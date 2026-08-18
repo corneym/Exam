@@ -33,3 +33,6 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+
+# Local exam source files
+/data/exams/
