@@ -1,0 +1,35 @@
+# Maven build output
+/target/
+
+# Eclipse
+.classpath
+.project
+.settings/
+.metadata/
+
+# Java
+*.class
+*.log
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
+*~
