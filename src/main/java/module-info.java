@@ -5,6 +5,7 @@ module au.edu.eq.questionbank {
 	requires javafx.swing;
 
 	requires org.apache.pdfbox;
+	requires javafx.graphics;
 
 	exports au.edu.eq.questionbank;
 	exports au.edu.eq.questionbank.ui;
