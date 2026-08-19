@@ -26,12 +26,29 @@ public class QuestionExtractor {
 	}
 
 	public BufferedImage extractQuestion(PdfSession session, Question question) throws IOException {
+		return extractRegions(session, question.getRegions());
+	}
+
+	public void extractRegion(Path pdfPath, QuestionRegion region, File outputFile) throws Exception {
+		try (PdfSession session = PdfSession.open(pdfPath)) {
+			BufferedImage image = extractRegion(session, region);
+			ImageIO.write(image, "png", outputFile);
+		}
+	}
+
+	public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
+		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
+		return cropRegion(page, region);
+	}
+
+	public BufferedImage extractRegions(PdfSession session, List<QuestionRegion> regions) throws IOException {
 		List<BufferedImage> regionImages = new ArrayList<>();
-		for (QuestionRegion region : question.getRegions()) {
+		for (QuestionRegion region : regions) {
 			BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
 			BufferedImage cropped = cropRegion(page, region);
 			regionImages.add(cropped);
 		}
+
 		int outputWidth = regionImages.stream().mapToInt(BufferedImage::getWidth).max().orElseThrow();
 		int outputHeight = regionImages.stream().mapToInt(BufferedImage::getHeight).sum();
 		BufferedImage combined = new BufferedImage(outputWidth, outputHeight, BufferedImage.TYPE_INT_RGB);
@@ -48,18 +65,6 @@ public class QuestionExtractor {
 			graphics.dispose();
 		}
 		return combined;
-	}
-
-	public void extractRegion(Path pdfPath, QuestionRegion region, File outputFile) throws Exception {
-		try (PdfSession session = PdfSession.open(pdfPath)) {
-			BufferedImage image = extractRegion(session, region);
-			ImageIO.write(image, "png", outputFile);
-		}
-	}
-
-	public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
-		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
-		return cropRegion(page, region);
 	}
 
 	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {

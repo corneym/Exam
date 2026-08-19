@@ -3,6 +3,8 @@ package au.edu.eq.questionbank.ui;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -47,6 +49,12 @@ public class QuestionBankApplication extends Application {
 	private double selectionStartY;
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private final ImageView previewView = new ImageView();
+	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
+	private QuestionRegion currentSelection;
+	private final Label regionCountLabel = new Label("Regions: 0");
+	private final Button addRegionButton = new Button("Add Region");
+	private final Button clearRegionsButton = new Button("Clear Regions");
+	private final Button previewQuestionButton = new Button("Preview Question");
 
 	private final Label pageLabel = new Label();
 
@@ -71,8 +79,12 @@ public class QuestionBankApplication extends Application {
 
 		previousButton.setOnAction(event -> previousPage());
 		nextButton.setOnAction(event -> nextPage());
+		addRegionButton.setOnAction(event -> addCurrentRegion());
+		clearRegionsButton.setOnAction(event -> clearRegions());
+		previewQuestionButton.setOnAction(event -> previewQuestion());
 
-		HBox controls = new HBox(10, previousButton, pageLabel, nextButton);
+		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, addRegionButton, clearRegionsButton,
+				previewQuestionButton, regionCountLabel);
 		controls.setAlignment(Pos.CENTER);
 
 		BorderPane root = new BorderPane();
@@ -86,6 +98,40 @@ public class QuestionBankApplication extends Application {
 		stage.show();
 
 		showCurrentPage();
+	}
+
+	private void previewQuestion() {
+		if (pendingRegions.isEmpty()) {
+			return;
+		}
+		try {
+			BufferedImage preview = questionExtractor.extractRegions(pdfSession, pendingRegions);
+			previewView.setImage(SwingFXUtils.toFXImage(preview, null));
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview question", e);
+		}
+	}
+
+	private void clearRegions() {
+		pendingRegions.clear();
+		currentSelection = null;
+		selectionRectangle.setVisible(false);
+		previewView.setImage(null);
+		setRegionCountLabel(0);
+	}
+
+	private void addCurrentRegion() {
+		if (currentSelection == null) {
+			return;
+		}
+		pendingRegions.add(currentSelection);
+		currentSelection = null;
+		selectionRectangle.setVisible(false);
+		setRegionCountLabel(pendingRegions.size());
+	}
+
+	private void setRegionCountLabel(int count) {
+		regionCountLabel.setText(String.format("Regions: %d", count));
 	}
 
 	@Override
@@ -195,11 +241,11 @@ public class QuestionBankApplication extends Application {
 		double normalizedY = selectionRectangle.getY() / pageHeight;
 		double normalizedWidth = width / pageWidth;
 		double normalizedHeight = height / pageHeight;
-		QuestionRegion region = new QuestionRegion(currentPageNumber, normalizedX, normalizedY, normalizedWidth,
+		currentSelection = new QuestionRegion(currentPageNumber, normalizedX, normalizedY, normalizedWidth,
 				normalizedHeight);
 		System.out.println("Selected region: ");
-		System.out.println(region);
-		showRegionPreview(region);
+		System.out.println(currentSelection);
+		showRegionPreview(currentSelection);
 	}
 
 	private void nextPage() {
