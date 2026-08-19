@@ -1,12 +1,32 @@
 package au.edu.eq.questionbank.pdf;
 
 import java.nio.file.Path;
+import java.util.Objects;
 
 public class PdfStore {
 
-	private static final Path PDF_ROOT = Path.of("D:/git/Exam/data/exams");
+	private final Path pdfRoot;
+
+	public PdfStore(Path pdfRoot) {
+		Objects.requireNonNull(pdfRoot, "pdfRoot");
+		this.pdfRoot = pdfRoot.toAbsolutePath().normalize();
+	}
 
 	public Path resolve(String relativePath) {
-		return PDF_ROOT.resolve(relativePath);
+		Objects.requireNonNull(relativePath, "relativePath");
+		if (relativePath.isBlank()) {
+			throw new IllegalArgumentException("PDF path must not be blank");
+		}
+
+		Path path = Path.of(relativePath);
+		if (path.isAbsolute() || path.getRoot() != null) {
+			throw new IllegalArgumentException("PDF path must be relative: " + relativePath);
+		}
+
+		Path resolved = pdfRoot.resolve(path).normalize();
+		if (!resolved.startsWith(pdfRoot)) {
+			throw new IllegalArgumentException("PDF path must remain within the configured data root: " + relativePath);
+		}
+		return resolved;
 	}
 }

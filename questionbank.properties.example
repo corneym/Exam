@@ -1,0 +1,2 @@
+# Copy this file to questionbank.properties and set the data root for this machine.
+pdf.dataRoot=D:/git/Exam/data/exams

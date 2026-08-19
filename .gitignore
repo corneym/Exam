@@ -36,3 +36,6 @@ Thumbs.db
 
 # Local exam source files
 /data/exams/
+
+# Machine-specific application configuration
+/questionbank.properties

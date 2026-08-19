@@ -17,9 +17,10 @@ public class Main {
 
 	public static void main(String[] args) throws Exception {
 
+		ApplicationConfig config = ApplicationConfig.load(Path.of("questionbank.properties"));
 		QuestionRepository repository = new InMemoryQuestionRepository();
 
-		PdfStore pdfStore = new PdfStore();
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		QuestionExtractor extractor = new QuestionExtractor();
 
 		Path outputDir = Path.of("target", "extracted");

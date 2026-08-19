@@ -22,6 +22,21 @@ public class QuestionExtractor {
 
 	private static final float RENDER_DPI = 150;
 
+	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {
+		int left = (int) Math.floor(region.x() * page.getWidth());
+		int top = (int) Math.floor(region.y() * page.getHeight());
+		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
+		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
+
+		right = Math.min(right, page.getWidth());
+		bottom = Math.min(bottom, page.getHeight());
+
+		int width = right - left;
+		int height = bottom - top;
+
+		return page.getSubimage(left, top, width, height);
+	}
+
 	public void extractQuestion(Path pdfPath, Question question, File outputFile) throws IOException {
 		try (PDDocument document = Loader.loadPDF(pdfPath.toFile())) {
 			PDFRenderer renderer = new PDFRenderer(document);
@@ -30,11 +45,7 @@ public class QuestionExtractor {
 			for (QuestionRegion region : question.getRegions()) {
 				int pageIndex = region.pageNumber() - 1;
 				BufferedImage page = renderer.renderImageWithDPI(pageIndex, RENDER_DPI);
-				int x = (int) Math.round(region.x() * page.getWidth());
-				int y = (int) Math.round(region.y() * page.getHeight());
-				int width = (int) Math.round(region.width() * page.getWidth());
-				int height = (int) Math.round(region.height() * page.getHeight());
-				BufferedImage cropped = page.getSubimage(x, y, width, height);
+				BufferedImage cropped = cropRegion(page, region);
 				regionImages.add(cropped);
 				int outputWidth = regionImages.stream().mapToInt(BufferedImage::getWidth).max().orElseThrow();
 				int outputHeight = regionImages.stream().mapToInt(BufferedImage::getHeight).sum();
@@ -60,11 +71,7 @@ public class QuestionExtractor {
 			// PDFBox page indexes are zero-indexed
 			int pageIndex = region.pageNumber() - 1;
 			BufferedImage page = renderer.renderImageWithDPI(pageIndex, RENDER_DPI);
-			int x = (int) Math.round(region.x() * page.getWidth());
-			int y = (int) Math.round(region.y() * page.getHeight());
-			int width = (int) Math.round(region.width() * page.getWidth());
-			int height = (int) Math.round(region.height() * page.getHeight());
-			BufferedImage question = page.getSubimage(x, y, width, height);
+			BufferedImage question = cropRegion(page, region);
 			ImageIO.write(question, "png", outputFile);
 		}
 	}

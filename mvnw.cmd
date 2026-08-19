@@ -88,11 +88,11 @@ if (-not (Test-Path -Path $MAVEN_M2_PATH)) {
     New-Item -Path $MAVEN_M2_PATH -ItemType Directory | Out-Null
 }
 
-$MAVEN_WRAPPER_DISTS = $null
-if ((Get-Item $MAVEN_M2_PATH).Target[0] -eq $null) {
+$MAVEN_M2_ITEM = Get-Item $MAVEN_M2_PATH
+if ($null -eq $MAVEN_M2_ITEM.LinkType) {
   $MAVEN_WRAPPER_DISTS = "$MAVEN_M2_PATH/wrapper/dists"
 } else {
-  $MAVEN_WRAPPER_DISTS = (Get-Item $MAVEN_M2_PATH).Target[0] + "/wrapper/dists"
+  $MAVEN_WRAPPER_DISTS = "$($MAVEN_M2_ITEM.Target[0])/wrapper/dists"
 }
 
 $MAVEN_HOME_PARENT = "$MAVEN_WRAPPER_DISTS/$distributionUrlNameMain"
@@ -128,6 +128,12 @@ Write-Verbose "Downloading from: $distributionUrl"
 Write-Verbose "Downloading to: $TMP_DOWNLOAD_DIR/$distributionUrlName"
 
 $webclient = New-Object System.Net.WebClient
+$webclient.Proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+if ($env:MVNW_PROXY_USERNAME -and $env:MVNW_PROXY_PASSWORD) {
+  $webclient.Proxy.Credentials = New-Object System.Net.NetworkCredential($env:MVNW_PROXY_USERNAME, $env:MVNW_PROXY_PASSWORD)
+} else {
+  $webclient.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
+}
 if ($env:MVNW_USERNAME -and $env:MVNW_PASSWORD) {
   $webclient.Credentials = New-Object System.Net.NetworkCredential($env:MVNW_USERNAME, $env:MVNW_PASSWORD)
 }

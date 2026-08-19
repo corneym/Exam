@@ -12,6 +12,12 @@ public class Question {
 
 	public Question(long id, Exam exam, String questionCode, String questionText, List<QuestionRegion> regions) {
 
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("Question must contain at least one region");
+		}
 		this.id = id;
 		this.exam = exam;
 		this.questionCode = questionCode;
