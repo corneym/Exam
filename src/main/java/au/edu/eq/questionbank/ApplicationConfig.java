@@ -28,6 +28,6 @@ public record ApplicationConfig(Path pdfDataRoot) {
 					"Missing required property '" + PDF_DATA_ROOT_PROPERTY + "' in " + propertiesFile);
 		}
 
-		return new ApplicationConfig(Path.of(configuredRoot.trim()));
+		return new ApplicationConfig(Path.of(configuredRoot.trim()).toAbsolutePath().normalize());
 	}
 }

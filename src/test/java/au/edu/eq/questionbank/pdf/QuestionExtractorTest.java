@@ -26,84 +26,13 @@ import au.edu.eq.questionbank.model.SourceDocument;
 
 class QuestionExtractorTest {
 
+	private record PageSpec(float width, float height, Color color) {
+	}
+
 	@TempDir
 	Path tempDir;
 
 	private final QuestionExtractor extractor = new QuestionExtractor();
-
-	@Test
-	void extractsAFullPageRegion() throws IOException {
-		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
-		Path output = tempDir.resolve("full-page.png");
-
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0, 0, 1, 1), output.toFile());
-
-		BufferedImage image = readImage(output);
-		assertAll(
-				() -> assertEquals(150, image.getWidth()),
-				() -> assertEquals(150, image.getHeight()));
-	}
-
-	@Test
-	void extractsARegionEndingAtTheRightAndBottomEdges() throws IOException {
-		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
-		Path output = tempDir.resolve("bottom-right.png");
-
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0.5, 0.5, 0.5, 0.5), output.toFile());
-
-		BufferedImage image = readImage(output);
-		assertAll(
-				() -> assertEquals(75, image.getWidth()),
-				() -> assertEquals(75, image.getHeight()));
-	}
-
-	@Test
-	void derivesCropSizeFromEndpointsOnAnOddSizedRenderedPage() throws IOException {
-		Path pdf = createPdf(new PageSpec(2.4f, 2.4f, Color.WHITE));
-		Path output = tempDir.resolve("odd-sized-page.png");
-
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0.1, 0.1, 0.9, 0.9), output.toFile());
-
-		BufferedImage image = readImage(output);
-		assertAll(
-				() -> assertEquals(5, image.getWidth()),
-				() -> assertEquals(5, image.getHeight()));
-	}
-
-	@Test
-	void preservesAtLeastOnePixelForAVeryNarrowRegion() throws IOException {
-		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
-		Path output = tempDir.resolve("narrow-region.png");
-
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0.5, 0.5, 0.001, 0.001), output.toFile());
-
-		BufferedImage image = readImage(output);
-		assertAll(
-				() -> assertEquals(1, image.getWidth()),
-				() -> assertEquals(1, image.getHeight()));
-	}
-
-	@Test
-	void combinesMultipleRegionsInQuestionOrder() throws IOException {
-		Path pdf = createPdf(
-				new PageSpec(72, 72, Color.RED),
-				new PageSpec(72, 72, Color.BLUE));
-		Path output = tempDir.resolve("multiple-regions.png");
-		SourceDocument sourceDocument = new SourceDocument(1, "exam.pdf");
-		Exam exam = new Exam(2, "Science", 2026, "External assessment", sourceDocument);
-		Question question = new Question(3, exam, "Q1", "A multi-page question.", List.of(
-				new QuestionRegion(1, 0, 0, 1, 1),
-				new QuestionRegion(2, 0, 0, 1, 1)));
-
-		extractor.extractQuestion(pdf, question, output.toFile());
-
-		BufferedImage image = readImage(output);
-		assertAll(
-				() -> assertEquals(150, image.getWidth()),
-				() -> assertEquals(300, image.getHeight()),
-				() -> assertEquals(Color.RED.getRGB(), image.getRGB(75, 75)),
-				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(75, 225)));
-	}
 
 	private Path createPdf(PageSpec... pages) throws IOException {
 		Path pdf = tempDir.resolve("source-" + System.nanoTime() + ".pdf");
@@ -128,6 +57,64 @@ class QuestionExtractorTest {
 		return image;
 	}
 
-	private record PageSpec(float width, float height, Color color) {
+	@Test
+	void combinesMultipleRegionsInQuestionOrder() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.BLUE));
+		Path output = tempDir.resolve("multiple-regions.png");
+		SourceDocument sourceDocument = new SourceDocument(1, "exam.pdf");
+		Exam exam = new Exam(2, "Science", 2026, "External assessment", sourceDocument);
+		Question question = new Question(3, exam, "Q1", "A multi-page question.",
+				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)));
+
+		extractor.extractQuestion(pdf, question, output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(300, image.getHeight()),
+				() -> assertEquals(Color.RED.getRGB(), image.getRGB(75, 75)),
+				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(75, 225)));
+	}
+
+	@Test
+	void derivesCropSizeFromEndpointsOnAnOddSizedRenderedPage() throws Exception {
+		Path pdf = createPdf(new PageSpec(2.4f, 2.4f, Color.WHITE));
+		Path output = tempDir.resolve("odd-sized-page.png");
+
+		extractor.extractRegion(pdf, new QuestionRegion(1, 0.1, 0.1, 0.9, 0.9), output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(() -> assertEquals(5, image.getWidth()), () -> assertEquals(5, image.getHeight()));
+	}
+
+	@Test
+	void extractsAFullPageRegion() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
+		Path output = tempDir.resolve("full-page.png");
+
+		extractor.extractRegion(pdf, new QuestionRegion(1, 0, 0, 1, 1), output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(150, image.getHeight()));
+	}
+
+	@Test
+	void extractsARegionEndingAtTheRightAndBottomEdges() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
+		Path output = tempDir.resolve("bottom-right.png");
+
+		extractor.extractRegion(pdf, new QuestionRegion(1, 0.5, 0.5, 0.5, 0.5), output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(75, image.getHeight()));
+	}
+
+	@Test
+	void preservesAtLeastOnePixelForAVeryNarrowRegion() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
+		Path output = tempDir.resolve("narrow-region.png");
+
+		extractor.extractRegion(pdf, new QuestionRegion(1, 0.5, 0.5, 0.001, 0.001), output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(() -> assertEquals(1, image.getWidth()), () -> assertEquals(1, image.getHeight()));
 	}
 }
