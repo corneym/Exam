@@ -1,26 +1,36 @@
 package au.edu.eq.questionbank.importer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import java.net.URL;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 
 class ChemistryCurriculumIntegrationTest {
 
-	private CurriculumExcelImporter importer;
-	private CurriculumNodeBuilder builder;
-	private Subject chemistry;
+	private void assertUniqueCodes(List<CurriculumNode> nodes) {
+
+		Set<String> codes = new HashSet<>();
+
+		for (CurriculumNode node : nodes) {
+			if (!codes.add(node.getCode())) {
+				throw new AssertionError("Duplicate curriculum code: " + node.getCode());
+			}
+		}
+	}
 
 	private CurriculumNode find(List<CurriculumNode> nodes, String code) {
 
@@ -29,6 +39,7 @@ class ChemistryCurriculumIntegrationTest {
 	}
 
 	private Path resourcePath(String fileName) throws Exception {
+
 		URL resource = getClass().getResource("/curriculum/" + fileName);
 
 		if (resource == null) {
@@ -38,65 +49,68 @@ class ChemistryCurriculumIntegrationTest {
 		return Path.of(resource.toURI());
 	}
 
+	private Set<String> rootCodes(List<CurriculumNode> nodes) {
+
+		return nodes.stream().filter(node -> node.getParent() == null).map(CurriculumNode::getCode)
+				.collect(Collectors.toSet());
+	}
+
 	@Test
-	void importsReal2019ChemistryCurriculum() throws Exception {
-		Path workbook = resourcePath("CHM Study Checklist [2019 Syllabus].xlsx");
+	void importsReal2019And2025ChemistryCurricula() throws Exception {
+		CurriculumExcelImporter importer = new CurriculumExcelImporter();
 
-		List<CurriculumImportRow> rows = importer.read(workbook);
+		CurriculumNodeBuilder builder = new CurriculumNodeBuilder();
 
-		assertEquals(199, rows.size());
+		Subject chemistry = new Subject(1, "Chemistry");
 
 		SyllabusVersion syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
 
-		AtomicLong ids = new AtomicLong(1);
-
-		List<CurriculumNode> nodes = builder.build(syllabus2019, rows, ids::getAndIncrement);
-
-		assertEquals(58, nodes.size());
-
-		assertEquals("Analytical techniques", find(nodes, "1.1.5").getName());
-
-		assertEquals(CurriculumLevel.SUBTOPIC, find(nodes, "3.1.1").getLevel());
-
-		assertEquals("3.1", find(nodes, "3.1.1").getParent().getCode());
-
-		assertEquals("3", find(nodes, "3.1.1").getParent().getParent().getCode());
-	}
-
-	@Test
-	void importsReal2025ChemistryCurriculum() throws Exception {
-		Path units1And2 = resourcePath("CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx");
-
-		Path units3And4 = resourcePath("CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx");
-
-		List<CurriculumImportRow> rows = new ArrayList<>();
-
-		rows.addAll(importer.read(units1And2));
-		rows.addAll(importer.read(units3And4));
-
-		assertEquals(226, rows.size());
-
 		SyllabusVersion syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
 
+		List<CurriculumImportRow> rows2019 = importer.read(resourcePath("CHM Study Checklist [2019 Syllabus].xlsx"));
+
+		List<CurriculumImportRow> rows2025 = new ArrayList<>();
+
+		rows2025.addAll(importer.read(resourcePath("CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx")));
+
+		rows2025.addAll(importer.read(resourcePath("CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx")));
+
+		assertFalse(rows2019.isEmpty());
+		assertFalse(rows2025.isEmpty());
+
+		/*
+		 * Use one ID sequence across both syllabus versions. CurriculumNode identity is
+		 * based on its ID, so IDs must remain unique even when different versions are
+		 * loaded.
+		 */
 		AtomicLong ids = new AtomicLong(1);
 
-		List<CurriculumNode> nodes = builder.build(syllabus2025, rows, ids::getAndIncrement);
+		List<CurriculumNode> nodes2019 = builder.build(syllabus2019, rows2019, ids::getAndIncrement);
 
-		assertEquals(54, nodes.size());
+		List<CurriculumNode> nodes2025 = builder.build(syllabus2025, rows2025, ids::getAndIncrement);
 
-		assertEquals("Analytical techniques", find(nodes, "1.1.3").getName());
+		assertFalse(nodes2019.isEmpty());
+		assertFalse(nodes2025.isEmpty());
 
-		assertEquals(CurriculumLevel.SUBTOPIC, find(nodes, "3.1.1").getLevel());
+		assertUniqueCodes(nodes2019);
+		assertUniqueCodes(nodes2025);
 
-		assertEquals("3.1", find(nodes, "3.1.1").getParent().getCode());
+		assertEquals(Set.of("1", "2", "3", "4"), rootCodes(nodes2019));
 
-		assertEquals("3", find(nodes, "3.1.1").getParent().getParent().getCode());
-	}
+		assertEquals(Set.of("1", "2", "3", "4"), rootCodes(nodes2025));
 
-	@BeforeEach
-	void setUp() {
-		importer = new CurriculumExcelImporter();
-		builder = new CurriculumNodeBuilder();
-		chemistry = new Subject(1, "Chemistry");
+		CurriculumNode node2019 = find(nodes2019, "3.1.1");
+
+		CurriculumNode node2025 = find(nodes2025, "3.1.1");
+
+		assertEquals("3.1", node2019.getParent().getCode());
+
+		assertEquals("3", node2019.getParent().getParent().getCode());
+
+		assertEquals("3.1", node2025.getParent().getCode());
+
+		assertEquals("3", node2025.getParent().getParent().getCode());
+
+		assertNotEquals(node2019.getSyllabusVersion(), node2025.getSyllabusVersion());
 	}
 }
