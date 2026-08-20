@@ -25,6 +25,56 @@ class InMemoryCurriculumRepositoryTest {
 
 	private CurriculumRepository repository;
 
+	@Test
+	void doesNotFindCodeInWrongVersion() {
+		assertTrue(repository.findByCode(syllabus2019, "3.1.1").isEmpty());
+	}
+
+	@Test
+	void findsChildren() {
+		assertEquals(List.of(topic31), repository.findChildren(unit3));
+		assertEquals(List.of(subtopic311), repository.findChildren(topic31));
+	}
+
+	@Test
+	void findsNodeByCodeWithinVersion() {
+		assertEquals(subtopic311, repository.findByCode(syllabus2025, "3.1.1").orElseThrow());
+	}
+
+	@Test
+	void findsRootNodesForVersion() {
+		List<CurriculumNode> roots = repository.findRootNodes(syllabus2025);
+
+		assertEquals(List.of(unit3), roots);
+	}
+
+	@Test
+	void findsSubjectsAndVersionsById() {
+		assertEquals(List.of(chemistry), repository.findAllSubjects());
+		assertEquals(chemistry, repository.findSubjectById(chemistry.getId()).orElseThrow());
+		assertEquals(syllabus2025, repository.findVersionById(syllabus2025.getId()).orElseThrow());
+	}
+
+	@Test
+	void findsVersionsForSubject() {
+		List<SyllabusVersion> versions = repository.findVersionsForSubject(chemistry);
+
+		assertEquals(2, versions.size());
+	}
+
+	@Test
+	void returnsNodesInDisplayOrderThenCodeOrder() {
+		CurriculumNode laterCode = new CurriculumNode(4, syllabus2025, unit3, "3.2", "Topic 3.2", CurriculumLevel.TOPIC,
+				2);
+		CurriculumNode earlierCode = new CurriculumNode(5, syllabus2025, unit3, "3.0", "Topic 3.0",
+				CurriculumLevel.TOPIC, 2);
+		CurriculumNode first = new CurriculumNode(6, syllabus2025, unit3, "3.3", "Topic 3.3", CurriculumLevel.TOPIC, 1);
+		CurriculumRepository orderedRepository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus2025), List.of(unit3, laterCode, earlierCode, first));
+
+		assertEquals(List.of(first, earlierCode, laterCode), orderedRepository.findChildren(unit3));
+	}
+
 	@BeforeEach
 	void setUp() {
 		chemistry = new Subject(1, "Chemistry");
@@ -41,57 +91,6 @@ class InMemoryCurriculumRepositoryTest {
 
 		repository = new InMemoryCurriculumRepository(List.of(chemistry), List.of(syllabus2019, syllabus2025),
 				List.of(unit3, topic31, subtopic311));
-	}
-
-	@Test
-	void findsVersionsForSubject() {
-		List<SyllabusVersion> versions = repository.findVersionsForSubject(chemistry);
-
-		assertEquals(2, versions.size());
-	}
-
-	@Test
-	void findsRootNodesForVersion() {
-		List<CurriculumNode> roots = repository.findRootNodes(syllabus2025);
-
-		assertEquals(List.of(unit3), roots);
-	}
-
-	@Test
-	void findsChildren() {
-		assertEquals(List.of(topic31), repository.findChildren(unit3));
-		assertEquals(List.of(subtopic311), repository.findChildren(topic31));
-	}
-
-	@Test
-	void findsNodeByCodeWithinVersion() {
-		assertEquals(subtopic311, repository.findByCode(syllabus2025, "3.1.1").orElseThrow());
-	}
-
-	@Test
-	void doesNotFindCodeInWrongVersion() {
-		assertTrue(repository.findByCode(syllabus2019, "3.1.1").isEmpty());
-	}
-
-	@Test
-	void findsSubjectsAndVersionsById() {
-		assertEquals(List.of(chemistry), repository.findAllSubjects());
-		assertEquals(chemistry, repository.findSubjectById(chemistry.getId()).orElseThrow());
-		assertEquals(syllabus2025, repository.findVersionById(syllabus2025.getId()).orElseThrow());
-	}
-
-	@Test
-	void returnsNodesInDisplayOrderThenCodeOrder() {
-		CurriculumNode laterCode = new CurriculumNode(4, syllabus2025, unit3, "3.2", "Topic 3.2",
-				CurriculumLevel.TOPIC, 2);
-		CurriculumNode earlierCode = new CurriculumNode(5, syllabus2025, unit3, "3.0", "Topic 3.0",
-				CurriculumLevel.TOPIC, 2);
-		CurriculumNode first = new CurriculumNode(6, syllabus2025, unit3, "3.3", "Topic 3.3",
-				CurriculumLevel.TOPIC, 1);
-		CurriculumRepository orderedRepository = new InMemoryCurriculumRepository(List.of(chemistry),
-				List.of(syllabus2025), List.of(unit3, laterCode, earlierCode, first));
-
-		assertEquals(List.of(first, earlierCode, laterCode), orderedRepository.findChildren(unit3));
 	}
 
 	@Test
