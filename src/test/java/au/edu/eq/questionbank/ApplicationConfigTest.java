@@ -32,4 +32,28 @@ class ApplicationConfigTest {
 
 		assertThrows(IllegalArgumentException.class, () -> ApplicationConfig.load(propertiesFile));
 	}
+
+	@Test
+	void trimsAndNormalizesTheConfiguredRoot() throws IOException {
+		Path propertiesFile = tempDir.resolve("questionbank.properties");
+		String configuredPath = tempDir.resolve("pdfs/../exams").toString().replace('\\', '/');
+		Files.writeString(propertiesFile, "pdf.dataRoot=  " + configuredPath + "  \n");
+
+		ApplicationConfig config = ApplicationConfig.load(propertiesFile);
+
+		assertEquals(tempDir.resolve("exams").toAbsolutePath().normalize(), config.pdfDataRoot());
+	}
+
+	@Test
+	void rejectsABlankPdfDataRoot() throws IOException {
+		Path propertiesFile = tempDir.resolve("questionbank.properties");
+		Files.writeString(propertiesFile, "pdf.dataRoot=   \n");
+
+		assertThrows(IllegalArgumentException.class, () -> ApplicationConfig.load(propertiesFile));
+	}
+
+	@Test
+	void rejectsANullPropertiesFile() {
+		assertThrows(NullPointerException.class, () -> ApplicationConfig.load(null));
+	}
 }

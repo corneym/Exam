@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.importer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URL;
 import java.nio.file.Path;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.CurriculumRepository;
 
 class ChemistryCurriculumIntegrationTest {
 
@@ -112,5 +114,30 @@ class ChemistryCurriculumIntegrationTest {
 		assertEquals("3", node2025.getParent().getParent().getCode());
 
 		assertNotEquals(node2019.getSyllabusVersion(), node2025.getSyllabusVersion());
+	}
+
+	@Test
+	void loadsBothChemistrySyllabusVersionsIntoRepository() throws Exception {
+
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
+
+		CurriculumRepository repository = new CurriculumRepositoryLoader().load(List.of(
+				new CurriculumSource(syllabus2019, List.of(resourcePath("CHM Study Checklist [2019 Syllabus].xlsx"))),
+
+				new CurriculumSource(syllabus2025,
+						List.of(resourcePath("CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx"),
+								resourcePath("CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx")))));
+
+		assertEquals(List.of(syllabus2019, syllabus2025), repository.findVersionsForSubject(chemistry));
+
+		assertTrue(repository.findByCode(syllabus2019, "3.1.1").isPresent());
+
+		assertTrue(repository.findByCode(syllabus2025, "3.1.1").isPresent());
+
+		assertEquals(4, repository.findRootNodes(syllabus2025).size());
 	}
 }

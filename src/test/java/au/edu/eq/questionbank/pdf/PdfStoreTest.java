@@ -61,4 +61,16 @@ class PdfStoreTest {
 
 		assertThrows(IllegalArgumentException.class, () -> store.resolve("  "));
 	}
+
+	@Test
+	void rejectsANullRoot() {
+		assertThrows(NullPointerException.class, () -> new PdfStore(null));
+	}
+
+	@Test
+	void rejectsANullRelativePath() {
+		PdfStore store = new PdfStore(tempDir);
+
+		assertThrows(NullPointerException.class, () -> store.resolve(null));
+	}
 }

@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.pdf;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.awt.Color;
 import java.awt.image.BufferedImage;
@@ -116,5 +117,33 @@ class QuestionExtractorTest {
 
 		BufferedImage image = readImage(output);
 		assertAll(() -> assertEquals(1, image.getWidth()), () -> assertEquals(1, image.getHeight()));
+	}
+
+	@Test
+	void padsNarrowerRegionsWithWhiteWhenCombining() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(36, 72, Color.BLUE));
+		Path output = tempDir.resolve("different-widths.png");
+		Question question = new Question(3, new Exam(2, "Science", 2026, "Assessment",
+				new SourceDocument(1, "exam.pdf")), "Q2", "Different widths",
+				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)));
+
+		extractor.extractQuestion(pdf, question, output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(
+				() -> assertEquals(150, image.getWidth()),
+				() -> assertEquals(300, image.getHeight()),
+				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(25, 225)),
+				() -> assertEquals(Color.WHITE.getRGB(), image.getRGB(125, 225)));
+	}
+
+	@Test
+	void rejectsARegionWhosePageIsOutsideTheDocument() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
+
+		try (PdfSession session = PdfSession.open(pdf)) {
+			assertThrows(IllegalArgumentException.class,
+					() -> extractor.extractRegion(session, new QuestionRegion(2, 0, 0, 1, 1)));
+		}
 	}
 }

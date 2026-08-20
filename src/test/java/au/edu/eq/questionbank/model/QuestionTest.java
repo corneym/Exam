@@ -52,4 +52,25 @@ class QuestionTest {
 		assertThrows(UnsupportedOperationException.class,
 				() -> question.getRegions().add(new QuestionRegion(3, 0, 0, 1, 1)));
 	}
+
+	@Test
+	void rejectsAnEmptyRegionList() {
+		assertThrows(IllegalArgumentException.class,
+				() -> new Question(33, exam, "Q4", "Missing region.", List.of()));
+	}
+
+	@Test
+	void rejectsANullRegionList() {
+		assertThrows(NullPointerException.class,
+				() -> new Question(34, exam, "Q5", "Missing regions.", null));
+	}
+
+	@Test
+	void rejectsANullRegionElement() {
+		List<QuestionRegion> regions = new ArrayList<>();
+		regions.add(null);
+
+		assertThrows(NullPointerException.class,
+				() -> new Question(35, exam, "Q6", "Null region.", regions));
+	}
 }

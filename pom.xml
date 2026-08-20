@@ -63,6 +63,9 @@
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>${maven.surefire.plugin.version}</version>
 				<configuration>
+					<includes>
+						<include>**/AllTests.java</include>
+					</includes>
 					<argLine>
 						--add-opens
 						au.edu.eq.questionbank/au.edu.eq.questionbank=ALL-UNNAMED

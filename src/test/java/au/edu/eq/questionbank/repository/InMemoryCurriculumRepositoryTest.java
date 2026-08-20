@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -70,5 +71,39 @@ class InMemoryCurriculumRepositoryTest {
 	@Test
 	void doesNotFindCodeInWrongVersion() {
 		assertTrue(repository.findByCode(syllabus2019, "3.1.1").isEmpty());
+	}
+
+	@Test
+	void findsSubjectsAndVersionsById() {
+		assertEquals(List.of(chemistry), repository.findAllSubjects());
+		assertEquals(chemistry, repository.findSubjectById(chemistry.getId()).orElseThrow());
+		assertEquals(syllabus2025, repository.findVersionById(syllabus2025.getId()).orElseThrow());
+	}
+
+	@Test
+	void returnsNodesInDisplayOrderThenCodeOrder() {
+		CurriculumNode laterCode = new CurriculumNode(4, syllabus2025, unit3, "3.2", "Topic 3.2",
+				CurriculumLevel.TOPIC, 2);
+		CurriculumNode earlierCode = new CurriculumNode(5, syllabus2025, unit3, "3.0", "Topic 3.0",
+				CurriculumLevel.TOPIC, 2);
+		CurriculumNode first = new CurriculumNode(6, syllabus2025, unit3, "3.3", "Topic 3.3",
+				CurriculumLevel.TOPIC, 1);
+		CurriculumRepository orderedRepository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus2025), List.of(unit3, laterCode, earlierCode, first));
+
+		assertEquals(List.of(first, earlierCode, laterCode), orderedRepository.findChildren(unit3));
+	}
+
+	@Test
+	void takesImmutableSnapshotsOfConstructorLists() {
+		List<Subject> subjects = new java.util.ArrayList<>(List.of(chemistry));
+		InMemoryCurriculumRepository snapshotRepository = new InMemoryCurriculumRepository(subjects,
+				List.of(syllabus2025), List.of(unit3));
+
+		subjects.clear();
+
+		assertEquals(List.of(chemistry), snapshotRepository.findAllSubjects());
+		assertThrows(UnsupportedOperationException.class,
+				() -> snapshotRepository.findAllSubjects().add(new Subject(2, "Physics")));
 	}
 }
