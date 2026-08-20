@@ -14,6 +14,7 @@
 		<junit.version>6.0.3</junit.version>
 		<maven.surefire.plugin.version>3.5.5</maven.surefire.plugin.version>
 		<javafx.version>25.0.4</javafx.version>
+		<apache.poi.version>5.5.1</apache.poi.version>
 	</properties>
 
 	<dependencies>
@@ -44,6 +45,11 @@
 			<artifactId>javafx-swing</artifactId>
 			<version>${javafx.version}</version>
 		</dependency>
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml</artifactId>
+			<version>${apache.poi.version}</version>
+		</dependency>
 	</dependencies>
 	<build>
 		<plugins>
@@ -65,9 +71,11 @@
 						--add-opens
 						au.edu.eq.questionbank/au.edu.eq.questionbank.pdf=ALL-UNNAMED
 						--add-opens
-						au.edu.eq.questionbank/au.edu.eq.questionbank.repository`=ALL-UNNAMED
+						au.edu.eq.questionbank/au.edu.eq.questionbank.repository=ALL-UNNAMED
 						--add-opens
 						au.edu.eq.questionbank/au.edu.eq.questionbank.output=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.importer=ALL-UNNAMED
 					</argLine>
 				</configuration>
 			</plugin>

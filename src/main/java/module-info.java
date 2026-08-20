@@ -6,6 +6,7 @@ module au.edu.eq.questionbank {
 
 	requires org.apache.pdfbox;
 	requires javafx.graphics;
+	requires org.apache.poi.ooxml;
 
 	exports au.edu.eq.questionbank;
 	exports au.edu.eq.questionbank.ui;
