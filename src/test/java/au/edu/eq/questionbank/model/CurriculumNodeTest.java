@@ -14,6 +14,20 @@ class CurriculumNodeTest {
 	private SyllabusVersion syllabus;
 
 	@Test
+	void acceptsValidUnitTopicSubtopicHierarchy() {
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
+
+		CurriculumNode unit3 = new CurriculumNode(1, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
+
+		CurriculumNode topic31 = new CurriculumNode(2, syllabus2025, unit3, "3.1", "Topic 3.1", CurriculumLevel.TOPIC,
+				1);
+
+		new CurriculumNode(3, syllabus2025, topic31, "3.1.1", "Subtopic 3.1.1", CurriculumLevel.SUBTOPIC, 1);
+	}
+
+	@Test
 	void equalityUsesNodeIdentity() {
 		CurriculumNode first = new CurriculumNode(7, syllabus, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
 		CurriculumNode sameId = new CurriculumNode(7, syllabus, null, "4", "Unit 4", CurriculumLevel.UNIT, 2);
@@ -56,6 +70,20 @@ class CurriculumNodeTest {
 						() -> new CurriculumNode(1, syllabus, null, "1", "Unit", null, 0)),
 				() -> assertThrows(IllegalArgumentException.class,
 						() -> new CurriculumNode(1, syllabus, null, "1", "Unit", CurriculumLevel.UNIT, -1)));
+	}
+
+	@Test
+	void rejectsParentFromDifferentSyllabusVersion() {
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
+
+		CurriculumNode unit2019 = new CurriculumNode(1, syllabus2019, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> new CurriculumNode(2, syllabus2025, unit2019, "3.1", "Topic 3.1", CurriculumLevel.TOPIC, 1));
 	}
 
 	@Test
