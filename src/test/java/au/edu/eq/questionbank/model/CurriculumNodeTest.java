@@ -73,6 +73,16 @@ class CurriculumNodeTest {
 	}
 
 	@Test
+	void rejectsNonPositiveId() {
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> new CurriculumNode(0, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1));
+	}
+
+	@Test
 	void rejectsParentFromDifferentSyllabusVersion() {
 		Subject chemistry = new Subject(1, "Chemistry");
 
