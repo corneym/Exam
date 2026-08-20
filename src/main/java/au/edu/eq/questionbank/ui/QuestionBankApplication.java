@@ -20,6 +20,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Separator;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
@@ -55,6 +56,11 @@ public class QuestionBankApplication extends Application {
 	private final Button addRegionButton = new Button("Add Region");
 	private final Button clearRegionsButton = new Button("Clear Regions");
 	private final Button previewQuestionButton = new Button("Preview Question");
+	private final VBox regionPreviewBox = new VBox(10);
+
+	private final ImageView combinedPreviewView = new ImageView();
+
+	private final Button combineRegionsButton = new Button("Combine Regions");
 
 	private final Label pageLabel = new Label();
 
@@ -81,10 +87,10 @@ public class QuestionBankApplication extends Application {
 		nextButton.setOnAction(event -> nextPage());
 		addRegionButton.setOnAction(event -> addCurrentRegion());
 		clearRegionsButton.setOnAction(event -> clearRegions());
-		previewQuestionButton.setOnAction(event -> previewQuestion());
+		combineRegionsButton.setOnAction(event -> combineRegions());
 
 		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, addRegionButton, clearRegionsButton,
-				previewQuestionButton, regionCountLabel);
+				regionCountLabel);
 		controls.setAlignment(Pos.CENTER);
 
 		BorderPane root = new BorderPane();
@@ -92,12 +98,24 @@ public class QuestionBankApplication extends Application {
 		root.setRight(createPreviewPane());
 		root.setBottom(controls);
 
-		Scene scene = new Scene(root, 1300, 800);
+		Scene scene = new Scene(root, 1400, 840);
 		stage.setTitle("Exam Question Bank");
 		stage.setScene(scene);
 		stage.show();
 
 		showCurrentPage();
+	}
+
+	private void combineRegions() {
+		if (pendingRegions.isEmpty()) {
+			return;
+		}
+		try {
+			BufferedImage combined = questionExtractor.extractRegions(pdfSession, pendingRegions);
+			combinedPreviewView.setImage(SwingFXUtils.toFXImage(combined, null));
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview question", e);
+		}
 	}
 
 	private void previewQuestion() {
@@ -117,16 +135,57 @@ public class QuestionBankApplication extends Application {
 		currentSelection = null;
 		selectionRectangle.setVisible(false);
 		previewView.setImage(null);
+		combinedPreviewView.setImage(null);
+		refreshRegionPreviews();
 		setRegionCountLabel(0);
 	}
 
 	private void addCurrentRegion() {
+
 		if (currentSelection == null) {
 			return;
 		}
+
 		pendingRegions.add(currentSelection);
 		currentSelection = null;
 		selectionRectangle.setVisible(false);
+		previewView.setImage(null);
+		combinedPreviewView.setImage(null);
+		refreshRegionPreviews();
+		setRegionCountLabel(pendingRegions.size());
+	}
+
+	private void refreshRegionPreviews() {
+		regionPreviewBox.getChildren().clear();
+		for (int i = 0; i < pendingRegions.size(); i++) {
+			QuestionRegion region = pendingRegions.get(i);
+			addRegionPreview(region, i);
+		}
+	}
+
+	private void addRegionPreview(QuestionRegion region, int regionIndex) {
+		try {
+			BufferedImage image = questionExtractor.extractRegion(pdfSession, region);
+			ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
+			imageView.setPreserveRatio(true);
+			imageView.setFitWidth(300);
+			imageView.setSmooth(true);
+
+			Label label = new Label(String.format("Region %d - Page %d", regionIndex, region.pageNumber()));
+			Button removeButton = new Button("Remove");
+			removeButton.setOnAction(event -> removeRegion(regionIndex));
+			HBox header = new HBox(10, label, removeButton);
+			VBox regionBox = new VBox(5, header, imageView);
+			regionPreviewBox.getChildren().add(regionBox);
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview region", e);
+		}
+	}
+
+	private void removeRegion(int regionIndex) {
+		pendingRegions.remove(regionIndex);
+		combinedPreviewView.setImage(null);
+		refreshRegionPreviews();
 		setRegionCountLabel(pendingRegions.size());
 	}
 
@@ -197,6 +256,10 @@ public class QuestionBankApplication extends Application {
 		previewView.setPreserveRatio(true);
 		previewView.setFitWidth(320);
 		previewView.setSmooth(true);
+
+		combinedPreviewView.setPreserveRatio(true);
+		combinedPreviewView.setFitWidth(320);
+		combinedPreviewView.setSmooth(true);
 	}
 
 	private void configureSelectionRectangle() {
@@ -214,14 +277,19 @@ public class QuestionBankApplication extends Application {
 
 	private VBox createPreviewPane() {
 
-		Label previewLabel = new Label("Selection preview");
-		ScrollPane previewScrollPane = new ScrollPane(previewView);
+		Label currentLabel = new Label("Current selection");
+		Label regionsLabel = new Label("Accepted regions");
+		Label combinedLabel = new Label("Combined question");
 
-		previewScrollPane.setFitToWidth(true);
-		previewScrollPane.setPrefWidth(360);
+		ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
 
-		VBox previewPane = new VBox(10, previewLabel, previewScrollPane);
+		regionsScrollPane.setFitToWidth(true);
+		regionsScrollPane.setPrefViewportHeight(300);
+
+		VBox previewPane = new VBox(10, currentLabel, previewView, new Separator(), regionsLabel, regionCountLabel,
+				regionsScrollPane, combineRegionsButton, new Separator(), combinedLabel, combinedPreviewView);
 		previewPane.setPadding(new Insets(10));
+		previewPane.setPrefWidth(360);
 		return previewPane;
 	}
 
