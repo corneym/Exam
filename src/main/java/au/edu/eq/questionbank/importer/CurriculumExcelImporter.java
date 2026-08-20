@@ -20,6 +20,10 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
 
 public class CurriculumExcelImporter {
 
+	private record HeaderColumns(int headerRow, int unitColumn, int topicColumn, int subtopicColumn,
+			int classificationColumn, int descriptorColumn) {
+	}
+
 	private static final int HEADER_SEARCH_LIMIT = 25;
 
 	private final DataFormatter formatter;
@@ -60,58 +64,16 @@ public class CurriculumExcelImporter {
 		}
 	}
 
-	private List<CurriculumImportRow> readSheet(Sheet sheet, HeaderColumns columns, FormulaEvaluator evaluator) {
-
-		List<CurriculumImportRow> rows = new ArrayList<>();
-
-		String currentUnit = "";
-		String currentTopic = "";
-		String currentSubtopic = "";
-		String currentClassification = "";
-
-		for (int rowIndex = columns.headerRow() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
-
-			Row row = sheet.getRow(rowIndex);
-
-			if (row == null) {
-				continue;
-			}
-
-			String unit = getText(row, columns.unitColumn(), evaluator);
-			String topic = getText(row, columns.topicColumn(), evaluator);
-			String subtopic = getText(row, columns.subtopicColumn(), evaluator);
-			String classification = getText(row, columns.classificationColumn(), evaluator);
-			String descriptor = getText(row, columns.descriptorColumn(), evaluator);
-
-			if (!unit.isBlank()) {
-				currentUnit = unit;
-			}
-			if (!topic.isBlank()) {
-				currentTopic = topic;
-			}
-			if (!subtopic.isBlank()) {
-				currentSubtopic = subtopic;
-			}
-			if (!classification.isBlank()) {
-				currentClassification = classification;
-			}
-
-			if (descriptor.isBlank()) {
-				continue;
-			}
-
-			if (currentUnit.isBlank() || currentTopic.isBlank() || currentSubtopic.isBlank()
-					|| currentClassification.isBlank()) {
-
-				throw new IllegalArgumentException("Incomplete curriculum hierarchy in sheet " + sheet.getSheetName()
-						+ " at Excel row " + (rowIndex + 1));
-			}
-
-			rows.add(new CurriculumImportRow(currentUnit, currentTopic, currentSubtopic, currentClassification,
-					descriptor));
+	private String cleanText(String value) {
+		if (value == null) {
+			return "";
 		}
 
-		return rows;
+		/*
+		 * Some 2019 descriptors contain non-breaking spaces copied from source
+		 * documents.
+		 */
+		return value.replace('\u00A0', ' ').strip();
 	}
 
 	private HeaderColumns findHeaderColumns(Sheet sheet, FormulaEvaluator evaluator) {
@@ -179,23 +141,70 @@ public class CurriculumExcelImporter {
 		return cleanText(formatter.formatCellValue(cell, evaluator));
 	}
 
-	private String cleanText(String value) {
-		if (value == null) {
-			return "";
-		}
-
-		/*
-		 * Some 2019 descriptors contain non-breaking spaces copied from source
-		 * documents.
-		 */
-		return value.replace('\u00A0', ' ').strip();
-	}
-
 	private String normalizeHeader(String value) {
 		return value.strip().toLowerCase(Locale.ROOT);
 	}
 
-	private record HeaderColumns(int headerRow, int unitColumn, int topicColumn, int subtopicColumn,
-			int classificationColumn, int descriptorColumn) {
+	private List<CurriculumImportRow> readSheet(Sheet sheet, HeaderColumns columns, FormulaEvaluator evaluator) {
+
+		List<CurriculumImportRow> rows = new ArrayList<>();
+
+		String currentUnit = "";
+		String currentTopic = "";
+		String currentSubtopic = "";
+		String currentClassification = "";
+
+		for (int rowIndex = columns.headerRow() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+
+			Row row = sheet.getRow(rowIndex);
+
+			if (row == null) {
+				continue;
+			}
+
+			String unit = getText(row, columns.unitColumn(), evaluator);
+			String topic = getText(row, columns.topicColumn(), evaluator);
+			String subtopic = getText(row, columns.subtopicColumn(), evaluator);
+			String classification = getText(row, columns.classificationColumn(), evaluator);
+			String descriptor = getText(row, columns.descriptorColumn(), evaluator);
+
+			if (!unit.isBlank() && !unit.equals(currentUnit)) {
+				currentUnit = unit;
+				currentTopic = "";
+				currentSubtopic = "";
+				currentClassification = "";
+			}
+
+			if (!topic.isBlank() && !topic.equals(currentTopic)) {
+				currentTopic = topic;
+				currentSubtopic = "";
+				currentClassification = "";
+			}
+
+			if (!subtopic.isBlank() && !subtopic.equals(currentSubtopic)) {
+				currentSubtopic = subtopic;
+				currentClassification = "";
+			}
+
+			if (!classification.isBlank()) {
+				currentClassification = classification;
+			}
+
+			if (descriptor.isBlank()) {
+				continue;
+			}
+
+			if (currentUnit.isBlank() || currentTopic.isBlank() || currentSubtopic.isBlank()
+					|| currentClassification.isBlank()) {
+
+				throw new IllegalArgumentException("Incomplete curriculum hierarchy in sheet " + sheet.getSheetName()
+						+ " at Excel row " + (rowIndex + 1));
+			}
+
+			rows.add(new CurriculumImportRow(currentUnit, currentTopic, currentSubtopic, currentClassification,
+					descriptor));
+		}
+
+		return rows;
 	}
 }

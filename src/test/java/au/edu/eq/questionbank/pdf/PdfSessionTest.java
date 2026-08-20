@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.nio.file.Path;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -30,28 +31,46 @@ class PdfSessionTest {
 	}
 
 	@Test
-	void reportsPageCountAndRendersOneBasedPages() throws Exception {
-		try (PdfSession session = PdfSession.open(createPdf(2))) {
-			BufferedImage page = session.renderPage(2, 72);
+	void rejectsANullPdfPath() {
+		assertThrows(NullPointerException.class, () -> PdfSession.open(null));
+	}
 
-			assertAll(
-					() -> assertEquals(2, session.getPageCount()),
-					() -> assertEquals(72, page.getWidth()),
-					() -> assertEquals(72, page.getHeight()));
+	@Test
+	void rejectsInfiniteDpi() throws IOException, Exception {
+		try (PdfSession session = PdfSession.open(createPdf(2))) {
+			assertThrows(IllegalArgumentException.class, () -> session.renderPage(1, Float.POSITIVE_INFINITY));
+		}
+	}
+
+	@Test
+	void rejectsNanDpi() throws IOException, Exception {
+		try (PdfSession session = PdfSession.open(createPdf(2))) {
+			assertThrows(IllegalArgumentException.class, () -> session.renderPage(1, Float.NaN));
 		}
 	}
 
 	@Test
 	void rejectsPageNumbersOutsideTheDocument() throws Exception {
 		try (PdfSession session = PdfSession.open(createPdf(2))) {
-			assertAll(
-					() -> assertThrows(IllegalArgumentException.class, () -> session.renderPage(0, 72)),
+			assertAll(() -> assertThrows(IllegalArgumentException.class, () -> session.renderPage(0, 72)),
 					() -> assertThrows(IllegalArgumentException.class, () -> session.renderPage(3, 72)));
 		}
 	}
 
 	@Test
-	void rejectsANullPdfPath() {
-		assertThrows(NullPointerException.class, () -> PdfSession.open(null));
+	void rejectsZeroDpi() throws IOException, Exception {
+		try (PdfSession session = PdfSession.open(createPdf(2))) {
+			assertThrows(IllegalArgumentException.class, () -> session.renderPage(1, 0.0f));
+		}
+	}
+
+	@Test
+	void reportsPageCountAndRendersOneBasedPages() throws Exception {
+		try (PdfSession session = PdfSession.open(createPdf(2))) {
+			BufferedImage page = session.renderPage(2, 72);
+
+			assertAll(() -> assertEquals(2, session.getPageCount()), () -> assertEquals(72, page.getWidth()),
+					() -> assertEquals(72, page.getHeight()));
+		}
 	}
 }

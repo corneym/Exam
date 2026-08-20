@@ -15,6 +15,9 @@ public class CurriculumNode {
 	public CurriculumNode(long id, SyllabusVersion syllabusVersion, CurriculumNode parent, String code, String name,
 			CurriculumLevel level, int displayOrder) {
 
+		if (id < 1) {
+			throw new IllegalArgumentException("id must be positive");
+		}
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
 		}
@@ -26,6 +29,30 @@ public class CurriculumNode {
 		}
 		if (level == null) {
 			throw new NullPointerException("level");
+		}
+		if (level == CurriculumLevel.UNIT) {
+			if (parent != null) {
+				throw new IllegalArgumentException("UNIT must not have a parent");
+			}
+		} else {
+			if (parent == null) {
+				throw new IllegalArgumentException(level + " must have a parent");
+			}
+
+			if (!parent.getSyllabusVersion().equals(syllabusVersion)) {
+				throw new IllegalArgumentException("parent must belong to the same syllabus version");
+			}
+
+			CurriculumLevel expectedParentLevel = switch (level) {
+			case TOPIC -> CurriculumLevel.UNIT;
+			case SUBTOPIC -> CurriculumLevel.TOPIC;
+			case SUBSUBTOPIC -> CurriculumLevel.SUBTOPIC;
+			case UNIT -> throw new IllegalStateException();
+			};
+
+			if (parent.getLevel() != expectedParentLevel) {
+				throw new IllegalArgumentException(level + " must have a " + expectedParentLevel + " parent");
+			}
 		}
 		if (displayOrder < 0) {
 			throw new IllegalArgumentException("displayOrder must not be negative");
@@ -43,39 +70,6 @@ public class CurriculumNode {
 		this.displayOrder = displayOrder;
 	}
 
-	public long getId() {
-		return id;
-	}
-
-	public SyllabusVersion getSyllabusVersion() {
-		return syllabusVersion;
-	}
-
-	public CurriculumNode getParent() {
-		return parent;
-	}
-
-	public String getCode() {
-		return code;
-	}
-
-	public String getName() {
-		return name;
-	}
-
-	public CurriculumLevel getLevel() {
-		return level;
-	}
-
-	public int getDisplayOrder() {
-		return displayOrder;
-	}
-
-	@Override
-	public String toString() {
-		return code + " " + name;
-	}
-
 	@Override
 	public boolean equals(Object object) {
 		if (this == object) {
@@ -87,8 +81,41 @@ public class CurriculumNode {
 		return id == other.id;
 	}
 
+	public String getCode() {
+		return code;
+	}
+
+	public int getDisplayOrder() {
+		return displayOrder;
+	}
+
+	public long getId() {
+		return id;
+	}
+
+	public CurriculumLevel getLevel() {
+		return level;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public CurriculumNode getParent() {
+		return parent;
+	}
+
+	public SyllabusVersion getSyllabusVersion() {
+		return syllabusVersion;
+	}
+
 	@Override
 	public int hashCode() {
 		return Objects.hash(id);
+	}
+
+	@Override
+	public String toString() {
+		return code + " " + name;
 	}
 }

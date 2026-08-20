@@ -74,11 +74,20 @@ class CurriculumMappingBuilderTest {
 
 		syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
 
-		source = new CurriculumNode(1, syllabus2019, null, "3.1.2", "2019 subtopic", CurriculumLevel.SUBTOPIC, 1);
+		CurriculumNode unit2019 = new CurriculumNode(1, syllabus2019, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
 
-		target = new CurriculumNode(2, syllabus2025, null, "3.2.1", "2025 subtopic", CurriculumLevel.SUBTOPIC, 1);
+		CurriculumNode topic2019 = new CurriculumNode(2, syllabus2019, unit2019, "3.1", "Topic 3.1",
+				CurriculumLevel.TOPIC, 1);
 
+		source = new CurriculumNode(3, syllabus2019, topic2019, "3.1.2", "2019 subtopic", CurriculumLevel.SUBTOPIC, 1);
+
+		CurriculumNode unit2025 = new CurriculumNode(4, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
+
+		CurriculumNode topic2025 = new CurriculumNode(5, syllabus2025, unit2025, "3.2", "Topic 3.2",
+				CurriculumLevel.TOPIC, 1);
+
+		target = new CurriculumNode(6, syllabus2025, topic2025, "3.2.1", "2025 subtopic", CurriculumLevel.SUBTOPIC, 1);
 		repository = new InMemoryCurriculumRepository(List.of(chemistry), List.of(syllabus2019, syllabus2025),
-				List.of(source, target));
+				List.of(unit2019, topic2019, source, unit2025, topic2025, target));
 	}
 }

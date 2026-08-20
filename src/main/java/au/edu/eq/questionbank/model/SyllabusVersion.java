@@ -10,6 +10,9 @@ public class SyllabusVersion {
 	private final boolean current;
 
 	public SyllabusVersion(long id, Subject subject, String name, boolean current) {
+		if (id < 1) {
+			throw new IllegalArgumentException("id must be positive");
+		}
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
@@ -23,27 +26,6 @@ public class SyllabusVersion {
 		this.current = current;
 	}
 
-	public long getId() {
-		return id;
-	}
-
-	public Subject getSubject() {
-		return subject;
-	}
-
-	public String getName() {
-		return name;
-	}
-
-	public boolean isCurrent() {
-		return current;
-	}
-
-	@Override
-	public String toString() {
-		return name + " " + subject.getName();
-	}
-
 	@Override
 	public boolean equals(Object object) {
 		if (this == object) {
@@ -55,8 +37,29 @@ public class SyllabusVersion {
 		return id == other.id;
 	}
 
+	public long getId() {
+		return id;
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public Subject getSubject() {
+		return subject;
+	}
+
 	@Override
 	public int hashCode() {
 		return Objects.hash(id);
+	}
+
+	public boolean isCurrent() {
+		return current;
+	}
+
+	@Override
+	public String toString() {
+		return name + " " + subject.getName();
 	}
 }

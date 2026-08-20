@@ -106,38 +106,11 @@ public class QuestionBankApplication extends Application {
 		showCurrentPage();
 	}
 
-	private void combineRegions() {
-		if (pendingRegions.isEmpty()) {
-			return;
+	@Override
+	public void stop() throws Exception {
+		if (pdfSession != null) {
+			pdfSession.close();
 		}
-		try {
-			BufferedImage combined = questionExtractor.extractRegions(pdfSession, pendingRegions);
-			combinedPreviewView.setImage(SwingFXUtils.toFXImage(combined, null));
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to preview question", e);
-		}
-	}
-
-	private void previewQuestion() {
-		if (pendingRegions.isEmpty()) {
-			return;
-		}
-		try {
-			BufferedImage preview = questionExtractor.extractRegions(pdfSession, pendingRegions);
-			previewView.setImage(SwingFXUtils.toFXImage(preview, null));
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to preview question", e);
-		}
-	}
-
-	private void clearRegions() {
-		pendingRegions.clear();
-		currentSelection = null;
-		selectionRectangle.setVisible(false);
-		previewView.setImage(null);
-		combinedPreviewView.setImage(null);
-		refreshRegionPreviews();
-		setRegionCountLabel(0);
 	}
 
 	private void addCurrentRegion() {
@@ -147,20 +120,10 @@ public class QuestionBankApplication extends Application {
 		}
 
 		pendingRegions.add(currentSelection);
-		currentSelection = null;
-		selectionRectangle.setVisible(false);
-		previewView.setImage(null);
+		clearCurrentSelection();
 		combinedPreviewView.setImage(null);
 		refreshRegionPreviews();
 		setRegionCountLabel(pendingRegions.size());
-	}
-
-	private void refreshRegionPreviews() {
-		regionPreviewBox.getChildren().clear();
-		for (int i = 0; i < pendingRegions.size(); i++) {
-			QuestionRegion region = pendingRegions.get(i);
-			addRegionPreview(region, i);
-		}
 	}
 
 	private void addRegionPreview(QuestionRegion region, int regionIndex) {
@@ -182,26 +145,36 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void removeRegion(int regionIndex) {
-		pendingRegions.remove(regionIndex);
-		combinedPreviewView.setImage(null);
-		refreshRegionPreviews();
-		setRegionCountLabel(pendingRegions.size());
-	}
-
-	private void setRegionCountLabel(int count) {
-		regionCountLabel.setText(String.format("Regions: %d", count));
-	}
-
-	@Override
-	public void stop() throws Exception {
-		if (pdfSession != null) {
-			pdfSession.close();
-		}
-	}
-
 	private double clamp(double value, double minimum, double maximum) {
 		return Math.max(minimum, Math.min(value, maximum));
+	}
+
+	private void clearCurrentSelection() {
+		currentSelection = null;
+		selectionRectangle.setVisible(false);
+		selectionRectangle.setWidth(0);
+		selectionRectangle.setHeight(0);
+		previewView.setImage(null);
+	}
+
+	private void clearRegions() {
+		pendingRegions.clear();
+		clearCurrentSelection();
+		combinedPreviewView.setImage(null);
+		refreshRegionPreviews();
+		setRegionCountLabel(0);
+	}
+
+	private void combineRegions() {
+		if (pendingRegions.isEmpty()) {
+			return;
+		}
+		try {
+			BufferedImage combined = questionExtractor.extractRegions(pdfSession, pendingRegions);
+			combinedPreviewView.setImage(SwingFXUtils.toFXImage(combined, null));
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview question", e);
+		}
 	}
 
 	private void configureMouseSelection() {
@@ -323,6 +296,18 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void previewQuestion() {
+		if (pendingRegions.isEmpty()) {
+			return;
+		}
+		try {
+			BufferedImage preview = questionExtractor.extractRegions(pdfSession, pendingRegions);
+			previewView.setImage(SwingFXUtils.toFXImage(preview, null));
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview question", e);
+		}
+	}
+
 	private void previousPage() {
 		if (currentPageNumber > 1) {
 			currentPageNumber--;
@@ -330,7 +315,27 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void refreshRegionPreviews() {
+		regionPreviewBox.getChildren().clear();
+		for (int i = 0; i < pendingRegions.size(); i++) {
+			QuestionRegion region = pendingRegions.get(i);
+			addRegionPreview(region, i);
+		}
+	}
+
+	private void removeRegion(int regionIndex) {
+		pendingRegions.remove(regionIndex);
+		combinedPreviewView.setImage(null);
+		refreshRegionPreviews();
+		setRegionCountLabel(pendingRegions.size());
+	}
+
+	private void setRegionCountLabel(int count) {
+		regionCountLabel.setText(String.format("Regions: %d", count));
+	}
+
 	private void showCurrentPage() {
+		clearCurrentSelection();
 		try {
 			BufferedImage bufferedImage = pdfSession.renderPage(currentPageNumber, DISPLAY_DPI);
 			pageView.setImage(SwingFXUtils.toFXImage(bufferedImage, null));

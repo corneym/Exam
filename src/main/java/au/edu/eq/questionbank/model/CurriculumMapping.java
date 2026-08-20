@@ -11,6 +11,9 @@ public class CurriculumMapping {
 
 	public CurriculumMapping(long id, CurriculumNode source, CurriculumNode target, MappingStatus status) {
 
+		if (id < 1) {
+			throw new IllegalArgumentException("id must be positive");
+		}
 		if (source == null) {
 			throw new NullPointerException("source");
 		}

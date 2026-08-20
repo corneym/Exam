@@ -11,7 +11,14 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 
 public class PdfSession implements AutoCloseable {
 
+	public static PdfSession open(Path pdfPath) throws IOException {
+		Objects.requireNonNull(pdfPath, "pdfPath");
+		PDDocument document = Loader.loadPDF(pdfPath.toFile());
+		return new PdfSession(document);
+	}
+
 	private final PDDocument document;
+
 	private final PDFRenderer renderer;
 
 	private PdfSession(PDDocument document) {
@@ -19,10 +26,9 @@ public class PdfSession implements AutoCloseable {
 		this.renderer = new PDFRenderer(document);
 	}
 
-	public static PdfSession open(Path pdfPath) throws IOException {
-		Objects.requireNonNull(pdfPath, "pdfPath");
-		PDDocument document = Loader.loadPDF(pdfPath.toFile());
-		return new PdfSession(document);
+	@Override
+	public void close() throws Exception {
+		document.close();
 	}
 
 	public int getPageCount() {
@@ -34,16 +40,11 @@ public class PdfSession implements AutoCloseable {
 			throw new IllegalArgumentException(
 					String.format("Page number must be between 1 and %d: %d", getPageCount(), pageNumber));
 		}
-		if (dpi <= 0) {
-			throw new IllegalArgumentException(String.format("DPI must be greater than zero: %d", dpi));
+		if (!Float.isFinite(dpi) || dpi <= 0.0f) {
+			throw new IllegalArgumentException("DPI must be positive and finite: " + dpi);
 		}
 
 		return renderer.renderImageWithDPI(pageNumber - 1, dpi);
-	}
-
-	@Override
-	public void close() throws Exception {
-		document.close();
 	}
 
 }

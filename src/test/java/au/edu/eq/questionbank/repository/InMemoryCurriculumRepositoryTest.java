@@ -63,6 +63,15 @@ class InMemoryCurriculumRepositoryTest {
 	}
 
 	@Test
+	void rejectsDuplicateCurriculumNodeIds() {
+		CurriculumNode duplicate = new CurriculumNode(unit3.getId(), syllabus2025, null, "4", "Unit 4",
+				CurriculumLevel.UNIT, 4);
+
+		assertThrows(IllegalArgumentException.class, () -> new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus2025), List.of(unit3, duplicate)));
+	}
+
+	@Test
 	void returnsNodesInDisplayOrderThenCodeOrder() {
 		CurriculumNode laterCode = new CurriculumNode(4, syllabus2025, unit3, "3.2", "Topic 3.2", CurriculumLevel.TOPIC,
 				2);
