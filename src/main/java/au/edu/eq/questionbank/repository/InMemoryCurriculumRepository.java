@@ -24,9 +24,7 @@ public class InMemoryCurriculumRepository implements CurriculumRepository {
 	public InMemoryCurriculumRepository(List<Subject> subjects, List<SyllabusVersion> syllabusVersions,
 			List<CurriculumNode> curriculumNodes) {
 		validateUniqueIds(subjects, Subject::getId, "Subject");
-
 		validateUniqueIds(syllabusVersions, SyllabusVersion::getId, "SyllabusVersion");
-
 		validateUniqueIds(curriculumNodes, CurriculumNode::getId, "CurriculumNode");
 		this.subjects = List.copyOf(subjects);
 		this.syllabusVersions = List.copyOf(syllabusVersions);
@@ -75,16 +73,12 @@ public class InMemoryCurriculumRepository implements CurriculumRepository {
 	}
 
 	private <T> void validateUniqueIds(List<T> items, ToLongFunction<T> idFunction, String typeName) {
-
 		Set<Long> ids = new HashSet<>();
-
 		for (T item : items) {
 			long id = idFunction.applyAsLong(item);
-
 			if (!ids.add(id)) {
 				throw new IllegalArgumentException("Duplicate " + typeName + " id: " + id);
 			}
 		}
 	}
-
 }

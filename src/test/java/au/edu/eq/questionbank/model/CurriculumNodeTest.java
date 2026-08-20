@@ -120,6 +120,26 @@ class CurriculumNodeTest {
 				() -> new CurriculumNode(2, syllabus2025, parentUnit, "4", "Unit 4", CurriculumLevel.UNIT, 2));
 	}
 
+	@Test
+	void rejectsZeroId() {
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> new CurriculumNode(0, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1));
+	}
+
+	@Test
+	void rejectsNegativeId() {
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> new CurriculumNode(-1, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1));
+	}
+
 	@BeforeEach
 	void setUp() {
 		chemistry = new Subject(1, "Chemistry");

@@ -12,17 +12,15 @@ public class InMemoryCurriculumMappingRepository implements CurriculumMappingRep
 	private final List<CurriculumMapping> mappings;
 
 	public InMemoryCurriculumMappingRepository(List<CurriculumMapping> mappings) {
+		if (mappings == null) {
+			throw new NullPointerException("mappings");
+		}
 		Set<Long> ids = new HashSet<>();
-
 		for (CurriculumMapping mapping : mappings) {
 			if (!ids.add(mapping.getId())) {
 				throw new IllegalArgumentException("Duplicate CurriculumMapping id: " + mapping.getId());
 			}
 		}
-		if (mappings == null) {
-			throw new NullPointerException("mappings");
-		}
-
 		this.mappings = List.copyOf(mappings);
 	}
 

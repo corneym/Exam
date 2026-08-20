@@ -114,4 +114,21 @@ class InMemoryCurriculumRepositoryTest {
 		assertThrows(UnsupportedOperationException.class,
 				() -> snapshotRepository.findAllSubjects().add(new Subject(2, "Physics")));
 	}
+
+	@Test
+	void rejectsDuplicateSubjectIds() {
+		Subject duplicate = new Subject(chemistry.getId(), "Physics");
+
+		assertThrows(IllegalArgumentException.class,
+				() -> new InMemoryCurriculumRepository(List.of(chemistry, duplicate), List.of(syllabus2025),
+						List.of(unit3)));
+	}
+
+	@Test
+	void rejectsDuplicateSyllabusVersionIds() {
+		SyllabusVersion duplicate = new SyllabusVersion(syllabus2025.getId(), chemistry, "2030", false);
+
+		assertThrows(IllegalArgumentException.class, () -> new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus2025, duplicate), List.of(unit3)));
+	}
 }
