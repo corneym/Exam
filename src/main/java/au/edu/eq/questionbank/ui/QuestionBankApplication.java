@@ -7,10 +7,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.importer.CurriculumRepositoryLoader;
+import au.edu.eq.questionbank.importer.CurriculumSource;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.CurriculumRepository;
+import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.application.Application;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
@@ -57,6 +63,7 @@ public class QuestionBankApplication extends Application {
 	private final Button clearRegionsButton = new Button("Clear Regions");
 	private final Button previewQuestionButton = new Button("Preview Question");
 	private final VBox regionPreviewBox = new VBox(10);
+	private CurriculumSelectionModel curriculumSelectionModel;
 
 	private final ImageView combinedPreviewView = new ImageView();
 
@@ -70,6 +77,7 @@ public class QuestionBankApplication extends Application {
 	@Override
 	public void start(Stage stage) throws Exception {
 		ApplicationConfig config = ApplicationConfig.load(Path.of("questionbank.properties"));
+		curriculumSelectionModel = loadCurriculum(config);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		Path pdfPath = pdfStore.resolve("chemistry/QCAA/2024/" + "snr_chemistry_24_ea_p1_mc_question.pdf");
 		pdfSession = PdfSession.open(pdfPath);
@@ -111,6 +119,28 @@ public class QuestionBankApplication extends Application {
 		if (pdfSession != null) {
 			pdfSession.close();
 		}
+	}
+
+	private CurriculumSelectionModel loadCurriculum(ApplicationConfig config) throws IOException {
+
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
+
+		Path chemistryRoot = config.curriculumDataRoot().resolve("chemistry");
+
+		CurriculumSource source2019 = new CurriculumSource(syllabus2019,
+				List.of(chemistryRoot.resolve("2019").resolve("CHM Study Checklist [2019 Syllabus].xlsx")));
+
+		CurriculumSource source2025 = new CurriculumSource(syllabus2025, List.of(
+				chemistryRoot.resolve("2025").resolve("CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx"),
+				chemistryRoot.resolve("2025").resolve("CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx")));
+
+		CurriculumRepository repository = new CurriculumRepositoryLoader().load(List.of(source2019, source2025));
+
+		return new CurriculumSelectionModel(repository);
 	}
 
 	private void addCurrentRegion() {
@@ -253,14 +283,16 @@ public class QuestionBankApplication extends Application {
 		Label currentLabel = new Label("Current selection");
 		Label regionsLabel = new Label("Accepted regions");
 		Label combinedLabel = new Label("Combined question");
+		CurriculumSelectorPane curriculumSelectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
 
 		ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
 
 		regionsScrollPane.setFitToWidth(true);
 		regionsScrollPane.setPrefViewportHeight(300);
 
-		VBox previewPane = new VBox(10, currentLabel, previewView, new Separator(), regionsLabel, regionCountLabel,
-				regionsScrollPane, combineRegionsButton, new Separator(), combinedLabel, combinedPreviewView);
+		VBox previewPane = new VBox(10, curriculumSelectorPane, new Separator(), currentLabel, previewView,
+				new Separator(), regionsLabel, regionCountLabel, regionsScrollPane, combineRegionsButton,
+				new Separator(), combinedLabel, combinedPreviewView);
 		previewPane.setPadding(new Insets(10));
 		previewPane.setPrefWidth(360);
 		return previewPane;

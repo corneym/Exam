@@ -7,27 +7,42 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Properties;
 
-public record ApplicationConfig(Path pdfDataRoot) {
+public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot) {
 
 	private static final String PDF_DATA_ROOT_PROPERTY = "pdf.dataRoot";
 
+	private static final String CURRICULUM_DATA_ROOT_PROPERTY = "curriculum.dataRoot";
+
 	public ApplicationConfig {
 		Objects.requireNonNull(pdfDataRoot, "pdfDataRoot");
+		Objects.requireNonNull(curriculumDataRoot, "curriculumDataRoot");
 	}
 
 	public static ApplicationConfig load(Path propertiesFile) throws IOException {
+
 		Objects.requireNonNull(propertiesFile, "propertiesFile");
+
 		Properties properties = new Properties();
+
 		try (Reader reader = Files.newBufferedReader(propertiesFile)) {
 			properties.load(reader);
 		}
 
-		String configuredRoot = properties.getProperty(PDF_DATA_ROOT_PROPERTY);
-		if (configuredRoot == null || configuredRoot.isBlank()) {
-			throw new IllegalArgumentException(
-					"Missing required property '" + PDF_DATA_ROOT_PROPERTY + "' in " + propertiesFile);
+		Path pdfDataRoot = readRequiredPath(properties, PDF_DATA_ROOT_PROPERTY, propertiesFile);
+
+		Path curriculumDataRoot = readRequiredPath(properties, CURRICULUM_DATA_ROOT_PROPERTY, propertiesFile);
+
+		return new ApplicationConfig(pdfDataRoot, curriculumDataRoot);
+	}
+
+	private static Path readRequiredPath(Properties properties, String propertyName, Path propertiesFile) {
+
+		String value = properties.getProperty(propertyName);
+
+		if (value == null || value.isBlank()) {
+			throw new IllegalArgumentException("Missing required property '" + propertyName + "' in " + propertiesFile);
 		}
 
-		return new ApplicationConfig(Path.of(configuredRoot.trim()).toAbsolutePath().normalize());
+		return Path.of(value.trim()).toAbsolutePath().normalize();
 	}
 }
