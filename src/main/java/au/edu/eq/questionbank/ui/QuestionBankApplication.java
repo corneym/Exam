@@ -23,6 +23,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
@@ -76,42 +77,46 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void start(Stage stage) throws Exception {
-		ApplicationConfig config = ApplicationConfig.load(Path.of("questionbank.properties"));
-		curriculumSelectionModel = loadCurriculum(config);
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-		Path pdfPath = pdfStore.resolve("chemistry/QCAA/2024/" + "snr_chemistry_24_ea_p1_mc_question.pdf");
-		pdfSession = PdfSession.open(pdfPath);
+		try {
+			ApplicationConfig config = ApplicationConfig.load(Path.of("questionbank.properties"));
+			curriculumSelectionModel = loadCurriculum(config);
+			PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+			Path pdfPath = pdfStore.resolve("chemistry/QCAA/2024/" + "snr_chemistry_24_ea_p1_mc_question.pdf");
+			pdfSession = PdfSession.open(pdfPath);
 
-		configurePageView();
-		configureSelectionRectangle();
-		configureMouseSelection();
-		configurePreviewView();
+			configurePageView();
+			configureSelectionRectangle();
+			configureMouseSelection();
+			configurePreviewView();
 
-		ScrollPane scrollPane = new ScrollPane(pagePane);
-		scrollPane.setFitToWidth(false);
-		scrollPane.setFitToHeight(false);
+			ScrollPane scrollPane = new ScrollPane(pagePane);
+			scrollPane.setFitToWidth(false);
+			scrollPane.setFitToHeight(false);
 
-		previousButton.setOnAction(event -> previousPage());
-		nextButton.setOnAction(event -> nextPage());
-		addRegionButton.setOnAction(event -> addCurrentRegion());
-		clearRegionsButton.setOnAction(event -> clearRegions());
-		combineRegionsButton.setOnAction(event -> combineRegions());
+			previousButton.setOnAction(event -> previousPage());
+			nextButton.setOnAction(event -> nextPage());
+			addRegionButton.setOnAction(event -> addCurrentRegion());
+			clearRegionsButton.setOnAction(event -> clearRegions());
+			combineRegionsButton.setOnAction(event -> combineRegions());
 
-		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, addRegionButton, clearRegionsButton,
-				regionCountLabel);
-		controls.setAlignment(Pos.CENTER);
+			HBox controls = new HBox(10, previousButton, pageLabel, nextButton, addRegionButton, clearRegionsButton,
+					regionCountLabel);
+			controls.setAlignment(Pos.CENTER);
 
-		BorderPane root = new BorderPane();
-		root.setCenter(scrollPane);
-		root.setRight(createPreviewPane());
-		root.setBottom(controls);
+			BorderPane root = new BorderPane();
+			root.setCenter(scrollPane);
+			root.setRight(createPreviewPane());
+			root.setBottom(controls);
 
-		Scene scene = new Scene(root, 1400, 840);
-		stage.setTitle("Exam Question Bank");
-		stage.setScene(scene);
-		stage.show();
+			Scene scene = new Scene(root, 1400, 840);
+			stage.setTitle("Exam Question Bank");
+			stage.setScene(scene);
+			stage.show();
 
-		showCurrentPage();
+			showCurrentPage();
+		} catch (IllegalArgumentException e) {
+			showStartupError("Configuration Error", e.getMessage());
+		}
 	}
 
 	@Override
@@ -119,28 +124,6 @@ public class QuestionBankApplication extends Application {
 		if (pdfSession != null) {
 			pdfSession.close();
 		}
-	}
-
-	private CurriculumSelectionModel loadCurriculum(ApplicationConfig config) throws IOException {
-
-		Subject chemistry = new Subject(1, "Chemistry");
-
-		SyllabusVersion syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
-
-		SyllabusVersion syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
-
-		Path chemistryRoot = config.curriculumDataRoot().resolve("chemistry");
-
-		CurriculumSource source2019 = new CurriculumSource(syllabus2019,
-				List.of(chemistryRoot.resolve("2019").resolve("CHM Study Checklist [2019 Syllabus].xlsx")));
-
-		CurriculumSource source2025 = new CurriculumSource(syllabus2025, List.of(
-				chemistryRoot.resolve("2025").resolve("CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx"),
-				chemistryRoot.resolve("2025").resolve("CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx")));
-
-		CurriculumRepository repository = new CurriculumRepositoryLoader().load(List.of(source2019, source2025));
-
-		return new CurriculumSelectionModel(repository);
 	}
 
 	private void addCurrentRegion() {
@@ -321,6 +304,28 @@ public class QuestionBankApplication extends Application {
 		showRegionPreview(currentSelection);
 	}
 
+	private CurriculumSelectionModel loadCurriculum(ApplicationConfig config) throws IOException {
+
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
+
+		Path chemistryRoot = config.curriculumDataRoot().resolve("chemistry");
+
+		CurriculumSource source2019 = new CurriculumSource(syllabus2019,
+				List.of(chemistryRoot.resolve("2019").resolve("CHM Study Checklist [2019 Syllabus].xlsx")));
+
+		CurriculumSource source2025 = new CurriculumSource(syllabus2025, List.of(
+				chemistryRoot.resolve("2025").resolve("CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx"),
+				chemistryRoot.resolve("2025").resolve("CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx")));
+
+		CurriculumRepository repository = new CurriculumRepositoryLoader().load(List.of(source2019, source2025));
+
+		return new CurriculumSelectionModel(repository);
+	}
+
 	private void nextPage() {
 		if (currentPageNumber < pdfSession.getPageCount()) {
 			currentPageNumber++;
@@ -396,5 +401,13 @@ public class QuestionBankApplication extends Application {
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview selected region", e);
 		}
+	}
+
+	private void showStartupError(String title, String message) {
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.setTitle(title);
+		alert.setHeaderText("The application could not start.");
+		alert.setContentText(message);
+		alert.showAndWait();
 	}
 }
