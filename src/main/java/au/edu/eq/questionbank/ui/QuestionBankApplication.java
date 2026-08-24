@@ -74,12 +74,13 @@ public class QuestionBankApplication extends Application {
 	private final Rectangle selectionRectangle = new Rectangle();
 
 	private final Button addRegionButton = new Button("Add");
-	private final Button clearRegionsButton = new Button("Clear Regions");
-	private final Button removeCurrentSelectionButton = new Button("Clear");
-	private final Button combineRegionsButton = new Button("Combine Regions");
-	private final Button previousButton = new Button("Previous");
-	private final Button nextButton = new Button("Next");
 	private final Button choosePdfButton = new Button("Choose PDF...");
+	private final Button clearRegionsButton = new Button("Clear Regions");
+	private final Button combineRegionsButton = new Button("Combine Regions");
+	private final Button nextButton = new Button("Next");
+	private final Button previousButton = new Button("Previous");
+	private final Button removeCurrentSelectionButton = new Button("Clear");
+	private final Button saveQuestionButton = new Button("Save Question");
 	private final Button setExamButton = new Button("Set Exam");
 
 	private final CheckBox fullWidthSelectionCheckBox = new CheckBox("Full width selection");
@@ -92,10 +93,11 @@ public class QuestionBankApplication extends Application {
 	private final Label pageLabel = new Label();
 	private final Label selectedPdfLabel = new Label("No PDF selected");
 
-	private final TextField providerField = new TextField();
-	private final TextField yearField = new TextField();
 	private final TextField assessmentField = new TextField();
 	private final TextField bookletField = new TextField();
+	private final TextField providerField = new TextField();
+	private final TextField questionCodeField = new TextField();
+	private final TextField yearField = new TextField();
 
 	private final VBox regionPreviewBox = new VBox(10);
 
@@ -410,6 +412,10 @@ public class QuestionBankApplication extends Application {
 		Label combinedLabel = new Label("Combined question");
 
 		CurriculumSelectorPane curriculumSelectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
+		questionCodeField.setPromptText("Q1");
+		questionCodeField.setPrefWidth(100);
+		HBox questionDetails = new HBox(8, new Label("Question"), questionCodeField, saveQuestionButton);
+		questionDetails.setAlignment(Pos.CENTER_LEFT);
 
 		ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
 
@@ -419,9 +425,9 @@ public class QuestionBankApplication extends Application {
 		removeCurrentSelectionButton.setPadding(new Insets(2, 8, 2, 8));
 		HBox currentSelectionButtons = new HBox(6, currentLabel, addRegionButton, removeCurrentSelectionButton);
 
-		VBox previewPane = new VBox(10, curriculumSelectorPane, new Separator(), currentSelectionButtons, previewView,
-				new Separator(), regionsLabel, regionCountLabel, regionsScrollPane, combineRegionsButton,
-				new Separator(), combinedLabel, combinedPreviewView);
+		VBox previewPane = new VBox(10, curriculumSelectorPane, questionDetails, new Separator(),
+				currentSelectionButtons, previewView, new Separator(), regionsLabel, regionCountLabel,
+				regionsScrollPane, combineRegionsButton, new Separator(), combinedLabel, combinedPreviewView);
 		previewPane.setPadding(new Insets(10));
 		previewPane.setPrefWidth(330);
 		previewPane.setMinWidth(330);
