@@ -8,9 +8,10 @@ import au.edu.eq.questionbank.model.Question;
 
 public class InMemoryQuestionRepository implements QuestionRepository {
 
-	private ArrayList<Question> questions = new ArrayList<Question>();
+	private final List<Question> questions;
 
 	public InMemoryQuestionRepository() {
+		questions = new ArrayList<Question>();
 	}
 
 	@Override
@@ -25,6 +26,6 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 
 	@Override
 	public void save(Question question) {
-		questions.addQuestion(question);
+		questions.add(question);
 	}
 }

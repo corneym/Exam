@@ -13,7 +13,48 @@ import org.junit.jupiter.api.Test;
 class QuestionTest {
 
 	private final SourceDocument sourceDocument = new SourceDocument(10, "chemistry/exam.pdf");
-	private final Exam exam = new Exam(20, "Chemistry", 2024, "External assessment", sourceDocument);
+	private final Exam exam = new Exam(20, new Subject(1, "Chemistry"), 2024, "External assessment", sourceDocument);
+
+	private CurriculumNode createClassification() {
+		Subject subject = new Subject(1, "Science");
+		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
+		CurriculumNode unit = new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
+		CurriculumNode topic = new CurriculumNode(2, syllabus, unit, "1.1", "Topic 1", CurriculumLevel.TOPIC, 1);
+		return new CurriculumNode(3, syllabus, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 1);
+	}
+
+	private CurriculumNode createInvalidClassification() {
+		Subject subject = new Subject(1, "Science");
+		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
+		return new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
+	}
+
+	@Test
+	void rejectInvalidClassification() {
+		assertThrows(IllegalArgumentException.class, () -> new Question(36, exam, "Q6", "Invalid classification",
+				List.of(new QuestionRegion(1, 0, 0, 1, 1)), createInvalidClassification()));
+	}
+
+	@Test
+	void rejectsAnEmptyRegionList() {
+		assertThrows(IllegalArgumentException.class,
+				() -> new Question(33, exam, "Q4", "Missing region.", List.of(), createClassification()));
+	}
+
+	@Test
+	void rejectsANullRegionElement() {
+		List<QuestionRegion> regions = new ArrayList<>();
+		regions.add(null);
+
+		assertThrows(NullPointerException.class,
+				() -> new Question(35, exam, "Q6", "Null region.", regions, createClassification()));
+	}
+
+	@Test
+	void rejectsANullRegionList() {
+		assertThrows(NullPointerException.class,
+				() -> new Question(34, exam, "Q5", "Missing regions.", null, createClassification()));
+	}
 
 	@Test
 	void retainsAQuestionWithOneRegion() {
@@ -50,46 +91,5 @@ class QuestionTest {
 		assertEquals(List.of(originalRegion), question.getRegions());
 		assertThrows(UnsupportedOperationException.class,
 				() -> question.getRegions().add(new QuestionRegion(3, 0, 0, 1, 1)));
-	}
-
-	private CurriculumNode createClassification() {
-		Subject subject = new Subject(1, "Science");
-		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
-		CurriculumNode unit = new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
-		CurriculumNode topic = new CurriculumNode(2, syllabus, unit, "1.1", "Topic 1", CurriculumLevel.TOPIC, 1);
-		return new CurriculumNode(3, syllabus, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 1);
-	}
-
-	private CurriculumNode createInvalidClassification() {
-		Subject subject = new Subject(1, "Science");
-		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
-		return new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
-	}
-
-	@Test
-	void rejectInvalidClassification() {
-		assertThrows(IllegalArgumentException.class, () -> new Question(36, exam, "Q6", "Invalid classification",
-				List.of(new QuestionRegion(1, 0, 0, 1, 1)), createInvalidClassification()));
-	}
-
-	@Test
-	void rejectsAnEmptyRegionList() {
-		assertThrows(IllegalArgumentException.class,
-				() -> new Question(33, exam, "Q4", "Missing region.", List.of(), createClassification()));
-	}
-
-	@Test
-	void rejectsANullRegionList() {
-		assertThrows(NullPointerException.class,
-				() -> new Question(34, exam, "Q5", "Missing regions.", null, createClassification()));
-	}
-
-	@Test
-	void rejectsANullRegionElement() {
-		List<QuestionRegion> regions = new ArrayList<>();
-		regions.add(null);
-
-		assertThrows(NullPointerException.class,
-				() -> new Question(35, exam, "Q6", "Null region.", regions, createClassification()));
 	}
 }

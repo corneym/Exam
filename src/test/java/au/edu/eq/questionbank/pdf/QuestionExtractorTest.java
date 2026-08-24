@@ -39,6 +39,14 @@ class QuestionExtractorTest {
 
 	private final QuestionExtractor extractor = new QuestionExtractor();
 
+	private CurriculumNode createClassification() {
+		Subject subject = new Subject(1, "Science");
+		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
+		CurriculumNode unit = new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
+		CurriculumNode topic = new CurriculumNode(2, syllabus, unit, "1.1", "Topic 1", CurriculumLevel.TOPIC, 1);
+		return new CurriculumNode(3, syllabus, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 1);
+	}
+
 	private Path createPdf(PageSpec... pages) throws IOException {
 		Path pdf = tempDir.resolve("source-" + System.nanoTime() + ".pdf");
 		try (PDDocument document = new PDDocument()) {
@@ -67,7 +75,7 @@ class QuestionExtractorTest {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.BLUE));
 		Path output = tempDir.resolve("multiple-regions.png");
 		SourceDocument sourceDocument = new SourceDocument(1, "exam.pdf");
-		Exam exam = new Exam(2, "Science", 2026, "External assessment", sourceDocument);
+		Exam exam = new Exam(2, new Subject(2, "Science"), 2026, "External assessment", sourceDocument);
 		Question question = new Question(3, exam, "Q1", "A multi-page question.",
 				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)), createClassification());
 
@@ -113,23 +121,13 @@ class QuestionExtractorTest {
 	}
 
 	@Test
-	void preservesAtLeastOnePixelForAVeryNarrowRegion() throws Exception {
-		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
-		Path output = tempDir.resolve("narrow-region.png");
-
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0.5, 0.5, 0.001, 0.001), output.toFile());
-
-		BufferedImage image = readImage(output);
-		assertAll(() -> assertEquals(1, image.getWidth()), () -> assertEquals(1, image.getHeight()));
-	}
-
-	@Test
 	void padsNarrowerRegionsWithWhiteWhenCombining() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(36, 72, Color.BLUE));
 		Path output = tempDir.resolve("different-widths.png");
 		Question question = new Question(3,
-				new Exam(2, "Science", 2026, "Assessment", new SourceDocument(1, "exam.pdf")), "Q2", "Different widths",
-				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)), createClassification());
+				new Exam(2, new Subject(3, "Biology"), 2026, "Assessment", new SourceDocument(1, "exam.pdf")), "Q2",
+				"Different widths", List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)),
+				createClassification());
 
 		extractor.extractQuestion(pdf, question, output.toFile());
 
@@ -139,12 +137,15 @@ class QuestionExtractorTest {
 				() -> assertEquals(Color.WHITE.getRGB(), image.getRGB(125, 225)));
 	}
 
-	private CurriculumNode createClassification() {
-		Subject subject = new Subject(1, "Science");
-		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
-		CurriculumNode unit = new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
-		CurriculumNode topic = new CurriculumNode(2, syllabus, unit, "1.1", "Topic 1", CurriculumLevel.TOPIC, 1);
-		return new CurriculumNode(3, syllabus, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 1);
+	@Test
+	void preservesAtLeastOnePixelForAVeryNarrowRegion() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
+		Path output = tempDir.resolve("narrow-region.png");
+
+		extractor.extractRegion(pdf, new QuestionRegion(1, 0.5, 0.5, 0.001, 0.001), output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(() -> assertEquals(1, image.getWidth()), () -> assertEquals(1, image.getHeight()));
 	}
 
 	@Test
