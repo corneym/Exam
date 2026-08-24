@@ -257,7 +257,7 @@ public class QuestionBankApplication extends Application {
 			double pageWidth = pageView.getBoundsInLocal().getWidth();
 			double pageHeight = pageView.getBoundsInLocal().getHeight();
 
-			selectionStartY = clamp(event.getY(), 0, pageView.getBoundsInLocal().getHeight());
+			selectionStartY = clamp(event.getY(), 0, pageHeight);
 			if (fullWidthSelectionCheckBox.isSelected()) {
 				selectionStartX = 0;
 				selectionRectangle.setWidth(pageWidth);
@@ -282,7 +282,7 @@ public class QuestionBankApplication extends Application {
 			double pageWidth = pageView.getBoundsInLocal().getWidth();
 			double pageHeight = pageView.getBoundsInLocal().getHeight();
 
-			double currentY = clamp(event.getY(), 0, pageView.getBoundsInLocal().getHeight());
+			double currentY = clamp(event.getY(), 0, pageHeight);
 			double top = Math.min(selectionStartY, currentY);
 			double height = Math.abs(currentY - selectionStartY);
 			selectionRectangle.setY(top);
@@ -292,7 +292,7 @@ public class QuestionBankApplication extends Application {
 				selectionRectangle.setX(0);
 				selectionRectangle.setWidth(pageWidth);
 			} else {
-				double currentX = clamp(event.getX(), 0, pageView.getBoundsInLocal().getWidth());
+				double currentX = clamp(event.getX(), 0, pageWidth);
 				double left = Math.min(selectionStartX, currentX);
 				double width = Math.abs(currentX - selectionStartX);
 				selectionRectangle.setX(left);
