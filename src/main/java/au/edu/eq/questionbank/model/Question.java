@@ -3,13 +3,14 @@ package au.edu.eq.questionbank.model;
 import java.util.List;
 
 /**
- * An examination question identified by ordered regions of its source booklet
- * or booklets.
+ * An examination question identified by ordered regions of one source booklet.
  * <p>
  * The original source regions are authoritative; question text is supplementary
  * metadata. Each question has one best-fit syllabus classification, which must
  * be a {@link CurriculumLevel#SUBTOPIC subtopic}. Questions that occupy several
- * page areas retain those regions in extraction and assembly order.
+ * page areas retain those regions in extraction and assembly order. Every
+ * region must belong to the same {@link ExamBooklet}, and that booklet must
+ * belong to the question's exam.
  */
 public class Question {
 
@@ -28,13 +29,17 @@ public class Question {
 	 * @param questionCode   the question label used by the assessment, such as
 	 *                       {@code Q6}
 	 * @param questionText   supplementary searchable or transcribed question text
-	 * @param regions        source regions in extraction and assembly order
+	 * @param regions        source regions from one booklet, in extraction and
+	 *                       assembly order
 	 * @param classification the single best-fit syllabus subtopic
 	 * @throws NullPointerException     if {@code regions}, an element of
 	 *                                  {@code regions}, or {@code classification}
 	 *                                  is {@code null}
-	 * @throws IllegalArgumentException if {@code regions} is empty or
-	 *                                  {@code classification} is not a subtopic
+	 * @throws IllegalArgumentException if {@code regions} is empty,
+	 *                                  {@code classification} is not a subtopic,
+	 *                                  a region belongs to a different exam, or
+	 *                                  the regions do not all belong to the same
+	 *                                  booklet
 	 */
 	public Question(long id, Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
 			CurriculumNode classification) {

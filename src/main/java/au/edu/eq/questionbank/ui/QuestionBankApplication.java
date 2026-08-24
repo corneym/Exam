@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui;
 
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -10,12 +11,14 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.importer.CurriculumRepositoryLoader;
 import au.edu.eq.questionbank.importer.CurriculumSource;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfSession;
-import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.CurriculumRepository;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -30,14 +33,17 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
+import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 /**
@@ -56,33 +62,42 @@ public class QuestionBankApplication extends Application {
 	private PdfSession pdfSession;
 	private ExamBooklet booklet;
 
-	private int currentPageNumber = 1;
-	private final ImageView pageView = new ImageView();
+	private final QuestionExtractor questionExtractor = new QuestionExtractor();
+	private CurriculumSelectionModel curriculumSelectionModel;
+	private QuestionRegion currentSelection;
+	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
+	private Path currentPdfPath;
+
 	private final Pane pagePane = new Pane();
 	private final Rectangle selectionRectangle = new Rectangle();
-	private double selectionStartX;
-	private double selectionStartY;
-	private final QuestionExtractor questionExtractor = new QuestionExtractor();
-	private final ImageView previewView = new ImageView();
-	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
-	private QuestionRegion currentSelection;
-	private final Label regionCountLabel = new Label("Regions: 0");
+
 	private final Button addRegionButton = new Button("Add");
 	private final Button clearRegionsButton = new Button("Clear Regions");
-	private final Button previewQuestionButton = new Button("Preview Question");
-
 	private final Button removeCurrentSelectionButton = new Button("Clear");
-
-	private final VBox regionPreviewBox = new VBox(10);
-	private CurriculumSelectionModel curriculumSelectionModel;
-
-	private final ImageView combinedPreviewView = new ImageView();
 	private final Button combineRegionsButton = new Button("Combine Regions");
-
-	private final Label pageLabel = new Label();
-
 	private final Button previousButton = new Button("Previous");
 	private final Button nextButton = new Button("Next");
+	private final Button choosePdfButton = new Button("Choose PDF...");
+	private final Button setExamButton = new Button("Set Exam");
+
+	private final ImageView previewView = new ImageView();
+	private final ImageView pageView = new ImageView();
+	private final ImageView combinedPreviewView = new ImageView();
+
+	private final Label regionCountLabel = new Label("Regions: 0");
+	private final Label pageLabel = new Label();
+	private final Label selectedPdfLabel = new Label("No PDF selected");
+
+	private final TextField providerField = new TextField();
+	private final TextField yearField = new TextField();
+	private final TextField assessmentField = new TextField();
+	private final TextField bookletField = new TextField();
+
+	private final VBox regionPreviewBox = new VBox(10);
+
+	private int currentPageNumber = 1;
+	private double selectionStartX;
+	private double selectionStartY;
 
 	@Override
 	public void start(Stage stage) throws Exception {
@@ -139,6 +154,50 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void choosePdf(Stage stage, Path pdfDataRoot) {
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Choose exam PDF");
+		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF files", "*.pdf"));
+
+		File root = pdfDataRoot.toFile();
+		if (root.isDirectory()) {
+			chooser.setInitialDirectory(root);
+		}
+
+		File selectedFile = chooser.showOpenDialog(stage);
+
+		if (selectedFile == null) {
+			return;
+		}
+
+		Path selectedPath = selectedFile.toPath().toAbsolutePath().normalize();
+		Path rootPath = pdfDataRoot.toAbsolutePath().normalize();
+
+		if (!selectedPath.startsWith(rootPath)) {
+			Alert alert = new Alert(Alert.AlertType.ERROR);
+			alert.setHeaderText("PDF must be inside the configured PDF data folder.");
+			alert.setContentText(rootPath.toString());
+			alert.showAndWait();
+			return;
+		}
+
+		try {
+			if (pdfSession != null) {
+				pdfSession.close();
+			}
+			pdfSession = PdfSession.open(selectedPath);
+			currentPdfPath = selectedPath;
+			booklet = null;
+			pagePane.setCursor(Cursor.DEFAULT);
+			currentPageNumber = 1;
+			clearRegions();
+			selectedPdfLabel.setText(selectedFile.getName());
+			showCurrentPage();
+		} catch (Exception e) {
+			throw new RuntimeException("Unable to open PDF", e);
+		}
+	}
+
 	private double clamp(double value, double minimum, double maximum) {
 		return Math.max(minimum, Math.min(value, maximum));
 	}
@@ -171,13 +230,28 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void configureActions(Stage stage, ApplicationConfig config) {
+		previousButton.setOnAction(event -> previousPage());
+		nextButton.setOnAction(event -> nextPage());
+		addRegionButton.setOnAction(event -> addCurrentRegion());
+		clearRegionsButton.setOnAction(event -> clearRegions());
+		combineRegionsButton.setOnAction(event -> combineRegions());
+		removeCurrentSelectionButton.setOnAction(event -> clearCurrentSelection());
+		setExamButton.setOnAction(event -> setExamMetadata(config.pdfDataRoot()));
+		choosePdfButton.setOnAction(event -> choosePdf(stage, config.pdfDataRoot()));
+		setExamButton.setOnAction(event -> setExamMetadata(config.pdfDataRoot()));
+	}
+
 	private void configureMouseSelection() {
 		pageView.setOnMousePressed(event -> {
 //			System.out.printf("PRESS %.1f, %.1f%n", event.getX(), event.getY());
+			if (booklet == null) {
+				return;
+			}
 			if (event.getButton() != MouseButton.PRIMARY) {
 				return;
 			}
-//			selectionStartX = clamp(event.getX(), 0, pagePane.getWidth());
+			selectionStartX = clamp(event.getX(), 0, pagePane.getWidth());
 			selectionStartY = clamp(event.getY(), 0, pagePane.getHeight());
 			selectionRectangle.setX(0);
 			selectionRectangle.setY(selectionStartY);
@@ -188,23 +262,29 @@ public class QuestionBankApplication extends Application {
 
 		pageView.setOnMouseDragged(event -> {
 //			System.out.printf("DRAG %.1f, %.1f%n", event.getX(), event.getY());
+			if (booklet == null) {
+				return;
+			}
 			if (!event.isPrimaryButtonDown()) {
 				return;
 			}
-//			double currentX = clamp(event.getX(), 0, pagePane.getWidth());
+			double currentX = clamp(event.getX(), 0, pagePane.getWidth());
 			double currentY = clamp(event.getY(), 0, pagePane.getHeight());
-//			double left = Math.min(selectionStartX, currentX);
+			double left = Math.min(selectionStartX, currentX);
 			double top = Math.min(selectionStartY, currentY);
-//			double width = Math.abs(currentX - selectionStartX);
+			double width = Math.abs(currentX - selectionStartX);
 			double height = Math.abs(currentY - selectionStartY);
-//			selectionRectangle.setX(left);
+			selectionRectangle.setX(left);
 			selectionRectangle.setY(top);
-//			selectionRectangle.setWidth(width);
+			selectionRectangle.setWidth(width);
 			selectionRectangle.setHeight(height);
 		});
 
 		pageView.setOnMouseReleased(event -> {
 			System.out.printf("RELEASE %.1f, %.1f%n", event.getX(), event.getY());
+			if (booklet == null) {
+				return;
+			}
 			if (event.getButton() != MouseButton.PRIMARY) {
 				return;
 			}
@@ -216,7 +296,7 @@ public class QuestionBankApplication extends Application {
 	private void configurePageView() {
 		pageView.setPreserveRatio(true);
 		pagePane.getChildren().add(pageView);
-		pagePane.setCursor(Cursor.CROSSHAIR);
+		pagePane.setCursor(Cursor.DEFAULT);
 	}
 
 	private void configurePreviewView() {
@@ -231,15 +311,67 @@ public class QuestionBankApplication extends Application {
 
 	private void configureSelectionRectangle() {
 		selectionRectangle.setFill(Color.rgb(0, 120, 215, 0.15));
-//		selectionRectangle.setFill(Color.rgb(255, 120, 215, 0.30));
 		selectionRectangle.setStroke(Color.rgb(0, 90, 180));
-//		selectionRectangle.setStroke(Color.RED);
 		selectionRectangle.setStrokeWidth(2);
-//		selectionRectangle.setStrokeWidth(3);
 		selectionRectangle.setVisible(false);
 		selectionRectangle.setMouseTransparent(true);
 		pagePane.getChildren().add(selectionRectangle);
 		selectionRectangle.toFront();
+	}
+
+	private HBox createExamBar() {
+		providerField.setPromptText("QCAA");
+		providerField.setPrefWidth(100);
+
+		yearField.setPromptText("2024");
+		yearField.setPrefWidth(70);
+
+		assessmentField.setPromptText("External Assessment");
+		assessmentField.setPrefWidth(180);
+
+		bookletField.setPromptText("Paper 1 MCQ");
+		bookletField.setPrefWidth(140);
+
+		HBox examDetails = new HBox(8, new Label("Provider"), providerField, new Label("Year"), yearField,
+				new Label("Assessment"), assessmentField, new Label("Booklet"), bookletField, setExamButton);
+
+		examDetails.setAlignment(Pos.CENTER_LEFT);
+		examDetails.setStyle(
+				"-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;" + "-fx-padding: 5;");
+
+		HBox pdfDetails = new HBox(8, choosePdfButton, selectedPdfLabel);
+
+		pdfDetails.setAlignment(Pos.CENTER_LEFT);
+		pdfDetails.setStyle(
+				"-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;" + "-fx-padding: 5;");
+
+		Label examDetailsLabel = new Label("Exam Details:");
+		examDetailsLabel.setStyle("-fx-font-weight: bold");
+		HBox examBar = new HBox(8, examDetailsLabel, examDetails, pdfDetails);
+
+		examBar.setAlignment(Pos.CENTER_LEFT);
+		examBar.setPadding(new Insets(6));
+
+		return examBar;
+	}
+
+	private VBox createPdfWorkspace() {
+		// PDF controls
+		HBox pageControls = new HBox(10, previousButton, pageLabel, nextButton);
+		pageControls.setAlignment(Pos.CENTER);
+		pageControls.setPadding(new Insets(6));
+		previousButton.setDisable(true);
+		nextButton.setDisable(true);
+		pageLabel.setText("No PDF selected");
+
+		ScrollPane scrollPane = new ScrollPane(pagePane);
+		scrollPane.setFitToWidth(true);
+		scrollPane.setFitToHeight(false);
+		pageView.fitWidthProperty().bind(pagePane.widthProperty());
+
+		VBox pdfWorkspace = new VBox(scrollPane, pageControls);
+		VBox.setVgrow(scrollPane, Priority.ALWAYS);
+		return pdfWorkspace;
 	}
 
 	private VBox createPreviewPane() {
@@ -247,6 +379,7 @@ public class QuestionBankApplication extends Application {
 		Label currentLabel = new Label("Current selection");
 		Label regionsLabel = new Label("Accepted regions");
 		Label combinedLabel = new Label("Combined question");
+
 		CurriculumSelectorPane curriculumSelectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
 
 		ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
@@ -261,49 +394,61 @@ public class QuestionBankApplication extends Application {
 				new Separator(), regionsLabel, regionCountLabel, regionsScrollPane, combineRegionsButton,
 				new Separator(), combinedLabel, combinedPreviewView);
 		previewPane.setPadding(new Insets(10));
-		previewPane.setPrefWidth(360);
+		previewPane.setPrefWidth(330);
+		previewPane.setMinWidth(330);
+		previewPane.setMaxWidth(330);
 		return previewPane;
 	}
 
 	private void createQuestionRegion() {
-//		double width = selectionRectangle.getWidth();
+		double width = selectionRectangle.getWidth();
 		double height = selectionRectangle.getHeight();
 
 		// Ignore clicks and accidental microscopic drags
-		if (height < MIN_SELECTION_SIZE) {
+		if (width < MIN_SELECTION_SIZE || height < MIN_SELECTION_SIZE) {
 			selectionRectangle.setVisible(false);
 			return;
 		}
 
-//		double pageWidth = pageView.getBoundsInLocal().getWidth();
+		double pageWidth = pagePane.getBoundsInLocal().getWidth();
 		double pageHeight = pagePane.getBoundsInLocal().getHeight();
-//		double normalizedX = selectionRectangle.getX() / pageWidth;
+		double normalizedX = selectionRectangle.getX() / pageWidth;
+		double normalizedWidth = width / pageWidth;
 		double normalizedY = selectionRectangle.getY() / pageHeight;
-//		double normalizedWidth = width / pageWidth;
 		double normalizedHeight = height / pageHeight;
-		currentSelection = new QuestionRegion(booklet, currentPageNumber, normalizedY, normalizedHeight);
-		System.out.println("Selected region: ");
-		System.out.println(currentSelection);
+		if (booklet == null) {
+			clearCurrentSelection();
+
+			Alert alert = new Alert(Alert.AlertType.WARNING);
+			alert.setHeaderText("Exam details have not been set.");
+			alert.setContentText("Enter the exam and booklet details, then click Set Exam.");
+			alert.showAndWait();
+
+			return;
+		}
+		currentSelection = new QuestionRegion(booklet, currentPageNumber, normalizedX, normalizedY, normalizedWidth,
+				normalizedHeight);
 		showRegionPreview(currentSelection);
 	}
 
+	private BorderPane createRootLayout(VBox pdfWorkspace) {
+		BorderPane root = new BorderPane();
+		root.setTop(createExamBar());
+		root.setLeft(createPreviewPane());
+		root.setCenter(pdfWorkspace);
+		return root;
+	}
+
 	private CurriculumSelectionModel loadCurriculum(ApplicationConfig config) throws IOException {
-
 		Subject chemistry = new Subject(1, "Chemistry");
-
 		SyllabusVersion syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
-
 		SyllabusVersion syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
-
 		Path chemistryRoot = config.curriculumDataRoot().resolve("chemistry");
-
 		CurriculumSource source2019 = new CurriculumSource(syllabus2019,
 				List.of(chemistryRoot.resolve("2019").resolve("CHM Study Checklist [2019 Syllabus].xlsx")));
-
 		CurriculumSource source2025 = new CurriculumSource(syllabus2025, List.of(
 				chemistryRoot.resolve("2025").resolve("CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx"),
 				chemistryRoot.resolve("2025").resolve("CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx")));
-
 		CurriculumRepository repository = new CurriculumRepositoryLoader().load(List.of(source2019, source2025));
 
 		return new CurriculumSelectionModel(repository);
@@ -313,18 +458,6 @@ public class QuestionBankApplication extends Application {
 		if (currentPageNumber < pdfSession.getPageCount()) {
 			currentPageNumber++;
 			showCurrentPage();
-		}
-	}
-
-	private void previewQuestion() {
-		if (pendingRegions.isEmpty()) {
-			return;
-		}
-		try {
-			BufferedImage preview = questionExtractor.extractRegions(pdfSession, pendingRegions);
-			previewView.setImage(SwingFXUtils.toFXImage(preview, null));
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to preview question", e);
 		}
 	}
 
@@ -350,6 +483,39 @@ public class QuestionBankApplication extends Application {
 		setRegionCountLabel(pendingRegions.size());
 	}
 
+	private void setExamMetadata(Path pdfDataRoot) {
+		if (pdfSession == null) {
+			showExamMetadataError("Choose a PDF first.");
+			return;
+		}
+
+		String providerName = providerField.getText().trim();
+		String yearText = yearField.getText().trim();
+		String assessmentName = assessmentField.getText().trim();
+		String bookletName = bookletField.getText().trim();
+
+		if (providerName.isBlank() || yearText.isBlank() || assessmentName.isBlank() || bookletName.isBlank()) {
+			showExamMetadataError("Complete all exam details.");
+			return;
+		}
+
+		int year;
+		try {
+			year = Integer.parseInt(yearText);
+		} catch (NumberFormatException e) {
+			showExamMetadataError("Year must be a number.");
+			return;
+		}
+
+		Subject subject = curriculumSelectionModel.getSubject();
+		ExamProvider provider = new ExamProvider(1, providerName);
+		Exam exam = new Exam(1, subject, provider, year, assessmentName);
+		SourceDocument sourceDocument = new SourceDocument(1,
+				pdfDataRoot.toAbsolutePath().normalize().relativize(currentPdfPath).toString());
+		booklet = new ExamBooklet(1, exam, bookletName, sourceDocument);
+		pagePane.setCursor(Cursor.CROSSHAIR);
+	}
+
 	private void setRegionCountLabel(int count) {
 		regionCountLabel.setText(String.format("Regions: %d", count));
 	}
@@ -360,12 +526,6 @@ public class QuestionBankApplication extends Application {
 			BufferedImage bufferedImage = pdfSession.renderPage(currentPageNumber, DISPLAY_DPI);
 			pageView.setImage(SwingFXUtils.toFXImage(bufferedImage, null));
 
-			// make the pane the same size as the rendered image --> mouse coordinates
-			// correspond to image coordinates
-			pagePane.setPrefSize(bufferedImage.getWidth(), bufferedImage.getHeight());
-			pagePane.setMinSize(bufferedImage.getWidth(), bufferedImage.getHeight());
-			pagePane.setMaxSize(bufferedImage.getWidth(), bufferedImage.getHeight());
-
 			selectionRectangle.setVisible(false);
 
 			pageLabel.setText(String.format("Page %d of %d", currentPageNumber, pdfSession.getPageCount()));
@@ -374,6 +534,13 @@ public class QuestionBankApplication extends Application {
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to render PDF page", e);
 		}
+	}
+
+	private void showExamMetadataError(String message) {
+		Alert alert = new Alert(Alert.AlertType.WARNING);
+		alert.setHeaderText("Exam details are incomplete.");
+		alert.setContentText(message);
+		alert.showAndWait();
 	}
 
 	private void showRegionPreview(QuestionRegion region) {
@@ -386,6 +553,13 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void showStage(Stage primaryStage, BorderPane root) {
+		Scene scene = new Scene(root, 1400, 840);
+		primaryStage.setTitle("Exam Question Bank");
+		primaryStage.setScene(scene);
+		primaryStage.show();
+	}
+
 	private void showStartupError(String title, String message) {
 		Alert alert = new Alert(Alert.AlertType.ERROR);
 		alert.setTitle(title);
@@ -396,40 +570,13 @@ public class QuestionBankApplication extends Application {
 
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws IOException {
 		curriculumSelectionModel = loadCurriculum(config);
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-		Path pdfPath = pdfStore.resolve("chemistry/QCAA/2024/" + "snr_chemistry_24_ea_p1_mc_question.pdf");
-		pdfSession = PdfSession.open(pdfPath);
-
+		configureActions(primaryStage, config);
 		configurePageView();
 		configureSelectionRectangle();
 		configureMouseSelection();
 		configurePreviewView();
-
-		ScrollPane scrollPane = new ScrollPane(pagePane);
-		scrollPane.setFitToWidth(false);
-		scrollPane.setFitToHeight(false);
-
-		previousButton.setOnAction(event -> previousPage());
-		nextButton.setOnAction(event -> nextPage());
-		addRegionButton.setOnAction(event -> addCurrentRegion());
-		clearRegionsButton.setOnAction(event -> clearRegions());
-		combineRegionsButton.setOnAction(event -> combineRegions());
-		removeCurrentSelectionButton.setOnAction(event -> clearCurrentSelection());
-
-		// bottom pane controls
-		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, clearRegionsButton, regionCountLabel);
-		controls.setAlignment(Pos.CENTER);
-
-		BorderPane root = new BorderPane();
-		root.setCenter(scrollPane);
-		root.setRight(createPreviewPane());
-		root.setBottom(controls);
-
-		Scene scene = new Scene(root, 1400, 840);
-		primaryStage.setTitle("Exam Question Bank");
-		primaryStage.setScene(scene);
-		primaryStage.show();
-
-		showCurrentPage();
+		VBox pdfWorkspace = createPdfWorkspace();
+		BorderPane root = createRootLayout(pdfWorkspace);
+		showStage(primaryStage, root);
 	}
 }
