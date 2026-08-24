@@ -60,6 +60,18 @@ class QuestionTest {
 		return new CurriculumNode(3, syllabus, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 1);
 	}
 
+	private CurriculumNode createInvalidClassification() {
+		Subject subject = new Subject(1, "Science");
+		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
+		return new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
+	}
+
+	@Test
+	void rejectInvalidClassification() {
+		assertThrows(IllegalArgumentException.class, () -> new Question(36, exam, "Q6", "Invalid classification",
+				List.of(new QuestionRegion(1, 0, 0, 1, 1)), createInvalidClassification()));
+	}
+
 	@Test
 	void rejectsAnEmptyRegionList() {
 		assertThrows(IllegalArgumentException.class,

@@ -20,7 +20,9 @@ public class Question {
 		if (classification == null) {
 			throw new NullPointerException("classification");
 		}
-
+		if (classification.getLevel() != CurriculumLevel.SUBTOPIC) {
+			throw new IllegalArgumentException("Question classification must be a SUBTOPIC");
+		}
 		if (regions.isEmpty()) {
 			throw new IllegalArgumentException("Question must contain at least one region");
 		}

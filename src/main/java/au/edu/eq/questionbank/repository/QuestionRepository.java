@@ -10,4 +10,6 @@ public interface QuestionRepository {
 	List<Question> findAll();
 
 	Optional<Question> findById(long id);
+
+	void save(Question question);
 }
