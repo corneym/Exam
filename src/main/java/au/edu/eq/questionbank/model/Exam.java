@@ -4,16 +4,16 @@ public class Exam {
 
 	private final long id;
 	private final Subject subject;
+	private final ExamProvider provider;
 	private final int year;
 	private final String name;
-	private final SourceDocument sourceDocument;
 
-	public Exam(long id, Subject subject, int year, String name, SourceDocument sourceDocument) {
+	public Exam(long id, Subject subject, ExamProvider provider, int year, String name) {
 		this.id = id;
 		this.subject = subject;
+		this.provider = provider;
 		this.year = year;
 		this.name = name;
-		this.sourceDocument = sourceDocument;
 	}
 
 	public long getId() {
@@ -22,10 +22,6 @@ public class Exam {
 
 	public String getName() {
 		return name;
-	}
-
-	public SourceDocument getSourceDocument() {
-		return sourceDocument;
 	}
 
 	public Subject getSubject() {

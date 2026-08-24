@@ -23,9 +23,9 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
-import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 
@@ -74,8 +74,7 @@ class QuestionExtractorTest {
 	void combinesMultipleRegionsInQuestionOrder() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.BLUE));
 		Path output = tempDir.resolve("multiple-regions.png");
-		SourceDocument sourceDocument = new SourceDocument(1, "exam.pdf");
-		Exam exam = new Exam(2, new Subject(2, "Science"), 2026, "External assessment", sourceDocument);
+		Exam exam = new Exam(2, new Subject(2, "Science"), new ExamProvider(1, "QCAA"), 2026, "External assessment");
 		Question question = new Question(3, exam, "Q1", "A multi-page question.",
 				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)), createClassification());
 
@@ -125,7 +124,7 @@ class QuestionExtractorTest {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(36, 72, Color.BLUE));
 		Path output = tempDir.resolve("different-widths.png");
 		Question question = new Question(3,
-				new Exam(2, new Subject(3, "Biology"), 2026, "Assessment", new SourceDocument(1, "exam.pdf")), "Q2",
+				new Exam(2, new Subject(3, "Biology"), new ExamProvider(2, "NEAP"), 2026, "Assessment"), "Q2",
 				"Different widths", List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)),
 				createClassification());
 

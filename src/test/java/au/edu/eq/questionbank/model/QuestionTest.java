@@ -12,8 +12,8 @@ import org.junit.jupiter.api.Test;
 
 class QuestionTest {
 
-	private final SourceDocument sourceDocument = new SourceDocument(10, "chemistry/exam.pdf");
-	private final Exam exam = new Exam(20, new Subject(1, "Chemistry"), 2024, "External assessment", sourceDocument);
+	private final Exam exam = new Exam(20, new Subject(1, "Chemistry"), new ExamProvider(3, "Provider"), 2024,
+			"External assessment");
 
 	private CurriculumNode createClassification() {
 		Subject subject = new Subject(1, "Science");
