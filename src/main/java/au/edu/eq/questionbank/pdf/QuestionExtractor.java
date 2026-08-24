@@ -68,9 +68,9 @@ public class QuestionExtractor {
 	}
 
 	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {
-		int left = (int) Math.floor(region.x() * page.getWidth());
+		int left = 0;
 		int top = (int) Math.floor(region.y() * page.getHeight());
-		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
+		int right = (int) Math.ceil(page.getWidth());
 		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
 
 		right = Math.min(right, page.getWidth());

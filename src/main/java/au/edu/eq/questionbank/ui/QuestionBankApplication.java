@@ -10,6 +10,7 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.importer.CurriculumRepositoryLoader;
 import au.edu.eq.questionbank.importer.CurriculumSource;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -49,6 +50,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private PdfSession pdfSession;
+	private ExamBooklet booklet;
 
 	private int currentPageNumber = 1;
 	private final ImageView pageView = new ImageView();
@@ -92,45 +94,6 @@ public class QuestionBankApplication extends Application {
 		}
 		startApplication(stage, config);
 
-	}
-
-	private void startApplication(Stage primaryStage, ApplicationConfig config) throws IOException {
-		curriculumSelectionModel = loadCurriculum(config);
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-		Path pdfPath = pdfStore.resolve("chemistry/QCAA/2024/" + "snr_chemistry_24_ea_p1_mc_question.pdf");
-		pdfSession = PdfSession.open(pdfPath);
-
-		configurePageView();
-		configureSelectionRectangle();
-		configureMouseSelection();
-		configurePreviewView();
-
-		ScrollPane scrollPane = new ScrollPane(pagePane);
-		scrollPane.setFitToWidth(false);
-		scrollPane.setFitToHeight(false);
-
-		previousButton.setOnAction(event -> previousPage());
-		nextButton.setOnAction(event -> nextPage());
-		addRegionButton.setOnAction(event -> addCurrentRegion());
-		clearRegionsButton.setOnAction(event -> clearRegions());
-		combineRegionsButton.setOnAction(event -> combineRegions());
-		removeCurrentSelectionButton.setOnAction(event -> clearCurrentSelection());
-
-		// bottom pane controls
-		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, clearRegionsButton, regionCountLabel);
-		controls.setAlignment(Pos.CENTER);
-
-		BorderPane root = new BorderPane();
-		root.setCenter(scrollPane);
-		root.setRight(createPreviewPane());
-		root.setBottom(controls);
-
-		Scene scene = new Scene(root, 1400, 840);
-		primaryStage.setTitle("Exam Question Bank");
-		primaryStage.setScene(scene);
-		primaryStage.show();
-
-		showCurrentPage();
 	}
 
 	@Override
@@ -314,7 +277,7 @@ public class QuestionBankApplication extends Application {
 		double normalizedY = selectionRectangle.getY() / pageHeight;
 //		double normalizedWidth = width / pageWidth;
 		double normalizedHeight = height / pageHeight;
-		currentSelection = new QuestionRegion(currentPageNumber, 0.0, normalizedY, 1.0, normalizedHeight);
+		currentSelection = new QuestionRegion(booklet, currentPageNumber, normalizedY, normalizedHeight);
 		System.out.println("Selected region: ");
 		System.out.println(currentSelection);
 		showRegionPreview(currentSelection);
@@ -425,5 +388,44 @@ public class QuestionBankApplication extends Application {
 		alert.setHeaderText("The application could not start.");
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	private void startApplication(Stage primaryStage, ApplicationConfig config) throws IOException {
+		curriculumSelectionModel = loadCurriculum(config);
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		Path pdfPath = pdfStore.resolve("chemistry/QCAA/2024/" + "snr_chemistry_24_ea_p1_mc_question.pdf");
+		pdfSession = PdfSession.open(pdfPath);
+
+		configurePageView();
+		configureSelectionRectangle();
+		configureMouseSelection();
+		configurePreviewView();
+
+		ScrollPane scrollPane = new ScrollPane(pagePane);
+		scrollPane.setFitToWidth(false);
+		scrollPane.setFitToHeight(false);
+
+		previousButton.setOnAction(event -> previousPage());
+		nextButton.setOnAction(event -> nextPage());
+		addRegionButton.setOnAction(event -> addCurrentRegion());
+		clearRegionsButton.setOnAction(event -> clearRegions());
+		combineRegionsButton.setOnAction(event -> combineRegions());
+		removeCurrentSelectionButton.setOnAction(event -> clearCurrentSelection());
+
+		// bottom pane controls
+		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, clearRegionsButton, regionCountLabel);
+		controls.setAlignment(Pos.CENTER);
+
+		BorderPane root = new BorderPane();
+		root.setCenter(scrollPane);
+		root.setRight(createPreviewPane());
+		root.setBottom(controls);
+
+		Scene scene = new Scene(root, 1400, 840);
+		primaryStage.setTitle("Exam Question Bank");
+		primaryStage.setScene(scene);
+		primaryStage.show();
+
+		showCurrentPage();
 	}
 }

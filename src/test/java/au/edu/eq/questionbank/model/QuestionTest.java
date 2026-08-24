@@ -8,12 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class QuestionTest {
 
 	private final Exam exam = new Exam(20, new Subject(1, "Chemistry"), new ExamProvider(3, "Provider"), 2024,
 			"External assessment");
+
+	private ExamBooklet booklet;
 
 	private CurriculumNode createClassification() {
 		Subject subject = new Subject(1, "Science");
@@ -32,7 +35,7 @@ class QuestionTest {
 	@Test
 	void rejectInvalidClassification() {
 		assertThrows(IllegalArgumentException.class, () -> new Question(36, exam, "Q6", "Invalid classification",
-				List.of(new QuestionRegion(1, 0, 0, 1, 1)), createInvalidClassification()));
+				List.of(new QuestionRegion(booklet, 1, 0, 1)), createInvalidClassification()));
 	}
 
 	@Test
@@ -58,7 +61,7 @@ class QuestionTest {
 
 	@Test
 	void retainsAQuestionWithOneRegion() {
-		QuestionRegion region = new QuestionRegion(1, 0.1, 0.2, 0.7, 0.3);
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.2, 0.3);
 
 		Question question = new Question(30, exam, "Q1", "Calculate the result.", List.of(region),
 				createClassification());
@@ -71,8 +74,8 @@ class QuestionTest {
 
 	@Test
 	void retainsMultipleRegionsInTheirOriginalOrder() {
-		QuestionRegion firstPagePart = new QuestionRegion(1, 0.1, 0.7, 0.8, 0.2);
-		QuestionRegion secondPagePart = new QuestionRegion(2, 0.1, 0.1, 0.8, 0.4);
+		QuestionRegion firstPagePart = new QuestionRegion(booklet, 1, 0.7, 0.2);
+		QuestionRegion secondPagePart = new QuestionRegion(booklet, 2, 0.1, 0.4);
 
 		Question question = new Question(31, exam, "Q2", "A question spanning pages.",
 				List.of(firstPagePart, secondPagePart), createClassification());
@@ -80,16 +83,26 @@ class QuestionTest {
 		assertEquals(List.of(firstPagePart, secondPagePart), question.getRegions());
 	}
 
+	@BeforeEach
+	void setUp() {
+		Subject subject = new Subject(78, "Psych");
+		ExamProvider provider = new ExamProvider(45, "QCAA");
+		Exam exam = new Exam(9, subject, provider, 2020, "Test exam");
+		SourceDocument document = new SourceDocument(4, "path");
+
+		booklet = new ExamBooklet(3, exam, "Test booklet", document);
+	}
+
 	@Test
 	void takesAnImmutableSnapshotOfRegions() {
-		QuestionRegion originalRegion = new QuestionRegion(1, 0.1, 0.2, 0.3, 0.4);
+		QuestionRegion originalRegion = new QuestionRegion(booklet, 1, 0.2, 0.4);
 		List<QuestionRegion> suppliedRegions = new ArrayList<>(List.of(originalRegion));
 		Question question = new Question(32, exam, "Q3", "Protected regions.", suppliedRegions, createClassification());
 
-		suppliedRegions.add(new QuestionRegion(2, 0.5, 0.6, 0.2, 0.1));
+		suppliedRegions.add(new QuestionRegion(booklet, 2, 0.6, 0.1));
 
 		assertEquals(List.of(originalRegion), question.getRegions());
 		assertThrows(UnsupportedOperationException.class,
-				() -> question.getRegions().add(new QuestionRegion(3, 0, 0, 1, 1)));
+				() -> question.getRegions().add(new QuestionRegion(booklet, 3, 0, 1)));
 	}
 }

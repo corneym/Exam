@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.output.HtmlQuestionRenderer;
 import au.edu.eq.questionbank.pdf.PdfStore;
@@ -28,7 +29,8 @@ public class Main {
 		List<Path> questionImages = new ArrayList<>();
 
 		for (Question question : repository.findAll()) {
-			SourceDocument document = question.getExam().getSourceDocument();
+			QuestionRegion region = question.getRegions().get(0);
+			SourceDocument document = region.booklet().getSourceDocument();
 			Path pdfPath = pdfStore.resolve(document.getRelativePath());
 			System.out.println(question.getExam().getSubject());
 			System.out.println(question.getExam().getYear());

@@ -17,15 +17,18 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 
@@ -38,6 +41,7 @@ class QuestionExtractorTest {
 	Path tempDir;
 
 	private final QuestionExtractor extractor = new QuestionExtractor();
+	private ExamBooklet booklet;
 
 	private CurriculumNode createClassification() {
 		Subject subject = new Subject(1, "Science");
@@ -76,7 +80,8 @@ class QuestionExtractorTest {
 		Path output = tempDir.resolve("multiple-regions.png");
 		Exam exam = new Exam(2, new Subject(2, "Science"), new ExamProvider(1, "QCAA"), 2026, "External assessment");
 		Question question = new Question(3, exam, "Q1", "A multi-page question.",
-				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)), createClassification());
+				List.of(new QuestionRegion(booklet, 1, 0, 1), new QuestionRegion(booklet, 2, 0, 1)),
+				createClassification());
 
 		extractor.extractQuestion(pdf, question, output.toFile());
 
@@ -91,7 +96,7 @@ class QuestionExtractorTest {
 		Path pdf = createPdf(new PageSpec(2.4f, 2.4f, Color.WHITE));
 		Path output = tempDir.resolve("odd-sized-page.png");
 
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0.1, 0.1, 0.9, 0.9), output.toFile());
+		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0.1, 0.9), output.toFile());
 
 		BufferedImage image = readImage(output);
 		assertAll(() -> assertEquals(5, image.getWidth()), () -> assertEquals(5, image.getHeight()));
@@ -102,7 +107,7 @@ class QuestionExtractorTest {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
 		Path output = tempDir.resolve("full-page.png");
 
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0, 0, 1, 1), output.toFile());
+		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0, 1), output.toFile());
 
 		BufferedImage image = readImage(output);
 		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(150, image.getHeight()));
@@ -113,10 +118,10 @@ class QuestionExtractorTest {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
 		Path output = tempDir.resolve("bottom-right.png");
 
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0.5, 0.5, 0.5, 0.5), output.toFile());
+		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0.5, 0.5), output.toFile());
 
 		BufferedImage image = readImage(output);
-		assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(75, image.getHeight()));
+		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(75, image.getHeight()));
 	}
 
 	@Test
@@ -125,7 +130,7 @@ class QuestionExtractorTest {
 		Path output = tempDir.resolve("different-widths.png");
 		Question question = new Question(3,
 				new Exam(2, new Subject(3, "Biology"), new ExamProvider(2, "NEAP"), 2026, "Assessment"), "Q2",
-				"Different widths", List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)),
+				"Different widths", List.of(new QuestionRegion(booklet, 1, 0, 1), new QuestionRegion(booklet, 2, 0, 1)),
 				createClassification());
 
 		extractor.extractQuestion(pdf, question, output.toFile());
@@ -137,14 +142,15 @@ class QuestionExtractorTest {
 	}
 
 	@Test
-	void preservesAtLeastOnePixelForAVeryNarrowRegion() throws Exception {
+	void preservesAtLeastOnePixelForAVeryShortRegion() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
-		Path output = tempDir.resolve("narrow-region.png");
+		Path output = tempDir.resolve("very-short-region.png");
 
-		extractor.extractRegion(pdf, new QuestionRegion(1, 0.5, 0.5, 0.001, 0.001), output.toFile());
+		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0.5, 0.001), output.toFile());
 
 		BufferedImage image = readImage(output);
-		assertAll(() -> assertEquals(1, image.getWidth()), () -> assertEquals(1, image.getHeight()));
+
+		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(1, image.getHeight()));
 	}
 
 	@Test
@@ -153,7 +159,17 @@ class QuestionExtractorTest {
 
 		try (PdfSession session = PdfSession.open(pdf)) {
 			assertThrows(IllegalArgumentException.class,
-					() -> extractor.extractRegion(session, new QuestionRegion(2, 0, 0, 1, 1)));
+					() -> extractor.extractRegion(session, new QuestionRegion(booklet, 2, 0, 1)));
 		}
+	}
+
+	@BeforeEach
+	void setUp() {
+		Subject subject = new Subject(78, "Psych");
+		ExamProvider provider = new ExamProvider(45, "QCAA");
+		Exam exam = new Exam(9, subject, provider, 2020, "Test exam");
+		SourceDocument document = new SourceDocument(4, "path");
+
+		booklet = new ExamBooklet(3, exam, "Test booklet", document);
 	}
 }
