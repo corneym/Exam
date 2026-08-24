@@ -20,10 +20,14 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
 
 class QuestionExtractorTest {
 
@@ -65,7 +69,7 @@ class QuestionExtractorTest {
 		SourceDocument sourceDocument = new SourceDocument(1, "exam.pdf");
 		Exam exam = new Exam(2, "Science", 2026, "External assessment", sourceDocument);
 		Question question = new Question(3, exam, "Q1", "A multi-page question.",
-				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)));
+				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)), createClassification());
 
 		extractor.extractQuestion(pdf, question, output.toFile());
 
@@ -123,18 +127,24 @@ class QuestionExtractorTest {
 	void padsNarrowerRegionsWithWhiteWhenCombining() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(36, 72, Color.BLUE));
 		Path output = tempDir.resolve("different-widths.png");
-		Question question = new Question(3, new Exam(2, "Science", 2026, "Assessment",
-				new SourceDocument(1, "exam.pdf")), "Q2", "Different widths",
-				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)));
+		Question question = new Question(3,
+				new Exam(2, "Science", 2026, "Assessment", new SourceDocument(1, "exam.pdf")), "Q2", "Different widths",
+				List.of(new QuestionRegion(1, 0, 0, 1, 1), new QuestionRegion(2, 0, 0, 1, 1)), createClassification());
 
 		extractor.extractQuestion(pdf, question, output.toFile());
 
 		BufferedImage image = readImage(output);
-		assertAll(
-				() -> assertEquals(150, image.getWidth()),
-				() -> assertEquals(300, image.getHeight()),
+		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(300, image.getHeight()),
 				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(25, 225)),
 				() -> assertEquals(Color.WHITE.getRGB(), image.getRGB(125, 225)));
+	}
+
+	private CurriculumNode createClassification() {
+		Subject subject = new Subject(1, "Science");
+		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
+		CurriculumNode unit = new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
+		CurriculumNode topic = new CurriculumNode(2, syllabus, unit, "1.1", "Topic 1", CurriculumLevel.TOPIC, 1);
+		return new CurriculumNode(3, syllabus, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 1);
 	}
 
 	@Test

@@ -9,12 +9,18 @@ public class Question {
 	private final String questionCode;
 	private final String questionText;
 	private final List<QuestionRegion> regions;
+	private final CurriculumNode classification;
 
-	public Question(long id, Exam exam, String questionCode, String questionText, List<QuestionRegion> regions) {
+	public Question(long id, Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
+			CurriculumNode classification) {
 
 		if (regions == null) {
 			throw new NullPointerException("regions");
 		}
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+
 		if (regions.isEmpty()) {
 			throw new IllegalArgumentException("Question must contain at least one region");
 		}
@@ -23,6 +29,7 @@ public class Question {
 		this.questionCode = questionCode;
 		this.questionText = questionText;
 		this.regions = List.copyOf(regions);
+		this.classification = classification;
 	}
 
 	public Exam getExam() {
@@ -43,5 +50,9 @@ public class Question {
 
 	public List<QuestionRegion> getRegions() {
 		return regions;
+	}
+
+	public CurriculumNode getClassification() {
+		return classification;
 	}
 }
