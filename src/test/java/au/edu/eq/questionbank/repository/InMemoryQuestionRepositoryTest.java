@@ -29,7 +29,7 @@ class InMemoryQuestionRepositoryTest {
 
 	private Question createQuestion(long id, String code, int pageNumber) {
 		return new Question(id, exam, code, "Question " + code,
-				List.of(new QuestionRegion(booklet, pageNumber, 0, 1)), classification);
+				List.of(new QuestionRegion(booklet, pageNumber, 0.0, 0.0, 1.0, 1.0)), classification);
 	}
 
 	@Test

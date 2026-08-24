@@ -17,9 +17,10 @@ import au.edu.eq.questionbank.model.QuestionRegion;
 /**
  * Renders source question regions to PNG images.
  * <p>
- * Regions are cropped at full page width and combined vertically in list order.
- * All regions passed to one extraction call are interpreted against the supplied
- * PDF path or session; booklet metadata is not used to open additional files.
+ * Rectangular regions are cropped from rendered pages and combined vertically
+ * in list order. All regions passed to one extraction call are interpreted
+ * against the supplied PDF path or session; booklet metadata is not used to
+ * open additional files.
  */
 public class QuestionExtractor {
 
@@ -54,7 +55,7 @@ public class QuestionExtractor {
 	}
 
 	/**
-	 * Opens a PDF, extracts one full-width vertical region, and writes a PNG image.
+	 * Opens a PDF, extracts one rectangular region, and writes a PNG image.
 	 *
 	 * @param pdfPath    the PDF represented by the region's booklet source document
 	 * @param region     the region to extract
@@ -72,7 +73,7 @@ public class QuestionExtractor {
 	 * Extracts one region using an existing PDF session. The session remains open.
 	 *
 	 * @param session the session for the region's booklet source document
-	 * @param region  the full-width vertical region to extract
+	 * @param region  the rectangular region to extract
 	 * @return the cropped region image
 	 * @throws IOException if the page cannot be rendered
 	 */
@@ -119,9 +120,9 @@ public class QuestionExtractor {
 	}
 
 	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {
-		int left = 0;
+		int left = (int) Math.floor(region.x() * page.getWidth());
 		int top = (int) Math.floor(region.y() * page.getHeight());
-		int right = (int) Math.ceil(page.getWidth());
+		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
 		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
 
 		right = Math.min(right, page.getWidth());

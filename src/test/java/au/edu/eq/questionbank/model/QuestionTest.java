@@ -33,7 +33,7 @@ class QuestionTest {
 	@Test
 	void rejectInvalidClassification() {
 		assertThrows(IllegalArgumentException.class, () -> new Question(36, exam, "Q6", "Invalid classification",
-				List.of(new QuestionRegion(booklet, 1, 0, 1)), createInvalidClassification()));
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0)), createInvalidClassification()));
 	}
 
 	@Test
@@ -45,7 +45,7 @@ class QuestionTest {
 	@Test
 	void rejectsANullClassification() {
 		assertThrows(NullPointerException.class, () -> new Question(37, exam, "Q7", "Missing classification.",
-				List.of(new QuestionRegion(booklet, 1, 0, 1)), null));
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0)), null));
 	}
 
 	@Test
@@ -70,7 +70,7 @@ class QuestionTest {
 		ExamBooklet otherBooklet = new ExamBooklet(99, otherExam, "Other booklet", new SourceDocument(99, "other.pdf"));
 
 		assertThrows(IllegalArgumentException.class, () -> new Question(1, exam, "Q1", "Question",
-				List.of(new QuestionRegion(otherBooklet, 1, 0.0, 0.5)), createClassification()));
+				List.of(new QuestionRegion(otherBooklet, 1, 0.0, 0.0, 1.0, 0.5)), createClassification()));
 	}
 
 	@Test
@@ -78,13 +78,14 @@ class QuestionTest {
 		ExamBooklet secondBooklet = new ExamBooklet(99, exam, "Second booklet", new SourceDocument(99, "second.pdf"));
 
 		assertThrows(IllegalArgumentException.class, () -> new Question(1, exam, "Q1", "Question",
-				List.of(new QuestionRegion(booklet, 1, 0.0, 0.4), new QuestionRegion(secondBooklet, 2, 0.5, 0.4)),
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 0.4),
+						new QuestionRegion(secondBooklet, 2, 0.0, 0.5, 1.0, 0.4)),
 				createClassification()));
 	}
 
 	@Test
 	void retainsAQuestionWithOneRegion() {
-		QuestionRegion region = new QuestionRegion(booklet, 1, 0.2, 0.3);
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.1, 0.2, 0.8, 0.3);
 		CurriculumNode classification = createClassification();
 
 		Question question = new Question(30, exam, "Q1", "Calculate the result.", List.of(region), classification);
@@ -98,8 +99,8 @@ class QuestionTest {
 
 	@Test
 	void retainsMultipleRegionsInTheirOriginalOrder() {
-		QuestionRegion firstPagePart = new QuestionRegion(booklet, 1, 0.7, 0.2);
-		QuestionRegion secondPagePart = new QuestionRegion(booklet, 2, 0.1, 0.4);
+		QuestionRegion firstPagePart = new QuestionRegion(booklet, 1, 0.0, 0.7, 1.0, 0.2);
+		QuestionRegion secondPagePart = new QuestionRegion(booklet, 2, 0.0, 0.1, 1.0, 0.4);
 
 		Question question = new Question(31, exam, "Q2", "A question spanning pages.",
 				List.of(firstPagePart, secondPagePart), createClassification());
@@ -119,14 +120,14 @@ class QuestionTest {
 
 	@Test
 	void takesAnImmutableSnapshotOfRegions() {
-		QuestionRegion originalRegion = new QuestionRegion(booklet, 1, 0.2, 0.4);
+		QuestionRegion originalRegion = new QuestionRegion(booklet, 1, 0.0, 0.2, 1.0, 0.4);
 		List<QuestionRegion> suppliedRegions = new ArrayList<>(List.of(originalRegion));
 		Question question = new Question(32, exam, "Q3", "Protected regions.", suppliedRegions, createClassification());
 
-		suppliedRegions.add(new QuestionRegion(booklet, 2, 0.6, 0.1));
+		suppliedRegions.add(new QuestionRegion(booklet, 2, 0.0, 0.6, 1.0, 0.1));
 
 		assertEquals(List.of(originalRegion), question.getRegions());
 		assertThrows(UnsupportedOperationException.class,
-				() -> question.getRegions().add(new QuestionRegion(booklet, 3, 0, 1)));
+				() -> question.getRegions().add(new QuestionRegion(booklet, 3, 0.0, 0.0, 1.0, 1.0)));
 	}
 }

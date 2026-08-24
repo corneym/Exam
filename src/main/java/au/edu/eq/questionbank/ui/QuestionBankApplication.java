@@ -48,7 +48,7 @@ import javafx.stage.Stage;
 
 /**
  * JavaFX proof-of-concept for displaying examination pages, selecting ordered
- * full-width question regions, and assigning a curriculum subtopic.
+ * rectangular question regions, and assigning a curriculum subtopic.
  */
 public class QuestionBankApplication extends Application {
 
@@ -251,11 +251,11 @@ public class QuestionBankApplication extends Application {
 			if (event.getButton() != MouseButton.PRIMARY) {
 				return;
 			}
-			selectionStartX = clamp(event.getX(), 0, pagePane.getWidth());
-			selectionStartY = clamp(event.getY(), 0, pagePane.getHeight());
-			selectionRectangle.setX(0);
+			selectionStartX = clamp(event.getX(), 0, pageView.getBoundsInLocal().getWidth());
+			selectionStartY = clamp(event.getY(), 0, pageView.getBoundsInLocal().getHeight());
+			selectionRectangle.setX(selectionStartX);
 			selectionRectangle.setY(selectionStartY);
-			selectionRectangle.setWidth(pageView.getBoundsInLocal().getWidth());
+			selectionRectangle.setWidth(0);
 			selectionRectangle.setHeight(0);
 			selectionRectangle.setVisible(true);
 		});
@@ -268,8 +268,8 @@ public class QuestionBankApplication extends Application {
 			if (!event.isPrimaryButtonDown()) {
 				return;
 			}
-			double currentX = clamp(event.getX(), 0, pagePane.getWidth());
-			double currentY = clamp(event.getY(), 0, pagePane.getHeight());
+			double currentX = clamp(event.getX(), 0, pageView.getBoundsInLocal().getWidth());
+			double currentY = clamp(event.getY(), 0, pageView.getBoundsInLocal().getHeight());
 			double left = Math.min(selectionStartX, currentX);
 			double top = Math.min(selectionStartY, currentY);
 			double width = Math.abs(currentX - selectionStartX);
@@ -410,8 +410,8 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		double pageWidth = pagePane.getBoundsInLocal().getWidth();
-		double pageHeight = pagePane.getBoundsInLocal().getHeight();
+		double pageWidth = pageView.getBoundsInLocal().getWidth();
+		double pageHeight = pageView.getBoundsInLocal().getHeight();
 		double normalizedX = selectionRectangle.getX() / pageWidth;
 		double normalizedWidth = width / pageWidth;
 		double normalizedY = selectionRectangle.getY() / pageHeight;

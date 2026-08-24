@@ -14,71 +14,101 @@ class QuestionRegionTest {
 
 	@Test
 	void acceptsAFullPageRegion() {
-		QuestionRegion region = new QuestionRegion(booklet, 1, 0.0, 1.0);
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0);
 
-		assertAll(() -> assertEquals(0.0, region.y()), () -> assertEquals(1.0, region.height()));
+		assertAll(() -> assertEquals(0.0, region.x()), () -> assertEquals(0.0, region.y()),
+				() -> assertEquals(1.0, region.width()), () -> assertEquals(1.0, region.height()));
 	}
 
 	@Test
-	void exposesItsPageAndNormalisedCoordinates() {
-		QuestionRegion region = new QuestionRegion(booklet, 3, 0.25, 0.625);
+	void acceptsARegionEndingExactlyAtTheRightAndBottomEdges() {
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.75, 0.75, 0.25, 0.25);
+
+		assertAll(() -> assertEquals(0.75, region.x()), () -> assertEquals(0.75, region.y()),
+				() -> assertEquals(0.25, region.width()), () -> assertEquals(0.25, region.height()));
+	}
+
+	@Test
+	void exposesItsBookletPageAndNormalisedRectangle() {
+		QuestionRegion region = new QuestionRegion(booklet, 3, 0.125, 0.25, 0.5, 0.625);
 
 		assertAll(() -> assertSame(booklet, region.booklet()), () -> assertEquals(3, region.pageNumber()),
-				() -> assertEquals(0.25, region.y()), () -> assertEquals(0.625, region.height()));
-	}
-
-	@Test
-	void acceptsARegionEndingExactlyAtTheBottomEdge() {
-		QuestionRegion region = new QuestionRegion(booklet, 1, 0.75, 0.25);
-
-		assertAll(() -> assertEquals(0.75, region.y()), () -> assertEquals(0.25, region.height()));
+				() -> assertEquals(0.125, region.x()), () -> assertEquals(0.25, region.y()),
+				() -> assertEquals(0.5, region.width()), () -> assertEquals(0.625, region.height()));
 	}
 
 	@Test
 	void rejectsNonFiniteCoordinatesAndDimensions() {
 		assertAll(
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> new QuestionRegion(booklet, 1, Double.NaN, 0.5)),
+						() -> new QuestionRegion(booklet, 1, Double.NaN, 0.1, 0.5, 0.5)),
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> new QuestionRegion(booklet, 1, Double.POSITIVE_INFINITY, 0.5)),
+						() -> new QuestionRegion(booklet, 1, Double.POSITIVE_INFINITY, 0.1, 0.5, 0.5)),
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> new QuestionRegion(booklet, 1, 0.1, Double.NEGATIVE_INFINITY)),
+						() -> new QuestionRegion(booklet, 1, 0.1, Double.NaN, 0.5, 0.5)),
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> new QuestionRegion(booklet, 1, 0.1, Double.NaN)));
+						() -> new QuestionRegion(booklet, 1, 0.1, Double.POSITIVE_INFINITY, 0.5, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.1, Double.NaN, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.1, Double.NEGATIVE_INFINITY, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, Double.NaN)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, Double.NEGATIVE_INFINITY)));
 	}
 
 	@Test
 	void rejectsNonPositiveOrOversizedDimensions() {
-		assertAll(() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, -0.1, 0.5)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.1, 0.0)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.1, -0.1)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.0, -0.5)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.0, 1.1)));
-	}
-
-	@Test
-	void rejectsOriginsOutsideTheNormalizedPage() {
-		assertAll(() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 1.1, 0.5)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, -0.1, 0.5)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.1, -0.5)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 1.0, 0.5)));
-	}
-
-	@Test
-	void rejectsPageNumbersLessThanOne() {
-		assertAll(() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 0, 0.1, 0.5)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, -1, 0.1, 0.5)));
+		assertAll(
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.1, 0.0, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.1, -0.1, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.0, 0.1, 1.1, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.0)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, -0.1)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.0, 0.5, 1.1)));
 	}
 
 	@Test
 	void rejectsNullBooklet() {
-		assertThrows(NullPointerException.class, () -> new QuestionRegion(null, 1, 0.1, 0.5));
+		assertThrows(NullPointerException.class, () -> new QuestionRegion(null, 1, 0.1, 0.1, 0.5, 0.5));
+	}
+
+	@Test
+	void rejectsOriginsOutsideTheNormalizedPage() {
+		assertAll(
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, -0.1, 0.1, 0.5, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 1.0, 0.1, 0.5, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, -0.1, 0.5, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 1.0, 0.5, 0.5)));
+	}
+
+	@Test
+	void rejectsPageNumbersLessThanOne() {
+		assertAll(
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 0, 0.1, 0.1, 0.5, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, -1, 0.1, 0.1, 0.5, 0.5)));
 	}
 
 	@Test
 	void rejectsRegionsExtendingBeyondThePageEdges() {
-		assertAll(() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 1.0, 0.5)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.6, 0.5)));
+		assertAll(
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.6, 0.1, 0.5, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new QuestionRegion(booklet, 1, 0.1, 0.6, 0.5, 0.5)));
 	}
 
 	@BeforeEach
@@ -93,11 +123,10 @@ class QuestionRegionTest {
 
 	@Test
 	void usesValueEquality() {
-		QuestionRegion first = new QuestionRegion(booklet, 2, 0.2, 0.4);
-		QuestionRegion sameValues = new QuestionRegion(booklet, 2, 0.2, 0.4);
+		QuestionRegion first = new QuestionRegion(booklet, 2, 0.1, 0.2, 0.3, 0.4);
+		QuestionRegion sameValues = new QuestionRegion(booklet, 2, 0.1, 0.2, 0.3, 0.4);
 
 		assertEquals(first, sameValues);
 		assertEquals(first.hashCode(), sameValues.hashCode());
 	}
-
 }
