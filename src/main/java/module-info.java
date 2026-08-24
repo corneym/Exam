@@ -8,6 +8,7 @@ module au.edu.eq.questionbank {
 	requires javafx.graphics;
 	requires org.apache.poi.ooxml;
 	requires org.apache.logging.log4j.core;
+	requires java.naming;
 
 	exports au.edu.eq.questionbank;
 	exports au.edu.eq.questionbank.ui;

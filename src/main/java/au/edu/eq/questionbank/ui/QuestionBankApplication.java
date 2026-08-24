@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.importer.CurriculumRepositoryLoader;
 import au.edu.eq.questionbank.importer.CurriculumSource;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -67,7 +68,6 @@ public class QuestionBankApplication extends Application {
 	private CurriculumSelectionModel curriculumSelectionModel;
 
 	private final ImageView combinedPreviewView = new ImageView();
-
 	private final Button combineRegionsButton = new Button("Combine Regions");
 
 	private final Label pageLabel = new Label();
@@ -77,46 +77,56 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void start(Stage stage) throws Exception {
+		ApplicationConfig config;
 		try {
-			ApplicationConfig config = ApplicationConfig.load(Path.of("questionbank.properties"));
-			curriculumSelectionModel = loadCurriculum(config);
-			PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-			Path pdfPath = pdfStore.resolve("chemistry/QCAA/2024/" + "snr_chemistry_24_ea_p1_mc_question.pdf");
-			pdfSession = PdfSession.open(pdfPath);
-
-			configurePageView();
-			configureSelectionRectangle();
-			configureMouseSelection();
-			configurePreviewView();
-
-			ScrollPane scrollPane = new ScrollPane(pagePane);
-			scrollPane.setFitToWidth(false);
-			scrollPane.setFitToHeight(false);
-
-			previousButton.setOnAction(event -> previousPage());
-			nextButton.setOnAction(event -> nextPage());
-			addRegionButton.setOnAction(event -> addCurrentRegion());
-			clearRegionsButton.setOnAction(event -> clearRegions());
-			combineRegionsButton.setOnAction(event -> combineRegions());
-
-			HBox controls = new HBox(10, previousButton, pageLabel, nextButton, addRegionButton, clearRegionsButton,
-					regionCountLabel);
-			controls.setAlignment(Pos.CENTER);
-
-			BorderPane root = new BorderPane();
-			root.setCenter(scrollPane);
-			root.setRight(createPreviewPane());
-			root.setBottom(controls);
-
-			Scene scene = new Scene(root, 1400, 840);
-			stage.setTitle("Exam Question Bank");
-			stage.setScene(scene);
-			stage.show();
-
-			showCurrentPage();
-		} catch (IllegalArgumentException e) {
+			config = ApplicationConfig.load(Path.of("questionbank.properties"));
+		} catch (ConfigurationException e) {
 			showStartupError("Configuration Error", e.getMessage());
+			return;
+		} catch (IOException e) {
+			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
+			return;
 		}
+		startApplication(stage, config);
+
+	}
+
+	private void startApplication(Stage primaryStage, ApplicationConfig config) throws IOException {
+		curriculumSelectionModel = loadCurriculum(config);
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		Path pdfPath = pdfStore.resolve("chemistry/QCAA/2024/" + "snr_chemistry_24_ea_p1_mc_question.pdf");
+		pdfSession = PdfSession.open(pdfPath);
+
+		configurePageView();
+		configureSelectionRectangle();
+		configureMouseSelection();
+		configurePreviewView();
+
+		ScrollPane scrollPane = new ScrollPane(pagePane);
+		scrollPane.setFitToWidth(false);
+		scrollPane.setFitToHeight(false);
+
+		previousButton.setOnAction(event -> previousPage());
+		nextButton.setOnAction(event -> nextPage());
+		addRegionButton.setOnAction(event -> addCurrentRegion());
+		clearRegionsButton.setOnAction(event -> clearRegions());
+		combineRegionsButton.setOnAction(event -> combineRegions());
+
+		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, addRegionButton, clearRegionsButton,
+				regionCountLabel);
+		controls.setAlignment(Pos.CENTER);
+
+		BorderPane root = new BorderPane();
+		root.setCenter(scrollPane);
+		root.setRight(createPreviewPane());
+		root.setBottom(controls);
+
+		Scene scene = new Scene(root, 1400, 840);
+		primaryStage.setTitle("Exam Question Bank");
+		primaryStage.setScene(scene);
+		primaryStage.show();
+
+		showCurrentPage();
 	}
 
 	@Override
@@ -250,11 +260,11 @@ public class QuestionBankApplication extends Application {
 
 	private void configureSelectionRectangle() {
 		selectionRectangle.setFill(Color.rgb(0, 120, 215, 0.15));
-		selectionRectangle.setFill(Color.rgb(255, 120, 215, 0.30));
+//		selectionRectangle.setFill(Color.rgb(255, 120, 215, 0.30));
 		selectionRectangle.setStroke(Color.rgb(0, 90, 180));
-		selectionRectangle.setStroke(Color.RED);
+//		selectionRectangle.setStroke(Color.RED);
 		selectionRectangle.setStrokeWidth(2);
-		selectionRectangle.setStrokeWidth(3);
+//		selectionRectangle.setStrokeWidth(3);
 		selectionRectangle.setVisible(false);
 		selectionRectangle.setMouseTransparent(true);
 		pagePane.getChildren().add(selectionRectangle);

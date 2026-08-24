@@ -29,27 +29,27 @@ class ApplicationConfigTest {
 	}
 
 	@Test
-	void rejectsConfigurationWithoutAPdfDataRoot() throws IOException {
+	void rejectsConfigurationWithoutAPdfDataRoot() throws IOException, ConfigurationException {
 
 		Path propertiesFile = tempDir.resolve("questionbank.properties");
 
 		Files.writeString(propertiesFile, "curriculum.dataRoot=D:/curriculum-data\n");
 
-		assertThrows(IllegalArgumentException.class, () -> ApplicationConfig.load(propertiesFile));
+		assertThrows(ConfigurationException.class, () -> ApplicationConfig.load(propertiesFile));
 	}
 
 	@Test
-	void rejectsConfigurationWithoutACurriculumDataRoot() throws IOException {
+	void rejectsConfigurationWithoutACurriculumDataRoot() throws IOException, ConfigurationException {
 
 		Path propertiesFile = tempDir.resolve("questionbank.properties");
 
 		Files.writeString(propertiesFile, "pdf.dataRoot=D:/exam-data\n");
 
-		assertThrows(IllegalArgumentException.class, () -> ApplicationConfig.load(propertiesFile));
+		assertThrows(ConfigurationException.class, () -> ApplicationConfig.load(propertiesFile));
 	}
 
 	@Test
-	void trimsAndNormalizesTheConfiguredRoots() throws IOException {
+	void trimsAndNormalizesTheConfiguredRoots() throws IOException, ConfigurationException {
 
 		Path propertiesFile = tempDir.resolve("questionbank.properties");
 
@@ -68,19 +68,19 @@ class ApplicationConfigTest {
 	}
 
 	@Test
-	void rejectsABlankPdfDataRoot() throws IOException {
+	void rejectsABlankPdfDataRoot() throws IOException, ConfigurationException {
 		Path propertiesFile = tempDir.resolve("questionbank.properties");
 		Files.writeString(propertiesFile, "pdf.dataRoot=   \n");
 
-		assertThrows(IllegalArgumentException.class, () -> ApplicationConfig.load(propertiesFile));
+		assertThrows(ConfigurationException.class, () -> ApplicationConfig.load(propertiesFile));
 	}
 
 	@Test
-	void rejectsABlankCurriculumDataRoot() throws IOException {
+	void rejectsABlankCurriculumDataRoot() throws IOException, ConfigurationException {
 		Path propertiesFile = tempDir.resolve("questionbank.properties");
 		Files.writeString(propertiesFile, "curriculum.dataRoot=   \n");
 
-		assertThrows(IllegalArgumentException.class, () -> ApplicationConfig.load(propertiesFile));
+		assertThrows(ConfigurationException.class, () -> ApplicationConfig.load(propertiesFile));
 	}
 
 	@Test
