@@ -30,10 +30,12 @@ import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
@@ -79,6 +81,8 @@ public class QuestionBankApplication extends Application {
 	private final Button nextButton = new Button("Next");
 	private final Button choosePdfButton = new Button("Choose PDF...");
 	private final Button setExamButton = new Button("Set Exam");
+
+	private final CheckBox fullWidthSelectionCheckBox = new CheckBox("Full width selection");
 
 	private final ImageView previewView = new ImageView();
 	private final ImageView pageView = new ImageView();
@@ -231,14 +235,13 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void configureActions(Stage stage, ApplicationConfig config) {
-		previousButton.setOnAction(event -> previousPage());
-		nextButton.setOnAction(event -> nextPage());
 		addRegionButton.setOnAction(event -> addCurrentRegion());
+		choosePdfButton.setOnAction(event -> choosePdf(stage, config.pdfDataRoot()));
 		clearRegionsButton.setOnAction(event -> clearRegions());
 		combineRegionsButton.setOnAction(event -> combineRegions());
+		nextButton.setOnAction(event -> nextPage());
+		previousButton.setOnAction(event -> previousPage());
 		removeCurrentSelectionButton.setOnAction(event -> clearCurrentSelection());
-		setExamButton.setOnAction(event -> setExamMetadata(config.pdfDataRoot()));
-		choosePdfButton.setOnAction(event -> choosePdf(stage, config.pdfDataRoot()));
 		setExamButton.setOnAction(event -> setExamMetadata(config.pdfDataRoot()));
 	}
 
@@ -251,11 +254,19 @@ public class QuestionBankApplication extends Application {
 			if (event.getButton() != MouseButton.PRIMARY) {
 				return;
 			}
-			selectionStartX = clamp(event.getX(), 0, pageView.getBoundsInLocal().getWidth());
+			double pageWidth = pageView.getBoundsInLocal().getWidth();
+			double pageHeight = pageView.getBoundsInLocal().getHeight();
+
 			selectionStartY = clamp(event.getY(), 0, pageView.getBoundsInLocal().getHeight());
+			if (fullWidthSelectionCheckBox.isSelected()) {
+				selectionStartX = 0;
+				selectionRectangle.setWidth(pageWidth);
+			} else {
+				selectionStartX = clamp(event.getX(), 0, pageWidth);
+				selectionRectangle.setWidth(0);
+			}
 			selectionRectangle.setX(selectionStartX);
 			selectionRectangle.setY(selectionStartY);
-			selectionRectangle.setWidth(0);
 			selectionRectangle.setHeight(0);
 			selectionRectangle.setVisible(true);
 		});
@@ -268,16 +279,25 @@ public class QuestionBankApplication extends Application {
 			if (!event.isPrimaryButtonDown()) {
 				return;
 			}
-			double currentX = clamp(event.getX(), 0, pageView.getBoundsInLocal().getWidth());
+			double pageWidth = pageView.getBoundsInLocal().getWidth();
+			double pageHeight = pageView.getBoundsInLocal().getHeight();
+
 			double currentY = clamp(event.getY(), 0, pageView.getBoundsInLocal().getHeight());
-			double left = Math.min(selectionStartX, currentX);
 			double top = Math.min(selectionStartY, currentY);
-			double width = Math.abs(currentX - selectionStartX);
 			double height = Math.abs(currentY - selectionStartY);
-			selectionRectangle.setX(left);
 			selectionRectangle.setY(top);
-			selectionRectangle.setWidth(width);
 			selectionRectangle.setHeight(height);
+
+			if (fullWidthSelectionCheckBox.isSelected()) {
+				selectionRectangle.setX(0);
+				selectionRectangle.setWidth(pageWidth);
+			} else {
+				double currentX = clamp(event.getX(), 0, pageView.getBoundsInLocal().getWidth());
+				double left = Math.min(selectionStartX, currentX);
+				double width = Math.abs(currentX - selectionStartX);
+				selectionRectangle.setX(left);
+				selectionRectangle.setWidth(width);
+			}
 		});
 
 		pageView.setOnMouseReleased(event -> {
@@ -297,6 +317,7 @@ public class QuestionBankApplication extends Application {
 		pageView.setPreserveRatio(true);
 		pagePane.getChildren().add(pageView);
 		pagePane.setCursor(Cursor.DEFAULT);
+		fullWidthSelectionCheckBox.setSelected(true);
 	}
 
 	private void configurePreviewView() {
@@ -317,6 +338,14 @@ public class QuestionBankApplication extends Application {
 		selectionRectangle.setMouseTransparent(true);
 		pagePane.getChildren().add(selectionRectangle);
 		selectionRectangle.toFront();
+	}
+
+	private void configureToolTips() {
+		fullWidthSelectionCheckBox
+				.setTooltip(new Tooltip("When selected, drag vertically to capture the full page width.\n"
+						+ "Clear this option to draw a rectangular region."));
+		setExamButton.setTooltip(new Tooltip("Apply these exam details before selecting question regions."));
+		choosePdfButton.setTooltip(new Tooltip("Choose the PDF containing the exam booklet."));
 	}
 
 	private HBox createExamBar() {
@@ -357,7 +386,7 @@ public class QuestionBankApplication extends Application {
 
 	private VBox createPdfWorkspace() {
 		// PDF controls
-		HBox pageControls = new HBox(10, previousButton, pageLabel, nextButton);
+		HBox pageControls = new HBox(10, previousButton, pageLabel, nextButton, fullWidthSelectionCheckBox);
 		pageControls.setAlignment(Pos.CENTER);
 		pageControls.setPadding(new Insets(6));
 		previousButton.setDisable(true);
@@ -575,6 +604,7 @@ public class QuestionBankApplication extends Application {
 		configureSelectionRectangle();
 		configureMouseSelection();
 		configurePreviewView();
+		configureToolTips();
 		VBox pdfWorkspace = createPdfWorkspace();
 		BorderPane root = createRootLayout(pdfWorkspace);
 		showStage(primaryStage, root);
