@@ -24,7 +24,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 
 	@Override
 	public List<Question> findAll() {
-		return questions;
+		return List.copyOf(questions);
 	}
 
 	@Override
