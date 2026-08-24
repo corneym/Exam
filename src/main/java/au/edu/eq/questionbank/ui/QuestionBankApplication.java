@@ -61,9 +61,12 @@ public class QuestionBankApplication extends Application {
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
 	private QuestionRegion currentSelection;
 	private final Label regionCountLabel = new Label("Regions: 0");
-	private final Button addRegionButton = new Button("Add Region");
+	private final Button addRegionButton = new Button("Add");
 	private final Button clearRegionsButton = new Button("Clear Regions");
 	private final Button previewQuestionButton = new Button("Preview Question");
+
+	private final Button removeCurrentSelectionButton = new Button("Clear");
+
 	private final VBox regionPreviewBox = new VBox(10);
 	private CurriculumSelectionModel curriculumSelectionModel;
 
@@ -111,9 +114,10 @@ public class QuestionBankApplication extends Application {
 		addRegionButton.setOnAction(event -> addCurrentRegion());
 		clearRegionsButton.setOnAction(event -> clearRegions());
 		combineRegionsButton.setOnAction(event -> combineRegions());
+		removeCurrentSelectionButton.setOnAction(event -> clearCurrentSelection());
 
-		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, addRegionButton, clearRegionsButton,
-				regionCountLabel);
+		// bottom pane controls
+		HBox controls = new HBox(10, previousButton, pageLabel, nextButton, clearRegionsButton, regionCountLabel);
 		controls.setAlignment(Pos.CENTER);
 
 		BorderPane root = new BorderPane();
@@ -157,7 +161,7 @@ public class QuestionBankApplication extends Application {
 			imageView.setFitWidth(300);
 			imageView.setSmooth(true);
 
-			Label label = new Label(String.format("Region %d - Page %d", regionIndex, region.pageNumber()));
+			Label label = new Label(String.format("Region %d - Page %d", regionIndex + 1, region.pageNumber()));
 			Button removeButton = new Button("Remove");
 			removeButton.setOnAction(event -> removeRegion(regionIndex));
 			HBox header = new HBox(10, label, removeButton);
@@ -202,33 +206,33 @@ public class QuestionBankApplication extends Application {
 
 	private void configureMouseSelection() {
 		pageView.setOnMousePressed(event -> {
-			System.out.printf("PRESS %.1f, %.1f%n", event.getX(), event.getY());
+//			System.out.printf("PRESS %.1f, %.1f%n", event.getX(), event.getY());
 			if (event.getButton() != MouseButton.PRIMARY) {
 				return;
 			}
-			selectionStartX = clamp(event.getX(), 0, pagePane.getWidth());
+//			selectionStartX = clamp(event.getX(), 0, pagePane.getWidth());
 			selectionStartY = clamp(event.getY(), 0, pagePane.getHeight());
-			selectionRectangle.setX(selectionStartX);
+			selectionRectangle.setX(0);
 			selectionRectangle.setY(selectionStartY);
-			selectionRectangle.setWidth(0);
+			selectionRectangle.setWidth(pageView.getBoundsInLocal().getWidth());
 			selectionRectangle.setHeight(0);
 			selectionRectangle.setVisible(true);
 		});
 
 		pageView.setOnMouseDragged(event -> {
-			System.out.printf("DRAG %.1f, %.1f%n", event.getX(), event.getY());
+//			System.out.printf("DRAG %.1f, %.1f%n", event.getX(), event.getY());
 			if (!event.isPrimaryButtonDown()) {
 				return;
 			}
-			double currentX = clamp(event.getX(), 0, pagePane.getWidth());
+//			double currentX = clamp(event.getX(), 0, pagePane.getWidth());
 			double currentY = clamp(event.getY(), 0, pagePane.getHeight());
-			double left = Math.min(selectionStartX, currentX);
+//			double left = Math.min(selectionStartX, currentX);
 			double top = Math.min(selectionStartY, currentY);
-			double width = Math.abs(currentX - selectionStartX);
+//			double width = Math.abs(currentX - selectionStartX);
 			double height = Math.abs(currentY - selectionStartY);
-			selectionRectangle.setX(left);
+//			selectionRectangle.setX(left);
 			selectionRectangle.setY(top);
-			selectionRectangle.setWidth(width);
+//			selectionRectangle.setWidth(width);
 			selectionRectangle.setHeight(height);
 		});
 
@@ -282,8 +286,11 @@ public class QuestionBankApplication extends Application {
 
 		regionsScrollPane.setFitToWidth(true);
 		regionsScrollPane.setPrefViewportHeight(300);
+		addRegionButton.setPadding(new Insets(2, 8, 2, 8));
+		removeCurrentSelectionButton.setPadding(new Insets(2, 8, 2, 8));
+		HBox currentSelectionButtons = new HBox(6, currentLabel, addRegionButton, removeCurrentSelectionButton);
 
-		VBox previewPane = new VBox(10, curriculumSelectorPane, new Separator(), currentLabel, previewView,
+		VBox previewPane = new VBox(10, curriculumSelectorPane, new Separator(), currentSelectionButtons, previewView,
 				new Separator(), regionsLabel, regionCountLabel, regionsScrollPane, combineRegionsButton,
 				new Separator(), combinedLabel, combinedPreviewView);
 		previewPane.setPadding(new Insets(10));
@@ -292,23 +299,22 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void createQuestionRegion() {
-		double width = selectionRectangle.getWidth();
+//		double width = selectionRectangle.getWidth();
 		double height = selectionRectangle.getHeight();
 
 		// Ignore clicks and accidental microscopic drags
-		if (width < MIN_SELECTION_SIZE || height < MIN_SELECTION_SIZE) {
+		if (height < MIN_SELECTION_SIZE) {
 			selectionRectangle.setVisible(false);
 			return;
 		}
 
-		double pageWidth = pageView.getBoundsInLocal().getWidth();
+//		double pageWidth = pageView.getBoundsInLocal().getWidth();
 		double pageHeight = pagePane.getBoundsInLocal().getHeight();
-		double normalizedX = selectionRectangle.getX() / pageWidth;
+//		double normalizedX = selectionRectangle.getX() / pageWidth;
 		double normalizedY = selectionRectangle.getY() / pageHeight;
-		double normalizedWidth = width / pageWidth;
+//		double normalizedWidth = width / pageWidth;
 		double normalizedHeight = height / pageHeight;
-		currentSelection = new QuestionRegion(currentPageNumber, normalizedX, normalizedY, normalizedWidth,
-				normalizedHeight);
+		currentSelection = new QuestionRegion(currentPageNumber, 0.0, normalizedY, 1.0, normalizedHeight);
 		System.out.println("Selected region: ");
 		System.out.println(currentSelection);
 		showRegionPreview(currentSelection);

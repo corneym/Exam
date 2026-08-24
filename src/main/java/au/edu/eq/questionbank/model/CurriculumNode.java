@@ -57,9 +57,6 @@ public class CurriculumNode {
 		if (displayOrder < 0) {
 			throw new IllegalArgumentException("displayOrder must not be negative");
 		}
-		if (parent != null && !parent.getSyllabusVersion().equals(syllabusVersion)) {
-			throw new IllegalArgumentException("parent must belong to the same syllabus version");
-		}
 
 		this.id = id;
 		this.syllabusVersion = syllabusVersion;
