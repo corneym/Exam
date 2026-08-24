@@ -78,8 +78,7 @@ class QuestionExtractorTest {
 	void combinesMultipleRegionsInQuestionOrder() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.BLUE));
 		Path output = tempDir.resolve("multiple-regions.png");
-		Exam exam = new Exam(2, new Subject(2, "Science"), new ExamProvider(1, "QCAA"), 2026, "External assessment");
-		Question question = new Question(3, exam, "Q1", "A multi-page question.",
+		Question question = new Question(3, booklet.getExam(), "Q1", "A multi-page question.",
 				List.of(new QuestionRegion(booklet, 1, 0, 1), new QuestionRegion(booklet, 2, 0, 1)),
 				createClassification());
 
@@ -129,8 +128,8 @@ class QuestionExtractorTest {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(36, 72, Color.BLUE));
 		Path output = tempDir.resolve("different-widths.png");
 		Question question = new Question(3,
-				new Exam(2, new Subject(3, "Biology"), new ExamProvider(2, "NEAP"), 2026, "Assessment"), "Q2",
-				"Different widths", List.of(new QuestionRegion(booklet, 1, 0, 1), new QuestionRegion(booklet, 2, 0, 1)),
+				booklet.getExam(), "Q2", "Different widths",
+				List.of(new QuestionRegion(booklet, 1, 0, 1), new QuestionRegion(booklet, 2, 0, 1)),
 				createClassification());
 
 		extractor.extractQuestion(pdf, question, output.toFile());

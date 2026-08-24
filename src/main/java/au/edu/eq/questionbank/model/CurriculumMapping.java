@@ -2,6 +2,13 @@ package au.edu.eq.questionbank.model;
 
 import java.util.Objects;
 
+/**
+ * A directional relationship from a node in one syllabus version to a node in
+ * another version of the same subject.
+ * <p>
+ * Mappings support translating classifications across syllabus changes and use
+ * persistent identifier equality.
+ */
 public class CurriculumMapping {
 
 	private final long id;
@@ -9,6 +16,19 @@ public class CurriculumMapping {
 	private final CurriculumNode target;
 	private final MappingStatus status;
 
+	/**
+	 * Creates a cross-version curriculum mapping.
+	 *
+	 * @param id     the positive persistent mapping identifier
+	 * @param source the node being translated from
+	 * @param target the corresponding node being translated to
+	 * @param status the mapping's review state
+	 * @throws NullPointerException     if {@code source}, {@code target}, or
+	 *                                  {@code status} is {@code null}
+	 * @throws IllegalArgumentException if the identifier is not positive, the
+	 *                                  nodes have different subjects, or the nodes
+	 *                                  belong to the same syllabus version
+	 */
 	public CurriculumMapping(long id, CurriculumNode source, CurriculumNode target, MappingStatus status) {
 
 		if (id < 1) {

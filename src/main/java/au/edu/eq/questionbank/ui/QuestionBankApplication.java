@@ -40,6 +40,10 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 
+/**
+ * JavaFX proof-of-concept for displaying examination pages, selecting ordered
+ * full-width question regions, and assigning a curriculum subtopic.
+ */
 public class QuestionBankApplication extends Application {
 
 	private static final float DISPLAY_DPI = 120;

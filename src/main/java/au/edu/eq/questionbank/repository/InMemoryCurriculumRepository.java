@@ -11,16 +11,37 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 
+/**
+ * Immutable in-memory snapshot of subjects, syllabus versions, and curriculum
+ * nodes.
+ * <p>
+ * Hierarchy queries order nodes by display order and then classification code.
+ */
 public class InMemoryCurriculumRepository implements CurriculumRepository {
 
 	private final List<Subject> subjects;
 	private final List<SyllabusVersion> syllabusVersions;
 	private final List<CurriculumNode> curriculumNodes;
 
+	/**
+	 * Creates an empty curriculum repository.
+	 */
 	public InMemoryCurriculumRepository() {
 		this(List.of(), List.of(), List.of());
 	}
 
+	/**
+	 * Creates a repository from immutable snapshots of the supplied collections.
+	 * Identifiers must be unique within each model type.
+	 *
+	 * @param subjects         the available subjects
+	 * @param syllabusVersions the available versions
+	 * @param curriculumNodes  all nodes in the version hierarchies
+	 * @throws NullPointerException     if a collection or one of its elements is
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if a model type contains duplicate
+	 *                                  identifiers
+	 */
 	public InMemoryCurriculumRepository(List<Subject> subjects, List<SyllabusVersion> syllabusVersions,
 			List<CurriculumNode> curriculumNodes) {
 		validateUniqueIds(subjects, Subject::getId, "Subject");

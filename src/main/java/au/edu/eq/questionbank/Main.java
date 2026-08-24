@@ -14,6 +14,10 @@ import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.QuestionRepository;
 
+/**
+ * Command-line proof of concept for extracting stored questions and rendering
+ * them into an HTML document.
+ */
 public class Main {
 
 	public static void main(String[] args) throws Exception {

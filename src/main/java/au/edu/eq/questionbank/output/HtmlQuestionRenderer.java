@@ -5,8 +5,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+/**
+ * Writes a simple printable HTML document containing pre-rendered question
+ * images.
+ */
 public class HtmlQuestionRenderer {
 
+	/**
+	 * Renders question images in list order using paths relative to the output
+	 * document's directory.
+	 *
+	 * @param questionImages images to include, in document order
+	 * @param outputFile     destination HTML file
+	 * @throws IOException if the output document cannot be written
+	 */
 	public void render(List<Path> questionImages, Path outputFile) throws IOException {
 
 		StringBuilder html = new StringBuilder();

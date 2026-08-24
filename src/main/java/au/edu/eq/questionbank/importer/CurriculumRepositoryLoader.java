@@ -13,11 +13,18 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.CurriculumRepository;
 import au.edu.eq.questionbank.repository.InMemoryCurriculumRepository;
 
+/**
+ * Orchestrates workbook import and hierarchy construction into an in-memory
+ * curriculum repository.
+ */
 public class CurriculumRepositoryLoader {
 
 	private final CurriculumExcelImporter importer;
 	private final CurriculumNodeBuilder nodeBuilder;
 
+	/**
+	 * Creates a loader using the standard workbook importer and node builder.
+	 */
 	public CurriculumRepositoryLoader() {
 		this(new CurriculumExcelImporter(), new CurriculumNodeBuilder());
 	}
@@ -28,6 +35,16 @@ public class CurriculumRepositoryLoader {
 		this.nodeBuilder = nodeBuilder;
 	}
 
+	/**
+	 * Loads one or more syllabus sources into a single repository. Node identifiers
+	 * are assigned sequentially across all sources in input order.
+	 *
+	 * @param sources non-empty syllabus sources to import
+	 * @return a repository containing the distinct subjects, versions, and built
+	 *         curriculum nodes
+	 * @throws IOException              if a source workbook cannot be read
+	 * @throws IllegalArgumentException if {@code sources} is {@code null} or empty
+	 */
 	public CurriculumRepository load(List<CurriculumSource> sources) throws IOException {
 
 		if (sources == null || sources.isEmpty()) {

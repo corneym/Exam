@@ -1,5 +1,15 @@
 package au.edu.eq.questionbank.importer;
 
+/**
+ * One normalized descriptor row read from a curriculum workbook.
+ *
+ * @param unitName          the non-blank unit label
+ * @param topicName         the non-blank topic label
+ * @param subtopicName      the non-blank subtopic label
+ * @param classificationCode the non-blank hierarchical classification code
+ * @param descriptor        the non-blank syllabus descriptor text
+ * @throws IllegalArgumentException if any component is {@code null} or blank
+ */
 public record CurriculumImportRow(String unitName, String topicName, String subtopicName, String classificationCode,
 		String descriptor) {
 

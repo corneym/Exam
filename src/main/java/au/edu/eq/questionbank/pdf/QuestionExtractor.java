@@ -14,10 +14,25 @@ import javax.imageio.ImageIO;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 
+/**
+ * Renders source question regions to PNG images.
+ * <p>
+ * Regions are cropped at full page width and combined vertically in list order.
+ * All regions passed to one extraction call are interpreted against the supplied
+ * PDF path or session; booklet metadata is not used to open additional files.
+ */
 public class QuestionExtractor {
 
 	private static final float RENDER_DPI = 150;
 
+	/**
+	 * Opens a PDF, extracts all regions of a question, and writes a PNG image.
+	 *
+	 * @param pdfPath    the PDF containing every question region in this call
+	 * @param question   the question whose ordered regions are extracted
+	 * @param outputFile the destination PNG file
+	 * @throws Exception if the PDF cannot be opened, rendered, closed, or written
+	 */
 	public void extractQuestion(Path pdfPath, Question question, File outputFile) throws Exception {
 		try (PdfSession session = PdfSession.open(pdfPath)) {
 			BufferedImage image = extractQuestion(session, question);
@@ -25,10 +40,27 @@ public class QuestionExtractor {
 		}
 	}
 
+	/**
+	 * Extracts and combines all regions of a question using an existing session.
+	 * The session remains open.
+	 *
+	 * @param session  the PDF session containing every question region in this call
+	 * @param question the question to extract
+	 * @return the vertically combined image
+	 * @throws IOException if a page cannot be rendered
+	 */
 	public BufferedImage extractQuestion(PdfSession session, Question question) throws IOException {
 		return extractRegions(session, question.getRegions());
 	}
 
+	/**
+	 * Opens a PDF, extracts one full-width vertical region, and writes a PNG image.
+	 *
+	 * @param pdfPath    the PDF represented by the region's booklet source document
+	 * @param region     the region to extract
+	 * @param outputFile the destination PNG file
+	 * @throws Exception if the PDF cannot be opened, rendered, closed, or written
+	 */
 	public void extractRegion(Path pdfPath, QuestionRegion region, File outputFile) throws Exception {
 		try (PdfSession session = PdfSession.open(pdfPath)) {
 			BufferedImage image = extractRegion(session, region);
@@ -36,11 +68,30 @@ public class QuestionExtractor {
 		}
 	}
 
+	/**
+	 * Extracts one region using an existing PDF session. The session remains open.
+	 *
+	 * @param session the session for the region's booklet source document
+	 * @param region  the full-width vertical region to extract
+	 * @return the cropped region image
+	 * @throws IOException if the page cannot be rendered
+	 */
 	public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
 		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
 		return cropRegion(page, region);
 	}
 
+	/**
+	 * Extracts non-empty ordered regions from one PDF and stacks them vertically.
+	 * Narrower rendered pages are left-aligned and padded with white to the widest
+	 * region.
+	 *
+	 * @param session the PDF session containing every region in this call
+	 * @param regions non-empty regions in output order
+	 * @return one combined RGB image
+	 * @throws IOException                  if a page cannot be rendered
+	 * @throws java.util.NoSuchElementException if {@code regions} is empty
+	 */
 	public BufferedImage extractRegions(PdfSession session, List<QuestionRegion> regions) throws IOException {
 		List<BufferedImage> regionImages = new ArrayList<>();
 		for (QuestionRegion region : regions) {

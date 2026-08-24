@@ -1,32 +1,28 @@
 package au.edu.eq.questionbank.model;
 
 /**
- * A rectangular region of a source PDF page, expressed independently of any
- * rendering resolution.
+ * A full-width vertical region on one page of an {@link ExamBooklet}.
  * <p>
- * Page numbers are human-readable and one-based. The coordinates use a top-left
- * origin and are normalized fractions of the rendered page: {@code x} and
- * {@code y} locate the top-left corner, while {@code width} and {@code height}
- * describe the region's extent. For example, {@code x = 0.10} means ten percent
- * of the rendered page width from its left edge.
+ * Page numbers are human-readable and one-based. {@code y} is the proportional
+ * distance from the displayed page's top edge and {@code height} is the
+ * proportional height of the region. Both are independent of rendering DPI,
+ * zoom and pixel dimensions. For example, {@code y = 0.25} and
+ * {@code height = 0.50} select the full page width from one quarter to three
+ * quarters of the way down the page.
  * <p>
- * Coordinates refer to the page as displayed after the renderer has applied the
- * PDF page's crop box and rotation. They do not represent PDF user-space
- * points, screen coordinates, zoom levels, DPI, or pixels. When a question has
- * multiple regions, their order in the question's region list defines their
- * extraction and assembly order.
+ * Coordinates refer to the page after PDF crop-box and rotation handling. When
+ * a question has multiple regions, their list order defines extraction and
+ * assembly order.
  *
- * @param booklet    the exam booklet holding the page and region data
- * @param pageNumber the one-based source PDF page number
- * @param x          the normalized horizontal position of the region's left
- *                   edge
- * @param y          the normalized vertical position of the region's top edge
- * @param width      the normalized width of the region
- * @param height     the normalized height of the region
- * @throws IllegalArgumentException if the page number is less than one, a
- *                                  coordinate is not finite, or the region has
- *                                  no positive area within the normalized page
- *                                  bounds
+ * @param booklet    the booklet containing the referenced page
+ * @param pageNumber the one-based page number within that booklet
+ * @param y          the normalized top edge in the range {@code [0.0, 1.0)}
+ * @param height     the normalized height in the range {@code (0.0, 1.0]}, with
+ *                   {@code y + height <= 1.0}
+ * @throws NullPointerException     if {@code booklet} is {@code null}
+ * @throws IllegalArgumentException if the page number is less than one, either
+ *                                  coordinate is not finite, or the region lies
+ *                                  outside the normalized page bounds
  */
 public record QuestionRegion(ExamBooklet booklet, int pageNumber, double y, double height) {
 

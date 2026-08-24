@@ -7,10 +7,21 @@ import java.util.Set;
 import au.edu.eq.questionbank.model.CurriculumMapping;
 import au.edu.eq.questionbank.model.CurriculumNode;
 
+/**
+ * Immutable in-memory snapshot of directional curriculum mappings.
+ */
 public class InMemoryCurriculumMappingRepository implements CurriculumMappingRepository {
 
 	private final List<CurriculumMapping> mappings;
 
+	/**
+	 * Creates a repository from a snapshot of the supplied mappings.
+	 *
+	 * @param mappings mappings with unique persistent identifiers
+	 * @throws NullPointerException     if the list or one of its elements is
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if mapping identifiers are duplicated
+	 */
 	public InMemoryCurriculumMappingRepository(List<CurriculumMapping> mappings) {
 		if (mappings == null) {
 			throw new NullPointerException("mappings");

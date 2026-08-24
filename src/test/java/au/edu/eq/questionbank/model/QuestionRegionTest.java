@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.model;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -22,8 +23,15 @@ class QuestionRegionTest {
 	void exposesItsPageAndNormalisedCoordinates() {
 		QuestionRegion region = new QuestionRegion(booklet, 3, 0.25, 0.625);
 
-		assertAll(() -> assertEquals(3, region.pageNumber()), () -> assertEquals(0.25, region.y()),
-				() -> assertEquals(0.625, region.height()));
+		assertAll(() -> assertSame(booklet, region.booklet()), () -> assertEquals(3, region.pageNumber()),
+				() -> assertEquals(0.25, region.y()), () -> assertEquals(0.625, region.height()));
+	}
+
+	@Test
+	void acceptsARegionEndingExactlyAtTheBottomEdge() {
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.75, 0.25);
+
+		assertAll(() -> assertEquals(0.75, region.y()), () -> assertEquals(0.25, region.height()));
 	}
 
 	@Test
@@ -42,6 +50,7 @@ class QuestionRegionTest {
 	@Test
 	void rejectsNonPositiveOrOversizedDimensions() {
 		assertAll(() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, -0.1, 0.5)),
+				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.1, 0.0)),
 				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.1, -0.1)),
 				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.0, -0.5)),
 				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 1, 0.0, 1.1)));
@@ -59,6 +68,11 @@ class QuestionRegionTest {
 	void rejectsPageNumbersLessThanOne() {
 		assertAll(() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, 0, 0.1, 0.5)),
 				() -> assertThrows(IllegalArgumentException.class, () -> new QuestionRegion(booklet, -1, 0.1, 0.5)));
+	}
+
+	@Test
+	void rejectsNullBooklet() {
+		assertThrows(NullPointerException.class, () -> new QuestionRegion(null, 1, 0.1, 0.5));
 	}
 
 	@Test

@@ -13,9 +13,7 @@ import org.junit.jupiter.api.Test;
 
 class QuestionTest {
 
-	private final Exam exam = new Exam(20, new Subject(1, "Chemistry"), new ExamProvider(3, "Provider"), 2024,
-			"External assessment");
-
+	private Exam exam;
 	private ExamBooklet booklet;
 
 	private CurriculumNode createClassification() {
@@ -45,6 +43,12 @@ class QuestionTest {
 	}
 
 	@Test
+	void rejectsANullClassification() {
+		assertThrows(NullPointerException.class, () -> new Question(37, exam, "Q7", "Missing classification.",
+				List.of(new QuestionRegion(booklet, 1, 0, 1)), null));
+	}
+
+	@Test
 	void rejectsANullRegionElement() {
 		List<QuestionRegion> regions = new ArrayList<>();
 		regions.add(null);
@@ -60,16 +64,36 @@ class QuestionTest {
 	}
 
 	@Test
+	void rejectsRegionFromDifferentExam() {
+		Exam otherExam = new Exam(99, exam.getSubject(), exam.getProvider(), exam.getYear(), "Other exam");
+
+		ExamBooklet otherBooklet = new ExamBooklet(99, otherExam, "Other booklet", new SourceDocument(99, "other.pdf"));
+
+		assertThrows(IllegalArgumentException.class, () -> new Question(1, exam, "Q1", "Question",
+				List.of(new QuestionRegion(otherBooklet, 1, 0.0, 0.5)), createClassification()));
+	}
+
+	@Test
+	void rejectsRegionsFromDifferentBooklets() {
+		ExamBooklet secondBooklet = new ExamBooklet(99, exam, "Second booklet", new SourceDocument(99, "second.pdf"));
+
+		assertThrows(IllegalArgumentException.class, () -> new Question(1, exam, "Q1", "Question",
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.4), new QuestionRegion(secondBooklet, 2, 0.5, 0.4)),
+				createClassification()));
+	}
+
+	@Test
 	void retainsAQuestionWithOneRegion() {
 		QuestionRegion region = new QuestionRegion(booklet, 1, 0.2, 0.3);
+		CurriculumNode classification = createClassification();
 
-		Question question = new Question(30, exam, "Q1", "Calculate the result.", List.of(region),
-				createClassification());
+		Question question = new Question(30, exam, "Q1", "Calculate the result.", List.of(region), classification);
 
 		assertAll(() -> assertEquals(30, question.getId()), () -> assertSame(exam, question.getExam()),
 				() -> assertEquals("Q1", question.getQuestionCode()),
 				() -> assertEquals("Calculate the result.", question.getQuestionText()),
-				() -> assertEquals(List.of(region), question.getRegions()));
+				() -> assertEquals(List.of(region), question.getRegions()),
+				() -> assertSame(classification, question.getClassification()));
 	}
 
 	@Test
@@ -80,14 +104,14 @@ class QuestionTest {
 		Question question = new Question(31, exam, "Q2", "A question spanning pages.",
 				List.of(firstPagePart, secondPagePart), createClassification());
 
-		assertEquals(List.of(firstPagePart, secondPagePart), question.getRegions());
+		assertAll(() -> assertEquals(List.of(firstPagePart, secondPagePart), question.getRegions()));
 	}
 
 	@BeforeEach
 	void setUp() {
 		Subject subject = new Subject(78, "Psych");
 		ExamProvider provider = new ExamProvider(45, "QCAA");
-		Exam exam = new Exam(9, subject, provider, 2020, "Test exam");
+		exam = new Exam(9, subject, provider, 2020, "Test exam");
 		SourceDocument document = new SourceDocument(4, "path");
 
 		booklet = new ExamBooklet(3, exam, "Test booklet", document);

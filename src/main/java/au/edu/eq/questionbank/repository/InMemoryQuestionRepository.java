@@ -6,10 +6,18 @@ import java.util.Optional;
 
 import au.edu.eq.questionbank.model.Question;
 
+/**
+ * Transient question repository that retains saved questions in insertion
+ * order. Intended for proof-of-concept workflows and tests rather than durable
+ * storage.
+ */
 public class InMemoryQuestionRepository implements QuestionRepository {
 
 	private final List<Question> questions;
 
+	/**
+	 * Creates an empty repository.
+	 */
 	public InMemoryQuestionRepository() {
 		questions = new ArrayList<Question>();
 	}

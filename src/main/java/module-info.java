@@ -1,3 +1,7 @@
+/**
+ * Exam question-bank domain, PDF extraction, curriculum import, output, and
+ * JavaFX user-interface components.
+ */
 module au.edu.eq.questionbank {
 	requires java.desktop;
 

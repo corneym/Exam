@@ -8,17 +8,40 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Properties;
 
+/**
+ * Filesystem roots for external PDF and curriculum application data.
+ *
+ * @param pdfDataRoot        root beneath which source examination PDFs are
+ *                           stored
+ * @param curriculumDataRoot root beneath which curriculum workbooks are stored
+ */
 public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot) {
 
 	private static final String PDF_DATA_ROOT_PROPERTY = "pdf.dataRoot";
 
 	private static final String CURRICULUM_DATA_ROOT_PROPERTY = "curriculum.dataRoot";
 
+	/**
+	 * Validates directly supplied configuration roots.
+	 *
+	 * @throws NullPointerException if either root is {@code null}
+	 */
 	public ApplicationConfig {
 		Objects.requireNonNull(pdfDataRoot, "pdfDataRoot");
 		Objects.requireNonNull(curriculumDataRoot, "curriculumDataRoot");
 	}
 
+	/**
+	 * Loads {@code pdf.dataRoot} and {@code curriculum.dataRoot} from a Java
+	 * properties file. Loaded values are converted to normalized absolute paths.
+	 *
+	 * @param propertiesFile the configuration file to read
+	 * @return the loaded application configuration
+	 * @throws IOException            if the file cannot be read
+	 * @throws ConfigurationException if a required property is missing, blank, or
+	 *                                not a valid path
+	 * @throws NullPointerException   if {@code propertiesFile} is {@code null}
+	 */
 	public static ApplicationConfig load(Path propertiesFile) throws IOException {
 
 		Objects.requireNonNull(propertiesFile, "propertiesFile");

@@ -2,6 +2,13 @@ package au.edu.eq.questionbank.model;
 
 import java.util.Objects;
 
+/**
+ * One node in a versioned syllabus hierarchy.
+ * <p>
+ * Units are roots; topics belong to units, subtopics belong to topics, and
+ * sub-subtopics belong to subtopics. A child and parent must belong to the same
+ * {@link SyllabusVersion}. Nodes use persistent identifier equality.
+ */
 public class CurriculumNode {
 
 	private final long id;
@@ -12,6 +19,22 @@ public class CurriculumNode {
 	private final CurriculumLevel level;
 	private final int displayOrder;
 
+	/**
+	 * Creates a curriculum node and validates its place in the hierarchy.
+	 *
+	 * @param id              the positive persistent node identifier
+	 * @param syllabusVersion the syllabus version containing the node
+	 * @param parent          {@code null} for a unit; otherwise the immediately
+	 *                        preceding hierarchy level
+	 * @param code            the non-blank syllabus classification code
+	 * @param name            the non-blank curriculum label or descriptor
+	 * @param level           the node's hierarchy level
+	 * @param displayOrder    the non-negative order among sibling nodes
+	 * @throws NullPointerException     if {@code syllabusVersion} or {@code level}
+	 *                                  is {@code null}
+	 * @throws IllegalArgumentException if identity, text, ordering, parent level,
+	 *                                  or syllabus ownership is invalid
+	 */
 	public CurriculumNode(long id, SyllabusVersion syllabusVersion, CurriculumNode parent, String code, String name,
 			CurriculumLevel level, int displayOrder) {
 

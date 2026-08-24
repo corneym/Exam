@@ -18,6 +18,13 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 
+/**
+ * Reads curriculum descriptors from the study-checklist Excel workbook format.
+ * <p>
+ * Visible sheets are inspected for the expected hierarchy headers. Repeated
+ * blank hierarchy cells inherit the latest unit, topic, subtopic, and
+ * classification values, matching the layout of the source workbooks.
+ */
 public class CurriculumExcelImporter {
 
 	private record HeaderColumns(int headerRow, int unitColumn, int topicColumn, int subtopicColumn,
@@ -28,10 +35,24 @@ public class CurriculumExcelImporter {
 
 	private final DataFormatter formatter;
 
+	/**
+	 * Creates an importer using Apache POI's display-value formatting.
+	 */
 	public CurriculumExcelImporter() {
 		formatter = new DataFormatter();
 	}
 
+	/**
+	 * Reads and normalizes all curriculum rows from the visible sheets in a
+	 * workbook.
+	 *
+	 * @param path the workbook file to read
+	 * @return an immutable list of rows in workbook and sheet order
+	 * @throws IOException              if the workbook cannot be read
+	 * @throws NullPointerException     if {@code path} is {@code null}
+	 * @throws IllegalArgumentException if no curriculum data is found or a row
+	 *                                  contains an incomplete hierarchy
+	 */
 	public List<CurriculumImportRow> read(Path path) throws IOException {
 		if (path == null) {
 			throw new NullPointerException("path");

@@ -8,6 +8,12 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.CurriculumRepository;
 
+/**
+ * Selection state for navigating a subject's current syllabus hierarchy.
+ * <p>
+ * Selecting a value clears all dependent selections beneath it. Selecting a
+ * subject automatically chooses that subject's current syllabus version.
+ */
 public class CurriculumSelectionModel {
 
 	private final CurriculumRepository repository;
@@ -18,6 +24,12 @@ public class CurriculumSelectionModel {
 	private CurriculumNode topic;
 	private CurriculumNode subtopic;
 
+	/**
+	 * Creates a selection model backed by curriculum lookups from a repository.
+	 *
+	 * @param repository the curriculum repository
+	 * @throws NullPointerException if {@code repository} is {@code null}
+	 */
 	public CurriculumSelectionModel(CurriculumRepository repository) {
 		this.repository = Objects.requireNonNull(repository, "repository");
 	}
@@ -26,6 +38,10 @@ public class CurriculumSelectionModel {
 		return repository.findAllSubjects();
 	}
 
+	/**
+	 * @return units for the selected current syllabus, or an empty list when no
+	 *         subject is selected
+	 */
 	public List<CurriculumNode> getUnits() {
 		if (syllabusVersion == null) {
 			return List.of();
@@ -34,6 +50,10 @@ public class CurriculumSelectionModel {
 		return repository.findRootNodes(syllabusVersion);
 	}
 
+	/**
+	 * @return children of the selected unit, or an empty list when no unit is
+	 *         selected
+	 */
 	public List<CurriculumNode> getTopics() {
 		if (unit == null) {
 			return List.of();
@@ -42,6 +62,10 @@ public class CurriculumSelectionModel {
 		return repository.findChildren(unit);
 	}
 
+	/**
+	 * @return children of the selected topic, or an empty list when no topic is
+	 *         selected
+	 */
 	public List<CurriculumNode> getSubtopics() {
 		if (topic == null) {
 			return List.of();
@@ -50,6 +74,13 @@ public class CurriculumSelectionModel {
 		return repository.findChildren(topic);
 	}
 
+	/**
+	 * Selects a subject and its current syllabus version, clearing all curriculum
+	 * node selections. Passing {@code null} clears the complete selection.
+	 *
+	 * @param subject the subject to select, or {@code null} to clear it
+	 * @throws IllegalStateException if the subject has no current syllabus version
+	 */
 	public void selectSubject(Subject subject) {
 		this.subject = subject;
 
@@ -67,17 +98,32 @@ public class CurriculumSelectionModel {
 						"No current syllabus version for subject: " + subject.getName()));
 	}
 
+	/**
+	 * Selects a unit and clears the selected topic and subtopic.
+	 *
+	 * @param unit the unit to select, or {@code null} to clear it
+	 */
 	public void selectUnit(CurriculumNode unit) {
 		this.unit = unit;
 		topic = null;
 		subtopic = null;
 	}
 
+	/**
+	 * Selects a topic and clears the selected subtopic.
+	 *
+	 * @param topic the topic to select, or {@code null} to clear it
+	 */
 	public void selectTopic(CurriculumNode topic) {
 		this.topic = topic;
 		subtopic = null;
 	}
 
+	/**
+	 * Selects the best-fit subtopic to be assigned to a question.
+	 *
+	 * @param subtopic the subtopic to select, or {@code null} to clear it
+	 */
 	public void selectSubtopic(CurriculumNode subtopic) {
 		this.subtopic = subtopic;
 	}

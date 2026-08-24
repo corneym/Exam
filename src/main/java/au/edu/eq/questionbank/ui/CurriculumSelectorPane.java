@@ -8,6 +8,10 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.layout.VBox;
 
+/**
+ * JavaFX controls for selecting a subject and one best-fit curriculum subtopic
+ * through its unit/topic hierarchy.
+ */
 public class CurriculumSelectorPane extends VBox {
 
 	private final CurriculumSelectionModel model;
@@ -17,6 +21,11 @@ public class CurriculumSelectorPane extends VBox {
 	private final ComboBox<CurriculumNode> topicBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> subtopicBox = new ComboBox<>();
 
+	/**
+	 * Creates a selector bound to the supplied selection model.
+	 *
+	 * @param model the curriculum selection state and lookup model
+	 */
 	public CurriculumSelectorPane(CurriculumSelectionModel model) {
 		this.model = model;
 

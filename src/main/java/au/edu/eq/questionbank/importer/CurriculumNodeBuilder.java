@@ -11,8 +11,27 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 
+/**
+ * Builds a de-duplicated unit/topic/subtopic hierarchy from normalized import
+ * rows.
+ */
 public class CurriculumNodeBuilder {
 
+	/**
+	 * Builds curriculum nodes in first-appearance order.
+	 * <p>
+	 * Classification codes must contain exactly three dot-separated parts.
+	 * Repeated codes reuse existing nodes and must retain the same names.
+	 *
+	 * @param syllabusVersion the version that owns every generated node
+	 * @param rows            normalized curriculum rows
+	 * @param idSupplier      source of a new persistent identifier for each node
+	 * @return an immutable list containing parents before their children
+	 * @throws NullPointerException     if an argument is {@code null}
+	 * @throws IllegalArgumentException if a classification code has the wrong
+	 *                                  shape or a repeated code has conflicting
+	 *                                  names
+	 */
 	public List<CurriculumNode> build(SyllabusVersion syllabusVersion, List<CurriculumImportRow> rows,
 			LongSupplier idSupplier) {
 
