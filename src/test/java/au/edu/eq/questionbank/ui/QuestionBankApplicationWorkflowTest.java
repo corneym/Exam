@@ -55,7 +55,7 @@ class QuestionBankApplicationWorkflowTest {
 		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
 		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
 		copyCurriculumFiles(curriculumDataRoot);
-		examPdf = createSinglePagePdf(pdfDataRoot.resolve("exam.pdf"));
+		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
 
 		application = new QuestionBankApplication();
 		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
@@ -132,6 +132,27 @@ class QuestionBankApplicationWorkflowTest {
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
 	}
 
+	@Test
+	void movingToNextAnswerPageDisablesControlsForUnacceptedSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "Q3");
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+
+		dragRegionOnDisplayedPage(robot);
+		Button addAnswerRegion = lookup(robot, "#add-answer-region", Button.class);
+		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
+		assertFalse(addAnswerRegion.isDisabled());
+		assertFalse(clearAnswerSelection.isDisabled());
+
+		robot.clickOn("#next-pdf-page");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertTrue(addAnswerRegion.isDisabled());
+		assertTrue(clearAnswerSelection.isDisabled());
+	}
+
 	private void assertAnswerEntryControlsEnabled(FxRobot robot) {
 		assertFalse(lookup(robot, "#answer-text", TextField.class).isDisabled());
 		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
@@ -160,8 +181,9 @@ class QuestionBankApplicationWorkflowTest {
 		return savedQuestion;
 	}
 
-	private Path createSinglePagePdf(Path path) throws Exception {
+	private Path createTwoPagePdf(Path path) throws Exception {
 		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage());
 			document.addPage(new PDPage());
 			document.save(path.toFile());
 		}

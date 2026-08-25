@@ -202,6 +202,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private void configureNavigation() {
 		previousButton.setDisable(true);
 		nextButton.setDisable(true);
+		nextButton.setId("next-pdf-page");
 		previousButton.setOnAction(event -> previousPage());
 		nextButton.setOnAction(event -> nextPage());
 	}

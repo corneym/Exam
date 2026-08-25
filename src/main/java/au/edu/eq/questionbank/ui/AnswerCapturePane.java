@@ -84,37 +84,6 @@ final class AnswerCapturePane extends VBox {
 		setStyle(BORDER_STYLE);
 	}
 
-	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
-		currentAnswerSelection = new AnswerRegion(answerFile, selection.pageNumber(), selection.x(), selection.y(),
-				selection.width(), selection.height());
-		Question question = unansweredQuestionField.getValue();
-		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — selection pending");
-		setSelectionActionsEnabled(true);
-	}
-
-	void clearCurrentSelectionForPageChange() {
-		currentAnswerSelection = null;
-	}
-
-	boolean hasAnswerFile() {
-		return answerFile != null;
-	}
-
-	void refreshUnansweredQuestions() {
-		List<Question> unansweredQuestions = questionRepository.findAll().stream()
-				.filter(question -> !question.hasAnswer()).toList();
-		unansweredQuestionField.getItems().setAll(unansweredQuestions);
-	}
-
-	void selectAnswerPdf(Question question, SelectedPdf selectedPdf) {
-		Objects.requireNonNull(question, "question");
-		Objects.requireNonNull(selectedPdf, "selectedPdf");
-		SourceDocument sourceDocument = new SourceDocument(1, selectedPdf.relativePath());
-		answerFile = new AnswerFile(1, question.getExam(), selectedPdf.file().getName(), sourceDocument);
-		answerPdfHandler.accept(selectedPdf);
-		selectedAnswerPdfLabel.setText(selectedPdf.file().getName());
-	}
-
 	private void addCurrentAnswerRegion() {
 		if (currentAnswerSelection == null) {
 			return;
@@ -275,5 +244,37 @@ final class AnswerCapturePane extends VBox {
 			return;
 		}
 		saveAnswer(question, answerText);
+	}
+
+	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
+		currentAnswerSelection = new AnswerRegion(answerFile, selection.pageNumber(), selection.x(), selection.y(),
+				selection.width(), selection.height());
+		Question question = unansweredQuestionField.getValue();
+		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — selection pending");
+		setSelectionActionsEnabled(true);
+	}
+
+	void clearCurrentSelectionForPageChange() {
+		currentAnswerSelection = null;
+		setSelectionActionsEnabled(false);
+	}
+
+	boolean hasAnswerFile() {
+		return answerFile != null;
+	}
+
+	void refreshUnansweredQuestions() {
+		List<Question> unansweredQuestions = questionRepository.findAll().stream()
+				.filter(question -> !question.hasAnswer()).toList();
+		unansweredQuestionField.getItems().setAll(unansweredQuestions);
+	}
+
+	void selectAnswerPdf(Question question, SelectedPdf selectedPdf) {
+		Objects.requireNonNull(question, "question");
+		Objects.requireNonNull(selectedPdf, "selectedPdf");
+		SourceDocument sourceDocument = new SourceDocument(1, selectedPdf.relativePath());
+		answerFile = new AnswerFile(1, question.getExam(), selectedPdf.file().getName(), sourceDocument);
+		answerPdfHandler.accept(selectedPdf);
+		selectedAnswerPdfLabel.setText(selectedPdf.file().getName());
 	}
 }
