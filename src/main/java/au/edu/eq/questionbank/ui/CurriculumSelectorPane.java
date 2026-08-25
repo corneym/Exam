@@ -37,9 +37,13 @@ public class CurriculumSelectorPane extends VBox {
 		Label classificationLabel = new Label("Classification");
 		classificationLabel.setStyle("-fx-font-weight: bold;");
 
+		subjectBox.setId("curriculum-subject");
 		subjectBox.setPromptText("Select subject");
+		unitBox.setId("curriculum-unit");
 		unitBox.setPromptText("Select unit");
+		topicBox.setId("curriculum-topic");
 		topicBox.setPromptText("Select topic");
+		subtopicBox.setId("curriculum-subtopic");
 		subtopicBox.setPromptText("Select subtopic");
 
 		subjectBox.setMaxWidth(Double.MAX_VALUE);
