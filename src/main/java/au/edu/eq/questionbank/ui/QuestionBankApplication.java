@@ -102,8 +102,8 @@ public class QuestionBankApplication extends Application {
 	private static final double ASSESSMENT_FIELD_WIDTH = 180.0;
 	private static final double BOOKLET_FIELD_WIDTH = 140.0;
 	private static final double QUESTION_CODE_FIELD_WIDTH = 100.0;
-	private static final double REGION_PREVIEW_WIDTH = 300.0;
-	private static final double PREVIEW_IMAGE_WIDTH = 320.0;
+	private static final double REGION_PREVIEW_WIDTH = 290.0;
+	private static final double PREVIEW_IMAGE_WIDTH = 290.0;
 	private static final double PREVIEW_PANE_WIDTH = 330.0;
 	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
 	private static final double SCENE_WIDTH = 1400.0;
@@ -586,7 +586,7 @@ public class QuestionBankApplication extends Application {
 		HBox pdfDetails = createPdfDetailsPane();
 		HBox examDetailsGroup = createExamDetailsGroup(pdfDetails, examDetails);
 		HBox examBar = new HBox(examDetailsGroup);
-		examBar.setAlignment(Pos.CENTER_LEFT);
+		examBar.setAlignment(Pos.CENTER);
 		examBar.setPadding(EXAM_BAR_PADDING);
 		return examBar;
 	}
@@ -689,8 +689,6 @@ public class QuestionBankApplication extends Application {
 				combinedPreviewView);
 
 		configureBorderedPanel(questionDetails);
-		questionDetails.setMaxWidth(Double.MAX_VALUE);
-
 		return questionDetails;
 	}
 
