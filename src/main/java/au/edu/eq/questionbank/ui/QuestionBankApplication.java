@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.importer.CurriculumRepositoryLoader;
 import au.edu.eq.questionbank.importer.CurriculumSource;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
@@ -129,7 +130,10 @@ public class QuestionBankApplication extends Application {
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private CurriculumSelectionModel curriculumSelectionModel;
 	private QuestionRegion currentSelection;
+	private AnswerRegion currentAnswerSelection;
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
+	private final List<AnswerRegion> pendingAnswerRegions = new ArrayList<>();
+
 	private Path currentPdfPath;
 	private CurriculumSelectorPane curriculumSelectorPane;
 	private AnswerFile answerFile;
@@ -138,15 +142,17 @@ public class QuestionBankApplication extends Application {
 	private final Pane pagePane = new Pane();
 	private final Rectangle selectionRectangle = new Rectangle();
 
+	private final Button addAnswerRegionButton = new Button("Add");
 	private final Button addRegionButton = new Button("Add");
-	private final Button chooseAnswerPdfButton = new Button("Choose Answer PDF...");
+	private final Button chooseAnswerPdfButton = new Button("PDF...");
 	private final Button choosePdfButton = new Button("Choose PDF...");
+	private final Button clearAnswerSelectionButton = new Button("Clear");
 	private final Button clearRegionsButton = new Button("Clear Regions");
 	private final Button combineRegionsButton = new Button("Preview Question");
 	private final Button nextButton = new Button("Next");
 	private final Button previousButton = new Button("Previous");
 	private final Button removeCurrentSelectionButton = new Button("Clear");
-	private final Button saveAnswerButton = new Button("Save Answer");
+	private final Button saveAnswerButton = new Button("Save");
 	private final Button saveQuestionButton = new Button("Save Question");
 	private final Button setExamButton = new Button("Set Exam");
 
@@ -162,11 +168,12 @@ public class QuestionBankApplication extends Application {
 	private final ImageView pageView = new ImageView();
 	private final ImageView combinedPreviewView = new ImageView();
 
+	private final Label answerRegionCountLabel = new Label("Regions: 0");
 	private final Label examSubjectLabel = new Label("Not selected");
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final Label pageLabel = new Label();
 	private final Label saveStatusLabel = new Label();
-	private final Label selectedAnswerPdfLabel = new Label("No answer PDF selected");
+	private final Label selectedAnswerPdfLabel = new Label("No PDF selected");
 	private final Label selectedAnswerQuestionLabel = new Label("No question selected");
 	private final Label selectedPdfLabel = new Label("No PDF selected");
 
@@ -205,6 +212,29 @@ public class QuestionBankApplication extends Application {
 		if (answerPdfSession != null) {
 			answerPdfSession.close();
 		}
+	}
+
+	private void addCurrentAnswerRegion() {
+		if (currentAnswerSelection == null) {
+			return;
+		}
+
+		pendingAnswerRegions.add(currentAnswerSelection);
+		currentAnswerSelection = null;
+
+		selectionRectangle.setVisible(false);
+		selectionRectangle.setWidth(0);
+		selectionRectangle.setHeight(0);
+
+		addAnswerRegionButton.setDisable(true);
+		clearAnswerSelectionButton.setDisable(true);
+
+		answerRegionCountLabel.setText("Regions: " + pendingAnswerRegions.size());
+
+		Question question = unansweredQuestionField.getValue();
+
+		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — "
+				+ pendingAnswerRegions.size() + " region(s) accepted");
 	}
 
 	private void addCurrentRegion() {
@@ -248,7 +278,6 @@ public class QuestionBankApplication extends Application {
 
 	private void chooseAnswerPdf(Stage stage, Path pdfDataRoot) {
 		Question question = unansweredQuestionField.getValue();
-
 		if (question == null) {
 			showAnswerError("Select a question first.");
 			return;
@@ -264,7 +293,6 @@ public class QuestionBankApplication extends Application {
 		}
 
 		File selectedFile = chooser.showOpenDialog(stage);
-
 		if (selectedFile == null) {
 			return;
 		}
@@ -276,26 +304,29 @@ public class QuestionBankApplication extends Application {
 					rootPath.toString());
 			return;
 		}
+		currentAnswerPdfPath = selectedPath;
+
+		SourceDocument sourceDocument = new SourceDocument(1, rootPath.relativize(selectedPath).toString());
+		answerFile = new AnswerFile(1, question.getExam(), selectedFile.getName(), sourceDocument);
+
 		try {
 			if (answerPdfSession != null) {
-				answerPdfSession.close();
+				try {
+					answerPdfSession.close();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
 			}
 
 			answerPdfSession = PdfSession.open(currentAnswerPdfPath);
 			showingAnswerPdf = true;
 			currentPageNumber = 1;
-
-			pagePane.setCursor(Cursor.DEFAULT);
+			selectedAnswerPdfLabel.setText(selectedFile.getName());
+			pagePane.setCursor(Cursor.CROSSHAIR);
 			showCurrentPage();
-
-		} catch (Exception e) {
+		} catch (IOException e) {
 			throw new RuntimeException("Unable to open answer PDF", e);
 		}
-
-		currentAnswerPdfPath = selectedPath;
-		SourceDocument sourceDocument = new SourceDocument(1, rootPath.relativize(selectedPath).toString());
-		answerFile = new AnswerFile(1, question.getExam(), selectedFile.getName(), sourceDocument);
-		selectedAnswerPdfLabel.setText(selectedFile.getName());
 	}
 
 	private void choosePdf(Stage stage, Path pdfDataRoot) {
@@ -322,6 +353,24 @@ public class QuestionBankApplication extends Application {
 		return Math.max(minimum, Math.min(value, maximum));
 	}
 
+	private void clearCurrentAnswerSelection() {
+		currentAnswerSelection = null;
+
+		selectionRectangle.setVisible(false);
+		selectionRectangle.setWidth(0);
+		selectionRectangle.setHeight(0);
+
+		addAnswerRegionButton.setDisable(true);
+		clearAnswerSelectionButton.setDisable(true);
+
+		Question question = unansweredQuestionField.getValue();
+
+		if (question != null) {
+			selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — "
+					+ pendingAnswerRegions.size() + " region(s) accepted");
+		}
+	}
+
 	private void clearCurrentSelection() {
 		currentSelection = null;
 		selectionRectangle.setVisible(false);
@@ -339,6 +388,20 @@ public class QuestionBankApplication extends Application {
 		bookletField.getSelectionModel().clearSelection();
 		bookletField.getEditor().clear();
 		booklet = null;
+	}
+
+	private void clearPendingAnswerRegions() {
+		pendingAnswerRegions.clear();
+		currentAnswerSelection = null;
+
+		selectionRectangle.setVisible(false);
+		selectionRectangle.setWidth(0);
+		selectionRectangle.setHeight(0);
+
+		addAnswerRegionButton.setDisable(true);
+		clearAnswerSelectionButton.setDisable(true);
+
+		answerRegionCountLabel.setText("Regions: 0");
 	}
 
 	private void clearPendingSelection() {
@@ -372,15 +435,17 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void configureActions(Stage stage, ApplicationConfig config) {
+		addAnswerRegionButton.setOnAction(event -> addCurrentAnswerRegion());
 		addRegionButton.setOnAction(event -> addCurrentRegion());
 		chooseAnswerPdfButton.setOnAction(event -> chooseAnswerPdf(stage, config.pdfDataRoot()));
 		choosePdfButton.setOnAction(event -> choosePdf(stage, config.pdfDataRoot()));
+		clearAnswerSelectionButton.setOnAction(event -> clearCurrentAnswerSelection());
 		clearRegionsButton.setOnAction(event -> clearQuestionRegions());
 		combineRegionsButton.setOnAction(event -> combineRegions());
 		nextButton.setOnAction(event -> nextPage());
 		previousButton.setOnAction(event -> previousPage());
 		removeCurrentSelectionButton.setOnAction(event -> clearPendingSelection());
-		saveAnswerButton.setOnAction(event -> validateTextAnswerForSave());
+		saveAnswerButton.setOnAction(event -> validateAnswerForSave());
 		saveQuestionButton.setOnAction(event -> validateQuestionForSave());
 		setExamButton.setOnAction(event -> setExamMetadata(config.pdfDataRoot()));
 	}
@@ -469,16 +534,47 @@ public class QuestionBankApplication extends Application {
 				.addListener((observable, oldQuestion, newQuestion) -> handleUnansweredQuestionChanged(newQuestion));
 
 		HBox answerControls = new HBox(CONTROL_SPACING, answerTextField, saveAnswerButton);
-		HBox answerPdfControls = new HBox(CONTROL_SPACING, chooseAnswerPdfButton, selectedAnswerPdfLabel);
-
-		answerPdfControls.setAlignment(Pos.CENTER_LEFT);
 		answerControls.setAlignment(Pos.CENTER_LEFT);
 
-		VBox answerDetails = new VBox(COMPACT_SPACING, createSectionLabel("Answer"), unansweredQuestionField,
-				selectedAnswerQuestionLabel, answerPdfControls, answerControls);
+		HBox answerPdfControls = new HBox(CONTROL_SPACING, chooseAnswerPdfButton, selectedAnswerPdfLabel);
+		answerPdfControls.setAlignment(Pos.CENTER_LEFT);
 
+		addAnswerRegionButton.setDisable(true);
+		clearAnswerSelectionButton.setDisable(true);
+
+		HBox answerRegionControls = new HBox(CONTROL_SPACING, addAnswerRegionButton, clearAnswerSelectionButton,
+				answerRegionCountLabel);
+		answerRegionControls.setAlignment(Pos.CENTER_LEFT);
+
+		VBox answerDetails = new VBox(COMPACT_SPACING, createSectionLabel("Answer"), unansweredQuestionField,
+				answerPdfControls, answerRegionControls, answerControls);
 		configureBorderedPanel(answerDetails);
+
 		return answerDetails;
+	}
+
+	private void createAnswerRegion() {
+		if (isSelectionTooSmall()) {
+			selectionRectangle.setVisible(false);
+			return;
+		}
+
+		double pageWidth = pageView.getBoundsInLocal().getWidth();
+		double pageHeight = pageView.getBoundsInLocal().getHeight();
+
+		double normalizedX = selectionRectangle.getX() / pageWidth;
+		double normalizedY = selectionRectangle.getY() / pageHeight;
+		double normalizedWidth = selectionRectangle.getWidth() / pageWidth;
+		double normalizedHeight = selectionRectangle.getHeight() / pageHeight;
+
+		currentAnswerSelection = new AnswerRegion(answerFile, currentPageNumber, normalizedX, normalizedY,
+				normalizedWidth, normalizedHeight);
+
+		Question question = unansweredQuestionField.getValue();
+
+		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — selection pending");
+		addAnswerRegionButton.setDisable(false);
+		clearAnswerSelectionButton.setDisable(false);
 	}
 
 	private HBox createCurrentSelectionControls(Label currentLabel) {
@@ -704,7 +800,15 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void handleSelectionDragged(MouseEvent event) {
-		if (showingAnswerPdf || booklet == null || !event.isPrimaryButtonDown()) {
+		if (!event.isPrimaryButtonDown()) {
+			return;
+		}
+
+		if (showingAnswerPdf) {
+			if (answerFile == null) {
+				return;
+			}
+		} else if (booklet == null) {
 			return;
 		}
 
@@ -714,16 +818,25 @@ public class QuestionBankApplication extends Application {
 
 		selectionRectangle.setY(Math.min(selectionStartY, currentY));
 		selectionRectangle.setHeight(Math.abs(currentY - selectionStartY));
+
 		updateHorizontalSelection(pageWidth, event.getX());
 	}
 
 	private void handleSelectionPressed(MouseEvent event) {
-		if (showingAnswerPdf || booklet == null || event.getButton() != MouseButton.PRIMARY) {
+		if (event.getButton() != MouseButton.PRIMARY) {
+			return;
+		}
+		if (showingAnswerPdf) {
+			if (answerFile == null) {
+				return;
+			}
+		} else if (booklet == null) {
 			return;
 		}
 
 		double pageWidth = pageView.getBoundsInLocal().getWidth();
 		double pageHeight = pageView.getBoundsInLocal().getHeight();
+
 		selectionStartY = clamp(event.getY(), 0, pageHeight);
 
 		if (fullWidthSelectionCheckBox.isSelected()) {
@@ -741,12 +854,24 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void handleSelectionReleased(MouseEvent event) {
-		if (!showingAnswerPdf && booklet != null && event.getButton() == MouseButton.PRIMARY) {
+		if (event.getButton() != MouseButton.PRIMARY) {
+			return;
+		}
+
+		if (showingAnswerPdf) {
+			if (answerFile != null) {
+				createAnswerRegion();
+			}
+			return;
+		}
+
+		if (booklet != null) {
 			createQuestionRegion();
 		}
 	}
 
 	private void handleUnansweredQuestionChanged(Question question) {
+		clearPendingAnswerRegions();
 		answerTextField.clear();
 
 		if (question == null) {
@@ -873,6 +998,18 @@ public class QuestionBankApplication extends Application {
 		curriculumSelectorPane.clearClassificationBelowSubject();
 	}
 
+	private void saveAnswer(Question question, String answerText) {
+		String storedText = answerText.isBlank() ? null : answerText;
+
+		Answer answer = new Answer(nextAnswerId++, storedText, pendingAnswerRegions);
+
+		question.setAnswer(answer);
+
+		unansweredQuestionField.getSelectionModel().clearSelection();
+
+		refreshUnansweredQuestions();
+	}
+
 	private void saveQuestion() {
 		Question question = new Question(nextQuestionId++, booklet.getExam(), questionCodeField.getText().trim(), "",
 				pendingRegions, curriculumSelectionModel.getSubtopic());
@@ -881,19 +1018,6 @@ public class QuestionBankApplication extends Application {
 		saveStatusLabel.setText(
 				String.format("Saved %s (%d region(s))", question.getQuestionCode(), question.getRegions().size()));
 		resetQuestionEntry();
-	}
-
-	private void saveTextAnswer(Question question, String answerText) {
-		Answer answer = new Answer(nextAnswerId++, answerText, List.of());
-
-		question.setAnswer(answer);
-
-		String questionCode = question.getQuestionCode();
-
-		unansweredQuestionField.getSelectionModel().clearSelection();
-		refreshUnansweredQuestions();
-
-		selectedAnswerQuestionLabel.setText("Saved answer for " + questionCode);
 	}
 
 	private void setExamMetadata(Path pdfDataRoot) {
@@ -941,6 +1065,7 @@ public class QuestionBankApplication extends Application {
 
 	private void showCurrentPage() {
 		clearCurrentSelection();
+		currentAnswerSelection = null;
 		PdfSession displayedSession = getDisplayedPdfSession();
 		if (displayedSession == null) {
 			return;
@@ -1021,6 +1146,29 @@ public class QuestionBankApplication extends Application {
 		selectionRectangle.setWidth(Math.abs(currentX - selectionStartX));
 	}
 
+	private void validateAnswerForSave() {
+		Question question = unansweredQuestionField.getValue();
+
+		if (question == null) {
+			showAnswerError("Select a question.");
+			return;
+		}
+
+		if (currentAnswerSelection != null) {
+			showAnswerError("The current answer selection has not been added.");
+			return;
+		}
+
+		String answerText = answerTextField.getText().trim();
+
+		if (answerText.isBlank() && pendingAnswerRegions.isEmpty()) {
+			showAnswerError("Enter answer text or add at least one answer region.");
+			return;
+		}
+
+		saveAnswer(question, answerText);
+	}
+
 	private void validateQuestionForSave() {
 		String validationError = findQuestionValidationError();
 		if (validationError != null) {
@@ -1029,23 +1177,5 @@ public class QuestionBankApplication extends Application {
 		}
 
 		saveQuestion();
-	}
-
-	private void validateTextAnswerForSave() {
-		Question question = unansweredQuestionField.getValue();
-
-		if (question == null) {
-			showAnswerError("Select a question.");
-			return;
-		}
-
-		String answerText = answerTextField.getText().trim();
-
-		if (answerText.isBlank()) {
-			showAnswerError("Enter answer text.");
-			return;
-		}
-
-		saveTextAnswer(question, answerText);
 	}
 }
