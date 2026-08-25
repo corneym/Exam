@@ -13,6 +13,7 @@ module au.edu.eq.questionbank {
 	requires org.apache.poi.ooxml;
 	requires org.apache.logging.log4j.core;
 	requires java.naming;
+	requires java.prefs;
 
 	exports au.edu.eq.questionbank;
 	exports au.edu.eq.questionbank.ui;

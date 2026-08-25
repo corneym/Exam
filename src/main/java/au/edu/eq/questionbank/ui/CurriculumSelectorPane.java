@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.geometry.Insets;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -29,8 +30,12 @@ public class CurriculumSelectorPane extends VBox {
 	public CurriculumSelectorPane(CurriculumSelectionModel model) {
 		this.model = model;
 
-		setSpacing(6);
-		setPadding(new Insets(10));
+		setSpacing(4);
+		setPadding(new Insets(8));
+		setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
+
+		Label classificationLabel = new Label("Classification");
+		classificationLabel.setStyle("-fx-font-weight: bold;");
 
 		subjectBox.setPromptText("Select subject");
 		unitBox.setPromptText("Select unit");
@@ -50,8 +55,25 @@ public class CurriculumSelectorPane extends VBox {
 
 		subjectBox.getItems().setAll(model.getSubjects());
 
-		getChildren().addAll(new Label("Classification"), new Label("Subject"), subjectBox, new Label("Unit"), unitBox,
+		getChildren().addAll(classificationLabel, new Label("Subject"), subjectBox, new Label("Unit"), unitBox,
 				new Label("Topic"), topicBox, new Label("Subtopic"), subtopicBox);
+	}
+
+	public void clearClassificationBelowSubject() {
+		unitBox.getSelectionModel().clearSelection();
+		topicBox.getSelectionModel().clearSelection();
+		subtopicBox.getSelectionModel().clearSelection();
+
+		topicBox.getItems().clear();
+		subtopicBox.getItems().clear();
+
+		unitBox.setDisable(false);
+		topicBox.setDisable(true);
+		subtopicBox.setDisable(true);
+
+		model.selectUnit(null);
+		model.selectTopic(null);
+		model.selectSubtopic(null);
 	}
 
 	private void configureSelectionHandlers() {
@@ -125,4 +147,7 @@ public class CurriculumSelectorPane extends VBox {
 		});
 	}
 
+	public ReadOnlyObjectProperty<Subject> selectedSubjectProperty() {
+		return subjectBox.valueProperty();
+	}
 }

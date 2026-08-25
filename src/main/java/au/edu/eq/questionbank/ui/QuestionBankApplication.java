@@ -4,6 +4,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Year;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -14,6 +15,7 @@ import au.edu.eq.questionbank.importer.CurriculumSource;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
@@ -21,6 +23,9 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.CurriculumRepository;
+import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
+import au.edu.eq.questionbank.repository.InMemoryQuestionRepository;
+import au.edu.eq.questionbank.repository.QuestionRepository;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.application.Application;
 import javafx.embed.swing.SwingFXUtils;
@@ -31,6 +36,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
@@ -64,11 +70,14 @@ public class QuestionBankApplication extends Application {
 	private PdfSession pdfSession;
 	private ExamBooklet booklet;
 
+	private final ExamMetadataOptionsRepository examMetadataOptionsRepository = new ExamMetadataOptionsRepository();
+	private final QuestionRepository questionRepository = new InMemoryQuestionRepository();
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private CurriculumSelectionModel curriculumSelectionModel;
 	private QuestionRegion currentSelection;
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
 	private Path currentPdfPath;
+	private CurriculumSelectorPane curriculumSelectorPane;
 
 	private final Pane pagePane = new Pane();
 	private final Rectangle selectionRectangle = new Rectangle();
@@ -76,7 +85,7 @@ public class QuestionBankApplication extends Application {
 	private final Button addRegionButton = new Button("Add");
 	private final Button choosePdfButton = new Button("Choose PDF...");
 	private final Button clearRegionsButton = new Button("Clear Regions");
-	private final Button combineRegionsButton = new Button("Combine Regions");
+	private final Button combineRegionsButton = new Button("Preview Question");
 	private final Button nextButton = new Button("Next");
 	private final Button previousButton = new Button("Previous");
 	private final Button removeCurrentSelectionButton = new Button("Clear");
@@ -85,23 +94,27 @@ public class QuestionBankApplication extends Application {
 
 	private final CheckBox fullWidthSelectionCheckBox = new CheckBox("Full width selection");
 
+	private final ComboBox<String> assessmentField = new ComboBox<>();
+	private final ComboBox<String> bookletField = new ComboBox<>();
+	private final ComboBox<String> providerField = new ComboBox<>();
+	private final ComboBox<Integer> yearField = new ComboBox<>();
+
 	private final ImageView previewView = new ImageView();
 	private final ImageView pageView = new ImageView();
 	private final ImageView combinedPreviewView = new ImageView();
 
+	private final Label examSubjectLabel = new Label("Not selected");
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final Label pageLabel = new Label();
+	private final Label saveStatusLabel = new Label();
 	private final Label selectedPdfLabel = new Label("No PDF selected");
 
-	private final TextField assessmentField = new TextField();
-	private final TextField bookletField = new TextField();
-	private final TextField providerField = new TextField();
 	private final TextField questionCodeField = new TextField();
-	private final TextField yearField = new TextField();
 
 	private final VBox regionPreviewBox = new VBox(10);
 
 	private int currentPageNumber = 1;
+	private long nextQuestionId = 1;
 	private double selectionStartX;
 	private double selectionStartY;
 
@@ -193,7 +206,7 @@ public class QuestionBankApplication extends Application {
 			}
 			pdfSession = PdfSession.open(selectedPath);
 			currentPdfPath = selectedPath;
-			booklet = null;
+			clearExamMetadata();
 			pagePane.setCursor(Cursor.DEFAULT);
 			currentPageNumber = 1;
 			clearRegions();
@@ -214,6 +227,17 @@ public class QuestionBankApplication extends Application {
 		selectionRectangle.setWidth(0);
 		selectionRectangle.setHeight(0);
 		previewView.setImage(null);
+	}
+
+	private void clearExamMetadata() {
+		providerField.getSelectionModel().clearSelection();
+		providerField.getEditor().clear();
+		yearField.getSelectionModel().clearSelection();
+		assessmentField.getSelectionModel().clearSelection();
+		assessmentField.getEditor().clear();
+		bookletField.getSelectionModel().clearSelection();
+		bookletField.getEditor().clear();
+		booklet = null;
 	}
 
 	private void clearRegions() {
@@ -244,6 +268,7 @@ public class QuestionBankApplication extends Application {
 		nextButton.setOnAction(event -> nextPage());
 		previousButton.setOnAction(event -> previousPage());
 		removeCurrentSelectionButton.setOnAction(event -> clearCurrentSelection());
+		saveQuestionButton.setOnAction(event -> validateQuestionForSave());
 		setExamButton.setOnAction(event -> setExamMetadata(config.pdfDataRoot()));
 	}
 
@@ -303,7 +328,7 @@ public class QuestionBankApplication extends Application {
 		});
 
 		pageView.setOnMouseReleased(event -> {
-			System.out.printf("RELEASE %.1f, %.1f%n", event.getX(), event.getY());
+//			System.out.printf("RELEASE %.1f, %.1f%n", event.getX(), event.getY());
 			if (booklet == null) {
 				return;
 			}
@@ -353,18 +378,25 @@ public class QuestionBankApplication extends Application {
 	private HBox createExamBar() {
 		providerField.setPromptText("QCAA");
 		providerField.setPrefWidth(100);
+		providerField.setEditable(true);
 
-		yearField.setPromptText("2024");
+		int currentYear = Year.now().getValue();
+		for (int year = currentYear; year >= currentYear - 15; year--) {
+			yearField.getItems().add(year);
+		}
 		yearField.setPrefWidth(70);
 
 		assessmentField.setPromptText("External Assessment");
 		assessmentField.setPrefWidth(180);
+		assessmentField.setEditable(true);
 
 		bookletField.setPromptText("Paper 1 MCQ");
 		bookletField.setPrefWidth(140);
+		bookletField.setEditable(true);
 
-		HBox examDetails = new HBox(8, new Label("Provider"), providerField, new Label("Year"), yearField,
-				new Label("Assessment"), assessmentField, new Label("Booklet"), bookletField, setExamButton);
+		HBox examDetails = new HBox(8, new Label("Subject"), examSubjectLabel, new Label("Provider"), providerField,
+				new Label("Year"), yearField, new Label("Assessment"), assessmentField, new Label("Booklet"),
+				bookletField, setExamButton);
 
 		examDetails.setAlignment(Pos.CENTER_LEFT);
 		examDetails.setStyle(
@@ -378,7 +410,7 @@ public class QuestionBankApplication extends Application {
 
 		Label examDetailsLabel = new Label("Exam Details:");
 		examDetailsLabel.setStyle("-fx-font-weight: bold");
-		HBox examBar = new HBox(8, examDetailsLabel, examDetails, pdfDetails);
+		HBox examBar = new HBox(8, examDetailsLabel, pdfDetails, examDetails);
 
 		examBar.setAlignment(Pos.CENTER_LEFT);
 		examBar.setPadding(new Insets(6));
@@ -411,14 +443,21 @@ public class QuestionBankApplication extends Application {
 		Label regionsLabel = new Label("Accepted regions");
 		Label combinedLabel = new Label("Combined question");
 
-		CurriculumSelectorPane curriculumSelectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
+		curriculumSelectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
+		Subject subject = curriculumSelectionModel.getSubject();
+		examSubjectLabel.setText(subject == null ? "Not selected" : subject.getName());
+		curriculumSelectorPane.selectedSubjectProperty().addListener((observable, oldSubject, newSubject) -> {
+			examSubjectLabel.setText(newSubject == null ? "Not selected" : newSubject.getName());
+		});
 		questionCodeField.setPromptText("Q1");
 		questionCodeField.setPrefWidth(100);
-		HBox questionDetails = new HBox(8, new Label("Question"), questionCodeField, saveQuestionButton);
-		questionDetails.setAlignment(Pos.CENTER_LEFT);
+		HBox questionControls = new HBox(8, questionCodeField, saveQuestionButton);
+		questionControls.setAlignment(Pos.CENTER_LEFT);
+		saveStatusLabel.setStyle("-fx-text-fill: #2e7d32;");
+		VBox questionDetails = new VBox(4, new Label("Question"), questionControls, saveStatusLabel);
+		questionDetails.setPadding(new Insets(0, 8, 0, 8));
 
 		ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
-
 		regionsScrollPane.setFitToWidth(true);
 		regionsScrollPane.setPrefViewportHeight(300);
 		addRegionButton.setPadding(new Insets(2, 8, 2, 8));
@@ -489,6 +528,12 @@ public class QuestionBankApplication extends Application {
 		return new CurriculumSelectionModel(repository);
 	}
 
+	private void loadExamMetadataOptions() {
+		providerField.getItems().setAll(examMetadataOptionsRepository.getProviders());
+		assessmentField.getItems().setAll(examMetadataOptionsRepository.getAssessments());
+		bookletField.getItems().setAll(examMetadataOptionsRepository.getBooklets());
+	}
+
 	private void nextPage() {
 		if (currentPageNumber < pdfSession.getPageCount()) {
 			currentPageNumber++;
@@ -518,36 +563,54 @@ public class QuestionBankApplication extends Application {
 		setRegionCountLabel(pendingRegions.size());
 	}
 
+	private void resetQuestionEntry() {
+		questionCodeField.clear();
+		clearRegions();
+		curriculumSelectorPane.clearClassificationBelowSubject();
+	}
+
+	private void saveQuestion() {
+		Question question = new Question(nextQuestionId++, booklet.getExam(), questionCodeField.getText().trim(), "",
+				pendingRegions, curriculumSelectionModel.getSubtopic());
+		questionRepository.save(question);
+		saveStatusLabel.setText(
+				String.format("Saved %s (%d region(s))", question.getQuestionCode(), question.getRegions().size()));
+		resetQuestionEntry();
+	}
+
 	private void setExamMetadata(Path pdfDataRoot) {
 		if (pdfSession == null) {
 			showExamMetadataError("Choose a PDF first.");
 			return;
 		}
+		Subject subject = curriculumSelectionModel.getSubject();
+		if (subject == null) {
+			showExamMetadataError("Select a subject before setting the exam.");
+			return;
+		}
 
-		String providerName = providerField.getText().trim();
-		String yearText = yearField.getText().trim();
-		String assessmentName = assessmentField.getText().trim();
-		String bookletName = bookletField.getText().trim();
+		String providerName = providerField.getEditor().getText().trim();
+		Integer year = yearField.getValue();
+		String assessmentName = assessmentField.getEditor().getText().trim();
+		String bookletName = bookletField.getEditor().getText().trim();
 
-		if (providerName.isBlank() || yearText.isBlank() || assessmentName.isBlank() || bookletName.isBlank()) {
+		if (providerName.isBlank() || year == null || assessmentName.isBlank() || bookletName.isBlank()) {
 			showExamMetadataError("Complete all exam details.");
 			return;
 		}
 
-		int year;
-		try {
-			year = Integer.parseInt(yearText);
-		} catch (NumberFormatException e) {
-			showExamMetadataError("Year must be a number.");
-			return;
-		}
-
-		Subject subject = curriculumSelectionModel.getSubject();
 		ExamProvider provider = new ExamProvider(1, providerName);
 		Exam exam = new Exam(1, subject, provider, year, assessmentName);
 		SourceDocument sourceDocument = new SourceDocument(1,
 				pdfDataRoot.toAbsolutePath().normalize().relativize(currentPdfPath).toString());
 		booklet = new ExamBooklet(1, exam, bookletName, sourceDocument);
+		examMetadataOptionsRepository.addProvider(providerName);
+		examMetadataOptionsRepository.addAssessment(assessmentName);
+		examMetadataOptionsRepository.addBooklet(bookletName);
+		loadExamMetadataOptions();
+		providerField.setValue(providerName);
+		assessmentField.setValue(assessmentName);
+		bookletField.setValue(bookletName);
 		pagePane.setCursor(Cursor.CROSSHAIR);
 	}
 
@@ -574,6 +637,13 @@ public class QuestionBankApplication extends Application {
 	private void showExamMetadataError(String message) {
 		Alert alert = new Alert(Alert.AlertType.WARNING);
 		alert.setHeaderText("Exam details are incomplete.");
+		alert.setContentText(message);
+		alert.showAndWait();
+	}
+
+	private void showQuestionError(String message) {
+		Alert alert = new Alert(Alert.AlertType.WARNING);
+		alert.setHeaderText("Question is incomplete.");
 		alert.setContentText(message);
 		alert.showAndWait();
 	}
@@ -611,8 +681,51 @@ public class QuestionBankApplication extends Application {
 		configureMouseSelection();
 		configurePreviewView();
 		configureToolTips();
+		loadExamMetadataOptions();
 		VBox pdfWorkspace = createPdfWorkspace();
 		BorderPane root = createRootLayout(pdfWorkspace);
 		showStage(primaryStage, root);
+	}
+
+	private void validateQuestionForSave() {
+		if (booklet == null) {
+			showQuestionError("Set the exam details first.");
+			return;
+		}
+
+		if (questionCodeField.getText().trim().isBlank()) {
+			showQuestionError("Enter a question code.");
+			return;
+		}
+
+		if (curriculumSelectionModel.getSubject() == null) {
+			showQuestionError("Select a subject.");
+			return;
+		}
+
+		if (curriculumSelectionModel.getUnit() == null) {
+			showQuestionError("Select a unit.");
+			return;
+		}
+
+		if (curriculumSelectionModel.getTopic() == null) {
+			showQuestionError("Select a topic.");
+			return;
+		}
+
+		if (curriculumSelectionModel.getSubtopic() == null) {
+			showQuestionError("Select a subtopic.");
+			return;
+		}
+		if (currentSelection != null) {
+			showQuestionError("The current selection has not been added to Accepted regions.");
+			return;
+		}
+		if (pendingRegions.isEmpty()) {
+			showQuestionError("Add at least one question region.");
+			return;
+		}
+
+		saveQuestion();
 	}
 }
