@@ -34,19 +34,20 @@ public class QuestionBankApplication extends Application {
 	private static final double SCENE_HEIGHT = 840.0;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 
+	public static void main(String[] args) {
+		launch(args);
+	}
+
 	private final QuestionRepository questionRepository = new InMemoryQuestionRepository();
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
-	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
 
+	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
 	private CurriculumSelectionModel curriculumSelectionModel;
 	private CurriculumSelectorPane curriculumSelectorPane;
 	private ExamMetadataPane examMetadataPane;
 	private QuestionCapturePane questionCapturePane;
-	private AnswerCapturePane answerCapturePane;
 
-	public static void main(String[] args) {
-		launch(args);
-	}
+	private AnswerCapturePane answerCapturePane;
 
 	@Override
 	public void start(Stage stage) throws Exception {
@@ -162,4 +163,5 @@ public class QuestionBankApplication extends Application {
 
 		showStage(primaryStage, createRootLayout());
 	}
+
 }

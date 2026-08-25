@@ -52,6 +52,7 @@ final class AnswerCapturePane extends VBox {
 	private final Button chooseAnswerPdfButton = new Button("PDF...");
 	private final Button clearAnswerSelectionButton = new Button("Clear");
 	private final Button saveAnswerButton = new Button("Save");
+	private final Button undoAnswerRegionButton = new Button("Undo");
 	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
 	private final Label answerRegionCountLabel = new Label("Regions: 0");
 	private final Label selectedAnswerPdfLabel = new Label("No PDF selected");
@@ -90,6 +91,7 @@ final class AnswerCapturePane extends VBox {
 		}
 
 		pendingAnswerRegions.add(currentAnswerSelection);
+		undoAnswerRegionButton.setDisable(false);
 		currentAnswerSelection = null;
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
@@ -137,6 +139,7 @@ final class AnswerCapturePane extends VBox {
 		chooseAnswerPdfButton.setOnAction(event -> chooseAnswerPdf(stage));
 		clearAnswerSelectionButton.setOnAction(event -> clearCurrentAnswerSelection());
 		saveAnswerButton.setOnAction(event -> validateAnswerForSave());
+		undoAnswerRegionButton.setOnAction(event -> undoLastAnswerRegion());
 	}
 
 	private void configureControls() {
@@ -156,6 +159,8 @@ final class AnswerCapturePane extends VBox {
 		chooseAnswerPdfButton.setId("choose-answer-pdf");
 		addAnswerRegionButton.setId("add-answer-region");
 		clearAnswerSelectionButton.setId("clear-answer-selection");
+		undoAnswerRegionButton.setId("undo-answer-region");
+		undoAnswerRegionButton.setDisable(true);
 		answerRegionCountLabel.setId("answer-region-count");
 		selectedAnswerQuestionLabel.setId("selected-answer-question");
 		setSelectionActionsEnabled(false);
@@ -169,7 +174,7 @@ final class AnswerCapturePane extends VBox {
 
 	private HBox createAnswerRegionControls() {
 		HBox controls = new HBox(CONTROL_SPACING, addAnswerRegionButton, clearAnswerSelectionButton,
-				answerRegionCountLabel);
+				answerRegionCountLabel, undoAnswerRegionButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
 	}
@@ -233,6 +238,15 @@ final class AnswerCapturePane extends VBox {
 		alert.setHeaderText("Answer is incomplete.");
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	private void undoLastAnswerRegion() {
+		if (pendingAnswerRegions.isEmpty()) {
+			return;
+		}
+		pendingAnswerRegions.removeLast();
+		answerRegionCountLabel.setText("Regions: " + pendingAnswerRegions.size());
+		undoAnswerRegionButton.setDisable(pendingAnswerRegions.isEmpty());
 	}
 
 	private void validateAnswerForSave() {
