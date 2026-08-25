@@ -20,6 +20,7 @@ public class Question {
 	private final String questionText;
 	private final List<QuestionRegion> regions;
 	private final CurriculumNode classification;
+	private Answer answer;
 
 	/**
 	 * Creates a classified question from one or more source regions.
@@ -36,9 +37,9 @@ public class Question {
 	 *                                  {@code regions}, or {@code classification}
 	 *                                  is {@code null}
 	 * @throws IllegalArgumentException if {@code regions} is empty,
-	 *                                  {@code classification} is not a subtopic,
-	 *                                  a region belongs to a different exam, or
-	 *                                  the regions do not all belong to the same
+	 *                                  {@code classification} is not a subtopic, a
+	 *                                  region belongs to a different exam, or the
+	 *                                  regions do not all belong to the same
 	 *                                  booklet
 	 */
 	public Question(long id, Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
@@ -73,6 +74,10 @@ public class Question {
 		this.classification = classification;
 	}
 
+	public Answer getAnswer() {
+		return answer;
+	}
+
 	public CurriculumNode getClassification() {
 		return classification;
 	}
@@ -95,5 +100,31 @@ public class Question {
 
 	public List<QuestionRegion> getRegions() {
 		return regions;
+	}
+
+	public boolean hasAnswer() {
+		return answer != null;
+	}
+
+	/**
+	 * Associates an answer with this question.
+	 *
+	 * @param answer the answer to associate with the question
+	 * @throws NullPointerException     if {@code answer} is {@code null}
+	 * @throws IllegalArgumentException if an answer region belongs to a different
+	 *                                  exam
+	 */
+	public void setAnswer(Answer answer) {
+		if (answer == null) {
+			throw new NullPointerException("answer");
+		}
+
+		for (AnswerRegion region : answer.getRegions()) {
+			if (region.answerFile().getExam().getId() != exam.getId()) {
+				throw new IllegalArgumentException("Answer region file must belong to the question's exam");
+			}
+		}
+
+		this.answer = answer;
 	}
 }
