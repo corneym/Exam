@@ -14,6 +14,7 @@ module au.edu.eq.questionbank {
 	requires org.apache.logging.log4j.core;
 	requires java.naming;
 	requires java.prefs;
+	requires javafx.base;
 
 	exports au.edu.eq.questionbank;
 	exports au.edu.eq.questionbank.ui;

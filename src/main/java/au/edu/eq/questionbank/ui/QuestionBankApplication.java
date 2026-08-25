@@ -53,6 +53,7 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.util.StringConverter;
 
 /**
  * JavaFX proof-of-concept for displaying examination pages, selecting ordered
@@ -97,6 +98,7 @@ public class QuestionBankApplication extends Application {
 	private final ComboBox<String> assessmentField = new ComboBox<>();
 	private final ComboBox<String> bookletField = new ComboBox<>();
 	private final ComboBox<String> providerField = new ComboBox<>();
+	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
 	private final ComboBox<Integer> yearField = new ComboBox<>();
 
 	private final ImageView previewView = new ImageView();
@@ -107,8 +109,10 @@ public class QuestionBankApplication extends Application {
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final Label pageLabel = new Label();
 	private final Label saveStatusLabel = new Label();
+	private final Label selectedAnswerQuestionLabel = new Label("No question selected");
 	private final Label selectedPdfLabel = new Label("No PDF selected");
 
+	private final TextField answerTextField = new TextField();
 	private final TextField questionCodeField = new TextField();
 
 	private final VBox regionPreviewBox = new VBox(10);
@@ -409,11 +413,17 @@ public class QuestionBankApplication extends Application {
 				"-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;" + "-fx-padding: 5;");
 
 		Label examDetailsLabel = new Label("Exam Details:");
-		examDetailsLabel.setStyle("-fx-font-weight: bold");
-		HBox examBar = new HBox(8, examDetailsLabel, pdfDetails, examDetails);
+		examDetailsLabel.setStyle("-fx-font-weight: bold;");
 
+		HBox examDetailsGroup = new HBox(8, examDetailsLabel, pdfDetails, examDetails);
+
+		examDetailsGroup.setAlignment(Pos.CENTER_LEFT);
+		examDetailsGroup.setPadding(new Insets(8));
+		examDetailsGroup.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
+
+		HBox examBar = new HBox(examDetailsGroup);
 		examBar.setAlignment(Pos.CENTER_LEFT);
-		examBar.setPadding(new Insets(6));
+		examBar.setPadding(new Insets(6, 10, 6, 10));
 
 		return examBar;
 	}
@@ -454,8 +464,84 @@ public class QuestionBankApplication extends Application {
 		HBox questionControls = new HBox(8, questionCodeField, saveQuestionButton);
 		questionControls.setAlignment(Pos.CENTER_LEFT);
 		saveStatusLabel.setStyle("-fx-text-fill: #2e7d32;");
-		VBox questionDetails = new VBox(4, new Label("Question"), questionControls, saveStatusLabel);
-		questionDetails.setPadding(new Insets(0, 8, 0, 8));
+
+		Label questionLabel = new Label("Question");
+		questionLabel.setStyle("-fx-font-weight: bold;");
+
+		VBox questionDetails = new VBox(4, questionLabel, questionControls, saveStatusLabel);
+
+		questionDetails.setPadding(new Insets(8));
+		questionDetails.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
+		saveStatusLabel.setStyle("-fx-text-fill: #2e7d32;");
+
+		unansweredQuestionField.setPromptText("Select unanswered question");
+		unansweredQuestionField.setMaxWidth(Double.MAX_VALUE);
+
+		unansweredQuestionField.setConverter(new StringConverter<Question>() {
+
+			@Override
+			public Question fromString(String string) {
+				return null;
+			}
+
+			@Override
+			public String toString(Question question) {
+				if (question == null) {
+					return "";
+				}
+				return question.getQuestionCode();
+			}
+		});
+
+		Label answerLabel = new Label("Answer");
+		answerLabel.setStyle("-fx-font-weight: bold;");
+
+		VBox answerDetails = new VBox(4, answerLabel, unansweredQuestionField, selectedAnswerQuestionLabel,
+				answerTextField);
+
+		answerDetails.setPadding(new Insets(8));
+		answerDetails.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
+		unansweredQuestionField.setPromptText("Select unanswered question");
+		unansweredQuestionField.setMaxWidth(Double.MAX_VALUE);
+
+		unansweredQuestionField.setConverter(new StringConverter<Question>() {
+
+			@Override
+			public Question fromString(String string) {
+				return null;
+			}
+
+			@Override
+			public String toString(Question question) {
+				if (question == null) {
+					return "";
+				}
+				return question.getQuestionCode();
+			}
+		});
+
+		answerTextField.setPromptText("Answer text, e.g. B");
+		answerTextField.setDisable(true);
+
+		unansweredQuestionField.valueProperty().addListener((observable, oldQuestion, newQuestion) -> {
+
+			answerTextField.clear();
+
+			if (newQuestion == null) {
+				selectedAnswerQuestionLabel.setText("No question selected");
+				answerTextField.setDisable(true);
+			} else {
+				selectedAnswerQuestionLabel.setText("Answering " + newQuestion.getQuestionCode());
+				answerTextField.setDisable(false);
+			}
+		});
+
+		answerLabel = new Label("Answer");
+		answerLabel.setStyle("-fx-font-weight: bold;");
+
+		answerDetails = new VBox(4, answerLabel, unansweredQuestionField, selectedAnswerQuestionLabel, answerTextField);
+		answerDetails.setPadding(new Insets(8));
+		answerDetails.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
 
 		ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
 		regionsScrollPane.setFitToWidth(true);
@@ -464,9 +550,10 @@ public class QuestionBankApplication extends Application {
 		removeCurrentSelectionButton.setPadding(new Insets(2, 8, 2, 8));
 		HBox currentSelectionButtons = new HBox(6, currentLabel, addRegionButton, removeCurrentSelectionButton);
 
-		VBox previewPane = new VBox(10, curriculumSelectorPane, questionDetails, new Separator(),
-				currentSelectionButtons, previewView, new Separator(), regionsLabel, regionCountLabel,
-				regionsScrollPane, combineRegionsButton, new Separator(), combinedLabel, combinedPreviewView);
+		VBox previewPane = new VBox(10, curriculumSelectorPane, questionDetails, saveStatusLabel, new Separator(),
+				answerDetails, new Separator(), currentSelectionButtons, previewView, new Separator(), regionsLabel,
+				regionCountLabel, regionsScrollPane, combineRegionsButton, new Separator(), combinedLabel,
+				combinedPreviewView);
 		previewPane.setPadding(new Insets(10));
 		previewPane.setPrefWidth(330);
 		previewPane.setMinWidth(330);
@@ -556,6 +643,13 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void refreshUnansweredQuestions() {
+		List<Question> unansweredQuestions = questionRepository.findAll().stream()
+				.filter(question -> !question.hasAnswer()).toList();
+
+		unansweredQuestionField.getItems().setAll(unansweredQuestions);
+	}
+
 	private void removeRegion(int regionIndex) {
 		pendingRegions.remove(regionIndex);
 		combinedPreviewView.setImage(null);
@@ -573,6 +667,7 @@ public class QuestionBankApplication extends Application {
 		Question question = new Question(nextQuestionId++, booklet.getExam(), questionCodeField.getText().trim(), "",
 				pendingRegions, curriculumSelectionModel.getSubtopic());
 		questionRepository.save(question);
+		refreshUnansweredQuestions();
 		saveStatusLabel.setText(
 				String.format("Saved %s (%d region(s))", question.getQuestionCode(), question.getRegions().size()));
 		resetQuestionEntry();
