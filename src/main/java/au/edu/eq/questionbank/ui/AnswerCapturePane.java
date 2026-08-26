@@ -112,6 +112,7 @@ final class AnswerCapturePane extends VBox {
 		pendingAnswerRegions.add(currentAnswerSelection);
 		refreshAnswerRegionList();
 		currentAnswerSelection = null;
+		answerPreviewView.setImage(null);
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
 		showAcceptedRegionStatus();
