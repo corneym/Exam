@@ -241,7 +241,7 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
-	void canUndoAcceptedAnswerRegions(FxRobot robot) throws Exception {
+	void canRemoveAcceptedAnswerRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q3");
 
@@ -250,30 +250,25 @@ class QuestionBankApplicationWorkflowTest {
 
 		openAnswerPdfForTest(question);
 
-		Button undo = lookup(robot, "#undo-answer-region", Button.class);
-
-		assertTrue(undo.isDisabled());
-
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-answer-region");
 
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
-		assertFalse(undo.isDisabled());
 
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-answer-region");
 
 		assertEquals("Regions: 2", lookup(robot, "#answer-region-count", Label.class).getText());
 
-		robot.clickOn(undo);
+		Button firstRemoveButton = robot.lookup("Remove").queryButton();
+		robot.clickOn(firstRemoveButton);
 
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
-		assertFalse(undo.isDisabled());
 
-		robot.clickOn(undo);
+		Button remainingRemoveButton = robot.lookup("Remove").queryButton();
+		robot.clickOn(remainingRemoveButton);
 
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
-		assertTrue(undo.isDisabled());
 	}
 
 	@Test

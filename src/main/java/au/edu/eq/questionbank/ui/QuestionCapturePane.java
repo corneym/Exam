@@ -25,7 +25,6 @@ import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 /**
@@ -51,15 +50,14 @@ final class QuestionCapturePane extends VBox {
 
 	private final Button addRegionButton = new Button("Add");
 	private final Button clearRegionsButton = new Button("Clear Regions");
-	private final Button combineRegionsButton = new Button("Preview Question");
 	private final Button removeCurrentSelectionButton = new Button("Clear");
 	private final Button saveQuestionButton = new Button("Save Question");
 	private final ImageView previewView = new ImageView();
-	private final ImageView combinedPreviewView = new ImageView();
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final Label saveStatusLabel = new Label();
 	private final TextField questionCodeField = new TextField();
 	private final VBox regionPreviewBox = new VBox(SECTION_SPACING);
+	private final ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
 
 	private final QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor;
@@ -91,8 +89,7 @@ final class QuestionCapturePane extends VBox {
 		configureActions();
 		getChildren().addAll(createSectionLabel("Question"), createQuestionControls(), saveStatusLabel, new Separator(),
 				createCurrentSelectionControls(), previewView, new Separator(), new Label("Accepted regions"),
-				regionCountLabel, createRegionsScrollPane(), combineRegionsButton, new Separator(),
-				new Label("Combined question"), combinedPreviewView);
+				regionCountLabel, createRegionsScrollPane());
 		setSpacing(COMPACT_SPACING);
 		setPadding(PANEL_PADDING);
 		setStyle(BORDER_STYLE);
@@ -130,7 +127,6 @@ final class QuestionCapturePane extends VBox {
 
 		pendingRegions.add(currentSelection);
 		clearCurrentSelection();
-		combinedPreviewView.setImage(null);
 		refreshRegionPreviews();
 		setRegionCountLabel(pendingRegions.size());
 		showQuestionPendingStatus();
@@ -167,27 +163,13 @@ final class QuestionCapturePane extends VBox {
 	private void clearRegions() {
 		pendingRegions.clear();
 		clearCurrentSelection();
-		combinedPreviewView.setImage(null);
 		refreshRegionPreviews();
 		setRegionCountLabel(0);
-	}
-
-	private void combineRegions() {
-		if (pendingRegions.isEmpty()) {
-			return;
-		}
-		try {
-			BufferedImage combined = questionExtractor.extractRegions(examPdfSessionSupplier.get(), pendingRegions);
-			combinedPreviewView.setImage(SwingFXUtils.toFXImage(combined, null));
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to preview question", e);
-		}
 	}
 
 	private void configureActions() {
 		addRegionButton.setOnAction(event -> addCurrentRegion());
 		clearRegionsButton.setOnAction(event -> clearQuestionRegions());
-		combineRegionsButton.setOnAction(event -> combineRegions());
 		removeCurrentSelectionButton.setOnAction(event -> clearPendingSelection());
 		saveQuestionButton.setOnAction(event -> validateQuestionForSave());
 	}
@@ -204,7 +186,6 @@ final class QuestionCapturePane extends VBox {
 		addRegionButton.setPadding(COMPACT_BUTTON_PADDING);
 		removeCurrentSelectionButton.setPadding(COMPACT_BUTTON_PADDING);
 		configurePreviewImageView(previewView);
-		configurePreviewImageView(combinedPreviewView);
 		saveStatusLabel.setStyle(SUCCESS_STATUS_STYLE);
 	}
 
@@ -226,9 +207,12 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private ScrollPane createRegionsScrollPane() {
-		ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
 		regionsScrollPane.setFitToWidth(true);
-		regionsScrollPane.setPrefViewportHeight(REGIONS_VIEWPORT_HEIGHT);
+		regionsScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		regionsScrollPane.setMinHeight(0);
+		regionsScrollPane.setMaxHeight(REGIONS_VIEWPORT_HEIGHT);
+		regionsScrollPane.setVisible(false);
+		regionsScrollPane.setManaged(false);
 		return regionsScrollPane;
 	}
 
@@ -250,14 +234,26 @@ final class QuestionCapturePane extends VBox {
 		for (int i = 0; i < pendingRegions.size(); i++) {
 			addRegionPreview(pendingRegions.get(i), i);
 		}
+		updateRegionsScrollPane();
 	}
 
 	private void removeRegion(int regionIndex) {
 		pendingRegions.remove(regionIndex);
-		combinedPreviewView.setImage(null);
 		refreshRegionPreviews();
 		setRegionCountLabel(pendingRegions.size());
 		showQuestionPendingStatus();
+	}
+
+	private void updateRegionsScrollPane() {
+		boolean hasRegions = !pendingRegions.isEmpty();
+		regionsScrollPane.setVisible(hasRegions);
+		regionsScrollPane.setManaged(hasRegions);
+		if (!hasRegions) {
+			regionsScrollPane.setPrefHeight(0);
+			return;
+		}
+		double contentHeight = regionPreviewBox.prefHeight(REGION_PREVIEW_WIDTH);
+		regionsScrollPane.setPrefHeight(Math.min(contentHeight + 4, REGIONS_VIEWPORT_HEIGHT));
 	}
 
 	private void resetQuestionEntry() {

@@ -15,6 +15,7 @@ import javafx.application.Application;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
@@ -86,10 +87,21 @@ public class QuestionBankApplication extends Application {
 		return previewPane;
 	}
 
+	private ScrollPane createPreviewScrollPane() {
+		ScrollPane scrollPane = new ScrollPane(createPreviewPane());
+		scrollPane.setFitToWidth(true);
+		scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+		scrollPane.setMinHeight(0);
+		scrollPane.setPrefWidth(PREVIEW_PANE_WIDTH + 18);
+
+		return scrollPane;
+	}
+
 	private BorderPane createRootLayout() {
 		BorderPane root = new BorderPane();
 		root.setTop(examMetadataPane);
-		root.setLeft(createPreviewPane());
+		root.setLeft(createPreviewScrollPane());
 		root.setCenter(pdfWorkspace);
 		return root;
 	}
@@ -149,7 +161,8 @@ public class QuestionBankApplication extends Application {
 				pdfWorkspace::setSelectionCursorEnabled);
 		curriculumSelectorPane = createCurriculumSelectorPane();
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerPdfPicker,
-				this::openAnswerPdf, pdfWorkspace::clearSelection);
+				this::openAnswerPdf, pdfWorkspace::clearSelection, questionExtractor,
+				pdfWorkspace::getAnswerPdfSession);
 		questionCapturePane = new QuestionCapturePane(questionRepository, questionExtractor, curriculumSelectionModel,
 				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
 				pdfWorkspace::clearSelection, answerCapturePane::refreshUnansweredQuestions);

@@ -11,6 +11,7 @@ import java.util.List;
 
 import javax.imageio.ImageIO;
 
+import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 
@@ -82,6 +83,21 @@ public class QuestionExtractor {
 		return cropRegion(page, region);
 	}
 
+	public BufferedImage extractRegion(PdfSession session, AnswerRegion region) throws IOException {
+
+		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
+
+		int left = (int) Math.floor(region.x() * page.getWidth());
+		int top = (int) Math.floor(region.y() * page.getHeight());
+		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
+		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
+
+		right = Math.min(right, page.getWidth());
+		bottom = Math.min(bottom, page.getHeight());
+
+		return page.getSubimage(left, top, right - left, bottom - top);
+	}
+
 	/**
 	 * Extracts non-empty ordered regions from one PDF and stacks them vertically.
 	 * Narrower rendered pages are left-aligned and padded with white to the widest
@@ -90,7 +106,7 @@ public class QuestionExtractor {
 	 * @param session the PDF session containing every region in this call
 	 * @param regions non-empty regions in output order
 	 * @return one combined RGB image
-	 * @throws IOException                  if a page cannot be rendered
+	 * @throws IOException                      if a page cannot be rendered
 	 * @throws java.util.NoSuchElementException if {@code regions} is empty
 	 */
 	public BufferedImage extractRegions(PdfSession session, List<QuestionRegion> regions) throws IOException {

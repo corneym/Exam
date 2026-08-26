@@ -46,14 +46,13 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
-	record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width,
-			double height) {
+	record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width, double height) {
 	}
 
 	private static final float DISPLAY_DPI = 120;
 	private static final double MIN_SELECTION_SIZE = 5.0;
 	private static final double PAGE_CONTROL_SPACING = 10.0;
-	private static final Insets PAGE_CONTROLS_PADDING = new Insets(6);
+	private static final Insets PAGE_CONTROLS_PADDING = new Insets(6, 6, 16, 6);
 
 	private final Pane pagePane = new Pane();
 	private final ImageView pageView = new ImageView();
@@ -105,6 +104,10 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	PdfSession getExamPdfSession() {
 		return examPdfSession;
+	}
+
+	PdfSession getAnswerPdfSession() {
+		return answerPdfSession;
 	}
 
 	int getCurrentPageNumber() {
@@ -195,6 +198,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		ScrollPane scrollPane = new ScrollPane(pagePane);
 		scrollPane.setFitToWidth(true);
 		scrollPane.setFitToHeight(false);
+		scrollPane.setMinHeight(0);
 		VBox.setVgrow(scrollPane, Priority.ALWAYS);
 		return scrollPane;
 	}
@@ -276,8 +280,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		if (event.getButton() != MouseButton.PRIMARY || !selectionAvailable.test(displayedDocument)) {
 			return;
 		}
-		if (selectionRectangle.getWidth() < MIN_SELECTION_SIZE
-				|| selectionRectangle.getHeight() < MIN_SELECTION_SIZE) {
+		if (selectionRectangle.getWidth() < MIN_SELECTION_SIZE || selectionRectangle.getHeight() < MIN_SELECTION_SIZE) {
 			selectionRectangle.setVisible(false);
 			return;
 		}
@@ -314,6 +317,9 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		try {
 			BufferedImage bufferedImage = displayedSession.renderPage(currentPageNumber, DISPLAY_DPI);
 			pageView.setImage(SwingFXUtils.toFXImage(bufferedImage, null));
+			double aspectRatio = (double) bufferedImage.getHeight() / bufferedImage.getWidth();
+			pagePane.prefHeightProperty().unbind();
+			pagePane.prefHeightProperty().bind(pagePane.widthProperty().multiply(aspectRatio));
 			pageLabel.setText(String.format("%s %d of %d", displayedDocument.pageLabel(), currentPageNumber,
 					displayedSession.getPageCount()));
 			previousButton.setDisable(currentPageNumber == 1);
