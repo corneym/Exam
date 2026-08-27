@@ -18,6 +18,14 @@ public final class SqliteDatabase {
 	}
 
 	public Connection openConnection() throws SQLException {
-		return DriverManager.getConnection("jdbc:sqlite:" + databasePath);
+		Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
+
+		try {
+			connection.createStatement().execute("PRAGMA foreign_keys = ON");
+			return connection;
+		} catch (SQLException e) {
+			connection.close();
+			throw e;
+		}
 	}
 }
