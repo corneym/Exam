@@ -11,8 +11,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
 
 class SqliteCurriculumWriterTest {
 
@@ -49,10 +52,9 @@ class SqliteCurriculumWriterTest {
 
 		Subject subject = writer.insertSubject("Chemistry");
 		SyllabusVersion version = writer.insertSyllabusVersion(subject, "2025", true);
-		CurriculumNode unit = writer.insertUnit(version, "1", "Unit 1", 0);
-		CurriculumNode topic = writer.insertChild(unit, CurriculumLevel.TOPIC, "1.1", "Topic 1", 0);
-		CurriculumNode descriptor = writer.insertChild(topic, CurriculumLevel.DESCRIPTOR, "1.1.a",
-				"Students should be able to explain...", 0);
+		Unit unit = writer.insertUnit(version, "1", "Unit 1", 0);
+		Topic topic = writer.insertTopic(unit, "1.1", "Topic 1", 0);
+		Descriptor descriptor = writer.insertDescriptor(topic, "1.1.a", "Students should be able to explain...", 0);
 		assertEquals(CurriculumLevel.DESCRIPTOR, descriptor.getLevel());
 		assertEquals(topic, descriptor.getParent());
 		assertEquals("Students should be able to explain...", descriptor.getName());

@@ -25,9 +25,9 @@ public class CurriculumMapping {
 	 * @param status the mapping's review state
 	 * @throws NullPointerException     if {@code source}, {@code target}, or
 	 *                                  {@code status} is {@code null}
-	 * @throws IllegalArgumentException if the identifier is not positive, the
-	 *                                  nodes have different subjects, or the nodes
-	 *                                  belong to the same syllabus version
+	 * @throws IllegalArgumentException if the identifier is not positive, the nodes
+	 *                                  have different subjects, or the nodes belong
+	 *                                  to the same syllabus version
 	 */
 	public CurriculumMapping(long id, CurriculumNode source, CurriculumNode target, MappingStatus status) {
 
@@ -52,6 +52,9 @@ public class CurriculumMapping {
 		if (source.getSyllabusVersion().equals(target.getSyllabusVersion())) {
 
 			throw new IllegalArgumentException("source and target must belong to different syllabus versions");
+		}
+		if (source.getLevel() != target.getLevel()) {
+			throw new IllegalArgumentException("source and target must be the same curriculum level");
 		}
 
 		this.id = id;

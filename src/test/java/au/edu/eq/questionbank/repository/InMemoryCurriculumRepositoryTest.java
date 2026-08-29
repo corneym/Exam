@@ -9,19 +9,21 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
 
 class InMemoryCurriculumRepositoryTest {
 
 	private Subject chemistry;
 	private SyllabusVersion syllabus2019;
 	private SyllabusVersion syllabus2025;
-	private CurriculumNode unit3;
-	private CurriculumNode topic31;
-	private CurriculumNode subtopic311;
+	private Unit unit3;
+	private Topic topic31;
+	private Subtopic subtopic311;
 
 	private CurriculumRepository repository;
 
@@ -64,20 +66,32 @@ class InMemoryCurriculumRepositoryTest {
 
 	@Test
 	void rejectsDuplicateCurriculumNodeIds() {
-		CurriculumNode duplicate = new CurriculumNode(unit3.getId(), syllabus2025, null, "4", "Unit 4",
-				CurriculumLevel.UNIT, 4);
-
+		Unit duplicate = new Unit(unit3.getId(), syllabus2025, "4", "Unit 4", 4);
 		assertThrows(IllegalArgumentException.class, () -> new InMemoryCurriculumRepository(List.of(chemistry),
 				List.of(syllabus2025), List.of(unit3, duplicate)));
 	}
 
 	@Test
+	void rejectsDuplicateSubjectIds() {
+		Subject duplicate = new Subject(chemistry.getId(), "Physics");
+		assertThrows(IllegalArgumentException.class,
+				() -> new InMemoryCurriculumRepository(List.of(chemistry, duplicate), List.of(syllabus2025),
+						List.of(unit3)));
+	}
+
+	@Test
+	void rejectsDuplicateSyllabusVersionIds() {
+		SyllabusVersion duplicate = new SyllabusVersion(syllabus2025.getId(), chemistry, "2030", false);
+
+		assertThrows(IllegalArgumentException.class, () -> new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus2025, duplicate), List.of(unit3)));
+	}
+
+	@Test
 	void returnsNodesInDisplayOrderThenCodeOrder() {
-		CurriculumNode laterCode = new CurriculumNode(4, syllabus2025, unit3, "3.2", "Topic 3.2", CurriculumLevel.TOPIC,
-				2);
-		CurriculumNode earlierCode = new CurriculumNode(5, syllabus2025, unit3, "3.0", "Topic 3.0",
-				CurriculumLevel.TOPIC, 2);
-		CurriculumNode first = new CurriculumNode(6, syllabus2025, unit3, "3.3", "Topic 3.3", CurriculumLevel.TOPIC, 1);
+		Topic laterCode = new Topic(4, syllabus2025, unit3, "3.2", "Topic 3.2", 2);
+		Topic earlierCode = new Topic(5, syllabus2025, unit3, "3.0", "Topic 3.0", 2);
+		Topic first = new Topic(6, syllabus2025, unit3, "3.3", "Topic 3.3", 1);
 		CurriculumRepository orderedRepository = new InMemoryCurriculumRepository(List.of(chemistry),
 				List.of(syllabus2025), List.of(unit3, laterCode, earlierCode, first));
 
@@ -87,17 +101,11 @@ class InMemoryCurriculumRepositoryTest {
 	@BeforeEach
 	void setUp() {
 		chemistry = new Subject(1, "Chemistry");
-
 		syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
 		syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
-
-		unit3 = new CurriculumNode(1, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 3);
-
-		topic31 = new CurriculumNode(2, syllabus2025, unit3, "3.1", "Topic 3.1", CurriculumLevel.TOPIC, 1);
-
-		subtopic311 = new CurriculumNode(3, syllabus2025, topic31, "3.1.1", "Subtopic 3.1.1", CurriculumLevel.SUBTOPIC,
-				1);
-
+		unit3 = new Unit(1, syllabus2025, "3", "Unit 3", 3);
+		topic31 = new Topic(2, syllabus2025, unit3, "3.1", "Topic 3.1", 1);
+		subtopic311 = new Subtopic(3, syllabus2025, topic31, "3.1.1", "Subtopic 3.1.1", 1);
 		repository = new InMemoryCurriculumRepository(List.of(chemistry), List.of(syllabus2019, syllabus2025),
 				List.of(unit3, topic31, subtopic311));
 	}
@@ -113,22 +121,5 @@ class InMemoryCurriculumRepositoryTest {
 		assertEquals(List.of(chemistry), snapshotRepository.findAllSubjects());
 		assertThrows(UnsupportedOperationException.class,
 				() -> snapshotRepository.findAllSubjects().add(new Subject(2, "Physics")));
-	}
-
-	@Test
-	void rejectsDuplicateSubjectIds() {
-		Subject duplicate = new Subject(chemistry.getId(), "Physics");
-
-		assertThrows(IllegalArgumentException.class,
-				() -> new InMemoryCurriculumRepository(List.of(chemistry, duplicate), List.of(syllabus2025),
-						List.of(unit3)));
-	}
-
-	@Test
-	void rejectsDuplicateSyllabusVersionIds() {
-		SyllabusVersion duplicate = new SyllabusVersion(syllabus2025.getId(), chemistry, "2030", false);
-
-		assertThrows(IllegalArgumentException.class, () -> new InMemoryCurriculumRepository(List.of(chemistry),
-				List.of(syllabus2025, duplicate), List.of(unit3)));
 	}
 }

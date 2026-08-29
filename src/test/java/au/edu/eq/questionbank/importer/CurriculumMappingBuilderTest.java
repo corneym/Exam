@@ -9,12 +9,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumMapping;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.MappingStatus;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.CurriculumRepository;
 import au.edu.eq.questionbank.repository.InMemoryCurriculumRepository;
 
@@ -69,24 +71,14 @@ class CurriculumMappingBuilderTest {
 	@BeforeEach
 	void setUp() {
 		Subject chemistry = new Subject(1, "Chemistry");
-
 		syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
-
 		syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
-
-		CurriculumNode unit2019 = new CurriculumNode(1, syllabus2019, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
-
-		CurriculumNode topic2019 = new CurriculumNode(2, syllabus2019, unit2019, "3.1", "Topic 3.1",
-				CurriculumLevel.TOPIC, 1);
-
-		source = new CurriculumNode(3, syllabus2019, topic2019, "3.1.2", "2019 subtopic", CurriculumLevel.SUBTOPIC, 1);
-
-		CurriculumNode unit2025 = new CurriculumNode(4, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
-
-		CurriculumNode topic2025 = new CurriculumNode(5, syllabus2025, unit2025, "3.2", "Topic 3.2",
-				CurriculumLevel.TOPIC, 1);
-
-		target = new CurriculumNode(6, syllabus2025, topic2025, "3.2.1", "2025 subtopic", CurriculumLevel.SUBTOPIC, 1);
+		Unit unit2019 = new Unit(1, syllabus2019, "3", "Unit 3", 1);
+		Topic topic2019 = new Topic(2, syllabus2019, unit2019, "3.1", "Topic 3.1", 1);
+		source = new Subtopic(3, syllabus2019, topic2019, "3.1.2", "2019 subtopic", 1);
+		Unit unit2025 = new Unit(4, syllabus2025, "3", "Unit 3", 1);
+		Topic topic2025 = new Topic(5, syllabus2025, unit2025, "3.2", "Topic 3.2", 1);
+		target = new Subtopic(6, syllabus2025, topic2025, "3.2.1", "2025 subtopic", 1);
 		repository = new InMemoryCurriculumRepository(List.of(chemistry), List.of(syllabus2019, syllabus2025),
 				List.of(unit2019, topic2019, source, unit2025, topic2025, target));
 	}

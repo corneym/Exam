@@ -6,10 +6,10 @@ import java.util.Objects;
  * One node in a versioned syllabus hierarchy.
  * <p>
  * Units are roots; topics belong to units, subtopics belong to topics, and
- * descriptors belong to subtopics. A child and parent must belong to the same
- * {@link SyllabusVersion}. Nodes use persistent identifier equality.
+ * descriptors belong to topics or subtopics. A child and parent must belong to
+ * the same {@link SyllabusVersion}. Nodes use persistent identifier equality.
  */
-public class CurriculumNode {
+public abstract class CurriculumNode {
 
 	private final long id;
 	private final SyllabusVersion syllabusVersion;
@@ -35,7 +35,7 @@ public class CurriculumNode {
 	 * @throws IllegalArgumentException if identity, text, ordering, parent level,
 	 *                                  or syllabus ownership is invalid
 	 */
-	public CurriculumNode(long id, SyllabusVersion syllabusVersion, CurriculumNode parent, String code, String name,
+	protected CurriculumNode(long id, SyllabusVersion syllabusVersion, CurriculumNode parent, String code, String name,
 			CurriculumLevel level, int displayOrder) {
 
 		if (id < 1) {

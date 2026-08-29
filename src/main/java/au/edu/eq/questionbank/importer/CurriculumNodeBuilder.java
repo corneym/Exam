@@ -7,9 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.LongSupplier;
 
-import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
 
 /**
  * Builds a de-duplicated unit/topic/subtopic hierarchy from normalized import
@@ -20,17 +22,16 @@ public class CurriculumNodeBuilder {
 	/**
 	 * Builds curriculum nodes in first-appearance order.
 	 * <p>
-	 * Classification codes must contain exactly three dot-separated parts.
-	 * Repeated codes reuse existing nodes and must retain the same names.
+	 * Classification codes must contain exactly three dot-separated parts. Repeated
+	 * codes reuse existing nodes and must retain the same names.
 	 *
 	 * @param syllabusVersion the version that owns every generated node
 	 * @param rows            normalized curriculum rows
 	 * @param idSupplier      source of a new persistent identifier for each node
 	 * @return an immutable list containing parents before their children
 	 * @throws NullPointerException     if an argument is {@code null}
-	 * @throws IllegalArgumentException if a classification code has the wrong
-	 *                                  shape or a repeated code has conflicting
-	 *                                  names
+	 * @throws IllegalArgumentException if a classification code has the wrong shape
+	 *                                  or a repeated code has conflicting names
 	 */
 	public List<CurriculumNode> build(SyllabusVersion syllabusVersion, List<CurriculumImportRow> rows,
 			LongSupplier idSupplier) {
@@ -47,9 +48,9 @@ public class CurriculumNodeBuilder {
 
 		List<CurriculumNode> nodes = new ArrayList<>();
 
-		Map<String, CurriculumNode> units = new LinkedHashMap<>();
-		Map<String, CurriculumNode> topics = new LinkedHashMap<>();
-		Map<String, CurriculumNode> subtopics = new LinkedHashMap<>();
+		Map<String, Unit> units = new LinkedHashMap<>();
+		Map<String, Topic> topics = new LinkedHashMap<>();
+		Map<String, Subtopic> subtopics = new LinkedHashMap<>();
 
 		Map<String, Integer> nextTopicOrder = new HashMap<>();
 		Map<String, Integer> nextSubtopicOrder = new HashMap<>();
@@ -68,26 +69,21 @@ public class CurriculumNodeBuilder {
 			String topicCode = parts[0] + "." + parts[1];
 			String subtopicCode = row.classificationCode();
 
-			CurriculumNode unit = units.get(unitCode);
+			Unit unit = units.get(unitCode);
 
 			if (unit == null) {
-				unit = new CurriculumNode(idSupplier.getAsLong(), syllabusVersion, null, unitCode, row.unitName(),
-						CurriculumLevel.UNIT, nextUnitOrder++);
-
+				unit = new Unit(idSupplier.getAsLong(), syllabusVersion, unitCode, row.unitName(), nextUnitOrder++);
 				units.put(unitCode, unit);
 				nodes.add(unit);
 			} else {
 				checkName(unit, row.unitName());
 			}
 
-			CurriculumNode topic = topics.get(topicCode);
+			Topic topic = topics.get(topicCode);
 
 			if (topic == null) {
 				int order = nextTopicOrder.getOrDefault(unitCode, 1);
-
-				topic = new CurriculumNode(idSupplier.getAsLong(), syllabusVersion, unit, topicCode, row.topicName(),
-						CurriculumLevel.TOPIC, order);
-
+				topic = new Topic(idSupplier.getAsLong(), syllabusVersion, unit, topicCode, row.topicName(), order);
 				topics.put(topicCode, topic);
 				nodes.add(topic);
 				nextTopicOrder.put(unitCode, order + 1);
@@ -95,13 +91,13 @@ public class CurriculumNodeBuilder {
 				checkName(topic, row.topicName());
 			}
 
-			CurriculumNode subtopic = subtopics.get(subtopicCode);
+			Subtopic subtopic = subtopics.get(subtopicCode);
 
 			if (subtopic == null) {
 				int order = nextSubtopicOrder.getOrDefault(topicCode, 1);
 
-				subtopic = new CurriculumNode(idSupplier.getAsLong(), syllabusVersion, topic, subtopicCode,
-						row.subtopicName(), CurriculumLevel.SUBTOPIC, order);
+				subtopic = new Subtopic(idSupplier.getAsLong(), syllabusVersion, topic, subtopicCode,
+						row.subtopicName(), order);
 
 				subtopics.put(subtopicCode, subtopic);
 				nodes.add(subtopic);

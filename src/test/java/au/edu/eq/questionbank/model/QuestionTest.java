@@ -21,30 +21,25 @@ class QuestionTest {
 	private CurriculumNode createClassification() {
 		Subject subject = new Subject(1, "Science");
 		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
-		CurriculumNode unit = new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
-		CurriculumNode topic = new CurriculumNode(2, syllabus, unit, "1.1", "Topic 1", CurriculumLevel.TOPIC, 1);
-		return new CurriculumNode(3, syllabus, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 1);
+		Unit unit = new Unit(1, syllabus, "1", "Unit 1", 1);
+		Topic topic = new Topic(2, syllabus, unit, "1.1", "Topic 1", 1);
+		return new Subtopic(3, syllabus, topic, "1.1.1", "Subtopic 1", 1);
 	}
 
 	private CurriculumNode createInvalidClassification() {
 		Subject subject = new Subject(1, "Science");
 		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
-		return new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
+		return new Unit(1, syllabus, "1", "Unit 1", 1);
 	}
 
 	@Test
 	void acceptsAnswerRegionsFromTheSameExam() {
 		Question question = new Question(1, exam, "Q1", "Question",
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 0.5)), createClassification());
-
 		AnswerFile answerFile = new AnswerFile(1, exam, "Marking guide", new SourceDocument(10, "answers.pdf"));
-
 		AnswerRegion answerRegion = new AnswerRegion(answerFile, 2, 0.1, 0.2, 0.8, 0.3);
-
 		Answer answer = new Answer(1, null, List.of(answerRegion));
-
 		question.setAnswer(answer);
-
 		assertSame(answer, question.getAnswer());
 	}
 

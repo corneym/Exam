@@ -21,7 +21,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -30,7 +29,10 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
 
 class QuestionExtractorTest {
 
@@ -46,26 +48,9 @@ class QuestionExtractorTest {
 	private CurriculumNode createClassification() {
 		Subject subject = new Subject(1, "Science");
 		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
-		CurriculumNode unit = new CurriculumNode(1, syllabus, null, "1", "Unit 1", CurriculumLevel.UNIT, 1);
-		CurriculumNode topic = new CurriculumNode(2, syllabus, unit, "1.1", "Topic 1", CurriculumLevel.TOPIC, 1);
-		return new CurriculumNode(3, syllabus, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 1);
-	}
-
-	private Path createPdf(PageSpec... pages) throws IOException {
-		Path pdf = tempDir.resolve("source-" + System.nanoTime() + ".pdf");
-		try (PDDocument document = new PDDocument()) {
-			for (PageSpec pageSpec : pages) {
-				PDPage page = new PDPage(new PDRectangle(pageSpec.width(), pageSpec.height()));
-				document.addPage(page);
-				try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-					content.setNonStrokingColor(pageSpec.color());
-					content.addRect(0, 0, pageSpec.width(), pageSpec.height());
-					content.fill();
-				}
-			}
-			document.save(pdf.toFile());
-		}
-		return pdf;
+		Unit unit = new Unit(1, syllabus, "1", "Unit 1", 1);
+		Topic topic = new Topic(2, syllabus, unit, "1.1", "Topic 1", 1);
+		return new Subtopic(3, syllabus, topic, "1.1.1", "Subtopic 1", 1);
 	}
 
 	private Path createHorizontallySplitPdf(Color leftColor, Color rightColor) throws IOException {
@@ -80,6 +65,23 @@ class QuestionExtractorTest {
 				content.setNonStrokingColor(rightColor);
 				content.addRect(36, 0, 36, 72);
 				content.fill();
+			}
+			document.save(pdf.toFile());
+		}
+		return pdf;
+	}
+
+	private Path createPdf(PageSpec... pages) throws IOException {
+		Path pdf = tempDir.resolve("source-" + System.nanoTime() + ".pdf");
+		try (PDDocument document = new PDDocument()) {
+			for (PageSpec pageSpec : pages) {
+				PDPage page = new PDPage(new PDRectangle(pageSpec.width(), pageSpec.height()));
+				document.addPage(page);
+				try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+					content.setNonStrokingColor(pageSpec.color());
+					content.addRect(0, 0, pageSpec.width(), pageSpec.height());
+					content.fill();
+				}
 			}
 			document.save(pdf.toFile());
 		}
@@ -147,8 +149,7 @@ class QuestionExtractorTest {
 	void padsNarrowerRegionsWithWhiteWhenCombining() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(36, 72, Color.BLUE));
 		Path output = tempDir.resolve("different-widths.png");
-		Question question = new Question(3,
-				booklet.getExam(), "Q2", "Different widths",
+		Question question = new Question(3, booklet.getExam(), "Q2", "Different widths",
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0),
 						new QuestionRegion(booklet, 2, 0.0, 0.0, 1.0, 1.0)),
 				createClassification());
@@ -159,18 +160,6 @@ class QuestionExtractorTest {
 		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(300, image.getHeight()),
 				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(25, 225)),
 				() -> assertEquals(Color.WHITE.getRGB(), image.getRGB(125, 225)));
-	}
-
-	@Test
-	void preservesAtLeastOnePixelForAVeryShortRegion() throws Exception {
-		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
-		Path output = tempDir.resolve("very-short-region.png");
-
-		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0.0, 0.5, 1.0, 0.001), output.toFile());
-
-		BufferedImage image = readImage(output);
-
-		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(1, image.getHeight()));
 	}
 
 	@Test
@@ -186,13 +175,24 @@ class QuestionExtractorTest {
 	}
 
 	@Test
+	void preservesAtLeastOnePixelForAVeryShortRegion() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
+		Path output = tempDir.resolve("very-short-region.png");
+
+		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0.0, 0.5, 1.0, 0.001), output.toFile());
+
+		BufferedImage image = readImage(output);
+
+		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(1, image.getHeight()));
+	}
+
+	@Test
 	void rejectsARegionWhosePageIsOutsideTheDocument() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
 
 		try (PdfSession session = PdfSession.open(pdf)) {
 			assertThrows(IllegalArgumentException.class,
-					() -> extractor.extractRegion(session,
-							new QuestionRegion(booklet, 2, 0.0, 0.0, 1.0, 1.0)));
+					() -> extractor.extractRegion(session, new QuestionRegion(booklet, 2, 0.0, 0.0, 1.0, 1.0)));
 		}
 	}
 

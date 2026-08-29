@@ -7,97 +7,37 @@ import java.sql.SQLException;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
 
 public final class SqliteCurriculumWriter {
 
 	private final SqliteDatabase database;
-	private final Connection connection;
 
 	public SqliteCurriculumWriter(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");
 		}
 		this.database = database;
-		this.connection = null;
 	}
 
-	SqliteCurriculumWriter(Connection connection) {
-		if (connection == null) {
-			throw new NullPointerException("connection");
-		}
-		this.database = null;
-		this.connection = connection;
+	public Descriptor insertDescriptor(Subtopic parent, String code, String name, int displayOrder)
+			throws SQLException {
+
+		long id = insertChild(parent, CurriculumLevel.DESCRIPTOR, code, name, displayOrder);
+
+		return new Descriptor(id, parent.getSyllabusVersion(), parent, code, name, displayOrder);
 	}
 
-	public CurriculumNode insertChild(CurriculumNode parent, CurriculumLevel level, String code, String name,
-			int displayOrder) throws SQLException {
+	public Descriptor insertDescriptor(Topic parent, String code, String name, int displayOrder) throws SQLException {
 
-		if (parent == null) {
-			throw new NullPointerException("parent");
-		}
-		if (level == null) {
-			throw new NullPointerException("level");
-		}
+		long id = insertChild(parent, CurriculumLevel.DESCRIPTOR, code, name, displayOrder);
 
-		boolean validParent = false;
-		switch (level) {
-		case TOPIC:
-			validParent = parent.getLevel() == CurriculumLevel.UNIT;
-			break;
-		case SUBTOPIC:
-			validParent = parent.getLevel() == CurriculumLevel.TOPIC;
-			break;
-		case DESCRIPTOR:
-			validParent = parent.getLevel() == CurriculumLevel.TOPIC
-					|| parent.getLevel() == CurriculumLevel.SUBTOPIC;
-			break;
-		case UNIT:
-			validParent = false;
-			break;
-		}
-
-		if (!validParent) {
-			throw new IllegalArgumentException(level + " has invalid parent level " + parent.getLevel());
-		}
-
-		if (code == null || code.isBlank()) {
-			throw new IllegalArgumentException("code must not be blank");
-		}
-		if (name == null || name.isBlank()) {
-			throw new IllegalArgumentException("name must not be blank");
-		}
-		if (displayOrder < 0) {
-			throw new IllegalArgumentException("displayOrder must not be negative");
-		}
-
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						INSERT INTO curriculum_nodes
-							(syllabus_version_id, parent_id,
-							 curriculum_code, curriculum_name,
-							 curriculum_level, display_order)
-						VALUES (?, ?, ?, ?, ?, ?)
-						RETURNING id
-						""")) {
-
-			statement.setLong(1, parent.getSyllabusVersion().getId());
-			statement.setLong(2, parent.getId());
-			statement.setString(3, code);
-			statement.setString(4, name);
-			statement.setString(5, level.name());
-			statement.setInt(6, displayOrder);
-
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new SQLException("Curriculum node insert did not return an id");
-				}
-
-				return new CurriculumNode(result.getLong("id"), parent.getSyllabusVersion(), parent, code, name, level,
-						displayOrder);
-			}
-		}
+		return new Descriptor(id, parent.getSyllabusVersion(), parent, code, name, displayOrder);
 	}
 
 	public Subject insertSubject(String subjectName) throws SQLException {
@@ -122,6 +62,13 @@ public final class SqliteCurriculumWriter {
 				return new Subject(result.getLong("id"), subjectName);
 			}
 		}
+	}
+
+	public Subtopic insertSubtopic(Topic parent, String code, String name, int displayOrder) throws SQLException {
+
+		long id = insertChild(parent, CurriculumLevel.SUBTOPIC, code, name, displayOrder);
+
+		return new Subtopic(id, parent.getSyllabusVersion(), parent, code, name, displayOrder);
 	}
 
 	public SyllabusVersion insertSyllabusVersion(Subject subject, String syllabusName, boolean current)
@@ -157,7 +104,13 @@ public final class SqliteCurriculumWriter {
 		}
 	}
 
-	public CurriculumNode insertUnit(SyllabusVersion syllabusVersion, String code, String name, int displayOrder)
+	public Topic insertTopic(Unit parent, String code, String name, int displayOrder) throws SQLException {
+		long id = insertChild(parent, CurriculumLevel.TOPIC, code, name, displayOrder);
+
+		return new Topic(id, parent.getSyllabusVersion(), parent, code, name, displayOrder);
+	}
+
+	public Unit insertUnit(SyllabusVersion syllabusVersion, String code, String name, int displayOrder)
 			throws SQLException {
 
 		if (syllabusVersion == null) {
@@ -194,8 +147,52 @@ public final class SqliteCurriculumWriter {
 					throw new SQLException("Curriculum unit insert did not return an id");
 				}
 
-				return new CurriculumNode(result.getLong("id"), syllabusVersion, null, code, name, CurriculumLevel.UNIT,
-						displayOrder);
+				return new Unit(result.getLong("id"), syllabusVersion, code, name, displayOrder);
+			}
+		}
+	}
+
+	private long insertChild(CurriculumNode parent, CurriculumLevel level, String code, String name, int displayOrder)
+			throws SQLException {
+
+		if (parent == null) {
+			throw new NullPointerException("parent");
+		}
+		if (code == null || code.isBlank()) {
+			throw new IllegalArgumentException("code must not be blank");
+		}
+		if (name == null || name.isBlank()) {
+			throw new IllegalArgumentException("name must not be blank");
+		}
+		if (displayOrder < 0) {
+			throw new IllegalArgumentException("displayOrder must not be negative");
+		}
+
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						INSERT INTO curriculum_nodes
+							(syllabus_version_id, parent_id,
+							 curriculum_code, curriculum_name,
+							 curriculum_level, display_order)
+						VALUES (?, ?, ?, ?, ?, ?)
+						RETURNING id
+						""")) {
+
+			statement.setLong(1, parent.getSyllabusVersion().getId());
+
+			statement.setLong(2, parent.getId());
+
+			statement.setString(3, code);
+			statement.setString(4, name);
+			statement.setString(5, level.name());
+			statement.setInt(6, displayOrder);
+
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Curriculum node insert did not return an id");
+				}
+
+				return result.getLong("id");
 			}
 		}
 	}
