@@ -6,7 +6,7 @@ import java.util.Objects;
  * One node in a versioned syllabus hierarchy.
  * <p>
  * Units are roots; topics belong to units, subtopics belong to topics, and
- * sub-subtopics belong to subtopics. A child and parent must belong to the same
+ * descriptors belong to subtopics. A child and parent must belong to the same
  * {@link SyllabusVersion}. Nodes use persistent identifier equality.
  */
 public class CurriculumNode {
@@ -61,20 +61,26 @@ public class CurriculumNode {
 			if (parent == null) {
 				throw new IllegalArgumentException(level + " must have a parent");
 			}
-
 			if (!parent.getSyllabusVersion().equals(syllabusVersion)) {
 				throw new IllegalArgumentException("parent must belong to the same syllabus version");
 			}
-
-			CurriculumLevel expectedParentLevel = switch (level) {
-			case TOPIC -> CurriculumLevel.UNIT;
-			case SUBTOPIC -> CurriculumLevel.TOPIC;
-			case SUBSUBTOPIC -> CurriculumLevel.SUBTOPIC;
-			case UNIT -> throw new IllegalStateException();
-			};
-
-			if (parent.getLevel() != expectedParentLevel) {
-				throw new IllegalArgumentException(level + " must have a " + expectedParentLevel + " parent");
+			boolean validParent = false;
+			switch (level) {
+			case TOPIC:
+				validParent = parent.getLevel() == CurriculumLevel.UNIT;
+				break;
+			case SUBTOPIC:
+				validParent = parent.getLevel() == CurriculumLevel.TOPIC;
+				break;
+			case DESCRIPTOR:
+				validParent = parent.getLevel() == CurriculumLevel.TOPIC
+						|| parent.getLevel() == CurriculumLevel.SUBTOPIC;
+				break;
+			case UNIT:
+				throw new IllegalStateException();
+			}
+			if (!validParent) {
+				throw new IllegalArgumentException(level + " has invalid parent level " + parent.getLevel());
 			}
 		}
 		if (displayOrder < 0) {

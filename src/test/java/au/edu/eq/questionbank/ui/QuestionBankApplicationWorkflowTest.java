@@ -102,8 +102,14 @@ class QuestionBankApplicationWorkflowTest {
 		robot.clickOn("#save-question");
 		WaitForAsyncUtils.waitForFxEvents();
 
-		Question savedQuestion = unansweredQuestions(robot).getItems().stream()
-				.filter(question -> questionCode.equals(question.getQuestionCode())).findFirst().orElse(null);
+		Question savedQuestion = null;
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		for (Question question : unansweredQuestions.getItems()) {
+			if (questionCode.equals(question.getQuestionCode())) {
+				savedQuestion = question;
+				break;
+			}
+		}
 		assertNotNull(savedQuestion);
 		return savedQuestion;
 	}

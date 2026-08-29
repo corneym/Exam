@@ -43,7 +43,9 @@ public class ExamMetadataOptionsRepository {
 			return List.of();
 		}
 
-		return Arrays.stream(stored.split("\\|")).sorted(String.CASE_INSENSITIVE_ORDER).toList();
+		String[] values = stored.split("\\|");
+		Arrays.sort(values, String.CASE_INSENSITIVE_ORDER);
+		return List.copyOf(Arrays.asList(values));
 	}
 
 	private void addValue(String key, String value) {
@@ -55,7 +57,13 @@ public class ExamMetadataOptionsRepository {
 
 		List<String> values = getValues(key);
 
-		boolean alreadyExists = values.stream().anyMatch(existing -> existing.equalsIgnoreCase(trimmed));
+		boolean alreadyExists = false;
+		for (String existing : values) {
+			if (existing.equalsIgnoreCase(trimmed)) {
+				alreadyExists = true;
+				break;
+			}
+		}
 
 		if (alreadyExists) {
 			return;

@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.repository;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -42,13 +43,23 @@ public class InMemoryCurriculumMappingRepository implements CurriculumMappingRep
 
 	@Override
 	public List<CurriculumMapping> findSources(CurriculumNode target) {
-
-		return mappings.stream().filter(mapping -> mapping.getTarget().equals(target)).toList();
+		List<CurriculumMapping> sources = new ArrayList<>();
+		for (CurriculumMapping mapping : mappings) {
+			if (mapping.getTarget().equals(target)) {
+				sources.add(mapping);
+			}
+		}
+		return List.copyOf(sources);
 	}
 
 	@Override
 	public List<CurriculumMapping> findTargets(CurriculumNode source) {
-
-		return mappings.stream().filter(mapping -> mapping.getSource().equals(source)).toList();
+		List<CurriculumMapping> targets = new ArrayList<>();
+		for (CurriculumMapping mapping : mappings) {
+			if (mapping.getSource().equals(source)) {
+				targets.add(mapping);
+			}
+		}
+		return List.copyOf(targets);
 	}
 }

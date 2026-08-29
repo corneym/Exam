@@ -11,28 +11,43 @@ import org.junit.jupiter.api.Test;
 class CurriculumNodeTest {
 
 	private Subject chemistry;
-	private SyllabusVersion syllabus;
+	private SyllabusVersion syllabusVersion;
+	private CurriculumNode unit;
+	private CurriculumNode topic;
+	private CurriculumNode subtopic;
 
 	@Test
 	void acceptsValidUnitTopicSubtopicHierarchy() {
 		Subject chemistry = new Subject(1, "Chemistry");
 
 		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
-
 		CurriculumNode unit3 = new CurriculumNode(1, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
-
 		CurriculumNode topic31 = new CurriculumNode(2, syllabus2025, unit3, "3.1", "Topic 3.1", CurriculumLevel.TOPIC,
 				1);
-
 		new CurriculumNode(3, syllabus2025, topic31, "3.1.1", "Subtopic 3.1.1", CurriculumLevel.SUBTOPIC, 1);
 	}
 
 	@Test
-	void equalityUsesNodeIdentity() {
-		CurriculumNode first = new CurriculumNode(7, syllabus, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
-		CurriculumNode sameId = new CurriculumNode(7, syllabus, null, "4", "Unit 4", CurriculumLevel.UNIT, 2);
-		CurriculumNode differentId = new CurriculumNode(8, syllabus, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
+	void descriptorMayBelongDirectlyToTopic() {
+		CurriculumNode descriptor = new CurriculumNode(4, syllabusVersion, topic, "1.1.a", "Descriptor text",
+				CurriculumLevel.DESCRIPTOR, 0);
+		assertEquals(topic, descriptor.getParent());
+	}
 
+	@Test
+	void descriptorMayBelongToSubtopic() {
+		CurriculumNode descriptor = new CurriculumNode(5, syllabusVersion, subtopic, "1.1.1.a", "Descriptor text",
+				CurriculumLevel.DESCRIPTOR, 0);
+
+		assertEquals(subtopic, descriptor.getParent());
+	}
+
+	@Test
+	void equalityUsesNodeIdentity() {
+		CurriculumNode first = new CurriculumNode(7, syllabusVersion, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
+		CurriculumNode sameId = new CurriculumNode(7, syllabusVersion, null, "4", "Unit 4", CurriculumLevel.UNIT, 2);
+		CurriculumNode differentId = new CurriculumNode(8, syllabusVersion, null, "3", "Unit 3", CurriculumLevel.UNIT,
+				1);
 		assertEquals(first, sameId);
 		assertEquals(first.hashCode(), sameId.hashCode());
 		assertNotEquals(first, differentId);
@@ -40,9 +55,9 @@ class CurriculumNodeTest {
 
 	@Test
 	void exposesNodeValuesAndReadableText() {
-		CurriculumNode unit = new CurriculumNode(10, syllabus, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
+		CurriculumNode unit = new CurriculumNode(10, syllabusVersion, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
 
-		assertAll(() -> assertEquals(10, unit.getId()), () -> assertEquals(syllabus, unit.getSyllabusVersion()),
+		assertAll(() -> assertEquals(10, unit.getId()), () -> assertEquals(syllabusVersion, unit.getSyllabusVersion()),
 				() -> assertEquals("3", unit.getCode()), () -> assertEquals("Unit 3", unit.getName()),
 				() -> assertEquals(CurriculumLevel.UNIT, unit.getLevel()),
 				() -> assertEquals(1, unit.getDisplayOrder()), () -> assertEquals("3 Unit 3", unit.toString()));
@@ -54,7 +69,7 @@ class CurriculumNodeTest {
 		CurriculumNode parent = new CurriculumNode(1, other, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
 
 		assertThrows(IllegalArgumentException.class,
-				() -> new CurriculumNode(2, syllabus, parent, "3.1", "Topic 1", CurriculumLevel.TOPIC, 1));
+				() -> new CurriculumNode(2, syllabusVersion, parent, "3.1", "Topic 1", CurriculumLevel.TOPIC, 1));
 	}
 
 	@Test
@@ -63,13 +78,23 @@ class CurriculumNodeTest {
 				() -> assertThrows(NullPointerException.class,
 						() -> new CurriculumNode(1, null, null, "1", "Unit", CurriculumLevel.UNIT, 0)),
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> new CurriculumNode(1, syllabus, null, " ", "Unit", CurriculumLevel.UNIT, 0)),
+						() -> new CurriculumNode(1, syllabusVersion, null, " ", "Unit", CurriculumLevel.UNIT, 0)),
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> new CurriculumNode(1, syllabus, null, "1", " ", CurriculumLevel.UNIT, 0)),
+						() -> new CurriculumNode(1, syllabusVersion, null, "1", " ", CurriculumLevel.UNIT, 0)),
 				() -> assertThrows(NullPointerException.class,
-						() -> new CurriculumNode(1, syllabus, null, "1", "Unit", null, 0)),
+						() -> new CurriculumNode(1, syllabusVersion, null, "1", "Unit", null, 0)),
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> new CurriculumNode(1, syllabus, null, "1", "Unit", CurriculumLevel.UNIT, -1)));
+						() -> new CurriculumNode(1, syllabusVersion, null, "1", "Unit", CurriculumLevel.UNIT, -1)));
+	}
+
+	@Test
+	void rejectsNegativeId() {
+		Subject chemistry = new Subject(1, "Chemistry");
+
+		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> new CurriculumNode(-1, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1));
 	}
 
 	@Test
@@ -85,13 +110,9 @@ class CurriculumNodeTest {
 	@Test
 	void rejectsParentFromDifferentSyllabusVersion() {
 		Subject chemistry = new Subject(1, "Chemistry");
-
 		SyllabusVersion syllabus2019 = new SyllabusVersion(1, chemistry, "2019", false);
-
 		SyllabusVersion syllabus2025 = new SyllabusVersion(2, chemistry, "2025", true);
-
 		CurriculumNode unit2019 = new CurriculumNode(1, syllabus2019, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new CurriculumNode(2, syllabus2025, unit2019, "3.1", "Topic 3.1", CurriculumLevel.TOPIC, 1));
 	}
@@ -99,11 +120,8 @@ class CurriculumNodeTest {
 	@Test
 	void rejectsSubtopicDirectlyUnderUnit() {
 		Subject chemistry = new Subject(1, "Chemistry");
-
 		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
-
 		CurriculumNode unit3 = new CurriculumNode(1, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
-
 		assertThrows(IllegalArgumentException.class, () -> new CurriculumNode(2, syllabus2025, unit3, "3.1.1",
 				"Subtopic 3.1.1", CurriculumLevel.SUBTOPIC, 1));
 	}
@@ -111,9 +129,7 @@ class CurriculumNodeTest {
 	@Test
 	void rejectsTopicWithoutParent() {
 		Subject chemistry = new Subject(1, "Chemistry");
-
 		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new CurriculumNode(1, syllabus2025, null, "3.1", "Topic 3.1", CurriculumLevel.TOPIC, 1));
 	}
@@ -121,11 +137,8 @@ class CurriculumNodeTest {
 	@Test
 	void rejectsUnitWithParent() {
 		Subject chemistry = new Subject(1, "Chemistry");
-
 		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
-
 		CurriculumNode parentUnit = new CurriculumNode(1, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new CurriculumNode(2, syllabus2025, parentUnit, "4", "Unit 4", CurriculumLevel.UNIT, 2));
 	}
@@ -133,26 +146,17 @@ class CurriculumNodeTest {
 	@Test
 	void rejectsZeroId() {
 		Subject chemistry = new Subject(1, "Chemistry");
-
 		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new CurriculumNode(0, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1));
-	}
-
-	@Test
-	void rejectsNegativeId() {
-		Subject chemistry = new Subject(1, "Chemistry");
-
-		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
-
-		assertThrows(IllegalArgumentException.class,
-				() -> new CurriculumNode(-1, syllabus2025, null, "3", "Unit 3", CurriculumLevel.UNIT, 1));
 	}
 
 	@BeforeEach
 	void setUp() {
 		chemistry = new Subject(1, "Chemistry");
-		syllabus = new SyllabusVersion(1, chemistry, "2025", true);
+		syllabusVersion = new SyllabusVersion(1, chemistry, "2025", true);
+		unit = new CurriculumNode(1, syllabusVersion, null, "1", "Unit 1", CurriculumLevel.UNIT, 0);
+		topic = new CurriculumNode(2, syllabusVersion, unit, "1.1", "Topic 1", CurriculumLevel.TOPIC, 0);
+		subtopic = new CurriculumNode(3, syllabusVersion, topic, "1.1.1", "Subtopic 1", CurriculumLevel.SUBTOPIC, 0);
 	}
 }

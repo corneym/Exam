@@ -1,7 +1,6 @@
 package au.edu.eq.questionbank.ui.model;
 
 import java.util.List;
-import java.util.Objects;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
@@ -31,7 +30,10 @@ public class CurriculumSelectionModel {
 	 * @throws NullPointerException if {@code repository} is {@code null}
 	 */
 	public CurriculumSelectionModel(CurriculumRepository repository) {
-		this.repository = Objects.requireNonNull(repository, "repository");
+		if (repository == null) {
+			throw new NullPointerException("repository");
+		}
+		this.repository = repository;
 	}
 
 	public List<Subject> getSubjects() {
@@ -93,9 +95,15 @@ public class CurriculumSelectionModel {
 			return;
 		}
 
-		syllabusVersion = repository.findVersionsForSubject(subject).stream().filter(SyllabusVersion::isCurrent)
-				.findFirst().orElseThrow(() -> new IllegalStateException(
-						"No current syllabus version for subject: " + subject.getName()));
+		List<SyllabusVersion> versions = repository.findVersionsForSubject(subject);
+		for (SyllabusVersion version : versions) {
+			if (version.isCurrent()) {
+				syllabusVersion = version;
+				return;
+			}
+		}
+
+		throw new IllegalStateException("No current syllabus version for subject: " + subject.getName());
 	}
 
 	/**

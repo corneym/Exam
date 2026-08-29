@@ -3,7 +3,6 @@ package au.edu.eq.questionbank.pdf;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Objects;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -27,7 +26,9 @@ public class PdfSession implements AutoCloseable {
 	 * @throws NullPointerException if {@code pdfPath} is {@code null}
 	 */
 	public static PdfSession open(Path pdfPath) throws IOException {
-		Objects.requireNonNull(pdfPath, "pdfPath");
+		if (pdfPath == null) {
+			throw new NullPointerException("pdfPath");
+		}
 		PDDocument document = Loader.loadPDF(pdfPath.toFile());
 		return new PdfSession(document);
 	}

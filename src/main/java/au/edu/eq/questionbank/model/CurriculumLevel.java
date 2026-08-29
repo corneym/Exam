@@ -5,5 +5,5 @@ package au.edu.eq.questionbank.model;
  * to its most specific descriptor level.
  */
 public enum CurriculumLevel {
-	UNIT, TOPIC, SUBTOPIC, SUBSUBTOPIC
+	UNIT, TOPIC, SUBTOPIC, DESCRIPTOR
 }

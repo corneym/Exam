@@ -5,7 +5,6 @@ import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.util.Objects;
 import java.util.Properties;
 
 /**
@@ -27,8 +26,12 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot) {
 	 * @throws NullPointerException if either root is {@code null}
 	 */
 	public ApplicationConfig {
-		Objects.requireNonNull(pdfDataRoot, "pdfDataRoot");
-		Objects.requireNonNull(curriculumDataRoot, "curriculumDataRoot");
+		if (pdfDataRoot == null) {
+			throw new NullPointerException("pdfDataRoot");
+		}
+		if (curriculumDataRoot == null) {
+			throw new NullPointerException("curriculumDataRoot");
+		}
 	}
 
 	/**
@@ -44,7 +47,9 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot) {
 	 */
 	public static ApplicationConfig load(Path propertiesFile) throws IOException {
 
-		Objects.requireNonNull(propertiesFile, "propertiesFile");
+		if (propertiesFile == null) {
+			throw new NullPointerException("propertiesFile");
+		}
 		Properties properties = new Properties();
 		try (Reader reader = Files.newBufferedReader(propertiesFile)) {
 			properties.load(reader);

@@ -3,7 +3,6 @@ package au.edu.eq.questionbank.ui;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -119,7 +118,9 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	void openAnswerPdf(Path path) {
-		Objects.requireNonNull(path, "path");
+		if (path == null) {
+			throw new NullPointerException("path");
+		}
 		closeExistingAnswerPdfSession();
 
 		try {
@@ -134,7 +135,9 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	void openExamPdf(Path path) {
-		Objects.requireNonNull(path, "path");
+		if (path == null) {
+			throw new NullPointerException("path");
+		}
 		try {
 			if (examPdfSession != null) {
 				examPdfSession.close();
@@ -150,15 +153,24 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	void setPageChangeHandler(Runnable pageChangeHandler) {
-		this.pageChangeHandler = Objects.requireNonNull(pageChangeHandler, "pageChangeHandler");
+		if (pageChangeHandler == null) {
+			throw new NullPointerException("pageChangeHandler");
+		}
+		this.pageChangeHandler = pageChangeHandler;
 	}
 
 	void setSelectionAvailable(Predicate<DocumentMode> selectionAvailable) {
-		this.selectionAvailable = Objects.requireNonNull(selectionAvailable, "selectionAvailable");
+		if (selectionAvailable == null) {
+			throw new NullPointerException("selectionAvailable");
+		}
+		this.selectionAvailable = selectionAvailable;
 	}
 
 	void setSelectionHandler(Consumer<RegionSelection> selectionHandler) {
-		this.selectionHandler = Objects.requireNonNull(selectionHandler, "selectionHandler");
+		if (selectionHandler == null) {
+			throw new NullPointerException("selectionHandler");
+		}
+		this.selectionHandler = selectionHandler;
 	}
 
 	void setSelectionCursorEnabled(boolean enabled) {
@@ -166,7 +178,10 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	void showDocument(DocumentMode documentMode) {
-		displayedDocument = Objects.requireNonNull(documentMode, "documentMode");
+		if (documentMode == null) {
+			throw new NullPointerException("documentMode");
+		}
+		displayedDocument = documentMode;
 		showCurrentPage();
 	}
 

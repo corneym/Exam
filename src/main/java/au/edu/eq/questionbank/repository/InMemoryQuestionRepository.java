@@ -29,7 +29,12 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 
 	@Override
 	public Optional<Question> findById(long id) {
-		return questions.stream().filter(q -> q.getId() == id).findFirst();
+		for (Question question : questions) {
+			if (question.getId() == id) {
+				return Optional.of(question);
+			}
+		}
+		return Optional.empty();
 	}
 
 	@Override

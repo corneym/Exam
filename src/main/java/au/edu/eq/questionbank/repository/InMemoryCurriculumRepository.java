@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.repository;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -59,34 +60,69 @@ public class InMemoryCurriculumRepository implements CurriculumRepository {
 
 	@Override
 	public Optional<CurriculumNode> findByCode(SyllabusVersion syllabusVersion, String code) {
-		return curriculumNodes.stream().filter(node -> node.getSyllabusVersion().equals(syllabusVersion))
-				.filter(node -> node.getCode().equals(code)).findFirst();
+		for (CurriculumNode node : curriculumNodes) {
+			boolean sameSyllabusVersion = node.getSyllabusVersion().equals(syllabusVersion);
+			if (sameSyllabusVersion && node.getCode().equals(code)) {
+				return Optional.of(node);
+			}
+		}
+		return Optional.empty();
 	}
 
 	@Override
 	public List<CurriculumNode> findChildren(CurriculumNode parent) {
-		return curriculumNodes.stream().filter(node -> parent.equals(node.getParent())).sorted(nodeOrder()).toList();
+		List<CurriculumNode> children = new ArrayList<>();
+		for (CurriculumNode node : curriculumNodes) {
+			if (parent.equals(node.getParent())) {
+				children.add(node);
+			}
+		}
+		children.sort(nodeOrder());
+		return List.copyOf(children);
 	}
 
 	@Override
 	public List<CurriculumNode> findRootNodes(SyllabusVersion syllabusVersion) {
-		return curriculumNodes.stream().filter(node -> node.getSyllabusVersion().equals(syllabusVersion))
-				.filter(node -> node.getParent() == null).sorted(nodeOrder()).toList();
+		List<CurriculumNode> rootNodes = new ArrayList<>();
+		for (CurriculumNode node : curriculumNodes) {
+			boolean sameSyllabusVersion = node.getSyllabusVersion().equals(syllabusVersion);
+			if (sameSyllabusVersion && node.getParent() == null) {
+				rootNodes.add(node);
+			}
+		}
+		rootNodes.sort(nodeOrder());
+		return List.copyOf(rootNodes);
 	}
 
 	@Override
 	public Optional<Subject> findSubjectById(long id) {
-		return subjects.stream().filter(subject -> subject.getId() == id).findFirst();
+		for (Subject subject : subjects) {
+			if (subject.getId() == id) {
+				return Optional.of(subject);
+			}
+		}
+		return Optional.empty();
 	}
 
 	@Override
 	public Optional<SyllabusVersion> findVersionById(long id) {
-		return syllabusVersions.stream().filter(version -> version.getId() == id).findFirst();
+		for (SyllabusVersion version : syllabusVersions) {
+			if (version.getId() == id) {
+				return Optional.of(version);
+			}
+		}
+		return Optional.empty();
 	}
 
 	@Override
 	public List<SyllabusVersion> findVersionsForSubject(Subject subject) {
-		return syllabusVersions.stream().filter(version -> version.getSubject().equals(subject)).toList();
+		List<SyllabusVersion> versions = new ArrayList<>();
+		for (SyllabusVersion version : syllabusVersions) {
+			if (version.getSubject().equals(subject)) {
+				versions.add(version);
+			}
+		}
+		return List.copyOf(versions);
 	}
 
 	private Comparator<CurriculumNode> nodeOrder() {

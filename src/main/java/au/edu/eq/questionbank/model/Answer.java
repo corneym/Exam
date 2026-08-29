@@ -33,8 +33,10 @@ public class Answer {
 		if (regions == null) {
 			throw new NullPointerException("regions");
 		}
-		if (regions.stream().anyMatch(region -> region == null)) {
-			throw new NullPointerException("regions must not contain null");
+		for (AnswerRegion region : regions) {
+			if (region == null) {
+				throw new NullPointerException("regions must not contain null");
+			}
 		}
 
 		boolean hasText = answerText != null && !answerText.isBlank();

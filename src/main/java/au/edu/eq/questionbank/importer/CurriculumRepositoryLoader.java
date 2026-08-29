@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.importer;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -65,7 +66,7 @@ public class CurriculumRepositoryLoader {
 
 			List<CurriculumImportRow> rows = new ArrayList<>();
 
-			for (var workbook : source.workbooks()) {
+			for (Path workbook : source.workbooks()) {
 				rows.addAll(importer.read(workbook));
 			}
 

@@ -4,7 +4,6 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -87,13 +86,31 @@ final class AnswerCapturePane extends VBox {
 	AnswerCapturePane(Stage stage, QuestionRepository questionRepository, PdfFilePicker pdfFilePicker,
 			Consumer<SelectedPdf> answerPdfHandler, Runnable selectionClearHandler, QuestionExtractor questionExtractor,
 			Supplier<PdfSession> answerPdfSessionSupplier) {
-		this.questionRepository = Objects.requireNonNull(questionRepository, "questionRepository");
-		this.pdfFilePicker = Objects.requireNonNull(pdfFilePicker, "pdfFilePicker");
-		this.answerPdfHandler = Objects.requireNonNull(answerPdfHandler, "answerPdfHandler");
-		this.selectionClearHandler = Objects.requireNonNull(selectionClearHandler, "selectionClearHandler");
-		this.questionExtractor = Objects.requireNonNull(questionExtractor, "questionExtractor");
+		if (questionRepository == null) {
+			throw new NullPointerException("questionRepository");
+		}
+		if (pdfFilePicker == null) {
+			throw new NullPointerException("pdfFilePicker");
+		}
+		if (answerPdfHandler == null) {
+			throw new NullPointerException("answerPdfHandler");
+		}
+		if (selectionClearHandler == null) {
+			throw new NullPointerException("selectionClearHandler");
+		}
+		if (questionExtractor == null) {
+			throw new NullPointerException("questionExtractor");
+		}
+		if (answerPdfSessionSupplier == null) {
+			throw new NullPointerException("answerPdfSessionSupplier");
+		}
 
-		this.answerPdfSessionSupplier = Objects.requireNonNull(answerPdfSessionSupplier, "answerPdfSessionSupplier");
+		this.questionRepository = questionRepository;
+		this.pdfFilePicker = pdfFilePicker;
+		this.answerPdfHandler = answerPdfHandler;
+		this.selectionClearHandler = selectionClearHandler;
+		this.questionExtractor = questionExtractor;
+		this.answerPdfSessionSupplier = answerPdfSessionSupplier;
 
 		configureControls();
 		configureActions(stage);
@@ -361,14 +378,22 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	void refreshUnansweredQuestions() {
-		List<Question> unansweredQuestions = questionRepository.findAll().stream()
-				.filter(question -> !question.hasAnswer()).toList();
+		List<Question> unansweredQuestions = new ArrayList<>();
+		for (Question question : questionRepository.findAll()) {
+			if (!question.hasAnswer()) {
+				unansweredQuestions.add(question);
+			}
+		}
 		unansweredQuestionField.getItems().setAll(unansweredQuestions);
 	}
 
 	void selectAnswerPdf(Question question, SelectedPdf selectedPdf) {
-		Objects.requireNonNull(question, "question");
-		Objects.requireNonNull(selectedPdf, "selectedPdf");
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (selectedPdf == null) {
+			throw new NullPointerException("selectedPdf");
+		}
 		SourceDocument sourceDocument = new SourceDocument(1, selectedPdf.relativePath());
 		answerFile = new AnswerFile(1, question.getExam(), selectedPdf.file().getName(), sourceDocument);
 		answerPdfHandler.accept(selectedPdf);

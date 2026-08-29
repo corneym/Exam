@@ -2,7 +2,6 @@ package au.edu.eq.questionbank.ui;
 
 import java.nio.file.Path;
 import java.time.Year;
-import java.util.Objects;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -69,12 +68,31 @@ final class ExamMetadataPane extends HBox {
 	ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
 			ExamMetadataOptionsRepository optionsRepository, BooleanSupplier examPdfAvailable,
 			Consumer<SelectedPdf> examPdfHandler, Consumer<Boolean> selectionCursorHandler) {
-		this.pdfDataRoot = Objects.requireNonNull(pdfDataRoot, "pdfDataRoot").toAbsolutePath().normalize();
-		this.curriculumSelectionModel = Objects.requireNonNull(curriculumSelectionModel, "curriculumSelectionModel");
-		this.optionsRepository = Objects.requireNonNull(optionsRepository, "optionsRepository");
-		this.examPdfAvailable = Objects.requireNonNull(examPdfAvailable, "examPdfAvailable");
-		this.examPdfHandler = Objects.requireNonNull(examPdfHandler, "examPdfHandler");
-		this.selectionCursorHandler = Objects.requireNonNull(selectionCursorHandler, "selectionCursorHandler");
+		if (pdfDataRoot == null) {
+			throw new NullPointerException("pdfDataRoot");
+		}
+		if (curriculumSelectionModel == null) {
+			throw new NullPointerException("curriculumSelectionModel");
+		}
+		if (optionsRepository == null) {
+			throw new NullPointerException("optionsRepository");
+		}
+		if (examPdfAvailable == null) {
+			throw new NullPointerException("examPdfAvailable");
+		}
+		if (examPdfHandler == null) {
+			throw new NullPointerException("examPdfHandler");
+		}
+		if (selectionCursorHandler == null) {
+			throw new NullPointerException("selectionCursorHandler");
+		}
+
+		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
+		this.curriculumSelectionModel = curriculumSelectionModel;
+		this.optionsRepository = optionsRepository;
+		this.examPdfAvailable = examPdfAvailable;
+		this.examPdfHandler = examPdfHandler;
+		this.selectionCursorHandler = selectionCursorHandler;
 		pdfFilePicker = new PdfFilePicker(this.pdfDataRoot);
 
 		configureFields();
@@ -101,7 +119,9 @@ final class ExamMetadataPane extends HBox {
 	}
 
 	void selectExamPdf(SelectedPdf selectedPdf) {
-		Objects.requireNonNull(selectedPdf, "selectedPdf");
+		if (selectedPdf == null) {
+			throw new NullPointerException("selectedPdf");
+		}
 		examPdfHandler.accept(selectedPdf);
 		currentPdfPath = selectedPdf.path();
 		clearForNewPdf();

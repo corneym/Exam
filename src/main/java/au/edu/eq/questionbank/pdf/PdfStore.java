@@ -1,7 +1,6 @@
 package au.edu.eq.questionbank.pdf;
 
 import java.nio.file.Path;
-import java.util.Objects;
 
 /**
  * Resolves stored source-document paths beneath a configured PDF data root.
@@ -20,7 +19,9 @@ public class PdfStore {
 	 * @throws NullPointerException if {@code pdfRoot} is {@code null}
 	 */
 	public PdfStore(Path pdfRoot) {
-		Objects.requireNonNull(pdfRoot, "pdfRoot");
+		if (pdfRoot == null) {
+			throw new NullPointerException("pdfRoot");
+		}
 		this.pdfRoot = pdfRoot.toAbsolutePath().normalize();
 	}
 
@@ -34,7 +35,9 @@ public class PdfStore {
 	 *                                  the configured root after normalization
 	 */
 	public Path resolve(String relativePath) {
-		Objects.requireNonNull(relativePath, "relativePath");
+		if (relativePath == null) {
+			throw new NullPointerException("relativePath");
+		}
 		if (relativePath.isBlank()) {
 			throw new IllegalArgumentException("PDF path must not be blank");
 		}

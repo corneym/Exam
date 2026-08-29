@@ -4,7 +4,6 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -76,14 +75,39 @@ final class QuestionCapturePane extends VBox {
 			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
 			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
 			Runnable selectionClearHandler, Runnable questionsChangedHandler) {
-		this.questionRepository = Objects.requireNonNull(questionRepository, "questionRepository");
-		this.questionExtractor = Objects.requireNonNull(questionExtractor, "questionExtractor");
-		this.curriculumSelectionModel = Objects.requireNonNull(curriculumSelectionModel, "curriculumSelectionModel");
-		this.curriculumSelectorPane = Objects.requireNonNull(curriculumSelectorPane, "curriculumSelectorPane");
-		this.bookletSupplier = Objects.requireNonNull(bookletSupplier, "bookletSupplier");
-		this.examPdfSessionSupplier = Objects.requireNonNull(examPdfSessionSupplier, "examPdfSessionSupplier");
-		this.selectionClearHandler = Objects.requireNonNull(selectionClearHandler, "selectionClearHandler");
-		this.questionsChangedHandler = Objects.requireNonNull(questionsChangedHandler, "questionsChangedHandler");
+		if (questionRepository == null) {
+			throw new NullPointerException("questionRepository");
+		}
+		if (questionExtractor == null) {
+			throw new NullPointerException("questionExtractor");
+		}
+		if (curriculumSelectionModel == null) {
+			throw new NullPointerException("curriculumSelectionModel");
+		}
+		if (curriculumSelectorPane == null) {
+			throw new NullPointerException("curriculumSelectorPane");
+		}
+		if (bookletSupplier == null) {
+			throw new NullPointerException("bookletSupplier");
+		}
+		if (examPdfSessionSupplier == null) {
+			throw new NullPointerException("examPdfSessionSupplier");
+		}
+		if (selectionClearHandler == null) {
+			throw new NullPointerException("selectionClearHandler");
+		}
+		if (questionsChangedHandler == null) {
+			throw new NullPointerException("questionsChangedHandler");
+		}
+
+		this.questionRepository = questionRepository;
+		this.questionExtractor = questionExtractor;
+		this.curriculumSelectionModel = curriculumSelectionModel;
+		this.curriculumSelectorPane = curriculumSelectorPane;
+		this.bookletSupplier = bookletSupplier;
+		this.examPdfSessionSupplier = examPdfSessionSupplier;
+		this.selectionClearHandler = selectionClearHandler;
+		this.questionsChangedHandler = questionsChangedHandler;
 
 		configureControls();
 		configureActions();

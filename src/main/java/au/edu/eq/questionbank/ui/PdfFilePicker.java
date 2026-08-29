@@ -2,7 +2,6 @@ package au.edu.eq.questionbank.ui;
 
 import java.io.File;
 import java.nio.file.Path;
-import java.util.Objects;
 
 import javafx.scene.control.Alert;
 import javafx.stage.FileChooser;
@@ -13,7 +12,10 @@ final class PdfFilePicker {
 	private final Path dataRoot;
 
 	PdfFilePicker(Path dataRoot) {
-		this.dataRoot = Objects.requireNonNull(dataRoot, "dataRoot").toAbsolutePath().normalize();
+		if (dataRoot == null) {
+			throw new NullPointerException("dataRoot");
+		}
+		this.dataRoot = dataRoot.toAbsolutePath().normalize();
 	}
 
 	SelectedPdf choose(Stage stage, String title, String invalidPathMessage) {

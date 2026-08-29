@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 import javax.imageio.ImageIO;
 
@@ -117,8 +118,16 @@ public class QuestionExtractor {
 			regionImages.add(cropped);
 		}
 
-		int outputWidth = regionImages.stream().mapToInt(BufferedImage::getWidth).max().orElseThrow();
-		int outputHeight = regionImages.stream().mapToInt(BufferedImage::getHeight).sum();
+		if (regionImages.isEmpty()) {
+			throw new NoSuchElementException("No value present");
+		}
+
+		int outputWidth = 0;
+		int outputHeight = 0;
+		for (BufferedImage image : regionImages) {
+			outputWidth = Math.max(outputWidth, image.getWidth());
+			outputHeight += image.getHeight();
+		}
 		BufferedImage combined = new BufferedImage(outputWidth, outputHeight, BufferedImage.TYPE_INT_RGB);
 		Graphics2D graphics = combined.createGraphics();
 		try {

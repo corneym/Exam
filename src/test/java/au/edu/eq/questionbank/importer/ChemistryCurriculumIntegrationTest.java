@@ -12,7 +12,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 
@@ -38,9 +37,12 @@ class ChemistryCurriculumIntegrationTest {
 	}
 
 	private CurriculumNode find(List<CurriculumNode> nodes, String code) {
-
-		return nodes.stream().filter(node -> node.getCode().equals(code)).findFirst()
-				.orElseThrow(() -> new AssertionError("Curriculum node not found: " + code));
+		for (CurriculumNode node : nodes) {
+			if (node.getCode().equals(code)) {
+				return node;
+			}
+		}
+		throw new AssertionError("Curriculum node not found: " + code);
 	}
 
 	private Path resourcePath(String fileName) throws Exception {
@@ -55,9 +57,13 @@ class ChemistryCurriculumIntegrationTest {
 	}
 
 	private Set<String> rootCodes(List<CurriculumNode> nodes) {
-
-		return nodes.stream().filter(node -> node.getParent() == null).map(CurriculumNode::getCode)
-				.collect(Collectors.toSet());
+		Set<String> codes = new HashSet<>();
+		for (CurriculumNode node : nodes) {
+			if (node.getParent() == null) {
+				codes.add(node.getCode());
+			}
+		}
+		return codes;
 	}
 
 	@Test
@@ -180,8 +186,10 @@ class ChemistryCurriculumIntegrationTest {
 		 */
 		CurriculumNode source413 = curriculumRepository.findByCode(syllabus2019, "4.1.3").orElseThrow();
 
-		Set<String> targets413 = mappingRepository.findTargets(source413).stream()
-				.map(mapping -> mapping.getTarget().getCode()).collect(Collectors.toSet());
+		Set<String> targets413 = new HashSet<>();
+		for (CurriculumMapping mapping : mappingRepository.findTargets(source413)) {
+			targets413.add(mapping.getTarget().getCode());
+		}
 
 		assertEquals(Set.of("4.1.1", "4.1.3"), targets413);
 
@@ -191,8 +199,10 @@ class ChemistryCurriculumIntegrationTest {
 		 */
 		CurriculumNode source423 = curriculumRepository.findByCode(syllabus2019, "4.2.3").orElseThrow();
 
-		Set<String> targets423 = mappingRepository.findTargets(source423).stream()
-				.map(mapping -> mapping.getTarget().getCode()).collect(Collectors.toSet());
+		Set<String> targets423 = new HashSet<>();
+		for (CurriculumMapping mapping : mappingRepository.findTargets(source423)) {
+			targets423.add(mapping.getTarget().getCode());
+		}
 
 		assertEquals(Set.of("4.1.4", "4.2.2"), targets423);
 	}
