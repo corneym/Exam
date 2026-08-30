@@ -88,6 +88,22 @@ class QuestionExtractorTest {
 		return pdf;
 	}
 
+	private Path createRotatedPdf(float width, float height, int rotation, Color color) throws IOException {
+		Path pdf = tempDir.resolve("rotated-source-" + System.nanoTime() + ".pdf");
+		try (PDDocument document = new PDDocument()) {
+			PDPage page = new PDPage(new PDRectangle(width, height));
+			page.setRotation(rotation);
+			document.addPage(page);
+			try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+				content.setNonStrokingColor(color);
+				content.addRect(0, 0, width, height);
+				content.fill();
+			}
+			document.save(pdf.toFile());
+		}
+		return pdf;
+	}
+
 	private BufferedImage readImage(Path path) throws IOException {
 		BufferedImage image = ImageIO.read(path.toFile());
 		assertNotNull(image);
@@ -131,6 +147,18 @@ class QuestionExtractorTest {
 
 		BufferedImage image = readImage(output);
 		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(150, image.getHeight()));
+	}
+
+	@Test
+	void extractsProportionalCoordinatesFromARotatedPage() throws Exception {
+		Path pdf = createRotatedPdf(72, 144, 90, Color.GREEN);
+		Path output = tempDir.resolve("rotated-region.png");
+
+		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0.25, 0.0, 0.5, 1.0), output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(150, image.getHeight()),
+				() -> assertEquals(Color.GREEN.getRGB(), image.getRGB(75, 75)));
 	}
 
 	@Test

@@ -33,9 +33,9 @@ public class Question {
 	 * @param regions        source regions from one booklet, in extraction and
 	 *                       assembly order
 	 * @param classification the single best-fit syllabus subtopic
-	 * @throws NullPointerException     if {@code regions}, an element of
-	 *                                  {@code regions}, or {@code classification}
-	 *                                  is {@code null}
+	 * @throws NullPointerException     if {@code exam}, {@code regions}, an element
+	 *                                  of {@code regions}, or
+	 *                                  {@code classification} is {@code null}
 	 * @throws IllegalArgumentException if {@code regions} is empty,
 	 *                                  {@code classification} is not a subtopic, a
 	 *                                  region belongs to a different exam, or the

@@ -17,11 +17,23 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
+/**
+ * Imports a syllabus version and its optional curriculum hierarchy into SQLite
+ * as one transaction. When a new version is marked current, any existing
+ * current version for the same subject is cleared within that transaction.
+ */
 public final class SqliteCurriculumImporter {
 
 	private final SqliteDatabase database;
 	private final SqliteCurriculumWriter writer;
 
+	/**
+	 * Creates an importer using the supplied database and low-level writer.
+	 *
+	 * @param database the database in which imports are transacted
+	 * @param writer   the writer used for individual curriculum inserts
+	 * @throws NullPointerException if either argument is {@code null}
+	 */
 	public SqliteCurriculumImporter(SqliteDatabase database, SqliteCurriculumWriter writer) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -33,6 +45,16 @@ public final class SqliteCurriculumImporter {
 		this.writer = writer;
 	}
 
+	/**
+	 * Imports a syllabus version without curriculum nodes.
+	 *
+	 * @param subjectName the existing or new subject name
+	 * @param syllabusName the new syllabus-version name
+	 * @param current whether this version becomes current for the subject
+	 * @return the stored syllabus version with its generated identifier
+	 * @throws SQLException if the import cannot be stored or committed
+	 * @throws IllegalArgumentException if a required name is blank
+	 */
 	public SyllabusVersion importSyllabus(String subjectName, String syllabusName, boolean current)
 			throws SQLException {
 		try (Connection connection = database.openConnection()) {
@@ -57,6 +79,20 @@ public final class SqliteCurriculumImporter {
 		}
 	}
 
+	/**
+	 * Imports a syllabus version and a complete ordered hierarchy of curriculum
+	 * rows. The version and all generated nodes are committed or rolled back
+	 * together.
+	 *
+	 * @param subjectName the existing or new subject name
+	 * @param syllabusName the new syllabus-version name
+	 * @param current whether this version becomes current for the subject
+	 * @param rows validated import rows from which the hierarchy is built
+	 * @return the stored syllabus version with its generated identifier
+	 * @throws SQLException if the import cannot be stored or committed
+	 * @throws NullPointerException if {@code rows} is {@code null}
+	 * @throws IllegalArgumentException if names or hierarchy rows are invalid
+	 */
 	public SyllabusVersion importSyllabus(String subjectName, String syllabusName, boolean current,
 			List<CurriculumImportRow> rows) throws SQLException {
 

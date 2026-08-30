@@ -36,6 +36,11 @@ public class CurriculumSelectionModel {
 		this.repository = repository;
 	}
 
+	/**
+	 * Returns all subjects available for selection.
+	 *
+	 * @return all subjects available from the backing repository
+	 */
 	public List<Subject> getSubjects() {
 		return repository.findAllSubjects();
 	}
@@ -65,7 +70,8 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * @return children of the selected topic, or an empty list when no topic is
+	 * @return children of the selected topic, which may be subtopics or descriptors
+	 *         attached directly to the topic; an empty list when no topic is
 	 *         selected
 	 */
 	public List<CurriculumNode> getSubtopics() {
@@ -128,30 +134,55 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * Selects the best-fit subtopic to be assigned to a question.
+	 * Selects the final curriculum node shown beneath the current topic.
 	 *
-	 * @param subtopic the subtopic to select, or {@code null} to clear it
+	 * @param subtopic the node to select, or {@code null} to clear it
 	 */
 	public void selectSubtopic(CurriculumNode subtopic) {
 		this.subtopic = subtopic;
 	}
 
+	/**
+	 * Returns the selected subject.
+	 *
+	 * @return the selected subject, or {@code null} when no subject is selected
+	 */
 	public Subject getSubject() {
 		return subject;
 	}
 
+	/**
+	 * Returns the current syllabus version for the selected subject.
+	 *
+	 * @return the selected subject's current syllabus version, or {@code null}
+	 */
 	public SyllabusVersion getSyllabusVersion() {
 		return syllabusVersion;
 	}
 
+	/**
+	 * Returns the selected unit.
+	 *
+	 * @return the selected unit, or {@code null}
+	 */
 	public CurriculumNode getUnit() {
 		return unit;
 	}
 
+	/**
+	 * Returns the selected topic.
+	 *
+	 * @return the selected topic, or {@code null}
+	 */
 	public CurriculumNode getTopic() {
 		return topic;
 	}
 
+	/**
+	 * Returns the selected final curriculum node.
+	 *
+	 * @return the selected final curriculum node, or {@code null}
+	 */
 	public CurriculumNode getSubtopic() {
 		return subtopic;
 	}

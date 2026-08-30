@@ -9,6 +9,7 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -93,6 +94,23 @@ class CurriculumSelectionModelTest {
 	@Test
 	void exposesSubjects() {
 		assertEquals(List.of(chemistry), model.getSubjects());
+	}
+
+	@Test
+	void exposesDescriptorsAttachedDirectlyToATopic() {
+		Descriptor descriptor = new Descriptor(4, syllabus2025, topic31, "3.1.1", "Descriptor 3.1.1", 1);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus2019, syllabus2025), List.of(unit3, topic31, descriptor));
+		CurriculumSelectionModel descriptorModel = new CurriculumSelectionModel(repository);
+
+		descriptorModel.selectSubject(chemistry);
+		descriptorModel.selectUnit(unit3);
+		descriptorModel.selectTopic(topic31);
+
+		assertEquals(List.of(descriptor), descriptorModel.getSubtopics());
+
+		descriptorModel.selectSubtopic(descriptor);
+		assertEquals(descriptor, descriptorModel.getSubtopic());
 	}
 
 	@Test

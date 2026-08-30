@@ -21,16 +21,32 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
 /**
  * Reads curriculum data from the standard two-column workbook format.
  *
- * Column A: Code Column B: Content
+ * Column A contains the curriculum code and column B contains its label or
+ * descriptor text. Hidden sheets and sheets without the expected header row
+ * are ignored.
  */
 public class CurriculumExcelImporter {
 
 	private final DataFormatter formatter;
 
+	/**
+	 * Creates an importer using Apache POI's standard display-value formatter.
+	 */
 	public CurriculumExcelImporter() {
 		formatter = new DataFormatter();
 	}
 
+	/**
+	 * Reads all valid visible sheets in workbook order and returns their rows in
+	 * sheet and row order. Curriculum codes must be unique across the workbook.
+	 *
+	 * @param path the workbook to read
+	 * @return an immutable, non-empty list of curriculum rows
+	 * @throws IOException if the workbook cannot be opened or read
+	 * @throws NullPointerException if {@code path} is {@code null}
+	 * @throws IllegalArgumentException if no curriculum data is found or a row has
+	 *                                  missing, invalid, or duplicate values
+	 */
 	public List<CurriculumImportRow> read(Path path) throws IOException {
 
 		if (path == null) {

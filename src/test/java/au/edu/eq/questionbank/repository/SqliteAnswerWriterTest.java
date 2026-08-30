@@ -1,0 +1,83 @@
+package au.edu.eq.questionbank.repository;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import au.edu.eq.questionbank.model.Answer;
+import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.AnswerRegion;
+import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
+import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
+
+class SqliteAnswerWriterTest {
+
+	@TempDir
+	Path tempDirectory;
+
+	@Test
+	void insertsAnswerAndOrderedRegions() throws Exception {
+		Path databasePath = tempDirectory.resolve("questionbank.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment",
+				"Question booklet", "Chemistry/2025/questions.pdf");
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question question = questionRepository.save(booklet.getExam(), "Q1", "",
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Answers",
+				"Chemistry/2025/answers.pdf");
+		List<AnswerRegion> regions = List.of(new AnswerRegion(answerFile, 4, 0.10, 0.20, 0.40, 0.10),
+				new AnswerRegion(answerFile, 5, 0.10, 0.15, 0.40, 0.12));
+		Answer answer = answerWriter.insertAnswer(question, "B", regions);
+		assertTrue(answer.getId() > 0);
+		assertEquals("B", answer.getAnswerText());
+		assertEquals(2, answer.getRegions().size());
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT
+						    answers.answer_text,
+						    answer_regions.region_order,
+						    answer_regions.page_number
+						FROM answers
+						JOIN answer_regions
+						    ON answer_regions.answer_id = answers.id
+						WHERE answers.id = %d
+						ORDER BY answer_regions.region_order
+						""".formatted(answer.getId()))) {
+			assertTrue(result.next());
+			assertEquals("B", result.getString("answer_text"));
+			assertEquals(0, result.getInt("region_order"));
+			assertEquals(4, result.getInt("page_number"));
+			assertTrue(result.next());
+			assertEquals(1, result.getInt("region_order"));
+			assertEquals(5, result.getInt("page_number"));
+			assertFalse(result.next());
+		}
+	}
+}

@@ -16,8 +16,13 @@ public class HtmlQuestionRenderer {
 	 * document's directory.
 	 *
 	 * @param questionImages images to include, in document order
-	 * @param outputFile     destination HTML file
+	 * @param outputFile     destination HTML file with a parent directory against
+	 *                       which image paths can be relativized
 	 * @throws IOException if the output document cannot be written
+	 * @throws NullPointerException if either argument, an image path, or the output
+	 *                              parent directory is {@code null}
+	 * @throws IllegalArgumentException if an image cannot be relativized against
+	 *                                  the output directory
 	 */
 	public void render(List<Path> questionImages, Path outputFile) throws IOException {
 

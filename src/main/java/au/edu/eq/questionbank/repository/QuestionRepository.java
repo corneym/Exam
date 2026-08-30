@@ -3,7 +3,10 @@ package au.edu.eq.questionbank.repository;
 import java.util.List;
 import java.util.Optional;
 
+import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
 
 /**
  * Persistence boundary for examination questions.
@@ -30,5 +33,6 @@ public interface QuestionRepository {
 	 *
 	 * @param question the question to store
 	 */
-	void save(Question question);
+	Question save(Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
+			CurriculumNode classification);
 }

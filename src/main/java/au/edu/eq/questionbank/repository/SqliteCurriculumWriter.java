@@ -14,10 +14,24 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
+/**
+ * Inserts subjects, syllabus versions, and curriculum nodes into SQLite and
+ * returns domain objects carrying their generated persistent identifiers.
+ * <p>
+ * Public operations own a short-lived connection. Package-private overloads
+ * accept a caller-owned connection so multi-row imports can participate in one
+ * transaction.
+ */
 public final class SqliteCurriculumWriter {
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a writer for the supplied database.
+	 *
+	 * @param database the initialized question-bank database
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
 	public SqliteCurriculumWriter(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -25,6 +39,19 @@ public final class SqliteCurriculumWriter {
 		this.database = database;
 	}
 
+	/**
+	 * Inserts a descriptor beneath a subtopic.
+	 *
+	 * @param parent the descriptor's subtopic parent
+	 * @param code the non-blank curriculum code
+	 * @param name the non-blank descriptor text
+	 * @param displayOrder the non-negative order among siblings
+	 * @return the stored descriptor
+	 * @throws SQLException if the insert fails
+	 * @throws NullPointerException if {@code parent} is {@code null}
+	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
+	 *                                  blank, or the order is negative
+	 */
 	public Descriptor insertDescriptor(Subtopic parent, String code, String name, int displayOrder)
 			throws SQLException {
 		try (Connection connection = database.openConnection()) {
@@ -32,24 +59,69 @@ public final class SqliteCurriculumWriter {
 		}
 	}
 
+	/**
+	 * Inserts a descriptor directly beneath a topic.
+	 *
+	 * @param parent the descriptor's topic parent
+	 * @param code the non-blank curriculum code
+	 * @param name the non-blank descriptor text
+	 * @param displayOrder the non-negative order among siblings
+	 * @return the stored descriptor
+	 * @throws SQLException if the insert fails
+	 * @throws NullPointerException if {@code parent} is {@code null}
+	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
+	 *                                  blank, or the order is negative
+	 */
 	public Descriptor insertDescriptor(Topic parent, String code, String name, int displayOrder) throws SQLException {
 		try (Connection connection = database.openConnection()) {
 			return insertDescriptor(connection, parent, code, name, displayOrder);
 		}
 	}
 
+	/**
+	 * Inserts a subject.
+	 *
+	 * @param subjectName the non-blank subject name
+	 * @return the stored subject
+	 * @throws SQLException if the insert fails, including a uniqueness violation
+	 * @throws IllegalArgumentException if {@code subjectName} is null or blank
+	 */
 	public Subject insertSubject(String subjectName) throws SQLException {
 		try (Connection connection = database.openConnection()) {
 			return insertSubject(connection, subjectName);
 		}
 	}
 
+	/**
+	 * Inserts a subtopic beneath a topic.
+	 *
+	 * @param parent the subtopic's topic parent
+	 * @param code the non-blank curriculum code
+	 * @param name the non-blank subtopic name
+	 * @param displayOrder the non-negative order among siblings
+	 * @return the stored subtopic
+	 * @throws SQLException if the insert fails
+	 * @throws NullPointerException if {@code parent} is {@code null}
+	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
+	 *                                  blank, or the order is negative
+	 */
 	public Subtopic insertSubtopic(Topic parent, String code, String name, int displayOrder) throws SQLException {
 		try (Connection connection = database.openConnection()) {
 			return insertSubtopic(connection, parent, code, name, displayOrder);
 		}
 	}
 
+	/**
+	 * Inserts a named syllabus version for a subject.
+	 *
+	 * @param subject the owning subject
+	 * @param syllabusName the non-blank version name
+	 * @param current whether the version is current
+	 * @return the stored syllabus version
+	 * @throws SQLException if the insert fails
+	 * @throws NullPointerException if {@code subject} is {@code null}
+	 * @throws IllegalArgumentException if {@code syllabusName} is null or blank
+	 */
 	public SyllabusVersion insertSyllabusVersion(Subject subject, String syllabusName, boolean current)
 			throws SQLException {
 		try (Connection connection = database.openConnection()) {
@@ -57,12 +129,38 @@ public final class SqliteCurriculumWriter {
 		}
 	}
 
+	/**
+	 * Inserts a topic beneath a unit.
+	 *
+	 * @param parent the topic's unit parent
+	 * @param code the non-blank curriculum code
+	 * @param name the non-blank topic name
+	 * @param displayOrder the non-negative order among siblings
+	 * @return the stored topic
+	 * @throws SQLException if the insert fails
+	 * @throws NullPointerException if {@code parent} is {@code null}
+	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
+	 *                                  blank, or the order is negative
+	 */
 	public Topic insertTopic(Unit parent, String code, String name, int displayOrder) throws SQLException {
 		try (Connection connection = database.openConnection()) {
 			return insertTopic(connection, parent, code, name, displayOrder);
 		}
 	}
 
+	/**
+	 * Inserts a root unit in a syllabus version.
+	 *
+	 * @param syllabusVersion the containing syllabus version
+	 * @param code the non-blank curriculum code
+	 * @param name the non-blank unit name
+	 * @param displayOrder the non-negative order among root units
+	 * @return the stored unit
+	 * @throws SQLException if the insert fails
+	 * @throws NullPointerException if {@code syllabusVersion} is {@code null}
+	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
+	 *                                  blank, or the order is negative
+	 */
 	public Unit insertUnit(SyllabusVersion syllabusVersion, String code, String name, int displayOrder)
 			throws SQLException {
 		try (Connection connection = database.openConnection()) {

@@ -16,6 +16,10 @@ import javafx.scene.layout.HBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
+/**
+ * Modal form for choosing a two-column curriculum workbook and the subject and
+ * syllabus-version metadata under which it will be imported.
+ */
 public class CurriculumImportDialog extends Dialog<ButtonType> {
 
 	private final TextField subjectField = new TextField();
@@ -24,6 +28,11 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	private final TextField fileField = new TextField();
 	private Path selectedFile;
 
+	/**
+	 * Creates a curriculum-import dialog owned by the supplied window.
+	 *
+	 * @param owner the window that owns the modal dialog
+	 */
 	public CurriculumImportDialog(Window owner) {
 		setTitle("Import Curriculum");
 		setHeaderText("Import curriculum from Excel");
@@ -57,18 +66,38 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		});
 	}
 
+	/**
+	 * Returns the workbook chosen for import.
+	 *
+	 * @return the workbook selected by the user, or {@code null} before selection
+	 */
 	public Path getSelectedFile() {
 		return selectedFile;
 	}
 
+	/**
+	 * Returns the subject name entered in the dialog.
+	 *
+	 * @return the trimmed subject name entered by the user
+	 */
 	public String getSubjectName() {
 		return subjectField.getText().strip();
 	}
 
+	/**
+	 * Returns the syllabus-version name entered in the dialog.
+	 *
+	 * @return the trimmed syllabus-version name entered by the user
+	 */
 	public String getVersionName() {
 		return versionField.getText().strip();
 	}
 
+	/**
+	 * Reports whether the imported syllabus should be marked current.
+	 *
+	 * @return whether the imported version should become current
+	 */
 	public boolean isCurrent() {
 		return currentCheckBox.isSelected();
 	}

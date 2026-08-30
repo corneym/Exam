@@ -1,14 +1,23 @@
 package au.edu.eq.questionbank.model;
 
 /**
- * A rectangular region on one page of an {@link AnswerFile}.
+ * A rectangular region on one page of an {@link AnswerFile}. Page numbers are
+ * one-based and coordinates are proportional to the displayed page after PDF
+ * crop-box and rotation handling, independent of rendering DPI and pixel size.
  *
  * @param answerFile the answer file containing the referenced page
  * @param pageNumber the one-based page number within that file
  * @param x          the normalized left edge in the range {@code [0.0, 1.0)}
  * @param y          the normalized top edge in the range {@code [0.0, 1.0)}
- * @param width      the normalized width in the range {@code (0.0, 1.0]}
- * @param height     the normalized height in the range {@code (0.0, 1.0]}
+ * @param width      the normalized width in the range {@code (0.0, 1.0]}, with
+ *                   {@code x + width <= 1.0}
+ * @param height     the normalized height in the range {@code (0.0, 1.0]}, with
+ *                   {@code y + height <= 1.0}
+ * @throws NullPointerException     if {@code answerFile} is {@code null}
+ * @throws IllegalArgumentException if the page number is less than one, a
+ *                                  coordinate or dimension is not finite, or the
+ *                                  region lies outside the normalized page
+ *                                  bounds
  */
 public record AnswerRegion(AnswerFile answerFile, int pageNumber, double x, double y, double width, double height) {
 

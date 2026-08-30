@@ -1,5 +1,13 @@
 package au.edu.eq.questionbank.importer;
 
+/**
+ * One non-blank curriculum code and its associated label or descriptor text as
+ * read from a curriculum workbook.
+ *
+ * @param code the non-blank curriculum code
+ * @param content the non-blank curriculum label or descriptor text
+ * @throws IllegalArgumentException if either value is {@code null} or blank
+ */
 public record CurriculumImportRow(String code, String content) {
 
 	public CurriculumImportRow {

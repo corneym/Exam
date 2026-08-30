@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -11,10 +12,10 @@ import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Question;
-import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.QuestionRepository;
+import au.edu.eq.questionbank.repository.SqliteAnswerWriter;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -78,14 +79,14 @@ final class AnswerCapturePane extends VBox {
 	private final Consumer<SelectedPdf> answerPdfHandler;
 	private final Runnable selectionClearHandler;
 	private final List<AnswerRegion> pendingAnswerRegions = new ArrayList<>();
+	private final SqliteAnswerWriter answerWriter;
 
 	private AnswerFile answerFile;
 	private AnswerRegion currentAnswerSelection;
-	private long nextAnswerId = 1;
 
-	AnswerCapturePane(Stage stage, QuestionRepository questionRepository, PdfFilePicker pdfFilePicker,
-			Consumer<SelectedPdf> answerPdfHandler, Runnable selectionClearHandler, QuestionExtractor questionExtractor,
-			Supplier<PdfSession> answerPdfSessionSupplier) {
+	AnswerCapturePane(Stage stage, QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
+			PdfFilePicker pdfFilePicker, Consumer<SelectedPdf> answerPdfHandler, Runnable selectionClearHandler,
+			QuestionExtractor questionExtractor, Supplier<PdfSession> answerPdfSessionSupplier) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -104,6 +105,9 @@ final class AnswerCapturePane extends VBox {
 		if (answerPdfSessionSupplier == null) {
 			throw new NullPointerException("answerPdfSessionSupplier");
 		}
+		if (answerWriter == null) {
+			throw new NullPointerException("answerWriter");
+		}
 
 		this.questionRepository = questionRepository;
 		this.pdfFilePicker = pdfFilePicker;
@@ -111,6 +115,7 @@ final class AnswerCapturePane extends VBox {
 		this.selectionClearHandler = selectionClearHandler;
 		this.questionExtractor = questionExtractor;
 		this.answerPdfSessionSupplier = answerPdfSessionSupplier;
+		this.answerWriter = answerWriter;
 
 		configureControls();
 		configureActions(stage);
@@ -210,6 +215,24 @@ final class AnswerCapturePane extends VBox {
 		setSelectionActionsEnabled(false);
 	}
 
+	private ImageView createAcceptedAnswerPreview(AnswerRegion region) {
+
+		try {
+			BufferedImage preview = questionExtractor.extractRegion(answerPdfSessionSupplier.get(), region);
+
+			ImageView previewView = new ImageView(SwingFXUtils.toFXImage(preview, null));
+
+			previewView.setPreserveRatio(true);
+			previewView.setFitWidth(ACCEPTED_ANSWER_PREVIEW_WIDTH);
+			previewView.setSmooth(true);
+
+			return previewView;
+
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview accepted answer region", e);
+		}
+	}
+
 	private HBox createAnswerPdfControls() {
 		HBox controls = new HBox(CONTROL_SPACING, chooseAnswerPdfButton, selectedAnswerPdfLabel);
 		controls.setAlignment(Pos.CENTER_LEFT);
@@ -258,11 +281,42 @@ final class AnswerCapturePane extends VBox {
 		chooseAnswerPdfButton.setDisable(false);
 	}
 
+	private void refreshAnswerRegionList() {
+		answerRegionListBox.getChildren().clear();
+		for (int i = 0; i < pendingAnswerRegions.size(); i++) {
+			AnswerRegion region = pendingAnswerRegions.get(i);
+			int regionIndex = i;
+			ImageView previewView = createAcceptedAnswerPreview(region);
+			Label label = new Label(String.format("Region %d - Page %d", i + 1, region.pageNumber()));
+			Button removeButton = new Button("Remove");
+			removeButton.setOnAction(event -> removeAnswerRegion(regionIndex));
+			VBox details = new VBox(COMPACT_SPACING, label, removeButton);
+			HBox row = new HBox(CONTROL_SPACING, previewView, details);
+			row.setAlignment(Pos.CENTER_LEFT);
+			answerRegionListBox.getChildren().add(row);
+		}
+
+		boolean hasRegions = !pendingAnswerRegions.isEmpty();
+		answerRegionsScrollPane.setVisible(hasRegions);
+		answerRegionsScrollPane.setManaged(hasRegions);
+	}
+
+	private void removeAnswerRegion(int regionIndex) {
+		pendingAnswerRegions.remove(regionIndex);
+		refreshAnswerRegionList();
+		showAcceptedRegionStatus();
+	}
+
 	private void saveAnswer(Question question, String answerText) {
 		String storedText = answerText.isBlank() ? null : answerText;
-		question.setAnswer(new Answer(nextAnswerId++, storedText, pendingAnswerRegions));
-		unansweredQuestionField.getSelectionModel().clearSelection();
-		refreshUnansweredQuestions();
+		try {
+			Answer answer = answerWriter.insertAnswer(question, storedText, pendingAnswerRegions);
+			question.setAnswer(answer);
+			unansweredQuestionField.getSelectionModel().clearSelection();
+			refreshUnansweredQuestions();
+		} catch (SQLException e) {
+			throw new IllegalStateException("Unable to save answer", e);
+		}
 	}
 
 	private void setSelectionActionsEnabled(boolean enabled) {
@@ -275,6 +329,17 @@ final class AnswerCapturePane extends VBox {
 		Question question = unansweredQuestionField.getValue();
 		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — "
 				+ pendingAnswerRegions.size() + " region(s) accepted");
+	}
+
+	private void showAnswerPreview(AnswerRegion region) {
+		try {
+			BufferedImage preview = questionExtractor.extractRegion(answerPdfSessionSupplier.get(), region);
+
+			answerPreviewView.setImage(SwingFXUtils.toFXImage(preview, null));
+
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview answer region", e);
+		}
 	}
 
 	private void showError(String message) {
@@ -295,58 +360,6 @@ final class AnswerCapturePane extends VBox {
 		saveAnswer(question, answerText);
 	}
 
-	private void removeAnswerRegion(int regionIndex) {
-		pendingAnswerRegions.remove(regionIndex);
-		refreshAnswerRegionList();
-		showAcceptedRegionStatus();
-	}
-
-	private void refreshAnswerRegionList() {
-		answerRegionListBox.getChildren().clear();
-
-		for (int i = 0; i < pendingAnswerRegions.size(); i++) {
-			AnswerRegion region = pendingAnswerRegions.get(i);
-			int regionIndex = i;
-
-			ImageView previewView = createAcceptedAnswerPreview(region);
-
-			Label label = new Label(String.format("Region %d - Page %d", i + 1, region.pageNumber()));
-
-			Button removeButton = new Button("Remove");
-			removeButton.setOnAction(event -> removeAnswerRegion(regionIndex));
-
-			VBox details = new VBox(COMPACT_SPACING, label, removeButton);
-
-			HBox row = new HBox(CONTROL_SPACING, previewView, details);
-
-			row.setAlignment(Pos.CENTER_LEFT);
-
-			answerRegionListBox.getChildren().add(row);
-		}
-
-		boolean hasRegions = !pendingAnswerRegions.isEmpty();
-		answerRegionsScrollPane.setVisible(hasRegions);
-		answerRegionsScrollPane.setManaged(hasRegions);
-	}
-
-	private ImageView createAcceptedAnswerPreview(AnswerRegion region) {
-
-		try {
-			BufferedImage preview = questionExtractor.extractRegion(answerPdfSessionSupplier.get(), region);
-
-			ImageView previewView = new ImageView(SwingFXUtils.toFXImage(preview, null));
-
-			previewView.setPreserveRatio(true);
-			previewView.setFitWidth(ACCEPTED_ANSWER_PREVIEW_WIDTH);
-			previewView.setSmooth(true);
-
-			return previewView;
-
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to preview accepted answer region", e);
-		}
-	}
-
 	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
 		currentAnswerSelection = new AnswerRegion(answerFile, selection.pageNumber(), selection.x(), selection.y(),
 				selection.width(), selection.height());
@@ -354,17 +367,6 @@ final class AnswerCapturePane extends VBox {
 		Question question = unansweredQuestionField.getValue();
 		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — selection pending");
 		setSelectionActionsEnabled(true);
-	}
-
-	private void showAnswerPreview(AnswerRegion region) {
-		try {
-			BufferedImage preview = questionExtractor.extractRegion(answerPdfSessionSupplier.get(), region);
-
-			answerPreviewView.setImage(SwingFXUtils.toFXImage(preview, null));
-
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to preview answer region", e);
-		}
 	}
 
 	void clearCurrentSelectionForPageChange() {
@@ -378,8 +380,9 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	void refreshUnansweredQuestions() {
+		List<Question> storedQuestions = questionRepository.findAll();
 		List<Question> unansweredQuestions = new ArrayList<>();
-		for (Question question : questionRepository.findAll()) {
+		for (Question question : storedQuestions) {
 			if (!question.hasAnswer()) {
 				unansweredQuestions.add(question);
 			}
@@ -394,8 +397,12 @@ final class AnswerCapturePane extends VBox {
 		if (selectedPdf == null) {
 			throw new NullPointerException("selectedPdf");
 		}
-		SourceDocument sourceDocument = new SourceDocument(1, selectedPdf.relativePath());
-		answerFile = new AnswerFile(1, question.getExam(), selectedPdf.file().getName(), sourceDocument);
+		try {
+			answerFile = answerWriter.findOrCreateAnswerFile(question.getExam(), selectedPdf.file().getName(),
+					selectedPdf.relativePath());
+		} catch (SQLException e) {
+			throw new IllegalStateException("Unable to save answer PDF", e);
+		}
 		answerPdfHandler.accept(selectedPdf);
 		selectedAnswerPdfLabel.setText(selectedPdf.file().getName());
 	}

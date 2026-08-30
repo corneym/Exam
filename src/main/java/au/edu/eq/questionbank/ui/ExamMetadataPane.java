@@ -1,16 +1,15 @@
 package au.edu.eq.questionbank.ui;
 
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.time.Year;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
-import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
+import au.edu.eq.questionbank.repository.SqliteExamImporter;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -54,6 +53,7 @@ final class ExamMetadataPane extends HBox {
 	private final Label examSubjectLabel = new Label("Not selected");
 	private final Label selectedPdfLabel = new Label("No PDF selected");
 
+	private final SqliteExamImporter examImporter;
 	private final CurriculumSelectionModel curriculumSelectionModel;
 	private final ExamMetadataOptionsRepository optionsRepository;
 	private final PdfFilePicker pdfFilePicker;
@@ -66,8 +66,9 @@ final class ExamMetadataPane extends HBox {
 	private ExamBooklet booklet;
 
 	ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
-			ExamMetadataOptionsRepository optionsRepository, BooleanSupplier examPdfAvailable,
-			Consumer<SelectedPdf> examPdfHandler, Consumer<Boolean> selectionCursorHandler) {
+			ExamMetadataOptionsRepository optionsRepository, SqliteExamImporter examImporter,
+			BooleanSupplier examPdfAvailable, Consumer<SelectedPdf> examPdfHandler,
+			Consumer<Boolean> selectionCursorHandler) {
 		if (pdfDataRoot == null) {
 			throw new NullPointerException("pdfDataRoot");
 		}
@@ -76,6 +77,9 @@ final class ExamMetadataPane extends HBox {
 		}
 		if (optionsRepository == null) {
 			throw new NullPointerException("optionsRepository");
+		}
+		if (examImporter == null) {
+			throw new NullPointerException("examImporter");
 		}
 		if (examPdfAvailable == null) {
 			throw new NullPointerException("examPdfAvailable");
@@ -92,6 +96,7 @@ final class ExamMetadataPane extends HBox {
 		this.optionsRepository = optionsRepository;
 		this.examPdfAvailable = examPdfAvailable;
 		this.examPdfHandler = examPdfHandler;
+		this.examImporter = examImporter;
 		this.selectionCursorHandler = selectionCursorHandler;
 		pdfFilePicker = new PdfFilePicker(this.pdfDataRoot);
 
@@ -101,35 +106,6 @@ final class ExamMetadataPane extends HBox {
 		getChildren().add(createDetailsGroup());
 		setAlignment(Pos.CENTER);
 		setPadding(BAR_PADDING);
-	}
-
-	void clearForNewPdf() {
-		providerField.getSelectionModel().clearSelection();
-		providerField.getEditor().clear();
-		yearField.getSelectionModel().clearSelection();
-		assessmentField.getSelectionModel().clearSelection();
-		assessmentField.getEditor().clear();
-		bookletField.getSelectionModel().clearSelection();
-		bookletField.getEditor().clear();
-		booklet = null;
-	}
-
-	ExamBooklet getBooklet() {
-		return booklet;
-	}
-
-	void selectExamPdf(SelectedPdf selectedPdf) {
-		if (selectedPdf == null) {
-			throw new NullPointerException("selectedPdf");
-		}
-		examPdfHandler.accept(selectedPdf);
-		currentPdfPath = selectedPdf.path();
-		clearForNewPdf();
-		selectedPdfLabel.setText(selectedPdf.file().getName());
-	}
-
-	void setSelectedSubject(Subject subject) {
-		examSubjectLabel.setText(subject == null ? "Not selected" : subject.getName());
 	}
 
 	private void applyInputToControls(ExamMetadataInput input) {
@@ -153,6 +129,11 @@ final class ExamMetadataPane extends HBox {
 		setExamButton.setOnAction(event -> setExamMetadata());
 		choosePdfButton.setTooltip(new Tooltip("Choose the PDF containing the exam booklet."));
 		setExamButton.setTooltip(new Tooltip("Apply these exam details before selecting question regions."));
+	}
+
+	private void configureBorderedPanel(Region panel) {
+		panel.setPadding(PANEL_PADDING);
+		panel.setStyle(BORDER_STYLE);
 	}
 
 	private void configureFields() {
@@ -180,19 +161,18 @@ final class ExamMetadataPane extends HBox {
 		setExamButton.setId("set-exam");
 	}
 
-	private ExamBooklet createExamBooklet(ExamMetadataInput input) {
-		ExamProvider provider = new ExamProvider(1, input.providerName());
-		Exam exam = new Exam(1, input.subject(), provider, input.year(), input.assessmentName());
-		SourceDocument sourceDocument = new SourceDocument(1, pdfDataRoot.relativize(currentPdfPath).toString());
-		return new ExamBooklet(1, exam, input.bookletName(), sourceDocument);
-	}
-
 	private HBox createDetailsGroup() {
 		HBox group = new HBox(CONTROL_SPACING, createSectionLabel("Exam Details:"), createPdfDetails(),
 				createMetadataDetails());
 		group.setAlignment(Pos.CENTER_LEFT);
 		configureBorderedPanel(group);
 		return group;
+	}
+
+	private ExamBooklet createExamBooklet(ExamMetadataInput input) throws SQLException {
+		String relativePath = pdfDataRoot.relativize(currentPdfPath).toString();
+		return examImporter.importExam(input.subject(), input.providerName(), input.year(), input.assessmentName(),
+				input.bookletName(), relativePath);
 	}
 
 	private HBox createMetadataDetails() {
@@ -215,11 +195,6 @@ final class ExamMetadataPane extends HBox {
 		Label label = new Label(text);
 		label.setStyle(HEADING_STYLE);
 		return label;
-	}
-
-	private void configureBorderedPanel(Region panel) {
-		panel.setPadding(PANEL_PADDING);
-		panel.setStyle(BORDER_STYLE);
 	}
 
 	private String findPrerequisiteError() {
@@ -268,11 +243,22 @@ final class ExamMetadataPane extends HBox {
 			showError("Complete all exam details.");
 			return;
 		}
+		try {
+			booklet = createExamBooklet(input);
+			rememberOptions(input);
+			applyInputToControls(input);
+			selectionCursorHandler.accept(true);
 
-		booklet = createExamBooklet(input);
-		rememberOptions(input);
-		applyInputToControls(input);
-		selectionCursorHandler.accept(true);
+		} catch (SQLException e) {
+			showDatabaseError(e.getMessage());
+		}
+	}
+
+	private void showDatabaseError(String message) {
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.setHeaderText("Exam details could not be saved.");
+		alert.setContentText(message);
+		alert.showAndWait();
 	}
 
 	private void showError(String message) {
@@ -280,5 +266,34 @@ final class ExamMetadataPane extends HBox {
 		alert.setHeaderText("Exam details are incomplete.");
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	void clearForNewPdf() {
+		providerField.getSelectionModel().clearSelection();
+		providerField.getEditor().clear();
+		yearField.getSelectionModel().clearSelection();
+		assessmentField.getSelectionModel().clearSelection();
+		assessmentField.getEditor().clear();
+		bookletField.getSelectionModel().clearSelection();
+		bookletField.getEditor().clear();
+		booklet = null;
+	}
+
+	ExamBooklet getBooklet() {
+		return booklet;
+	}
+
+	void selectExamPdf(SelectedPdf selectedPdf) {
+		if (selectedPdf == null) {
+			throw new NullPointerException("selectedPdf");
+		}
+		examPdfHandler.accept(selectedPdf);
+		currentPdfPath = selectedPdf.path();
+		clearForNewPdf();
+		selectedPdfLabel.setText(selectedPdf.file().getName());
+	}
+
+	void setSelectedSubject(Subject subject) {
+		examSubjectLabel.setText(subject == null ? "Not selected" : subject.getName());
 	}
 }

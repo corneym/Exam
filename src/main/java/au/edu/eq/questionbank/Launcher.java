@@ -8,6 +8,17 @@ import au.edu.eq.questionbank.ui.QuestionBankApplication;
  */
 public class Launcher {
 
+	/**
+	 * Creates the launcher used by the packaged application.
+	 */
+	public Launcher() {
+	}
+
+	/**
+	 * Starts the JavaFX application.
+	 *
+	 * @param args command-line arguments passed to JavaFX
+	 */
 	public static void main(String[] args) {
 		QuestionBankApplication.main(args);
 	}

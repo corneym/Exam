@@ -13,11 +13,14 @@ import au.edu.eq.questionbank.importer.CurriculumImportRow;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
-import au.edu.eq.questionbank.repository.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.QuestionRepository;
+import au.edu.eq.questionbank.repository.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.SqliteCurriculumImporter;
 import au.edu.eq.questionbank.repository.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.SqliteDatabase;
+import au.edu.eq.questionbank.repository.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.SqliteQuestionRepository;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.application.Application;
 import javafx.geometry.Insets;
@@ -47,20 +50,31 @@ public class QuestionBankApplication extends Application {
 	private static final double SCENE_HEIGHT = 840.0;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 
+	/**
+	 * Launches the desktop application.
+	 *
+	 * @param args command-line arguments passed to JavaFX
+	 */
 	public static void main(String[] args) {
 		launch(args);
 	}
 
-	private final QuestionRepository questionRepository = new InMemoryQuestionRepository();
-	private final QuestionExtractor questionExtractor = new QuestionExtractor();
+	private QuestionRepository questionRepository;
 
+	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
+
 	private CurriculumSelectionModel curriculumSelectionModel;
 	private CurriculumSelectorPane curriculumSelectorPane;
 	private ExamMetadataPane examMetadataPane;
 	private QuestionCapturePane questionCapturePane;
-
 	private AnswerCapturePane answerCapturePane;
+
+	/**
+	 * Creates the desktop application instance initialized by JavaFX.
+	 */
+	public QuestionBankApplication() {
+	}
 
 	@Override
 	public void start(Stage stage) throws Exception {
@@ -210,13 +224,19 @@ public class QuestionBankApplication extends Application {
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		questionRepository = new SqliteQuestionRepository(database);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
-				new ExamMetadataOptionsRepository(), pdfWorkspace::hasExamPdf, this::openExamPdf,
+				new ExamMetadataOptionsRepository(), examImporter, pdfWorkspace::hasExamPdf, this::openExamPdf,
 				pdfWorkspace::setSelectionCursorEnabled);
 		curriculumSelectorPane = createCurriculumSelectorPane();
-		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerPdfPicker,
+		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, pdfWorkspace::clearSelection, questionExtractor,
 				pdfWorkspace::getAnswerPdfSession);
+		answerCapturePane.refreshUnansweredQuestions();
 		questionCapturePane = new QuestionCapturePane(questionRepository, questionExtractor, curriculumSelectionModel,
 				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
 				pdfWorkspace::clearSelection, answerCapturePane::refreshUnansweredQuestions);

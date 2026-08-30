@@ -29,28 +29,25 @@ class InMemoryQuestionRepositoryTest {
 	private ExamBooklet booklet;
 	private InMemoryQuestionRepository repository;
 
-	private Question createQuestion(long id, String code, int pageNumber) {
-		return new Question(id, exam, code, "Question " + code,
+	private Question saveQuestion(String code, int pageNumber) {
+		return repository.save(exam, code, "Question " + code,
 				List.of(new QuestionRegion(booklet, pageNumber, 0.0, 0.0, 1.0, 1.0)), classification);
 	}
 
 	@Test
 	void returnsEmptyWhenNoQuestionHasTheRequestedId() {
-		repository.save(createQuestion(1, "Q1", 1));
-
+		saveQuestion("Q1", 1);
 		assertTrue(repository.findById(2).isEmpty());
 	}
 
 	@Test
 	void savesQuestionsAndFindsThemById() {
-		Question first = createQuestion(1, "Q1", 1);
-		Question second = createQuestion(2, "Q2", 2);
-
-		repository.save(first);
-		repository.save(second);
-
+		Question first = saveQuestion("Q1", 1);
+		Question second = saveQuestion("Q2", 2);
+		assertEquals(1, first.getId());
+		assertEquals(2, second.getId());
 		assertEquals(List.of(first, second), repository.findAll());
-		assertSame(second, repository.findById(2).orElseThrow());
+		assertSame(second, repository.findById(second.getId()).orElseThrow());
 	}
 
 	@BeforeEach

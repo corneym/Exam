@@ -69,7 +69,6 @@ final class QuestionCapturePane extends VBox {
 
 	private QuestionRegion currentSelection;
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
-	private long nextQuestionId = 1;
 
 	QuestionCapturePane(QuestionRepository questionRepository, QuestionExtractor questionExtractor,
 			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
@@ -117,31 +116,6 @@ final class QuestionCapturePane extends VBox {
 		setSpacing(COMPACT_SPACING);
 		setPadding(PANEL_PADDING);
 		setStyle(BORDER_STYLE);
-	}
-
-	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
-		ExamBooklet booklet = bookletSupplier.get();
-		if (booklet == null) {
-			clearCurrentSelection();
-			showAlert(Alert.AlertType.WARNING, "Exam details have not been set.",
-					"Enter the exam and booklet details, then click Set Exam.");
-			return;
-		}
-
-		currentSelection = new QuestionRegion(booklet, selection.pageNumber(), selection.x(), selection.y(),
-				selection.width(), selection.height());
-		showRegionPreview(currentSelection);
-		saveStatusLabel.setText("Selection pending — click Add or Clear");
-	}
-
-	void clearCurrentSelection() {
-		currentSelection = null;
-		selectionClearHandler.run();
-		previewView.setImage(null);
-	}
-
-	void clearForNewPdf() {
-		clearRegions();
 	}
 
 	private void addCurrentRegion() {
@@ -268,18 +242,6 @@ final class QuestionCapturePane extends VBox {
 		showQuestionPendingStatus();
 	}
 
-	private void updateRegionsScrollPane() {
-		boolean hasRegions = !pendingRegions.isEmpty();
-		regionsScrollPane.setVisible(hasRegions);
-		regionsScrollPane.setManaged(hasRegions);
-		if (!hasRegions) {
-			regionsScrollPane.setPrefHeight(0);
-			return;
-		}
-		double contentHeight = regionPreviewBox.prefHeight(REGION_PREVIEW_WIDTH);
-		regionsScrollPane.setPrefHeight(Math.min(contentHeight + 4, REGIONS_VIEWPORT_HEIGHT));
-	}
-
 	private void resetQuestionEntry() {
 		questionCodeField.clear();
 		clearRegions();
@@ -288,9 +250,8 @@ final class QuestionCapturePane extends VBox {
 
 	private void saveQuestion() {
 		ExamBooklet booklet = bookletSupplier.get();
-		Question question = new Question(nextQuestionId++, booklet.getExam(), questionCodeField.getText().trim(), "",
+		Question question = questionRepository.save(booklet.getExam(), questionCodeField.getText().trim(), "",
 				pendingRegions, curriculumSelectionModel.getSubtopic());
-		questionRepository.save(question);
 		questionsChangedHandler.run();
 		saveStatusLabel.setText(
 				String.format("Saved %s (%d region(s))", question.getQuestionCode(), question.getRegions().size()));
@@ -323,6 +284,18 @@ final class QuestionCapturePane extends VBox {
 		}
 	}
 
+	private void updateRegionsScrollPane() {
+		boolean hasRegions = !pendingRegions.isEmpty();
+		regionsScrollPane.setVisible(hasRegions);
+		regionsScrollPane.setManaged(hasRegions);
+		if (!hasRegions) {
+			regionsScrollPane.setPrefHeight(0);
+			return;
+		}
+		double contentHeight = regionPreviewBox.prefHeight(REGION_PREVIEW_WIDTH);
+		regionsScrollPane.setPrefHeight(Math.min(contentHeight + 4, REGIONS_VIEWPORT_HEIGHT));
+	}
+
 	private void validateQuestionForSave() {
 		String validationError = findValidationError();
 		if (validationError != null) {
@@ -330,5 +303,30 @@ final class QuestionCapturePane extends VBox {
 			return;
 		}
 		saveQuestion();
+	}
+
+	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null) {
+			clearCurrentSelection();
+			showAlert(Alert.AlertType.WARNING, "Exam details have not been set.",
+					"Enter the exam and booklet details, then click Set Exam.");
+			return;
+		}
+
+		currentSelection = new QuestionRegion(booklet, selection.pageNumber(), selection.x(), selection.y(),
+				selection.width(), selection.height());
+		showRegionPreview(currentSelection);
+		saveStatusLabel.setText("Selection pending — click Add or Clear");
+	}
+
+	void clearCurrentSelection() {
+		currentSelection = null;
+		selectionClearHandler.run();
+		previewView.setImage(null);
+	}
+
+	void clearForNewPdf() {
+		clearRegions();
 	}
 }

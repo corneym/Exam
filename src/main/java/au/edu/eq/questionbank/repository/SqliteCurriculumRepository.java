@@ -17,10 +17,22 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
+/**
+ * Reads subjects, syllabus versions, and curriculum hierarchies from SQLite.
+ * SQL failures are exposed as {@link IllegalStateException} because the
+ * {@link CurriculumRepository} interface represents lookup operations rather
+ * than JDBC operations.
+ */
 public final class SqliteCurriculumRepository implements CurriculumRepository {
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a curriculum repository backed by the supplied database.
+	 *
+	 * @param database the initialized question-bank database
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
 	public SqliteCurriculumRepository(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");

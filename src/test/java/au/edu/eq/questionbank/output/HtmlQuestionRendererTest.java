@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.output;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -42,5 +43,13 @@ class HtmlQuestionRendererTest {
 		assertTrue(html.contains("<!DOCTYPE html>"));
 		assertTrue(html.contains("</html>"));
 		assertFalse(html.contains("<img"));
+	}
+
+	@Test
+	void rejectsAnOutputPathWithoutAParentDirectoryWhenRenderingImages() {
+		Path image = tempDir.resolve("question.png");
+
+		assertThrows(NullPointerException.class,
+				() -> renderer.render(List.of(image), Path.of("questions-without-parent.html")));
 	}
 }

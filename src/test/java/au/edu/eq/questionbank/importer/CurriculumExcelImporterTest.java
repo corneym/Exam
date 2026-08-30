@@ -8,6 +8,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -15,6 +16,12 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.InMemoryCurriculumRepository;
 
 class CurriculumExcelImporterTest {
 
@@ -155,6 +162,35 @@ class CurriculumExcelImporterTest {
 
 		assertEquals("1.1.1", rows.get(2).code());
 		assertEquals("Descriptor one", rows.get(2).content());
+	}
+
+	@Test
+	void importsAWorkbookIntoAQueryableCurriculumHierarchy() throws IOException {
+		Path file = tempDirectory.resolve("integrated-curriculum.xlsx");
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet sheet = workbook.createSheet("Curriculum");
+			addHeader(sheet);
+			addRow(sheet, 1, "1", "Unit 1");
+			addRow(sheet, 2, "1.1", "Topic 1");
+			addRow(sheet, 3, "1.1.1", "Subtopic 1");
+			addRow(sheet, 4, "1.1.1.1", "Descriptor 1");
+			writeWorkbook(workbook, file);
+		}
+
+		Subject subject = new Subject(1, "Science");
+		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2025", true);
+		List<CurriculumImportRow> rows = new CurriculumExcelImporter().read(file);
+		List<CurriculumNode> nodes = new CurriculumNodeBuilder().build(syllabus, rows,
+				new AtomicLong(1)::getAndIncrement);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(subject), List.of(syllabus),
+				nodes);
+
+		assertEquals(List.of(nodes.get(0)), repository.findRootNodes(syllabus));
+		assertEquals(CurriculumLevel.UNIT, nodes.get(0).getLevel());
+		assertEquals(CurriculumLevel.TOPIC, nodes.get(1).getLevel());
+		assertEquals(CurriculumLevel.SUBTOPIC, nodes.get(2).getLevel());
+		assertEquals(CurriculumLevel.DESCRIPTOR, nodes.get(3).getLevel());
+		assertEquals("1.1.1", repository.findByCode(syllabus, "1.1.1.1").orElseThrow().getParent().getCode());
 	}
 
 	@Test

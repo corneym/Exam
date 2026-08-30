@@ -17,12 +17,12 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 
 /**
- * Renders source question regions to PNG images.
+ * Renders and crops source question or answer regions as raster images.
  * <p>
- * Rectangular regions are cropped from rendered pages and combined vertically
- * in list order. All regions passed to one extraction call are interpreted
- * against the supplied PDF path or session; booklet metadata is not used to
- * open additional files.
+ * Question regions can be combined vertically in list order or written to PNG.
+ * All regions passed to one extraction call are interpreted against the
+ * supplied PDF path or session; source-document metadata is not used to open
+ * additional files.
  */
 public class QuestionExtractor {
 
@@ -84,6 +84,15 @@ public class QuestionExtractor {
 		return cropRegion(page, region);
 	}
 
+	/**
+	 * Extracts one answer region using an existing PDF session. The session remains
+	 * open.
+	 *
+	 * @param session the session for the region's answer-file source document
+	 * @param region the rectangular answer region to extract
+	 * @return the cropped region image
+	 * @throws IOException if the page cannot be rendered
+	 */
 	public BufferedImage extractRegion(PdfSession session, AnswerRegion region) throws IOException {
 
 		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);

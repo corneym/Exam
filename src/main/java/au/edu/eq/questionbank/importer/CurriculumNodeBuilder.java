@@ -19,6 +19,22 @@ import au.edu.eq.questionbank.model.Unit;
  */
 public class CurriculumNodeBuilder {
 
+	/**
+	 * Builds nodes in hierarchy order: units, topics, then subtopics and
+	 * descriptors. A three-part code with children becomes a subtopic; a
+	 * childless three-part code becomes a descriptor directly beneath its topic.
+	 * Four-part codes are descriptors beneath subtopics.
+	 *
+	 * @param syllabusVersion the version containing every generated node
+	 * @param rows unique curriculum rows with complete parent chains
+	 * @param idSupplier supplies a positive identifier for each generated node
+	 * @return an immutable list ordered by hierarchy level and source-row order
+	 *         within each level
+	 * @throws NullPointerException if an argument or row element is {@code null}
+	 * @throws IllegalArgumentException if a code is invalid or duplicated, a
+	 *                                  parent row is absent, or a supplied model
+	 *                                  value is invalid
+	 */
 	public List<CurriculumNode> build(SyllabusVersion syllabusVersion, List<CurriculumImportRow> rows,
 			LongSupplier idSupplier) {
 

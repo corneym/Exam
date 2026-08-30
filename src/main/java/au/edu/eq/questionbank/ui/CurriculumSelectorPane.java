@@ -10,8 +10,9 @@ import javafx.scene.control.Label;
 import javafx.scene.layout.VBox;
 
 /**
- * JavaFX controls for selecting a subject and one best-fit curriculum subtopic
- * through its unit/topic hierarchy.
+ * JavaFX controls for navigating the current syllabus of a subject through its
+ * unit and topic hierarchy and selecting the final classification shown by the
+ * model.
  */
 public class CurriculumSelectorPane extends VBox {
 
@@ -61,6 +62,10 @@ public class CurriculumSelectorPane extends VBox {
 				new Label("Topic"), topicBox, new Label("Subtopic"), subtopicBox);
 	}
 
+	/**
+	 * Clears unit, topic, and final-classification state while retaining the
+	 * selected subject.
+	 */
 	public void clearClassificationBelowSubject() {
 		unitBox.getSelectionModel().clearSelection();
 		topicBox.getSelectionModel().clearSelection();
@@ -78,6 +83,10 @@ public class CurriculumSelectorPane extends VBox {
 		model.selectSubtopic(null);
 	}
 
+	/**
+	 * Reloads available subjects while preserving the current selection when it
+	 * still exists.
+	 */
 	public void refreshSubjects() {
 		Subject selectedSubject = subjectBox.getValue();
 		subjectBox.getItems().setAll(model.getSubjects());
@@ -86,6 +95,11 @@ public class CurriculumSelectorPane extends VBox {
 		}
 	}
 
+	/**
+	 * Exposes the subject selected by this pane.
+	 *
+	 * @return the read-only selected-subject property
+	 */
 	public ReadOnlyObjectProperty<Subject> selectedSubjectProperty() {
 		return subjectBox.valueProperty();
 	}

@@ -47,6 +47,11 @@ public class PdfSession implements AutoCloseable {
 		document.close();
 	}
 
+	/**
+	 * Returns the number of pages available to render.
+	 *
+	 * @return the number of pages in the open PDF document
+	 */
 	public int getPageCount() {
 		return document.getNumberOfPages();
 	}

@@ -8,11 +8,13 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 /**
- * Filesystem roots for external PDF and curriculum application data.
+ * Filesystem locations for external PDF and curriculum application data and
+ * the persistent question-bank database.
  *
  * @param pdfDataRoot        root beneath which source examination PDFs are
  *                           stored
  * @param curriculumDataRoot root beneath which curriculum workbooks are stored
+ * @param databasePath       path to the SQLite question-bank database
  */
 public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path databasePath) {
 
@@ -21,9 +23,9 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 	private static final String DATABASE_PATH_PROPERTY = "database.path";
 
 	/**
-	 * Validates directly supplied configuration roots.
+	 * Validates directly supplied configuration paths.
 	 *
-	 * @throws NullPointerException if either root is {@code null}
+	 * @throws NullPointerException if any path is {@code null}
 	 */
 	public ApplicationConfig {
 		if (pdfDataRoot == null) {
@@ -38,8 +40,9 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 	}
 
 	/**
-	 * Loads {@code pdf.dataRoot} and {@code curriculum.dataRoot} from a Java
-	 * properties file. Loaded values are converted to normalized absolute paths.
+	 * Loads {@code pdf.dataRoot}, {@code curriculum.dataRoot}, and
+	 * {@code database.path} from a Java properties file. Loaded values are
+	 * converted to normalized absolute paths.
 	 *
 	 * @param propertiesFile the configuration file to read
 	 * @return the loaded application configuration
