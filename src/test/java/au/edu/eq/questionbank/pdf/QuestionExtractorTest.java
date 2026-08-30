@@ -46,7 +46,7 @@ class QuestionExtractorTest {
 	private ExamBooklet booklet;
 
 	private CurriculumNode createClassification() {
-		Subject subject = new Subject(1, "Science");
+		Subject subject = booklet.getExam().getSubject();
 		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
 		Unit unit = new Unit(1, syllabus, "1", "Unit 1", 1);
 		Topic topic = new Topic(2, syllabus, unit, "1.1", "Topic 1", 1);

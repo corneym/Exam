@@ -22,12 +22,22 @@ import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 
+/**
+ * SQLite-backed question repository that reconstructs complete question,
+ * region, exam, curriculum, and answer state from persistent records.
+ */
 public final class SqliteQuestionRepository implements QuestionRepository {
 
 	private final SqliteDatabase database;
 	private final SqliteQuestionWriter writer;
 	private final CurriculumRepository curriculumRepository;
 
+	/**
+	 * Creates a repository for an initialised question-bank database.
+	 *
+	 * @param database the question-bank database
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
 	public SqliteQuestionRepository(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -170,6 +180,7 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 				    ar.width,
 				    ar.height,
 				    af.id AS answer_file_id,
+				    af.exam_id AS answer_file_exam_id,
 				    af.answer_file_name,
 				    sd.id AS source_document_id,
 				    sd.relative_path
@@ -184,6 +195,9 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 			statement.setLong(1, answerId);
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
+					if (result.getLong("answer_file_exam_id") != exam.getId()) {
+						throw new IllegalStateException("Answer region file belongs to a different exam");
+					}
 					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 							result.getString("relative_path"));
 					AnswerFile answerFile = new AnswerFile(result.getLong("answer_file_id"), exam,
@@ -208,6 +222,7 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 				    qr.width,
 				    qr.height,
 				    eb.id AS booklet_id,
+				    eb.exam_id AS booklet_exam_id,
 				    eb.booklet_name,
 				    sd.id AS source_document_id,
 				    sd.relative_path
@@ -223,6 +238,9 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 			statement.setLong(1, questionId);
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
+					if (result.getLong("booklet_exam_id") != exam.getId()) {
+						throw new IllegalStateException("Question region booklet belongs to a different exam");
+					}
 					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 							result.getString("relative_path"));
 					ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam,

@@ -73,6 +73,9 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private Runnable pageChangeHandler = () -> {
 	};
 
+	/**
+	 * Creates an empty PDF workspace with navigation and region-selection controls.
+	 */
 	PdfWorkspacePane() {
 		configurePageView();
 		configureSelectionRectangle();
@@ -83,14 +86,37 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	@Override
 	public void close() throws Exception {
+		Exception failure = null;
 		if (examPdfSession != null) {
-			examPdfSession.close();
+			try {
+				examPdfSession.close();
+			} catch (Exception e) {
+				failure = e;
+			} finally {
+				examPdfSession = null;
+			}
 		}
 		if (answerPdfSession != null) {
-			answerPdfSession.close();
+			try {
+				answerPdfSession.close();
+			} catch (Exception e) {
+				if (failure == null) {
+					failure = e;
+				} else {
+					failure.addSuppressed(e);
+				}
+			} finally {
+				answerPdfSession = null;
+			}
+		}
+		if (failure != null) {
+			throw failure;
 		}
 	}
 
+	/**
+	 * Removes the visible pending selection rectangle.
+	 */
 	void clearSelection() {
 		selectionRectangle.setVisible(false);
 		selectionRectangle.setWidth(0);
@@ -117,6 +143,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		return examPdfSession != null;
 	}
 
+	/**
+	 * Opens and displays an answer PDF, replacing any previous answer session.
+	 *
+	 * @param path the answer PDF path
+	 */
 	void openAnswerPdf(Path path) {
 		if (path == null) {
 			throw new NullPointerException("path");
@@ -134,13 +165,22 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * Opens and displays an exam PDF, replacing any previous exam session.
+	 *
+	 * @param path the exam PDF path
+	 */
 	void openExamPdf(Path path) {
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
 		try {
 			if (examPdfSession != null) {
-				examPdfSession.close();
+				try {
+					examPdfSession.close();
+				} finally {
+					examPdfSession = null;
+				}
 			}
 			examPdfSession = PdfSession.open(path);
 			displayedDocument = DocumentMode.EXAM;
@@ -152,6 +192,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * Sets the callback invoked before a newly rendered page is shown.
+	 *
+	 * @param pageChangeHandler the page-change callback
+	 */
 	void setPageChangeHandler(Runnable pageChangeHandler) {
 		if (pageChangeHandler == null) {
 			throw new NullPointerException("pageChangeHandler");
@@ -159,6 +204,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		this.pageChangeHandler = pageChangeHandler;
 	}
 
+	/**
+	 * Sets the predicate controlling whether a document accepts region selection.
+	 *
+	 * @param selectionAvailable selection availability by document mode
+	 */
 	void setSelectionAvailable(Predicate<DocumentMode> selectionAvailable) {
 		if (selectionAvailable == null) {
 			throw new NullPointerException("selectionAvailable");
@@ -166,6 +216,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		this.selectionAvailable = selectionAvailable;
 	}
 
+	/**
+	 * Sets the consumer for completed proportional region selections.
+	 *
+	 * @param selectionHandler the completed-selection consumer
+	 */
 	void setSelectionHandler(Consumer<RegionSelection> selectionHandler) {
 		if (selectionHandler == null) {
 			throw new NullPointerException("selectionHandler");
@@ -177,6 +232,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pagePane.setCursor(enabled ? Cursor.CROSSHAIR : Cursor.DEFAULT);
 	}
 
+	/**
+	 * Switches between the already opened exam and answer documents.
+	 *
+	 * @param documentMode the document to display
+	 */
 	void showDocument(DocumentMode documentMode) {
 		if (documentMode == null) {
 			throw new NullPointerException("documentMode");
@@ -197,7 +257,9 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		try {
 			answerPdfSession.close();
 		} catch (Exception e) {
-			e.printStackTrace();
+			throw new IllegalStateException("Unable to close the previous answer PDF", e);
+		} finally {
+			answerPdfSession = null;
 		}
 	}
 

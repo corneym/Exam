@@ -7,7 +7,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 /**
- * Owns the SQLite database location, initializes the question-bank schema, and
+ * Owns the SQLite database location, initialises the question-bank schema, and
  * opens connections with foreign-key enforcement enabled.
  */
 public final class SqliteDatabase {
@@ -257,7 +257,9 @@ public final class SqliteDatabase {
 		Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
 
 		try {
-			connection.createStatement().execute("PRAGMA foreign_keys = ON");
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("PRAGMA foreign_keys = ON");
+			}
 			return connection;
 		} catch (SQLException e) {
 			connection.close();

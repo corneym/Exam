@@ -10,7 +10,8 @@ import java.util.List;
  * be a {@link CurriculumLevel#SUBTOPIC subtopic}. Questions that occupy several
  * page areas retain those regions in extraction and assembly order. Every
  * region must belong to the same {@link ExamBooklet}, and that booklet must
- * belong to the question's exam.
+ * belong to the question's exam. The classification must belong to the same
+ * subject as the exam.
  */
 public class Question {
 
@@ -33,18 +34,33 @@ public class Question {
 	 * @param regions        source regions from one booklet, in extraction and
 	 *                       assembly order
 	 * @param classification the single best-fit syllabus subtopic
-	 * @throws NullPointerException     if {@code exam}, {@code regions}, an element
-	 *                                  of {@code regions}, or
-	 *                                  {@code classification} is {@code null}
-	 * @throws IllegalArgumentException if {@code regions} is empty,
+	 * @throws NullPointerException     if {@code exam}, {@code questionText},
+	 *                                  {@code regions}, an element of
+	 *                                  {@code regions}, or {@code classification}
+	 *                                  is {@code null}
+	 * @throws IllegalArgumentException if {@code id} is not positive,
+	 *                                  {@code questionCode} is null or blank,
+	 *                                  {@code regions} is empty,
 	 *                                  {@code classification} is not a subtopic, a
-	 *                                  region belongs to a different exam, or the
-	 *                                  regions do not all belong to the same
-	 *                                  booklet
+	 *                                  classification belongs to another subject,
+	 *                                  a region belongs to a different exam, or the
+	 *                                  regions do not all belong to the same booklet
 	 */
 	public Question(long id, Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
 			CurriculumNode classification) {
 
+		if (id < 1) {
+			throw new IllegalArgumentException("id must be positive");
+		}
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (questionCode == null || questionCode.isBlank()) {
+			throw new IllegalArgumentException("questionCode must not be blank");
+		}
+		if (questionText == null) {
+			throw new NullPointerException("questionText");
+		}
 		if (regions == null) {
 			throw new NullPointerException("regions");
 		}
@@ -56,6 +72,9 @@ public class Question {
 		}
 		if (classification.getLevel() != CurriculumLevel.SUBTOPIC) {
 			throw new IllegalArgumentException("Question classification must be a SUBTOPIC");
+		}
+		if (!classification.getSyllabusVersion().getSubject().equals(exam.getSubject())) {
+			throw new IllegalArgumentException("Question classification must belong to the exam's subject");
 		}
 		ExamBooklet firstBooklet = regions.get(0).booklet();
 		for (QuestionRegion region : regions) {

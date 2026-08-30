@@ -9,11 +9,22 @@ import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 
+/**
+ * Finds or creates the complete exam, provider, source-document, and booklet
+ * hierarchy in one SQLite transaction.
+ */
 public final class SqliteExamImporter {
 
 	private final SqliteDatabase database;
 	private final SqliteExamWriter writer;
 
+	/**
+	 * Creates an exam importer.
+	 *
+	 * @param database the question-bank database
+	 * @param writer   the exam metadata writer used within the transaction
+	 * @throws NullPointerException if either argument is {@code null}
+	 */
 	public SqliteExamImporter(SqliteDatabase database, SqliteExamWriter writer) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -25,6 +36,20 @@ public final class SqliteExamImporter {
 		this.writer = writer;
 	}
 
+	/**
+	 * Finds or creates exam metadata matching the supplied natural keys.
+	 *
+	 * @param subject      the persisted subject being assessed
+	 * @param providerName the non-blank issuing organisation name
+	 * @param year         the positive assessment year
+	 * @param examName     the non-blank assessment name
+	 * @param bookletName the non-blank booklet name
+	 * @param relativePath the non-blank data-root-relative source path
+	 * @return the existing or newly stored booklet
+	 * @throws SQLException             if the transaction cannot be completed
+	 * @throws NullPointerException     if {@code subject} is {@code null}
+	 * @throws IllegalArgumentException if supplied metadata is invalid
+	 */
 	public ExamBooklet importExam(Subject subject, String providerName, int year, String examName, String bookletName,
 			String relativePath) throws SQLException {
 		if (subject == null) {

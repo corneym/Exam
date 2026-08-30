@@ -144,6 +144,11 @@ class QuestionBankApplicationWorkflowTest {
 		Unit unit = writer.insertUnit(syllabus2025, "1", "Unit one", 1);
 		Topic topic = writer.insertTopic(unit, "1.1", "Topic one", 1);
 		writer.insertSubtopic(topic, "1.1.1", "Subtopic one", 1);
+		Subject physics = writer.insertSubject("Physics");
+		SyllabusVersion physicsSyllabus = writer.insertSyllabusVersion(physics, "2025", true);
+		Unit physicsUnit = writer.insertUnit(physicsSyllabus, "1", "Unit one", 1);
+		Topic physicsTopic = writer.insertTopic(physicsUnit, "1.1", "Topic one", 1);
+		writer.insertSubtopic(physicsTopic, "1.1.1", "Subtopic one", 1);
 	}
 
 	private void createCurriculumFile(Path curriculumDataRoot, String version, String fileName, String unitCode)
@@ -357,6 +362,19 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(answerText.isDisabled());
 		assertEquals("", answerText.getText());
 		assertNull(unansweredQuestions.getValue());
+	}
+
+	@Test
+	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		assertNotNull(examMetadataPane().getBooklet());
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+
+		robot.interact(() -> subjects.getSelectionModel().select(1));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertNull(examMetadataPane().getBooklet());
+		assertEquals("Physics", subjects.getValue().getName());
 	}
 
 	@Test

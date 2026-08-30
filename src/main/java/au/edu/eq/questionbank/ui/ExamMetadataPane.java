@@ -65,6 +65,9 @@ final class ExamMetadataPane extends HBox {
 	private Path currentPdfPath;
 	private ExamBooklet booklet;
 
+	/**
+	 * Creates the exam metadata workflow controls and persistence integration.
+	 */
 	ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
 			ExamMetadataOptionsRepository optionsRepository, SqliteExamImporter examImporter,
 			BooleanSupplier examPdfAvailable, Consumer<SelectedPdf> examPdfHandler,
@@ -268,6 +271,9 @@ final class ExamMetadataPane extends HBox {
 		alert.showAndWait();
 	}
 
+	/**
+	 * Clears metadata that must be re-entered for a newly selected exam PDF.
+	 */
 	void clearForNewPdf() {
 		providerField.getSelectionModel().clearSelection();
 		providerField.getEditor().clear();
@@ -279,10 +285,20 @@ final class ExamMetadataPane extends HBox {
 		booklet = null;
 	}
 
+	/**
+	 * Returns the persisted booklet currently used for question regions.
+	 *
+	 * @return the current booklet, or {@code null} before exam metadata is set
+	 */
 	ExamBooklet getBooklet() {
 		return booklet;
 	}
 
+	/**
+	 * Applies a validated PDF selection and clears metadata from the old PDF.
+	 *
+	 * @param selectedPdf the selected exam PDF
+	 */
 	void selectExamPdf(SelectedPdf selectedPdf) {
 		if (selectedPdf == null) {
 			throw new NullPointerException("selectedPdf");
@@ -293,7 +309,17 @@ final class ExamMetadataPane extends HBox {
 		selectedPdfLabel.setText(selectedPdf.file().getName());
 	}
 
+	/**
+	 * Updates the subject displayed with the exam metadata controls.
+	 *
+	 * @param subject the selected subject, or {@code null}
+	 */
 	void setSelectedSubject(Subject subject) {
+		if (booklet != null
+				&& (subject == null || booklet.getExam().getSubject().getId() != subject.getId())) {
+			booklet = null;
+			selectionCursorHandler.accept(false);
+		}
 		examSubjectLabel.setText(subject == null ? "Not selected" : subject.getName());
 	}
 }

@@ -14,7 +14,8 @@ import au.edu.eq.questionbank.model.Subject;
 /**
  * Inserts examination metadata and source-document references into SQLite,
  * returning domain objects carrying their generated persistent identifiers.
- * Each operation owns and closes its database connection.
+ * Public operations own their connections; package-level overloads participate
+ * in a caller-managed transaction.
  */
 public final class SqliteExamWriter {
 

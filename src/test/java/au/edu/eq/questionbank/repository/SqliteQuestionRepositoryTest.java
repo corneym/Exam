@@ -1,9 +1,12 @@
 package au.edu.eq.questionbank.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -21,9 +24,36 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
 class SqliteQuestionRepositoryTest {
+	private record ReconstructionFixture(SqliteDatabase database, Question question, ExamBooklet otherBooklet,
+			AnswerFile otherAnswerFile) {
+	}
 
 	@TempDir
 	Path tempDirectory;
+
+	private ReconstructionFixture createReconstructionFixture(String databaseName) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment",
+				"Question booklet", "Chemistry/2025/questions.pdf");
+		ExamBooklet otherBooklet = examImporter.importExam(chemistry, "QCAA", 2024, "External Assessment",
+				"Question booklet", "Chemistry/2024/questions.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question question = repository.save(booklet.getExam(), "Q1", "",
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile otherAnswerFile = answerWriter.findOrCreateAnswerFile(otherBooklet.getExam(), "Answers",
+				"Chemistry/2024/answers.pdf");
+		return new ReconstructionFixture(database, question, otherBooklet, otherAnswerFile);
+	}
 
 	@Test
 	void reloadsPersistedAnswer() throws Exception {
@@ -84,5 +114,40 @@ class SqliteQuestionRepositoryTest {
 		assertEquals(5, loaded.getRegions().get(1).pageNumber());
 		assertEquals(subtopic.getId(), loaded.getClassification().getId());
 		assertEquals(1, secondRepository.findAll().size());
+	}
+
+	@Test
+	void rejectsPersistedAnswerRegionWhoseFileBelongsToAnotherExam() throws Exception {
+		ReconstructionFixture fixture = createReconstructionFixture("invalid-answer-reconstruction.db");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("INSERT INTO answers (id, question_id, answer_text) VALUES (1, "
+					+ fixture.question().getId() + ", NULL)");
+			statement.execute("""
+					INSERT INTO answer_regions
+					    (answer_id, region_order, answer_file_id, page_number, x, y, width, height)
+					VALUES (1, 0, %d, 1, 0.10, 0.10, 0.50, 0.20)
+					""".formatted(fixture.otherAnswerFile().getId()));
+		}
+
+		assertThrows(IllegalStateException.class,
+				() -> new SqliteQuestionRepository(fixture.database()).findById(fixture.question().getId()));
+	}
+
+	@Test
+	void rejectsPersistedQuestionRegionWhoseBookletBelongsToAnotherExam() throws Exception {
+		ReconstructionFixture fixture = createReconstructionFixture("invalid-question-reconstruction.db");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("DELETE FROM question_regions WHERE question_id = " + fixture.question().getId());
+			statement.execute("""
+					INSERT INTO question_regions
+					    (question_id, region_order, booklet_id, page_number, x, y, width, height)
+					VALUES (%d, 0, %d, 1, 0.10, 0.10, 0.50, 0.20)
+					""".formatted(fixture.question().getId(), fixture.otherBooklet().getId()));
+		}
+
+		assertThrows(IllegalStateException.class,
+				() -> new SqliteQuestionRepository(fixture.database()).findById(fixture.question().getId()));
 	}
 }

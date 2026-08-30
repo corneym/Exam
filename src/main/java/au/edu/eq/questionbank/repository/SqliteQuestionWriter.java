@@ -11,10 +11,19 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 
+/**
+ * Persists a question and its ordered source regions in one SQLite transaction.
+ */
 public final class SqliteQuestionWriter {
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a question writer.
+	 *
+	 * @param database the question-bank database
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
 	public SqliteQuestionWriter(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -22,6 +31,20 @@ public final class SqliteQuestionWriter {
 		this.database = database;
 	}
 
+	/**
+	 * Stores a classified question and all of its regions atomically.
+	 *
+	 * @param exam           the exam containing the question
+	 * @param questionCode   the non-blank question label
+	 * @param questionText   supplementary text, which may be blank
+	 * @param regions        source regions in extraction order
+	 * @param classification the question's syllabus subtopic
+	 * @return the stored question with its generated identifier
+	 * @throws SQLException             if the transaction cannot be completed
+	 * @throws NullPointerException     if a required object is {@code null}
+	 * @throws IllegalArgumentException if the question metadata or relationships
+	 *                                  are invalid
+	 */
 	public Question insertQuestion(Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
 			CurriculumNode classification) throws SQLException {
 

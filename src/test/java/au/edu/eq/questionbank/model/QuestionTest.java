@@ -19,7 +19,7 @@ class QuestionTest {
 	private ExamBooklet booklet;
 
 	private CurriculumNode createClassification() {
-		Subject subject = new Subject(1, "Science");
+		Subject subject = exam.getSubject();
 		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
 		Unit unit = new Unit(1, syllabus, "1", "Unit 1", 1);
 		Topic topic = new Topic(2, syllabus, unit, "1.1", "Topic 1", 1);
@@ -27,7 +27,7 @@ class QuestionTest {
 	}
 
 	private CurriculumNode createInvalidClassification() {
-		Subject subject = new Subject(1, "Science");
+		Subject subject = exam.getSubject();
 		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
 		return new Unit(1, syllabus, "1", "Unit 1", 1);
 	}
@@ -60,6 +60,34 @@ class QuestionTest {
 	void rejectInvalidClassification() {
 		assertThrows(IllegalArgumentException.class, () -> new Question(36, exam, "Q6", "Invalid classification",
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0)), createInvalidClassification()));
+	}
+
+	@Test
+	void rejectsClassificationFromDifferentSubject() {
+		Subject chemistry = new Subject(79, "Chemistry");
+		SyllabusVersion syllabus = new SyllabusVersion(2, chemistry, "2025", true);
+		Unit unit = new Unit(4, syllabus, "1", "Unit 1", 1);
+		Topic topic = new Topic(5, syllabus, unit, "1.1", "Topic 1", 1);
+		Subtopic classification = new Subtopic(6, syllabus, topic, "1.1.1", "Subtopic 1", 1);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> new Question(1, exam, "Q1", "Question",
+						List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 0.5)), classification));
+	}
+
+	@Test
+	void rejectsInvalidPersistentMetadata() {
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 0.5);
+
+		assertAll(
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new Question(0, exam, "Q1", "Question", List.of(region), createClassification())),
+				() -> assertThrows(NullPointerException.class,
+						() -> new Question(1, null, "Q1", "Question", List.of(region), createClassification())),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new Question(1, exam, " ", "Question", List.of(region), createClassification())),
+				() -> assertThrows(NullPointerException.class,
+						() -> new Question(1, exam, "Q1", null, List.of(region), createClassification())));
 	}
 
 	@Test

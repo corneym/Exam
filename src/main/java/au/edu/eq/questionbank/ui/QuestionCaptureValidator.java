@@ -1,7 +1,13 @@
 package au.edu.eq.questionbank.ui;
 
+/**
+ * Applies save-time validation to the transient question-capture state.
+ */
 final class QuestionCaptureValidator {
 
+	/**
+	 * Values required to decide whether the current question can be saved.
+	 */
 	record State(boolean examSet, String questionCode, boolean subjectSelected, boolean unitSelected,
 			boolean topicSelected, boolean subtopicSelected, boolean currentSelectionPending, int acceptedRegionCount) {
 	}
@@ -9,6 +15,12 @@ final class QuestionCaptureValidator {
 	private QuestionCaptureValidator() {
 	}
 
+	/**
+	 * Returns the first workflow error, or {@code null} when the state is valid.
+	 *
+	 * @param state the current capture state
+	 * @return a user-facing validation message, or {@code null}
+	 */
 	static String findError(State state) {
 		if (!state.examSet()) {
 			return "Set the exam details first.";

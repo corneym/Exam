@@ -70,6 +70,9 @@ final class QuestionCapturePane extends VBox {
 	private QuestionRegion currentSelection;
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
 
+	/**
+	 * Creates the question-capture workflow and its repository integration.
+	 */
 	QuestionCapturePane(QuestionRepository questionRepository, QuestionExtractor questionExtractor,
 			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
 			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
@@ -305,6 +308,11 @@ final class QuestionCapturePane extends VBox {
 		saveQuestion();
 	}
 
+	/**
+	 * Accepts a proportional exam-page selection as the current pending region.
+	 *
+	 * @param selection the selected exam-page rectangle
+	 */
 	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
 		ExamBooklet booklet = bookletSupplier.get();
 		if (booklet == null) {
@@ -320,12 +328,18 @@ final class QuestionCapturePane extends VBox {
 		saveStatusLabel.setText("Selection pending — click Add or Clear");
 	}
 
+	/**
+	 * Discards the current unaccepted region selection.
+	 */
 	void clearCurrentSelection() {
 		currentSelection = null;
 		selectionClearHandler.run();
 		previewView.setImage(null);
 	}
 
+	/**
+	 * Clears all transient question regions when the exam PDF changes.
+	 */
 	void clearForNewPdf() {
 		clearRegions();
 	}

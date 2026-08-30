@@ -7,10 +7,18 @@ import javafx.scene.control.Alert;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
+/**
+ * Chooses PDFs and rejects selections outside the configured PDF data root.
+ */
 final class PdfFilePicker {
 
 	private final Path dataRoot;
 
+	/**
+	 * Creates a picker restricted to one data root.
+	 *
+	 * @param dataRoot the configured PDF data root
+	 */
 	PdfFilePicker(Path dataRoot) {
 		if (dataRoot == null) {
 			throw new NullPointerException("dataRoot");
@@ -18,6 +26,14 @@ final class PdfFilePicker {
 		this.dataRoot = dataRoot.toAbsolutePath().normalize();
 	}
 
+	/**
+	 * Shows a PDF chooser and validates the selected path.
+	 *
+	 * @param stage              the owner stage
+	 * @param title              the chooser title
+	 * @param invalidPathMessage alert heading used for an out-of-root selection
+	 * @return the selected PDF, or {@code null} when cancelled or rejected
+	 */
 	SelectedPdf choose(Stage stage, String title, String invalidPathMessage) {
 		FileChooser chooser = createFileChooser(title);
 		File selectedFile = chooser.showOpenDialog(stage);
@@ -34,6 +50,12 @@ final class PdfFilePicker {
 		return new SelectedPdf(selectedFile, selectedPath, dataRoot);
 	}
 
+	/**
+	 * Tests whether a path resolves within the configured data root.
+	 *
+	 * @param path the path to test
+	 * @return {@code true} when the normalised absolute path is contained
+	 */
 	boolean isInsideDataRoot(Path path) {
 		return path.toAbsolutePath().normalize().startsWith(dataRoot);
 	}

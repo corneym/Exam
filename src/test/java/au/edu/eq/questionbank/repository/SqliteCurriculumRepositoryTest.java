@@ -73,6 +73,22 @@ class SqliteCurriculumRepositoryTest {
 	}
 
 	@Test
+	void ordersEqualDisplayPositionsByCurriculumCode() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("stable-order.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SyllabusVersion syllabus = writer.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = writer.insertUnit(syllabus, "1", "Unit one", 1);
+		writer.insertTopic(unit, "1.2", "Later code", 1);
+		writer.insertTopic(unit, "1.1", "Earlier code", 1);
+
+		List<CurriculumNode> topics = new SqliteCurriculumRepository(database).findChildren(unit);
+
+		assertEquals(List.of("1.1", "1.2"), List.of(topics.get(0).getCode(), topics.get(1).getCode()));
+	}
+
+	@Test
 	void findsCurriculumNodeByCode() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("questionbank.db"));
 		database.initialiseSchema();

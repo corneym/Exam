@@ -84,6 +84,9 @@ final class AnswerCapturePane extends VBox {
 	private AnswerFile answerFile;
 	private AnswerRegion currentAnswerSelection;
 
+	/**
+	 * Creates the answer-capture workflow and its persistence integration.
+	 */
 	AnswerCapturePane(Stage stage, QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
 			PdfFilePicker pdfFilePicker, Consumer<SelectedPdf> answerPdfHandler, Runnable selectionClearHandler,
 			QuestionExtractor questionExtractor, Supplier<PdfSession> answerPdfSessionSupplier) {
@@ -274,6 +277,10 @@ final class AnswerCapturePane extends VBox {
 			chooseAnswerPdfButton.setDisable(true);
 			return;
 		}
+		if (answerFile != null && answerFile.getExam().getId() != question.getExam().getId()) {
+			answerFile = null;
+			selectedAnswerPdfLabel.setText("No PDF selected");
+		}
 
 		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode());
 		answerTextField.setDisable(false);
@@ -360,6 +367,11 @@ final class AnswerCapturePane extends VBox {
 		saveAnswer(question, answerText);
 	}
 
+	/**
+	 * Accepts a proportional answer-page selection as the current pending region.
+	 *
+	 * @param selection the selected answer-page rectangle
+	 */
 	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
 		currentAnswerSelection = new AnswerRegion(answerFile, selection.pageNumber(), selection.x(), selection.y(),
 				selection.width(), selection.height());
@@ -369,6 +381,9 @@ final class AnswerCapturePane extends VBox {
 		setSelectionActionsEnabled(true);
 	}
 
+	/**
+	 * Discards an unaccepted region when the displayed page changes.
+	 */
 	void clearCurrentSelectionForPageChange() {
 		currentAnswerSelection = null;
 		answerPreviewView.setImage(null);
@@ -379,6 +394,9 @@ final class AnswerCapturePane extends VBox {
 		return answerFile != null;
 	}
 
+	/**
+	 * Reloads persisted questions that do not yet have an answer.
+	 */
 	void refreshUnansweredQuestions() {
 		List<Question> storedQuestions = questionRepository.findAll();
 		List<Question> unansweredQuestions = new ArrayList<>();
@@ -390,6 +408,12 @@ final class AnswerCapturePane extends VBox {
 		unansweredQuestionField.getItems().setAll(unansweredQuestions);
 	}
 
+	/**
+	 * Persists and opens the answer PDF selected for a question.
+	 *
+	 * @param question    the question being answered
+	 * @param selectedPdf the selected answer PDF
+	 */
 	void selectAnswerPdf(Question question, SelectedPdf selectedPdf) {
 		if (question == null) {
 			throw new NullPointerException("question");

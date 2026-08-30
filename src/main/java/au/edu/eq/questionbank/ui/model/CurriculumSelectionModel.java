@@ -90,8 +90,7 @@ public class CurriculumSelectionModel {
 	 * @throws IllegalStateException if the subject has no current syllabus version
 	 */
 	public void selectSubject(Subject subject) {
-		this.subject = subject;
-
+		this.subject = null;
 		syllabusVersion = null;
 		unit = null;
 		topic = null;
@@ -104,6 +103,7 @@ public class CurriculumSelectionModel {
 		List<SyllabusVersion> versions = repository.findVersionsForSubject(subject);
 		for (SyllabusVersion version : versions) {
 			if (version.isCurrent()) {
+				this.subject = subject;
 				syllabusVersion = version;
 				return;
 			}

@@ -132,6 +132,8 @@ class CurriculumSelectionModelTest {
 		CurriculumSelectionModel physicsModel = new CurriculumSelectionModel(repository);
 
 		assertThrows(IllegalStateException.class, () -> physicsModel.selectSubject(physics));
+		assertNull(physicsModel.getSubject());
+		assertNull(physicsModel.getSyllabusVersion());
 	}
 
 	@Test

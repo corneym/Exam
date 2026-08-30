@@ -15,11 +15,21 @@ import au.edu.eq.questionbank.repository.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.QuestionRepository;
 
 /**
- * Command-line proof of concept for extracting stored questions and rendering
- * them into an HTML document.
+ * Legacy command-line proof of concept for extracting questions and rendering
+ * them into an HTML document. It currently uses an empty in-memory repository;
+ * the maintained desktop workflow starts through {@link Launcher}.
  */
 public class Main {
+	private Main() {
+	}
 
+	/**
+	 * Writes extracted images, when present, and an HTML document under
+	 * {@code target/extracted}.
+	 *
+	 * @param args ignored
+	 * @throws Exception if configuration, extraction, or output fails
+	 */
 	public static void main(String[] args) throws Exception {
 
 		ApplicationConfig config = ApplicationConfig.load(Path.of("questionbank.properties"));

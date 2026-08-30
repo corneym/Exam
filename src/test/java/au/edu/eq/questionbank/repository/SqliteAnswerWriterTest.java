@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -29,6 +31,15 @@ class SqliteAnswerWriterTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	private int countRows(SqliteDatabase database, String tableName) throws Exception {
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + tableName)) {
+			assertTrue(result.next());
+			return result.getInt(1);
+		}
+	}
 
 	@Test
 	void insertsAnswerAndOrderedRegions() throws Exception {
@@ -79,5 +90,35 @@ class SqliteAnswerWriterTest {
 			assertEquals(5, result.getInt("page_number"));
 			assertFalse(result.next());
 		}
+	}
+
+	@Test
+	void rejectsRegionsFromAnotherExamWithoutPersistingAnAnswer() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("cross-exam-answer.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet questionBooklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment",
+				"Question booklet", "Chemistry/2025/questions.pdf");
+		ExamBooklet otherBooklet = examImporter.importExam(chemistry, "QCAA", 2024, "External Assessment",
+				"Question booklet", "Chemistry/2024/questions.pdf");
+		Question question = new SqliteQuestionRepository(database).save(questionBooklet.getExam(), "Q1", "",
+				List.of(new QuestionRegion(questionBooklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		Exam otherExam = otherBooklet.getExam();
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(otherExam, "Answers",
+				"Chemistry/2024/answers.pdf");
+		AnswerRegion wrongExamRegion = new AnswerRegion(answerFile, 1, 0.10, 0.10, 0.50, 0.20);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> answerWriter.insertAnswer(question, null, List.of(wrongExamRegion)));
+		assertEquals(0, countRows(database, "answers"));
+		assertEquals(0, countRows(database, "answer_regions"));
 	}
 }

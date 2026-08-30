@@ -58,12 +58,13 @@ public class HtmlQuestionRenderer {
 		for (Path image : questionImages) {
 
 			Path relativeImage = outputFile.getParent().relativize(image);
+			String source = escapeAttribute(relativeImage.toString().replace('\\', '/'));
 
 			html.append("""
 					<div class="question">
 					    <img src="%s">
 					</div>
-					""".formatted(relativeImage.toString().replace('\\', '/')));
+					""".formatted(source));
 		}
 
 		html.append("""
@@ -72,5 +73,9 @@ public class HtmlQuestionRenderer {
 				""");
 
 		Files.writeString(outputFile, html.toString());
+	}
+
+	private String escapeAttribute(String value) {
+		return value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;");
 	}
 }

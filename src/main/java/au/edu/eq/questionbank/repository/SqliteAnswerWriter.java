@@ -13,11 +13,22 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SourceDocument;
 
+/**
+ * Persists answer source files, answers, and ordered answer regions in SQLite.
+ * Multi-row writes are committed atomically.
+ */
 public final class SqliteAnswerWriter {
 
 	private final SqliteDatabase database;
 	private final SqliteExamWriter examWriter;
 
+	/**
+	 * Creates an answer writer.
+	 *
+	 * @param database   the question-bank database
+	 * @param examWriter the writer used for shared source-document records
+	 * @throws NullPointerException if either argument is {@code null}
+	 */
 	public SqliteAnswerWriter(SqliteDatabase database, SqliteExamWriter examWriter) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -29,6 +40,17 @@ public final class SqliteAnswerWriter {
 		this.examWriter = examWriter;
 	}
 
+	/**
+	 * Finds or creates an answer file for an exam and source document.
+	 *
+	 * @param exam         the exam whose answers the file contains
+	 * @param name         the non-blank answer-file name
+	 * @param relativePath the non-blank data-root-relative source path
+	 * @return the existing or newly stored answer file
+	 * @throws SQLException             if the transaction cannot be completed
+	 * @throws NullPointerException     if {@code exam} is {@code null}
+	 * @throws IllegalArgumentException if a string argument is null or blank
+	 */
 	public AnswerFile findOrCreateAnswerFile(Exam exam, String name, String relativePath) throws SQLException {
 		if (exam == null) {
 			throw new NullPointerException("exam");
@@ -59,12 +81,37 @@ public final class SqliteAnswerWriter {
 		}
 	}
 
+	/**
+	 * Stores one answer and its regions in list order.
+	 *
+	 * @param question   the persisted question being answered
+	 * @param answerText optional answer text; a region-only answer may use
+	 *                   {@code null}
+	 * @param regions    answer regions in display order
+	 * @return the stored answer with its generated identifier
+	 * @throws SQLException             if the transaction cannot be completed
+	 * @throws NullPointerException     if {@code question}, {@code regions}, or a
+	 *                                  region is {@code null}
+	 * @throws IllegalArgumentException if the answer has neither text nor regions,
+	 *                                  or a region belongs to another exam
+	 */
 	public Answer insertAnswer(Question question, String answerText, List<AnswerRegion> regions) throws SQLException {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
 		if (regions == null) {
 			throw new NullPointerException("regions");
+		}
+		if ((answerText == null || answerText.isBlank()) && regions.isEmpty()) {
+			throw new IllegalArgumentException("Answer must contain text or at least one region");
+		}
+		for (AnswerRegion region : regions) {
+			if (region == null) {
+				throw new NullPointerException("regions must not contain null");
+			}
+			if (region.answerFile().getExam().getId() != question.getExam().getId()) {
+				throw new IllegalArgumentException("Answer region file must belong to the question's exam");
+			}
 		}
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);

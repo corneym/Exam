@@ -130,6 +130,7 @@ public class CurriculumSelectorPane extends VBox {
 				 * The subject exists, but it has no current syllabus version. It cannot
 				 * currently be used for question classification.
 				 */
+				subjectBox.getSelectionModel().clearSelection();
 			}
 		});
 

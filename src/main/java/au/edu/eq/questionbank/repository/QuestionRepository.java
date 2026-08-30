@@ -29,9 +29,19 @@ public interface QuestionRepository {
 	Optional<Question> findById(long id);
 
 	/**
-	 * Stores a question.
+	 * Stores a classified question and its ordered source regions.
 	 *
-	 * @param question the question to store
+	 * @param exam           the exam containing the question
+	 * @param questionCode   the non-blank question label
+	 * @param questionText   supplementary question text, which may be blank
+	 * @param regions        source regions in extraction order
+	 * @param classification the question's syllabus subtopic
+	 * @return the stored question with its persistent identifier
+	 * @throws NullPointerException     if a required object is {@code null}
+	 * @throws IllegalArgumentException if the question metadata or relationships
+	 *                                  are invalid
+	 * @throws IllegalStateException    if the repository cannot persist the
+	 *                                  question
 	 */
 	Question save(Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
 			CurriculumNode classification);

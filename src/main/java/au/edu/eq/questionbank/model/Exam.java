@@ -23,8 +23,27 @@ public class Exam {
 	 * @param provider the organisation that issued the assessment
 	 * @param year     the calendar year of the assessment
 	 * @param name     the human-readable assessment name
+	 * @throws NullPointerException     if {@code subject} or {@code provider} is
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if {@code id} or {@code year} is not
+	 *                                  positive, or {@code name} is null or blank
 	 */
 	public Exam(long id, Subject subject, ExamProvider provider, int year, String name) {
+		if (id < 1) {
+			throw new IllegalArgumentException("id must be positive");
+		}
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (provider == null) {
+			throw new NullPointerException("provider");
+		}
+		if (year < 1) {
+			throw new IllegalArgumentException("year must be positive");
+		}
+		if (name == null || name.isBlank()) {
+			throw new IllegalArgumentException("name must not be blank");
+		}
 		this.id = id;
 		this.subject = subject;
 		this.provider = provider;

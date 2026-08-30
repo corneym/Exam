@@ -114,7 +114,7 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 						    display_order
 						FROM curriculum_nodes
 						WHERE parent_id = ?
-						ORDER BY display_order
+						ORDER BY display_order, curriculum_code
 						""")) {
 			statement.setLong(1, parent.getId());
 			try (ResultSet result = statement.executeQuery()) {
@@ -146,7 +146,7 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 						WHERE syllabus_version_id = ?
 						  AND parent_id IS NULL
 						  AND curriculum_level = 'UNIT'
-						ORDER BY display_order
+						ORDER BY display_order, curriculum_code
 						""")) {
 			statement.setLong(1, syllabusVersion.getId());
 			try (ResultSet result = statement.executeQuery()) {

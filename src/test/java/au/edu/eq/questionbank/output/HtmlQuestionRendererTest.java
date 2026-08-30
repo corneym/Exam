@@ -46,6 +46,17 @@ class HtmlQuestionRendererTest {
 	}
 
 	@Test
+	void escapesImagePathsUsedInHtmlAttributes() throws Exception {
+		Path output = tempDir.resolve("questions.html");
+		Path image = tempDir.resolve("question&answer.png");
+
+		renderer.render(List.of(image), output);
+
+		String html = Files.readString(output);
+		assertTrue(html.contains("<img src=\"question&amp;answer.png\">"));
+	}
+
+	@Test
 	void rejectsAnOutputPathWithoutAParentDirectoryWhenRenderingImages() {
 		Path image = tempDir.resolve("question.png");
 
