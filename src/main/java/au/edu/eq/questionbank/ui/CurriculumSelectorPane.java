@@ -56,9 +56,7 @@ public class CurriculumSelectorPane extends VBox {
 		subtopicBox.setDisable(true);
 
 		configureSelectionHandlers();
-
-		subjectBox.getItems().setAll(model.getSubjects());
-
+		refreshSubjects();
 		getChildren().addAll(classificationLabel, new Label("Subject"), subjectBox, new Label("Unit"), unitBox,
 				new Label("Topic"), topicBox, new Label("Subtopic"), subtopicBox);
 	}
@@ -80,32 +78,45 @@ public class CurriculumSelectorPane extends VBox {
 		model.selectSubtopic(null);
 	}
 
+	public void refreshSubjects() {
+		Subject selectedSubject = subjectBox.getValue();
+		subjectBox.getItems().setAll(model.getSubjects());
+		if (selectedSubject != null && subjectBox.getItems().contains(selectedSubject)) {
+			subjectBox.setValue(selectedSubject);
+		}
+	}
+
+	public ReadOnlyObjectProperty<Subject> selectedSubjectProperty() {
+		return subjectBox.valueProperty();
+	}
+
 	private void configureSelectionHandlers() {
 
 		subjectBox.setOnAction(event -> {
 			Subject subject = subjectBox.getValue();
-
-			model.selectSubject(subject);
-
 			unitBox.getSelectionModel().clearSelection();
 			topicBox.getSelectionModel().clearSelection();
 			subtopicBox.getSelectionModel().clearSelection();
-
+			unitBox.getItems().clear();
 			topicBox.getItems().clear();
 			subtopicBox.getItems().clear();
-
-			if (subject == null) {
-				unitBox.getItems().clear();
-				unitBox.setDisable(true);
-				topicBox.setDisable(true);
-				subtopicBox.setDisable(true);
-				return;
-			}
-
-			unitBox.getItems().setAll(model.getUnits());
-			unitBox.setDisable(false);
+			unitBox.setDisable(true);
 			topicBox.setDisable(true);
 			subtopicBox.setDisable(true);
+			if (subject == null) {
+				model.selectSubject(null);
+				return;
+			}
+			try {
+				model.selectSubject(subject);
+				unitBox.getItems().setAll(model.getUnits());
+				unitBox.setDisable(false);
+			} catch (IllegalStateException e) {
+				/*
+				 * The subject exists, but it has no current syllabus version. It cannot
+				 * currently be used for question classification.
+				 */
+			}
 		});
 
 		unitBox.setOnAction(event -> {
@@ -149,9 +160,5 @@ public class CurriculumSelectorPane extends VBox {
 		subtopicBox.setOnAction(event -> {
 			model.selectSubtopic(subtopicBox.getValue());
 		});
-	}
-
-	public ReadOnlyObjectProperty<Subject> selectedSubjectProperty() {
-		return subjectBox.valueProperty();
 	}
 }

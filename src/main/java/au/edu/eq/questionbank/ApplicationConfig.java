@@ -14,11 +14,11 @@ import java.util.Properties;
  *                           stored
  * @param curriculumDataRoot root beneath which curriculum workbooks are stored
  */
-public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot) {
+public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path databasePath) {
 
 	private static final String PDF_DATA_ROOT_PROPERTY = "pdf.dataRoot";
-
 	private static final String CURRICULUM_DATA_ROOT_PROPERTY = "curriculum.dataRoot";
+	private static final String DATABASE_PATH_PROPERTY = "database.path";
 
 	/**
 	 * Validates directly supplied configuration roots.
@@ -31,6 +31,9 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot) {
 		}
 		if (curriculumDataRoot == null) {
 			throw new NullPointerException("curriculumDataRoot");
+		}
+		if (databasePath == null) {
+			throw new NullPointerException("databasePath");
 		}
 	}
 
@@ -56,7 +59,8 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot) {
 		}
 		Path pdfDataRoot = readRequiredPath(properties, PDF_DATA_ROOT_PROPERTY, propertiesFile);
 		Path curriculumDataRoot = readRequiredPath(properties, CURRICULUM_DATA_ROOT_PROPERTY, propertiesFile);
-		return new ApplicationConfig(pdfDataRoot, curriculumDataRoot);
+		Path databasePath = readRequiredPath(properties, DATABASE_PATH_PROPERTY, propertiesFile);
+		return new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
 	}
 
 	private static Path readRequiredPath(Properties properties, String propertyName, Path propertiesFile) {

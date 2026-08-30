@@ -2,19 +2,31 @@ package au.edu.eq.questionbank.ui;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.Optional;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ConfigurationException;
+import au.edu.eq.questionbank.importer.CurriculumExcelImporter;
+import au.edu.eq.questionbank.importer.CurriculumImportRow;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.QuestionRepository;
+import au.edu.eq.questionbank.repository.SqliteCurriculumImporter;
+import au.edu.eq.questionbank.repository.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.SqliteDatabase;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.application.Application;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Menu;
+import javafx.scene.control.MenuBar;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Region;
@@ -80,6 +92,18 @@ public class QuestionBankApplication extends Application {
 		return selectorPane;
 	}
 
+	private MenuBar createMenuBar(Stage primaryStage, ApplicationConfig config) {
+		MenuBar menuBar = new MenuBar();
+		Menu fileMenu = new Menu("File");
+		Menu importMenu = new Menu("Import");
+		MenuItem curriculumItem = new MenuItem("Curriculum...");
+		curriculumItem.setOnAction(event -> importCurriculum(primaryStage, config));
+		importMenu.getItems().add(curriculumItem);
+		fileMenu.getItems().add(importMenu);
+		menuBar.getMenus().add(fileMenu);
+		return menuBar;
+	}
+
 	private VBox createPreviewPane() {
 		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, questionCapturePane, answerCapturePane);
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
@@ -98,9 +122,10 @@ public class QuestionBankApplication extends Application {
 		return scrollPane;
 	}
 
-	private BorderPane createRootLayout() {
+	private BorderPane createRootLayout(Stage primaryStage, ApplicationConfig config) {
 		BorderPane root = new BorderPane();
-		root.setTop(examMetadataPane);
+		VBox top = new VBox(createMenuBar(primaryStage, config), examMetadataPane);
+		root.setTop(top);
 		root.setLeft(createPreviewScrollPane());
 		root.setCenter(pdfWorkspace);
 		return root;
@@ -111,6 +136,35 @@ public class QuestionBankApplication extends Application {
 			answerCapturePane.acceptSelection(selection);
 		} else {
 			questionCapturePane.acceptSelection(selection);
+		}
+	}
+
+	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
+		CurriculumImportDialog dialog = new CurriculumImportDialog(primaryStage);
+		Optional<ButtonType> result = dialog.showAndWait();
+		if (result.isEmpty()) {
+			return;
+		}
+		if (result.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+
+			return;
+		}
+		try {
+			CurriculumExcelImporter excelImporter = new CurriculumExcelImporter();
+			List<CurriculumImportRow> rows = excelImporter.read(dialog.getSelectedFile());
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+			SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
+			importer.importSyllabus(dialog.getSubjectName(), dialog.getVersionName(), dialog.isCurrent(), rows);
+			curriculumSelectorPane.refreshSubjects();
+			showAlert(Alert.AlertType.INFORMATION, "Curriculum Import", "Curriculum imported successfully.",
+					dialog.getSubjectName() + " " + dialog.getVersionName());
+		} catch (IOException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not read the Excel file.", e.getMessage());
+		} catch (SQLException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not save the curriculum.", e.getMessage());
+		} catch (IllegalArgumentException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "The curriculum file is invalid.", e.getMessage());
 		}
 	}
 
@@ -153,7 +207,7 @@ public class QuestionBankApplication extends Application {
 		showAlert(Alert.AlertType.ERROR, title, "The application could not start.", message);
 	}
 
-	private void startApplication(Stage primaryStage, ApplicationConfig config) throws IOException {
+	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
 		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
@@ -174,7 +228,6 @@ public class QuestionBankApplication extends Application {
 			answerCapturePane.clearCurrentSelectionForPageChange();
 		});
 
-		showStage(primaryStage, createRootLayout());
+		showStage(primaryStage, createRootLayout(primaryStage, config));
 	}
-
 }

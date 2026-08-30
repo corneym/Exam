@@ -6,15 +6,19 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +29,12 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.SqliteDatabase;
 import javafx.event.Event;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
@@ -119,21 +129,59 @@ class QuestionBankApplicationWorkflowTest {
 		return robot.lookup(selector).queryAs(ComboBox.class);
 	}
 
-	private void copyCurriculumFile(Path curriculumDataRoot, String version, String fileName) throws Exception {
-		URL resource = getClass().getResource("/curriculum/" + fileName);
-		if (resource == null) {
-			throw new IllegalStateException("Missing curriculum test resource: " + fileName);
-		}
-
-		Path destination = curriculumDataRoot.resolve("chemistry").resolve(version).resolve(fileName);
-		Files.createDirectories(destination.getParent());
-		Files.copy(Path.of(resource.toURI()), destination);
+	private void copyCurriculumFiles(Path curriculumDataRoot) throws Exception {
+		createCurriculumFile(curriculumDataRoot, "2019", CURRICULUM_2019, "1");
+		createCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_1_2, "1");
+		createCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_3_4, "3");
 	}
 
-	private void copyCurriculumFiles(Path curriculumDataRoot) throws Exception {
-		copyCurriculumFile(curriculumDataRoot, "2019", CURRICULUM_2019);
-		copyCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_1_2);
-		copyCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_3_4);
+	private void createCurriculumDatabase(Path databasePath) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SyllabusVersion syllabus2025 = writer.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = writer.insertUnit(syllabus2025, "1", "Unit one", 1);
+		Topic topic = writer.insertTopic(unit, "1.1", "Topic one", 1);
+		writer.insertSubtopic(topic, "1.1.1", "Subtopic one", 1);
+	}
+
+	private void createCurriculumFile(Path curriculumDataRoot, String version, String fileName, String unitCode)
+			throws Exception {
+		Path destination = curriculumDataRoot.resolve("chemistry").resolve(version).resolve(fileName);
+		Files.createDirectories(destination.getParent());
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet sheet = workbook.createSheet("Curriculum");
+
+			Row header = sheet.createRow(0);
+			header.createCell(0).setCellValue("Code");
+			header.createCell(1).setCellValue("Content");
+
+			Row unit = sheet.createRow(1);
+			unit.createCell(0).setCellValue(unitCode);
+			unit.createCell(1).setCellValue("Test unit " + unitCode);
+
+			String topicCode = unitCode + ".1";
+
+			Row topic = sheet.createRow(2);
+			topic.createCell(0).setCellValue(topicCode);
+			topic.createCell(1).setCellValue("Test topic");
+
+			String subtopicCode = topicCode + ".1";
+
+			Row subtopic = sheet.createRow(3);
+			subtopic.createCell(0).setCellValue(subtopicCode);
+			subtopic.createCell(1).setCellValue("Test subtopic");
+
+			Row descriptor = sheet.createRow(4);
+			descriptor.createCell(0).setCellValue(subtopicCode + ".1");
+			descriptor.createCell(1).setCellValue("Test descriptor");
+
+			try (OutputStream output = Files.newOutputStream(destination)) {
+
+				workbook.write(output);
+			}
+		}
 	}
 
 	private Path createTwoPagePdf(Path path) throws Exception {
@@ -337,12 +385,12 @@ class QuestionBankApplicationWorkflowTest {
 		Path testRoot = Files.createTempDirectory("question-bank-ui-");
 		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
 		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
-		copyCurriculumFiles(curriculumDataRoot);
+		Path databasePath = testRoot.resolve("questionbank.db");
+		createCurriculumDatabase(databasePath);
 		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
-
 		application = new QuestionBankApplication();
 		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
-				new ApplicationConfig(pdfDataRoot, curriculumDataRoot));
+				new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath));
 		openExamPdfForTest();
 	}
 

@@ -8,112 +8,224 @@ import java.util.Map;
 import java.util.function.LongSupplier;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
 /**
- * Builds a de-duplicated unit/topic/subtopic hierarchy from normalized import
- * rows.
+ * Builds a curriculum hierarchy from two-column curriculum import rows.
  */
 public class CurriculumNodeBuilder {
 
-	/**
-	 * Builds curriculum nodes in first-appearance order.
-	 * <p>
-	 * Classification codes must contain exactly three dot-separated parts. Repeated
-	 * codes reuse existing nodes and must retain the same names.
-	 *
-	 * @param syllabusVersion the version that owns every generated node
-	 * @param rows            normalized curriculum rows
-	 * @param idSupplier      source of a new persistent identifier for each node
-	 * @return an immutable list containing parents before their children
-	 * @throws NullPointerException     if an argument is {@code null}
-	 * @throws IllegalArgumentException if a classification code has the wrong shape
-	 *                                  or a repeated code has conflicting names
-	 */
 	public List<CurriculumNode> build(SyllabusVersion syllabusVersion, List<CurriculumImportRow> rows,
 			LongSupplier idSupplier) {
 
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
 		}
+
 		if (rows == null) {
 			throw new NullPointerException("rows");
 		}
+
 		if (idSupplier == null) {
 			throw new NullPointerException("idSupplier");
 		}
 
+		Map<String, CurriculumImportRow> rowsByCode = new LinkedHashMap<>();
+
+		for (CurriculumImportRow row : rows) {
+			if (row == null) {
+				throw new NullPointerException("row");
+			}
+
+			validateCode(row.code());
+
+			if (rowsByCode.containsKey(row.code())) {
+				throw new IllegalArgumentException("Duplicate curriculum code: " + row.code());
+			}
+
+			rowsByCode.put(row.code(), row);
+		}
+
+		validateParents(rowsByCode);
+
 		List<CurriculumNode> nodes = new ArrayList<>();
 
-		Map<String, Unit> units = new LinkedHashMap<>();
-		Map<String, Topic> topics = new LinkedHashMap<>();
-		Map<String, Subtopic> subtopics = new LinkedHashMap<>();
+		Map<String, Unit> units = new HashMap<>();
+
+		Map<String, Topic> topics = new HashMap<>();
+
+		Map<String, Subtopic> subtopics = new HashMap<>();
 
 		Map<String, Integer> nextTopicOrder = new HashMap<>();
+
 		Map<String, Integer> nextSubtopicOrder = new HashMap<>();
+
+		Map<String, Integer> nextDescriptorOrder = new HashMap<>();
 
 		int nextUnitOrder = 1;
 
-		for (CurriculumImportRow row : rows) {
-			String[] parts = row.classificationCode().split("\\.");
-
-			if (parts.length != 3) {
-				throw new IllegalArgumentException(
-						"Expected three-part classification code but found: " + row.classificationCode());
+		/*
+		 * Units first.
+		 */
+		for (CurriculumImportRow row : rowsByCode.values()) {
+			if (depth(row.code()) != 1) {
+				continue;
 			}
 
-			String unitCode = parts[0];
-			String topicCode = parts[0] + "." + parts[1];
-			String subtopicCode = row.classificationCode();
+			Unit unit = new Unit(idSupplier.getAsLong(), syllabusVersion, row.code(), row.content(), nextUnitOrder);
+
+			nextUnitOrder++;
+
+			units.put(row.code(), unit);
+			nodes.add(unit);
+		}
+
+		/*
+		 * Topics second.
+		 */
+		for (CurriculumImportRow row : rowsByCode.values()) {
+			if (depth(row.code()) != 2) {
+				continue;
+			}
+
+			String unitCode = parentCode(row.code());
 
 			Unit unit = units.get(unitCode);
 
-			if (unit == null) {
-				unit = new Unit(idSupplier.getAsLong(), syllabusVersion, unitCode, row.unitName(), nextUnitOrder++);
-				units.put(unitCode, unit);
-				nodes.add(unit);
-			} else {
-				checkName(unit, row.unitName());
+			int order = nextOrder(nextTopicOrder, unitCode);
+
+			Topic topic = new Topic(idSupplier.getAsLong(), syllabusVersion, unit, row.code(), row.content(), order);
+
+			topics.put(row.code(), topic);
+			nodes.add(topic);
+		}
+
+		/*
+		 * Three-part codes can be either subtopics or descriptors.
+		 *
+		 * If a three-part code has a child, it is a subtopic. Otherwise it is a
+		 * descriptor belonging directly to the topic.
+		 */
+		for (CurriculumImportRow row : rowsByCode.values()) {
+			if (depth(row.code()) != 3) {
+				continue;
 			}
+
+			String topicCode = parentCode(row.code());
 
 			Topic topic = topics.get(topicCode);
 
-			if (topic == null) {
-				int order = nextTopicOrder.getOrDefault(unitCode, 1);
-				topic = new Topic(idSupplier.getAsLong(), syllabusVersion, unit, topicCode, row.topicName(), order);
-				topics.put(topicCode, topic);
-				nodes.add(topic);
-				nextTopicOrder.put(unitCode, order + 1);
+			if (hasChild(row.code(), rowsByCode)) {
+				int order = nextOrder(nextSubtopicOrder, topicCode);
+
+				Subtopic subtopic = new Subtopic(idSupplier.getAsLong(), syllabusVersion, topic, row.code(),
+						row.content(), order);
+
+				subtopics.put(row.code(), subtopic);
+
+				nodes.add(subtopic);
+
 			} else {
-				checkName(topic, row.topicName());
+				int order = nextOrder(nextDescriptorOrder, topicCode);
+
+				Descriptor descriptor = new Descriptor(idSupplier.getAsLong(), syllabusVersion, topic, row.code(),
+						row.content(), order);
+
+				nodes.add(descriptor);
 			}
+		}
+
+		/*
+		 * Four-part codes are always descriptors.
+		 */
+		for (CurriculumImportRow row : rowsByCode.values()) {
+			if (depth(row.code()) != 4) {
+				continue;
+			}
+
+			String subtopicCode = parentCode(row.code());
 
 			Subtopic subtopic = subtopics.get(subtopicCode);
 
-			if (subtopic == null) {
-				int order = nextSubtopicOrder.getOrDefault(topicCode, 1);
+			int order = nextOrder(nextDescriptorOrder, subtopicCode);
 
-				subtopic = new Subtopic(idSupplier.getAsLong(), syllabusVersion, topic, subtopicCode,
-						row.subtopicName(), order);
+			Descriptor descriptor = new Descriptor(idSupplier.getAsLong(), syllabusVersion, subtopic, row.code(),
+					row.content(), order);
 
-				subtopics.put(subtopicCode, subtopic);
-				nodes.add(subtopic);
-				nextSubtopicOrder.put(topicCode, order + 1);
-			} else {
-				checkName(subtopic, row.subtopicName());
-			}
+			nodes.add(descriptor);
 		}
 
 		return List.copyOf(nodes);
 	}
 
-	private void checkName(CurriculumNode node, String importedName) {
-		if (!node.getName().equals(importedName)) {
-			throw new IllegalArgumentException("Classification code " + node.getCode() + " has conflicting names: \""
-					+ node.getName() + "\" and \"" + importedName + "\"");
+	private int depth(String code) {
+		return code.split("\\.").length;
+	}
+
+	private boolean hasChild(String code, Map<String, CurriculumImportRow> rowsByCode) {
+
+		String childPrefix = code + ".";
+
+		for (String possibleChild : rowsByCode.keySet()) {
+
+			if (possibleChild.startsWith(childPrefix) && depth(possibleChild) == depth(code) + 1) {
+
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private int nextOrder(Map<String, Integer> nextOrders, String parentCode) {
+
+		Integer next = nextOrders.get(parentCode);
+
+		if (next == null) {
+			next = 1;
+		}
+
+		nextOrders.put(parentCode, next + 1);
+
+		return next;
+	}
+
+	private String parentCode(String code) {
+		int lastDot = code.lastIndexOf('.');
+
+		if (lastDot < 0) {
+			return null;
+		}
+
+		return code.substring(0, lastDot);
+	}
+
+	private void validateCode(String code) {
+		if (code == null || !code.matches("\\d+(\\.\\d+){0,3}")) {
+
+			throw new IllegalArgumentException("Invalid curriculum code: " + code);
+		}
+	}
+
+	private void validateParents(Map<String, CurriculumImportRow> rowsByCode) {
+
+		for (CurriculumImportRow row : rowsByCode.values()) {
+			int depth = depth(row.code());
+
+			if (depth == 1) {
+				continue;
+			}
+
+			String parentCode = parentCode(row.code());
+
+			if (!rowsByCode.containsKey(parentCode)) {
+				throw new IllegalArgumentException(
+						"Missing parent " + parentCode + " for curriculum code " + row.code());
+			}
 		}
 	}
 }

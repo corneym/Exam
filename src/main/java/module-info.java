@@ -16,6 +16,7 @@ module au.edu.eq.questionbank {
 	requires javafx.base;
 	requires javafx.controls;
 	requires javafx.swing;
+	requires org.apache.poi.poi;
 
 	exports au.edu.eq.questionbank;
 	exports au.edu.eq.questionbank.ui;

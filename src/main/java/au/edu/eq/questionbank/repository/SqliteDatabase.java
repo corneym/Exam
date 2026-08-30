@@ -39,7 +39,7 @@ public final class SqliteDatabase {
 			statement.execute("""
 					CREATE TABLE IF NOT EXISTS subjects (
 					   id INTEGER PRIMARY KEY,
-					   subject_name TEXT NOT NULL
+					   subject_name TEXT NOT NULL UNIQUE
 					)
 					""");
 
@@ -49,7 +49,8 @@ public final class SqliteDatabase {
 						subject_id INTEGER NOT NULL,
 						syllabus_name TEXT NOT NULL,
 						is_current INTEGER NOT NULL CHECK (is_current IN (0, 1)),
-						FOREIGN KEY (subject_id) REFERENCES subjects(id)
+						FOREIGN KEY (subject_id) REFERENCES subjects(id),
+						UNIQUE (subject_id, syllabus_name)
 					)
 					""");
 

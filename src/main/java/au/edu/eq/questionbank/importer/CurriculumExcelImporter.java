@@ -5,10 +5,10 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
+import java.util.Set;
 
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -19,41 +19,20 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 
 /**
- * Reads curriculum descriptors from the study-checklist Excel workbook format.
- * <p>
- * Visible sheets are inspected for the expected hierarchy headers. Repeated
- * blank hierarchy cells inherit the latest unit, topic, subtopic, and
- * classification values, matching the layout of the source workbooks.
+ * Reads curriculum data from the standard two-column workbook format.
+ *
+ * Column A: Code Column B: Content
  */
 public class CurriculumExcelImporter {
 
-	private record HeaderColumns(int headerRow, int unitColumn, int topicColumn, int subtopicColumn,
-			int classificationColumn, int descriptorColumn) {
-	}
-
-	private static final int HEADER_SEARCH_LIMIT = 25;
-
 	private final DataFormatter formatter;
 
-	/**
-	 * Creates an importer using Apache POI's display-value formatting.
-	 */
 	public CurriculumExcelImporter() {
 		formatter = new DataFormatter();
 	}
 
-	/**
-	 * Reads and normalizes all curriculum rows from the visible sheets in a
-	 * workbook.
-	 *
-	 * @param path the workbook file to read
-	 * @return an immutable list of rows in workbook and sheet order
-	 * @throws IOException              if the workbook cannot be read
-	 * @throws NullPointerException     if {@code path} is {@code null}
-	 * @throws IllegalArgumentException if no curriculum data is found or a row
-	 *                                  contains an incomplete hierarchy
-	 */
 	public List<CurriculumImportRow> read(Path path) throws IOException {
+
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
@@ -62,19 +41,20 @@ public class CurriculumExcelImporter {
 				Workbook workbook = WorkbookFactory.create(inputStream)) {
 
 			FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
+
 			List<CurriculumImportRow> importRows = new ArrayList<>();
 
+			Set<String> codes = new HashSet<>();
+
 			for (int sheetIndex = 0; sheetIndex < workbook.getNumberOfSheets(); sheetIndex++) {
+
 				if (workbook.isSheetHidden(sheetIndex) || workbook.isSheetVeryHidden(sheetIndex)) {
 					continue;
 				}
 
 				Sheet sheet = workbook.getSheetAt(sheetIndex);
-				HeaderColumns columns = findHeaderColumns(sheet, evaluator);
 
-				if (columns != null) {
-					importRows.addAll(readSheet(sheet, columns, evaluator));
-				}
+				readSheet(sheet, evaluator, importRows, codes);
 			}
 
 			if (importRows.isEmpty()) {
@@ -85,72 +65,6 @@ public class CurriculumExcelImporter {
 		}
 	}
 
-	private String cleanText(String value) {
-		if (value == null) {
-			return "";
-		}
-
-		/*
-		 * Some 2019 descriptors contain non-breaking spaces copied from source
-		 * documents.
-		 */
-		return value.replace('\u00A0', ' ').strip();
-	}
-
-	private HeaderColumns findHeaderColumns(Sheet sheet, FormulaEvaluator evaluator) {
-
-		int lastSearchRow = Math.min(sheet.getLastRowNum(), sheet.getFirstRowNum() + HEADER_SEARCH_LIMIT);
-
-		for (int rowIndex = sheet.getFirstRowNum(); rowIndex <= lastSearchRow; rowIndex++) {
-
-			Row row = sheet.getRow(rowIndex);
-
-			if (row == null) {
-				continue;
-			}
-
-			Map<String, Integer> headers = new HashMap<>();
-
-			for (int columnIndex = 0; columnIndex < row.getLastCellNum(); columnIndex++) {
-
-				String value = normalizeHeader(getText(row, columnIndex, evaluator));
-
-				if (!value.isBlank()) {
-					headers.put(value, columnIndex);
-				}
-			}
-
-			Integer unitColumn = headers.get("unit");
-			Integer topicColumn = headers.get("topic");
-			Integer subtopicColumn = headers.get("subtopic");
-			Integer descriptorColumn = headers.get("descriptor");
-
-			if (unitColumn == null || topicColumn == null || subtopicColumn == null || descriptorColumn == null) {
-				continue;
-			}
-
-			Integer classificationColumn = headers.get("classification");
-
-			/*
-			 * The full Chemistry study checklists have a blank header immediately before
-			 * Descriptor. That column contains the classification code.
-			 */
-			if (classificationColumn == null) {
-				classificationColumn = descriptorColumn - 1;
-			}
-
-			if (classificationColumn < 0 || classificationColumn.equals(subtopicColumn)) {
-				throw new IllegalArgumentException(
-						"Could not determine classification column in sheet " + sheet.getSheetName());
-			}
-
-			return new HeaderColumns(rowIndex, unitColumn, topicColumn, subtopicColumn, classificationColumn,
-					descriptorColumn);
-		}
-
-		return null;
-	}
-
 	private String getText(Row row, int columnIndex, FormulaEvaluator evaluator) {
 
 		Cell cell = row.getCell(columnIndex, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
@@ -159,23 +73,28 @@ public class CurriculumExcelImporter {
 			return "";
 		}
 
-		return cleanText(formatter.formatCellValue(cell, evaluator));
+		return formatter.formatCellValue(cell, evaluator).strip();
 	}
 
-	private String normalizeHeader(String value) {
-		return value.strip().toLowerCase(Locale.ROOT);
-	}
+	private void readSheet(Sheet sheet, FormulaEvaluator evaluator, List<CurriculumImportRow> importRows,
+			Set<String> codes) {
 
-	private List<CurriculumImportRow> readSheet(Sheet sheet, HeaderColumns columns, FormulaEvaluator evaluator) {
+		Row header = sheet.getRow(sheet.getFirstRowNum());
 
-		List<CurriculumImportRow> rows = new ArrayList<>();
+		if (header == null) {
+			return;
+		}
 
-		String currentUnit = "";
-		String currentTopic = "";
-		String currentSubtopic = "";
-		String currentClassification = "";
+		String codeHeader = getText(header, 0, evaluator);
 
-		for (int rowIndex = columns.headerRow() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+		String contentHeader = getText(header, 1, evaluator);
+
+		if (!codeHeader.toLowerCase(Locale.ROOT).equals("code")
+				|| !contentHeader.toLowerCase(Locale.ROOT).equals("content")) {
+			return;
+		}
+
+		for (int rowIndex = sheet.getFirstRowNum() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
 
 			Row row = sheet.getRow(rowIndex);
 
@@ -183,49 +102,38 @@ public class CurriculumExcelImporter {
 				continue;
 			}
 
-			String unit = getText(row, columns.unitColumn(), evaluator);
-			String topic = getText(row, columns.topicColumn(), evaluator);
-			String subtopic = getText(row, columns.subtopicColumn(), evaluator);
-			String classification = getText(row, columns.classificationColumn(), evaluator);
-			String descriptor = getText(row, columns.descriptorColumn(), evaluator);
+			String code = getText(row, 0, evaluator);
 
-			if (!unit.isBlank() && !unit.equals(currentUnit)) {
-				currentUnit = unit;
-				currentTopic = "";
-				currentSubtopic = "";
-				currentClassification = "";
-			}
+			String content = getText(row, 1, evaluator);
 
-			if (!topic.isBlank() && !topic.equals(currentTopic)) {
-				currentTopic = topic;
-				currentSubtopic = "";
-				currentClassification = "";
-			}
-
-			if (!subtopic.isBlank() && !subtopic.equals(currentSubtopic)) {
-				currentSubtopic = subtopic;
-				currentClassification = "";
-			}
-
-			if (!classification.isBlank()) {
-				currentClassification = classification;
-			}
-
-			if (descriptor.isBlank()) {
+			if (code.isBlank() && content.isBlank()) {
 				continue;
 			}
 
-			if (currentUnit.isBlank() || currentTopic.isBlank() || currentSubtopic.isBlank()
-					|| currentClassification.isBlank()) {
-
-				throw new IllegalArgumentException("Incomplete curriculum hierarchy in sheet " + sheet.getSheetName()
-						+ " at Excel row " + (rowIndex + 1));
+			if (code.isBlank()) {
+				throw new IllegalArgumentException(
+						"Missing curriculum code in sheet " + sheet.getSheetName() + " at Excel row " + (rowIndex + 1));
 			}
 
-			rows.add(new CurriculumImportRow(currentUnit, currentTopic, currentSubtopic, currentClassification,
-					descriptor));
-		}
+			if (content.isBlank()) {
+				throw new IllegalArgumentException("Missing curriculum content for " + code);
+			}
 
-		return rows;
+			validateCode(code);
+
+			if (!codes.add(code)) {
+				throw new IllegalArgumentException("Duplicate curriculum code: " + code);
+			}
+
+			importRows.add(new CurriculumImportRow(code, content));
+		}
+	}
+
+	private void validateCode(String code) {
+
+		if (!code.matches("\\d+(\\.\\d+){0,3}")) {
+
+			throw new IllegalArgumentException("Invalid curriculum code: " + code);
+		}
 	}
 }
