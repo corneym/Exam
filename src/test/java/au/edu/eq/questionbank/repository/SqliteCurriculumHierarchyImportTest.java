@@ -1,7 +1,9 @@
 package au.edu.eq.questionbank.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.OutputStream;
 import java.nio.file.Files;
@@ -10,6 +12,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.List;
+import java.util.Optional;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -20,6 +23,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.importer.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.CurriculumImportRow;
+import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
 
 class SqliteCurriculumHierarchyImportTest {
 
@@ -137,5 +143,41 @@ class SqliteCurriculumHierarchyImportTest {
 			assertNode(connection, "2.3", "TOPIC", "2");
 			assertNode(connection, "2.3.5", "DESCRIPTOR", "2.3");
 		}
+	}
+
+	@Test
+	void retainsHistoricalAndCurrentCurriculumVersions() throws Exception {
+		Path databasePath = tempDirectory.resolve("multiple-versions.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
+		List<CurriculumImportRow> rows2019 = List.of(new CurriculumImportRow("1", "2019 Unit one"),
+				new CurriculumImportRow("1.1", "2019 Topic one"), new CurriculumImportRow("1.1.1", "2019 Subtopic one"),
+				new CurriculumImportRow("1.1.1.1", "2019 Descriptor"));
+		List<CurriculumImportRow> rows2025 = List.of(new CurriculumImportRow("1", "2025 Unit one"),
+				new CurriculumImportRow("1.1", "2025 Topic one"), new CurriculumImportRow("1.1.1", "2025 Subtopic one"),
+				new CurriculumImportRow("1.1.1.1", "2025 Descriptor"));
+		importer.importSyllabus("Chemistry", "2019", false, rows2019);
+		importer.importSyllabus("Chemistry", "2025", true, rows2025);
+		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
+		List<Subject> subjects = repository.findAllSubjects();
+		assertEquals(1, subjects.size());
+		Subject chemistry = subjects.get(0);
+		assertEquals("Chemistry", chemistry.getName());
+		List<SyllabusVersion> versions = repository.findVersionsForSubject(chemistry);
+		assertEquals(2, versions.size());
+		SyllabusVersion version2019 = versions.get(0);
+		SyllabusVersion version2025 = versions.get(1);
+		assertEquals("2019", version2019.getName());
+		assertFalse(version2019.isCurrent());
+		assertEquals("2025", version2025.getName());
+		assertTrue(version2025.isCurrent());
+		Optional<CurriculumNode> node2019 = repository.findByCode(version2019, "1.1.1.1");
+		Optional<CurriculumNode> node2025 = repository.findByCode(version2025, "1.1.1.1");
+		assertTrue(node2019.isPresent());
+		assertTrue(node2025.isPresent());
+		assertEquals("2019 Descriptor", node2019.get().getName());
+		assertEquals("2025 Descriptor", node2025.get().getName());
 	}
 }
