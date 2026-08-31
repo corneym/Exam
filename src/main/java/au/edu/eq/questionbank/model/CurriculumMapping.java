@@ -26,8 +26,8 @@ public class CurriculumMapping {
 	 * @throws NullPointerException     if {@code source}, {@code target}, or
 	 *                                  {@code status} is {@code null}
 	 * @throws IllegalArgumentException if the identifier is not positive, the nodes
-	 *                                  have different subjects, or the nodes belong
-	 *                                  to the same syllabus version
+	 *                                  have different subjects or curriculum levels,
+	 *                                  or belong to the same syllabus version
 	 */
 	public CurriculumMapping(long id, CurriculumNode source, CurriculumNode target, MappingStatus status) {
 

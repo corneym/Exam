@@ -1,0 +1,232 @@
+package au.edu.eq.questionbank.repository;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+import au.edu.eq.questionbank.model.CurriculumMapping;
+import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.MappingStatus;
+
+/**
+ * Writes directional curriculum mappings. Each operation validates persisted
+ * endpoint identities and writes within one transaction; syllabus names and
+ * current-version flags do not determine direction.
+ */
+public final class SqliteCurriculumMappingWriter {
+	private final SqliteDatabase database;
+
+	/**
+	 * @param database the initialised question-bank database
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
+	public SqliteCurriculumMappingWriter(SqliteDatabase database) {
+		if (database == null) {
+			throw new NullPointerException("database");
+		}
+		this.database = database;
+	}
+
+	/**
+	 * Inserts one source-to-target mapping after checking both Java relationships
+	 * and persisted subject, syllabus and level identities. An existing pair is
+	 * rejected rather than replaced.
+	 *
+	 * @param source the persisted source node
+	 * @param target the persisted target node
+	 * @param status the review state to store
+	 * @return the mapping with its generated persistent identifier
+	 * @throws NullPointerException if an argument is {@code null}
+	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents its
+	 *                                  persisted identity, or violates mapping invariants
+	 * @throws SQLException if the pair already exists or the transaction fails
+	 */
+	public CurriculumMapping insertMapping(CurriculumNode source, CurriculumNode target, MappingStatus status)
+			throws SQLException {
+		validateMapping(source, target, status);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				validatePersistentMapping(connection, source, target);
+				CurriculumMapping mapping;
+				try (PreparedStatement statement = connection.prepareStatement("""
+						INSERT INTO curriculum_mappings
+						    (source_node_id, target_node_id, mapping_status)
+						VALUES (?, ?, ?)
+						RETURNING id
+						""")) {
+					statement.setLong(1, source.getId());
+					statement.setLong(2, target.getId());
+					statement.setString(3, status.name());
+					try (ResultSet result = statement.executeQuery()) {
+						if (!result.next()) {
+							throw new SQLException("Curriculum mapping insert did not return an id");
+						}
+						mapping = new CurriculumMapping(result.getLong("id"), source, target, status);
+					}
+				}
+				connection.commit();
+				return mapping;
+			} catch (SQLException | RuntimeException e) {
+				rollback(connection, e);
+				throw e;
+			}
+		}
+	}
+
+	/**
+	 * Updates exactly the identified mapping without changing its endpoints.
+	 * Endpoint identities are revalidated; the object's previous status is not a
+	 * precondition for the update.
+	 *
+	 * @param mapping the mapping whose persistent identity and endpoints must match
+	 * @param status the review state to store
+	 * @return a new mapping with the stored status and unchanged identity/endpoints
+	 * @throws NullPointerException if either argument is {@code null}
+	 * @throws IllegalArgumentException if the mapping or its endpoints misrepresent
+	 *                                  persistent state or violate mapping invariants
+	 * @throws SQLException if the mapping is missing or the transaction fails
+	 */
+	public CurriculumMapping updateStatus(CurriculumMapping mapping, MappingStatus status) throws SQLException {
+		if (mapping == null) {
+			throw new NullPointerException("mapping");
+		}
+		if (status == null) {
+			throw new NullPointerException("status");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				validatePersistentMapping(connection, mapping.getSource(), mapping.getTarget());
+				validatePersistentMappingIdentity(connection, mapping);
+				try (PreparedStatement statement = connection.prepareStatement("""
+						UPDATE curriculum_mappings
+						SET mapping_status = ?
+						WHERE id = ?
+						  AND source_node_id = ? AND target_node_id = ?
+						""")) {
+					statement.setString(1, status.name());
+					statement.setLong(2, mapping.getId());
+					statement.setLong(3, mapping.getSource().getId());
+					statement.setLong(4, mapping.getTarget().getId());
+					int updatedRows = statement.executeUpdate();
+					if (updatedRows != 1) {
+						throw new SQLException("Curriculum mapping " + mapping.getId() + " was not found or changed");
+					}
+				}
+				CurriculumMapping updated = new CurriculumMapping(mapping.getId(), mapping.getSource(),
+						mapping.getTarget(), status);
+				connection.commit();
+				return updated;
+			} catch (SQLException | RuntimeException e) {
+				rollback(connection, e);
+				throw e;
+			}
+		}
+	}
+
+	private void rollback(Connection connection, Exception failure) {
+		try {
+			connection.rollback();
+		} catch (SQLException rollbackFailure) {
+			failure.addSuppressed(rollbackFailure);
+		}
+	}
+
+	private void validateMapping(CurriculumNode source, CurriculumNode target, MappingStatus status) {
+		if (source == null) {
+			throw new NullPointerException("source");
+		}
+		if (target == null) {
+			throw new NullPointerException("target");
+		}
+		if (status == null) {
+			throw new NullPointerException("status");
+		}
+		if (!source.getSyllabusVersion().getSubject().equals(target.getSyllabusVersion().getSubject())) {
+			throw new IllegalArgumentException("source and target must belong to the same subject");
+		}
+		if (source.getSyllabusVersion().equals(target.getSyllabusVersion())) {
+			throw new IllegalArgumentException("source and target must belong to different syllabus versions");
+		}
+		if (source.getLevel() != target.getLevel()) {
+			throw new IllegalArgumentException("source and target must be the same curriculum level");
+		}
+	}
+
+	private void validatePersistentMapping(Connection connection, CurriculumNode source, CurriculumNode target)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    source.syllabus_version_id AS source_version_id,
+				    source.curriculum_level AS source_level,
+				    source_version.subject_id AS source_subject_id,
+				    target.syllabus_version_id AS target_version_id,
+				    target.curriculum_level AS target_level,
+				    target_version.subject_id AS target_subject_id
+				FROM curriculum_nodes source
+				JOIN syllabus_versions source_version
+				    ON source_version.id = source.syllabus_version_id
+				JOIN curriculum_nodes target
+				    ON target.id = ?
+				JOIN syllabus_versions target_version
+				    ON target_version.id = target.syllabus_version_id
+				WHERE source.id = ?
+				""")) {
+			statement.setLong(1, target.getId());
+			statement.setLong(2, source.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("source or target curriculum node does not exist");
+				}
+				long sourceVersionId = result.getLong("source_version_id");
+				long targetVersionId = result.getLong("target_version_id");
+				long sourceSubjectId = result.getLong("source_subject_id");
+				long targetSubjectId = result.getLong("target_subject_id");
+				String sourceLevel = result.getString("source_level");
+				String targetLevel = result.getString("target_level");
+				if (sourceVersionId != source.getSyllabusVersion().getId()
+						|| sourceSubjectId != source.getSyllabusVersion().getSubject().getId()
+						|| !sourceLevel.equals(source.getLevel().name())) {
+					throw new IllegalArgumentException("source does not match persisted curriculum node");
+				}
+				if (targetVersionId != target.getSyllabusVersion().getId()
+						|| targetSubjectId != target.getSyllabusVersion().getSubject().getId()
+						|| !targetLevel.equals(target.getLevel().name())) {
+					throw new IllegalArgumentException("target does not match persisted curriculum node");
+				}
+				if (sourceSubjectId != targetSubjectId) {
+					throw new IllegalArgumentException("source and target must belong to the same subject");
+				}
+				if (sourceVersionId == targetVersionId) {
+					throw new IllegalArgumentException("source and target must belong to different syllabus versions");
+				}
+				if (!sourceLevel.equals(targetLevel)) {
+					throw new IllegalArgumentException("source and target must be the same curriculum level");
+				}
+			}
+		}
+	}
+
+	private void validatePersistentMappingIdentity(Connection connection, CurriculumMapping mapping)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT source_node_id, target_node_id
+				FROM curriculum_mappings
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, mapping.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Curriculum mapping " + mapping.getId() + " was not found");
+				}
+				long sourceNodeId = result.getLong("source_node_id");
+				long targetNodeId = result.getLong("target_node_id");
+				if (sourceNodeId != mapping.getSource().getId() || targetNodeId != mapping.getTarget().getId()) {
+					throw new IllegalArgumentException("mapping does not match persisted curriculum mapping");
+				}
+			}
+		}
+	}
+}

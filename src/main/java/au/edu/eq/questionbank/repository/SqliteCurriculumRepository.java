@@ -25,6 +25,7 @@ import au.edu.eq.questionbank.model.Unit;
  */
 public final class SqliteCurriculumRepository implements CurriculumRepository {
 
+	private static final int MAX_HIERARCHY_DEPTH = 4;
 	private final SqliteDatabase database;
 
 	/**
@@ -185,8 +186,15 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 
 	@Override
 	public Optional<SyllabusVersion> findVersionById(long id) {
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
+		try (Connection connection = database.openConnection()) {
+			return findVersionById(connection, id);
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not read syllabus version from database", e);
+		}
+	}
+
+	private Optional<SyllabusVersion> findVersionById(Connection connection, long id) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
 						SELECT
 						    version.id AS version_id,
 						    version.syllabus_name,
@@ -208,8 +216,59 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 						result.getString("syllabus_name"), result.getInt("is_current") == 1);
 				return Optional.of(version);
 			}
-		} catch (SQLException e) {
-			throw new IllegalStateException("Could not read syllabus version from database", e);
+		}
+	}
+
+	/**
+	 * Reconstructs a node using its stored parent links, without interpreting its
+	 * code. Mapping reads share their caller-owned connection so mapping and node
+	 * identities are read from the same SQLite snapshot.
+	 *
+	 * @param connection the caller-owned connection with an active read
+	 * @param id the persistent node identifier
+	 * @return the reconstructed node, or empty if the identifier is absent
+	 * @throws SQLException if a lookup fails
+	 * @throws IllegalStateException if a parent/version is missing or the stored
+	 *                               hierarchy is inconsistent
+	 */
+	Optional<CurriculumNode> findNodeById(Connection connection, long id) throws SQLException {
+		return findNodeById(connection, id, MAX_HIERARCHY_DEPTH);
+	}
+
+	private Optional<CurriculumNode> findNodeById(Connection connection, long id, int remainingLevels)
+			throws SQLException {
+		if (remainingLevels == 0) {
+			throw new IllegalStateException("Curriculum hierarchy is cyclic or exceeds four levels at node " + id);
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT id, syllabus_version_id, parent_id, curriculum_code, curriculum_name,
+				       curriculum_level, display_order
+				FROM curriculum_nodes
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, id);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				long versionId = result.getLong("syllabus_version_id");
+				long parentId = result.getLong("parent_id");
+				if (result.wasNull()) {
+					if (!"UNIT".equals(result.getString("curriculum_level"))) {
+						throw new IllegalStateException("Non-unit curriculum node has no parent: " + id);
+					}
+					SyllabusVersion version = findVersionById(connection, versionId)
+							.orElseThrow(() -> new IllegalStateException("Missing syllabus version " + versionId));
+					return Optional.of(new Unit(id, version, result.getString("curriculum_code"),
+							result.getString("curriculum_name"), result.getInt("display_order")));
+				}
+				CurriculumNode parent = findNodeById(connection, parentId, remainingLevels - 1)
+						.orElseThrow(() -> new IllegalStateException("Missing curriculum parent " + parentId));
+				if (parent.getSyllabusVersion().getId() != versionId) {
+					throw new IllegalStateException("Curriculum node " + id + " has a parent in another syllabus version");
+				}
+				return Optional.of(createChild(result, parent));
+			}
 		}
 	}
 
