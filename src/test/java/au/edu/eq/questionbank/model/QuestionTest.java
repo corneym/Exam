@@ -32,6 +32,23 @@ class QuestionTest {
 		return new Unit(1, syllabus, "1", "Unit 1", 1);
 	}
 
+	private CurriculumNode createDescriptorClassification() {
+		Subject subject = exam.getSubject();
+		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2026", true);
+		Unit unit = new Unit(1, syllabus, "1", "Unit 1", 1);
+		Topic topic = new Topic(2, syllabus, unit, "1.1", "Topic 1", 1);
+		return new Descriptor(3, syllabus, topic, "1.1.1", "Descriptor 1", 1);
+	}
+
+	@Test
+	void acceptsDescriptorClassification() {
+		CurriculumNode classification = createDescriptorClassification();
+		Question question = new Question(1, exam, "Q1", "Question",
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 0.5)), classification);
+		assertSame(classification, question.getClassification());
+		assertEquals(CurriculumLevel.DESCRIPTOR, question.getClassification().getLevel());
+	}
+
 	@Test
 	void acceptsAnswerRegionsFromTheSameExam() {
 		Question question = new Question(1, exam, "Q1", "Question",
@@ -63,6 +80,30 @@ class QuestionTest {
 	}
 
 	@Test
+	void rejectsTopicClassification() {
+		SyllabusVersion syllabus = new SyllabusVersion(1, exam.getSubject(), "2026", true);
+		Unit unit = new Unit(1, syllabus, "1", "Unit 1", 1);
+		Topic topic = new Topic(2, syllabus, unit, "1.1", "Topic 1", 1);
+
+		assertThrows(IllegalArgumentException.class, () -> new Question(1, exam, "Q1", "Question",
+				List.of(new QuestionRegion(booklet, 1, 0, 0, 1, 1)), topic));
+	}
+
+	@Test
+	void rejectsDescriptorFromDifferentSubject() {
+		Subject chemistry = new Subject(79, "Chemistry");
+		SyllabusVersion syllabus = new SyllabusVersion(2, chemistry, "2025", true);
+		Unit unit = new Unit(4, syllabus, "1", "Unit 1", 1);
+		Topic topic = new Topic(5, syllabus, unit, "1.1", "Topic 1", 1);
+		Descriptor descriptor = new Descriptor(6, syllabus, topic, "1.1.1", "Descriptor 1", 1);
+
+		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+				() -> new Question(1, exam, "Q1", "Question",
+						List.of(new QuestionRegion(booklet, 1, 0, 0, 1, 1)), descriptor));
+		assertEquals("Question classification must belong to the exam's subject", error.getMessage());
+	}
+
+	@Test
 	void rejectsClassificationFromDifferentSubject() {
 		Subject chemistry = new Subject(79, "Chemistry");
 		SyllabusVersion syllabus = new SyllabusVersion(2, chemistry, "2025", true);
@@ -70,9 +111,8 @@ class QuestionTest {
 		Topic topic = new Topic(5, syllabus, unit, "1.1", "Topic 1", 1);
 		Subtopic classification = new Subtopic(6, syllabus, topic, "1.1.1", "Subtopic 1", 1);
 
-		assertThrows(IllegalArgumentException.class,
-				() -> new Question(1, exam, "Q1", "Question",
-						List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 0.5)), classification));
+		assertThrows(IllegalArgumentException.class, () -> new Question(1, exam, "Q1", "Question",
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 0.5)), classification));
 	}
 
 	@Test

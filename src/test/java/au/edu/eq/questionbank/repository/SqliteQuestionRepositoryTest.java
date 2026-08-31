@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -14,6 +15,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
+import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -83,6 +86,38 @@ class SqliteQuestionRepositoryTest {
 		assertEquals("B", loaded.getAnswer().getAnswerText());
 		assertEquals(1, loaded.getAnswer().getRegions().size());
 		assertEquals(4, loaded.getAnswer().getRegions().getFirst().pageNumber());
+	}
+
+	@Test
+	void savesAndReloadsDescriptorClassification() throws Exception {
+		Path databasePath = tempDirectory.resolve("descriptor-classification.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject psychology = curriculumWriter.insertSubject("Psychology");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(psychology, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Descriptor descriptor = curriculumWriter.insertDescriptor(topic, "1.1.1", "Descriptor 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(psychology, "QCAA", 2025, "External Assessment",
+				"Question booklet", "Psychology/2025/questions.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.save(booklet.getExam(), "Q1", "",
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), descriptor);
+		SqliteDatabase reopenedDatabase = new SqliteDatabase(databasePath);
+		reopenedDatabase.initialiseSchema();
+		SqliteQuestionRepository secondRepository = new SqliteQuestionRepository(reopenedDatabase);
+		Question loaded = secondRepository.findById(saved.getId()).orElseThrow();
+		assertInstanceOf(Descriptor.class, loaded.getClassification());
+		assertEquals(descriptor.getId(), loaded.getClassification().getId());
+		assertEquals(CurriculumLevel.DESCRIPTOR, loaded.getClassification().getLevel());
+		assertInstanceOf(Topic.class, loaded.getClassification().getParent());
+		assertEquals(topic.getId(), loaded.getClassification().getParent().getId());
+		assertEquals(psychology, loaded.getClassification().getSyllabusVersion().getSubject());
+		assertEquals(CurriculumLevel.DESCRIPTOR,
+				secondRepository.findAll().getFirst().getClassification().getLevel());
 	}
 
 	@Test

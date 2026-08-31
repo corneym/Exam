@@ -227,7 +227,7 @@ final class QuestionCapturePane extends VBox {
 		return QuestionCaptureValidator.findError(new QuestionCaptureValidator.State(bookletSupplier.get() != null,
 				questionCodeField.getText().trim(), curriculumSelectionModel.getSubject() != null,
 				curriculumSelectionModel.getUnit() != null, curriculumSelectionModel.getTopic() != null,
-				curriculumSelectionModel.getSubtopic() != null, currentSelection != null, pendingRegions.size()));
+				curriculumSelectionModel.getClassification() != null, currentSelection != null, pendingRegions.size()));
 	}
 
 	private void refreshRegionPreviews() {
@@ -254,7 +254,7 @@ final class QuestionCapturePane extends VBox {
 	private void saveQuestion() {
 		ExamBooklet booklet = bookletSupplier.get();
 		Question question = questionRepository.save(booklet.getExam(), questionCodeField.getText().trim(), "",
-				pendingRegions, curriculumSelectionModel.getSubtopic());
+				pendingRegions, curriculumSelectionModel.getClassification());
 		questionsChangedHandler.run();
 		saveStatusLabel.setText(
 				String.format("Saved %s (%d region(s))", question.getQuestionCode(), question.getRegions().size()));

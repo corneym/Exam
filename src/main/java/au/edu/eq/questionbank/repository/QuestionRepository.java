@@ -35,7 +35,7 @@ public interface QuestionRepository {
 	 * @param questionCode   the non-blank question label
 	 * @param questionText   supplementary question text, which may be blank
 	 * @param regions        source regions in extraction order
-	 * @param classification the question's syllabus subtopic
+	 * @param classification the question's syllabus subtopic or descriptor
 	 * @return the stored question with its persistent identifier
 	 * @throws NullPointerException     if a required object is {@code null}
 	 * @throws IllegalArgumentException if the question metadata or relationships

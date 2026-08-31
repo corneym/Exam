@@ -28,6 +28,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -143,7 +144,7 @@ class QuestionBankApplicationWorkflowTest {
 		SyllabusVersion syllabus2025 = writer.insertSyllabusVersion(chemistry, "2025", true);
 		Unit unit = writer.insertUnit(syllabus2025, "1", "Unit one", 1);
 		Topic topic = writer.insertTopic(unit, "1.1", "Topic one", 1);
-		writer.insertSubtopic(topic, "1.1.1", "Subtopic one", 1);
+		writer.insertDescriptor(topic, "1.1.1", "Descriptor one", 1);
 		Subject physics = writer.insertSubject("Physics");
 		SyllabusVersion physicsSyllabus = writer.insertSyllabusVersion(physics, "2025", true);
 		Unit physicsUnit = writer.insertUnit(physicsSyllabus, "1", "Unit one", 1);
@@ -236,7 +237,12 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	private void prepareExamAndClassification(FxRobot robot) throws Exception {
-		selectFirst(robot, "#curriculum-subject");
+		prepareExamAndClassification(robot, 0);
+	}
+
+	private void prepareExamAndClassification(FxRobot robot, int subjectIndex) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> subjects.getSelectionModel().select(subjectIndex));
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirst(robot, "#curriculum-subtopic");
@@ -331,11 +337,24 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void capturesQuestionWithSubtopicClassification(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, 1);
+
+		Question savedQuestion = captureQuestion(robot, "P1");
+
+		assertEquals("Physics", savedQuestion.getExam().getSubject().getName());
+		assertEquals(CurriculumLevel.SUBTOPIC, savedQuestion.getClassification().getLevel());
+		assertEquals(savedQuestion.getExam().getSubject(),
+				savedQuestion.getClassification().getSyllabusVersion().getSubject());
+	}
+
+	@Test
 	void capturesQuestionThenSavesTextOnlyAnswer(FxRobot robot) throws Exception {
 		assertInitialAnswerControlsDisabled(robot);
 		prepareExamAndClassification(robot);
 
 		Question savedQuestion = captureQuestion(robot, "Q1");
+		assertEquals(CurriculumLevel.DESCRIPTOR, savedQuestion.getClassification().getLevel());
 
 		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);

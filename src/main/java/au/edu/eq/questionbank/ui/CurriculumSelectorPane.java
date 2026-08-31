@@ -21,7 +21,7 @@ public class CurriculumSelectorPane extends VBox {
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> unitBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> topicBox = new ComboBox<>();
-	private final ComboBox<CurriculumNode> subtopicBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
 
 	/**
 	 * Creates a selector bound to the supplied selection model.
@@ -44,22 +44,22 @@ public class CurriculumSelectorPane extends VBox {
 		unitBox.setPromptText("Select unit");
 		topicBox.setId("curriculum-topic");
 		topicBox.setPromptText("Select topic");
-		subtopicBox.setId("curriculum-subtopic");
-		subtopicBox.setPromptText("Select subtopic");
+		classificationBox.setId("curriculum-subtopic");
+		classificationBox.setPromptText("Select subtopic or descriptor");
 
 		subjectBox.setMaxWidth(Double.MAX_VALUE);
 		unitBox.setMaxWidth(Double.MAX_VALUE);
 		topicBox.setMaxWidth(Double.MAX_VALUE);
-		subtopicBox.setMaxWidth(Double.MAX_VALUE);
+		classificationBox.setMaxWidth(Double.MAX_VALUE);
 
 		unitBox.setDisable(true);
 		topicBox.setDisable(true);
-		subtopicBox.setDisable(true);
+		classificationBox.setDisable(true);
 
 		configureSelectionHandlers();
 		refreshSubjects();
 		getChildren().addAll(classificationLabel, new Label("Subject"), subjectBox, new Label("Unit"), unitBox,
-				new Label("Topic"), topicBox, new Label("Subtopic"), subtopicBox);
+				new Label("Topic"), topicBox, new Label("Subtopic / Descriptor"), classificationBox);
 	}
 
 	/**
@@ -69,18 +69,18 @@ public class CurriculumSelectorPane extends VBox {
 	public void clearClassificationBelowSubject() {
 		unitBox.getSelectionModel().clearSelection();
 		topicBox.getSelectionModel().clearSelection();
-		subtopicBox.getSelectionModel().clearSelection();
+		classificationBox.getSelectionModel().clearSelection();
 
 		topicBox.getItems().clear();
-		subtopicBox.getItems().clear();
+		classificationBox.getItems().clear();
 
 		unitBox.setDisable(false);
 		topicBox.setDisable(true);
-		subtopicBox.setDisable(true);
+		classificationBox.setDisable(true);
 
 		model.selectUnit(null);
 		model.selectTopic(null);
-		model.selectSubtopic(null);
+		model.selectClassification(null);
 	}
 
 	/**
@@ -110,13 +110,13 @@ public class CurriculumSelectorPane extends VBox {
 			Subject subject = subjectBox.getValue();
 			unitBox.getSelectionModel().clearSelection();
 			topicBox.getSelectionModel().clearSelection();
-			subtopicBox.getSelectionModel().clearSelection();
+			classificationBox.getSelectionModel().clearSelection();
 			unitBox.getItems().clear();
 			topicBox.getItems().clear();
-			subtopicBox.getItems().clear();
+			classificationBox.getItems().clear();
 			unitBox.setDisable(true);
 			topicBox.setDisable(true);
-			subtopicBox.setDisable(true);
+			classificationBox.setDisable(true);
 			if (subject == null) {
 				model.selectSubject(null);
 				return;
@@ -140,19 +140,19 @@ public class CurriculumSelectorPane extends VBox {
 			model.selectUnit(unit);
 
 			topicBox.getSelectionModel().clearSelection();
-			subtopicBox.getSelectionModel().clearSelection();
-			subtopicBox.getItems().clear();
+			classificationBox.getSelectionModel().clearSelection();
+			classificationBox.getItems().clear();
 
 			if (unit == null) {
 				topicBox.getItems().clear();
 				topicBox.setDisable(true);
-				subtopicBox.setDisable(true);
+				classificationBox.setDisable(true);
 				return;
 			}
 
 			topicBox.getItems().setAll(model.getTopics());
 			topicBox.setDisable(false);
-			subtopicBox.setDisable(true);
+			classificationBox.setDisable(true);
 		});
 
 		topicBox.setOnAction(event -> {
@@ -160,20 +160,20 @@ public class CurriculumSelectorPane extends VBox {
 
 			model.selectTopic(topic);
 
-			subtopicBox.getSelectionModel().clearSelection();
+			classificationBox.getSelectionModel().clearSelection();
 
 			if (topic == null) {
-				subtopicBox.getItems().clear();
-				subtopicBox.setDisable(true);
+				classificationBox.getItems().clear();
+				classificationBox.setDisable(true);
 				return;
 			}
 
-			subtopicBox.getItems().setAll(model.getSubtopics());
-			subtopicBox.setDisable(false);
+			classificationBox.getItems().setAll(model.getClassifications());
+			classificationBox.setDisable(false);
 		});
 
-		subtopicBox.setOnAction(event -> {
-			model.selectSubtopic(subtopicBox.getValue());
+		classificationBox.setOnAction(event -> {
+			model.selectClassification(classificationBox.getValue());
 		});
 	}
 }

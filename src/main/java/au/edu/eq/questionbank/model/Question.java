@@ -7,7 +7,8 @@ import java.util.List;
  * <p>
  * The original source regions are authoritative; question text is supplementary
  * metadata. Each question has one best-fit syllabus classification, which must
- * be a {@link CurriculumLevel#SUBTOPIC subtopic}. Questions that occupy several
+ * be a {@link CurriculumLevel#SUBTOPIC subtopic} or
+ * {@link CurriculumLevel#DESCRIPTOR descriptor}. Questions that occupy several
  * page areas retain those regions in extraction and assembly order. Every
  * region must belong to the same {@link ExamBooklet}, and that booklet must
  * belong to the question's exam. The classification must belong to the same
@@ -33,7 +34,7 @@ public class Question {
 	 * @param questionText   supplementary searchable or transcribed question text
 	 * @param regions        source regions from one booklet, in extraction and
 	 *                       assembly order
-	 * @param classification the single best-fit syllabus subtopic
+	 * @param classification the single best-fit syllabus subtopic or descriptor
 	 * @throws NullPointerException     if {@code exam}, {@code questionText},
 	 *                                  {@code regions}, an element of
 	 *                                  {@code regions}, or {@code classification}
@@ -41,10 +42,11 @@ public class Question {
 	 * @throws IllegalArgumentException if {@code id} is not positive,
 	 *                                  {@code questionCode} is null or blank,
 	 *                                  {@code regions} is empty,
-	 *                                  {@code classification} is not a subtopic, a
-	 *                                  classification belongs to another subject,
-	 *                                  a region belongs to a different exam, or the
-	 *                                  regions do not all belong to the same booklet
+	 *                                  {@code classification} is not a subtopic or
+	 *                                  descriptor, a classification belongs to
+	 *                                  another subject, a region belongs to a
+	 *                                  different exam, or the regions do not all
+	 *                                  belong to the same booklet
 	 */
 	public Question(long id, Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
 			CurriculumNode classification) {
@@ -70,8 +72,9 @@ public class Question {
 		if (regions.isEmpty()) {
 			throw new IllegalArgumentException("Question must contain at least one region");
 		}
-		if (classification.getLevel() != CurriculumLevel.SUBTOPIC) {
-			throw new IllegalArgumentException("Question classification must be a SUBTOPIC");
+		CurriculumLevel classificationLevel = classification.getLevel();
+		if (classificationLevel != CurriculumLevel.SUBTOPIC && classificationLevel != CurriculumLevel.DESCRIPTOR) {
+			throw new IllegalArgumentException("Question classification must be a SUBTOPIC or DESCRIPTOR");
 		}
 		if (!classification.getSyllabusVersion().getSubject().equals(exam.getSubject())) {
 			throw new IllegalArgumentException("Question classification must belong to the exam's subject");

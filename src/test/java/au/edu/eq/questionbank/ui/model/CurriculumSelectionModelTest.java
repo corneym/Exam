@@ -30,14 +30,14 @@ class CurriculumSelectionModelTest {
 	private CurriculumSelectionModel model;
 
 	@Test
-	void cascadesUnitTopicAndSubtopicSelections() {
+	void cascadesUnitTopicAndClassificationSelections() {
 		model.selectSubject(chemistry);
 		model.selectUnit(unit3);
 		assertEquals(List.of(topic31), model.getTopics());
 		model.selectTopic(topic31);
-		assertEquals(List.of(subtopic311), model.getSubtopics());
-		model.selectSubtopic(subtopic311);
-		assertEquals(subtopic311, model.getSubtopic());
+		assertEquals(List.of(subtopic311), model.getClassifications());
+		model.selectClassification(subtopic311);
+		assertEquals(subtopic311, model.getClassification());
 	}
 
 	@Test
@@ -45,7 +45,7 @@ class CurriculumSelectionModelTest {
 		model.selectSubject(chemistry);
 		model.selectUnit(unit3);
 		model.selectTopic(topic31);
-		model.selectSubtopic(subtopic311);
+		model.selectClassification(subtopic311);
 
 		model.selectSubject(null);
 
@@ -53,24 +53,24 @@ class CurriculumSelectionModelTest {
 		assertNull(model.getSyllabusVersion());
 		assertNull(model.getUnit());
 		assertNull(model.getTopic());
-		assertNull(model.getSubtopic());
+		assertNull(model.getClassification());
 
 		assertEquals(List.of(), model.getUnits());
 	}
 
 	@Test
-	void changingTopicClearsSubtopicSelection() {
+	void changingTopicClearsClassificationSelection() {
 		model.selectSubject(chemistry);
 		model.selectUnit(unit3);
 		model.selectTopic(topic31);
-		model.selectSubtopic(subtopic311);
+		model.selectClassification(subtopic311);
 
 		model.selectTopic(null);
 
 		assertNull(model.getTopic());
-		assertNull(model.getSubtopic());
+		assertNull(model.getClassification());
 
-		assertEquals(List.of(), model.getSubtopics());
+		assertEquals(List.of(), model.getClassifications());
 	}
 
 	@Test
@@ -78,17 +78,17 @@ class CurriculumSelectionModelTest {
 		model.selectSubject(chemistry);
 		model.selectUnit(unit3);
 		model.selectTopic(topic31);
-		model.selectSubtopic(subtopic311);
+		model.selectClassification(subtopic311);
 
 		model.selectUnit(null);
 
 		assertNull(model.getUnit());
 		assertNull(model.getTopic());
-		assertNull(model.getSubtopic());
+		assertNull(model.getClassification());
 
 		assertEquals(List.of(), model.getTopics());
 
-		assertEquals(List.of(), model.getSubtopics());
+		assertEquals(List.of(), model.getClassifications());
 	}
 
 	@Test
@@ -107,10 +107,10 @@ class CurriculumSelectionModelTest {
 		descriptorModel.selectUnit(unit3);
 		descriptorModel.selectTopic(topic31);
 
-		assertEquals(List.of(descriptor), descriptorModel.getSubtopics());
+		assertEquals(List.of(descriptor), descriptorModel.getClassifications());
 
-		descriptorModel.selectSubtopic(descriptor);
-		assertEquals(descriptor, descriptorModel.getSubtopic());
+		descriptorModel.selectClassification(descriptor);
+		assertEquals(descriptor, descriptorModel.getClassification());
 	}
 
 	@Test

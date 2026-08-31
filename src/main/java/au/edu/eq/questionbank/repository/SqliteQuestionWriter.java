@@ -38,7 +38,7 @@ public final class SqliteQuestionWriter {
 	 * @param questionCode   the non-blank question label
 	 * @param questionText   supplementary text, which may be blank
 	 * @param regions        source regions in extraction order
-	 * @param classification the question's syllabus subtopic
+	 * @param classification the question's syllabus subtopic or descriptor
 	 * @return the stored question with its generated identifier
 	 * @throws SQLException             if the transaction cannot be completed
 	 * @throws NullPointerException     if a required object is {@code null}

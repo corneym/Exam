@@ -21,7 +21,7 @@ public class CurriculumSelectionModel {
 	private SyllabusVersion syllabusVersion;
 	private CurriculumNode unit;
 	private CurriculumNode topic;
-	private CurriculumNode subtopic;
+	private CurriculumNode classification;
 
 	/**
 	 * Creates a selection model backed by curriculum lookups from a repository.
@@ -70,15 +70,16 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * @return children of the selected topic, which may be subtopics or descriptors
-	 *         attached directly to the topic; an empty list when no topic is
+	 * Returns the valid final classifications beneath the selected topic. These may
+	 * be subtopics or descriptors.
+	 *
+	 * @return final classification nodes, or an empty list when no topic is
 	 *         selected
 	 */
-	public List<CurriculumNode> getSubtopics() {
+	public List<CurriculumNode> getClassifications() {
 		if (topic == null) {
 			return List.of();
 		}
-
 		return repository.findChildren(topic);
 	}
 
@@ -94,7 +95,7 @@ public class CurriculumSelectionModel {
 		syllabusVersion = null;
 		unit = null;
 		topic = null;
-		subtopic = null;
+		classification = null;
 
 		if (subject == null) {
 			return;
@@ -113,33 +114,33 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * Selects a unit and clears the selected topic and subtopic.
+	 * Selects a unit and clears the selected topic and final classification.
 	 *
 	 * @param unit the unit to select, or {@code null} to clear it
 	 */
 	public void selectUnit(CurriculumNode unit) {
 		this.unit = unit;
 		topic = null;
-		subtopic = null;
+		classification = null;
 	}
 
 	/**
-	 * Selects a topic and clears the selected subtopic.
+	 * Selects a topic and clears the selected final classification.
 	 *
 	 * @param topic the topic to select, or {@code null} to clear it
 	 */
 	public void selectTopic(CurriculumNode topic) {
 		this.topic = topic;
-		subtopic = null;
+		classification = null;
 	}
 
 	/**
 	 * Selects the final curriculum node shown beneath the current topic.
 	 *
-	 * @param subtopic the node to select, or {@code null} to clear it
+	 * @param classification the node to select, or {@code null} to clear it
 	 */
-	public void selectSubtopic(CurriculumNode subtopic) {
-		this.subtopic = subtopic;
+	public void selectClassification(CurriculumNode classification) {
+		this.classification = classification;
 	}
 
 	/**
@@ -179,11 +180,11 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * Returns the selected final curriculum node.
+	 * Returns the selected final curriculum classification.
 	 *
-	 * @return the selected final curriculum node, or {@code null}
+	 * @return the selected subtopic or descriptor, or {@code null}
 	 */
-	public CurriculumNode getSubtopic() {
-		return subtopic;
+	public CurriculumNode getClassification() {
+		return classification;
 	}
 }
