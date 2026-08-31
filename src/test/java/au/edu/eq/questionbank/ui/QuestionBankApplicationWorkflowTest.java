@@ -484,7 +484,17 @@ class QuestionBankApplicationWorkflowTest {
 		assertNotNull(examMetadataPane().getBooklet());
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 
-		robot.interact(() -> subjects.getSelectionModel().select(1));
+		Subject physics = null;
+		for (Subject subject : subjects.getItems()) {
+			if ("Physics".equals(subject.getName())) {
+				physics = subject;
+				break;
+			}
+		}
+		assertNotNull(physics);
+		Subject physicsSelection = physics;
+		robot.interact(() -> subjects.setValue(physicsSelection));
+		WaitForAsyncUtils.waitForFxEvents();
 		WaitForAsyncUtils.waitForFxEvents();
 
 		assertNull(examMetadataPane().getBooklet());
