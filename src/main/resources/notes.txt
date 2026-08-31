@@ -1,0 +1,53 @@
+The review looks solid. I would merge the maintenance work. Nothing in the “changes made” list looks like an architectural change that escaped the boundaries we set, and the test evidence is adequate. The one TestFX failure is consistent with a focus-sensitive test rather than a production regression because the application workflow tests passed and the isolated test passed immediately on rerun.
+
+Before starting curriculum mapping, though, the findings change the order I would use.
+
+First, commit and merge chore/codex-review into main. Then I would not immediately add the curriculum_mappings table as we were about to do. Finding 4 matters now because curriculum mapping is literally the next schema change. This is the right point to introduce real schema migrations rather than continuing to add tables to “schema version 1”. I would make a small dedicated branch such as:
+
+git switch main
+git pull
+git switch -c feature/schema-migrations
+
+That branch should make initial schema creation transactional and make schema_version actually drive ordered migrations. Once that is merged, curriculum mapping can become the first genuine schema migration.
+
+Of the eight findings, I would group them this way.
+
+Findings 1 and 2 need an explicit design decision before we do much more curriculum work. Finding 1 confirms an inconsistency we already suspected: the persistence model stores a generic CurriculumNode, but Question artificially restricts it to SUBTOPIC. I do not think we should “fix” that by blindly treating every three-part leaf as a subtopic. We need to decide what a question is actually classified against. Given the direction of this project, I think the better model is likely that a question may be classified against an appropriate curriculum node, including a DESCRIPTOR, rather than assuming every subject has a subtopic layer. But we should decide that deliberately because it affects the selector and later classifier.
+
+Finding 2 is also important. For historical examinations, I think we will need explicit syllabus-version selection. Otherwise a 2019 exam can only be classified against the current 2025 syllabus, which undermines the reason for keeping the 2019 curriculum and building mappings. A coherent workflow would be:
+
+Historical exam
+    → classify against its contemporary syllabus
+    → retain that original classification
+    → curriculum mapping
+    → obtain corresponding current-syllabus classification
+
+That preserves provenance rather than rewriting old questions as though they were originally classified under a future syllabus.
+
+Finding 3 should probably be addressed alongside the migration work, at least where SQLite can enforce the invariant cleanly. In particular, “one current syllabus per subject” is a good candidate for a partial unique index. I would be more cautious about complicated triggers for every domain invariant; application validation is still useful. The database should enforce the important structural invariants where it can do so clearly.
+
+Finding 4 is therefore effectively “do now”, despite Codex calling it medium severity.
+
+Findings 5 and 7 are good near-term maintenance work. Canonical source paths will matter increasingly as the database fills with PDFs, and friendly persistence-error handling matters before you start doing substantial real data entry. Neither needs to block the curriculum model decision.
+
+Finding 6 can wait. It only becomes a serious usability problem if you intend to alternate rapidly between capturing questions and partially completing answers. We can revisit that when the workflow settles.
+
+Finding 8 can comfortably wait.
+
+So my suggested order from here is:
+
+Merge the Codex review branch.
+Add proper SQLite schema migration support.
+Decide the classification semantics behind findings 1 and 2.
+Implement that curriculum-selection/classification change.
+Then start curriculum mapping persistence.
+Tackle path canonicalisation and persistence-error UI before bulk data entry.
+Leave unfinished-answer refresh behaviour and the | delimiter issue for later.
+
+The most important new conclusion from the review is that we should not add another table under the current ad-hoc schema initialisation. This is the natural point to establish migrations before the database becomes harder to evolve.
+
+Decide the classification semantics behind findings 1 and 2.
+Implement that curriculum-selection/classification change.
+Then start curriculum mapping persistence.
+Tackle path canonicalisation and persistence-error UI before bulk data entry.
+Leave unfinished-answer refresh behaviour and the | delimiter issue for later.
