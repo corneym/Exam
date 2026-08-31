@@ -29,6 +29,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -121,7 +122,9 @@ class QuestionBankApplicationWorkflowTest {
 				break;
 			}
 		}
-		assertNotNull(savedQuestion);
+//		assertNotNull(savedQuestion);
+		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
+		assertNotNull(savedQuestion, "Question save status: " + saveStatus.getText());
 		return savedQuestion;
 	}
 
@@ -145,11 +148,20 @@ class QuestionBankApplicationWorkflowTest {
 		Unit unit = writer.insertUnit(syllabus2025, "1", "Unit one", 1);
 		Topic topic = writer.insertTopic(unit, "1.1", "Topic one", 1);
 		writer.insertDescriptor(topic, "1.1.1", "Descriptor one", 1);
+		SyllabusVersion syllabus2019 = writer.insertSyllabusVersion(chemistry, "2019", false);
+		Unit historicalUnit = writer.insertUnit(syllabus2019, "3", "Historical unit", 1);
+		Topic historicalTopic = writer.insertTopic(historicalUnit, "3.1", "Historical topic", 1);
+		writer.insertDescriptor(historicalTopic, "3.1.1", "Historical descriptor", 1);
 		Subject physics = writer.insertSubject("Physics");
 		SyllabusVersion physicsSyllabus = writer.insertSyllabusVersion(physics, "2025", true);
 		Unit physicsUnit = writer.insertUnit(physicsSyllabus, "1", "Unit one", 1);
 		Topic physicsTopic = writer.insertTopic(physicsUnit, "1.1", "Topic one", 1);
 		writer.insertSubtopic(physicsTopic, "1.1.1", "Subtopic one", 1);
+		Subject biology = writer.insertSubject("Biology");
+		SyllabusVersion biology2019 = writer.insertSyllabusVersion(biology, "2019", false);
+		Unit biologyUnit = writer.insertUnit(biology2019, "2", "Biology historical unit", 1);
+		Topic biologyTopic = writer.insertTopic(biologyUnit, "2.1", "Biology historical topic", 1);
+		writer.insertDescriptor(biologyTopic, "2.1.1", "Biology historical descriptor", 1);
 	}
 
 	private void createCurriculumFile(Path curriculumDataRoot, String version, String fileName, String unitCode)
@@ -237,16 +249,24 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	private void prepareExamAndClassification(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot, 0);
+		prepareExamAndClassification(robot, "Chemistry");
 	}
 
-	private void prepareExamAndClassification(FxRobot robot, int subjectIndex) throws Exception {
+	private void prepareExamAndClassification(FxRobot robot, String subjectName) throws Exception {
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-		robot.interact(() -> subjects.getSelectionModel().select(subjectIndex));
+		Subject selectedSubject = null;
+		for (Subject subject : subjects.getItems()) {
+			if (subjectName.equals(subject.getName())) {
+				selectedSubject = subject;
+				break;
+			}
+		}
+		assertNotNull(selectedSubject);
+		Subject subjectSelection = selectedSubject;
+		robot.interact(() -> subjects.setValue(subjectSelection));
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirst(robot, "#curriculum-subtopic");
-
 		ComboBox<String> provider = comboBox(robot, "#exam-provider");
 		ComboBox<Integer> year = comboBox(robot, "#exam-year");
 		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
@@ -306,6 +326,81 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void canSelectHistoricalSyllabus(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject chemistry = null;
+		for (Subject subject : subjects.getItems()) {
+			if ("Chemistry".equals(subject.getName())) {
+				chemistry = subject;
+				break;
+			}
+		}
+		assertNotNull(chemistry);
+		Subject chemistrySelection = chemistry;
+		robot.interact(() -> subjects.setValue(chemistrySelection));
+		WaitForAsyncUtils.waitForFxEvents();
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
+		ComboBox<CurriculumNode> classifications = comboBox(robot, "#curriculum-subtopic");
+		assertEquals(2, syllabuses.getItems().size());
+		assertNotNull(syllabuses.getValue());
+		assertEquals("2025", syllabuses.getValue().getName());
+		assertEquals(1, units.getItems().size());
+		assertEquals("1", units.getItems().getFirst().getCode());
+		SyllabusVersion historical = null;
+		for (SyllabusVersion version : syllabuses.getItems()) {
+			if ("2019".equals(version.getName())) {
+				historical = version;
+				break;
+			}
+		}
+		assertNotNull(historical);
+		SyllabusVersion historicalSelection = historical;
+		robot.interact(() -> syllabuses.setValue(historicalSelection));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("2019", syllabuses.getValue().getName());
+		assertEquals(1, units.getItems().size());
+		assertEquals("3", units.getItems().getFirst().getCode());
+		assertTrue(topics.getItems().isEmpty());
+		assertTrue(classifications.getItems().isEmpty());
+		assertFalse(units.isDisabled());
+		assertTrue(topics.isDisabled());
+		assertTrue(classifications.isDisabled());
+	}
+
+	@Test
+	void canSelectSubjectWithOnlyHistoricalSyllabus(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		Subject biology = null;
+		for (Subject subject : subjects.getItems()) {
+			if ("Biology".equals(subject.getName())) {
+				biology = subject;
+				break;
+			}
+		}
+		assertNotNull(biology);
+		Subject biologySelection = biology;
+		robot.interact(() -> subjects.setValue(biologySelection));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, syllabuses.getItems().size());
+		assertEquals("2019", syllabuses.getItems().getFirst().getName());
+		assertNull(syllabuses.getValue());
+		assertFalse(syllabuses.isDisabled());
+		assertTrue(units.getItems().isEmpty());
+		assertTrue(units.isDisabled());
+		SyllabusVersion historical = syllabuses.getItems().getFirst();
+		robot.interact(() -> syllabuses.setValue(historical));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(historical, syllabuses.getValue());
+		assertEquals(1, units.getItems().size());
+		assertEquals("2", units.getItems().getFirst().getCode());
+		assertFalse(units.isDisabled());
+	}
+
+	@Test
 	void canRemoveAcceptedAnswerRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q3");
@@ -338,7 +433,7 @@ class QuestionBankApplicationWorkflowTest {
 
 	@Test
 	void capturesQuestionWithSubtopicClassification(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot, 1);
+		prepareExamAndClassification(robot, "Physics");
 
 		Question savedQuestion = captureQuestion(robot, "P1");
 

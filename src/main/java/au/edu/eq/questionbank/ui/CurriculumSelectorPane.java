@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.geometry.Insets;
@@ -22,6 +23,7 @@ public class CurriculumSelectorPane extends VBox {
 	private final ComboBox<CurriculumNode> unitBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> topicBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
+	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
 
 	/**
 	 * Creates a selector bound to the supplied selection model.
@@ -40,6 +42,8 @@ public class CurriculumSelectorPane extends VBox {
 
 		subjectBox.setId("curriculum-subject");
 		subjectBox.setPromptText("Select subject");
+		syllabusBox.setId("curriculum-syllabus");
+		syllabusBox.setPromptText("Select syllabus");
 		unitBox.setId("curriculum-unit");
 		unitBox.setPromptText("Select unit");
 		topicBox.setId("curriculum-topic");
@@ -51,15 +55,18 @@ public class CurriculumSelectorPane extends VBox {
 		unitBox.setMaxWidth(Double.MAX_VALUE);
 		topicBox.setMaxWidth(Double.MAX_VALUE);
 		classificationBox.setMaxWidth(Double.MAX_VALUE);
+		syllabusBox.setMaxWidth(Double.MAX_VALUE);
 
 		unitBox.setDisable(true);
 		topicBox.setDisable(true);
 		classificationBox.setDisable(true);
+		syllabusBox.setDisable(true);
 
 		configureSelectionHandlers();
 		refreshSubjects();
-		getChildren().addAll(classificationLabel, new Label("Subject"), subjectBox, new Label("Unit"), unitBox,
-				new Label("Topic"), topicBox, new Label("Subtopic / Descriptor"), classificationBox);
+		getChildren().addAll(classificationLabel, new Label("Subject"), subjectBox, new Label("Syllabus"), syllabusBox,
+				new Label("Unit"), unitBox, new Label("Topic"), topicBox, new Label("Subtopic / Descriptor"),
+				classificationBox);
 	}
 
 	/**
@@ -104,76 +111,99 @@ public class CurriculumSelectorPane extends VBox {
 		return subjectBox.valueProperty();
 	}
 
-	private void configureSelectionHandlers() {
+	private void handleSubjectSelection() {
+		Subject subject = subjectBox.getValue();
+		syllabusBox.getSelectionModel().clearSelection();
+		syllabusBox.getItems().clear();
+		unitBox.getSelectionModel().clearSelection();
+		topicBox.getSelectionModel().clearSelection();
+		classificationBox.getSelectionModel().clearSelection();
+		unitBox.getItems().clear();
+		topicBox.getItems().clear();
+		classificationBox.getItems().clear();
+		syllabusBox.setDisable(true);
+		unitBox.setDisable(true);
+		topicBox.setDisable(true);
+		classificationBox.setDisable(true);
+		model.selectSubject(subject);
+		if (subject == null) {
+			return;
+		}
+		syllabusBox.getItems().setAll(model.getSyllabusVersions());
+		syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
+		SyllabusVersion defaultVersion = model.getSyllabusVersion();
+		if (defaultVersion != null) {
+			syllabusBox.setValue(defaultVersion);
+		}
+	}
 
-		subjectBox.setOnAction(event -> {
-			Subject subject = subjectBox.getValue();
-			unitBox.getSelectionModel().clearSelection();
-			topicBox.getSelectionModel().clearSelection();
-			classificationBox.getSelectionModel().clearSelection();
-			unitBox.getItems().clear();
+	private void handleSyllabusSelection() {
+		SyllabusVersion syllabusVersion = syllabusBox.getValue();
+		unitBox.getSelectionModel().clearSelection();
+		topicBox.getSelectionModel().clearSelection();
+		classificationBox.getSelectionModel().clearSelection();
+		unitBox.getItems().clear();
+		topicBox.getItems().clear();
+		classificationBox.getItems().clear();
+		unitBox.setDisable(true);
+		topicBox.setDisable(true);
+		classificationBox.setDisable(true);
+		model.selectSyllabusVersion(syllabusVersion);
+		if (syllabusVersion == null) {
+			return;
+		}
+		unitBox.getItems().setAll(model.getUnits());
+		unitBox.setDisable(false);
+	}
+
+	private void handleUnitSelection() {
+		CurriculumNode unit = unitBox.getValue();
+
+		model.selectUnit(unit);
+
+		topicBox.getSelectionModel().clearSelection();
+		classificationBox.getSelectionModel().clearSelection();
+		classificationBox.getItems().clear();
+
+		if (unit == null) {
 			topicBox.getItems().clear();
-			classificationBox.getItems().clear();
-			unitBox.setDisable(true);
 			topicBox.setDisable(true);
 			classificationBox.setDisable(true);
-			if (subject == null) {
-				model.selectSubject(null);
-				return;
-			}
-			try {
-				model.selectSubject(subject);
-				unitBox.getItems().setAll(model.getUnits());
-				unitBox.setDisable(false);
-			} catch (IllegalStateException e) {
-				/*
-				 * The subject exists, but it has no current syllabus version. It cannot
-				 * currently be used for question classification.
-				 */
-				subjectBox.getSelectionModel().clearSelection();
-			}
-		});
+			return;
+		}
 
-		unitBox.setOnAction(event -> {
-			CurriculumNode unit = unitBox.getValue();
+		topicBox.getItems().setAll(model.getTopics());
+		topicBox.setDisable(false);
+		classificationBox.setDisable(true);
+	}
 
-			model.selectUnit(unit);
+	private void handleTopicSelection() {
+		CurriculumNode topic = topicBox.getValue();
 
-			topicBox.getSelectionModel().clearSelection();
-			classificationBox.getSelectionModel().clearSelection();
+		model.selectTopic(topic);
+
+		classificationBox.getSelectionModel().clearSelection();
+
+		if (topic == null) {
 			classificationBox.getItems().clear();
-
-			if (unit == null) {
-				topicBox.getItems().clear();
-				topicBox.setDisable(true);
-				classificationBox.setDisable(true);
-				return;
-			}
-
-			topicBox.getItems().setAll(model.getTopics());
-			topicBox.setDisable(false);
 			classificationBox.setDisable(true);
-		});
+			return;
+		}
 
-		topicBox.setOnAction(event -> {
-			CurriculumNode topic = topicBox.getValue();
+		classificationBox.getItems().setAll(model.getClassifications());
+		classificationBox.setDisable(false);
+	}
 
-			model.selectTopic(topic);
+	private void handleClassificationSelection() {
+		model.selectClassification(classificationBox.getValue());
+	}
 
-			classificationBox.getSelectionModel().clearSelection();
+	private void configureSelectionHandlers() {
 
-			if (topic == null) {
-				classificationBox.getItems().clear();
-				classificationBox.setDisable(true);
-				return;
-			}
-
-			classificationBox.getItems().setAll(model.getClassifications());
-			classificationBox.setDisable(false);
-		});
-
-		classificationBox.setOnAction(event -> {
-			model.selectClassification(classificationBox.getValue());
-		});
+		subjectBox.setOnAction(event -> handleSubjectSelection());
+		syllabusBox.setOnAction(event -> handleSyllabusSelection());
+		unitBox.setOnAction(event -> handleUnitSelection());
+		topicBox.setOnAction(event -> handleTopicSelection());
+		classificationBox.setOnAction(event -> handleClassificationSelection());
 	}
 }

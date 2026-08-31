@@ -121,19 +121,43 @@ class CurriculumSelectionModelTest {
 	}
 
 	@Test
-	void rejectsSubjectWithoutCurrentSyllabus() {
+	void allowsSubjectWithOnlyHistoricalSyllabus() {
 		Subject physics = new Subject(2, "Physics");
-
 		SyllabusVersion oldPhysics = new SyllabusVersion(3, physics, "2019", false);
-
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(physics),
 				List.of(oldPhysics), List.of());
-
 		CurriculumSelectionModel physicsModel = new CurriculumSelectionModel(repository);
-
-		assertThrows(IllegalStateException.class, () -> physicsModel.selectSubject(physics));
-		assertNull(physicsModel.getSubject());
+		physicsModel.selectSubject(physics);
+		assertEquals(physics, physicsModel.getSubject());
 		assertNull(physicsModel.getSyllabusVersion());
+		assertEquals(List.of(oldPhysics), physicsModel.getSyllabusVersions());
+		physicsModel.selectSyllabusVersion(oldPhysics);
+		assertEquals(oldPhysics, physicsModel.getSyllabusVersion());
+	}
+
+	@Test
+	void rejectsSyllabusFromAnotherSubject() {
+		Subject physics = new Subject(2, "Physics");
+		SyllabusVersion physics2019 = new SyllabusVersion(3, physics, "2019", false);
+		model.selectSubject(chemistry);
+		assertThrows(IllegalArgumentException.class, () -> model.selectSyllabusVersion(physics2019));
+	}
+
+	@Test
+	void explicitlySelectsHistoricalSyllabus() {
+		model.selectSubject(chemistry);
+		assertEquals(syllabus2025, model.getSyllabusVersion());
+		model.selectSyllabusVersion(syllabus2019);
+		assertEquals(syllabus2019, model.getSyllabusVersion());
+		assertNull(model.getUnit());
+		assertNull(model.getTopic());
+		assertNull(model.getClassification());
+	}
+
+	@Test
+	void exposesSyllabusVersionsForSelectedSubject() {
+		model.selectSubject(chemistry);
+		assertEquals(List.of(syllabus2019, syllabus2025), model.getSyllabusVersions());
 	}
 
 	@Test
