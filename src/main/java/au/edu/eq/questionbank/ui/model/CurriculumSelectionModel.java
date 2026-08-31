@@ -99,8 +99,9 @@ public class CurriculumSelectionModel {
 
 	/**
 	 * Selects a subject, clears all curriculum node selections, and defaults to the
-	 * subject's current syllabus version when one exists. Passing {@code null}
-	 * clears the complete selection.
+	 * subject's current syllabus version when one exists. Otherwise the subject is
+	 * retained without a selected syllabus. Passing {@code null} clears the
+	 * complete selection.
 	 *
 	 * @param subject the subject to select, or {@code null} to clear it
 	 */
@@ -122,8 +123,8 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * Selects a syllabus version for the current subject and clears all curriculum
-	 * node selections beneath it.
+	 * Selects a syllabus version for the selected subject and clears all curriculum
+	 * node selections beneath it. Rejected versions leave the selection unchanged.
 	 *
 	 * @param syllabusVersion the syllabus version to select, or {@code null} to
 	 *                        clear the syllabus selection
@@ -133,20 +134,19 @@ public class CurriculumSelectionModel {
 	 *                                  selected subject
 	 */
 	public void selectSyllabusVersion(SyllabusVersion syllabusVersion) {
+		if (syllabusVersion != null) {
+			if (subject == null) {
+				throw new IllegalStateException("Select a subject before selecting a syllabus version");
+			}
+			if (!syllabusVersion.getSubject().equals(subject)
+					|| !repository.findVersionsForSubject(subject).contains(syllabusVersion)) {
+				throw new IllegalArgumentException("Syllabus version is not available for the selected subject");
+			}
+		}
+		this.syllabusVersion = syllabusVersion;
 		unit = null;
 		topic = null;
 		classification = null;
-		if (syllabusVersion == null) {
-			this.syllabusVersion = null;
-			return;
-		}
-		if (subject == null) {
-			throw new IllegalStateException("Select a subject before selecting a syllabus version");
-		}
-		if (!repository.findVersionsForSubject(subject).contains(syllabusVersion)) {
-			throw new IllegalArgumentException("Syllabus version does not belong to the selected subject");
-		}
-		this.syllabusVersion = syllabusVersion;
 	}
 
 	/**

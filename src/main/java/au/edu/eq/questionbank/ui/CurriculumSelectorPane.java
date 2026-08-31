@@ -11,9 +11,9 @@ import javafx.scene.control.Label;
 import javafx.scene.layout.VBox;
 
 /**
- * JavaFX controls for navigating the current syllabus of a subject through its
- * unit and topic hierarchy and selecting the final classification shown by the
- * model.
+ * JavaFX controls for selecting a subject and syllabus, then navigating its unit
+ * and topic hierarchy to a final classification. A subject's current syllabus
+ * is the default when available; historical syllabuses remain selectable.
  */
 public class CurriculumSelectorPane extends VBox {
 
@@ -24,6 +24,7 @@ public class CurriculumSelectorPane extends VBox {
 	private final ComboBox<CurriculumNode> topicBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
+	private boolean refreshingSubjects;
 
 	/**
 	 * Creates a selector bound to the supplied selection model.
@@ -71,7 +72,8 @@ public class CurriculumSelectorPane extends VBox {
 
 	/**
 	 * Clears unit, topic, and final-classification state while retaining the
-	 * selected subject.
+	 * selected subject and syllabus. Unit selection remains disabled if no
+	 * syllabus is selected.
 	 */
 	public void clearClassificationBelowSubject() {
 		unitBox.getSelectionModel().clearSelection();
@@ -81,7 +83,7 @@ public class CurriculumSelectorPane extends VBox {
 		topicBox.getItems().clear();
 		classificationBox.getItems().clear();
 
-		unitBox.setDisable(false);
+		unitBox.setDisable(model.getSyllabusVersion() == null);
 		topicBox.setDisable(true);
 		classificationBox.setDisable(true);
 
@@ -91,15 +93,54 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
-	 * Reloads available subjects while preserving the current selection when it
-	 * still exists.
+	 * Reloads subjects, syllabuses, and hierarchy choices after a repository change.
+	 * Selections are retained when still available, including an explicitly chosen
+	 * historical syllabus; unavailable selections and their dependants are cleared.
 	 */
 	public void refreshSubjects() {
 		Subject selectedSubject = subjectBox.getValue();
-		subjectBox.getItems().setAll(model.getSubjects());
-		if (selectedSubject != null && subjectBox.getItems().contains(selectedSubject)) {
-			subjectBox.setValue(selectedSubject);
+		SyllabusVersion selectedSyllabus = syllabusBox.getValue();
+		CurriculumNode selectedUnit = unitBox.getValue();
+		CurriculumNode selectedTopic = topicBox.getValue();
+		CurriculumNode selectedClassification = classificationBox.getValue();
+		refreshingSubjects = true;
+		try {
+			subjectBox.getItems().setAll(model.getSubjects());
+			selectAvailableValue(subjectBox, selectedSubject);
+			model.selectSubject(subjectBox.getValue());
+
+			syllabusBox.getItems().setAll(model.getSyllabusVersions());
+			selectAvailableValue(syllabusBox, selectedSyllabus);
+			model.selectSyllabusVersion(syllabusBox.getValue());
+			syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
+
+			unitBox.getItems().setAll(model.getUnits());
+			selectAvailableValue(unitBox, selectedUnit);
+			model.selectUnit(unitBox.getValue());
+			unitBox.setDisable(model.getSyllabusVersion() == null);
+
+			topicBox.getItems().setAll(model.getTopics());
+			selectAvailableValue(topicBox, selectedTopic);
+			model.selectTopic(topicBox.getValue());
+			topicBox.setDisable(model.getUnit() == null);
+
+			classificationBox.getItems().setAll(model.getClassifications());
+			selectAvailableValue(classificationBox, selectedClassification);
+			model.selectClassification(classificationBox.getValue());
+			classificationBox.setDisable(model.getTopic() == null);
+		} finally {
+			refreshingSubjects = false;
 		}
+	}
+
+	private <T> void selectAvailableValue(ComboBox<T> box, T selectedValue) {
+		for (T item : box.getItems()) {
+			if (item.equals(selectedValue)) {
+				box.setValue(item);
+				return;
+			}
+		}
+		box.setValue(null);
 	}
 
 	/**
@@ -112,6 +153,9 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void handleSubjectSelection() {
+		if (refreshingSubjects) {
+			return;
+		}
 		Subject subject = subjectBox.getValue();
 		syllabusBox.getSelectionModel().clearSelection();
 		syllabusBox.getItems().clear();
@@ -138,6 +182,9 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void handleSyllabusSelection() {
+		if (refreshingSubjects) {
+			return;
+		}
 		SyllabusVersion syllabusVersion = syllabusBox.getValue();
 		unitBox.getSelectionModel().clearSelection();
 		topicBox.getSelectionModel().clearSelection();
@@ -157,6 +204,9 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void handleUnitSelection() {
+		if (refreshingSubjects) {
+			return;
+		}
 		CurriculumNode unit = unitBox.getValue();
 
 		model.selectUnit(unit);
@@ -178,6 +228,9 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void handleTopicSelection() {
+		if (refreshingSubjects) {
+			return;
+		}
 		CurriculumNode topic = topicBox.getValue();
 
 		model.selectTopic(topic);
@@ -195,6 +248,9 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void handleClassificationSelection() {
+		if (refreshingSubjects) {
+			return;
+		}
 		model.selectClassification(classificationBox.getValue());
 	}
 
