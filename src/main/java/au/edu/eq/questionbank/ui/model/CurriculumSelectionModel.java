@@ -8,10 +8,11 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.CurriculumRepository;
 
 /**
- * Selection state for navigating a subject's current syllabus hierarchy.
+ * Selection state for navigating a subject's syllabus hierarchy.
  * <p>
- * Selecting a value clears all dependent selections beneath it. Selecting a
- * subject automatically chooses that subject's current syllabus version.
+ * Selecting a subject defaults to its current syllabus version when one exists.
+ * A historical syllabus version may then be selected explicitly. Selecting a
+ * value clears all dependent selections beneath it.
  */
 public class CurriculumSelectionModel {
 
@@ -46,8 +47,21 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * @return units for the selected current syllabus, or an empty list when no
+	 * Returns the syllabus versions available for the selected subject.
+	 *
+	 * @return syllabus versions for the selected subject, or an empty list when no
 	 *         subject is selected
+	 */
+	public List<SyllabusVersion> getSyllabusVersions() {
+		if (subject == null) {
+			return List.of();
+		}
+		return repository.findVersionsForSubject(subject);
+	}
+
+	/**
+	 * @return units for the selected syllabus, or an empty list when no syllabus is
+	 *         selected
 	 */
 	public List<CurriculumNode> getUnits() {
 		if (syllabusVersion == null) {
@@ -84,33 +98,55 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * Selects a subject and its current syllabus version, clearing all curriculum
-	 * node selections. Passing {@code null} clears the complete selection.
+	 * Selects a subject, clears all curriculum node selections, and defaults to the
+	 * subject's current syllabus version when one exists. Otherwise the subject is
+	 * retained without a selected syllabus. Passing {@code null} clears the
+	 * complete selection.
 	 *
 	 * @param subject the subject to select, or {@code null} to clear it
-	 * @throws IllegalStateException if the subject has no current syllabus version
 	 */
 	public void selectSubject(Subject subject) {
-		this.subject = null;
+		this.subject = subject;
 		syllabusVersion = null;
 		unit = null;
 		topic = null;
 		classification = null;
-
 		if (subject == null) {
 			return;
 		}
-
-		List<SyllabusVersion> versions = repository.findVersionsForSubject(subject);
-		for (SyllabusVersion version : versions) {
+		for (SyllabusVersion version : repository.findVersionsForSubject(subject)) {
 			if (version.isCurrent()) {
-				this.subject = subject;
 				syllabusVersion = version;
 				return;
 			}
 		}
+	}
 
-		throw new IllegalStateException("No current syllabus version for subject: " + subject.getName());
+	/**
+	 * Selects a syllabus version for the selected subject and clears all curriculum
+	 * node selections beneath it. Rejected versions leave the selection unchanged.
+	 *
+	 * @param syllabusVersion the syllabus version to select, or {@code null} to
+	 *                        clear the syllabus selection
+	 * @throws IllegalStateException    if a non-null version is selected without a
+	 *                                  subject
+	 * @throws IllegalArgumentException if the version is not available for the
+	 *                                  selected subject
+	 */
+	public void selectSyllabusVersion(SyllabusVersion syllabusVersion) {
+		if (syllabusVersion != null) {
+			if (subject == null) {
+				throw new IllegalStateException("Select a subject before selecting a syllabus version");
+			}
+			if (!syllabusVersion.getSubject().equals(subject)
+					|| !repository.findVersionsForSubject(subject).contains(syllabusVersion)) {
+				throw new IllegalArgumentException("Syllabus version is not available for the selected subject");
+			}
+		}
+		this.syllabusVersion = syllabusVersion;
+		unit = null;
+		topic = null;
+		classification = null;
 	}
 
 	/**
@@ -153,9 +189,9 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
-	 * Returns the current syllabus version for the selected subject.
+	 * Returns the selected syllabus version.
 	 *
-	 * @return the selected subject's current syllabus version, or {@code null}
+	 * @return the selected syllabus version, or {@code null}
 	 */
 	public SyllabusVersion getSyllabusVersion() {
 		return syllabusVersion;
