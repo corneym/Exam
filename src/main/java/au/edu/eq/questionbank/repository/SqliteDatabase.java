@@ -21,6 +21,15 @@ public final class SqliteDatabase {
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
 
+	/**
+	 * Returns the latest database schema version supported by this application.
+	 *
+	 * @return the latest supported schema version
+	 */
+	public static int latestSchemaVersion() {
+		return LATEST_SCHEMA_VERSION;
+	}
+
 	private final Path databasePath;
 
 	/**
@@ -102,6 +111,23 @@ public final class SqliteDatabase {
 				e.addSuppressed(closeFailure);
 			}
 			throw e;
+		}
+	}
+
+	/**
+	 * Returns the SQLite runtime version used by the current JDBC driver.
+	 *
+	 * @return the SQLite runtime version
+	 * @throws SQLException if the version cannot be read
+	 */
+	public String sqliteVersion() throws SQLException {
+		try (Connection connection = openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT sqlite_version()")) {
+			if (!result.next()) {
+				throw new SQLException("SQLite did not return a version");
+			}
+			return result.getString(1);
 		}
 	}
 

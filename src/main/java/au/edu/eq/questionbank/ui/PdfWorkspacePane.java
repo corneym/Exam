@@ -32,7 +32,7 @@ import javafx.scene.shape.Rectangle;
 final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	enum DocumentMode {
-		EXAM("Page"), ANSWER("Answer page");
+		EXAM("Page"), ANSWER("Answer page"), VIEWER("Page");
 
 		private final String pageLabel;
 
@@ -63,8 +63,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	private PdfSession examPdfSession;
 	private PdfSession answerPdfSession;
+	private PdfSession viewerPdfSession;
 	private DocumentMode displayedDocument = DocumentMode.EXAM;
+	private DocumentMode viewerReturnDocument = DocumentMode.EXAM;
 	private int currentPageNumber = 1;
+	private int viewerReturnPageNumber = 1;
 	private double selectionStartX;
 	private double selectionStartY;
 	private Predicate<DocumentMode> selectionAvailable = mode -> false;
@@ -109,144 +112,34 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 				answerPdfSession = null;
 			}
 		}
+		if (viewerPdfSession != null) {
+			try {
+				viewerPdfSession.close();
+			} catch (Exception e) {
+				if (failure == null) {
+					failure = e;
+				} else {
+					failure.addSuppressed(e);
+				}
+			} finally {
+				viewerPdfSession = null;
+			}
+		}
 		if (failure != null) {
 			throw failure;
 		}
 	}
 
-	/**
-	 * Removes the visible pending selection rectangle.
-	 */
-	void clearSelection() {
-		selectionRectangle.setVisible(false);
-		selectionRectangle.setWidth(0);
-		selectionRectangle.setHeight(0);
-	}
-
-	DocumentMode getDisplayedDocument() {
-		return displayedDocument;
-	}
-
-	PdfSession getExamPdfSession() {
-		return examPdfSession;
-	}
-
-	PdfSession getAnswerPdfSession() {
-		return answerPdfSession;
-	}
-
-	int getCurrentPageNumber() {
-		return currentPageNumber;
-	}
-
-	boolean hasExamPdf() {
-		return examPdfSession != null;
-	}
-
-	/**
-	 * Opens and displays an answer PDF, replacing any previous answer session.
-	 *
-	 * @param path the answer PDF path
-	 */
-	void openAnswerPdf(Path path) {
-		if (path == null) {
-			throw new NullPointerException("path");
-		}
-		closeExistingAnswerPdfSession();
-
-		try {
-			answerPdfSession = PdfSession.open(path);
-			displayedDocument = DocumentMode.ANSWER;
-			currentPageNumber = 1;
-			pagePane.setCursor(Cursor.CROSSHAIR);
-			showCurrentPage();
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to open answer PDF", e);
-		}
-	}
-
-	/**
-	 * Opens and displays an exam PDF, replacing any previous exam session.
-	 *
-	 * @param path the exam PDF path
-	 */
-	void openExamPdf(Path path) {
-		if (path == null) {
-			throw new NullPointerException("path");
-		}
-		try {
-			if (examPdfSession != null) {
-				try {
-					examPdfSession.close();
-				} finally {
-					examPdfSession = null;
-				}
-			}
-			examPdfSession = PdfSession.open(path);
-			displayedDocument = DocumentMode.EXAM;
-			currentPageNumber = 1;
-			pagePane.setCursor(Cursor.DEFAULT);
-			showCurrentPage();
-		} catch (Exception e) {
-			throw new RuntimeException("Unable to open PDF", e);
-		}
-	}
-
-	/**
-	 * Sets the callback invoked before a newly rendered page is shown.
-	 *
-	 * @param pageChangeHandler the page-change callback
-	 */
-	void setPageChangeHandler(Runnable pageChangeHandler) {
-		if (pageChangeHandler == null) {
-			throw new NullPointerException("pageChangeHandler");
-		}
-		this.pageChangeHandler = pageChangeHandler;
-	}
-
-	/**
-	 * Sets the predicate controlling whether a document accepts region selection.
-	 *
-	 * @param selectionAvailable selection availability by document mode
-	 */
-	void setSelectionAvailable(Predicate<DocumentMode> selectionAvailable) {
-		if (selectionAvailable == null) {
-			throw new NullPointerException("selectionAvailable");
-		}
-		this.selectionAvailable = selectionAvailable;
-	}
-
-	/**
-	 * Sets the consumer for completed proportional region selections.
-	 *
-	 * @param selectionHandler the completed-selection consumer
-	 */
-	void setSelectionHandler(Consumer<RegionSelection> selectionHandler) {
-		if (selectionHandler == null) {
-			throw new NullPointerException("selectionHandler");
-		}
-		this.selectionHandler = selectionHandler;
-	}
-
-	void setSelectionCursorEnabled(boolean enabled) {
-		pagePane.setCursor(enabled ? Cursor.CROSSHAIR : Cursor.DEFAULT);
-	}
-
-	/**
-	 * Switches between the already opened exam and answer documents.
-	 *
-	 * @param documentMode the document to display
-	 */
-	void showDocument(DocumentMode documentMode) {
-		if (documentMode == null) {
-			throw new NullPointerException("documentMode");
-		}
-		displayedDocument = documentMode;
-		showCurrentPage();
-	}
-
 	private double clamp(double value, double minimum, double maximum) {
 		return Math.max(minimum, Math.min(value, maximum));
+	}
+
+	private void clearDisplayedPage() {
+		pageView.setImage(null);
+		clearSelection();
+		pageLabel.setText("No PDF selected");
+		previousButton.setDisable(true);
+		nextButton.setDisable(true);
 	}
 
 	private void closeExistingAnswerPdfSession() {
@@ -263,21 +156,17 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
-	private HBox createPageControls() {
-		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, nextButton,
-				fullWidthSelectionCheckBox);
-		pageControls.setAlignment(Pos.CENTER);
-		pageControls.setPadding(PAGE_CONTROLS_PADDING);
-		return pageControls;
-	}
-
-	private ScrollPane createScrollPane() {
-		ScrollPane scrollPane = new ScrollPane(pagePane);
-		scrollPane.setFitToWidth(true);
-		scrollPane.setFitToHeight(false);
-		scrollPane.setMinHeight(0);
-		VBox.setVgrow(scrollPane, Priority.ALWAYS);
-		return scrollPane;
+	private void closeExistingViewerPdfSession() {
+		if (viewerPdfSession == null) {
+			return;
+		}
+		try {
+			viewerPdfSession.close();
+		} catch (Exception e) {
+			throw new IllegalStateException("Unable to close the previous viewer PDF", e);
+		} finally {
+			viewerPdfSession = null;
+		}
 	}
 
 	private void configureNavigation() {
@@ -313,8 +202,31 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		selectionRectangle.toFront();
 	}
 
+	private HBox createPageControls() {
+		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, nextButton,
+				fullWidthSelectionCheckBox);
+		pageControls.setAlignment(Pos.CENTER);
+		pageControls.setPadding(PAGE_CONTROLS_PADDING);
+		return pageControls;
+	}
+
+	private ScrollPane createScrollPane() {
+		ScrollPane scrollPane = new ScrollPane(pagePane);
+		scrollPane.setFitToWidth(true);
+		scrollPane.setFitToHeight(false);
+		scrollPane.setMinHeight(0);
+		VBox.setVgrow(scrollPane, Priority.ALWAYS);
+		return scrollPane;
+	}
+
 	private PdfSession displayedPdfSession() {
-		return displayedDocument == DocumentMode.ANSWER ? answerPdfSession : examPdfSession;
+		if (displayedDocument == DocumentMode.ANSWER) {
+			return answerPdfSession;
+		}
+		if (displayedDocument == DocumentMode.VIEWER) {
+			return viewerPdfSession;
+		}
+		return examPdfSession;
 	}
 
 	private void handleSelectionDragged(MouseEvent event) {
@@ -416,5 +328,177 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		double currentX = clamp(eventX, 0, pageWidth);
 		selectionRectangle.setX(Math.min(selectionStartX, currentX));
 		selectionRectangle.setWidth(Math.abs(currentX - selectionStartX));
+	}
+
+	/**
+	 * Removes the visible pending selection rectangle.
+	 */
+	void clearSelection() {
+		selectionRectangle.setVisible(false);
+		selectionRectangle.setWidth(0);
+		selectionRectangle.setHeight(0);
+	}
+
+	void closeViewerPdf() {
+		closeExistingViewerPdfSession();
+		displayedDocument = viewerReturnDocument;
+		currentPageNumber = viewerReturnPageNumber;
+		fullWidthSelectionCheckBox.setVisible(true);
+		fullWidthSelectionCheckBox.setManaged(true);
+		PdfSession displayedSession = displayedPdfSession();
+		if (displayedSession == null) {
+			clearDisplayedPage();
+			return;
+		}
+		showCurrentPage();
+	}
+
+	PdfSession getAnswerPdfSession() {
+		return answerPdfSession;
+	}
+
+	int getCurrentPageNumber() {
+		return currentPageNumber;
+	}
+
+	DocumentMode getDisplayedDocument() {
+		return displayedDocument;
+	}
+
+	PdfSession getExamPdfSession() {
+		return examPdfSession;
+	}
+
+	boolean hasExamPdf() {
+		return examPdfSession != null;
+	}
+
+	/**
+	 * Opens and displays an answer PDF, replacing any previous answer session.
+	 *
+	 * @param path the answer PDF path
+	 */
+	void openAnswerPdf(Path path) {
+		if (path == null) {
+			throw new NullPointerException("path");
+		}
+		closeExistingAnswerPdfSession();
+
+		try {
+			answerPdfSession = PdfSession.open(path);
+			displayedDocument = DocumentMode.ANSWER;
+			currentPageNumber = 1;
+			pagePane.setCursor(Cursor.CROSSHAIR);
+			fullWidthSelectionCheckBox.setVisible(true);
+			fullWidthSelectionCheckBox.setManaged(true);
+			showCurrentPage();
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to open answer PDF", e);
+		}
+	}
+
+	/**
+	 * Opens and displays an exam PDF, replacing any previous exam session.
+	 *
+	 * @param path the exam PDF path
+	 */
+	void openExamPdf(Path path) {
+		if (path == null) {
+			throw new NullPointerException("path");
+		}
+		try {
+			if (examPdfSession != null) {
+				try {
+					examPdfSession.close();
+				} finally {
+					examPdfSession = null;
+				}
+			}
+			examPdfSession = PdfSession.open(path);
+			displayedDocument = DocumentMode.EXAM;
+			currentPageNumber = 1;
+			pagePane.setCursor(Cursor.DEFAULT);
+			fullWidthSelectionCheckBox.setVisible(true);
+			fullWidthSelectionCheckBox.setManaged(true);
+			showCurrentPage();
+		} catch (Exception e) {
+			throw new RuntimeException("Unable to open PDF", e);
+		}
+	}
+
+	void openViewerPdf(Path path) {
+		if (path == null) {
+			throw new NullPointerException("path");
+		}
+		closeExistingViewerPdfSession();
+		try {
+			viewerPdfSession = PdfSession.open(path);
+			if (displayedDocument != DocumentMode.VIEWER) {
+				viewerReturnDocument = displayedDocument;
+				viewerReturnPageNumber = currentPageNumber;
+			}
+			displayedDocument = DocumentMode.VIEWER;
+			currentPageNumber = 1;
+			clearSelection();
+			pagePane.setCursor(Cursor.DEFAULT);
+			fullWidthSelectionCheckBox.setVisible(false);
+			fullWidthSelectionCheckBox.setManaged(false);
+			showCurrentPage();
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to open PDF", e);
+		}
+	}
+
+	/**
+	 * Sets the callback invoked before a newly rendered page is shown.
+	 *
+	 * @param pageChangeHandler the page-change callback
+	 */
+	void setPageChangeHandler(Runnable pageChangeHandler) {
+		if (pageChangeHandler == null) {
+			throw new NullPointerException("pageChangeHandler");
+		}
+		this.pageChangeHandler = pageChangeHandler;
+	}
+
+	/**
+	 * Sets the predicate controlling whether a document accepts region selection.
+	 *
+	 * @param selectionAvailable selection availability by document mode
+	 */
+	void setSelectionAvailable(Predicate<DocumentMode> selectionAvailable) {
+		if (selectionAvailable == null) {
+			throw new NullPointerException("selectionAvailable");
+		}
+		this.selectionAvailable = selectionAvailable;
+	}
+
+	void setSelectionCursorEnabled(boolean enabled) {
+		pagePane.setCursor(enabled ? Cursor.CROSSHAIR : Cursor.DEFAULT);
+	}
+
+	/**
+	 * Sets the consumer for completed proportional region selections.
+	 *
+	 * @param selectionHandler the completed-selection consumer
+	 */
+	void setSelectionHandler(Consumer<RegionSelection> selectionHandler) {
+		if (selectionHandler == null) {
+			throw new NullPointerException("selectionHandler");
+		}
+		this.selectionHandler = selectionHandler;
+	}
+
+	/**
+	 * Switches between the already opened exam and answer documents.
+	 *
+	 * @param documentMode the document to display
+	 */
+	void showDocument(DocumentMode documentMode) {
+		if (documentMode == null) {
+			throw new NullPointerException("documentMode");
+		}
+		displayedDocument = documentMode;
+		showCurrentPage();
 	}
 }

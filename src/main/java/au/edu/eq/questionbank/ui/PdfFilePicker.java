@@ -26,6 +26,24 @@ final class PdfFilePicker {
 		this.dataRoot = dataRoot.toAbsolutePath().normalize();
 	}
 
+	private FileChooser createFileChooser(String title) {
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle(title);
+		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF files", "*.pdf"));
+		File root = dataRoot.toFile();
+		if (root.isDirectory()) {
+			chooser.setInitialDirectory(root);
+		}
+		return chooser;
+	}
+
+	private void showInvalidPathAlert(String invalidPathMessage) {
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.setHeaderText(invalidPathMessage);
+		alert.setContentText(dataRoot.toString());
+		alert.showAndWait();
+	}
+
 	/**
 	 * Shows a PDF chooser and validates the selected path.
 	 *
@@ -51,6 +69,23 @@ final class PdfFilePicker {
 	}
 
 	/**
+	 * Shows a PDF chooser without requiring the selected file to be inside the
+	 * configured data root.
+	 *
+	 * @param stage the owner stage
+	 * @param title the chooser title
+	 * @return the selected absolute PDF path, or {@code null} when cancelled
+	 */
+	Path chooseAnyPdf(Stage stage, String title) {
+		FileChooser chooser = createFileChooser(title);
+		File selectedFile = chooser.showOpenDialog(stage);
+		if (selectedFile == null) {
+			return null;
+		}
+		return selectedFile.toPath().toAbsolutePath().normalize();
+	}
+
+	/**
 	 * Tests whether a path resolves within the configured data root.
 	 *
 	 * @param path the path to test
@@ -58,23 +93,5 @@ final class PdfFilePicker {
 	 */
 	boolean isInsideDataRoot(Path path) {
 		return path.toAbsolutePath().normalize().startsWith(dataRoot);
-	}
-
-	private FileChooser createFileChooser(String title) {
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle(title);
-		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF files", "*.pdf"));
-		File root = dataRoot.toFile();
-		if (root.isDirectory()) {
-			chooser.setInitialDirectory(root);
-		}
-		return chooser;
-	}
-
-	private void showInvalidPathAlert(String invalidPathMessage) {
-		Alert alert = new Alert(Alert.AlertType.ERROR);
-		alert.setHeaderText(invalidPathMessage);
-		alert.setContentText(dataRoot.toString());
-		alert.showAndWait();
 	}
 }

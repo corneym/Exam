@@ -2,14 +2,17 @@ package au.edu.eq.questionbank;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Properties;
 
 /**
- * Filesystem locations for external PDF and curriculum application data and
- * the persistent question-bank database.
+ * Filesystem locations for application data.
+ * <p>
+ * A configured data root contains the PDF library, curriculum data, and
+ * question-bank database.
  *
  * @param pdfDataRoot        root beneath which source examination PDFs are
  *                           stored
@@ -18,9 +21,13 @@ import java.util.Properties;
  */
 public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path databasePath) {
 
+	private static final String DATA_ROOT_PROPERTY = "data.root";
 	private static final String PDF_DATA_ROOT_PROPERTY = "pdf.dataRoot";
 	private static final String CURRICULUM_DATA_ROOT_PROPERTY = "curriculum.dataRoot";
 	private static final String DATABASE_PATH_PROPERTY = "database.path";
+	private static final String PDF_DIRECTORY = "pdf";
+	private static final String CURRICULUM_DIRECTORY = "curriculum";
+	private static final String DATABASE_FILENAME = "questionbank.db";
 
 	/**
 	 * Validates directly supplied configuration paths.
@@ -37,12 +44,26 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 		if (databasePath == null) {
 			throw new NullPointerException("databasePath");
 		}
+		pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
+		curriculumDataRoot = curriculumDataRoot.toAbsolutePath().normalize();
+		databasePath = databasePath.toAbsolutePath().normalize();
 	}
 
 	/**
-	 * Loads {@code pdf.dataRoot}, {@code curriculum.dataRoot}, and
-	 * {@code database.path} from a Java properties file. Loaded values are
-	 * converted to normalized absolute paths.
+	 * Returns the application data root.
+	 *
+	 * @return the directory containing the database and application data folders
+	 */
+	public Path dataRoot() {
+		return databasePath.getParent();
+	}
+
+	/**
+	 * Loads configuration from a Java properties file.
+	 * <p>
+	 * When {@code data.root} is present, the PDF root, curriculum root, and
+	 * database path are derived from it. The older individual path properties
+	 * remain supported temporarily for existing configuration files.
 	 *
 	 * @param propertiesFile the configuration file to read
 	 * @return the loaded application configuration
@@ -52,7 +73,6 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 	 * @throws NullPointerException   if {@code propertiesFile} is {@code null}
 	 */
 	public static ApplicationConfig load(Path propertiesFile) throws IOException {
-
 		if (propertiesFile == null) {
 			throw new NullPointerException("propertiesFile");
 		}
@@ -60,10 +80,61 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 		try (Reader reader = Files.newBufferedReader(propertiesFile)) {
 			properties.load(reader);
 		}
+		if (properties.containsKey(DATA_ROOT_PROPERTY)) {
+			Path dataRoot = readRequiredPath(properties, DATA_ROOT_PROPERTY, propertiesFile);
+			return fromDataRoot(dataRoot);
+		}
 		Path pdfDataRoot = readRequiredPath(properties, PDF_DATA_ROOT_PROPERTY, propertiesFile);
 		Path curriculumDataRoot = readRequiredPath(properties, CURRICULUM_DATA_ROOT_PROPERTY, propertiesFile);
 		Path databasePath = readRequiredPath(properties, DATABASE_PATH_PROPERTY, propertiesFile);
 		return new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
+	}
+
+	/**
+	 * Creates configuration derived from a single application data root.
+	 *
+	 * @param dataRoot the application data root
+	 * @return derived application configuration
+	 */
+	public static ApplicationConfig fromDataRoot(Path dataRoot) {
+		if (dataRoot == null) {
+			throw new NullPointerException("dataRoot");
+		}
+		Path normalisedRoot = dataRoot.toAbsolutePath().normalize();
+		return new ApplicationConfig(normalisedRoot.resolve(PDF_DIRECTORY),
+				normalisedRoot.resolve(CURRICULUM_DIRECTORY), normalisedRoot.resolve(DATABASE_FILENAME));
+	}
+
+	/**
+	 * Saves the configured data root. Legacy individual path properties are removed
+	 * when the configuration is saved.
+	 *
+	 * @param propertiesFile the properties file to update
+	 * @param dataRoot       the application data root
+	 * @throws IOException          if the properties file cannot be read or written
+	 * @throws NullPointerException if either argument is {@code null}
+	 */
+	public static void saveDataRoot(Path propertiesFile, Path dataRoot) throws IOException {
+		if (propertiesFile == null) {
+			throw new NullPointerException("propertiesFile");
+		}
+		if (dataRoot == null) {
+			throw new NullPointerException("dataRoot");
+		}
+		Properties properties = new Properties();
+		if (Files.exists(propertiesFile)) {
+			try (Reader reader = Files.newBufferedReader(propertiesFile)) {
+				properties.load(reader);
+			}
+		}
+		String rootValue = dataRoot.toAbsolutePath().normalize().toString().replace('\\', '/');
+		properties.setProperty(DATA_ROOT_PROPERTY, rootValue);
+		properties.remove(PDF_DATA_ROOT_PROPERTY);
+		properties.remove(CURRICULUM_DATA_ROOT_PROPERTY);
+		properties.remove(DATABASE_PATH_PROPERTY);
+		try (Writer writer = Files.newBufferedWriter(propertiesFile)) {
+			properties.store(writer, "Exam Question Bank configuration");
+		}
 	}
 
 	private static Path readRequiredPath(Properties properties, String propertyName, Path propertiesFile) {

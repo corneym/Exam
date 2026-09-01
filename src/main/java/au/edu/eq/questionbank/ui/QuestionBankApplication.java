@@ -33,6 +33,7 @@ import au.edu.eq.questionbank.service.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
@@ -41,6 +42,7 @@ import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
@@ -59,6 +61,7 @@ public class QuestionBankApplication extends Application {
 	private static final double SCENE_WIDTH = 1400.0;
 	private static final double SCENE_HEIGHT = 840.0;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
+	private static final Path PROPERTIES_FILE = Path.of("questionbank.properties");
 
 	/**
 	 * Launches the desktop application.
@@ -79,6 +82,8 @@ public class QuestionBankApplication extends Application {
 	private ExamMetadataPane examMetadataPane;
 	private QuestionCapturePane questionCapturePane;
 	private AnswerCapturePane answerCapturePane;
+	private ScrollPane previewScrollPane;
+	private ExamImportDialog examImportDialog;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -90,7 +95,7 @@ public class QuestionBankApplication extends Application {
 	public void start(Stage stage) throws Exception {
 		ApplicationConfig config;
 		try {
-			config = ApplicationConfig.load(Path.of("questionbank.properties"));
+			config = ApplicationConfig.load(PROPERTIES_FILE);
 		} catch (ConfigurationException e) {
 			showStartupError("Configuration Error", e.getMessage());
 			return;
@@ -106,6 +111,11 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.close();
 	}
 
+	private void closeViewerPdf() {
+		pdfWorkspace.closeViewerPdf();
+		setViewerMode(false);
+	}
+
 	private CurriculumSelectorPane createCurriculumSelectorPane() {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
 		Subject subject = curriculumSelectionModel.getSubject();
@@ -118,34 +128,56 @@ public class QuestionBankApplication extends Application {
 
 	private MenuBar createMenuBar(Stage primaryStage, ApplicationConfig config) {
 		MenuBar menuBar = new MenuBar();
-		Menu fileMenu = new Menu("File");
-		Menu importMenu = new Menu("Import");
-		MenuItem curriculumItem = new MenuItem("Curriculum...");
-		curriculumItem.setOnAction(event -> importCurriculum(primaryStage, config));
-		importMenu.getItems().add(curriculumItem);
-		fileMenu.getItems().add(importMenu);
-		MenuItem mappingItem = new MenuItem("Review Curriculum Mappings...");
+		Menu fileMenu = new Menu("_File");
+		Menu openMenu = new Menu("_Open");
+		MenuItem openPdfItem = new MenuItem("_PDF...");
+		openPdfItem.setOnAction(event -> openViewerPdf(primaryStage, config));
+		openMenu.getItems().add(openPdfItem);
+		MenuItem closePdfItem = new MenuItem("_Close PDF");
+		closePdfItem.setOnAction(event -> closeViewerPdf());
+		MenuItem optionsItem = new MenuItem("Op_tions...");
+		optionsItem.setOnAction(event -> showOptions(primaryStage, config));
+		MenuItem exitItem = new MenuItem("E_xit");
+		exitItem.setOnAction(event -> Platform.exit());
+		fileMenu.getItems().addAll(openMenu, closePdfItem, new SeparatorMenuItem(), optionsItem,
+				new SeparatorMenuItem(), exitItem);
+		Menu examMenu = new Menu("_Exam");
+		MenuItem importExamItem = new MenuItem("_Import...");
+		importExamItem.setOnAction(event -> showExamImport());
+		examMenu.getItems().add(importExamItem);
+		Menu curriculumMenu = new Menu("_Curriculum");
+		MenuItem importCurriculumItem = new MenuItem("_Import...");
+		importCurriculumItem.setOnAction(event -> importCurriculum(primaryStage, config));
+		MenuItem mappingItem = new MenuItem("_Review Mappings...");
 		mappingItem.setOnAction(event -> reviewCurriculumMappings(primaryStage, config));
-		fileMenu.getItems().add(mappingItem);
-		menuBar.getMenus().add(fileMenu);
+		curriculumMenu.getItems().addAll(importCurriculumItem, mappingItem);
+		Menu exportMenu = new Menu("E_xport");
+		MenuItem exportPlaceholder = new MenuItem("No export options yet");
+		exportPlaceholder.setDisable(true);
+		exportMenu.getItems().add(exportPlaceholder);
+		Menu helpMenu = new Menu("_Help");
+		MenuItem aboutItem = new MenuItem("_About...");
+		aboutItem.setOnAction(event -> showAbout());
+		MenuItem versionItem = new MenuItem("_Version Information...");
+		versionItem.setOnAction(event -> showVersionInformation(config));
+		helpMenu.getItems().addAll(aboutItem, versionItem);
+		menuBar.getMenus().addAll(fileMenu, examMenu, curriculumMenu, exportMenu, helpMenu);
+		openPdfItem.setMnemonicParsing(true);
+		closePdfItem.setMnemonicParsing(true);
+		optionsItem.setMnemonicParsing(true);
+		exitItem.setMnemonicParsing(true);
+		importExamItem.setMnemonicParsing(true);
+		importCurriculumItem.setMnemonicParsing(true);
+		mappingItem.setMnemonicParsing(true);
+		aboutItem.setMnemonicParsing(true);
+		versionItem.setMnemonicParsing(true);
+		fileMenu.setMnemonicParsing(true);
+		openMenu.setMnemonicParsing(true);
+		examMenu.setMnemonicParsing(true);
+		curriculumMenu.setMnemonicParsing(true);
+		exportMenu.setMnemonicParsing(true);
+		helpMenu.setMnemonicParsing(true);
 		return menuBar;
-	}
-
-	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
-		try {
-			SqliteDatabase database = new SqliteDatabase(config.databasePath());
-			CurriculumRepository repository = new SqliteCurriculumRepository(database);
-			CurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
-			CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
-			CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
-			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
-			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
-					suggester, reviewRepository, mappingRepository, reviewWriter);
-			dialog.showAndWait();
-		} catch (IllegalStateException e) {
-			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",
-					e.getMessage());
-		}
 	}
 
 	private VBox createPreviewPane() {
@@ -168,9 +200,9 @@ public class QuestionBankApplication extends Application {
 
 	private BorderPane createRootLayout(Stage primaryStage, ApplicationConfig config) {
 		BorderPane root = new BorderPane();
-		VBox top = new VBox(createMenuBar(primaryStage, config), examMetadataPane);
-		root.setTop(top);
-		root.setLeft(createPreviewScrollPane());
+		root.setTop(createMenuBar(primaryStage, config));
+		previewScrollPane = createPreviewScrollPane();
+		root.setLeft(previewScrollPane);
 		root.setCenter(pdfWorkspace);
 		return root;
 	}
@@ -213,8 +245,13 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private boolean isRegionSelectionAvailable(PdfWorkspacePane.DocumentMode documentMode) {
-		return documentMode == PdfWorkspacePane.DocumentMode.ANSWER ? answerCapturePane.hasAnswerFile()
-				: examMetadataPane.getBooklet() != null;
+		if (documentMode == PdfWorkspacePane.DocumentMode.VIEWER) {
+			return false;
+		}
+		if (documentMode == PdfWorkspacePane.DocumentMode.ANSWER) {
+			return answerCapturePane.hasAnswerFile();
+		}
+		return examMetadataPane.getBooklet() != null;
 	}
 
 	private void openAnswerPdf(SelectedPdf selectedPdf) {
@@ -226,10 +263,52 @@ public class QuestionBankApplication extends Application {
 		questionCapturePane.clearForNewPdf();
 	}
 
+	private void openViewerPdf(Stage primaryStage, ApplicationConfig config) {
+		PdfFilePicker picker = new PdfFilePicker(config.pdfDataRoot());
+		Path selectedPath = picker.chooseAnyPdf(primaryStage, "Open PDF");
+		if (selectedPath == null) {
+			return;
+		}
+		pdfWorkspace.openViewerPdf(selectedPath);
+		setViewerMode(true);
+	}
+
+	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
+		try {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			CurriculumRepository repository = new SqliteCurriculumRepository(database);
+			CurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
+			CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
+			CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
+			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
+			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
+					suggester, reviewRepository, mappingRepository, reviewWriter);
+			dialog.showAndWait();
+		} catch (IllegalStateException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",
+					e.getMessage());
+		}
+	}
+
 	private void setFixedWidth(Region region, double width) {
 		region.setPrefWidth(width);
 		region.setMinWidth(width);
 		region.setMaxWidth(width);
+	}
+
+	private void setViewerMode(boolean viewerMode) {
+		previewScrollPane.setVisible(!viewerMode);
+		previewScrollPane.setManaged(!viewerMode);
+	}
+
+	private void showAbout() {
+		Alert alert = new Alert(Alert.AlertType.INFORMATION);
+		alert.setTitle("About Exam Question Bank");
+		alert.setHeaderText("Exam Question Bank");
+		alert.setContentText("""
+				An application for importing, classifying, capturing and managing examination questions.
+				""");
+		alert.showAndWait();
 	}
 
 	private void showAlert(Alert.AlertType type, String title, String header, String message) {
@@ -238,6 +317,33 @@ public class QuestionBankApplication extends Application {
 		alert.setHeaderText(header);
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	private void showExamImport() {
+		if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
+			showAlert(Alert.AlertType.WARNING, "Import Exam", "Close the viewer PDF first.",
+					"An exam cannot be imported while an unrelated PDF is open in viewer mode.");
+			return;
+		}
+		examImportDialog.showAndWait();
+	}
+
+	private void showOptions(Stage primaryStage, ApplicationConfig config) {
+		OptionsDialog dialog = new OptionsDialog(primaryStage, config.dataRoot());
+		Optional<ButtonType> result = dialog.showAndWait();
+		if (result.isEmpty() || result.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+			return;
+		}
+		try {
+			Path dataRoot = dialog.getDataRoot();
+			ApplicationConfig.saveDataRoot(PROPERTIES_FILE, dataRoot);
+			showAlert(Alert.AlertType.INFORMATION, "Options", "Options saved.",
+					"The new data location will be used after the application is restarted.");
+		} catch (IllegalArgumentException e) {
+			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", e.getMessage());
+		} catch (IOException e) {
+			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.", e.getMessage());
+		}
 	}
 
 	private void showStage(Stage primaryStage, BorderPane root) {
@@ -249,6 +355,38 @@ public class QuestionBankApplication extends Application {
 
 	private void showStartupError(String title, String message) {
 		showAlert(Alert.AlertType.ERROR, title, "The application could not start.", message);
+	}
+
+	private void showVersionInformation(ApplicationConfig config) {
+		String applicationVersion = getClass().getPackage().getImplementationVersion();
+		if (applicationVersion == null || applicationVersion.isBlank()) {
+			applicationVersion = "Development build";
+		}
+		String javaVersion = System.getProperty("java.version", "Unknown");
+		String javaFxVersion = System.getProperty("javafx.runtime.version", "Unknown");
+		String operatingSystem = System.getProperty("os.name", "Unknown") + " " + System.getProperty("os.version", "");
+		String sqliteVersion = "Unknown";
+		try {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			sqliteVersion = database.sqliteVersion();
+		} catch (SQLException e) {
+			sqliteVersion = "Unavailable";
+		}
+		String information = """
+				Application: Exam Question Bank
+				Version: %s
+				Java: %s
+				JavaFX: %s
+				Operating system: %s
+				SQLite: %s
+				Database schema: %d
+				""".formatted(applicationVersion, javaVersion, javaFxVersion, operatingSystem.trim(), sqliteVersion,
+				SqliteDatabase.latestSchemaVersion());
+		Alert alert = new Alert(Alert.AlertType.INFORMATION);
+		alert.setTitle("Version Information");
+		alert.setHeaderText("Exam Question Bank");
+		alert.setContentText(information);
+		alert.showAndWait();
 	}
 
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
