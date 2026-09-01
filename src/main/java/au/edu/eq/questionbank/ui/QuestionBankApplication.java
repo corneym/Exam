@@ -111,6 +111,10 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.close();
 	}
 
+	private void activateExamSubject(Subject subject) {
+		curriculumSelectorPane.selectSubject(subject);
+	}
+
 	private void closeViewerPdf() {
 		pdfWorkspace.closeViewerPdf();
 		setViewerMode(false);
@@ -118,10 +122,8 @@ public class QuestionBankApplication extends Application {
 
 	private CurriculumSelectorPane createCurriculumSelectorPane() {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
-		Subject subject = curriculumSelectionModel.getSubject();
-		examMetadataPane.setSelectedSubject(subject);
 		selectorPane.selectedSubjectProperty().addListener((observable, oldSubject, newSubject) -> {
-			examMetadataPane.setSelectedSubject(newSubject);
+			examMetadataPane.invalidateForSubjectChange(newSubject);
 		});
 		return selectorPane;
 	}
@@ -399,7 +401,7 @@ public class QuestionBankApplication extends Application {
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
 				new ExamMetadataOptionsRepository(), examImporter, pdfWorkspace::hasExamPdf, this::openExamPdf,
-				pdfWorkspace::setSelectionCursorEnabled);
+				pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
 		curriculumSelectorPane = createCurriculumSelectorPane();
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, pdfWorkspace::clearSelection, questionExtractor,

@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Year;
@@ -241,7 +242,7 @@ final class ExamMetadataPane extends VBox {
 		if (!examPdfAvailable.getAsBoolean()) {
 			return "Choose a PDF first.";
 		}
-		if (curriculumSelectionModel.getSubject() == null) {
+		if (subjectField.getValue() == null) {
 			return "Select a subject before setting the exam.";
 		}
 		return null;
@@ -259,7 +260,7 @@ final class ExamMetadataPane extends VBox {
 	}
 
 	private ExamMetadataInput readInput() {
-		return new ExamMetadataInput(curriculumSelectionModel.getSubject(), providerField.getEditor().getText().trim(),
+		return new ExamMetadataInput(subjectField.getValue(), providerField.getEditor().getText().trim(),
 				yearField.getValue(), assessmentField.getEditor().getText().trim(),
 				bookletField.getEditor().getText().trim());
 	}
@@ -287,6 +288,7 @@ final class ExamMetadataPane extends VBox {
 			rememberOptions(input);
 			applyInputToControls(input);
 			selectionCursorHandler.accept(true);
+			examSubjectHandler.accept(input.subject());
 		} catch (SQLException e) {
 			showDatabaseError(e.getMessage());
 		}
@@ -337,6 +339,22 @@ final class ExamMetadataPane extends VBox {
 	}
 
 	/**
+	 * Invalidates the active exam when classification moves to a different subject.
+	 *
+	 * @param subject the newly selected classification subject, or {@code null}
+	 */
+	void invalidateForSubjectChange(Subject subject) {
+		if (booklet == null) {
+			return;
+		}
+		Subject examSubject = booklet.getExam().getSubject();
+		if (subject == null || examSubject.getId() != subject.getId()) {
+			booklet = null;
+			selectionCursorHandler.accept(false);
+		}
+	}
+
+	/**
 	 * Applies a validated PDF selection and clears metadata from the old PDF.
 	 *
 	 * @param selectedPdf the selected exam PDF
@@ -349,18 +367,5 @@ final class ExamMetadataPane extends VBox {
 		currentPdfPath = selectedPdf.path();
 		clearForNewPdf();
 		selectedPdfLabel.setText(selectedPdf.file().getName());
-	}
-
-	/**
-	 * Updates the subject displayed with the exam metadata controls.
-	 *
-	 * @param subject the selected subject, or {@code null}
-	 */
-	void setSelectedSubject(Subject subject) {
-		if (booklet != null && (subject == null || booklet.getExam().getSubject().getId() != subject.getId())) {
-			booklet = null;
-			selectionCursorHandler.accept(false);
-		}
-		examSubjectLabel.setText(subject == null ? "Not selected" : subject.getName());
 	}
 }
