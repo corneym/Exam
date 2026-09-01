@@ -18,6 +18,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SqliteConnectionTest {
 
+	private static final int LATEST_SCHEMA_VERSION = 3;
+
 	@TempDir
 	Path tempDir;
 
@@ -156,16 +158,16 @@ class SqliteConnectionTest {
 				ResultSet result = statement.executeQuery()) {
 
 			assertTrue(result.next());
-			assertEquals(2, result.getInt("version"));
+			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
 			assertFalse(result.next());
 		}
 
 		assertTrue(tableExists(database, "subjects"));
-		assertTrue(tableExists(database, "curriculum_mappings"));
+		assertTrue(tableExists(database, "curriculum_mapping_reviews"));
 	}
 
 	@Test
-	void leavesExistingVersionTwoDatabaseUnchanged() throws Exception {
+	void leavesExistingLatestDatabaseUnchanged() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 
@@ -183,7 +185,7 @@ class SqliteConnectionTest {
 						""")) {
 
 			assertTrue(result.next());
-			assertEquals(2, result.getInt("version"));
+			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
 			assertFalse(result.next());
 		}
 		try (Connection connection = database.openConnection();
@@ -196,7 +198,7 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void migratesVersionOneDatabaseToVersionTwoWithoutLosingData() throws Exception {
+	void migratesVersionOneDatabaseToLatestVersionWithoutLosingData() throws Exception {
 		Path databasePath = tempDir.resolve("migration.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection connection = database.openConnection()) {
@@ -217,7 +219,7 @@ class SqliteConnectionTest {
 					FROM schema_version
 					""")) {
 				assertTrue(result.next());
-				assertEquals(2, result.getInt("version"));
+				assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
 			}
 			try (ResultSet result = statement.executeQuery("""
 					SELECT subject_name
@@ -230,7 +232,7 @@ class SqliteConnectionTest {
 					SELECT name
 					FROM sqlite_master
 					WHERE type = 'table'
-					  AND name = 'curriculum_mappings'
+					  AND name = 'curriculum_mapping_reviews'
 					""")) {
 				assertTrue(result.next());
 			}
@@ -269,7 +271,8 @@ class SqliteConnectionTest {
 		String[] invalidValues = { "0", "-1", "1.5" };
 		for (int index = 0; index < invalidValues.length; index++) {
 			SqliteDatabase database = new SqliteDatabase(tempDir.resolve("invalid-version-" + index + ".db"));
-			try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (Connection connection = database.openConnection();
+					Statement statement = connection.createStatement()) {
 				statement.execute("CREATE TABLE schema_version (version)");
 				statement.execute("INSERT INTO schema_version (version) VALUES (" + invalidValues[index] + ")");
 			}
@@ -411,13 +414,12 @@ class SqliteConnectionTest {
 					    version INTEGER NOT NULL
 					)
 					""");
-			statement.execute("""
-					INSERT INTO schema_version (version)
-					VALUES (3)
-					""");
+			statement.execute(
+					String.format("INSERT INTO schema_version (version) VALUES (%d)", LATEST_SCHEMA_VERSION + 1));
 		}
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-		assertTrue(exception.getMessage().contains("Unsupported database schema version 3"));
+		assertTrue(
+				exception.getMessage().contains("Unsupported database schema version " + (LATEST_SCHEMA_VERSION + 1)));
 	}
 
 	@Test

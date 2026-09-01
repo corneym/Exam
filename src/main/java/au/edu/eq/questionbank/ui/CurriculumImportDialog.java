@@ -66,6 +66,18 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		});
 	}
 
+	private void chooseFile(Window owner) {
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Select Curriculum Excel File");
+		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel workbooks", "*.xlsx"));
+		File file = chooser.showOpenDialog(owner);
+		if (file == null) {
+			return;
+		}
+		selectedFile = file.toPath();
+		fileField.setText(selectedFile.toString());
+	}
+
 	/**
 	 * Returns the workbook chosen for import.
 	 *
@@ -100,18 +112,6 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	 */
 	public boolean isCurrent() {
 		return currentCheckBox.isSelected();
-	}
-
-	private void chooseFile(Window owner) {
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Select Curriculum Excel File");
-		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel workbooks", "*.xlsx"));
-		File file = chooser.showOpenDialog(owner);
-		if (file == null) {
-			return;
-		}
-		selectedFile = file.toPath();
-		fileField.setText(selectedFile.toString());
 	}
 
 	private boolean isValid() {

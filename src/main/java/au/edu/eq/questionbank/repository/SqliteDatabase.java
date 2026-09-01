@@ -16,7 +16,7 @@ import java.util.List;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 2;
+	private static final int LATEST_SCHEMA_VERSION = 3;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -141,6 +141,10 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v1-to-v2.sql", 2);
 			return 2;
 		}
+		if (version == 2) {
+			executeMigration(connection, "/db/migration-v2-to-v3.sql", 3);
+			return 3;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -207,6 +211,10 @@ public final class SqliteDatabase {
 		if (version >= 2 && !tableExists(connection, "curriculum_mappings")) {
 			throw new SQLException(
 					"Database schema version " + version + " is missing required table curriculum_mappings");
+		}
+		if (version >= 3 && !tableExists(connection, "curriculum_mapping_reviews")) {
+			throw new SQLException(
+					"Database schema version " + version + " is missing required table curriculum_mapping_reviews");
 		}
 	}
 }

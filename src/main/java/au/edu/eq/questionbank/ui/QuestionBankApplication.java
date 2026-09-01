@@ -12,15 +12,24 @@ import au.edu.eq.questionbank.importer.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.CurriculumImportRow;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.CurriculumMappingRepository;
+import au.edu.eq.questionbank.repository.CurriculumMappingReviewRepository;
+import au.edu.eq.questionbank.repository.CurriculumRepository;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.QuestionRepository;
 import au.edu.eq.questionbank.repository.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.SqliteCurriculumImporter;
+import au.edu.eq.questionbank.repository.SqliteCurriculumMappingRepository;
+import au.edu.eq.questionbank.repository.SqliteCurriculumMappingReviewRepository;
+import au.edu.eq.questionbank.repository.SqliteCurriculumMappingReviewWriter;
+import au.edu.eq.questionbank.repository.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.SqliteDatabase;
 import au.edu.eq.questionbank.repository.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.SqliteQuestionRepository;
+import au.edu.eq.questionbank.service.CurriculumMappingSuggester;
+import au.edu.eq.questionbank.service.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.application.Application;
 import javafx.geometry.Insets;
@@ -114,8 +123,28 @@ public class QuestionBankApplication extends Application {
 		curriculumItem.setOnAction(event -> importCurriculum(primaryStage, config));
 		importMenu.getItems().add(curriculumItem);
 		fileMenu.getItems().add(importMenu);
+		MenuItem mappingItem = new MenuItem("Review Curriculum Mappings...");
+		mappingItem.setOnAction(event -> reviewCurriculumMappings(primaryStage, config));
+		fileMenu.getItems().add(mappingItem);
 		menuBar.getMenus().add(fileMenu);
 		return menuBar;
+	}
+
+	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
+		try {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			CurriculumRepository repository = new SqliteCurriculumRepository(database);
+			CurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
+			CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
+			CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
+			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
+			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
+					suggester, reviewRepository, mappingRepository, reviewWriter);
+			dialog.showAndWait();
+		} catch (IllegalStateException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",
+					e.getMessage());
+		}
 	}
 
 	private VBox createPreviewPane() {
