@@ -11,9 +11,10 @@ import javafx.scene.control.Label;
 import javafx.scene.layout.VBox;
 
 /**
- * JavaFX controls for selecting a subject and syllabus, then navigating its unit
- * and topic hierarchy to a final classification. A subject's current syllabus
- * is the default when available; historical syllabuses remain selectable.
+ * JavaFX controls for selecting a subject and syllabus, then navigating its
+ * unit and topic hierarchy to a final classification. A subject's current
+ * syllabus is the default when available; historical syllabuses remain
+ * selectable.
  */
 public class CurriculumSelectorPane extends VBox {
 
@@ -72,8 +73,8 @@ public class CurriculumSelectorPane extends VBox {
 
 	/**
 	 * Clears unit, topic, and final-classification state while retaining the
-	 * selected subject and syllabus. Unit selection remains disabled if no
-	 * syllabus is selected.
+	 * selected subject and syllabus. Unit selection remains disabled if no syllabus
+	 * is selected.
 	 */
 	public void clearClassificationBelowSubject() {
 		unitBox.getSelectionModel().clearSelection();
@@ -93,9 +94,10 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
-	 * Reloads subjects, syllabuses, and hierarchy choices after a repository change.
-	 * Selections are retained when still available, including an explicitly chosen
-	 * historical syllabus; unavailable selections and their dependants are cleared.
+	 * Reloads subjects, syllabuses, and hierarchy choices after a repository
+	 * change. Selections are retained when still available, including an explicitly
+	 * chosen historical syllabus; unavailable selections and their dependants are
+	 * cleared.
 	 */
 	public void refreshSubjects() {
 		Subject selectedSubject = subjectBox.getValue();
@@ -133,16 +135,6 @@ public class CurriculumSelectorPane extends VBox {
 		}
 	}
 
-	private <T> void selectAvailableValue(ComboBox<T> box, T selectedValue) {
-		for (T item : box.getItems()) {
-			if (item.equals(selectedValue)) {
-				box.setValue(item);
-				return;
-			}
-		}
-		box.setValue(null);
-	}
-
 	/**
 	 * Exposes the subject selected by this pane.
 	 *
@@ -150,6 +142,51 @@ public class CurriculumSelectorPane extends VBox {
 	 */
 	public ReadOnlyObjectProperty<Subject> selectedSubjectProperty() {
 		return subjectBox.valueProperty();
+	}
+
+	/**
+	 * Selects a subject programmatically and rebuilds the dependent syllabus and
+	 * classification choices as though the user selected it.
+	 *
+	 * @param subject the subject to select, or {@code null} to clear the selection
+	 * @throws IllegalArgumentException if the subject is not available
+	 */
+	public void selectSubject(Subject subject) {
+		Subject availableSubject = null;
+		if (subject != null) {
+			for (Subject item : subjectBox.getItems()) {
+				if (item.equals(subject)) {
+					availableSubject = item;
+					break;
+				}
+			}
+			if (availableSubject == null) {
+				throw new IllegalArgumentException("Subject is not available: " + subject.getName());
+			}
+		}
+		refreshingSubjects = true;
+		try {
+			subjectBox.setValue(availableSubject);
+		} finally {
+			refreshingSubjects = false;
+		}
+		handleSubjectSelection();
+	}
+
+	private void configureSelectionHandlers() {
+
+		subjectBox.setOnAction(event -> handleSubjectSelection());
+		syllabusBox.setOnAction(event -> handleSyllabusSelection());
+		unitBox.setOnAction(event -> handleUnitSelection());
+		topicBox.setOnAction(event -> handleTopicSelection());
+		classificationBox.setOnAction(event -> handleClassificationSelection());
+	}
+
+	private void handleClassificationSelection() {
+		if (refreshingSubjects) {
+			return;
+		}
+		model.selectClassification(classificationBox.getValue());
 	}
 
 	private void handleSubjectSelection() {
@@ -203,6 +240,26 @@ public class CurriculumSelectorPane extends VBox {
 		unitBox.setDisable(false);
 	}
 
+	private void handleTopicSelection() {
+		if (refreshingSubjects) {
+			return;
+		}
+		CurriculumNode topic = topicBox.getValue();
+
+		model.selectTopic(topic);
+
+		classificationBox.getSelectionModel().clearSelection();
+
+		if (topic == null) {
+			classificationBox.getItems().clear();
+			classificationBox.setDisable(true);
+			return;
+		}
+
+		classificationBox.getItems().setAll(model.getClassifications());
+		classificationBox.setDisable(false);
+	}
+
 	private void handleUnitSelection() {
 		if (refreshingSubjects) {
 			return;
@@ -227,39 +284,13 @@ public class CurriculumSelectorPane extends VBox {
 		classificationBox.setDisable(true);
 	}
 
-	private void handleTopicSelection() {
-		if (refreshingSubjects) {
-			return;
+	private <T> void selectAvailableValue(ComboBox<T> box, T selectedValue) {
+		for (T item : box.getItems()) {
+			if (item.equals(selectedValue)) {
+				box.setValue(item);
+				return;
+			}
 		}
-		CurriculumNode topic = topicBox.getValue();
-
-		model.selectTopic(topic);
-
-		classificationBox.getSelectionModel().clearSelection();
-
-		if (topic == null) {
-			classificationBox.getItems().clear();
-			classificationBox.setDisable(true);
-			return;
-		}
-
-		classificationBox.getItems().setAll(model.getClassifications());
-		classificationBox.setDisable(false);
-	}
-
-	private void handleClassificationSelection() {
-		if (refreshingSubjects) {
-			return;
-		}
-		model.selectClassification(classificationBox.getValue());
-	}
-
-	private void configureSelectionHandlers() {
-
-		subjectBox.setOnAction(event -> handleSubjectSelection());
-		syllabusBox.setOnAction(event -> handleSyllabusSelection());
-		unitBox.setOnAction(event -> handleUnitSelection());
-		topicBox.setOnAction(event -> handleTopicSelection());
-		classificationBox.setOnAction(event -> handleClassificationSelection());
+		box.setValue(null);
 	}
 }

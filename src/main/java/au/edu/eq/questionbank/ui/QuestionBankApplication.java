@@ -417,5 +417,6 @@ public class QuestionBankApplication extends Application {
 		});
 
 		showStage(primaryStage, createRootLayout(primaryStage, config));
+		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
 	}
 }
