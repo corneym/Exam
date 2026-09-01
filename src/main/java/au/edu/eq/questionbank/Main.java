@@ -11,8 +11,8 @@ import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.output.HtmlQuestionRenderer;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
-import au.edu.eq.questionbank.repository.InMemoryQuestionRepository;
-import au.edu.eq.questionbank.repository.QuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 
 /**
  * Legacy command-line proof of concept for extracting questions and rendering

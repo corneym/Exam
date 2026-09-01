@@ -11,7 +11,7 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
-import au.edu.eq.questionbank.repository.QuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;

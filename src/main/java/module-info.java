@@ -22,5 +22,5 @@ module au.edu.eq.questionbank {
 	exports au.edu.eq.questionbank.ui;
 
 	opens au.edu.eq.questionbank.ui.model;
-	opens au.edu.eq.questionbank.service;
+	opens au.edu.eq.questionbank.service.curriculum;
 }

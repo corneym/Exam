@@ -15,7 +15,7 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
-import au.edu.eq.questionbank.repository.InMemoryCurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 
 class CurriculumSelectionModelTest {
 

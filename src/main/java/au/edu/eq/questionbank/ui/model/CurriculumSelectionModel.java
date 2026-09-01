@@ -5,7 +5,7 @@ import java.util.List;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
-import au.edu.eq.questionbank.repository.CurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 
 /**
  * Selection state for navigating a subject's syllabus hierarchy.

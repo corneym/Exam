@@ -92,11 +92,15 @@
 						--add-opens
 						au.edu.eq.questionbank/au.edu.eq.questionbank.pdf=ALL-UNNAMED
 						--add-opens
-						au.edu.eq.questionbank/au.edu.eq.questionbank.repository=ALL-UNNAMED
+						au.edu.eq.questionbank/au.edu.eq.questionbank.repository.sqlite=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.repository.curriculum=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.repository.assessment=ALL-UNNAMED
 						--add-opens
 						au.edu.eq.questionbank/au.edu.eq.questionbank.output=ALL-UNNAMED
 						--add-opens
-						au.edu.eq.questionbank/au.edu.eq.questionbank.importer=ALL-UNNAMED
+						au.edu.eq.questionbank/au.edu.eq.questionbank.importer.curriculum=ALL-UNNAMED
 						--add-opens
 						au.edu.eq.questionbank/au.edu.eq.questionbank.ui=ALL-UNNAMED
 						--add-exports

@@ -11,7 +11,7 @@ import java.util.function.Consumer;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
-import au.edu.eq.questionbank.repository.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;

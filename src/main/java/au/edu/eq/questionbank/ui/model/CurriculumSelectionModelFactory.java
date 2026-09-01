@@ -3,9 +3,9 @@ package au.edu.eq.questionbank.ui.model;
 import java.sql.SQLException;
 
 import au.edu.eq.questionbank.ApplicationConfig;
-import au.edu.eq.questionbank.repository.CurriculumRepository;
-import au.edu.eq.questionbank.repository.SqliteCurriculumRepository;
-import au.edu.eq.questionbank.repository.SqliteDatabase;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
  * Creates the curriculum selection model used when the desktop application
