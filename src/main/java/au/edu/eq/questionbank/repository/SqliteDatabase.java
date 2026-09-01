@@ -41,8 +41,8 @@ public final class SqliteDatabase {
 	 * Creates a new database and applies all migrations, or upgrades an existing
 	 * supported database sequentially to the latest schema version. Creation and
 	 * migration run in one transaction. Existing databases with missing or invalid
-	 * version metadata, or missing tables required by their recorded version, are
-	 * rejected rather than repaired implicitly.
+	 * version metadata, or missing required schema structures for their recorded
+	 * version, are rejected rather than repaired implicitly.
 	 *
 	 * @throws SQLException if the schema cannot be created, the version information
 	 *                      is invalid, or the database is newer than the
@@ -136,6 +136,50 @@ public final class SqliteDatabase {
 		verifySchema(connection, expectedVersion);
 	}
 
+	private int foreignKeyColumnCount(Connection connection, int foreignKeyId) throws SQLException {
+		int count = 0;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(curriculum_mapping_reviews)")) {
+			while (result.next()) {
+				if (result.getInt("id") == foreignKeyId) {
+					count++;
+				}
+			}
+		}
+		return count;
+	}
+
+	private boolean hasExactSingleColumnForeignKey(Connection connection, String fromColumn, String targetTable,
+			String targetColumn) throws SQLException {
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(curriculum_mapping_reviews)")) {
+			while (result.next()) {
+				if (result.getInt("seq") != 0 || !fromColumn.equals(result.getString("from"))
+						|| !targetTable.equals(result.getString("table"))
+						|| !targetColumn.equals(result.getString("to"))) {
+					continue;
+				}
+				int foreignKeyId = result.getInt("id");
+				if (foreignKeyColumnCount(connection, foreignKeyId) == 1) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private boolean hasUserSchemaObjects(Connection connection) throws SQLException {
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT 1
+				FROM sqlite_master
+				WHERE type IN ('table', 'view', 'trigger')
+				  AND name NOT LIKE 'sqlite_%'
+				LIMIT 1
+				""")) {
+			return result.next();
+		}
+	}
+
 	private int migrate(Connection connection, int version) throws SQLException {
 		if (version == 1) {
 			executeMigration(connection, "/db/migration-v1-to-v2.sql", 2);
@@ -175,18 +219,6 @@ public final class SqliteDatabase {
 		return tableExists(connection, "schema_version");
 	}
 
-	private boolean hasUserSchemaObjects(Connection connection) throws SQLException {
-		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
-				SELECT 1
-				FROM sqlite_master
-				WHERE type IN ('table', 'view', 'trigger')
-				  AND name NOT LIKE 'sqlite_%'
-				LIMIT 1
-				""")) {
-			return result.next();
-		}
-	}
-
 	private boolean tableExists(Connection connection, String tableName) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT 1
@@ -201,6 +233,62 @@ public final class SqliteDatabase {
 		}
 	}
 
+	private void verifyCurriculumMappingReviewForeignKeys(Connection connection) throws SQLException {
+		if (!hasExactSingleColumnForeignKey(connection, "source_node_id", "curriculum_nodes", "id")) {
+			throw new SQLException(
+					"curriculum_mapping_reviews is missing exact foreign key source_node_id -> curriculum_nodes(id)");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "target_syllabus_version_id", "syllabus_versions", "id")) {
+			throw new SQLException(
+					"curriculum_mapping_reviews is missing exact foreign key target_syllabus_version_id -> syllabus_versions(id)");
+		}
+	}
+
+	private void verifyCurriculumMappingReviewSchema(Connection connection) throws SQLException {
+		boolean hasSourceNodeId = false;
+		boolean hasTargetVersionId = false;
+		boolean hasReviewOutcome = false;
+		int sourcePrimaryKeyPosition = 0;
+		int targetPrimaryKeyPosition = 0;
+		int outcomePrimaryKeyPosition = 0;
+		int primaryKeyColumnCount = 0;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(curriculum_mapping_reviews)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				int primaryKeyPosition = result.getInt("pk");
+				if (primaryKeyPosition > 0) {
+					primaryKeyColumnCount++;
+				}
+				if ("source_node_id".equals(columnName)) {
+					hasSourceNodeId = true;
+					sourcePrimaryKeyPosition = primaryKeyPosition;
+				} else if ("target_syllabus_version_id".equals(columnName)) {
+					hasTargetVersionId = true;
+					targetPrimaryKeyPosition = primaryKeyPosition;
+				} else if ("review_outcome".equals(columnName)) {
+					hasReviewOutcome = true;
+					outcomePrimaryKeyPosition = primaryKeyPosition;
+				}
+			}
+		}
+		if (!hasSourceNodeId) {
+			throw new SQLException("curriculum_mapping_reviews is missing required column source_node_id");
+		}
+		if (!hasTargetVersionId) {
+			throw new SQLException("curriculum_mapping_reviews is missing required column target_syllabus_version_id");
+		}
+		if (!hasReviewOutcome) {
+			throw new SQLException("curriculum_mapping_reviews is missing required column review_outcome");
+		}
+		if (primaryKeyColumnCount != 2 || sourcePrimaryKeyPosition != 1 || targetPrimaryKeyPosition != 2
+				|| outcomePrimaryKeyPosition != 0) {
+			throw new SQLException(
+					"curriculum_mapping_reviews has an invalid primary key; expected exactly (source_node_id, target_syllabus_version_id)");
+		}
+		verifyCurriculumMappingReviewForeignKeys(connection);
+	}
+
 	private void verifySchema(Connection connection, int version) throws SQLException {
 		for (String tableName : VERSION_ONE_TABLES) {
 			if (!tableExists(connection, tableName)) {
@@ -212,9 +300,12 @@ public final class SqliteDatabase {
 			throw new SQLException(
 					"Database schema version " + version + " is missing required table curriculum_mappings");
 		}
-		if (version >= 3 && !tableExists(connection, "curriculum_mapping_reviews")) {
-			throw new SQLException(
-					"Database schema version " + version + " is missing required table curriculum_mapping_reviews");
+		if (version >= 3) {
+			if (!tableExists(connection, "curriculum_mapping_reviews")) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table curriculum_mapping_reviews");
+			}
+			verifyCurriculumMappingReviewSchema(connection);
 		}
 	}
 }

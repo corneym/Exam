@@ -1,13 +1,16 @@
 package au.edu.eq.questionbank.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
 import au.edu.eq.questionbank.model.CurriculumMappingSuggestion;
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -77,5 +80,110 @@ class TfIdfCurriculumMappingSuggesterTest {
 		}
 		assertTrue(foundDirect);
 		assertTrue(foundNested);
+	}
+
+	@Test
+	void hierarchyContextBreaksTieBetweenIdenticalDescriptorText() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion sourceVersion = new SyllabusVersion(1, chemistry, "Source", false);
+		Unit sourceUnit = new Unit(1, sourceVersion, "1", "Matter", 1);
+		Topic sourceTopic = new Topic(2, sourceVersion, sourceUnit, "1.1", "Particle theory", 1);
+		Descriptor source = new Descriptor(3, sourceVersion, sourceTopic, "1.1.1", "model particle behaviour", 1);
+		SyllabusVersion targetVersion = new SyllabusVersion(2, chemistry, "Target", true);
+		Unit unrelatedUnit = new Unit(4, targetVersion, "1", "Energy", 1);
+		Topic unrelatedTopic = new Topic(5, targetVersion, unrelatedUnit, "1.1", "Heat transfer", 1);
+		Descriptor unrelatedContext = new Descriptor(6, targetVersion, unrelatedTopic, "1.1.1",
+				"model particle behaviour", 1);
+		Unit relatedUnit = new Unit(7, targetVersion, "2", "Matter", 2);
+		Topic relatedTopic = new Topic(8, targetVersion, relatedUnit, "2.1", "Particle theory", 1);
+		Descriptor relatedContext = new Descriptor(9, targetVersion, relatedTopic, "2.1.1",
+				"model particle behaviour", 1);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(sourceVersion, targetVersion), List.of(sourceUnit, sourceTopic, source, unrelatedUnit,
+						unrelatedTopic, unrelatedContext, relatedUnit, relatedTopic, relatedContext));
+		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
+
+		List<CurriculumMappingSuggestion> suggestions = suggester.suggest(source, targetVersion);
+
+		assertEquals(relatedContext, suggestions.getFirst().getTarget());
+		assertTrue(suggestions.getFirst().getScore() > suggestions.get(1).getScore());
+	}
+
+	@Test
+	void returnsAtMostFiveDirectionalTargetsFromSelectedVersion() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion sourceVersion = new SyllabusVersion(1, chemistry, "Source", false);
+		Unit sourceUnit = new Unit(1, sourceVersion, "1", "Source unit", 1);
+		Topic sourceTopic = new Topic(2, sourceVersion, sourceUnit, "1.1", "Source topic", 1);
+		Descriptor source = new Descriptor(3, sourceVersion, sourceTopic, "1.1.1", "reaction energy", 1);
+		SyllabusVersion targetVersion = new SyllabusVersion(2, chemistry, "Target", true);
+		Unit targetUnit = new Unit(10, targetVersion, "1", "Target unit", 1);
+		Topic targetTopic = new Topic(11, targetVersion, targetUnit, "1.1", "Target topic", 1);
+		List<CurriculumNode> nodes = new ArrayList<>();
+		nodes.add(sourceUnit);
+		nodes.add(sourceTopic);
+		nodes.add(source);
+		nodes.add(targetUnit);
+		nodes.add(targetTopic);
+		for (int index = 0; index < 6; index++) {
+			nodes.add(new Descriptor(20 + index, targetVersion, targetTopic, "1.1." + (index + 1),
+					"reaction energy candidate " + index, index));
+		}
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(sourceVersion, targetVersion), nodes);
+		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
+
+		List<CurriculumMappingSuggestion> suggestions = suggester.suggest(source, targetVersion);
+
+		assertEquals(5, suggestions.size());
+		for (CurriculumMappingSuggestion suggestion : suggestions) {
+			assertEquals(source, suggestion.getSource());
+			assertEquals(targetVersion, suggestion.getTarget().getSyllabusVersion());
+		}
+	}
+
+	@Test
+	void rejectsNonDescriptorSource() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion sourceVersion = new SyllabusVersion(1, chemistry, "Source", false);
+		SyllabusVersion targetVersion = new SyllabusVersion(2, chemistry, "Target", true);
+		Unit sourceUnit = new Unit(1, sourceVersion, "1", "Source unit", 1);
+		Unit targetUnit = new Unit(2, targetVersion, "1", "Target unit", 1);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(sourceVersion, targetVersion), List.of(sourceUnit, targetUnit));
+		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
+
+		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(sourceUnit, targetVersion));
+	}
+
+	@Test
+	void rejectsTargetVersionFromDifferentSubject() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion sourceVersion = new SyllabusVersion(1, chemistry, "Source", false);
+		Unit sourceUnit = new Unit(1, sourceVersion, "1", "Source unit", 1);
+		Topic sourceTopic = new Topic(2, sourceVersion, sourceUnit, "1.1", "Source topic", 1);
+		Descriptor source = new Descriptor(3, sourceVersion, sourceTopic, "1.1.1", "Source descriptor", 1);
+		Subject physics = new Subject(2, "Physics");
+		SyllabusVersion physicsVersion = new SyllabusVersion(2, physics, "Target", true);
+		Unit physicsUnit = new Unit(4, physicsVersion, "1", "Physics unit", 1);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry, physics),
+				List.of(sourceVersion, physicsVersion), List.of(sourceUnit, sourceTopic, source, physicsUnit));
+		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
+
+		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(source, physicsVersion));
+	}
+
+	@Test
+	void rejectsSourceVersionAsTargetVersion() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion version = new SyllabusVersion(1, chemistry, "Source", false);
+		Unit unit = new Unit(1, version, "1", "Unit", 1);
+		Topic topic = new Topic(2, version, unit, "1.1", "Topic", 1);
+		Descriptor source = new Descriptor(3, version, topic, "1.1.1", "Descriptor", 1);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(version), List.of(unit, topic, source));
+		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
+
+		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(source, version));
 	}
 }

@@ -31,6 +31,7 @@ import au.edu.eq.questionbank.repository.SqliteQuestionRepository;
 import au.edu.eq.questionbank.service.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import javafx.application.Application;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;

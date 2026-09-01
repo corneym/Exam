@@ -7,16 +7,20 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 
 /**
- * Produces ranked candidate mappings for a curriculum node in another
- * explicitly selected syllabus version.
+ * Produces ranked directional candidate mappings for a curriculum node in an
+ * explicitly selected syllabus version of the same subject.
  */
 public interface CurriculumMappingSuggester {
 	/**
-	 * Finds candidate target nodes for the supplied source node.
+	 * Finds candidate target nodes for the supplied source node. Implementations do
+	 * not confirm or persist the highest-ranked candidate automatically.
 	 *
 	 * @param source        the node being mapped from
 	 * @param targetVersion the syllabus version to search
 	 * @return candidate mappings ordered from strongest to weakest match
+	 * @throws NullPointerException if either argument is {@code null}
+	 * @throws IllegalArgumentException if the source is unsupported or the selected
+	 *                                  versions violate mapping invariants
 	 */
 	List<CurriculumMappingSuggestion> suggest(CurriculumNode source, SyllabusVersion targetVersion);
 }

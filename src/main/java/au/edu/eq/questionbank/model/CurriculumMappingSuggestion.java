@@ -1,14 +1,25 @@
 package au.edu.eq.questionbank.model;
 
 /**
- * A candidate directional mapping between curriculum nodes that has not yet
- * been persisted as a CurriculumMapping.
+ * A scored candidate for a directional source-to-target curriculum mapping.
+ * A suggestion is not a confirmed mapping and is not persisted by this type.
  */
 public final class CurriculumMappingSuggestion {
 	private final CurriculumNode source;
 	private final CurriculumNode target;
 	private final double score;
 
+	/**
+	 * Creates a candidate between nodes at the same curriculum level in different
+	 * syllabus versions of the same subject.
+	 *
+	 * @param source the node being mapped from
+	 * @param target the candidate node being mapped to
+	 * @param score  the finite similarity score from {@code 0.0} to {@code 1.0}
+	 * @throws NullPointerException if either endpoint is {@code null}
+	 * @throws IllegalArgumentException if the score is outside its permitted range,
+	 *                                  or the endpoints violate mapping invariants
+	 */
 	public CurriculumMappingSuggestion(CurriculumNode source, CurriculumNode target, double score) {
 		if (source == null) {
 			throw new NullPointerException("source");
@@ -33,14 +44,23 @@ public final class CurriculumMappingSuggestion {
 		this.score = score;
 	}
 
+	/**
+	 * @return the normalised similarity score from {@code 0.0} to {@code 1.0}
+	 */
 	public double getScore() {
 		return score;
 	}
 
+	/**
+	 * @return the directional source node
+	 */
 	public CurriculumNode getSource() {
 		return source;
 	}
 
+	/**
+	 * @return the directional candidate target node
+	 */
 	public CurriculumNode getTarget() {
 		return target;
 	}

@@ -18,6 +18,10 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 public final class SqliteCurriculumMappingReviewRepository implements CurriculumMappingReviewRepository {
 	private final SqliteDatabase database;
 
+	/**
+	 * @param database the initialised question-bank database
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
 	public SqliteCurriculumMappingReviewRepository(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");

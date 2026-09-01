@@ -10,7 +10,10 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.CurriculumRepository;
 
 /**
- * Produces ranked descriptor mapping suggestions using TF-IDF text similarity.
+ * Produces up to five ranked descriptor mapping suggestions using TF-IDF cosine
+ * similarity. Descriptor text contributes 85 percent of the score and ancestor
+ * hierarchy text contributes 15 percent. Ties are ordered by persistent target
+ * identifier; ranking never confirms a mapping.
  */
 public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingSuggester {
 	private final CurriculumRepository repository;
@@ -18,6 +21,11 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 	private static final double CONTEXT_WEIGHT = 0.15;
 	private static final int MAX_SUGGESTIONS = 5;
 
+	/**
+	 * @param repository the curriculum hierarchy used to build the source and target
+	 *                   corpora
+	 * @throws NullPointerException if {@code repository} is {@code null}
+	 */
 	public TfIdfCurriculumMappingSuggester(CurriculumRepository repository) {
 		if (repository == null) {
 			throw new NullPointerException("repository");

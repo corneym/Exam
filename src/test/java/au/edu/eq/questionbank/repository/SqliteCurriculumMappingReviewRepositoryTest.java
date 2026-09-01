@@ -1,7 +1,6 @@
 package au.edu.eq.questionbank.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -63,9 +62,7 @@ class SqliteCurriculumMappingReviewRepositoryTest {
 		SyllabusVersion targetVersion = new SyllabusVersion(2, subject, "Current syllabus", true);
 		CurriculumMappingReviewRepository repository = new SqliteCurriculumMappingReviewRepository(database);
 		Set<Long> reviewedSourceIds = repository.findReviewedSourceIds(sourceVersion, targetVersion);
-		assertTrue(reviewedSourceIds.contains(12L));
-		assertTrue(reviewedSourceIds.contains(13L));
-		assertFalse(reviewedSourceIds.contains(14L));
+		assertEquals(Set.of(12L, 13L), reviewedSourceIds);
 	}
 
 	@Test
@@ -79,7 +76,8 @@ class SqliteCurriculumMappingReviewRepositoryTest {
 					    (id, subject_id, syllabus_name, is_current)
 					VALUES
 					    (1, 1, 'Old syllabus', 0),
-					    (2, 1, 'Current syllabus', 1)
+					    (2, 1, 'Current syllabus', 1),
+					    (3, 1, 'Other target syllabus', 0)
 					""");
 			statement.execute("""
 					INSERT INTO curriculum_nodes
@@ -106,5 +104,8 @@ class SqliteCurriculumMappingReviewRepositoryTest {
 		Optional<CurriculumMappingReviewOutcome> outcome = repository.findOutcome(descriptor, targetVersion);
 		assertTrue(outcome.isPresent());
 		assertEquals(CurriculumMappingReviewOutcome.NO_MATCH, outcome.get());
+		SyllabusVersion otherTargetVersion = new SyllabusVersion(3, subject, "Other target syllabus", false);
+		assertTrue(repository.findOutcome(descriptor, otherTargetVersion).isEmpty(),
+				"absence of a target-specific review row must mean unreviewed");
 	}
 }

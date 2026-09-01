@@ -75,6 +75,20 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private Button confirmButton;
 	private boolean editingReview;
 
+	/**
+	 * Creates the descriptor-review workflow. Suggestions remain unselected until
+	 * the reviewer explicitly chooses one or more targets or records no match.
+	 * Completed reviews are displayed read-only until edit mode is entered.
+	 *
+	 * @param owner            the window that owns this dialog
+	 * @param repository       curriculum hierarchy lookup
+	 * @param suggester        ranked descriptor suggestion service
+	 * @param reviewRepository completed-review lookup
+	 * @param mappingRepository directional mapping lookup
+	 * @param reviewWriter     atomic review persistence boundary
+	 * @throws NullPointerException if a repository, service or writer is
+	 *                              {@code null}
+	 */
 	public CurriculumMappingReviewDialog(Window owner, CurriculumRepository repository,
 			CurriculumMappingSuggester suggester, CurriculumMappingReviewRepository reviewRepository,
 			CurriculumMappingRepository mappingRepository, SqliteCurriculumMappingReviewWriter reviewWriter) {

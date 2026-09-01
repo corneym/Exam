@@ -39,6 +39,29 @@ class SqliteConnectionTest {
 	}
 
 	@Test
+	void createsNewDatabaseAtLatestSchemaVersion() throws Exception {
+		Path databasePath = tempDir.resolve("questionbank.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+
+		database.initialiseSchema();
+
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT version
+						FROM schema_version
+						""");
+				ResultSet result = statement.executeQuery()) {
+
+			assertTrue(result.next());
+			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
+			assertFalse(result.next());
+		}
+
+		assertTrue(tableExists(database, "subjects"));
+		assertTrue(tableExists(database, "curriculum_mapping_reviews"));
+	}
+
+	@Test
 	void createsSubjectsTable() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -144,29 +167,6 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void createsNewDatabaseAtLatestSchemaVersion() throws Exception {
-		Path databasePath = tempDir.resolve("questionbank.db");
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-
-		database.initialiseSchema();
-
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT version
-						FROM schema_version
-						""");
-				ResultSet result = statement.executeQuery()) {
-
-			assertTrue(result.next());
-			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
-			assertFalse(result.next());
-		}
-
-		assertTrue(tableExists(database, "subjects"));
-		assertTrue(tableExists(database, "curriculum_mapping_reviews"));
-	}
-
-	@Test
 	void leavesExistingLatestDatabaseUnchanged() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -240,122 +240,72 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsDatabaseWithEmptySchemaVersionTable() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("empty-version.db"));
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
-		}
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-		assertTrue(exception.getMessage().contains("schema_version table is empty"));
-		assertFalse(tableExists(database, "curriculum_mappings"));
-	}
-
-	@Test
-	void rejectsDatabaseWithMultipleSchemaVersionRows() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("multiple-versions.db"));
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
-			statement.execute("INSERT INTO schema_version (version) VALUES (1), (1)");
-		}
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-		assertTrue(exception.getMessage().contains("more than one row"));
-		assertFalse(tableExists(database, "curriculum_mappings"));
-	}
-
-	@Test
-	void rejectsInvalidSchemaVersionValues() throws Exception {
-		String[] invalidValues = { "0", "-1", "1.5" };
-		for (int index = 0; index < invalidValues.length; index++) {
-			SqliteDatabase database = new SqliteDatabase(tempDir.resolve("invalid-version-" + index + ".db"));
-			try (Connection connection = database.openConnection();
-					Statement statement = connection.createStatement()) {
-				statement.execute("CREATE TABLE schema_version (version)");
-				statement.execute("INSERT INTO schema_version (version) VALUES (" + invalidValues[index] + ")");
-			}
-
-			SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-			assertTrue(exception.getMessage().contains("Invalid database schema version"));
-			assertFalse(tableExists(database, "curriculum_mappings"));
-		}
-	}
-
-	@Test
-	void rejectsNonEmptyDatabaseWithoutSchemaVersion() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("unversioned-partial.db"));
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("CREATE TABLE subjects (id INTEGER PRIMARY KEY, subject_name TEXT NOT NULL UNIQUE)");
-		}
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-		assertTrue(exception.getMessage().contains("has no schema_version table"));
-		assertTrue(tableExists(database, "subjects"));
-		assertFalse(tableExists(database, "schema_version"));
-	}
-
-	@Test
-	void rejectsSupportedVersionWhenRequiredSchemaIsMissing() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v1-schema.db"));
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
-			statement.execute("INSERT INTO schema_version (version) VALUES (1)");
-		}
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-		assertTrue(exception.getMessage().contains("missing required table subjects"));
-		assertFalse(tableExists(database, "curriculum_mappings"));
-	}
-
-	@Test
-	void rejectsVersionTwoDatabaseWithoutItsMigrationTable() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v2-schema.db"));
+	void migratesVersionTwoMappingsAndBackfillsOnlyConfirmedReviews() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-two-migration.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
 			try (Statement statement = connection.createStatement()) {
-				statement.execute("UPDATE schema_version SET version = 2");
-			}
-			connection.commit();
-		}
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-		assertTrue(exception.getMessage().contains("missing required table curriculum_mappings"));
-	}
-
-	@Test
-	void rollsBackStructuralMigrationWhenVersionUpdateFails() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("migration-rollback.db"));
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			try (Statement statement = connection.createStatement()) {
+				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 				statement.execute("""
-						CREATE TRIGGER reject_schema_version_update
-						BEFORE UPDATE ON schema_version
-						BEGIN
-						    SELECT RAISE(ABORT, 'version update rejected');
-						END
+						INSERT INTO syllabus_versions
+						    (id, subject_id, syllabus_name, is_current)
+						VALUES
+						    (1, 1, 'Old syllabus', 0),
+						    (2, 1, 'Current syllabus', 1),
+						    (3, 1, 'Other target syllabus', 0)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_nodes
+						    (id, syllabus_version_id, parent_id, curriculum_code,
+						     curriculum_name, curriculum_level, display_order)
+						VALUES
+						    (10, 1, NULL, '1', 'Old unit', 'UNIT', 0),
+						    (11, 1, 10, '1.1', 'Old topic', 'TOPIC', 0),
+						    (12, 1, 11, '1.1.1', 'Confirmed source', 'DESCRIPTOR', 0),
+						    (13, 1, 11, '1.1.2', 'Suggested source', 'DESCRIPTOR', 1),
+						    (20, 2, NULL, '1', 'Current unit', 'UNIT', 0),
+						    (21, 2, 20, '1.1', 'Current topic', 'TOPIC', 0),
+						    (22, 2, 21, '1.1.1', 'Confirmed target', 'DESCRIPTOR', 0),
+						    (30, 3, NULL, '1', 'Other unit', 'UNIT', 0),
+						    (31, 3, 30, '1.1', 'Other topic', 'TOPIC', 0),
+						    (32, 3, 31, '1.1.1', 'Suggested target', 'DESCRIPTOR', 0)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_mappings
+						    (id, source_node_id, target_node_id, mapping_status)
+						VALUES
+						    (1, 12, 22, 'CONFIRMED'),
+						    (2, 13, 32, 'SUGGESTED')
 						""");
 			}
 			connection.commit();
 		}
 
-		assertThrows(SQLException.class, database::initialiseSchema);
+		database.initialiseSchema();
 
-		assertFalse(tableExists(database, "curriculum_mappings"));
-		try (Connection connection = database.openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
-			assertTrue(result.next());
-			assertEquals(1, result.getInt("version"));
-			assertFalse(result.next());
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
+				assertTrue(result.next());
+				assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
+				assertFalse(result.next());
+			}
+			try (ResultSet result = statement.executeQuery("""
+					SELECT source_node_id, target_syllabus_version_id, review_outcome
+					FROM curriculum_mapping_reviews
+					ORDER BY source_node_id
+					""")) {
+				assertTrue(result.next());
+				assertEquals(12, result.getLong("source_node_id"));
+				assertEquals(2, result.getLong("target_syllabus_version_id"));
+				assertEquals("MATCHED", result.getString("review_outcome"));
+				assertFalse(result.next(), "SUGGESTED mappings must remain unreviewed");
+			}
+			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
+				assertTrue(result.next());
+				assertEquals(2, result.getInt(1));
+			}
 		}
 	}
 
@@ -402,6 +352,33 @@ class SqliteConnectionTest {
 						 'TOPIC', 0)
 					"""));
 		}
+	}
+
+	@Test
+	void rejectsDatabaseWithEmptySchemaVersionTable() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("empty-version.db"));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("schema_version table is empty"));
+		assertFalse(tableExists(database, "curriculum_mappings"));
+	}
+
+	@Test
+	void rejectsDatabaseWithMultipleSchemaVersionRows() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("multiple-versions.db"));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
+			statement.execute("INSERT INTO schema_version (version) VALUES (1), (1)");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("more than one row"));
+		assertFalse(tableExists(database, "curriculum_mappings"));
 	}
 
 	@Test
@@ -459,6 +436,38 @@ class SqliteConnectionTest {
 	}
 
 	@Test
+	void rejectsInvalidSchemaVersionValues() throws Exception {
+		String[] invalidValues = { "0", "-1", "1.5" };
+		for (int index = 0; index < invalidValues.length; index++) {
+			SqliteDatabase database = new SqliteDatabase(tempDir.resolve("invalid-version-" + index + ".db"));
+			try (Connection connection = database.openConnection();
+					Statement statement = connection.createStatement()) {
+				statement.execute("CREATE TABLE schema_version (version)");
+				statement.execute("INSERT INTO schema_version (version) VALUES (" + invalidValues[index] + ")");
+			}
+
+			SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+			assertTrue(exception.getMessage().contains("Invalid database schema version"));
+			assertFalse(tableExists(database, "curriculum_mappings"));
+		}
+	}
+
+	@Test
+	void rejectsNonEmptyDatabaseWithoutSchemaVersion() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("unversioned-partial.db"));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("CREATE TABLE subjects (id INTEGER PRIMARY KEY, subject_name TEXT NOT NULL UNIQUE)");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("has no schema_version table"));
+		assertTrue(tableExists(database, "subjects"));
+		assertFalse(tableExists(database, "schema_version"));
+	}
+
+	@Test
 	void rejectsNonPositiveExamYears() throws Exception {
 		Path databasePath = tempDir.resolve("invalid-exam-year.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -473,6 +482,20 @@ class SqliteConnectionTest {
 					VALUES (1, 1, 0, 'Invalid year')
 					"""));
 		}
+	}
+
+	@Test
+	void rejectsSupportedVersionWhenRequiredSchemaIsMissing() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v1-schema.db"));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
+			statement.execute("INSERT INTO schema_version (version) VALUES (1)");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing required table subjects"));
+		assertFalse(tableExists(database, "curriculum_mappings"));
 	}
 
 	@Test
@@ -495,6 +518,258 @@ class SqliteConnectionTest {
 			insert.setInt(4, 1);
 
 			assertThrows(SQLException.class, insert::executeUpdate);
+		}
+	}
+
+	@Test
+	void rejectsVersionThreeDatabaseWithoutReviewTable() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v3-schema.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 3");
+			}
+			connection.commit();
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing required table curriculum_mapping_reviews"));
+		assertFalse(tableExists(database, "curriculum_mapping_reviews"));
+	}
+
+	@Test
+	void rejectsVersionThreeReviewTableWithInvalidPrimaryKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("invalid-review-primary-key.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL PRIMARY KEY,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id),
+					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
+					)
+					""");
+		}
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("invalid primary key"));
+	}
+
+	@Test
+	void rejectsVersionThreeReviewTableWithExtraPrimaryKeyColumn() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("extra-review-primary-key-column.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    review_scope INTEGER NOT NULL,
+					    PRIMARY KEY (source_node_id, target_syllabus_version_id, review_scope),
+					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id),
+					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
+					)
+					""");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("expected exactly"));
+	}
+
+	@Test
+	void rejectsVersionThreeReviewTableWithMissingColumn() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-review-column.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
+					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id),
+					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
+					)
+					""");
+		}
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("missing required column review_outcome"));
+	}
+
+	@Test
+	void rejectsVersionThreeReviewTableWithMissingSourceForeignKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-review-source-foreign-key.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
+					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
+					)
+					""");
+		}
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("missing exact foreign key source_node_id"));
+	}
+
+	@Test
+	void rejectsVersionThreeReviewTableWithMissingTargetVersionForeignKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-review-target-foreign-key.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
+					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id)
+					)
+					""");
+		}
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("missing exact foreign key target_syllabus_version_id"));
+	}
+
+	@Test
+	void rejectsCompositeSourceForeignKeyImpostor() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("composite-review-source-foreign-key.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL,
+					    source_syllabus_version_id INTEGER NOT NULL,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
+					    FOREIGN KEY (source_node_id, source_syllabus_version_id)
+					        REFERENCES curriculum_nodes(id, syllabus_version_id),
+					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
+					)
+					""");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing exact foreign key source_node_id"));
+	}
+
+	@Test
+	void rejectsCompositeTargetVersionForeignKeyImpostor() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("composite-review-target-foreign-key.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    target_subject_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
+					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id),
+					    FOREIGN KEY (target_syllabus_version_id, target_subject_id)
+					        REFERENCES syllabus_versions(id, subject_id)
+					)
+					""");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing exact foreign key target_syllabus_version_id"));
+	}
+
+	@Test
+	void rejectsVersionTwoDatabaseWithoutItsMigrationTable() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v2-schema.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 2");
+			}
+			connection.commit();
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing required table curriculum_mappings"));
+	}
+
+	@Test
+	void rollsBackStructuralMigrationWhenVersionUpdateFails() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("migration-rollback.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("""
+						CREATE TRIGGER reject_schema_version_update
+						BEFORE UPDATE ON schema_version
+						BEGIN
+						    SELECT RAISE(ABORT, 'version update rejected');
+						END
+						""");
+			}
+			connection.commit();
+		}
+
+		assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertFalse(tableExists(database, "curriculum_mappings"));
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
+			assertTrue(result.next());
+			assertEquals(1, result.getInt("version"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
+	void rollsBackVersionTwoMigrationWhenVersionUpdateFails() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-two-rollback.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("""
+						CREATE TRIGGER reject_version_three
+						BEFORE UPDATE ON schema_version
+						WHEN OLD.version = 2
+						BEGIN
+						    SELECT RAISE(ABORT, 'version three rejected');
+						END
+						""");
+			}
+			connection.commit();
+		}
+
+		assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertFalse(tableExists(database, "curriculum_mapping_reviews"));
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
+			assertTrue(result.next());
+			assertEquals(2, result.getInt("version"));
+			assertFalse(result.next());
 		}
 	}
 

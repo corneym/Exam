@@ -17,10 +17,21 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.SqliteDatabase;
 
+/**
+ * Diagnostic command that writes ranked Chemistry 2019-to-2025 descriptor
+ * suggestions to a tab-separated file under {@code target}. This is a data probe,
+ * not the subject-independent application workflow.
+ */
 public final class CurriculumMappingSuggestionProbe {
 	private CurriculumMappingSuggestionProbe() {
 	}
 
+	/**
+	 * Runs the fixed-version diagnostic against the configured application database.
+	 * Failures are reported to standard error.
+	 *
+	 * @param args ignored command-line arguments
+	 */
 	public static void main(String[] args) {
 		try {
 			runProbe();

@@ -21,6 +21,16 @@ public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
 			"construct", "describe", "determine", "evaluate", "explain", "identify", "interpret", "investigate",
 			"justify", "predict");
 
+	/**
+	 * Builds document frequencies from the supplied curriculum text. Stop words are
+	 * omitted and common cognitive verbs receive reduced weight when scoring.
+	 *
+	 * @param corpus the non-empty collection of documents used to calculate term
+	 *               weights
+	 * @throws NullPointerException if the corpus or one of its documents is
+	 *                              {@code null}
+	 * @throws IllegalArgumentException if the corpus is empty
+	 */
 	public TfIdfTextSimilarityScorer(List<String> corpus) {
 		if (corpus == null) {
 			throw new NullPointerException("corpus");
