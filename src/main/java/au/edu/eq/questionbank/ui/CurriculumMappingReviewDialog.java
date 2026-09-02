@@ -80,12 +80,12 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	 * the reviewer explicitly chooses one or more targets or records no match.
 	 * Completed reviews are displayed read-only until edit mode is entered.
 	 *
-	 * @param owner            the window that owns this dialog
-	 * @param repository       curriculum hierarchy lookup
-	 * @param suggester        ranked descriptor suggestion service
-	 * @param reviewRepository completed-review lookup
+	 * @param owner             the window that owns this dialog
+	 * @param repository        curriculum hierarchy lookup
+	 * @param suggester         ranked descriptor suggestion service
+	 * @param reviewRepository  completed-review lookup
 	 * @param mappingRepository directional mapping lookup
-	 * @param reviewWriter     atomic review persistence boundary
+	 * @param reviewWriter      atomic review persistence boundary
 	 * @throws NullPointerException if a repository, service or writer is
 	 *                              {@code null}
 	 */
@@ -120,6 +120,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		setSelectorWidth(subjectBox);
 		setSelectorWidth(sourceVersionBox);
 		setSelectorWidth(targetVersionBox);
+		targetVersionBox.setDisable(true);
 		setSelectorWidth(sourceDescriptorBox);
 		sourceDescriptorBox.setButtonCell(new ListCell<>() {
 			@Override
@@ -194,7 +195,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		grid.add(subjectBox, 1, 0);
 		grid.add(new Label("Source syllabus:"), 0, 1);
 		grid.add(sourceVersionBox, 1, 1);
-		grid.add(new Label("Target syllabus:"), 0, 2);
+		grid.add(new Label("Current target syllabus:"), 0, 2);
 		grid.add(targetVersionBox, 1, 2);
 		grid.add(sourceDescriptorHeading, 0, 3);
 		grid.add(sourceDescriptorRow, 1, 3);
@@ -520,14 +521,29 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 			return;
 		}
 		List<SyllabusVersion> versions = repository.findVersionsForSubject(subject);
-		sourceVersionBox.getItems().setAll(versions);
-		targetVersionBox.getItems().setAll(versions);
+		SyllabusVersion currentVersion = null;
 		for (SyllabusVersion version : versions) {
 			if (version.isCurrent()) {
-				targetVersionBox.setValue(version);
-				break;
+				if (currentVersion != null) {
+					statusLabel.setText("More than one current syllabus is configured for this subject.");
+					return;
+				}
+				currentVersion = version;
+			} else {
+				sourceVersionBox.getItems().add(version);
 			}
 		}
+		if (currentVersion == null) {
+			statusLabel.setText("No current syllabus is configured for this subject.");
+			return;
+		}
+		targetVersionBox.getItems().setAll(currentVersion);
+		targetVersionBox.setValue(currentVersion);
+		if (sourceVersionBox.getItems().isEmpty()) {
+			statusLabel.setText("No historical syllabus is available for mapping.");
+			return;
+		}
+		sourceVersionBox.getSelectionModel().selectFirst();
 	}
 
 	private void resetEditMode() {
