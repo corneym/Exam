@@ -65,21 +65,29 @@ class SqliteCurriculumImporterTest {
 	}
 
 	@Test
-	void rejectsDuplicateSyllabusVersion() throws Exception {
+	void reusesIdenticalSyllabusVersionWithoutNodes() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("questionbank.db"));
 		database.initialiseSchema();
 		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 		SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
-		importer.importSyllabus("Chemistry", "2025", true);
-		assertThrows(SQLException.class, () -> importer.importSyllabus("Chemistry", "2025", true));
+		CurriculumImportResult first = importer.importSyllabusWithResult("Chemistry", "2025", true);
+		CurriculumImportResult second = importer.importSyllabusWithResult("Chemistry", "2025", true);
+
+		assertTrue(first.imported());
+		assertFalse(second.imported());
+		assertEquals(first.syllabusVersion().getId(), second.syllabusVersion().getId());
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
-						SELECT COUNT(*)
-						FROM syllabus_versions
+						SELECT
+						    (SELECT COUNT(*) FROM subjects) AS subject_count,
+						    (SELECT COUNT(*) FROM syllabus_versions) AS version_count,
+						    (SELECT COUNT(*) FROM curriculum_nodes) AS node_count
 						""")) {
 			assertTrue(result.next());
-			assertEquals(1, result.getInt(1));
+			assertEquals(1, result.getInt("subject_count"));
+			assertEquals(1, result.getInt("version_count"));
+			assertEquals(0, result.getInt("node_count"));
 		}
 	}
 

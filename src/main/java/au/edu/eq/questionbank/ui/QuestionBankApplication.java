@@ -27,6 +27,8 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingReviewRepository;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumImportConflictException;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumImportResult;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumImporter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRepository;
@@ -288,13 +290,22 @@ public class QuestionBankApplication extends Application {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 			SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
-			importer.importSyllabus(dialog.getSubjectName(), dialog.getVersionName(), dialog.isCurrent(), rows);
+			CurriculumImportResult importResult = importer.importSyllabusWithResult(dialog.getSubjectName(),
+					dialog.getVersionName(), dialog.isCurrent(), rows);
 			curriculumSelectorPane.refreshSubjects();
 			examMetadataPane.refreshSubjects();
-			showAlert(Alert.AlertType.INFORMATION, "Curriculum Import", "Curriculum imported successfully.",
-					dialog.getSubjectName() + " " + dialog.getVersionName());
+			if (importResult.imported()) {
+				showAlert(Alert.AlertType.INFORMATION, "Curriculum Import", "Curriculum imported successfully.",
+						dialog.getSubjectName() + " " + dialog.getVersionName());
+			} else {
+				showAlert(Alert.AlertType.INFORMATION, "Curriculum Import", "Curriculum already imported.",
+						dialog.getSubjectName() + " " + dialog.getVersionName()
+							+ " is already imported. No changes were required.");
+			}
 		} catch (IOException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not read the Excel file.", e.getMessage());
+		} catch (CurriculumImportConflictException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not import curriculum.", e.getMessage());
 		} catch (SQLException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not save the curriculum.", e.getMessage());
 		} catch (IllegalArgumentException e) {
