@@ -543,7 +543,6 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 			statusLabel.setText("No historical syllabus is available for mapping.");
 			return;
 		}
-		sourceVersionBox.getSelectionModel().selectFirst();
 	}
 
 	private void resetEditMode() {

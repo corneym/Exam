@@ -21,8 +21,17 @@ module au.edu.eq.questionbank {
 	exports au.edu.eq.questionbank;
 	exports au.edu.eq.questionbank.ui;
 
-	opens au.edu.eq.questionbank.ui.model;
-	opens au.edu.eq.questionbank.service.curriculum;
-	opens au.edu.eq.questionbank.importer.legacy;
+	opens au.edu.eq.questionbank;
 	opens au.edu.eq.questionbank.admin;
+	opens au.edu.eq.questionbank.importer.curriculum;
+	opens au.edu.eq.questionbank.importer.legacy;
+	opens au.edu.eq.questionbank.model;
+	opens au.edu.eq.questionbank.output;
+	opens au.edu.eq.questionbank.pdf;
+	opens au.edu.eq.questionbank.repository.assessment;
+	opens au.edu.eq.questionbank.repository.curriculum;
+	opens au.edu.eq.questionbank.repository.sqlite;
+	opens au.edu.eq.questionbank.service.curriculum;
+	opens au.edu.eq.questionbank.ui;
+	opens au.edu.eq.questionbank.ui.model;
 }
