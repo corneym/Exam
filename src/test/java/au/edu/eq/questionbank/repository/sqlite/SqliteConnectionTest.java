@@ -242,6 +242,29 @@ class SqliteConnectionTest {
 	}
 
 	@Test
+	void migratesEmptyVersionThreeDatabaseToVersionFour() throws Exception {
+		Path databasePath = tempDir.resolve("version-three-to-four.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			connection.commit();
+		}
+
+		database.initialiseSchema();
+
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
+			assertTrue(result.next());
+			assertEquals(4, result.getInt("version"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
 	void migratesVersionOneDatabaseToLatestVersionWithoutLosingData() throws Exception {
 		Path databasePath = tempDir.resolve("migration.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -612,6 +635,66 @@ class SqliteConnectionTest {
 			insert.setInt(4, 1);
 
 			assertThrows(SQLException.class, insert::executeUpdate);
+		}
+	}
+
+	@Test
+	void rejectsVersionThreeDatabaseContainingQuestions() throws Exception {
+		Path databasePath = tempDir.resolve("populated-version-three.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
+				statement.execute("""
+						INSERT INTO syllabus_versions
+						    (id, subject_id, syllabus_name, is_current)
+						VALUES (1, 1, '2019', 0)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_nodes
+						    (id, syllabus_version_id, parent_id, curriculum_code,
+						     curriculum_name, curriculum_level, display_order)
+						VALUES
+						    (1, 1, NULL, '1', 'Unit 1', 'UNIT', 1),
+						    (2, 1, 1, '1.1', 'Topic 1', 'TOPIC', 1),
+						    (3, 1, 2, '1.1.1', 'Subtopic 1', 'SUBTOPIC', 1)
+						""");
+				statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
+				statement.execute("INSERT INTO source_documents (id, relative_path) VALUES (1, 'paper.pdf')");
+				statement.execute("""
+						INSERT INTO exams
+						    (id, subject_id, provider_id, exam_year, exam_name)
+						VALUES (1, 1, 1, 2020, 'External Assessment')
+						""");
+				statement.execute("""
+						INSERT INTO exam_booklets
+						    (id, exam_id, source_document_id, booklet_name)
+						VALUES (1, 1, 1, 'Paper 1')
+						""");
+				statement.execute("""
+						INSERT INTO questions
+						    (id, exam_id, classification_node_id, question_code, question_text)
+						VALUES (1, 1, 3, 'Q1', '')
+						""");
+			}
+			connection.commit();
+		}
+
+		IncompatibleDatabaseException exception = assertThrows(IncompatibleDatabaseException.class,
+				database::initialiseSchema);
+
+		assertEquals("The existing database contains question data that cannot be migrated safely.",
+				exception.getMessage());
+
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
+			assertTrue(result.next());
+			assertEquals(3, result.getInt("version"));
 		}
 	}
 
