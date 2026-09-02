@@ -4,9 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.ApplicationConfig;
@@ -19,6 +17,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
@@ -152,36 +151,6 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
-	private Path copyIntoPdfDataRoot(Path selectedPath, Path pdfDataRoot) throws IOException {
-		Path normalisedRoot = pdfDataRoot.toAbsolutePath().normalize();
-		Path normalisedPath = selectedPath.toAbsolutePath().normalize();
-
-		if (normalisedPath.startsWith(normalisedRoot)) {
-			return normalisedPath;
-		}
-
-		Files.createDirectories(normalisedRoot);
-
-		String fileName = normalisedPath.getFileName().toString();
-		Path destination = normalisedRoot.resolve(fileName);
-
-		if (!Files.exists(destination)) {
-			return Files.copy(normalisedPath, destination);
-		}
-
-		int dotPosition = fileName.lastIndexOf('.');
-		String name = dotPosition > 0 ? fileName.substring(0, dotPosition) : fileName;
-		String extension = dotPosition > 0 ? fileName.substring(dotPosition) : "";
-
-		int number = 2;
-		do {
-			destination = normalisedRoot.resolve(name + " (" + number + ")" + extension);
-			number++;
-		} while (Files.exists(destination));
-
-		return Files.copy(normalisedPath, destination);
-	}
-
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
 		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
@@ -253,18 +222,15 @@ public class QuestionBankApplication extends Application {
 			List<LegacyBookletImportRequest> requests) throws IOException, SQLException {
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
-		Map<Path, Path> importedPaths = new HashMap<>();
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 
 		for (LegacyBookletImportRequest request : requests) {
-			Path selectedPath = request.pdfPath();
-			Path storedPath = importedPaths.get(selectedPath);
-			if (storedPath == null) {
-				storedPath = copyIntoPdfDataRoot(selectedPath, config.pdfDataRoot());
-				importedPaths.put(selectedPath, storedPath);
-			}
+			LegacyBookletRequirement requirement = request.requirement();
+
+			Path storedPath = pdfStore.importExamPdf(request.pdfPath(), subject.getName(), requirement.providerName(),
+					requirement.year());
 
 			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
-			LegacyBookletRequirement requirement = request.requirement();
 
 			examImporter.importExam(subject, requirement.providerName(), requirement.year(), request.assessmentName(),
 					requirement.bookletName(), relativePath);

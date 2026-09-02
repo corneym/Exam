@@ -1,5 +1,8 @@
 package au.edu.eq.questionbank.pdf;
 
+import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -23,6 +26,59 @@ public class PdfStore {
 			throw new NullPointerException("pdfRoot");
 		}
 		this.pdfRoot = pdfRoot.toAbsolutePath().normalize();
+	}
+
+	/**
+	 * Imports an examination PDF into the standard subject/provider/year hierarchy.
+	 *
+	 * @param sourcePath   the PDF selected by the user
+	 * @param subjectName  the subject name
+	 * @param providerName the examination provider
+	 * @param year         the examination year
+	 * @return the absolute stored PDF path
+	 * @throws IOException if the file cannot be copied or a different file already
+	 *                     occupies the required destination
+	 */
+	public Path importExamPdf(Path sourcePath, String subjectName, String providerName, int year) throws IOException {
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		String subjectDirectory = validateDirectoryName(subjectName, "subjectName");
+		String providerDirectory = validateDirectoryName(providerName, "providerName");
+		if (year < 1) {
+			throw new IllegalArgumentException("year must be positive");
+		}
+
+		Path source = sourcePath.toAbsolutePath().normalize();
+		Path destinationDirectory = pdfRoot.resolve(subjectDirectory).resolve(providerDirectory)
+				.resolve(Integer.toString(year)).normalize();
+
+		if (!destinationDirectory.startsWith(pdfRoot)) {
+			throw new IllegalArgumentException("PDF destination must remain within the configured data root");
+		}
+
+		Path destination = destinationDirectory.resolve(source.getFileName()).normalize();
+
+		if (source.equals(destination)) {
+			return destination;
+		}
+
+		Files.createDirectories(destinationDirectory);
+
+		if (!Files.exists(destination)) {
+			return Files.copy(source, destination);
+		}
+
+		if (Files.isSameFile(source, destination)) {
+			return destination;
+		}
+
+		if (Files.mismatch(source, destination) == -1) {
+			return destination;
+		}
+
+		throw new FileAlreadyExistsException(destination.toString(), source.toString(),
+				"A different PDF with the same filename already exists in the exam directory");
 	}
 
 	/**
@@ -52,5 +108,19 @@ public class PdfStore {
 			throw new IllegalArgumentException("PDF path must remain within the configured data root: " + relativePath);
 		}
 		return resolved;
+	}
+
+	private String validateDirectoryName(String value, String fieldName) {
+		if (value == null || value.isBlank()) {
+			throw new IllegalArgumentException(fieldName + " must not be blank");
+		}
+
+		String trimmed = value.trim();
+
+		if (".".equals(trimmed) || "..".equals(trimmed) || trimmed.contains("/") || trimmed.contains("\\")) {
+			throw new IllegalArgumentException(fieldName + " is not a valid directory name: " + value);
+		}
+
+		return trimmed;
 	}
 }
