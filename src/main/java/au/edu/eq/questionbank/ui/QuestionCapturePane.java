@@ -26,6 +26,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.util.StringConverter;
 
 /**
  * Owns the question-capture controls, pending regions, previews, validation,
@@ -109,7 +110,6 @@ final class QuestionCapturePane extends VBox {
 		if (questionsChangedHandler == null) {
 			throw new NullPointerException("questionsChangedHandler");
 		}
-
 		this.questionRepository = questionRepository;
 		this.questionExtractor = questionExtractor;
 		this.curriculumSelectionModel = curriculumSelectionModel;
@@ -118,93 +118,15 @@ final class QuestionCapturePane extends VBox {
 		this.examPdfSessionSupplier = examPdfSessionSupplier;
 		this.selectionClearHandler = selectionClearHandler;
 		this.questionsChangedHandler = questionsChangedHandler;
-
 		configureControls();
 		configureActions();
 		getChildren().addAll(createSectionLabel("Question"), new Label("Imported question awaiting capture"),
 				createImportedQuestionControls(), captureHintLabel, createQuestionControls(), saveStatusLabel,
-				new Separator(),
+				new Separator(), createCurrentSelectionControls(), previewView, new Separator(),
+				new Label("Accepted regions"), regionCountLabel, createRegionsScrollPane());
 		setSpacing(COMPACT_SPACING);
 		setPadding(PANEL_PADDING);
 		setStyle(BORDER_STYLE);
-	}
-
-	private void clearImportedQuestionSelection() {
-		refreshingImportedQuestions = true;
-		try {
-			importedQuestionBox.setValue(null);
-		} finally {
-			refreshingImportedQuestions = false;
-		}
-		importedQuestion = null;
-		questionCodeField.setDisable(false);
-		marksField.setDisable(false);
-		curriculumSelectorPane.setDisable(false);
-		saveQuestionButton.setText("Save Question");
-		captureHintLabel.setVisible(false);
-		captureHintLabel.setManaged(false);
-		resetQuestionEntry();
-	}
-
-	void refreshImportedQuestions() {
-		ExamBooklet booklet = bookletSupplier.get();
-		Question selected = importedQuestion;
-		List<Question> awaitingCapture = new ArrayList<>();
-		if (booklet != null) {
-			for (Question question : questionRepository.findAll()) {
-				if (question.getBooklet().getId() == booklet.getId() && question.getRegions().isEmpty()) {
-					awaitingCapture.add(question);
-				}
-			}
-		}
-		refreshingImportedQuestions = true;
-		try {
-			importedQuestionBox.getItems().setAll(awaitingCapture);
-			Question matchingSelection = null;
-			if (selected != null) {
-				for (Question question : awaitingCapture) {
-					if (question.getId() == selected.getId()) {
-						matchingSelection = question;
-						break;
-					}
-				}
-			}
-			importedQuestionBox.setValue(matchingSelection);
-			importedQuestion = matchingSelection;
-		} finally {
-			refreshingImportedQuestions = false;
-		}
-	}
-
-	private void loadImportedQuestion(Question question) {
-		clearRegions();
-		importedQuestion = question;
-		if (question == null) {
-			questionCodeField.setDisable(false);
-			marksField.setDisable(false);
-			curriculumSelectorPane.setDisable(false);
-			saveQuestionButton.setText("Save Question");
-			captureHintLabel.setVisible(false);
-			captureHintLabel.setManaged(false);
-			return;
-		}
-		questionCodeField.setText(question.getQuestionCode());
-		marksField.setText(Integer.toString(question.getMarks()));
-		curriculumSelectorPane.selectClassificationPath(question.getClassification());
-		questionCodeField.setDisable(true);
-		marksField.setDisable(true);
-		curriculumSelectorPane.setDisable(true);
-		saveQuestionButton.setText("Attach Regions");
-		if (question.isPreambleCaptureRequired()) {
-			captureHintLabel
-					.setText("Preamble required: capture the shared or introductory material with this question.");
-			captureHintLabel.setVisible(true);
-			captureHintLabel.setManaged(true);
-		} else {
-			captureHintLabel.setVisible(false);
-			captureHintLabel.setManaged(false);
-		}
-		showQuestionPendingStatus();
 	}
 
 	private void addCurrentRegion() {
@@ -235,6 +157,23 @@ final class QuestionCapturePane extends VBox {
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview region", e);
 		}
+	}
+
+	private void clearImportedQuestionSelection() {
+		refreshingImportedQuestions = true;
+		try {
+			importedQuestionBox.setValue(null);
+		} finally {
+			refreshingImportedQuestions = false;
+		}
+		importedQuestion = null;
+		questionCodeField.setDisable(false);
+		marksField.setDisable(false);
+		curriculumSelectorPane.setDisable(false);
+		saveQuestionButton.setText("Save Question");
+		captureHintLabel.setVisible(false);
+		captureHintLabel.setManaged(false);
+		resetQuestionEntry();
 	}
 
 	private void clearPendingSelection() {
@@ -355,6 +294,37 @@ final class QuestionCapturePane extends VBox {
 				currentSelection != null, pendingRegions.size()));
 	}
 
+	private void loadImportedQuestion(Question question) {
+		clearRegions();
+		importedQuestion = question;
+		if (question == null) {
+			questionCodeField.setDisable(false);
+			marksField.setDisable(false);
+			curriculumSelectorPane.setDisable(false);
+			saveQuestionButton.setText("Save Question");
+			captureHintLabel.setVisible(false);
+			captureHintLabel.setManaged(false);
+			return;
+		}
+		questionCodeField.setText(question.getQuestionCode());
+		marksField.setText(Integer.toString(question.getMarks()));
+		curriculumSelectorPane.selectClassificationPath(question.getClassification());
+		questionCodeField.setDisable(true);
+		marksField.setDisable(true);
+		curriculumSelectorPane.setDisable(true);
+		saveQuestionButton.setText("Attach Regions");
+		if (question.isPreambleCaptureRequired()) {
+			captureHintLabel
+					.setText("Preamble required: capture the shared or introductory material with this question.");
+			captureHintLabel.setVisible(true);
+			captureHintLabel.setManaged(true);
+		} else {
+			captureHintLabel.setVisible(false);
+			captureHintLabel.setManaged(false);
+		}
+		showQuestionPendingStatus();
+	}
+
 	private void refreshRegionPreviews() {
 		regionPreviewBox.getChildren().clear();
 		for (int i = 0; i < pendingRegions.size(); i++) {
@@ -368,6 +338,18 @@ final class QuestionCapturePane extends VBox {
 		refreshRegionPreviews();
 		setRegionCountLabel(pendingRegions.size());
 		showQuestionPendingStatus();
+	}
+
+	private void resetAfterQuestionSave() {
+		importedQuestion = null;
+		questionCodeField.setDisable(false);
+		marksField.setDisable(false);
+		curriculumSelectorPane.setDisable(false);
+		saveQuestionButton.setText("Save Question");
+		captureHintLabel.setVisible(false);
+		captureHintLabel.setManaged(false);
+		resetQuestionEntry();
+		refreshImportedQuestions();
 	}
 
 	private void resetQuestionEntry() {
@@ -393,18 +375,6 @@ final class QuestionCapturePane extends VBox {
 		}
 		questionsChangedHandler.run();
 		resetAfterQuestionSave();
-	}
-
-	private void resetAfterQuestionSave() {
-		importedQuestion = null;
-		questionCodeField.setDisable(false);
-		marksField.setDisable(false);
-		curriculumSelectorPane.setDisable(false);
-		saveQuestionButton.setText("Save Question");
-		captureHintLabel.setVisible(false);
-		captureHintLabel.setManaged(false);
-		resetQuestionEntry();
-		refreshImportedQuestions();
 	}
 
 	private void setRegionCountLabel(int count) {
@@ -496,5 +466,35 @@ final class QuestionCapturePane extends VBox {
 		captureHintLabel.setManaged(false);
 		resetQuestionEntry();
 		refreshImportedQuestions();
+	}
+
+	void refreshImportedQuestions() {
+		ExamBooklet booklet = bookletSupplier.get();
+		Question selected = importedQuestion;
+		List<Question> awaitingCapture = new ArrayList<>();
+		if (booklet != null) {
+			for (Question question : questionRepository.findAll()) {
+				if (question.getBooklet().getId() == booklet.getId() && question.getRegions().isEmpty()) {
+					awaitingCapture.add(question);
+				}
+			}
+		}
+		refreshingImportedQuestions = true;
+		try {
+			importedQuestionBox.getItems().setAll(awaitingCapture);
+			Question matchingSelection = null;
+			if (selected != null) {
+				for (Question question : awaitingCapture) {
+					if (question.getId() == selected.getId()) {
+						matchingSelection = question;
+						break;
+					}
+				}
+			}
+			importedQuestionBox.setValue(matchingSelection);
+			importedQuestion = matchingSelection;
+		} finally {
+			refreshingImportedQuestions = false;
+		}
 	}
 }

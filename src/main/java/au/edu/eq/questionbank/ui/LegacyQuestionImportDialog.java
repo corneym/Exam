@@ -7,6 +7,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import javafx.geometry.Insets;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
@@ -100,15 +101,30 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	}
 
 	private boolean isValid() {
+		if (subjectBox.getItems().isEmpty()) {
+			showValidationError("No subjects are available.",
+					"Import a curriculum before importing legacy question metadata.");
+			return false;
+		}
 		if (subjectBox.getValue() == null) {
+			showValidationError("No subject selected.", "Select the subject for the legacy question metadata.");
 			subjectBox.requestFocus();
 			return false;
 		}
+		if (syllabusBox.getItems().isEmpty()) {
+			showValidationError("No syllabus versions are available.", "Import the required curriculum for "
+					+ subjectBox.getValue().getName() + " before importing legacy question metadata.");
+			return false;
+		}
 		if (syllabusBox.getValue() == null) {
+			showValidationError("No syllabus version selected.",
+					"Select the syllabus version used by the legacy question metadata.");
 			syllabusBox.requestFocus();
 			return false;
 		}
 		if (selectedFile == null) {
+			showValidationError("No Excel workbook selected.",
+					"Choose the legacy question metadata workbook to import.");
 			return false;
 		}
 		return true;
@@ -123,5 +139,14 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		}
 		syllabusBox.getItems().setAll(curriculumRepository.findVersionsForSubject(subject));
 		syllabusBox.setDisable(false);
+	}
+
+	private void showValidationError(String header, String message) {
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.initOwner(getOwner());
+		alert.setTitle("Legacy Question Import");
+		alert.setHeaderText(header);
+		alert.setContentText(message);
+		alert.showAndWait();
 	}
 }

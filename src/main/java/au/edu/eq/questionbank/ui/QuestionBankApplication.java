@@ -1,15 +1,20 @@
 package au.edu.eq.questionbank.ui;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
+import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
+import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
 import au.edu.eq.questionbank.model.Subject;
@@ -147,6 +152,36 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
+	private Path copyIntoPdfDataRoot(Path selectedPath, Path pdfDataRoot) throws IOException {
+		Path normalisedRoot = pdfDataRoot.toAbsolutePath().normalize();
+		Path normalisedPath = selectedPath.toAbsolutePath().normalize();
+
+		if (normalisedPath.startsWith(normalisedRoot)) {
+			return normalisedPath;
+		}
+
+		Files.createDirectories(normalisedRoot);
+
+		String fileName = normalisedPath.getFileName().toString();
+		Path destination = normalisedRoot.resolve(fileName);
+
+		if (!Files.exists(destination)) {
+			return Files.copy(normalisedPath, destination);
+		}
+
+		int dotPosition = fileName.lastIndexOf('.');
+		String name = dotPosition > 0 ? fileName.substring(0, dotPosition) : fileName;
+		String extension = dotPosition > 0 ? fileName.substring(dotPosition) : "";
+
+		int number = 2;
+		do {
+			destination = normalisedRoot.resolve(name + " (" + number + ")" + extension);
+			number++;
+		} while (Files.exists(destination));
+
+		return Files.copy(normalisedPath, destination);
+	}
+
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
 		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
@@ -214,6 +249,28 @@ public class QuestionBankApplication extends Application {
 		return item;
 	}
 
+	private void createMissingLegacyBooklets(ApplicationConfig config, Subject subject,
+			List<LegacyBookletImportRequest> requests) throws IOException, SQLException {
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
+		Map<Path, Path> importedPaths = new HashMap<>();
+
+		for (LegacyBookletImportRequest request : requests) {
+			Path selectedPath = request.pdfPath();
+			Path storedPath = importedPaths.get(selectedPath);
+			if (storedPath == null) {
+				storedPath = copyIntoPdfDataRoot(selectedPath, config.pdfDataRoot());
+				importedPaths.put(selectedPath, storedPath);
+			}
+
+			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
+			LegacyBookletRequirement requirement = request.requirement();
+
+			examImporter.importExam(subject, requirement.providerName(), requirement.year(), request.assessmentName(),
+					requirement.bookletName(), relativePath);
+		}
+	}
+
 	private VBox createPreviewPane() {
 		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, questionCapturePane, answerCapturePane);
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
@@ -250,7 +307,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
-		CurriculumImportDialog dialog = new CurriculumImportDialog(primaryStage);
+		CurriculumImportDialog dialog = new CurriculumImportDialog(primaryStage, config.curriculumDataRoot());
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty()) {
 			return;
@@ -267,6 +324,7 @@ public class QuestionBankApplication extends Application {
 			SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
 			importer.importSyllabus(dialog.getSubjectName(), dialog.getVersionName(), dialog.isCurrent(), rows);
 			curriculumSelectorPane.refreshSubjects();
+			examMetadataPane.refreshSubjects();
 			showAlert(Alert.AlertType.INFORMATION, "Curriculum Import", "Curriculum imported successfully.",
 					dialog.getSubjectName() + " " + dialog.getVersionName());
 		} catch (IOException e) {
@@ -290,15 +348,43 @@ public class QuestionBankApplication extends Application {
 			Subject subject = dialog.getSelectedSubject();
 			SyllabusVersion syllabusVersion = dialog.getSelectedSyllabusVersion();
 			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
+
+			List<LegacyBookletRequirement> missingBooklets = importer.findMissingBooklets(dialog.getSelectedFile(),
+					subject.getName(), syllabusVersion.getName());
+
+			int importedBooklets = 0;
+
+			if (!missingBooklets.isEmpty()) {
+				LegacyBookletImportDialog bookletDialog = new LegacyBookletImportDialog(primaryStage, missingBooklets);
+				Optional<ButtonType> bookletResult = bookletDialog.showAndWait();
+
+				if (bookletResult.isEmpty()
+						|| bookletResult.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+					return;
+				}
+
+				List<LegacyBookletImportRequest> requests = bookletDialog.getRequests();
+				createMissingLegacyBooklets(config, subject, requests);
+				importedBooklets = requests.size();
+
+				List<LegacyBookletRequirement> stillMissing = importer.findMissingBooklets(dialog.getSelectedFile(),
+						subject.getName(), syllabusVersion.getName());
+
+				if (!stillMissing.isEmpty()) {
+					throw new IllegalStateException("Required exam booklets are still missing after booklet import.");
+				}
+			}
+
 			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
 					subject.getName(), syllabusVersion.getName());
 			answerCapturePane.refreshUnansweredQuestions();
 			questionCapturePane.refreshImportedQuestions();
 			String message = """
+					Exam booklets imported: %d
 					Questions imported: %d
 					Questions already present: %d
 					Answers imported: %d
-					""".formatted(importResult.insertedQuestions(), importResult.existingQuestions(),
+					""".formatted(importedBooklets, importResult.insertedQuestions(), importResult.existingQuestions(),
 					importResult.insertedAnswers());
 			showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy question metadata imported.",
 					message);
@@ -395,6 +481,7 @@ public class QuestionBankApplication extends Application {
 					"An exam cannot be imported while an unrelated PDF is open in viewer mode.");
 			return;
 		}
+		examMetadataPane.refreshSubjects();
 		examImportDialog.showAndWait();
 	}
 

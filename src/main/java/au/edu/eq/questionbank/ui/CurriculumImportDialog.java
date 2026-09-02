@@ -4,6 +4,7 @@ import java.io.File;
 import java.nio.file.Path;
 
 import javafx.geometry.Insets;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
@@ -27,13 +28,18 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	private final CheckBox currentCheckBox = new CheckBox();
 	private final TextField fileField = new TextField();
 	private Path selectedFile;
+	private final Path curriculumDataRoot;
 
 	/**
 	 * Creates a curriculum-import dialog owned by the supplied window.
 	 *
 	 * @param owner the window that owns the modal dialog
 	 */
-	public CurriculumImportDialog(Window owner) {
+	public CurriculumImportDialog(Window owner, Path curriculumDataRoot) {
+		if (curriculumDataRoot == null) {
+			throw new NullPointerException("curriculumDataRoot");
+		}
+		this.curriculumDataRoot = curriculumDataRoot.toAbsolutePath().normalize();
 		setTitle("Import Curriculum");
 		setHeaderText("Import curriculum from Excel");
 		initOwner(owner);
@@ -64,18 +70,6 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 				event.consume();
 			}
 		});
-	}
-
-	private void chooseFile(Window owner) {
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Select Curriculum Excel File");
-		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel workbooks", "*.xlsx"));
-		File file = chooser.showOpenDialog(owner);
-		if (file == null) {
-			return;
-		}
-		selectedFile = file.toPath();
-		fileField.setText(selectedFile.toString());
 	}
 
 	/**
@@ -112,6 +106,34 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	 */
 	public boolean isCurrent() {
 		return currentCheckBox.isSelected();
+	}
+
+	private void chooseFile(Window owner) {
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Select Curriculum Excel File");
+		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel workbooks", "*.xlsx"));
+
+		File root = curriculumDataRoot.toFile();
+		if (root.isDirectory()) {
+			chooser.setInitialDirectory(root);
+		}
+
+		File file = chooser.showOpenDialog(owner);
+		if (file == null) {
+			return;
+		}
+
+		Path selectedPath = file.toPath().toAbsolutePath().normalize();
+		if (!selectedPath.startsWith(curriculumDataRoot)) {
+			Alert alert = new Alert(Alert.AlertType.ERROR);
+			alert.setHeaderText("Curriculum files must be inside the configured curriculum directory.");
+			alert.setContentText(curriculumDataRoot.toString());
+			alert.showAndWait();
+			return;
+		}
+
+		selectedFile = selectedPath;
+		fileField.setText(selectedFile.toString());
 	}
 
 	private boolean isValid() {

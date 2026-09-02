@@ -7,7 +7,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -43,6 +45,35 @@ public final class LegacyQuestionMetadataImporter {
 		reader = new LegacyQuestionWorkbookReader();
 	}
 
+	public List<LegacyBookletRequirement> findMissingBooklets(Path workbookPath, String subjectName,
+			String syllabusName) throws IOException, SQLException {
+		if (subjectName == null || subjectName.isBlank()) {
+			throw new IllegalArgumentException("subjectName must not be blank");
+		}
+		if (syllabusName == null || syllabusName.isBlank()) {
+			throw new IllegalArgumentException("syllabusName must not be blank");
+		}
+		List<LegacyQuestionSheet> sheets = reader.read(workbookPath);
+		try (Connection connection = database.openConnection()) {
+			ImportContext context = findImportContext(connection, subjectName, syllabusName);
+			Set<LegacyBookletRequirement> missing = new LinkedHashSet<>();
+			for (LegacyQuestionSheet sheet : sheets) {
+				for (LegacyQuestionRow row : sheet.questions()) {
+					findClassificationNodeId(connection, context.syllabusVersionId(), sheet.providerName(), row);
+					if (!bookletExists(connection, context.subjectId(), sheet.providerName(), row)) {
+						missing.add(new LegacyBookletRequirement(sheet.providerName(), row.year(),
+								bookletName(row.paperCode())));
+					}
+				}
+			}
+			List<LegacyBookletRequirement> result = new ArrayList<>(missing);
+			result.sort(Comparator.comparing(LegacyBookletRequirement::providerName)
+					.thenComparingInt(LegacyBookletRequirement::year)
+					.thenComparing(LegacyBookletRequirement::bookletName));
+			return List.copyOf(result);
+		}
+	}
+
 	public LegacyQuestionImportResult importWorkbook(Path workbookPath, String subjectName, String syllabusName)
 			throws IOException, SQLException {
 		if (subjectName == null || subjectName.isBlank()) {
@@ -63,6 +94,36 @@ public final class LegacyQuestionMetadataImporter {
 			} catch (SQLException | RuntimeException e) {
 				connection.rollback();
 				throw e;
+			}
+		}
+	}
+
+	private boolean bookletExists(Connection connection, long subjectId, String providerName, LegacyQuestionRow row)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT COUNT(*) AS booklet_count
+				FROM exam_booklets eb
+				JOIN exams e
+				    ON e.id = eb.exam_id
+				JOIN exam_providers p
+				    ON p.id = e.provider_id
+				WHERE e.subject_id = ?
+				  AND p.provider_name = ?
+				  AND e.exam_year = ?
+				  AND eb.booklet_name = ?
+				""")) {
+			statement.setLong(1, subjectId);
+			statement.setString(2, providerName);
+			statement.setInt(3, row.year());
+			statement.setString(4, bookletName(row.paperCode()));
+			try (ResultSet result = statement.executeQuery()) {
+				result.next();
+				int count = result.getInt("booklet_count");
+				if (count > 1) {
+					throw new IllegalArgumentException(
+							"More than one exam booklet matches " + description(providerName, row));
+				}
+				return count == 1;
 			}
 		}
 	}

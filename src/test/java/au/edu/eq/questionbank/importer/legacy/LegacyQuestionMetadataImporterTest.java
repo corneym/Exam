@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.List;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -97,6 +98,27 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void findsMissingBookletsBeforeImport() throws Exception {
+		Fixture fixture = createFixture("missing-booklets.db", false);
+
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					DELETE FROM exam_booklets
+					WHERE booklet_name = 'Paper 1'
+					""");
+		}
+
+		List<LegacyBookletRequirement> missing = new LegacyQuestionMetadataImporter(fixture.database())
+				.findMissingBooklets(fixture.workbookPath(), "Chemistry", "2019");
+
+		assertEquals(1, missing.size());
+		assertEquals("QCAA", missing.get(0).providerName());
+		assertEquals(2020, missing.get(0).year());
+		assertEquals("Paper 1", missing.get(0).bookletName());
+	}
+
+	@Test
 	void importsLegacyMetadataWithoutCreatingQuestionRegions() throws Exception {
 		Fixture fixture = createFixture("import.db", false);
 		LegacyQuestionImportResult result = new LegacyQuestionMetadataImporter(fixture.database())
@@ -157,5 +179,15 @@ class LegacyQuestionMetadataImporterTest {
 			assertEquals(2, countRows(statement, "questions"));
 			assertEquals(1, countRows(statement, "answers"));
 		}
+	}
+
+	@Test
+	void reportsNoMissingBookletsWhenAllRequiredBookletsExist() throws Exception {
+		Fixture fixture = createFixture("all-booklets-present.db", false);
+
+		List<LegacyBookletRequirement> missing = new LegacyQuestionMetadataImporter(fixture.database())
+				.findMissingBooklets(fixture.workbookPath(), "Chemistry", "2019");
+
+		assertTrue(missing.isEmpty());
 	}
 }

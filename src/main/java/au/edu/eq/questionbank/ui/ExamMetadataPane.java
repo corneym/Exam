@@ -354,6 +354,32 @@ final class ExamMetadataPane extends VBox {
 		}
 	}
 
+	void refreshSubjects() {
+		Subject selectedSubject = subjectField.getValue();
+		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
+
+		if (selectedSubject != null) {
+			for (Subject subject : subjectField.getItems()) {
+				if (subject.getId() == selectedSubject.getId()) {
+					subjectField.setValue(subject);
+					return;
+				}
+			}
+		}
+
+		Subject currentSubject = curriculumSelectionModel.getSubject();
+		if (currentSubject != null) {
+			for (Subject subject : subjectField.getItems()) {
+				if (subject.getId() == currentSubject.getId()) {
+					subjectField.setValue(subject);
+					return;
+				}
+			}
+		}
+
+		subjectField.setValue(null);
+	}
+
 	/**
 	 * Applies a validated PDF selection and clears metadata from the old PDF.
 	 *
