@@ -24,4 +24,5 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.ui.model;
 	opens au.edu.eq.questionbank.service.curriculum;
 	opens au.edu.eq.questionbank.importer.legacy;
+	opens au.edu.eq.questionbank.admin;
 }

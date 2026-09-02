@@ -131,4 +131,38 @@ class LegacyQuestionWorkbookReaderTest {
 		assertTrue(exception.getMessage().contains("Missing column"));
 		assertTrue(exception.getMessage().contains("QCAA"));
 	}
+
+	@Test
+	void evaluatesFormulaCellsUsedByLegacyMetadata() throws Exception {
+		Path path = createWorkbook();
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
+			Row row = workbook.getSheetAt(0).getRow(2);
+			row.getCell(0).setCellFormula("2019+1");
+			row.getCell(3).setCellFormula("1+2");
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+
+		LegacyQuestionRow row = new LegacyQuestionWorkbookReader().read(path).getFirst().questions().get(1);
+
+		assertEquals(2020, row.year());
+		assertEquals(3, row.marks());
+	}
+
+	@Test
+	void rejectsDuplicateHeadings() throws Exception {
+		Path path = createWorkbook();
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
+			workbook.getSheetAt(0).getRow(0).createCell(7).setCellValue("Year");
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> new LegacyQuestionWorkbookReader().read(path));
+
+		assertTrue(exception.getMessage().contains("Duplicate column: Year"));
+	}
 }

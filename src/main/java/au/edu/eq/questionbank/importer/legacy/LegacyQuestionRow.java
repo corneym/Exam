@@ -5,6 +5,15 @@ package au.edu.eq.questionbank.importer.legacy;
  * <p>
  * Subject, exam provider and syllabus version are import context and therefore
  * are not properties of an individual workbook row.
+ *
+ * @param year                    the positive examination year
+ * @param paperCode               {@code MCQ}, {@code 1}, or {@code 2}
+ * @param questionCode            the question identifier, retained as text
+ * @param marks                   the positive mark value
+ * @param classificationCode      the source syllabus classification code
+ * @param answer                  optional answer text supplied by the workbook
+ * @param preambleCaptureRequired whether shared or introductory material should
+ *                                be included during region capture
  */
 public record LegacyQuestionRow(int year, String paperCode, String questionCode, int marks, String classificationCode,
 		String answer, boolean preambleCaptureRequired) {

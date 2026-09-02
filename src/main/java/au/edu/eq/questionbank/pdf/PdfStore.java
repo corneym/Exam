@@ -35,9 +35,15 @@ public class PdfStore {
 	 * @param subjectName  the subject name
 	 * @param providerName the examination provider
 	 * @param year         the examination year
-	 * @return the absolute stored PDF path
-	 * @throws IOException if the file cannot be copied or a different file already
-	 *                     occupies the required destination
+	 * @return the absolute stored PDF path; an existing byte-identical file is
+	 *         reused
+	 * @throws IOException              if the source is not a regular file, the
+	 *                                  file cannot be copied, or different bytes
+	 *                                  already occupy the required destination
+	 * @throws NullPointerException     if {@code sourcePath} is {@code null}
+	 * @throws IllegalArgumentException if a directory component is blank, contains
+	 *                                  a path separator, or {@code year} is not
+	 *                                  positive
 	 */
 	public Path importExamPdf(Path sourcePath, String subjectName, String providerName, int year) throws IOException {
 		if (sourcePath == null) {
@@ -50,6 +56,9 @@ public class PdfStore {
 		}
 
 		Path source = sourcePath.toAbsolutePath().normalize();
+		if (!Files.isRegularFile(source)) {
+			throw new IOException("Exam PDF source is not a regular file: " + source);
+		}
 		Path destinationDirectory = pdfRoot.resolve(subjectDirectory).resolve(providerDirectory)
 				.resolve(Integer.toString(year)).normalize();
 

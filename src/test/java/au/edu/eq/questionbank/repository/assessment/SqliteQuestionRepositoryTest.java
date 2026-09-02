@@ -91,6 +91,13 @@ class SqliteQuestionRepositoryTest {
 		Question reloaded = new SqliteQuestionRepository(database).findById(imported.getId()).orElseThrow();
 		assertEquals(2, reloaded.getRegions().size());
 		assertTrue(reloaded.isPreambleCaptureRequired());
+
+		assertThrows(IllegalArgumentException.class,
+				() -> repository.attachRegions(imported.getId(),
+						List.of(new QuestionRegion(booklet, 5, 0.10, 0.10, 0.50, 0.20))));
+		Question afterRejectedSecondAttachment = new SqliteQuestionRepository(database).findById(imported.getId())
+				.orElseThrow();
+		assertEquals(2, afterRejectedSecondAttachment.getRegions().size());
 	}
 
 	@Test

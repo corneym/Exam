@@ -10,11 +10,17 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.FormulaEvaluator;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 
+/**
+ * Reads the fixed legacy question-metadata workbook format. Each worksheet name
+ * identifies an examination provider and every non-blank data row becomes one
+ * validated question record.
+ */
 public class LegacyQuestionWorkbookReader {
 
 	private static final String YEAR = "Year";
@@ -27,14 +33,25 @@ public class LegacyQuestionWorkbookReader {
 
 	private final DataFormatter formatter = new DataFormatter();
 
+	/**
+	 * Reads every worksheet in workbook order.
+	 *
+	 * @param path the legacy {@code .xlsx} workbook
+	 * @return immutable worksheet records
+	 * @throws IOException              if the workbook cannot be read
+	 * @throws NullPointerException     if {@code path} is {@code null}
+	 * @throws IllegalArgumentException if a required heading or row value is
+	 *                                  invalid
+	 */
 	public List<LegacyQuestionSheet> read(Path path) throws IOException {
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
 		try (InputStream input = Files.newInputStream(path); Workbook workbook = WorkbookFactory.create(input)) {
+			FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
 			List<LegacyQuestionSheet> sheets = new ArrayList<>();
 			for (Sheet sheet : workbook) {
-				sheets.add(readSheet(sheet));
+				sheets.add(readSheet(sheet, evaluator));
 			}
 			return List.copyOf(sheets);
 		}
@@ -44,12 +61,15 @@ public class LegacyQuestionWorkbookReader {
 		return new IllegalArgumentException("Sheet '" + sheet.getSheetName() + "', row " + rowNumber + ": " + message);
 	}
 
-	private Map<String, Integer> findColumns(Sheet sheet, Row header) {
+	private Map<String, Integer> findColumns(Sheet sheet, Row header, FormulaEvaluator evaluator) {
 		Map<String, Integer> columns = new HashMap<>();
 		for (int columnIndex = header.getFirstCellNum(); columnIndex < header.getLastCellNum(); columnIndex++) {
-			String heading = text(header, columnIndex);
+			String heading = text(header, columnIndex, evaluator);
 			if (!heading.isBlank()) {
-				columns.put(heading, columnIndex);
+				Integer previous = columns.putIfAbsent(heading, columnIndex);
+				if (previous != null) {
+					throw error(sheet, 1, "Duplicate column: " + heading);
+				}
 			}
 		}
 		requireColumn(sheet, columns, YEAR);
@@ -62,22 +82,23 @@ public class LegacyQuestionWorkbookReader {
 		return columns;
 	}
 
-	private boolean isBlank(Row row, Map<String, Integer> columns) {
+	private boolean isBlank(Row row, Map<String, Integer> columns, FormulaEvaluator evaluator) {
 		for (int columnIndex : columns.values()) {
-			if (!text(row, columnIndex).isBlank()) {
+			if (!text(row, columnIndex, evaluator).isBlank()) {
 				return false;
 			}
 		}
 		return true;
 	}
 
-	private String optionalText(Row row, int columnIndex) {
-		String value = text(row, columnIndex);
+	private String optionalText(Row row, int columnIndex, FormulaEvaluator evaluator) {
+		String value = text(row, columnIndex, evaluator);
 		return value.isBlank() ? null : value;
 	}
 
-	private int positiveInteger(Sheet sheet, Row row, int columnIndex, String columnName) {
-		String value = text(row, columnIndex);
+	private int positiveInteger(Sheet sheet, Row row, int columnIndex, String columnName,
+			FormulaEvaluator evaluator) {
+		String value = text(row, columnIndex, evaluator);
 		if (value.isBlank()) {
 			throw new IllegalArgumentException(columnName + " is blank");
 		}
@@ -92,8 +113,8 @@ public class LegacyQuestionWorkbookReader {
 		}
 	}
 
-	private boolean preamble(Sheet sheet, Row row, int columnIndex) {
-		String value = text(row, columnIndex);
+	private boolean preamble(Sheet sheet, Row row, int columnIndex, FormulaEvaluator evaluator) {
+		String value = text(row, columnIndex, evaluator);
 		if (value.isBlank()) {
 			return false;
 		}
@@ -103,16 +124,17 @@ public class LegacyQuestionWorkbookReader {
 		throw new IllegalArgumentException("Preamble must be blank or 1: " + value);
 	}
 
-	private LegacyQuestionRow readQuestion(Sheet sheet, Row row, Map<String, Integer> columns) {
+	private LegacyQuestionRow readQuestion(Sheet sheet, Row row, Map<String, Integer> columns,
+			FormulaEvaluator evaluator) {
 		int excelRow = row.getRowNum() + 1;
 		try {
-			int year = positiveInteger(sheet, row, columns.get(YEAR), YEAR);
-			String paperCode = requiredText(sheet, row, columns.get(PAPER), PAPER);
-			String questionCode = requiredText(sheet, row, columns.get(QUESTION), QUESTION);
-			int marks = positiveInteger(sheet, row, columns.get(MARKS), MARKS);
-			String classificationCode = requiredText(sheet, row, columns.get(TOPIC), TOPIC);
-			String answer = optionalText(row, columns.get(ANSWER));
-			boolean preambleCaptureRequired = preamble(sheet, row, columns.get(PREAMBLE));
+			int year = positiveInteger(sheet, row, columns.get(YEAR), YEAR, evaluator);
+			String paperCode = requiredText(sheet, row, columns.get(PAPER), PAPER, evaluator);
+			String questionCode = requiredText(sheet, row, columns.get(QUESTION), QUESTION, evaluator);
+			int marks = positiveInteger(sheet, row, columns.get(MARKS), MARKS, evaluator);
+			String classificationCode = requiredText(sheet, row, columns.get(TOPIC), TOPIC, evaluator);
+			String answer = optionalText(row, columns.get(ANSWER), evaluator);
+			boolean preambleCaptureRequired = preamble(sheet, row, columns.get(PREAMBLE), evaluator);
 			return new LegacyQuestionRow(year, paperCode, questionCode, marks, classificationCode, answer,
 					preambleCaptureRequired);
 		} catch (IllegalArgumentException e) {
@@ -120,19 +142,19 @@ public class LegacyQuestionWorkbookReader {
 		}
 	}
 
-	private LegacyQuestionSheet readSheet(Sheet sheet) {
+	private LegacyQuestionSheet readSheet(Sheet sheet, FormulaEvaluator evaluator) {
 		Row header = sheet.getRow(sheet.getFirstRowNum());
 		if (header == null) {
 			throw error(sheet, 1, "Sheet has no header row");
 		}
-		Map<String, Integer> columns = findColumns(sheet, header);
+		Map<String, Integer> columns = findColumns(sheet, header, evaluator);
 		List<LegacyQuestionRow> questions = new ArrayList<>();
 		for (int rowIndex = header.getRowNum() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
 			Row row = sheet.getRow(rowIndex);
-			if (row == null || isBlank(row, columns)) {
+			if (row == null || isBlank(row, columns, evaluator)) {
 				continue;
 			}
-			questions.add(readQuestion(sheet, row, columns));
+			questions.add(readQuestion(sheet, row, columns, evaluator));
 		}
 		return new LegacyQuestionSheet(sheet.getSheetName().trim(), questions);
 	}
@@ -143,18 +165,19 @@ public class LegacyQuestionWorkbookReader {
 		}
 	}
 
-	private String requiredText(Sheet sheet, Row row, int columnIndex, String columnName) {
-		String value = text(row, columnIndex);
+	private String requiredText(Sheet sheet, Row row, int columnIndex, String columnName,
+			FormulaEvaluator evaluator) {
+		String value = text(row, columnIndex, evaluator);
 		if (value.isBlank()) {
 			throw new IllegalArgumentException(columnName + " is blank");
 		}
 		return value;
 	}
 
-	private String text(Row row, int columnIndex) {
+	private String text(Row row, int columnIndex, FormulaEvaluator evaluator) {
 		if (row == null || row.getCell(columnIndex) == null) {
 			return "";
 		}
-		return formatter.formatCellValue(row.getCell(columnIndex)).trim();
+		return formatter.formatCellValue(row.getCell(columnIndex), evaluator).trim();
 	}
 }

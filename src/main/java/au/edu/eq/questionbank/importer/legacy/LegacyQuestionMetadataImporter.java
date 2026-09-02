@@ -15,6 +15,14 @@ import java.util.Set;
 
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
+/**
+ * Preflights and atomically imports validated legacy question metadata into an
+ * existing subject, syllabus, and exam-booklet hierarchy.
+ * <p>
+ * Question identity is {@code (booklet, question code)}. Re-import reuses
+ * compatible questions and answers, while conflicting persisted metadata is
+ * rejected without partially importing the workbook.
+ */
 public final class LegacyQuestionMetadataImporter {
 
 	private record ExistingAnswer(boolean exists, String answerText) {
@@ -37,6 +45,12 @@ public final class LegacyQuestionMetadataImporter {
 	private final SqliteDatabase database;
 	private final LegacyQuestionWorkbookReader reader;
 
+	/**
+	 * Creates an importer for an initialised question-bank database.
+	 *
+	 * @param database the target database
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
 	public LegacyQuestionMetadataImporter(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -45,6 +59,21 @@ public final class LegacyQuestionMetadataImporter {
 		reader = new LegacyQuestionWorkbookReader();
 	}
 
+	/**
+	 * Validates workbook classifications and reports booklets that must exist
+	 * before question metadata can be imported.
+	 *
+	 * @param workbookPath the legacy workbook
+	 * @param subjectName  the existing subject receiving the questions
+	 * @param syllabusName the existing historical syllabus used by workbook topic
+	 *                     codes
+	 * @return immutable, provider/year/booklet-sorted missing requirements
+	 * @throws IOException              if the workbook cannot be read
+	 * @throws SQLException             if preflight queries fail
+	 * @throws NullPointerException     if {@code workbookPath} is {@code null}
+	 * @throws IllegalArgumentException if import context, workbook data, or an
+	 *                                  existing booklet match is invalid
+	 */
 	public List<LegacyBookletRequirement> findMissingBooklets(Path workbookPath, String subjectName,
 			String syllabusName) throws IOException, SQLException {
 		if (subjectName == null || subjectName.isBlank()) {
@@ -74,6 +103,23 @@ public final class LegacyQuestionMetadataImporter {
 		}
 	}
 
+	/**
+	 * Imports every workbook row in one SQLite transaction. Existing compatible
+	 * questions are reused, supplied answers are added only when absent, and no
+	 * placeholder regions are created.
+	 *
+	 * @param workbookPath the legacy workbook
+	 * @param subjectName  the existing subject receiving the questions
+	 * @param syllabusName the existing historical syllabus used by workbook topic
+	 *                     codes
+	 * @return counts of inserted and reused records
+	 * @throws IOException              if the workbook cannot be read
+	 * @throws SQLException             if the transaction fails
+	 * @throws NullPointerException     if {@code workbookPath} is {@code null}
+	 * @throws IllegalArgumentException if import context, workbook data, required
+	 *                                  booklets, or existing question metadata is
+	 *                                  invalid
+	 */
 	public LegacyQuestionImportResult importWorkbook(Path workbookPath, String subjectName, String syllabusName)
 			throws IOException, SQLException {
 		if (subjectName == null || subjectName.isBlank()) {
@@ -92,7 +138,11 @@ public final class LegacyQuestionMetadataImporter {
 				connection.commit();
 				return result;
 			} catch (SQLException | RuntimeException e) {
-				connection.rollback();
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
 				throw e;
 			}
 		}

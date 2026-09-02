@@ -56,6 +56,14 @@ public class Question {
 	 * The booklet is derived from the first region, so this constructor requires at
 	 * least one region. Questions created this way do not carry the legacy preamble
 	 * capture hint.
+	 *
+	 * @param id             the persistent question identifier
+	 * @param exam           the exam containing every supplied region
+	 * @param questionCode   the non-blank question identifier
+	 * @param questionText   supplementary text, which may be blank
+	 * @param marks          the positive mark value
+	 * @param regions        one or more source regions in assembly order
+	 * @param classification the syllabus subtopic or descriptor
 	 */
 	public Question(long id, Exam exam, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification) {
@@ -72,6 +80,7 @@ public class Question {
 	 * @param booklet                 the booklet containing the question
 	 * @param questionCode            the question or part-question identifier
 	 * @param questionText            supplementary searchable or transcribed text
+	 * @param marks                   the positive mark value
 	 * @param regions                 zero or more source regions in assembly order
 	 * @param classification          the syllabus subtopic or descriptor
 	 * @param preambleCaptureRequired whether legacy metadata indicates that shared
@@ -125,10 +134,21 @@ public class Question {
 		this.preambleCaptureRequired = preambleCaptureRequired;
 	}
 
+	/**
+	 * Returns the associated answer, or {@code null} when none has been persisted.
+	 *
+	 * @return the answer, or {@code null}
+	 */
 	public Answer getAnswer() {
 		return answer;
 	}
 
+	/**
+	 * Returns the source booklet, including for metadata-only questions awaiting
+	 * region capture.
+	 *
+	 * @return the source booklet
+	 */
 	public ExamBooklet getBooklet() {
 		return booklet;
 	}
@@ -145,6 +165,11 @@ public class Question {
 		return id;
 	}
 
+	/**
+	 * Returns the positive mark value assigned to the question.
+	 *
+	 * @return the mark value
+	 */
 	public int getMarks() {
 		return marks;
 	}
@@ -165,6 +190,12 @@ public class Question {
 		return answer != null;
 	}
 
+	/**
+	 * Returns whether legacy metadata says shared or introductory material should
+	 * be included during subsequent region capture.
+	 *
+	 * @return {@code true} when the capture hint is present
+	 */
 	public boolean isPreambleCaptureRequired() {
 		return preambleCaptureRequired;
 	}

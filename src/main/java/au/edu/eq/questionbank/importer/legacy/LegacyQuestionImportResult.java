@@ -1,5 +1,12 @@
 package au.edu.eq.questionbank.importer.legacy;
 
+/**
+ * Counts produced by one atomic legacy question import.
+ *
+ * @param insertedQuestions newly inserted question rows
+ * @param existingQuestions compatible questions reused by the import
+ * @param insertedAnswers   newly inserted text answers
+ */
 public record LegacyQuestionImportResult(int insertedQuestions, int existingQuestions, int insertedAnswers) {
 
 	public LegacyQuestionImportResult {

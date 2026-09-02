@@ -19,6 +19,9 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 	private final List<Question> questions;
 	private long nextId = 1;
 
+	/**
+	 * Creates an empty repository.
+	 */
 	public InMemoryQuestionRepository() {
 		questions = new ArrayList<Question>();
 	}

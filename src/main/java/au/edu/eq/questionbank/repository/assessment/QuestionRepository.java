@@ -20,6 +20,12 @@ public interface QuestionRepository {
 	 * @param questionId the persistent question identifier
 	 * @param regions    one or more source regions in extraction order
 	 * @return the updated question
+	 * @throws NullPointerException     if {@code regions} or an element is
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if the question is absent, already has
+	 *                                  regions, or a region belongs to another
+	 *                                  booklet
+	 * @throws IllegalStateException    if the repository cannot persist the update
 	 */
 	Question attachRegions(long questionId, List<QuestionRegion> regions);
 
@@ -41,11 +47,14 @@ public interface QuestionRepository {
 	/**
 	 * Stores a classified question and its ordered source regions.
 	 *
-	 * @param exam           the exam containing the question
+	 * @param booklet        the booklet containing the question
 	 * @param questionCode   the non-blank question label
 	 * @param questionText   supplementary question text, which may be blank
-	 * @param regions        source regions in extraction order
+	 * @param marks          the positive mark value
+	 * @param regions        zero or more source regions in extraction order
 	 * @param classification the question's syllabus subtopic or descriptor
+	 * @param preambleCaptureRequired whether shared or introductory material must
+	 *                                be included during later capture
 	 * @return the stored question with its persistent identifier
 	 * @throws NullPointerException     if a required object is {@code null}
 	 * @throws IllegalArgumentException if the question metadata or relationships

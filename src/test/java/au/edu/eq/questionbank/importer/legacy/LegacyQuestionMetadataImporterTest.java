@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 
@@ -119,6 +120,21 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void findsEveryRequiredBookletWhenNoneArePresent() throws Exception {
+		Fixture fixture = createFixture("no-booklets.db", false);
+		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("DELETE FROM exam_booklets");
+		}
+
+		List<LegacyBookletRequirement> missing = new LegacyQuestionMetadataImporter(fixture.database())
+				.findMissingBooklets(fixture.workbookPath(), "Chemistry", "2019");
+
+		assertEquals(2, missing.size());
+		assertTrue(missing.contains(new LegacyBookletRequirement("QCAA", 2020, "MCQ booklet")));
+		assertTrue(missing.contains(new LegacyBookletRequirement("QCAA", 2020, "Paper 1")));
+	}
+
+	@Test
 	void importsLegacyMetadataWithoutCreatingQuestionRegions() throws Exception {
 		Fixture fixture = createFixture("import.db", false);
 		LegacyQuestionImportResult result = new LegacyQuestionMetadataImporter(fixture.database())
@@ -178,6 +194,51 @@ class LegacyQuestionMetadataImporterTest {
 				Statement statement = connection.createStatement()) {
 			assertEquals(2, countRows(statement, "questions"));
 			assertEquals(1, countRows(statement, "answers"));
+		}
+	}
+
+	@Test
+	void conflictingExistingQuestionPreventsAnyNewRows() throws Exception {
+		Fixture fixture = createFixture("existing-conflict.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DELETE FROM answers");
+			statement.execute("DELETE FROM questions WHERE question_code = '1'");
+			statement.execute("UPDATE questions SET marks = 4 WHERE question_code = '21a'");
+		}
+
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
+
+		assertTrue(exception.getMessage().contains("Existing marks conflict"));
+		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+			assertEquals(1, countRows(statement, "questions"));
+			assertEquals(0, countRows(statement, "answers"));
+		}
+	}
+
+	@Test
+	void databaseFailureRollsBackEarlierQuestionAndAnswerInserts() throws Exception {
+		Fixture fixture = createFixture("transaction-rollback.db", false);
+		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_second_legacy_question
+					BEFORE INSERT ON questions
+					WHEN NEW.question_code = '21a'
+					BEGIN
+					    SELECT RAISE(ABORT, 'deliberate legacy import failure');
+					END
+					""");
+		}
+
+		assertThrows(SQLException.class,
+				() -> new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(),
+						"Chemistry", "2019"));
+
+		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+			assertEquals(0, countRows(statement, "questions"));
+			assertEquals(0, countRows(statement, "answers"));
 		}
 	}
 

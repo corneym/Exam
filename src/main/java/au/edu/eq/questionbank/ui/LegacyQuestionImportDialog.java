@@ -20,6 +20,10 @@ import javafx.scene.layout.HBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
+/**
+ * Collects the subject, historical syllabus version, and workbook for a legacy
+ * question metadata import.
+ */
 public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 
 	private final CurriculumRepository curriculumRepository;
@@ -28,6 +32,13 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	private final TextField fileField = new TextField();
 	private Path selectedFile;
 
+	/**
+	 * Creates a legacy import dialog backed by the available persisted curriculum.
+	 *
+	 * @param owner                the owning window
+	 * @param curriculumRepository source of subjects and syllabus versions
+	 * @throws NullPointerException if {@code curriculumRepository} is {@code null}
+	 */
 	public LegacyQuestionImportDialog(Window owner, CurriculumRepository curriculumRepository) {
 		if (curriculumRepository == null) {
 			throw new NullPointerException("curriculumRepository");
@@ -76,14 +87,29 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		});
 	}
 
+	/**
+	 * Returns the selected workbook, or {@code null} before a valid selection.
+	 *
+	 * @return the selected workbook path, or {@code null}
+	 */
 	public Path getSelectedFile() {
 		return selectedFile;
 	}
 
+	/**
+	 * Returns the selected subject, or {@code null} before selection.
+	 *
+	 * @return the selected subject, or {@code null}
+	 */
 	public Subject getSelectedSubject() {
 		return subjectBox.getValue();
 	}
 
+	/**
+	 * Returns the explicitly selected source syllabus version.
+	 *
+	 * @return the selected syllabus version, or {@code null} before selection
+	 */
 	public SyllabusVersion getSelectedSyllabusVersion() {
 		return syllabusBox.getValue();
 	}

@@ -38,6 +38,14 @@ class SqliteConnectionTest {
 		}
 	}
 
+	private void replaceQuestionsTable(SqliteDatabase database, String createTableSql) throws Exception {
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("PRAGMA foreign_keys = OFF");
+			statement.execute("DROP TABLE questions");
+			statement.execute(createTableSql);
+		}
+	}
+
 	@Test
 	void createsNewDatabaseAtLatestSchemaVersion() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
@@ -91,6 +99,52 @@ class SqliteConnectionTest {
 			assertEquals("Chemistry", result.getString("subject_name"));
 			assertFalse(result.next());
 		}
+	}
+
+	@Test
+	void rejectsVersionFourQuestionTableMissingMarks() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-marks.db"));
+		database.initialiseSchema();
+		replaceQuestionsTable(database, """
+				CREATE TABLE questions (
+				    id INTEGER PRIMARY KEY,
+				    booklet_id INTEGER NOT NULL,
+				    classification_node_id INTEGER NOT NULL,
+				    question_code TEXT NOT NULL,
+				    question_text TEXT NOT NULL,
+				    preamble_capture_required INTEGER NOT NULL,
+				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
+				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id),
+				    UNIQUE (booklet_id, question_code)
+				)
+				""");
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing required column marks"));
+	}
+
+	@Test
+	void rejectsVersionFourQuestionTableWithoutItsNaturalKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-natural-key.db"));
+		database.initialiseSchema();
+		replaceQuestionsTable(database, """
+				CREATE TABLE questions (
+				    id INTEGER PRIMARY KEY,
+				    booklet_id INTEGER NOT NULL,
+				    classification_node_id INTEGER NOT NULL,
+				    question_code TEXT NOT NULL,
+				    question_text TEXT NOT NULL,
+				    marks INTEGER NOT NULL,
+				    preamble_capture_required INTEGER NOT NULL,
+				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
+				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id)
+				)
+				""");
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing exact unique key"));
 	}
 
 	@Test

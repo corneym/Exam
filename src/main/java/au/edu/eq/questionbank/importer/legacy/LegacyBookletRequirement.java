@@ -3,6 +3,10 @@ package au.edu.eq.questionbank.importer.legacy;
 /**
  * One exam booklet required by a legacy question workbook but not currently
  * present in the database.
+ *
+ * @param providerName the examination provider named by the worksheet
+ * @param year         the examination year
+ * @param bookletName  the normalised booklet name used by the application
  */
 public record LegacyBookletRequirement(String providerName, int year, String bookletName) {
 

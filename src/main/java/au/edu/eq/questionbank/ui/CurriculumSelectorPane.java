@@ -136,6 +136,14 @@ public class CurriculumSelectorPane extends VBox {
 		}
 	}
 
+	/**
+	 * Selects the subject, syllabus, unit, topic, and final classification path for
+	 * an existing question.
+	 *
+	 * @param classification the subtopic or descriptor to display
+	 * @throws NullPointerException     if {@code classification} is {@code null}
+	 * @throws IllegalArgumentException if it does not have a valid unit/topic path
+	 */
 	public void selectClassificationPath(CurriculumNode classification) {
 		if (classification == null) {
 			throw new NullPointerException("classification");

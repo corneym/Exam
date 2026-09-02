@@ -98,6 +98,20 @@ class PdfStoreTest {
 		PdfStore store = new PdfStore(pdfRoot);
 
 		assertThrows(FileAlreadyExistsException.class, () -> store.importExamPdf(source, "Chemistry", "QCAA", 2020));
+		assertTrue(Files.notExists(existing.getParent().resolve("paper1 (2).pdf")));
+	}
+
+	@Test
+	void rejectsMissingOrNonFilePdfSources() throws Exception {
+		PdfStore store = new PdfStore(tempDir.resolve("pdf"));
+		Path missing = tempDir.resolve("missing.pdf");
+		Path directory = tempDir.resolve("directory.pdf");
+		Files.createDirectories(directory);
+
+		assertThrows(java.io.IOException.class,
+				() -> store.importExamPdf(missing, "Chemistry", "QCAA", 2020));
+		assertThrows(java.io.IOException.class,
+				() -> store.importExamPdf(directory, "Chemistry", "QCAA", 2020));
 	}
 
 	@Test

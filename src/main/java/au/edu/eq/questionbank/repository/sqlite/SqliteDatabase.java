@@ -8,7 +8,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Owns the SQLite database location, initialises the question-bank schema, and
@@ -56,6 +59,10 @@ public final class SqliteDatabase {
 	 * @throws SQLException if the schema cannot be created, the version information
 	 *                      is invalid, or the database is newer than the
 	 *                      application
+	 * @throws IncompatibleDatabaseException if a version-three database contains
+	 *                                       disposable development question data
+	 *                                       for which no lossless v4 migration is
+	 *                                       defined
 	 */
 	public void initialiseSchema() throws SQLException {
 		try (Connection connection = openConnection()) {
@@ -162,10 +169,10 @@ public final class SqliteDatabase {
 		verifySchema(connection, expectedVersion);
 	}
 
-	private int foreignKeyColumnCount(Connection connection, int foreignKeyId) throws SQLException {
+	private int foreignKeyColumnCount(Connection connection, String tableName, int foreignKeyId) throws SQLException {
 		int count = 0;
 		try (Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(curriculum_mapping_reviews)")) {
+				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(" + tableName + ")")) {
 			while (result.next()) {
 				if (result.getInt("id") == foreignKeyId) {
 					count++;
@@ -175,10 +182,10 @@ public final class SqliteDatabase {
 		return count;
 	}
 
-	private boolean hasExactSingleColumnForeignKey(Connection connection, String fromColumn, String targetTable,
-			String targetColumn) throws SQLException {
+	private boolean hasExactSingleColumnForeignKey(Connection connection, String tableName, String fromColumn,
+			String targetTable, String targetColumn) throws SQLException {
 		try (Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(curriculum_mapping_reviews)")) {
+				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(" + tableName + ")")) {
 			while (result.next()) {
 				if (result.getInt("seq") != 0 || !fromColumn.equals(result.getString("from"))
 						|| !targetTable.equals(result.getString("table"))
@@ -186,7 +193,31 @@ public final class SqliteDatabase {
 					continue;
 				}
 				int foreignKeyId = result.getInt("id");
-				if (foreignKeyColumnCount(connection, foreignKeyId) == 1) {
+				if (foreignKeyColumnCount(connection, tableName, foreignKeyId) == 1) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private boolean hasExactUniqueIndex(Connection connection, String tableName, List<String> expectedColumns)
+			throws SQLException {
+		try (Statement statement = connection.createStatement();
+				ResultSet indexes = statement.executeQuery("PRAGMA index_list(" + tableName + ")")) {
+			while (indexes.next()) {
+				if (indexes.getInt("unique") == 0) {
+					continue;
+				}
+				String indexName = indexes.getString("name").replace("'", "''");
+				List<String> actualColumns = new ArrayList<>();
+				try (Statement indexStatement = connection.createStatement();
+						ResultSet columns = indexStatement.executeQuery("PRAGMA index_info('" + indexName + "')")) {
+					while (columns.next()) {
+						actualColumns.add(columns.getString("name"));
+					}
+				}
+				if (actualColumns.equals(expectedColumns)) {
 					return true;
 				}
 			}
@@ -265,11 +296,13 @@ public final class SqliteDatabase {
 	}
 
 	private void verifyCurriculumMappingReviewForeignKeys(Connection connection) throws SQLException {
-		if (!hasExactSingleColumnForeignKey(connection, "source_node_id", "curriculum_nodes", "id")) {
+		if (!hasExactSingleColumnForeignKey(connection, "curriculum_mapping_reviews", "source_node_id",
+				"curriculum_nodes", "id")) {
 			throw new SQLException(
 					"curriculum_mapping_reviews is missing exact foreign key source_node_id -> curriculum_nodes(id)");
 		}
-		if (!hasExactSingleColumnForeignKey(connection, "target_syllabus_version_id", "syllabus_versions", "id")) {
+		if (!hasExactSingleColumnForeignKey(connection, "curriculum_mapping_reviews", "target_syllabus_version_id",
+				"syllabus_versions", "id")) {
 			throw new SQLException(
 					"curriculum_mapping_reviews is missing exact foreign key target_syllabus_version_id -> syllabus_versions(id)");
 		}
@@ -320,6 +353,49 @@ public final class SqliteDatabase {
 		verifyCurriculumMappingReviewForeignKeys(connection);
 	}
 
+	private void verifyVersionFourQuestionSchema(Connection connection) throws SQLException {
+		Set<String> requiredColumns = new HashSet<>(List.of("id", "booklet_id", "classification_node_id",
+				"question_code", "question_text", "marks", "preamble_capture_required"));
+		int primaryKeyColumnCount = 0;
+		int idPrimaryKeyPosition = 0;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				requiredColumns.remove(columnName);
+				int primaryKeyPosition = result.getInt("pk");
+				if (primaryKeyPosition > 0) {
+					primaryKeyColumnCount++;
+				}
+				if ("id".equals(columnName)) {
+					idPrimaryKeyPosition = primaryKeyPosition;
+				} else if (("booklet_id".equals(columnName) || "classification_node_id".equals(columnName)
+						|| "question_code".equals(columnName) || "question_text".equals(columnName)
+						|| "marks".equals(columnName) || "preamble_capture_required".equals(columnName))
+						&& result.getInt("notnull") == 0) {
+					throw new SQLException("questions column must be NOT NULL: " + columnName);
+				}
+			}
+		}
+		if (!requiredColumns.isEmpty()) {
+			throw new SQLException("questions is missing required column " + requiredColumns.iterator().next());
+		}
+		if (primaryKeyColumnCount != 1 || idPrimaryKeyPosition != 1) {
+			throw new SQLException("questions has an invalid primary key; expected exactly (id)");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "questions", "booklet_id", "exam_booklets", "id")) {
+			throw new SQLException("questions is missing exact foreign key booklet_id -> exam_booklets(id)");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "questions", "classification_node_id", "curriculum_nodes",
+				"id")) {
+			throw new SQLException(
+					"questions is missing exact foreign key classification_node_id -> curriculum_nodes(id)");
+		}
+		if (!hasExactUniqueIndex(connection, "questions", List.of("booklet_id", "question_code"))) {
+			throw new SQLException("questions is missing exact unique key (booklet_id, question_code)");
+		}
+	}
+
 	private void verifySchema(Connection connection, int version) throws SQLException {
 		for (String tableName : VERSION_ONE_TABLES) {
 			if (!tableExists(connection, tableName)) {
@@ -337,6 +413,9 @@ public final class SqliteDatabase {
 						"Database schema version " + version + " is missing required table curriculum_mapping_reviews");
 			}
 			verifyCurriculumMappingReviewSchema(connection);
+		}
+		if (version >= 4) {
+			verifyVersionFourQuestionSchema(connection);
 		}
 	}
 

@@ -32,6 +32,18 @@ public final class SqliteQuestionWriter {
 		this.database = database;
 	}
 
+	/**
+	 * Atomically attaches ordered regions to a persisted question that currently
+	 * has none.
+	 *
+	 * @param questionId the positive persistent question identifier
+	 * @param regions    one or more regions from the question's booklet
+	 * @throws SQLException             if the transaction fails
+	 * @throws NullPointerException     if {@code regions} or an element is
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if the question is absent, already has
+	 *                                  regions, or the regions use another booklet
+	 */
 	public void attachRegions(long questionId, List<QuestionRegion> regions) throws SQLException {
 		if (questionId < 1) {
 			throw new IllegalArgumentException("questionId must be positive");
@@ -42,7 +54,11 @@ public final class SqliteQuestionWriter {
 		if (regions.isEmpty()) {
 			throw new IllegalArgumentException("regions must not be empty");
 		}
-		ExamBooklet booklet = regions.getFirst().booklet();
+		QuestionRegion firstRegion = regions.getFirst();
+		if (firstRegion == null) {
+			throw new NullPointerException("regions contains null");
+		}
+		ExamBooklet booklet = firstRegion.booklet();
 		for (QuestionRegion region : regions) {
 			if (region == null) {
 				throw new NullPointerException("regions contains null");
@@ -58,7 +74,11 @@ public final class SqliteQuestionWriter {
 				insertRegions(connection, questionId, regions);
 				connection.commit();
 			} catch (SQLException | RuntimeException e) {
-				connection.rollback();
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
 				throw e;
 			}
 		}
@@ -67,11 +87,14 @@ public final class SqliteQuestionWriter {
 	/**
 	 * Stores a classified question and all of its regions atomically.
 	 *
-	 * @param exam           the exam containing the question
+	 * @param booklet        the booklet containing the question
 	 * @param questionCode   the non-blank question label
 	 * @param questionText   supplementary text, which may be blank
-	 * @param regions        source regions in extraction order
+	 * @param marks          the positive mark value
+	 * @param regions        zero or more source regions in extraction order
 	 * @param classification the question's syllabus subtopic or descriptor
+	 * @param preambleCaptureRequired whether shared or introductory material must
+	 *                                be included during later capture
 	 * @return the stored question with its generated identifier
 	 * @throws SQLException             if the transaction cannot be completed
 	 * @throws NullPointerException     if a required object is {@code null}
@@ -109,7 +132,11 @@ public final class SqliteQuestionWriter {
 				connection.commit();
 				return question;
 			} catch (SQLException | RuntimeException e) {
-				connection.rollback();
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
 				throw e;
 			}
 		}

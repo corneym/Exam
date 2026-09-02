@@ -33,7 +33,10 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	/**
 	 * Creates a curriculum-import dialog owned by the supplied window.
 	 *
-	 * @param owner the window that owns the modal dialog
+	 * @param owner              the window that owns the modal dialog
+	 * @param curriculumDataRoot the configured directory from which curriculum
+	 *                           workbooks may be selected
+	 * @throws NullPointerException if {@code curriculumDataRoot} is {@code null}
 	 */
 	public CurriculumImportDialog(Window owner, Path curriculumDataRoot) {
 		if (curriculumDataRoot == null) {
