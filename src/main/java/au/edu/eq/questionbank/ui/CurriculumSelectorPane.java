@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.ui;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -130,6 +131,52 @@ public class CurriculumSelectorPane extends VBox {
 			selectAvailableValue(classificationBox, selectedClassification);
 			model.selectClassification(classificationBox.getValue());
 			classificationBox.setDisable(model.getTopic() == null);
+		} finally {
+			refreshingSubjects = false;
+		}
+	}
+
+	public void selectClassificationPath(CurriculumNode classification) {
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+		CurriculumNode topic = classification.getParent();
+		if (topic != null && topic.getLevel() == CurriculumLevel.SUBTOPIC) {
+			topic = topic.getParent();
+		}
+		if (topic == null || topic.getLevel() != CurriculumLevel.TOPIC) {
+			throw new IllegalArgumentException("Classification does not belong beneath a topic");
+		}
+		CurriculumNode unit = topic.getParent();
+		if (unit == null || unit.getLevel() != CurriculumLevel.UNIT) {
+			throw new IllegalArgumentException("Classification topic does not belong to a unit");
+		}
+
+		selectSubject(classification.getSyllabusVersion().getSubject());
+
+		refreshingSubjects = true;
+		try {
+			SyllabusVersion syllabusVersion = classification.getSyllabusVersion();
+			selectAvailableValue(syllabusBox, syllabusVersion);
+			model.selectSyllabusVersion(syllabusBox.getValue());
+
+			unitBox.getItems().setAll(model.getUnits());
+			selectAvailableValue(unitBox, unit);
+			model.selectUnit(unitBox.getValue());
+			unitBox.setDisable(false);
+
+			topicBox.getItems().setAll(model.getTopics());
+			selectAvailableValue(topicBox, topic);
+			model.selectTopic(topicBox.getValue());
+			topicBox.setDisable(false);
+
+			classificationBox.getItems().setAll(model.getClassifications());
+			if (!classificationBox.getItems().contains(classification)) {
+				classificationBox.getItems().add(classification);
+			}
+			classificationBox.setValue(classification);
+			model.selectClassification(classification);
+			classificationBox.setDisable(false);
 		} finally {
 			refreshingSubjects = false;
 		}

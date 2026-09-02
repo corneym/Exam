@@ -293,6 +293,7 @@ public class QuestionBankApplication extends Application {
 			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
 					subject.getName(), syllabusVersion.getName());
 			answerCapturePane.refreshUnansweredQuestions();
+			questionCapturePane.refreshImportedQuestions();
 			String message = """
 					Questions imported: %d
 					Questions already present: %d
@@ -405,6 +406,9 @@ public class QuestionBankApplication extends Application {
 		}
 		try {
 			Path dataRoot = dialog.getDataRoot();
+			if (dataRoot.equals(config.dataRoot())) {
+				return;
+			}
 			ApplicationConfig.saveDataRoot(PROPERTIES_FILE, dataRoot);
 			showAlert(Alert.AlertType.INFORMATION, "Options", "Options saved.",
 					"The new data location will be used after the application is restarted.");

@@ -14,6 +14,16 @@ import au.edu.eq.questionbank.model.QuestionRegion;
 public interface QuestionRepository {
 
 	/**
+	 * Attaches captured source regions to an existing question that currently has
+	 * no regions.
+	 *
+	 * @param questionId the persistent question identifier
+	 * @param regions    one or more source regions in extraction order
+	 * @return the updated question
+	 */
+	Question attachRegions(long questionId, List<QuestionRegion> regions);
+
+	/**
 	 * Returns all stored questions in repository-defined order.
 	 *
 	 * @return the stored questions

@@ -51,6 +51,17 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 	}
 
 	@Override
+	public Question attachRegions(long questionId, List<QuestionRegion> regions) {
+		try {
+			writer.attachRegions(questionId, regions);
+			return findById(questionId)
+					.orElseThrow(() -> new IllegalStateException("Question disappeared after attaching regions"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not attach question regions", e);
+		}
+	}
+
+	@Override
 	public List<Question> findAll() {
 
 		List<Long> questionIds = new ArrayList<>();

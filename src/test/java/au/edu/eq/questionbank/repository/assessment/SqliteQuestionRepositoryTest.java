@@ -61,6 +61,49 @@ class SqliteQuestionRepositoryTest {
 	}
 
 	@Test
+	void attachesRegionsToImportedQuestion() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("attach-imported-regions.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
+				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question imported = repository.save(booklet, "21a", "", 3, List.of(), subtopic, true);
+
+		List<QuestionRegion> regions = List.of(new QuestionRegion(booklet, 4, 0.10, 0.20, 0.60, 0.15),
+				new QuestionRegion(booklet, 4, 0.10, 0.40, 0.60, 0.20));
+
+		Question updated = repository.attachRegions(imported.getId(), regions);
+
+		assertEquals(imported.getId(), updated.getId());
+		assertEquals("21a", updated.getQuestionCode());
+		assertEquals(3, updated.getMarks());
+		assertTrue(updated.isPreambleCaptureRequired());
+		assertEquals(2, updated.getRegions().size());
+		assertEquals(4, updated.getRegions().get(0).pageNumber());
+
+		Question reloaded = new SqliteQuestionRepository(database).findById(imported.getId()).orElseThrow();
+		assertEquals(2, reloaded.getRegions().size());
+		assertTrue(reloaded.isPreambleCaptureRequired());
+	}
+
+	@Test
+	void rejectsAttachingRegionsToQuestionThatAlreadyHasRegions() throws Exception {
+		ReconstructionFixture fixture = createReconstructionFixture("already-captured-question.db");
+		Question question = fixture.question();
+
+		assertThrows(IllegalArgumentException.class,
+				() -> new SqliteQuestionRepository(fixture.database()).attachRegions(question.getId(),
+						List.of(new QuestionRegion(question.getBooklet(), 2, 0.10, 0.10, 0.50, 0.20))));
+	}
+
+	@Test
 	void rejectsPersistedAnswerRegionWhoseFileBelongsToAnotherExam() throws Exception {
 		ReconstructionFixture fixture = createReconstructionFixture("invalid-answer-reconstruction.db");
 		try (Connection connection = fixture.database().openConnection();

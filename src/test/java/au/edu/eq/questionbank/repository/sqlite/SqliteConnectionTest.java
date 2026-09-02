@@ -199,50 +199,6 @@ class SqliteConnectionTest {
 
 	@Test
 	void migratesEmptyVersionThreeDatabaseToVersionFour() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-three-to-four.db"));
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			connection.commit();
-		}
-
-		database.initialiseSchema();
-
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			try (ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
-				assertTrue(result.next());
-				assertEquals(4, result.getInt("version"));
-				assertFalse(result.next());
-			}
-			boolean hasBookletId = false;
-			boolean hasMarks = false;
-			boolean hasPreambleCaptureRequired = false;
-			boolean hasExamId = false;
-			try (ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
-				while (result.next()) {
-					String columnName = result.getString("name");
-					if ("booklet_id".equals(columnName)) {
-						hasBookletId = true;
-					} else if ("marks".equals(columnName)) {
-						hasMarks = true;
-					} else if ("preamble_capture_required".equals(columnName)) {
-						hasPreambleCaptureRequired = true;
-					} else if ("exam_id".equals(columnName)) {
-						hasExamId = true;
-					}
-				}
-			}
-			assertTrue(hasBookletId);
-			assertTrue(hasMarks);
-			assertTrue(hasPreambleCaptureRequired);
-			assertFalse(hasExamId);
-		}
-	}
-
-	@Test
-	void migratesEmptyVersionThreeDatabaseToVersionFour() throws Exception {
 		Path databasePath = tempDir.resolve("version-three-to-four.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection connection = database.openConnection()) {

@@ -32,6 +32,38 @@ public final class SqliteQuestionWriter {
 		this.database = database;
 	}
 
+	public void attachRegions(long questionId, List<QuestionRegion> regions) throws SQLException {
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("regions must not be empty");
+		}
+		ExamBooklet booklet = regions.getFirst().booklet();
+		for (QuestionRegion region : regions) {
+			if (region == null) {
+				throw new NullPointerException("regions contains null");
+			}
+			if (region.booklet().getId() != booklet.getId()) {
+				throw new IllegalArgumentException("All question regions must belong to the same booklet");
+			}
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				verifyQuestionCanAcceptRegions(connection, questionId, booklet);
+				insertRegions(connection, questionId, regions);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				connection.rollback();
+				throw e;
+			}
+		}
+	}
+
 	/**
 	 * Stores a classified question and all of its regions atomically.
 	 *
@@ -139,6 +171,33 @@ public final class SqliteQuestionWriter {
 				statement.setDouble(7, region.width());
 				statement.setDouble(8, region.height());
 				statement.executeUpdate();
+			}
+		}
+	}
+
+	private void verifyQuestionCanAcceptRegions(Connection connection, long questionId, ExamBooklet booklet)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    q.booklet_id,
+				    COUNT(qr.question_id) AS region_count
+				FROM questions q
+				LEFT JOIN question_regions qr
+				    ON qr.question_id = q.id
+				WHERE q.id = ?
+				GROUP BY q.id, q.booklet_id
+				""")) {
+			statement.setLong(1, questionId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Question does not exist: " + questionId);
+				}
+				if (result.getLong("booklet_id") != booklet.getId()) {
+					throw new IllegalArgumentException("Question regions must belong to the question's booklet");
+				}
+				if (result.getInt("region_count") != 0) {
+					throw new IllegalArgumentException("Question already has captured regions");
+				}
 			}
 		}
 	}
