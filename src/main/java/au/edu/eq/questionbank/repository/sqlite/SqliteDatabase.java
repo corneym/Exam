@@ -16,7 +16,7 @@ import java.util.List;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 3;
+	private static final int LATEST_SCHEMA_VERSION = 4;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -215,6 +215,11 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v2-to-v3.sql", 3);
 			return 3;
 		}
+		if (version == 3) {
+			verifyVersionThreeCanBeMigrated(connection);
+			executeMigration(connection, "/db/migration-v3-to-v4.sql", 4);
+			return 4;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -332,6 +337,17 @@ public final class SqliteDatabase {
 						"Database schema version " + version + " is missing required table curriculum_mapping_reviews");
 			}
 			verifyCurriculumMappingReviewSchema(connection);
+		}
+	}
+
+	private void verifyVersionThreeCanBeMigrated(Connection connection) throws SQLException {
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM questions")) {
+			result.next();
+			if (result.getInt(1) > 0) {
+				throw new IncompatibleDatabaseException(
+						"The existing database contains question data that cannot be migrated safely.");
+			}
 		}
 	}
 }

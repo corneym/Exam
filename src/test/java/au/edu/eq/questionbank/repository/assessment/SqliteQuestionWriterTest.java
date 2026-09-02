@@ -1,9 +1,5 @@
 package au.edu.eq.questionbank.repository.assessment;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
-import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -26,6 +22,8 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteQuestionWriterTest {
 
@@ -50,7 +48,7 @@ class SqliteQuestionWriterTest {
 		List<QuestionRegion> regions = List.of(new QuestionRegion(booklet, 4, 0.10, 0.20, 0.50, 0.15),
 				new QuestionRegion(booklet, 5, 0.10, 0.10, 0.50, 0.20));
 		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
-		Question question = writer.insertQuestion(booklet.getExam(), "Q6", "", regions, subtopic);
+		Question question = writer.insertQuestion(booklet, "Q6", "", 3, regions, subtopic, false);
 		assertTrue(question.getId() > 0);
 		assertEquals("Q6", question.getQuestionCode());
 		assertEquals(2, question.getRegions().size());
@@ -91,9 +89,8 @@ class SqliteQuestionWriterTest {
 				"External Assessment", "Question booklet", "Chemistry/2025/questions.pdf");
 		QuestionRegion region = new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20);
 
-		assertThrows(IllegalArgumentException.class,
-				() -> new SqliteQuestionWriter(database).insertQuestion(booklet.getExam(), "Q1", "", List.of(region),
-						physicsSubtopic));
+		assertThrows(IllegalArgumentException.class, () -> new SqliteQuestionWriter(database).insertQuestion(booklet,
+				"Q1", "", 1, List.of(region), physicsSubtopic, false));
 
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();

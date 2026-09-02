@@ -18,7 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SqliteConnectionTest {
 
-	private static final int LATEST_SCHEMA_VERSION = 3;
+	private static final int LATEST_SCHEMA_VERSION = 4;
 
 	@TempDir
 	Path tempDir;
@@ -198,6 +198,50 @@ class SqliteConnectionTest {
 	}
 
 	@Test
+	void migratesEmptyVersionThreeDatabaseToVersionFour() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-three-to-four.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			connection.commit();
+		}
+
+		database.initialiseSchema();
+
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
+				assertTrue(result.next());
+				assertEquals(4, result.getInt("version"));
+				assertFalse(result.next());
+			}
+			boolean hasBookletId = false;
+			boolean hasMarks = false;
+			boolean hasPreambleCaptureRequired = false;
+			boolean hasExamId = false;
+			try (ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+				while (result.next()) {
+					String columnName = result.getString("name");
+					if ("booklet_id".equals(columnName)) {
+						hasBookletId = true;
+					} else if ("marks".equals(columnName)) {
+						hasMarks = true;
+					} else if ("preamble_capture_required".equals(columnName)) {
+						hasPreambleCaptureRequired = true;
+					} else if ("exam_id".equals(columnName)) {
+						hasExamId = true;
+					}
+				}
+			}
+			assertTrue(hasBookletId);
+			assertTrue(hasMarks);
+			assertTrue(hasPreambleCaptureRequired);
+			assertFalse(hasExamId);
+		}
+	}
+
+	@Test
 	void migratesVersionOneDatabaseToLatestVersionWithoutLosingData() throws Exception {
 		Path databasePath = tempDir.resolve("migration.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -319,6 +363,56 @@ class SqliteConnectionTest {
 		}
 
 		assertTrue(Files.exists(databasePath));
+	}
+
+	@Test
+	void rejectsCompositeSourceForeignKeyImpostor() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("composite-review-source-foreign-key.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL,
+					    source_syllabus_version_id INTEGER NOT NULL,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
+					    FOREIGN KEY (source_node_id, source_syllabus_version_id)
+					        REFERENCES curriculum_nodes(id, syllabus_version_id),
+					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
+					)
+					""");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing exact foreign key source_node_id"));
+	}
+
+	@Test
+	void rejectsCompositeTargetVersionForeignKeyImpostor() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("composite-review-target-foreign-key.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    target_subject_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
+					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id),
+					    FOREIGN KEY (target_syllabus_version_id, target_subject_id)
+					        REFERENCES syllabus_versions(id, subject_id)
+					)
+					""");
+		}
+
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+
+		assertTrue(exception.getMessage().contains("missing exact foreign key target_syllabus_version_id"));
 	}
 
 	@Test
@@ -541,26 +635,6 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionThreeReviewTableWithInvalidPrimaryKey() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("invalid-review-primary-key.db"));
-		database.initialiseSchema();
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("DROP TABLE curriculum_mapping_reviews");
-			statement.execute("""
-					CREATE TABLE curriculum_mapping_reviews (
-					    source_node_id INTEGER NOT NULL PRIMARY KEY,
-					    target_syllabus_version_id INTEGER NOT NULL,
-					    review_outcome TEXT NOT NULL,
-					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id),
-					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
-					)
-					""");
-		}
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-		assertTrue(exception.getMessage().contains("invalid primary key"));
-	}
-
-	@Test
 	void rejectsVersionThreeReviewTableWithExtraPrimaryKeyColumn() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("extra-review-primary-key-column.db"));
 		database.initialiseSchema();
@@ -582,6 +656,26 @@ class SqliteConnectionTest {
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
 
 		assertTrue(exception.getMessage().contains("expected exactly"));
+	}
+
+	@Test
+	void rejectsVersionThreeReviewTableWithInvalidPrimaryKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("invalid-review-primary-key.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE curriculum_mapping_reviews");
+			statement.execute("""
+					CREATE TABLE curriculum_mapping_reviews (
+					    source_node_id INTEGER NOT NULL PRIMARY KEY,
+					    target_syllabus_version_id INTEGER NOT NULL,
+					    review_outcome TEXT NOT NULL,
+					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id),
+					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
+					)
+					""");
+		}
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("invalid primary key"));
 	}
 
 	@Test
@@ -641,56 +735,6 @@ class SqliteConnectionTest {
 					""");
 		}
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-		assertTrue(exception.getMessage().contains("missing exact foreign key target_syllabus_version_id"));
-	}
-
-	@Test
-	void rejectsCompositeSourceForeignKeyImpostor() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("composite-review-source-foreign-key.db"));
-		database.initialiseSchema();
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("DROP TABLE curriculum_mapping_reviews");
-			statement.execute("""
-					CREATE TABLE curriculum_mapping_reviews (
-					    source_node_id INTEGER NOT NULL,
-					    source_syllabus_version_id INTEGER NOT NULL,
-					    target_syllabus_version_id INTEGER NOT NULL,
-					    review_outcome TEXT NOT NULL,
-					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
-					    FOREIGN KEY (source_node_id, source_syllabus_version_id)
-					        REFERENCES curriculum_nodes(id, syllabus_version_id),
-					    FOREIGN KEY (target_syllabus_version_id) REFERENCES syllabus_versions(id)
-					)
-					""");
-		}
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-		assertTrue(exception.getMessage().contains("missing exact foreign key source_node_id"));
-	}
-
-	@Test
-	void rejectsCompositeTargetVersionForeignKeyImpostor() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("composite-review-target-foreign-key.db"));
-		database.initialiseSchema();
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("DROP TABLE curriculum_mapping_reviews");
-			statement.execute("""
-					CREATE TABLE curriculum_mapping_reviews (
-					    source_node_id INTEGER NOT NULL,
-					    target_syllabus_version_id INTEGER NOT NULL,
-					    target_subject_id INTEGER NOT NULL,
-					    review_outcome TEXT NOT NULL,
-					    PRIMARY KEY (source_node_id, target_syllabus_version_id),
-					    FOREIGN KEY (source_node_id) REFERENCES curriculum_nodes(id),
-					    FOREIGN KEY (target_syllabus_version_id, target_subject_id)
-					        REFERENCES syllabus_versions(id, subject_id)
-					)
-					""");
-		}
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("missing exact foreign key target_syllabus_version_id"));
 	}
 
@@ -828,10 +872,14 @@ class SqliteConnectionTest {
 					""");
 			statement.execute("""
 					INSERT INTO questions
-					    (id, exam_id, classification_node_id,
-					     question_code, question_text)
+					    (id, booklet_id,
+					     classification_node_id,
+					     question_code,
+					     question_text,
+					     marks,
+					     preamble_capture_required)
 					VALUES
-					    (1, 1, 3, 'Q1', '')
+					    (1, 1, 3, 'Q1', '', 1, 0)
 					""");
 			statement.execute("""
 					INSERT INTO question_regions
@@ -1092,12 +1140,14 @@ class SqliteConnectionTest {
 
 			statement.execute("""
 					INSERT INTO questions
-					    (id, exam_id,
+					    (id, booklet_id,
 					     classification_node_id,
 					     question_code,
-					     question_text)
+					     question_text,
+					     marks,
+					     preamble_capture_required)
 					VALUES
-					    (1, 1, 3, 'Q6', '')
+					    (1, 1, 3, 'Q6', '', 3, 0)
 					""");
 
 			statement.execute("""

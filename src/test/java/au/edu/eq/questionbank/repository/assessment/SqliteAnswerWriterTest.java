@@ -1,9 +1,5 @@
 package au.edu.eq.questionbank.repository.assessment;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
-import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -30,6 +26,8 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteAnswerWriterTest {
 
@@ -61,8 +59,8 @@ class SqliteAnswerWriterTest {
 		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment",
 				"Question booklet", "Chemistry/2025/questions.pdf");
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
-		Question question = questionRepository.save(booklet.getExam(), "Q1", "",
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic);
+		Question question = questionRepository.save(booklet, "Q1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Answers",
 				"Chemistry/2025/answers.pdf");
@@ -112,12 +110,11 @@ class SqliteAnswerWriterTest {
 				"Question booklet", "Chemistry/2025/questions.pdf");
 		ExamBooklet otherBooklet = examImporter.importExam(chemistry, "QCAA", 2024, "External Assessment",
 				"Question booklet", "Chemistry/2024/questions.pdf");
-		Question question = new SqliteQuestionRepository(database).save(questionBooklet.getExam(), "Q1", "",
-				List.of(new QuestionRegion(questionBooklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic);
+		Question question = new SqliteQuestionRepository(database).save(questionBooklet, "Q1", "", 1,
+				List.of(new QuestionRegion(questionBooklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		Exam otherExam = otherBooklet.getExam();
-		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(otherExam, "Answers",
-				"Chemistry/2024/answers.pdf");
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(otherExam, "Answers", "Chemistry/2024/answers.pdf");
 		AnswerRegion wrongExamRegion = new AnswerRegion(answerFile, 1, 0.10, 0.10, 0.50, 0.20);
 
 		assertThrows(IllegalArgumentException.class,

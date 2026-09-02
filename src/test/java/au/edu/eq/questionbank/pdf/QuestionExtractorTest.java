@@ -114,7 +114,7 @@ class QuestionExtractorTest {
 	void combinesMultipleRegionsInQuestionOrder() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.BLUE));
 		Path output = tempDir.resolve("multiple-regions.png");
-		Question question = new Question(3, booklet.getExam(), "Q1", "A multi-page question.",
+		Question question = new Question(3, booklet.getExam(), "Q1", "A multi-page question.", 1,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0),
 						new QuestionRegion(booklet, 2, 0.0, 0.0, 1.0, 1.0)),
 				createClassification());
@@ -150,18 +150,6 @@ class QuestionExtractorTest {
 	}
 
 	@Test
-	void extractsProportionalCoordinatesFromARotatedPage() throws Exception {
-		Path pdf = createRotatedPdf(72, 144, 90, Color.GREEN);
-		Path output = tempDir.resolve("rotated-region.png");
-
-		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0.25, 0.0, 0.5, 1.0), output.toFile());
-
-		BufferedImage image = readImage(output);
-		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(150, image.getHeight()),
-				() -> assertEquals(Color.GREEN.getRGB(), image.getRGB(75, 75)));
-	}
-
-	@Test
 	void extractsARegionEndingAtTheRightAndBottomEdges() throws Exception {
 		Path pdf = createHorizontallySplitPdf(Color.RED, Color.BLUE);
 		Path output = tempDir.resolve("bottom-right.png");
@@ -174,10 +162,22 @@ class QuestionExtractorTest {
 	}
 
 	@Test
+	void extractsProportionalCoordinatesFromARotatedPage() throws Exception {
+		Path pdf = createRotatedPdf(72, 144, 90, Color.GREEN);
+		Path output = tempDir.resolve("rotated-region.png");
+
+		extractor.extractRegion(pdf, new QuestionRegion(booklet, 1, 0.25, 0.0, 0.5, 1.0), output.toFile());
+
+		BufferedImage image = readImage(output);
+		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(150, image.getHeight()),
+				() -> assertEquals(Color.GREEN.getRGB(), image.getRGB(75, 75)));
+	}
+
+	@Test
 	void padsNarrowerRegionsWithWhiteWhenCombining() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(36, 72, Color.BLUE));
 		Path output = tempDir.resolve("different-widths.png");
-		Question question = new Question(3, booklet.getExam(), "Q2", "Different widths",
+		Question question = new Question(3, booklet.getExam(), "Q2", "Different widths", 1,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0),
 						new QuestionRegion(booklet, 2, 0.0, 0.0, 1.0, 1.0)),
 				createClassification());

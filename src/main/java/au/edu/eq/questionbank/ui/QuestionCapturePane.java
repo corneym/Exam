@@ -41,6 +41,7 @@ final class QuestionCapturePane extends VBox {
 	private static final double REGION_PREVIEW_WIDTH = 290.0;
 	private static final double PREVIEW_IMAGE_WIDTH = 290.0;
 	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
+	private static final double MARKS_FIELD_WIDTH = 60.0;
 	private static final Insets PANEL_PADDING = new Insets(8);
 	private static final Insets COMPACT_BUTTON_PADDING = new Insets(2, 8, 2, 8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
@@ -55,6 +56,7 @@ final class QuestionCapturePane extends VBox {
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final Label saveStatusLabel = new Label();
 	private final TextField questionCodeField = new TextField();
+	private final TextField marksField = new TextField();
 	private final VBox regionPreviewBox = new VBox(SECTION_SPACING);
 	private final ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
 
@@ -179,6 +181,9 @@ final class QuestionCapturePane extends VBox {
 		questionCodeField.setId("question-code");
 		questionCodeField.setPromptText("Q1");
 		questionCodeField.setPrefWidth(QUESTION_CODE_FIELD_WIDTH);
+		marksField.setId("question-marks");
+		marksField.setPromptText("1");
+		marksField.setPrefWidth(MARKS_FIELD_WIDTH);
 		saveQuestionButton.setId("save-question");
 		saveStatusLabel.setId("question-save-status");
 		regionCountLabel.setId("question-region-count");
@@ -202,7 +207,8 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private HBox createQuestionControls() {
-		HBox controls = new HBox(CONTROL_SPACING, questionCodeField, saveQuestionButton);
+		HBox controls = new HBox(CONTROL_SPACING, questionCodeField, new Label("Marks"), marksField,
+				saveQuestionButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
 	}
@@ -225,9 +231,10 @@ final class QuestionCapturePane extends VBox {
 
 	private String findValidationError() {
 		return QuestionCaptureValidator.findError(new QuestionCaptureValidator.State(bookletSupplier.get() != null,
-				questionCodeField.getText().trim(), curriculumSelectionModel.getSubject() != null,
-				curriculumSelectionModel.getUnit() != null, curriculumSelectionModel.getTopic() != null,
-				curriculumSelectionModel.getClassification() != null, currentSelection != null, pendingRegions.size()));
+				questionCodeField.getText().trim(), marksField.getText().trim(),
+				curriculumSelectionModel.getSubject() != null, curriculumSelectionModel.getUnit() != null,
+				curriculumSelectionModel.getTopic() != null, curriculumSelectionModel.getClassification() != null,
+				currentSelection != null, pendingRegions.size()));
 	}
 
 	private void refreshRegionPreviews() {
@@ -247,17 +254,19 @@ final class QuestionCapturePane extends VBox {
 
 	private void resetQuestionEntry() {
 		questionCodeField.clear();
+		marksField.clear();
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
 	}
 
 	private void saveQuestion() {
 		ExamBooklet booklet = bookletSupplier.get();
-		Question question = questionRepository.save(booklet.getExam(), questionCodeField.getText().trim(), "",
-				pendingRegions, curriculumSelectionModel.getClassification());
+		int marks = Integer.parseInt(marksField.getText().trim());
+		Question question = questionRepository.save(booklet, questionCodeField.getText().trim(), "", marks,
+				pendingRegions, curriculumSelectionModel.getClassification(), false);
 		questionsChangedHandler.run();
-		saveStatusLabel.setText(
-				String.format("Saved %s (%d region(s))", question.getQuestionCode(), question.getRegions().size()));
+		saveStatusLabel.setText(String.format("Saved %s (%d mark(s), %d region(s))", question.getQuestionCode(),
+				question.getMarks(), question.getRegions().size()));
 		resetQuestionEntry();
 	}
 

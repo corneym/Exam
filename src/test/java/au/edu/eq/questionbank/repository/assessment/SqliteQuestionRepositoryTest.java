@@ -1,9 +1,5 @@
 package au.edu.eq.questionbank.repository.assessment;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
-import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -29,6 +25,8 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteQuestionRepositoryTest {
 	private record ReconstructionFixture(SqliteDatabase database, Question question, ExamBooklet otherBooklet,
@@ -54,105 +52,12 @@ class SqliteQuestionRepositoryTest {
 		ExamBooklet otherBooklet = examImporter.importExam(chemistry, "QCAA", 2024, "External Assessment",
 				"Question booklet", "Chemistry/2024/questions.pdf");
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-		Question question = repository.save(booklet.getExam(), "Q1", "",
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic);
+		Question question = repository.save(booklet, "Q1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		AnswerFile otherAnswerFile = answerWriter.findOrCreateAnswerFile(otherBooklet.getExam(), "Answers",
 				"Chemistry/2024/answers.pdf");
 		return new ReconstructionFixture(database, question, otherBooklet, otherAnswerFile);
-	}
-
-	@Test
-	void reloadsPersistedAnswer() throws Exception {
-		Path databasePath = tempDirectory.resolve("answers.db");
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		database.initialiseSchema();
-		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
-		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
-		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
-		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
-		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment",
-				"Question booklet", "Chemistry/2025/questions.pdf");
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-		Question question = repository.save(booklet.getExam(), "Q1", "",
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic);
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Answers",
-				"Chemistry/2025/answers.pdf");
-		answerWriter.insertAnswer(question, "B", List.of(new AnswerRegion(answerFile, 4, 0.10, 0.20, 0.40, 0.10)));
-		SqliteQuestionRepository secondRepository = new SqliteQuestionRepository(database);
-		Question loaded = secondRepository.findById(question.getId()).orElseThrow();
-		assertTrue(loaded.hasAnswer());
-		assertEquals("B", loaded.getAnswer().getAnswerText());
-		assertEquals(1, loaded.getAnswer().getRegions().size());
-		assertEquals(4, loaded.getAnswer().getRegions().getFirst().pageNumber());
-	}
-
-	@Test
-	void savesAndReloadsDescriptorClassification() throws Exception {
-		Path databasePath = tempDirectory.resolve("descriptor-classification.db");
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		database.initialiseSchema();
-		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
-		Subject psychology = curriculumWriter.insertSubject("Psychology");
-		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(psychology, "2025", true);
-		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
-		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
-		Descriptor descriptor = curriculumWriter.insertDescriptor(topic, "1.1.1", "Descriptor 1", 1);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-		ExamBooklet booklet = examImporter.importExam(psychology, "QCAA", 2025, "External Assessment",
-				"Question booklet", "Psychology/2025/questions.pdf");
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-		Question saved = repository.save(booklet.getExam(), "Q1", "",
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), descriptor);
-		SqliteDatabase reopenedDatabase = new SqliteDatabase(databasePath);
-		reopenedDatabase.initialiseSchema();
-		SqliteQuestionRepository secondRepository = new SqliteQuestionRepository(reopenedDatabase);
-		Question loaded = secondRepository.findById(saved.getId()).orElseThrow();
-		assertInstanceOf(Descriptor.class, loaded.getClassification());
-		assertEquals(descriptor.getId(), loaded.getClassification().getId());
-		assertEquals(CurriculumLevel.DESCRIPTOR, loaded.getClassification().getLevel());
-		assertInstanceOf(Topic.class, loaded.getClassification().getParent());
-		assertEquals(topic.getId(), loaded.getClassification().getParent().getId());
-		assertEquals(psychology, loaded.getClassification().getSyllabusVersion().getSubject());
-		assertEquals(CurriculumLevel.DESCRIPTOR,
-				secondRepository.findAll().getFirst().getClassification().getLevel());
-	}
-
-	@Test
-	void savesAndReloadsQuestion() throws Exception {
-		Path databasePath = tempDirectory.resolve("questionbank.db");
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		database.initialiseSchema();
-		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
-		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
-		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
-		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
-		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2019, "External Assessment", "Paper 1",
-				"Chemistry/2019/paper1.pdf");
-		List<QuestionRegion> regions = List.of(new QuestionRegion(booklet, 4, 0.10, 0.20, 0.50, 0.15),
-				new QuestionRegion(booklet, 5, 0.10, 0.10, 0.50, 0.20));
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-		Question saved = repository.save(booklet.getExam(), "Q6", "", regions, subtopic);
-		assertTrue(saved.getId() > 0);
-		SqliteQuestionRepository secondRepository = new SqliteQuestionRepository(database);
-		Question loaded = secondRepository.findById(saved.getId()).orElseThrow();
-		assertEquals(saved.getId(), loaded.getId());
-		assertEquals("Q6", loaded.getQuestionCode());
-		assertEquals(2, loaded.getRegions().size());
-		assertEquals(4, loaded.getRegions().get(0).pageNumber());
-		assertEquals(5, loaded.getRegions().get(1).pageNumber());
-		assertEquals(subtopic.getId(), loaded.getClassification().getId());
-		assertEquals(1, secondRepository.findAll().size());
 	}
 
 	@Test
@@ -188,5 +93,121 @@ class SqliteQuestionRepositoryTest {
 
 		assertThrows(IllegalStateException.class,
 				() -> new SqliteQuestionRepository(fixture.database()).findById(fixture.question().getId()));
+	}
+
+	@Test
+	void reloadsPersistedAnswer() throws Exception {
+		Path databasePath = tempDirectory.resolve("answers.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment",
+				"Question booklet", "Chemistry/2025/questions.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question question = repository.save(booklet, "Q1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Answers",
+				"Chemistry/2025/answers.pdf");
+		answerWriter.insertAnswer(question, "B", List.of(new AnswerRegion(answerFile, 4, 0.10, 0.20, 0.40, 0.10)));
+		SqliteQuestionRepository secondRepository = new SqliteQuestionRepository(database);
+		Question loaded = secondRepository.findById(question.getId()).orElseThrow();
+		assertTrue(loaded.hasAnswer());
+		assertEquals("B", loaded.getAnswer().getAnswerText());
+		assertEquals(1, loaded.getAnswer().getRegions().size());
+		assertEquals(4, loaded.getAnswer().getRegions().getFirst().pageNumber());
+	}
+
+	@Test
+	void savesAndReloadsDescriptorClassification() throws Exception {
+		Path databasePath = tempDirectory.resolve("descriptor-classification.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject psychology = curriculumWriter.insertSubject("Psychology");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(psychology, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Descriptor descriptor = curriculumWriter.insertDescriptor(topic, "1.1.1", "Descriptor 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(psychology, "QCAA", 2025, "External Assessment",
+				"Question booklet", "Psychology/2025/questions.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.save(booklet, "Q1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), descriptor, false);
+		SqliteDatabase reopenedDatabase = new SqliteDatabase(databasePath);
+		reopenedDatabase.initialiseSchema();
+		SqliteQuestionRepository secondRepository = new SqliteQuestionRepository(reopenedDatabase);
+		Question loaded = secondRepository.findById(saved.getId()).orElseThrow();
+		assertInstanceOf(Descriptor.class, loaded.getClassification());
+		assertEquals(descriptor.getId(), loaded.getClassification().getId());
+		assertEquals(CurriculumLevel.DESCRIPTOR, loaded.getClassification().getLevel());
+		assertInstanceOf(Topic.class, loaded.getClassification().getParent());
+		assertEquals(topic.getId(), loaded.getClassification().getParent().getId());
+		assertEquals(psychology, loaded.getClassification().getSyllabusVersion().getSubject());
+		assertEquals(CurriculumLevel.DESCRIPTOR, secondRepository.findAll().getFirst().getClassification().getLevel());
+	}
+
+	@Test
+	void savesAndReloadsImportedQuestionWithoutRegions() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("imported-question.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
+				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.save(booklet, "21a", "", 3, List.of(), subtopic, true);
+		Question loaded = repository.findById(saved.getId()).orElseThrow();
+		assertEquals(booklet.getId(), loaded.getBooklet().getId());
+		assertEquals(3, loaded.getMarks());
+		assertTrue(loaded.getRegions().isEmpty());
+		assertTrue(loaded.isPreambleCaptureRequired());
+	}
+
+	@Test
+	void savesAndReloadsQuestion() throws Exception {
+		Path databasePath = tempDirectory.resolve("questionbank.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2019, "External Assessment", "Paper 1",
+				"Chemistry/2019/paper1.pdf");
+		List<QuestionRegion> regions = List.of(new QuestionRegion(booklet, 4, 0.10, 0.20, 0.50, 0.15),
+				new QuestionRegion(booklet, 5, 0.10, 0.10, 0.50, 0.20));
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.save(booklet, "Q6", "", 3, regions, subtopic, false);
+		assertTrue(saved.getId() > 0);
+		SqliteQuestionRepository secondRepository = new SqliteQuestionRepository(database);
+		Question loaded = secondRepository.findById(saved.getId()).orElseThrow();
+		assertEquals(saved.getId(), loaded.getId());
+		assertEquals("Q6", loaded.getQuestionCode());
+		assertEquals(2, loaded.getRegions().size());
+		assertEquals(3, loaded.getMarks());
+		assertEquals(booklet.getId(), loaded.getBooklet().getId());
+		assertEquals(4, loaded.getRegions().get(0).pageNumber());
+		assertEquals(5, loaded.getRegions().get(1).pageNumber());
+		assertEquals(subtopic.getId(), loaded.getClassification().getId());
+		assertEquals(1, secondRepository.findAll().size());
 	}
 }

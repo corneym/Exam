@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
-import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 
@@ -19,9 +19,6 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 	private final List<Question> questions;
 	private long nextId = 1;
 
-	/**
-	 * Creates an empty repository.
-	 */
 	public InMemoryQuestionRepository() {
 		questions = new ArrayList<Question>();
 	}
@@ -42,9 +39,10 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 	}
 
 	@Override
-	public Question save(Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
-			CurriculumNode classification) {
-		Question question = new Question(nextId++, exam, questionCode, questionText, regions, classification);
+	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
+		Question question = new Question(nextId++, booklet, questionCode, questionText, marks, regions, classification,
+				preambleCaptureRequired);
 		questions.add(question);
 		return question;
 	}

@@ -10,24 +10,28 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
+import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
+import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
-import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingRepository;
-import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingReviewRepository;
-import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingRepository;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingReviewRepository;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumImporter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
-import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
-import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -103,7 +107,30 @@ public class QuestionBankApplication extends Application {
 			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
 			return;
 		}
-		startApplication(stage, config);
+		try {
+			startApplication(stage, config);
+		} catch (IncompatibleDatabaseException e) {
+			showStartupError("Database Upgrade Required", """
+					The existing question-bank database contains old development question data
+					that cannot be migrated safely to the current database format.
+
+					Delete the existing database and restart the application.
+
+					Database:
+					%s
+
+					You will need to re-import the curriculum and exam data afterwards.
+					""".formatted(config.databasePath()));
+		} catch (SQLException e) {
+			showStartupError("Database Error", """
+					The question-bank database could not be opened or upgraded.
+
+					Database:
+					%s
+
+					%s
+					""".formatted(config.databasePath(), e.getMessage()));
+		}
 	}
 
 	@Override
@@ -120,6 +147,13 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
+	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
+		Menu curriculumMenu = createMenu("_Curriculum");
+		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
+				createMenuItem("_Review Mappings...", () -> reviewCurriculumMappings(primaryStage, config)));
+		return curriculumMenu;
+	}
+
 	private CurriculumSelectorPane createCurriculumSelectorPane() {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
 		selectorPane.selectedSubjectProperty().addListener((observable, oldSubject, newSubject) -> {
@@ -128,58 +162,56 @@ public class QuestionBankApplication extends Application {
 		return selectorPane;
 	}
 
-	private MenuBar createMenuBar(Stage primaryStage, ApplicationConfig config) {
-		MenuBar menuBar = new MenuBar();
-		Menu fileMenu = new Menu("_File");
-		Menu openMenu = new Menu("_Open");
-		MenuItem openPdfItem = new MenuItem("_PDF...");
-		openPdfItem.setOnAction(event -> openViewerPdf(primaryStage, config));
-		openMenu.getItems().add(openPdfItem);
-		MenuItem closePdfItem = new MenuItem("_Close PDF");
-		closePdfItem.setOnAction(event -> closeViewerPdf());
-		MenuItem optionsItem = new MenuItem("Op_tions...");
-		optionsItem.setOnAction(event -> showOptions(primaryStage, config));
-		MenuItem exitItem = new MenuItem("E_xit");
-		exitItem.setOnAction(event -> Platform.exit());
-		fileMenu.getItems().addAll(openMenu, closePdfItem, new SeparatorMenuItem(), optionsItem,
-				new SeparatorMenuItem(), exitItem);
-		Menu examMenu = new Menu("_Exam");
-		MenuItem importExamItem = new MenuItem("_Import...");
-		importExamItem.setOnAction(event -> showExamImport());
-		examMenu.getItems().add(importExamItem);
-		Menu curriculumMenu = new Menu("_Curriculum");
-		MenuItem importCurriculumItem = new MenuItem("_Import...");
-		importCurriculumItem.setOnAction(event -> importCurriculum(primaryStage, config));
-		MenuItem mappingItem = new MenuItem("_Review Mappings...");
-		mappingItem.setOnAction(event -> reviewCurriculumMappings(primaryStage, config));
-		curriculumMenu.getItems().addAll(importCurriculumItem, mappingItem);
-		Menu exportMenu = new Menu("E_xport");
+	private Menu createExamMenu(Stage primaryStage, ApplicationConfig config) {
+		Menu examMenu = createMenu("_Exam");
+		examMenu.getItems().addAll(createMenuItem("_Import...", this::showExamImport), createMenuItem(
+				"Import _Legacy Question Metadata...", () -> importLegacyQuestionMetadata(primaryStage, config)));
+		return examMenu;
+	}
+
+	private Menu createExportMenu() {
+		Menu exportMenu = createMenu("E_xport");
 		MenuItem exportPlaceholder = new MenuItem("No export options yet");
 		exportPlaceholder.setDisable(true);
 		exportMenu.getItems().add(exportPlaceholder);
-		Menu helpMenu = new Menu("_Help");
-		MenuItem aboutItem = new MenuItem("_About...");
-		aboutItem.setOnAction(event -> showAbout());
-		MenuItem versionItem = new MenuItem("_Version Information...");
-		versionItem.setOnAction(event -> showVersionInformation(config));
-		helpMenu.getItems().addAll(aboutItem, versionItem);
-		menuBar.getMenus().addAll(fileMenu, examMenu, curriculumMenu, exportMenu, helpMenu);
-		openPdfItem.setMnemonicParsing(true);
-		closePdfItem.setMnemonicParsing(true);
-		optionsItem.setMnemonicParsing(true);
-		exitItem.setMnemonicParsing(true);
-		importExamItem.setMnemonicParsing(true);
-		importCurriculumItem.setMnemonicParsing(true);
-		mappingItem.setMnemonicParsing(true);
-		aboutItem.setMnemonicParsing(true);
-		versionItem.setMnemonicParsing(true);
-		fileMenu.setMnemonicParsing(true);
-		openMenu.setMnemonicParsing(true);
-		examMenu.setMnemonicParsing(true);
-		curriculumMenu.setMnemonicParsing(true);
-		exportMenu.setMnemonicParsing(true);
-		helpMenu.setMnemonicParsing(true);
+		return exportMenu;
+	}
+
+	private Menu createFileMenu(Stage primaryStage, ApplicationConfig config) {
+		Menu fileMenu = createMenu("_File");
+		Menu openMenu = createMenu("_Open");
+		openMenu.getItems().add(createMenuItem("_PDF...", () -> openViewerPdf(primaryStage, config)));
+		fileMenu.getItems().addAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
+				new SeparatorMenuItem(), createMenuItem("Op_tions...", () -> showOptions(primaryStage, config)),
+				new SeparatorMenuItem(), createMenuItem("E_xit", Platform::exit));
+		return fileMenu;
+	}
+
+	private Menu createHelpMenu(ApplicationConfig config) {
+		Menu helpMenu = createMenu("_Help");
+		helpMenu.getItems().addAll(createMenuItem("_About...", this::showAbout),
+				createMenuItem("_Version Information...", () -> showVersionInformation(config)));
+		return helpMenu;
+	}
+
+	private Menu createMenu(String text) {
+		Menu menu = new Menu(text);
+		menu.setMnemonicParsing(true);
+		return menu;
+	}
+
+	private MenuBar createMenuBar(Stage primaryStage, ApplicationConfig config) {
+		MenuBar menuBar = new MenuBar();
+		menuBar.getMenus().addAll(createFileMenu(primaryStage, config), createExamMenu(primaryStage, config),
+				createCurriculumMenu(primaryStage, config), createExportMenu(), createHelpMenu(config));
 		return menuBar;
+	}
+
+	private MenuItem createMenuItem(String text, Runnable action) {
+		MenuItem item = new MenuItem(text);
+		item.setOnAction(event -> action.run());
+		item.setMnemonicParsing(true);
+		return item;
 	}
 
 	private VBox createPreviewPane() {
@@ -243,6 +275,41 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not save the curriculum.", e.getMessage());
 		} catch (IllegalArgumentException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "The curriculum file is invalid.", e.getMessage());
+		}
+	}
+
+	private void importLegacyQuestionMetadata(Stage primaryStage, ApplicationConfig config) {
+		try {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+			LegacyQuestionImportDialog dialog = new LegacyQuestionImportDialog(primaryStage, curriculumRepository);
+			Optional<ButtonType> result = dialog.showAndWait();
+			if (result.isEmpty() || result.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+				return;
+			}
+			Subject subject = dialog.getSelectedSubject();
+			SyllabusVersion syllabusVersion = dialog.getSelectedSyllabusVersion();
+			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
+			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
+					subject.getName(), syllabusVersion.getName());
+			answerCapturePane.refreshUnansweredQuestions();
+			String message = """
+					Questions imported: %d
+					Questions already present: %d
+					Answers imported: %d
+					""".formatted(importResult.insertedQuestions(), importResult.existingQuestions(),
+					importResult.insertedAnswers());
+			showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy question metadata imported.",
+					message);
+		} catch (IOException e) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
+					e.getMessage());
+		} catch (SQLException e) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not save the question metadata.",
+					e.getMessage());
+		} catch (IllegalArgumentException | IllegalStateException e) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy question import failed.",
+					e.getMessage());
 		}
 	}
 

@@ -37,9 +37,9 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.event.Event;
 import javafx.scene.Node;
@@ -114,6 +114,8 @@ class QuestionBankApplicationWorkflowTest {
 	private Question captureQuestion(FxRobot robot, String questionCode) throws Exception {
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		robot.clickOn(questionCodeField).write(questionCode);
+		TextField marksField = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(marksField).write("1");
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
 		robot.clickOn("#save-question");
@@ -496,7 +498,7 @@ class QuestionBankApplicationWorkflowTest {
 		Label questionRegionCount = lookup(robot, "#question-region-count", Label.class);
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 
-		assertEquals("Saved Q1 (1 region(s))", saveStatus.getText());
+		assertEquals("Saved Q1 (1 mark(s), 1 region(s))", saveStatus.getText());
 		assertEquals("", questionCode.getText());
 		assertEquals("Regions: 0", questionRegionCount.getText());
 		assertEquals(1, unansweredQuestions.getItems().size());

@@ -8,12 +8,9 @@ final class QuestionCaptureValidator {
 	/**
 	 * Values required to decide whether the current question can be saved.
 	 */
-	record State(boolean examSet, String questionCode, boolean subjectSelected, boolean unitSelected,
+	record State(boolean examSet, String questionCode, String marks, boolean subjectSelected, boolean unitSelected,
 			boolean topicSelected, boolean classificationSelected, boolean currentSelectionPending,
 			int acceptedRegionCount) {
-	}
-
-	private QuestionCaptureValidator() {
 	}
 
 	/**
@@ -47,6 +44,19 @@ final class QuestionCaptureValidator {
 		if (state.acceptedRegionCount() == 0) {
 			return "Add at least one question region.";
 		}
+		if (state.marks().isBlank()) {
+			return "Enter marks.";
+		}
+		try {
+			if (Integer.parseInt(state.marks()) < 1) {
+				return "Marks must be a positive whole number.";
+			}
+		} catch (NumberFormatException e) {
+			return "Marks must be a positive whole number.";
+		}
 		return null;
+	}
+
+	private QuestionCaptureValidator() {
 	}
 }

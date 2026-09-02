@@ -30,8 +30,8 @@ class InMemoryQuestionRepositoryTest {
 	private InMemoryQuestionRepository repository;
 
 	private Question saveQuestion(String code, int pageNumber) {
-		return repository.save(exam, code, "Question " + code,
-				List.of(new QuestionRegion(booklet, pageNumber, 0.0, 0.0, 1.0, 1.0)), classification);
+		return repository.save(booklet, code, "Question " + code, 1,
+				List.of(new QuestionRegion(booklet, pageNumber, 0.0, 0.0, 1.0, 1.0)), classification, false);
 	}
 
 	@Test

@@ -1,11 +1,5 @@
 package au.edu.eq.questionbank.repository.assessment;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
-import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
-
-import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -27,6 +21,9 @@ import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
  * SQLite-backed question repository that reconstructs complete question,
@@ -93,7 +90,13 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 						    q.id,
 						    q.question_code,
 						    q.question_text,
+						    q.marks,
+						    q.preamble_capture_required,
 						    q.classification_node_id,
+						    eb.id AS booklet_id,
+						    eb.booklet_name,
+						    sd.id AS source_document_id,
+						    sd.relative_path,
 						    e.id AS exam_id,
 						    e.exam_year,
 						    e.exam_name,
@@ -104,17 +107,20 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 						    cn.syllabus_version_id,
 						    cn.curriculum_code
 						FROM questions q
+						JOIN exam_booklets eb
+						    ON eb.id = q.booklet_id
+						JOIN source_documents sd
+						    ON sd.id = eb.source_document_id
 						JOIN exams e
-						    ON e.id = q.exam_id
+						    ON e.id = eb.exam_id
 						JOIN subjects s
 						    ON s.id = e.subject_id
 						JOIN exam_providers p
 						    ON p.id = e.provider_id
 						JOIN curriculum_nodes cn
-						    ON cn.id =
-						       q.classification_node_id
+						    ON cn.id = q.classification_node_id
 						WHERE q.id = ?
-						""")) {
+												""")) {
 
 			statement.setLong(1, id);
 			try (ResultSet result = statement.executeQuery()) {
@@ -126,15 +132,20 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 						result.getString("provider_name"));
 				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
 						result.getString("exam_name"));
+				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
+						result.getString("relative_path"));
+				ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam,
+						result.getString("booklet_name"), sourceDocument);
 				long syllabusVersionId = result.getLong("syllabus_version_id");
 				SyllabusVersion syllabusVersion = curriculumRepository.findVersionById(syllabusVersionId)
 						.orElseThrow(() -> new IllegalStateException("Missing syllabus version " + syllabusVersionId));
 				String curriculumCode = result.getString("curriculum_code");
 				CurriculumNode classification = curriculumRepository.findByCode(syllabusVersion, curriculumCode)
 						.orElseThrow(() -> new IllegalStateException("Missing curriculum node " + curriculumCode));
-				List<QuestionRegion> regions = findRegions(connection, id, exam);
-				Question question = new Question(result.getLong("id"), exam, result.getString("question_code"),
-						result.getString("question_text"), regions, classification);
+				List<QuestionRegion> regions = findRegions(connection, id, booklet);
+				Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
+						result.getString("question_text"), result.getInt("marks"), regions, classification,
+						result.getInt("preamble_capture_required") != 0);
 				Answer answer = findAnswer(connection, id, exam);
 				if (answer != null) {
 					question.setAnswer(answer);
@@ -147,10 +158,11 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 	}
 
 	@Override
-	public Question save(Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
-			CurriculumNode classification) {
+	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
 		try {
-			return writer.insertQuestion(exam, questionCode, questionText, regions, classification);
+			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
+					preambleCaptureRequired);
 
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
@@ -218,7 +230,8 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 		return regions;
 	}
 
-	private List<QuestionRegion> findRegions(Connection connection, long questionId, Exam exam) throws SQLException {
+	private List<QuestionRegion> findRegions(Connection connection, long questionId, ExamBooklet questionBooklet)
+			throws SQLException {
 		List<QuestionRegion> regions = new ArrayList<>();
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
@@ -227,31 +240,20 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 				    qr.y,
 				    qr.width,
 				    qr.height,
-				    eb.id AS booklet_id,
-				    eb.exam_id AS booklet_exam_id,
-				    eb.booklet_name,
-				    sd.id AS source_document_id,
-				    sd.relative_path
+				    eb.id AS booklet_id
 				FROM question_regions qr
 				JOIN exam_booklets eb
 				    ON eb.id = qr.booklet_id
-				JOIN source_documents sd
-				    ON sd.id =
-				       eb.source_document_id
 				WHERE qr.question_id = ?
 				ORDER BY qr.region_order
 				""")) {
 			statement.setLong(1, questionId);
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
-					if (result.getLong("booklet_exam_id") != exam.getId()) {
-						throw new IllegalStateException("Question region booklet belongs to a different exam");
+					if (result.getLong("booklet_id") != questionBooklet.getId()) {
+						throw new IllegalStateException("Question region belongs to a different booklet");
 					}
-					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
-							result.getString("relative_path"));
-					ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam,
-							result.getString("booklet_name"), sourceDocument);
-					QuestionRegion region = new QuestionRegion(booklet, result.getInt("page_number"),
+					QuestionRegion region = new QuestionRegion(questionBooklet, result.getInt("page_number"),
 							result.getDouble("x"), result.getDouble("y"), result.getDouble("width"),
 							result.getDouble("height"));
 					regions.add(region);

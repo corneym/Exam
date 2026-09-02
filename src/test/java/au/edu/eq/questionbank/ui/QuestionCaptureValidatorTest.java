@@ -7,6 +7,20 @@ import org.junit.jupiter.api.Test;
 
 class QuestionCaptureValidatorTest {
 
+	private QuestionCaptureValidator.State state(boolean examSet, String questionCode, boolean subjectSelected,
+			boolean unitSelected, boolean topicSelected, boolean subtopicSelected, boolean currentSelectionPending,
+			int acceptedRegionCount) {
+		return new QuestionCaptureValidator.State(examSet, questionCode, "1", subjectSelected, unitSelected,
+				topicSelected, subtopicSelected, currentSelectionPending, acceptedRegionCount);
+	}
+
+	@Test
+	void acceptsCompleteQuestionCaptureState() {
+		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, false, 1);
+
+		assertNull(QuestionCaptureValidator.findError(state));
+	}
+
 	@Test
 	void reportsMissingQuestionInputsInWorkflowOrder() {
 		assertEquals("Set the exam details first.",
@@ -24,6 +38,13 @@ class QuestionCaptureValidatorTest {
 	}
 
 	@Test
+	void requiresAtLeastOneAcceptedRegion() {
+		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, false, 0);
+
+		assertEquals("Add at least one question region.", QuestionCaptureValidator.findError(state));
+	}
+
+	@Test
 	void requiresPendingSelectionToBeAccepted() {
 		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, true, 1);
 
@@ -32,23 +53,12 @@ class QuestionCaptureValidatorTest {
 	}
 
 	@Test
-	void requiresAtLeastOneAcceptedRegion() {
-		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, false, 0);
-
-		assertEquals("Add at least one question region.", QuestionCaptureValidator.findError(state));
-	}
-
-	@Test
-	void acceptsCompleteQuestionCaptureState() {
-		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, false, 1);
-
-		assertNull(QuestionCaptureValidator.findError(state));
-	}
-
-	private QuestionCaptureValidator.State state(boolean examSet, String questionCode, boolean subjectSelected,
-			boolean unitSelected, boolean topicSelected, boolean subtopicSelected, boolean currentSelectionPending,
-			int acceptedRegionCount) {
-		return new QuestionCaptureValidator.State(examSet, questionCode, subjectSelected, unitSelected, topicSelected,
-				subtopicSelected, currentSelectionPending, acceptedRegionCount);
+	void requiresValidMarks() {
+		assertEquals("Enter marks.", QuestionCaptureValidator
+				.findError(new QuestionCaptureValidator.State(true, "Q1", "", true, true, true, true, false, 1)));
+		assertEquals("Marks must be a positive whole number.", QuestionCaptureValidator
+				.findError(new QuestionCaptureValidator.State(true, "Q1", "0", true, true, true, true, false, 1)));
+		assertEquals("Marks must be a positive whole number.", QuestionCaptureValidator
+				.findError(new QuestionCaptureValidator.State(true, "Q1", "abc", true, true, true, true, false, 1)));
 	}
 }

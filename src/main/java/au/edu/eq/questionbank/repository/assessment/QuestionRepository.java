@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
-import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 
@@ -43,6 +43,6 @@ public interface QuestionRepository {
 	 * @throws IllegalStateException    if the repository cannot persist the
 	 *                                  question
 	 */
-	Question save(Exam exam, String questionCode, String questionText, List<QuestionRegion> regions,
-			CurriculumNode classification);
+	Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired);
 }
