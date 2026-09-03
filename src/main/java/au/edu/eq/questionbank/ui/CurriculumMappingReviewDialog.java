@@ -79,17 +79,17 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private final ComboBox<SyllabusVersion> targetVersionBox = new ComboBox<>();
 
 	/**
-	 * Creates the mapping-review workflow. Suggestions remain unselected until
-	 * the reviewer explicitly chooses one or more targets or records no match.
+	 * Creates the mapping-review workflow. Suggestions remain unselected until the
+	 * reviewer explicitly chooses one or more targets or records no match.
 	 * Completed reviews are displayed read-only until edit mode is entered.
 	 *
-	 * @param owner             the window that owns this dialog
-	 * @param repository        curriculum hierarchy lookup
+	 * @param owner               the window that owns this dialog
+	 * @param repository          curriculum hierarchy lookup
 	 * @param descriptorSuggester ranked descriptor suggestion service
 	 * @param subtopicSuggester   ranked subtopic suggestion service
-	 * @param reviewRepository  completed-review lookup
-	 * @param mappingRepository directional mapping lookup
-	 * @param reviewWriter      atomic review persistence boundary
+	 * @param reviewRepository    completed-review lookup
+	 * @param mappingRepository   directional mapping lookup
+	 * @param reviewWriter        atomic review persistence boundary
 	 * @throws NullPointerException if a repository, service or writer is
 	 *                              {@code null}
 	 */
@@ -131,6 +131,104 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		initialiseData();
 	}
 
+	private CurriculumMappingSuggester activeSuggester() {
+		if (reviewLevelBox.getValue() == CurriculumLevel.SUBTOPIC) {
+			return subtopicSuggester;
+		}
+		return descriptorSuggester;
+	}
+
+	private void beginEditReview() {
+		CurriculumNode source = sourceDescriptorBox.getValue();
+		SyllabusVersion targetVersion = targetVersionBox.getValue();
+		if (source == null || targetVersion == null) {
+			return;
+		}
+		Optional<CurriculumMappingReviewOutcome> outcome = reviewRepository.findOutcome(source, targetVersion);
+		if (outcome.isEmpty()) {
+			return;
+		}
+		editingReview = true;
+		editReviewButton.setText("Cancel edit");
+		editReviewButton.setDisable(false);
+		selectedTargetIds.clear();
+		originalReviewedTargetIds.clear();
+		supplementalTargetIds.clear();
+		suggestionsList.getItems().clear();
+		reviewedMappingsList.getItems().clear();
+		showSuggestionsList();
+		noMatchCheckBox.setDisable(false);
+		List<CurriculumMapping> existingMappings = findReviewedMappings(source, targetVersion);
+		if (outcome.get() == CurriculumMappingReviewOutcome.NO_MATCH) {
+			noMatchCheckBox.setSelected(true);
+		} else {
+			noMatchCheckBox.setSelected(false);
+			for (CurriculumMapping mapping : existingMappings) {
+				long targetId = mapping.getTarget().getId();
+				selectedTargetIds.add(targetId);
+				originalReviewedTargetIds.add(targetId);
+			}
+		}
+		suggestionsList.getItems().setAll(createEditableSuggestions(source, targetVersion, existingMappings));
+		suggestionsList.refresh();
+		updateReviewStatus();
+	}
+
+	private void buildContent() {
+		HBox sourceDescriptorRow = new HBox(CONTROL_GAP, sourceDescriptorBox, sourceDescriptorTextBox);
+		sourceDescriptorRow.setMinWidth(CONTENT_WIDTH);
+		sourceDescriptorRow.setPrefWidth(CONTENT_WIDTH);
+		sourceDescriptorRow.setMaxWidth(CONTENT_WIDTH);
+		StackPane targetListPane = new StackPane(suggestionsList, reviewedMappingsList);
+		targetListPane.setPrefWidth(CONTENT_WIDTH);
+		targetListPane.setPrefHeight(320);
+		HBox reviewOptions = new HBox(CONTROL_GAP, showReviewedCheckBox, editReviewButton);
+		GridPane grid = new GridPane();
+		grid.setHgap(10);
+		grid.setVgap(6);
+		grid.setPadding(new Insets(10));
+		grid.add(new Label("Subject:"), 0, 0);
+		grid.add(subjectBox, 1, 0);
+		grid.add(new Label("Source syllabus:"), 0, 1);
+		grid.add(sourceVersionBox, 1, 1);
+		grid.add(new Label("Current target syllabus:"), 0, 2);
+		grid.add(targetVersionBox, 1, 2);
+		grid.add(new Label("Mapping level:"), 0, 3);
+		grid.add(reviewLevelBox, 1, 3);
+		grid.add(sourceNodeHeading, 0, 4);
+		grid.add(sourceDescriptorRow, 1, 4);
+		grid.add(reviewOptions, 1, 5);
+		grid.add(new Label("Suggested targets:"), 0, 6);
+		grid.add(targetListPane, 1, 6);
+		grid.add(noMatchCheckBox, 1, 7);
+		grid.add(statusLabel, 1, 8);
+		getDialogPane().setContent(grid);
+	}
+
+	private void cancelEdit() {
+		resetEditMode();
+		clearReviewSelection();
+		updateSelectedDescriptor();
+	}
+
+	private void clearReviewSelection() {
+		selectedTargetIds.clear();
+		noMatchCheckBox.setSelected(false);
+		suggestionsList.refresh();
+		updateConfirmButtonState();
+	}
+
+	private void collectReviewNodes(CurriculumNode node, CurriculumLevel level, List<CurriculumNode> nodes) {
+		if (node.getLevel() == level) {
+			nodes.add(node);
+			return;
+		}
+
+		for (CurriculumNode child : repository.findChildren(node)) {
+			collectReviewNodes(child, level, nodes);
+		}
+	}
+
 	private ButtonType configureDialog(Window owner) {
 		setTitle("Curriculum Mapping");
 		setHeaderText("Review curriculum mapping suggestions");
@@ -138,6 +236,46 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		ButtonType confirmButtonType = new ButtonType("Confirm", ButtonBar.ButtonData.APPLY);
 		getDialogPane().getButtonTypes().addAll(confirmButtonType, ButtonType.CLOSE);
 		return confirmButtonType;
+	}
+
+	private void configureReviewControls() {
+		noMatchCheckBox.setDisable(true);
+		noMatchCheckBox.setOnAction(event -> {
+			if (noMatchCheckBox.isSelected()) {
+				selectedTargetIds.clear();
+				suggestionsList.refresh();
+			}
+			updateReviewStatus();
+		});
+		showReviewedCheckBox.setOnAction(event -> loadSourceDescriptors());
+		editReviewButton.setDisable(true);
+		editReviewButton.setOnAction(event -> {
+			if (editingReview) {
+				cancelEdit();
+			} else {
+				beginEditReview();
+			}
+		});
+		sourceNodeHeading.setPadding(new Insets(4, 0, 0, 0));
+		GridPane.setValignment(sourceNodeHeading, VPos.TOP);
+	}
+
+	private void configureReviewedMappingsList() {
+		reviewedMappingsList.setPrefWidth(CONTENT_WIDTH);
+		reviewedMappingsList.setPrefHeight(320);
+		reviewedMappingsList.setCellFactory(list -> new ListCell<>() {
+			@Override
+			protected void updateItem(CurriculumMapping mapping, boolean empty) {
+				super.updateItem(mapping, empty);
+				setWrapText(true);
+				if (empty || mapping == null) {
+					setText(null);
+					return;
+				}
+				CurriculumNode target = mapping.getTarget();
+				setText(target.getCode() + "    " + target.getName());
+			}
+		});
 	}
 
 	private void configureSelectors() {
@@ -189,178 +327,6 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 				.setStyle("-fx-border-color: #b0b0b0; -fx-border-width: 1; -fx-background-color: white;");
 	}
 
-	private void configureSuggestionLists() {
-		configureSuggestionList();
-		configureReviewedMappingsList();
-		showSuggestionsList();
-	}
-
-	private void configureReviewControls() {
-		noMatchCheckBox.setDisable(true);
-		noMatchCheckBox.setOnAction(event -> {
-			if (noMatchCheckBox.isSelected()) {
-				selectedTargetIds.clear();
-				suggestionsList.refresh();
-			}
-			updateReviewStatus();
-		});
-		showReviewedCheckBox.setOnAction(event -> loadSourceDescriptors());
-		editReviewButton.setDisable(true);
-		editReviewButton.setOnAction(event -> {
-			if (editingReview) {
-				cancelEdit();
-			} else {
-				beginEditReview();
-			}
-		});
-		sourceNodeHeading.setPadding(new Insets(4, 0, 0, 0));
-		GridPane.setValignment(sourceNodeHeading, VPos.TOP);
-	}
-
-	private void buildContent() {
-		HBox sourceDescriptorRow = new HBox(CONTROL_GAP, sourceDescriptorBox, sourceDescriptorTextBox);
-		sourceDescriptorRow.setMinWidth(CONTENT_WIDTH);
-		sourceDescriptorRow.setPrefWidth(CONTENT_WIDTH);
-		sourceDescriptorRow.setMaxWidth(CONTENT_WIDTH);
-		StackPane targetListPane = new StackPane(suggestionsList, reviewedMappingsList);
-		targetListPane.setPrefWidth(CONTENT_WIDTH);
-		targetListPane.setPrefHeight(320);
-		HBox reviewOptions = new HBox(CONTROL_GAP, showReviewedCheckBox, editReviewButton);
-		GridPane grid = new GridPane();
-		grid.setHgap(10);
-		grid.setVgap(6);
-		grid.setPadding(new Insets(10));
-		grid.add(new Label("Subject:"), 0, 0);
-		grid.add(subjectBox, 1, 0);
-		grid.add(new Label("Source syllabus:"), 0, 1);
-		grid.add(sourceVersionBox, 1, 1);
-		grid.add(new Label("Current target syllabus:"), 0, 2);
-		grid.add(targetVersionBox, 1, 2);
-		grid.add(new Label("Mapping level:"), 0, 3);
-		grid.add(reviewLevelBox, 1, 3);
-		grid.add(sourceNodeHeading, 0, 4);
-		grid.add(sourceDescriptorRow, 1, 4);
-		grid.add(reviewOptions, 1, 5);
-		grid.add(new Label("Suggested targets:"), 0, 6);
-		grid.add(targetListPane, 1, 6);
-		grid.add(noMatchCheckBox, 1, 7);
-		grid.add(statusLabel, 1, 8);
-		getDialogPane().setContent(grid);
-	}
-
-	private void wireListeners(ButtonType confirmButtonType) {
-		confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);
-		confirmButton.setDisable(true);
-		confirmButton.addEventFilter(ActionEvent.ACTION, event -> {
-			event.consume();
-			confirmReview();
-		});
-		subjectBox.valueProperty().addListener((observable, oldSubject, newSubject) -> loadVersions(newSubject));
-		sourceVersionBox.valueProperty().addListener((observable, oldVersion, newVersion) -> loadSourceDescriptors());
-		targetVersionBox.valueProperty().addListener((observable, oldVersion, newVersion) -> loadSourceDescriptors());
-		sourceDescriptorBox.valueProperty().addListener((observable, oldDescriptor, newDescriptor) -> {
-			resetEditMode();
-			clearReviewSelection();
-			updateSourceDescriptorText(newDescriptor);
-			updateSelectedDescriptor();
-		});
-		reviewLevelBox.valueProperty().addListener((observable, oldLevel, newLevel) -> {
-			resetEditMode();
-			clearReviewSelection();
-			updateLevelLabels();
-			loadSourceDescriptors();
-		});
-	}
-
-	private void initialiseData() {
-		subjectBox.getItems().setAll(repository.findAllSubjects());
-	}
-
-	private CurriculumMappingSuggester activeSuggester() {
-		if (reviewLevelBox.getValue() == CurriculumLevel.SUBTOPIC) {
-			return subtopicSuggester;
-		}
-		return descriptorSuggester;
-	}
-
-	private void beginEditReview() {
-		CurriculumNode source = sourceDescriptorBox.getValue();
-		SyllabusVersion targetVersion = targetVersionBox.getValue();
-		if (source == null || targetVersion == null) {
-			return;
-		}
-		Optional<CurriculumMappingReviewOutcome> outcome = reviewRepository.findOutcome(source, targetVersion);
-		if (outcome.isEmpty()) {
-			return;
-		}
-		editingReview = true;
-		editReviewButton.setText("Cancel edit");
-		editReviewButton.setDisable(false);
-		selectedTargetIds.clear();
-		originalReviewedTargetIds.clear();
-		supplementalTargetIds.clear();
-		suggestionsList.getItems().clear();
-		reviewedMappingsList.getItems().clear();
-		showSuggestionsList();
-		noMatchCheckBox.setDisable(false);
-		List<CurriculumMapping> existingMappings = findReviewedMappings(source, targetVersion);
-		if (outcome.get() == CurriculumMappingReviewOutcome.NO_MATCH) {
-			noMatchCheckBox.setSelected(true);
-		} else {
-			noMatchCheckBox.setSelected(false);
-			for (CurriculumMapping mapping : existingMappings) {
-				long targetId = mapping.getTarget().getId();
-				selectedTargetIds.add(targetId);
-				originalReviewedTargetIds.add(targetId);
-			}
-		}
-		suggestionsList.getItems().setAll(createEditableSuggestions(source, targetVersion, existingMappings));
-		suggestionsList.refresh();
-		updateReviewStatus();
-	}
-
-	private void cancelEdit() {
-		resetEditMode();
-		clearReviewSelection();
-		updateSelectedDescriptor();
-	}
-
-	private void clearReviewSelection() {
-		selectedTargetIds.clear();
-		noMatchCheckBox.setSelected(false);
-		suggestionsList.refresh();
-		updateConfirmButtonState();
-	}
-
-	private void collectReviewNodes(CurriculumNode node, CurriculumLevel level, List<CurriculumNode> nodes) {
-		if (node.getLevel() == level) {
-			nodes.add(node);
-			return;
-		}
-
-		for (CurriculumNode child : repository.findChildren(node)) {
-			collectReviewNodes(child, level, nodes);
-		}
-	}
-
-	private void configureReviewedMappingsList() {
-		reviewedMappingsList.setPrefWidth(CONTENT_WIDTH);
-		reviewedMappingsList.setPrefHeight(320);
-		reviewedMappingsList.setCellFactory(list -> new ListCell<>() {
-			@Override
-			protected void updateItem(CurriculumMapping mapping, boolean empty) {
-				super.updateItem(mapping, empty);
-				setWrapText(true);
-				if (empty || mapping == null) {
-					setText(null);
-					return;
-				}
-				CurriculumNode target = mapping.getTarget();
-				setText(target.getCode() + "    " + target.getName());
-			}
-		});
-	}
-
 	private void configureSuggestionList() {
 		suggestionsList.setPrefWidth(CONTENT_WIDTH);
 		suggestionsList.setPrefHeight(320);
@@ -402,9 +368,17 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		});
 	}
 
+	private void configureSuggestionLists() {
+		configureSuggestionList();
+		configureReviewedMappingsList();
+		showSuggestionsList();
+	}
+
 	private void confirmReview() {
 		CurriculumNode source = sourceDescriptorBox.getValue();
 		SyllabusVersion targetVersion = targetVersionBox.getValue();
+		int sourceIndex = sourceDescriptorBox.getSelectionModel().getSelectedIndex();
+		boolean wasEditingReview = editingReview;
 		if (source == null || targetVersion == null) {
 			return;
 		}
@@ -434,7 +408,12 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 				}
 			}
 			resetEditMode();
-			loadSourceDescriptors(sourceId);
+
+			if (wasEditingReview) {
+				loadSourceDescriptors(sourceId);
+			} else {
+				loadSourceDescriptors(0, sourceIndex);
+			}
 		} catch (SQLException e) {
 			showSaveError("Could not save the curriculum mapping review.", e.getMessage());
 		} catch (IllegalArgumentException | IllegalStateException e) {
@@ -458,6 +437,23 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 			}
 		}
 		return suggestions;
+	}
+
+	private List<CurriculumNode> findAvailableSourceDescriptors(SyllabusVersion sourceVersion,
+			SyllabusVersion targetVersion) {
+		reviewedSourceIds.addAll(reviewRepository.findReviewedSourceIds(sourceVersion, targetVersion));
+		List<CurriculumNode> availableDescriptors = new ArrayList<>();
+		for (CurriculumNode node : findReviewNodes(sourceVersion)) {
+			boolean reviewed = reviewedSourceIds.contains(node.getId());
+			if (showReviewedCheckBox.isSelected()) {
+				if (reviewed) {
+					availableDescriptors.add(node);
+				}
+			} else if (!reviewed) {
+				availableDescriptors.add(node);
+			}
+		}
+		return availableDescriptors;
 	}
 
 	private List<CurriculumMapping> findReviewedMappings(CurriculumNode source, SyllabusVersion targetVersion) {
@@ -486,6 +482,10 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		return nodes;
 	}
 
+	private void initialiseData() {
+		subjectBox.getItems().setAll(repository.findAllSubjects());
+	}
+
 	private void loadReviewedDescriptor(CurriculumNode source, SyllabusVersion targetVersion,
 			CurriculumMappingReviewOutcome outcome) {
 		showReviewedMappingsList();
@@ -511,83 +511,39 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	}
 
 	private void loadSourceDescriptors() {
-		loadSourceDescriptors(0);
+		loadSourceDescriptors(0, -1);
 	}
 
 	private void loadSourceDescriptors(long preferredSourceId) {
+		loadSourceDescriptors(preferredSourceId, -1);
+	}
+
+	private void loadSourceDescriptors(long preferredSourceId, int preferredSourceIndex) {
 		resetSourceDescriptorState();
+
 		SyllabusVersion sourceVersion = sourceVersionBox.getValue();
 		SyllabusVersion targetVersion = targetVersionBox.getValue();
+
 		if (sourceVersion == null || targetVersion == null) {
 			statusLabel.setText("");
 			return;
 		}
+
 		if (sourceVersion.equals(targetVersion)) {
 			statusLabel.setText("Source and target syllabus versions must be different.");
 			return;
 		}
+
 		List<CurriculumNode> availableDescriptors = findAvailableSourceDescriptors(sourceVersion, targetVersion);
+
 		sourceDescriptorBox.getItems().setAll(availableDescriptors);
+
 		if (availableDescriptors.isEmpty()) {
 			showNoAvailableSourceDescriptors();
 			return;
 		}
-		selectPreferredSourceDescriptor(availableDescriptors, preferredSourceId);
-	}
 
-	private void resetSourceDescriptorState() {
-		resetEditMode();
-		sourceDescriptorBox.getItems().clear();
-		sourceDescriptorText.setText("");
-		suggestionsList.getItems().clear();
-		reviewedMappingsList.getItems().clear();
-		clearReviewSelection();
-		noMatchCheckBox.setDisable(true);
-		showSuggestionsList();
-		reviewedSourceIds.clear();
-	}
-
-	private List<CurriculumNode> findAvailableSourceDescriptors(SyllabusVersion sourceVersion,
-			SyllabusVersion targetVersion) {
-		reviewedSourceIds.addAll(reviewRepository.findReviewedSourceIds(sourceVersion, targetVersion));
-		List<CurriculumNode> availableDescriptors = new ArrayList<>();
-		for (CurriculumNode node : findReviewNodes(sourceVersion)) {
-			boolean reviewed = reviewedSourceIds.contains(node.getId());
-			if (showReviewedCheckBox.isSelected()) {
-				if (reviewed) {
-					availableDescriptors.add(node);
-				}
-			} else if (!reviewed) {
-				availableDescriptors.add(node);
-			}
-		}
-		return availableDescriptors;
-	}
-
-	private void showNoAvailableSourceDescriptors() {
-		if (showReviewedCheckBox.isSelected()) {
-			statusLabel.setText("No reviewed " + reviewNodeNamePlural() + " for these syllabus versions.");
-		} else {
-			statusLabel.setText("All " + reviewNodeNamePlural() + " have been reviewed for these syllabus versions.");
-		}
-		updateConfirmButtonState();
-	}
-
-	private void selectPreferredSourceDescriptor(List<CurriculumNode> availableDescriptors, long preferredSourceId) {
-		CurriculumNode preferredDescriptor = null;
-		if (preferredSourceId > 0) {
-			for (CurriculumNode descriptor : availableDescriptors) {
-				if (descriptor.getId() == preferredSourceId) {
-					preferredDescriptor = descriptor;
-					break;
-				}
-			}
-		}
-		if (preferredDescriptor != null) {
-			sourceDescriptorBox.setValue(preferredDescriptor);
-		} else {
-			sourceDescriptorBox.getSelectionModel().selectFirst();
-		}
+		selectPreferredSourceDescriptor(availableDescriptors, preferredSourceId, preferredSourceIndex);
 	}
 
 	private void loadVersions(Subject subject) {
@@ -639,6 +595,18 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		editReviewButton.setDisable(true);
 	}
 
+	private void resetSourceDescriptorState() {
+		resetEditMode();
+		sourceDescriptorBox.getItems().clear();
+		sourceDescriptorText.setText("");
+		suggestionsList.getItems().clear();
+		reviewedMappingsList.getItems().clear();
+		clearReviewSelection();
+		noMatchCheckBox.setDisable(true);
+		showSuggestionsList();
+		reviewedSourceIds.clear();
+	}
+
 	private String reviewNodeName() {
 		if (reviewLevelBox.getValue() == CurriculumLevel.SUBTOPIC) {
 			return "subtopic";
@@ -663,10 +631,40 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		return targets;
 	}
 
+	private void selectPreferredSourceDescriptor(List<CurriculumNode> availableDescriptors, long preferredSourceId,
+			int preferredSourceIndex) {
+
+		if (preferredSourceId > 0) {
+			for (CurriculumNode descriptor : availableDescriptors) {
+				if (descriptor.getId() == preferredSourceId) {
+					sourceDescriptorBox.setValue(descriptor);
+					return;
+				}
+			}
+		}
+
+		if (preferredSourceIndex >= 0) {
+			int index = Math.min(preferredSourceIndex, availableDescriptors.size() - 1);
+			sourceDescriptorBox.getSelectionModel().select(index);
+			return;
+		}
+
+		sourceDescriptorBox.getSelectionModel().selectFirst();
+	}
+
 	private void setSelectorWidth(ComboBox<?> comboBox) {
 		comboBox.setMinWidth(SELECTOR_WIDTH);
 		comboBox.setPrefWidth(SELECTOR_WIDTH);
 		comboBox.setMaxWidth(SELECTOR_WIDTH);
+	}
+
+	private void showNoAvailableSourceDescriptors() {
+		if (showReviewedCheckBox.isSelected()) {
+			statusLabel.setText("No reviewed " + reviewNodeNamePlural() + " for these syllabus versions.");
+		} else {
+			statusLabel.setText("All " + reviewNodeNamePlural() + " have been reviewed for these syllabus versions.");
+		}
+		updateConfirmButtonState();
 	}
 
 	private void showReviewedMappingsList() {
@@ -731,6 +729,8 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		if (selectedTargetIds.isEmpty()) {
 			if (editingReview) {
 				statusLabel.setText("Editing review: no target " + nodeName + " selected");
+			} else if (reviewLevelBox.getValue() == CurriculumLevel.SUBTOPIC && suggestionsList.getItems().isEmpty()) {
+				statusLabel.setText("No subtopic candidates from confirmed descriptor mappings.");
 			} else {
 				statusLabel.setText(suggestionsList.getItems().size() + " candidate mappings");
 			}
@@ -798,5 +798,29 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 			selectedTargetIds.remove(targetId);
 		}
 		updateReviewStatus();
+	}
+
+	private void wireListeners(ButtonType confirmButtonType) {
+		confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);
+		confirmButton.setDisable(true);
+		confirmButton.addEventFilter(ActionEvent.ACTION, event -> {
+			event.consume();
+			confirmReview();
+		});
+		subjectBox.valueProperty().addListener((observable, oldSubject, newSubject) -> loadVersions(newSubject));
+		sourceVersionBox.valueProperty().addListener((observable, oldVersion, newVersion) -> loadSourceDescriptors());
+		targetVersionBox.valueProperty().addListener((observable, oldVersion, newVersion) -> loadSourceDescriptors());
+		sourceDescriptorBox.valueProperty().addListener((observable, oldDescriptor, newDescriptor) -> {
+			resetEditMode();
+			clearReviewSelection();
+			updateSourceDescriptorText(newDescriptor);
+			updateSelectedDescriptor();
+		});
+		reviewLevelBox.valueProperty().addListener((observable, oldLevel, newLevel) -> {
+			resetEditMode();
+			clearReviewSelection();
+			updateLevelLabels();
+			loadSourceDescriptors();
+		});
 	}
 }
