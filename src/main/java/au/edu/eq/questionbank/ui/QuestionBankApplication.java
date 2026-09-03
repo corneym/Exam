@@ -40,6 +40,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.curriculum.ConfirmedDescriptorSubtopicMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -450,12 +451,15 @@ public class QuestionBankApplication extends Application {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			CurriculumRepository repository = new SqliteCurriculumRepository(database);
-			CurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
-			CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
 			CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
+			CurriculumMappingSuggester descriptorSuggester = new TfIdfCurriculumMappingSuggester(repository);
+			CurriculumMappingSuggester subtopicSuggester = new ConfirmedDescriptorSubtopicMappingSuggester(repository,
+					mappingRepository);
+			CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
 			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
+
 			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
-					suggester, reviewRepository, mappingRepository, reviewWriter);
+					descriptorSuggester, subtopicSuggester, reviewRepository, mappingRepository, reviewWriter);
 			dialog.showAndWait();
 		} catch (IllegalStateException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",
