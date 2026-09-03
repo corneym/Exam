@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
@@ -15,48 +14,70 @@ import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
  * Application-facing service for finding questions applicable to current
  * curriculum.
  * <p>
- * Retrieval does not change a question's original classification. The service
- * also guarantees unique question results and deterministic ordering.
+ * Retrieval does not change a question's original classification. Unit and
+ * topic nodes are search scopes only. They are expanded to the subtopic and
+ * descriptor nodes that can actually classify questions.
  */
 public final class QuestionRetrievalService {
 
 	private final QuestionRetrievalRepository retrievalRepository;
+	private final CurriculumSearchNodeExpansionService searchNodeExpansionService;
 
 	/**
-	 * @param retrievalRepository curriculum-aware question persistence boundary
-	 * @throws NullPointerException if the repository is {@code null}
+	 * @param retrievalRepository        curriculum-aware question persistence
+	 *                                   boundary
+	 * @param searchNodeExpansionService current curriculum hierarchy expansion
+	 *                                   service
+	 * @throws NullPointerException if either dependency is {@code null}
 	 */
-	public QuestionRetrievalService(QuestionRetrievalRepository retrievalRepository) {
+	public QuestionRetrievalService(QuestionRetrievalRepository retrievalRepository,
+			CurriculumSearchNodeExpansionService searchNodeExpansionService) {
+
 		if (retrievalRepository == null) {
 			throw new NullPointerException("retrievalRepository");
 		}
+		if (searchNodeExpansionService == null) {
+			throw new NullPointerException("searchNodeExpansionService");
+		}
 
 		this.retrievalRepository = retrievalRepository;
+		this.searchNodeExpansionService = searchNodeExpansionService;
 	}
 
 	/**
-	 * Finds unique stored questions applicable to a current descriptor or subtopic.
+	 * Finds unique stored questions applicable within a current curriculum scope.
+	 * <p>
+	 * Descriptor searches are exact. Subtopic, topic and unit searches expand
+	 * downwards according to the current curriculum hierarchy.
 	 * <p>
 	 * Results are ordered by persistent question identifier. Historical
 	 * classifications remain unchanged and are exposed separately from the current
 	 * applicability that caused each result to match.
 	 *
-	 * @param currentNode the current descriptor or subtopic being searched
+	 * @param currentNode the current unit, topic, subtopic or descriptor being
+	 *                    searched
 	 * @return unique matching questions in deterministic order
 	 * @throws NullPointerException     if {@code currentNode} is {@code null}
-	 * @throws IllegalArgumentException if the node is not current or is not yet a
-	 *                                  supported search level
-	 * @throws IllegalStateException    if persistence cannot be read or returns an
-	 *                                  invalid match
+	 * @throws IllegalArgumentException if the node is not a supported current
+	 *                                  curriculum search scope
+	 * @throws IllegalStateException    if the curriculum hierarchy or persistence
+	 *                                  result is invalid
 	 */
 	public List<QuestionRetrievalResult> findQuestionsApplicableTo(CurriculumNode currentNode) {
-		validateSearchNode(currentNode);
 
-		return retrieveForCurrentNodes(List.of(currentNode));
+		List<CurriculumNode> currentNodes = searchNodeExpansionService.expandSearchNode(currentNode);
+
+		if (currentNodes.isEmpty()) {
+			return List.of();
+		}
+
+		return retrieveForCurrentNodes(currentNodes);
 	}
 
 	private List<QuestionRetrievalResult> retrieveForCurrentNodes(List<CurriculumNode> currentNodes) {
+
 		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
+
 		Map<Long, Map<Long, CurriculumNode>> applicabilityByQuestionId = new TreeMap<Long, Map<Long, CurriculumNode>>();
 
 		Map<Long, CurriculumNode> requestedNodesById = new TreeMap<Long, CurriculumNode>();
@@ -89,6 +110,7 @@ public final class QuestionRetrievalService {
 
 			if (applicability == null) {
 				applicability = new TreeMap<Long, CurriculumNode>();
+
 				applicabilityByQuestionId.put(question.getId(), applicability);
 			}
 
@@ -105,20 +127,5 @@ public final class QuestionRetrievalService {
 		}
 
 		return List.copyOf(results);
-	}
-
-	private void validateSearchNode(CurriculumNode currentNode) {
-		if (currentNode == null) {
-			throw new NullPointerException("currentNode");
-		}
-		if (!currentNode.getSyllabusVersion().isCurrent()) {
-			throw new IllegalArgumentException("Search node must belong to a current syllabus");
-		}
-
-		CurriculumLevel level = currentNode.getLevel();
-
-		if (level != CurriculumLevel.DESCRIPTOR && level != CurriculumLevel.SUBTOPIC) {
-			throw new IllegalArgumentException("Search node must currently be a DESCRIPTOR or SUBTOPIC");
-		}
 	}
 }
