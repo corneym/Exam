@@ -55,7 +55,11 @@ final class AnswerCapturePane extends VBox {
 
 		@Override
 		public String toString(Question question) {
-			return question == null ? "" : question.getQuestionCode();
+			if (question == null) {
+				return "";
+			}
+			return String.format("%s %d — %s — %s", question.getExam().getProvider().getName(),
+					question.getExam().getYear(), question.getBooklet().getName(), question.getQuestionCode());
 		}
 	};
 
@@ -129,6 +133,20 @@ final class AnswerCapturePane extends VBox {
 		setStyle(BORDER_STYLE);
 	}
 
+	/**
+	 * Accepts a proportional answer-page selection as the current pending region.
+	 *
+	 * @param selection the selected answer-page rectangle
+	 */
+	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
+		currentAnswerSelection = new AnswerRegion(answerFile, selection.pageNumber(), selection.x(), selection.y(),
+				selection.width(), selection.height());
+		showAnswerPreview(currentAnswerSelection);
+		Question question = unansweredQuestionField.getValue();
+		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — selection pending");
+		setSelectionActionsEnabled(true);
+	}
+
 	private void addCurrentAnswerRegion() {
 		if (currentAnswerSelection == null) {
 			return;
@@ -170,6 +188,15 @@ final class AnswerCapturePane extends VBox {
 			selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — "
 					+ pendingAnswerRegions.size() + " region(s) accepted");
 		}
+	}
+
+	/**
+	 * Discards an unaccepted region when the displayed page changes.
+	 */
+	void clearCurrentSelectionForPageChange() {
+		currentAnswerSelection = null;
+		answerPreviewView.setImage(null);
+		setSelectionActionsEnabled(false);
 	}
 
 	private void clearPendingAnswerRegions() {
@@ -288,6 +315,10 @@ final class AnswerCapturePane extends VBox {
 		chooseAnswerPdfButton.setDisable(false);
 	}
 
+	boolean hasAnswerFile() {
+		return answerFile != null;
+	}
+
 	private void refreshAnswerRegionList() {
 		answerRegionListBox.getChildren().clear();
 		for (int i = 0; i < pendingAnswerRegions.size(); i++) {
@@ -308,6 +339,20 @@ final class AnswerCapturePane extends VBox {
 		answerRegionsScrollPane.setManaged(hasRegions);
 	}
 
+	/**
+	 * Reloads persisted questions that do not yet have an answer.
+	 */
+	void refreshUnansweredQuestions() {
+		List<Question> storedQuestions = questionRepository.findAll();
+		List<Question> unansweredQuestions = new ArrayList<>();
+		for (Question question : storedQuestions) {
+			if (!question.hasAnswer()) {
+				unansweredQuestions.add(question);
+			}
+		}
+		unansweredQuestionField.getItems().setAll(unansweredQuestions);
+	}
+
 	private void removeAnswerRegion(int regionIndex) {
 		pendingAnswerRegions.remove(regionIndex);
 		refreshAnswerRegionList();
@@ -324,6 +369,29 @@ final class AnswerCapturePane extends VBox {
 		} catch (SQLException e) {
 			throw new IllegalStateException("Unable to save answer", e);
 		}
+	}
+
+	/**
+	 * Persists and opens the answer PDF selected for a question.
+	 *
+	 * @param question    the question being answered
+	 * @param selectedPdf the selected answer PDF
+	 */
+	void selectAnswerPdf(Question question, SelectedPdf selectedPdf) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (selectedPdf == null) {
+			throw new NullPointerException("selectedPdf");
+		}
+		try {
+			answerFile = answerWriter.findOrCreateAnswerFile(question.getExam(), selectedPdf.file().getName(),
+					selectedPdf.relativePath());
+		} catch (SQLException e) {
+			throw new IllegalStateException("Unable to save answer PDF", e);
+		}
+		answerPdfHandler.accept(selectedPdf);
+		selectedAnswerPdfLabel.setText(selectedPdf.file().getName());
 	}
 
 	private void setSelectionActionsEnabled(boolean enabled) {
@@ -365,69 +433,5 @@ final class AnswerCapturePane extends VBox {
 			return;
 		}
 		saveAnswer(question, answerText);
-	}
-
-	/**
-	 * Accepts a proportional answer-page selection as the current pending region.
-	 *
-	 * @param selection the selected answer-page rectangle
-	 */
-	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
-		currentAnswerSelection = new AnswerRegion(answerFile, selection.pageNumber(), selection.x(), selection.y(),
-				selection.width(), selection.height());
-		showAnswerPreview(currentAnswerSelection);
-		Question question = unansweredQuestionField.getValue();
-		selectedAnswerQuestionLabel.setText("Answering " + question.getQuestionCode() + " — selection pending");
-		setSelectionActionsEnabled(true);
-	}
-
-	/**
-	 * Discards an unaccepted region when the displayed page changes.
-	 */
-	void clearCurrentSelectionForPageChange() {
-		currentAnswerSelection = null;
-		answerPreviewView.setImage(null);
-		setSelectionActionsEnabled(false);
-	}
-
-	boolean hasAnswerFile() {
-		return answerFile != null;
-	}
-
-	/**
-	 * Reloads persisted questions that do not yet have an answer.
-	 */
-	void refreshUnansweredQuestions() {
-		List<Question> storedQuestions = questionRepository.findAll();
-		List<Question> unansweredQuestions = new ArrayList<>();
-		for (Question question : storedQuestions) {
-			if (!question.hasAnswer()) {
-				unansweredQuestions.add(question);
-			}
-		}
-		unansweredQuestionField.getItems().setAll(unansweredQuestions);
-	}
-
-	/**
-	 * Persists and opens the answer PDF selected for a question.
-	 *
-	 * @param question    the question being answered
-	 * @param selectedPdf the selected answer PDF
-	 */
-	void selectAnswerPdf(Question question, SelectedPdf selectedPdf) {
-		if (question == null) {
-			throw new NullPointerException("question");
-		}
-		if (selectedPdf == null) {
-			throw new NullPointerException("selectedPdf");
-		}
-		try {
-			answerFile = answerWriter.findOrCreateAnswerFile(question.getExam(), selectedPdf.file().getName(),
-					selectedPdf.relativePath());
-		} catch (SQLException e) {
-			throw new IllegalStateException("Unable to save answer PDF", e);
-		}
-		answerPdfHandler.accept(selectedPdf);
-		selectedAnswerPdfLabel.setText(selectedPdf.file().getName());
 	}
 }

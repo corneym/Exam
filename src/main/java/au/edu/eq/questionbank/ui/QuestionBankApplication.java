@@ -15,6 +15,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -110,6 +111,13 @@ public class QuestionBankApplication extends Application {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
+
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet != null && activeBooklet.getId() == question.getBooklet().getId() && pdfWorkspace.hasExamPdf()
+				&& pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.EXAM) {
+			return true;
+		}
+
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		Path pdfPath;
 		try {
@@ -571,6 +579,7 @@ public class QuestionBankApplication extends Application {
 				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
 				question -> activateImportedQuestion(question, config), pdfWorkspace::clearSelection,
 				answerCapturePane::refreshUnansweredQuestions);
+		questionCapturePane.refreshImportedQuestions();
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
 		pdfWorkspace.setPageChangeHandler(() -> {

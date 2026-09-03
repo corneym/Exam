@@ -426,7 +426,7 @@ final class QuestionCapturePane extends VBox {
 		showQuestionPendingStatus();
 	}
 
-	private void resetAfterQuestionSave() {
+	private void resetAfterQuestionSave(int previousImportedIndex) {
 		importedQuestion = null;
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
@@ -436,6 +436,22 @@ final class QuestionCapturePane extends VBox {
 		captureHintLabel.setManaged(false);
 		resetQuestionEntry();
 		refreshImportedQuestions();
+
+		if (previousImportedIndex < 0 || importedQuestionBox.getItems().isEmpty()) {
+			return;
+		}
+
+		int nextIndex = Math.min(previousImportedIndex, importedQuestionBox.getItems().size() - 1);
+		Question nextQuestion = importedQuestionBox.getItems().get(nextIndex);
+
+		refreshingImportedQuestions = true;
+		try {
+			importedQuestionBox.getSelectionModel().select(nextIndex);
+		} finally {
+			refreshingImportedQuestions = false;
+		}
+
+		loadImportedQuestion(nextQuestion);
 	}
 
 	private void resetQuestionEntry() {
@@ -447,7 +463,14 @@ final class QuestionCapturePane extends VBox {
 
 	private void saveQuestion() {
 		Question question;
+		int previousImportedIndex = -1;
+
 		if (importedQuestion != null) {
+			previousImportedIndex = importedQuestionBox.getSelectionModel().getSelectedIndex();
+			if (previousImportedIndex < 0) {
+				previousImportedIndex = 0;
+			}
+
 			question = questionRepository.attachRegions(importedQuestion.getId(), pendingRegions);
 			saveStatusLabel.setText(String.format("Captured %s (%d mark(s), %d region(s))", question.getQuestionCode(),
 					question.getMarks(), question.getRegions().size()));
@@ -459,8 +482,9 @@ final class QuestionCapturePane extends VBox {
 			saveStatusLabel.setText(String.format("Saved %s (%d mark(s), %d region(s))", question.getQuestionCode(),
 					question.getMarks(), question.getRegions().size()));
 		}
+
 		questionsChangedHandler.run();
-		resetAfterQuestionSave();
+		resetAfterQuestionSave(previousImportedIndex);
 	}
 
 	private void setRegionCountLabel(int count) {
