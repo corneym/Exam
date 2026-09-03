@@ -159,6 +159,16 @@ public final class SqliteCurriculumMappingWriter {
 
 	private void validatePersistentMapping(Connection connection, CurriculumNode source, CurriculumNode target)
 			throws SQLException {
+		PersistentMappingEndpoints endpoints = readPersistentMappingEndpoints(connection, source, target);
+		validatePersistentEndpoint(source, endpoints.sourceVersionId(), endpoints.sourceSubjectId(),
+				endpoints.sourceLevel(), "source");
+		validatePersistentEndpoint(target, endpoints.targetVersionId(), endpoints.targetSubjectId(),
+				endpoints.targetLevel(), "target");
+		validatePersistentRelationship(endpoints);
+	}
+
+	private PersistentMappingEndpoints readPersistentMappingEndpoints(Connection connection, CurriculumNode source,
+			CurriculumNode target) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
 				    source.syllabus_version_id AS source_version_id,
@@ -182,32 +192,32 @@ public final class SqliteCurriculumMappingWriter {
 				if (!result.next()) {
 					throw new IllegalArgumentException("source or target curriculum node does not exist");
 				}
-				long sourceVersionId = result.getLong("source_version_id");
-				long targetVersionId = result.getLong("target_version_id");
-				long sourceSubjectId = result.getLong("source_subject_id");
-				long targetSubjectId = result.getLong("target_subject_id");
-				String sourceLevel = result.getString("source_level");
-				String targetLevel = result.getString("target_level");
-				if (sourceVersionId != source.getSyllabusVersion().getId()
-						|| sourceSubjectId != source.getSyllabusVersion().getSubject().getId()
-						|| !sourceLevel.equals(source.getLevel().name())) {
-					throw new IllegalArgumentException("source does not match persisted curriculum node");
-				}
-				if (targetVersionId != target.getSyllabusVersion().getId()
-						|| targetSubjectId != target.getSyllabusVersion().getSubject().getId()
-						|| !targetLevel.equals(target.getLevel().name())) {
-					throw new IllegalArgumentException("target does not match persisted curriculum node");
-				}
-				if (sourceSubjectId != targetSubjectId) {
-					throw new IllegalArgumentException("source and target must belong to the same subject");
-				}
-				if (sourceVersionId == targetVersionId) {
-					throw new IllegalArgumentException("source and target must belong to different syllabus versions");
-				}
-				if (!sourceLevel.equals(targetLevel)) {
-					throw new IllegalArgumentException("source and target must be the same curriculum level");
-				}
+				return new PersistentMappingEndpoints(result.getLong("source_version_id"),
+						result.getLong("target_version_id"), result.getLong("source_subject_id"),
+						result.getLong("target_subject_id"), result.getString("source_level"),
+						result.getString("target_level"));
 			}
+		}
+	}
+
+	private void validatePersistentEndpoint(CurriculumNode node, long versionId, long subjectId, String level,
+			String endpointName) {
+		if (versionId != node.getSyllabusVersion().getId()
+				|| subjectId != node.getSyllabusVersion().getSubject().getId()
+				|| !level.equals(node.getLevel().name())) {
+			throw new IllegalArgumentException(endpointName + " does not match persisted curriculum node");
+		}
+	}
+
+	private void validatePersistentRelationship(PersistentMappingEndpoints endpoints) {
+		if (endpoints.sourceSubjectId() != endpoints.targetSubjectId()) {
+			throw new IllegalArgumentException("source and target must belong to the same subject");
+		}
+		if (endpoints.sourceVersionId() == endpoints.targetVersionId()) {
+			throw new IllegalArgumentException("source and target must belong to different syllabus versions");
+		}
+		if (!endpoints.sourceLevel().equals(endpoints.targetLevel())) {
+			throw new IllegalArgumentException("source and target must be the same curriculum level");
 		}
 	}
 
@@ -230,5 +240,9 @@ public final class SqliteCurriculumMappingWriter {
 				}
 			}
 		}
+	}
+
+	private record PersistentMappingEndpoints(long sourceVersionId, long targetVersionId, long sourceSubjectId,
+			long targetSubjectId, String sourceLevel, String targetLevel) {
 	}
 }

@@ -92,44 +92,39 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	@Override
 	public void close() throws Exception {
 		Exception failure = null;
-		if (examPdfSession != null) {
-			try {
-				examPdfSession.close();
-			} catch (Exception e) {
-				failure = e;
-			} finally {
-				examPdfSession = null;
-			}
+		try {
+			failure = closeSession(examPdfSession, failure);
+		} finally {
+			examPdfSession = null;
 		}
-		if (answerPdfSession != null) {
-			try {
-				answerPdfSession.close();
-			} catch (Exception e) {
-				if (failure == null) {
-					failure = e;
-				} else {
-					failure.addSuppressed(e);
-				}
-			} finally {
-				answerPdfSession = null;
-			}
+		try {
+			failure = closeSession(answerPdfSession, failure);
+		} finally {
+			answerPdfSession = null;
 		}
-		if (viewerPdfSession != null) {
-			try {
-				viewerPdfSession.close();
-			} catch (Exception e) {
-				if (failure == null) {
-					failure = e;
-				} else {
-					failure.addSuppressed(e);
-				}
-			} finally {
-				viewerPdfSession = null;
-			}
+		try {
+			failure = closeSession(viewerPdfSession, failure);
+		} finally {
+			viewerPdfSession = null;
 		}
 		if (failure != null) {
 			throw failure;
 		}
+	}
+
+	private Exception closeSession(PdfSession session, Exception existingFailure) {
+		if (session == null) {
+			return existingFailure;
+		}
+		try {
+			session.close();
+		} catch (Exception e) {
+			if (existingFailure == null) {
+				return e;
+			}
+			existingFailure.addSuppressed(e);
+		}
+		return existingFailure;
 	}
 
 	private double clamp(double value, double minimum, double maximum) {

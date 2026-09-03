@@ -366,46 +366,17 @@ public class QuestionBankApplication extends Application {
 			Subject subject = dialog.getSelectedSubject();
 			SyllabusVersion syllabusVersion = dialog.getSelectedSyllabusVersion();
 			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
-
-			List<LegacyBookletRequirement> missingBooklets = importer.findMissingBooklets(dialog.getSelectedFile(),
-					subject.getName(), syllabusVersion.getName());
-
-			int importedBooklets = 0;
-
-			if (!missingBooklets.isEmpty()) {
-				LegacyBookletImportDialog bookletDialog = new LegacyBookletImportDialog(primaryStage, missingBooklets);
-				Optional<ButtonType> bookletResult = bookletDialog.showAndWait();
-
-				if (bookletResult.isEmpty()
-						|| bookletResult.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
-					return;
-				}
-
-				List<LegacyBookletImportRequest> requests = bookletDialog.getRequests();
-				createMissingLegacyBooklets(config, subject, requests);
-				importedBooklets = requests.size();
-
-				List<LegacyBookletRequirement> stillMissing = importer.findMissingBooklets(dialog.getSelectedFile(),
-						subject.getName(), syllabusVersion.getName());
-
-				if (!stillMissing.isEmpty()) {
-					throw new IllegalStateException("Required exam booklets are still missing after booklet import.");
-				}
+			Optional<Integer> importedBooklets = importMissingLegacyBooklets(primaryStage, config, dialog, subject,
+					syllabusVersion, importer);
+			if (importedBooklets.isEmpty()) {
+				return;
 			}
 
 			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
 					subject.getName(), syllabusVersion.getName());
 			answerCapturePane.refreshUnansweredQuestions();
 			questionCapturePane.refreshImportedQuestions();
-			String message = """
-					Exam booklets imported: %d
-					Questions imported: %d
-					Questions already present: %d
-					Answers imported: %d
-					""".formatted(importedBooklets, importResult.insertedQuestions(), importResult.existingQuestions(),
-					importResult.insertedAnswers());
-			showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy question metadata imported.",
-					message);
+			showLegacyQuestionImportResult(importedBooklets.get().intValue(), importResult);
 		} catch (IOException e) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
 					e.getMessage());
@@ -416,6 +387,43 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy question import failed.",
 					e.getMessage());
 		}
+	}
+
+	private Optional<Integer> importMissingLegacyBooklets(Stage primaryStage, ApplicationConfig config,
+			LegacyQuestionImportDialog dialog, Subject subject, SyllabusVersion syllabusVersion,
+			LegacyQuestionMetadataImporter importer) throws IOException, SQLException {
+		List<LegacyBookletRequirement> missingBooklets = importer.findMissingBooklets(dialog.getSelectedFile(),
+				subject.getName(), syllabusVersion.getName());
+		if (missingBooklets.isEmpty()) {
+			return Optional.of(Integer.valueOf(0));
+		}
+
+		LegacyBookletImportDialog bookletDialog = new LegacyBookletImportDialog(primaryStage, missingBooklets);
+		Optional<ButtonType> bookletResult = bookletDialog.showAndWait();
+		if (bookletResult.isEmpty()
+				|| bookletResult.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+			return Optional.empty();
+		}
+
+		List<LegacyBookletImportRequest> requests = bookletDialog.getRequests();
+		createMissingLegacyBooklets(config, subject, requests);
+		List<LegacyBookletRequirement> stillMissing = importer.findMissingBooklets(dialog.getSelectedFile(),
+				subject.getName(), syllabusVersion.getName());
+		if (!stillMissing.isEmpty()) {
+			throw new IllegalStateException("Required exam booklets are still missing after booklet import.");
+		}
+		return Optional.of(Integer.valueOf(requests.size()));
+	}
+
+	private void showLegacyQuestionImportResult(int importedBooklets, LegacyQuestionImportResult importResult) {
+		String message = """
+				Exam booklets imported: %d
+				Questions imported: %d
+				Questions already present: %d
+				Answers imported: %d
+				""".formatted(importedBooklets, importResult.insertedQuestions(), importResult.existingQuestions(),
+				importResult.insertedAnswers());
+		showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy question metadata imported.", message);
 	}
 
 	private boolean isRegionSelectionAvailable(PdfWorkspacePane.DocumentMode documentMode) {

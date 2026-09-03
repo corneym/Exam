@@ -37,7 +37,21 @@ public abstract class CurriculumNode {
 	 */
 	protected CurriculumNode(long id, SyllabusVersion syllabusVersion, CurriculumNode parent, String code, String name,
 			CurriculumLevel level, int displayOrder) {
+		validateValues(id, syllabusVersion, code, name, level);
+		validateParent(syllabusVersion, parent, level);
+		validateDisplayOrder(displayOrder);
 
+		this.id = id;
+		this.syllabusVersion = syllabusVersion;
+		this.parent = parent;
+		this.code = code;
+		this.name = name;
+		this.level = level;
+		this.displayOrder = displayOrder;
+	}
+
+	private void validateValues(long id, SyllabusVersion syllabusVersion, String code, String name,
+			CurriculumLevel level) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -53,6 +67,9 @@ public abstract class CurriculumNode {
 		if (level == null) {
 			throw new NullPointerException("level");
 		}
+	}
+
+	private void validateParent(SyllabusVersion syllabusVersion, CurriculumNode parent, CurriculumLevel level) {
 		if (level == CurriculumLevel.UNIT) {
 			if (parent != null) {
 				throw new IllegalArgumentException("UNIT must not have a parent");
@@ -83,17 +100,12 @@ public abstract class CurriculumNode {
 				throw new IllegalArgumentException(level + " has invalid parent level " + parent.getLevel());
 			}
 		}
+	}
+
+	private void validateDisplayOrder(int displayOrder) {
 		if (displayOrder < 0) {
 			throw new IllegalArgumentException("displayOrder must not be negative");
 		}
-
-		this.id = id;
-		this.syllabusVersion = syllabusVersion;
-		this.parent = parent;
-		this.code = code;
-		this.name = name;
-		this.level = level;
-		this.displayOrder = displayOrder;
 	}
 
 	@Override

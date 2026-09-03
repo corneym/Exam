@@ -47,12 +47,18 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 		if (sourceDescriptors.isEmpty()) {
 			return List.of();
 		}
+		Map<CurriculumNode, Integer> evidenceCounts = collectEvidence(sourceDescriptors, targetVersion);
+		List<CurriculumMappingSuggestion> suggestions = createSuggestions(source, sourceDescriptors.size(),
+				evidenceCounts);
+		sortSuggestions(suggestions);
+		return List.copyOf(suggestions);
+	}
 
+	private Map<CurriculumNode, Integer> collectEvidence(List<CurriculumNode> sourceDescriptors,
+			SyllabusVersion targetVersion) {
 		Map<CurriculumNode, Integer> evidenceCounts = new HashMap<>();
-
 		for (CurriculumNode sourceDescriptor : sourceDescriptors) {
 			Set<Long> supportedTargetSubtopicIds = new HashSet<>();
-
 			for (CurriculumMapping mapping : mappingRepository.findTargets(sourceDescriptor)) {
 				if (mapping.getStatus() != MappingStatus.CONFIRMED) {
 					continue;
@@ -73,14 +79,20 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 				}
 			}
 		}
+		return evidenceCounts;
+	}
 
+	private List<CurriculumMappingSuggestion> createSuggestions(CurriculumNode source, int sourceDescriptorCount,
+			Map<CurriculumNode, Integer> evidenceCounts) {
 		List<CurriculumMappingSuggestion> suggestions = new ArrayList<>();
-
 		for (Map.Entry<CurriculumNode, Integer> entry : evidenceCounts.entrySet()) {
-			double score = (double) entry.getValue() / sourceDescriptors.size();
+			double score = (double) entry.getValue() / sourceDescriptorCount;
 			suggestions.add(new CurriculumMappingSuggestion(source, entry.getKey(), score));
 		}
+		return suggestions;
+	}
 
+	private void sortSuggestions(List<CurriculumMappingSuggestion> suggestions) {
 		suggestions.sort((first, second) -> {
 			int scoreComparison = Double.compare(second.getScore(), first.getScore());
 			if (scoreComparison != 0) {
@@ -88,8 +100,6 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 			}
 			return Long.compare(first.getTarget().getId(), second.getTarget().getId());
 		});
-
-		return List.copyOf(suggestions);
 	}
 
 	private List<CurriculumNode> findDirectDescriptors(CurriculumNode subtopic) {

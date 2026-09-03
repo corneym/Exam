@@ -37,7 +37,29 @@ public class CurriculumNodeBuilder {
 	 */
 	public List<CurriculumNode> build(SyllabusVersion syllabusVersion, List<CurriculumImportRow> rows,
 			LongSupplier idSupplier) {
+		validateArguments(syllabusVersion, rows, idSupplier);
+		Map<String, CurriculumImportRow> rowsByCode = indexRows(rows);
+		validateParents(rowsByCode);
 
+		List<CurriculumNode> nodes = new ArrayList<>();
+		Map<String, Unit> units = new HashMap<>();
+		Map<String, Topic> topics = new HashMap<>();
+		Map<String, Subtopic> subtopics = new HashMap<>();
+		Map<String, Integer> nextTopicOrder = new HashMap<>();
+		Map<String, Integer> nextSubtopicOrder = new HashMap<>();
+		Map<String, Integer> nextDescriptorOrder = new HashMap<>();
+
+		addUnits(syllabusVersion, idSupplier, rowsByCode, units, nodes);
+		addTopics(syllabusVersion, idSupplier, rowsByCode, units, topics, nextTopicOrder, nodes);
+		addThreePartNodes(syllabusVersion, idSupplier, rowsByCode, topics, subtopics, nextSubtopicOrder,
+				nextDescriptorOrder, nodes);
+		addFourPartDescriptors(syllabusVersion, idSupplier, rowsByCode, subtopics, nextDescriptorOrder, nodes);
+
+		return List.copyOf(nodes);
+	}
+
+	private void validateArguments(SyllabusVersion syllabusVersion, List<CurriculumImportRow> rows,
+			LongSupplier idSupplier) {
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
 		}
@@ -49,133 +71,93 @@ public class CurriculumNodeBuilder {
 		if (idSupplier == null) {
 			throw new NullPointerException("idSupplier");
 		}
+	}
 
+	private Map<String, CurriculumImportRow> indexRows(List<CurriculumImportRow> rows) {
 		Map<String, CurriculumImportRow> rowsByCode = new LinkedHashMap<>();
-
 		for (CurriculumImportRow row : rows) {
 			if (row == null) {
 				throw new NullPointerException("row");
 			}
-
 			validateCode(row.code());
-
 			if (rowsByCode.containsKey(row.code())) {
 				throw new IllegalArgumentException("Duplicate curriculum code: " + row.code());
 			}
-
 			rowsByCode.put(row.code(), row);
 		}
+		return rowsByCode;
+	}
 
-		validateParents(rowsByCode);
-
-		List<CurriculumNode> nodes = new ArrayList<>();
-
-		Map<String, Unit> units = new HashMap<>();
-
-		Map<String, Topic> topics = new HashMap<>();
-
-		Map<String, Subtopic> subtopics = new HashMap<>();
-
-		Map<String, Integer> nextTopicOrder = new HashMap<>();
-
-		Map<String, Integer> nextSubtopicOrder = new HashMap<>();
-
-		Map<String, Integer> nextDescriptorOrder = new HashMap<>();
-
+	private void addUnits(SyllabusVersion syllabusVersion, LongSupplier idSupplier,
+			Map<String, CurriculumImportRow> rowsByCode, Map<String, Unit> units, List<CurriculumNode> nodes) {
 		int nextUnitOrder = 1;
-
-		/*
-		 * Units first.
-		 */
 		for (CurriculumImportRow row : rowsByCode.values()) {
 			if (depth(row.code()) != 1) {
 				continue;
 			}
-
 			Unit unit = new Unit(idSupplier.getAsLong(), syllabusVersion, row.code(), row.content(), nextUnitOrder);
-
 			nextUnitOrder++;
-
 			units.put(row.code(), unit);
 			nodes.add(unit);
 		}
+	}
 
-		/*
-		 * Topics second.
-		 */
+	private void addTopics(SyllabusVersion syllabusVersion, LongSupplier idSupplier,
+			Map<String, CurriculumImportRow> rowsByCode, Map<String, Unit> units, Map<String, Topic> topics,
+			Map<String, Integer> nextTopicOrder, List<CurriculumNode> nodes) {
 		for (CurriculumImportRow row : rowsByCode.values()) {
 			if (depth(row.code()) != 2) {
 				continue;
 			}
-
 			String unitCode = parentCode(row.code());
-
 			Unit unit = units.get(unitCode);
-
 			int order = nextOrder(nextTopicOrder, unitCode);
-
 			Topic topic = new Topic(idSupplier.getAsLong(), syllabusVersion, unit, row.code(), row.content(), order);
-
 			topics.put(row.code(), topic);
 			nodes.add(topic);
 		}
+	}
 
-		/*
-		 * Three-part codes can be either subtopics or descriptors.
-		 *
-		 * If a three-part code has a child, it is a subtopic. Otherwise it is a
-		 * descriptor belonging directly to the topic.
-		 */
+	private void addThreePartNodes(SyllabusVersion syllabusVersion, LongSupplier idSupplier,
+			Map<String, CurriculumImportRow> rowsByCode, Map<String, Topic> topics,
+			Map<String, Subtopic> subtopics, Map<String, Integer> nextSubtopicOrder,
+			Map<String, Integer> nextDescriptorOrder, List<CurriculumNode> nodes) {
+		// A three-part node is a subtopic when it has children, otherwise a descriptor.
 		for (CurriculumImportRow row : rowsByCode.values()) {
 			if (depth(row.code()) != 3) {
 				continue;
 			}
-
 			String topicCode = parentCode(row.code());
-
 			Topic topic = topics.get(topicCode);
-
 			if (hasChild(row.code(), rowsByCode)) {
 				int order = nextOrder(nextSubtopicOrder, topicCode);
-
 				Subtopic subtopic = new Subtopic(idSupplier.getAsLong(), syllabusVersion, topic, row.code(),
 						row.content(), order);
-
 				subtopics.put(row.code(), subtopic);
-
 				nodes.add(subtopic);
-
 			} else {
 				int order = nextOrder(nextDescriptorOrder, topicCode);
-
 				Descriptor descriptor = new Descriptor(idSupplier.getAsLong(), syllabusVersion, topic, row.code(),
 						row.content(), order);
-
 				nodes.add(descriptor);
 			}
 		}
+	}
 
-		/*
-		 * Four-part codes are always descriptors.
-		 */
+	private void addFourPartDescriptors(SyllabusVersion syllabusVersion, LongSupplier idSupplier,
+			Map<String, CurriculumImportRow> rowsByCode, Map<String, Subtopic> subtopics,
+			Map<String, Integer> nextDescriptorOrder, List<CurriculumNode> nodes) {
 		for (CurriculumImportRow row : rowsByCode.values()) {
 			if (depth(row.code()) != 4) {
 				continue;
 			}
-
 			String subtopicCode = parentCode(row.code());
-
 			Subtopic subtopic = subtopics.get(subtopicCode);
-
 			int order = nextOrder(nextDescriptorOrder, subtopicCode);
-
 			Descriptor descriptor = new Descriptor(idSupplier.getAsLong(), syllabusVersion, subtopic, row.code(),
 					row.content(), order);
-
 			nodes.add(descriptor);
 		}
-
-		return List.copyOf(nodes);
 	}
 
 	private int depth(String code) {

@@ -44,29 +44,40 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 			throw new NullPointerException("curriculumRepository");
 		}
 		this.curriculumRepository = curriculumRepository;
+		ButtonType importButtonType = configureDialog(owner);
+		configureSelectors();
+		HBox fileBox = configureFileControls(owner);
+		buildContent(fileBox);
+		wireValidation(importButtonType);
+	}
+
+	private ButtonType configureDialog(Window owner) {
 		setTitle("Import Legacy Question Metadata");
 		setHeaderText("Import legacy question metadata from Excel");
 		initOwner(owner);
-
 		ButtonType importButtonType = new ButtonType("Import", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(importButtonType, ButtonType.CANCEL);
+		return importButtonType;
+	}
 
+	private void configureSelectors() {
 		subjectBox.getItems().setAll(curriculumRepository.findAllSubjects());
 		subjectBox.setPrefWidth(220);
 		subjectBox.valueProperty()
 				.addListener((observable, oldSubject, newSubject) -> loadSyllabusVersions(newSubject));
-
 		syllabusBox.setPrefWidth(220);
 		syllabusBox.setDisable(true);
+	}
 
+	private HBox configureFileControls(Window owner) {
 		fileField.setEditable(false);
 		fileField.setPrefWidth(300);
-
 		Button browseButton = new Button("Browse...");
 		browseButton.setOnAction(event -> chooseFile(owner));
+		return new HBox(6, fileField, browseButton);
+	}
 
-		HBox fileBox = new HBox(6, fileField, browseButton);
-
+	private void buildContent(HBox fileBox) {
 		GridPane grid = new GridPane();
 		grid.setHgap(10);
 		grid.setVgap(8);
@@ -78,7 +89,9 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		grid.add(new Label("Excel file:"), 0, 2);
 		grid.add(fileBox, 1, 2);
 		getDialogPane().setContent(grid);
+	}
 
+	private void wireValidation(ButtonType importButtonType) {
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
 		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
 			if (!isValid()) {

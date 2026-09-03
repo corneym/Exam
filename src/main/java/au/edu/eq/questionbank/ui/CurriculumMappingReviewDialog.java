@@ -79,13 +79,14 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private final ComboBox<SyllabusVersion> targetVersionBox = new ComboBox<>();
 
 	/**
-	 * Creates the descriptor-review workflow. Suggestions remain unselected until
+	 * Creates the mapping-review workflow. Suggestions remain unselected until
 	 * the reviewer explicitly chooses one or more targets or records no match.
 	 * Completed reviews are displayed read-only until edit mode is entered.
 	 *
 	 * @param owner             the window that owns this dialog
 	 * @param repository        curriculum hierarchy lookup
-	 * @param suggester         ranked descriptor suggestion service
+	 * @param descriptorSuggester ranked descriptor suggestion service
+	 * @param subtopicSuggester   ranked subtopic suggestion service
 	 * @param reviewRepository  completed-review lookup
 	 * @param mappingRepository directional mapping lookup
 	 * @param reviewWriter      atomic review persistence boundary
@@ -120,11 +121,26 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		this.reviewRepository = reviewRepository;
 		this.mappingRepository = mappingRepository;
 		this.reviewWriter = reviewWriter;
+		ButtonType confirmButtonType = configureDialog(owner);
+		configureSelectors();
+		configureSourceNodeControls();
+		configureSuggestionLists();
+		configureReviewControls();
+		buildContent();
+		wireListeners(confirmButtonType);
+		initialiseData();
+	}
+
+	private ButtonType configureDialog(Window owner) {
 		setTitle("Curriculum Mapping");
 		setHeaderText("Review curriculum mapping suggestions");
 		initOwner(owner);
 		ButtonType confirmButtonType = new ButtonType("Confirm", ButtonBar.ButtonData.APPLY);
 		getDialogPane().getButtonTypes().addAll(confirmButtonType, ButtonType.CLOSE);
+		return confirmButtonType;
+	}
+
+	private void configureSelectors() {
 		setSelectorWidth(subjectBox);
 		setSelectorWidth(sourceVersionBox);
 		setSelectorWidth(targetVersionBox);
@@ -134,6 +150,9 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		updateLevelLabels();
 		targetVersionBox.setDisable(true);
 		setSelectorWidth(sourceDescriptorBox);
+	}
+
+	private void configureSourceNodeControls() {
 		sourceDescriptorBox.setButtonCell(new ListCell<>() {
 			@Override
 			protected void updateItem(CurriculumNode descriptor, boolean empty) {
@@ -168,16 +187,15 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		sourceDescriptorTextBox.setPadding(new Insets(6));
 		sourceDescriptorTextBox
 				.setStyle("-fx-border-color: #b0b0b0; -fx-border-width: 1; -fx-background-color: white;");
-		HBox sourceDescriptorRow = new HBox(CONTROL_GAP, sourceDescriptorBox, sourceDescriptorTextBox);
-		sourceDescriptorRow.setMinWidth(CONTENT_WIDTH);
-		sourceDescriptorRow.setPrefWidth(CONTENT_WIDTH);
-		sourceDescriptorRow.setMaxWidth(CONTENT_WIDTH);
-		configureSuggestionsList();
+	}
+
+	private void configureSuggestionLists() {
+		configureSuggestionList();
 		configureReviewedMappingsList();
-		StackPane targetListPane = new StackPane(suggestionsList, reviewedMappingsList);
-		targetListPane.setPrefWidth(CONTENT_WIDTH);
-		targetListPane.setPrefHeight(320);
 		showSuggestionsList();
+	}
+
+	private void configureReviewControls() {
 		noMatchCheckBox.setDisable(true);
 		noMatchCheckBox.setOnAction(event -> {
 			if (noMatchCheckBox.isSelected()) {
@@ -195,9 +213,19 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 				beginEditReview();
 			}
 		});
-		HBox reviewOptions = new HBox(CONTROL_GAP, showReviewedCheckBox, editReviewButton);
 		sourceNodeHeading.setPadding(new Insets(4, 0, 0, 0));
 		GridPane.setValignment(sourceNodeHeading, VPos.TOP);
+	}
+
+	private void buildContent() {
+		HBox sourceDescriptorRow = new HBox(CONTROL_GAP, sourceDescriptorBox, sourceDescriptorTextBox);
+		sourceDescriptorRow.setMinWidth(CONTENT_WIDTH);
+		sourceDescriptorRow.setPrefWidth(CONTENT_WIDTH);
+		sourceDescriptorRow.setMaxWidth(CONTENT_WIDTH);
+		StackPane targetListPane = new StackPane(suggestionsList, reviewedMappingsList);
+		targetListPane.setPrefWidth(CONTENT_WIDTH);
+		targetListPane.setPrefHeight(320);
+		HBox reviewOptions = new HBox(CONTROL_GAP, showReviewedCheckBox, editReviewButton);
 		GridPane grid = new GridPane();
 		grid.setHgap(10);
 		grid.setVgap(6);
@@ -218,6 +246,9 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		grid.add(noMatchCheckBox, 1, 7);
 		grid.add(statusLabel, 1, 8);
 		getDialogPane().setContent(grid);
+	}
+
+	private void wireListeners(ButtonType confirmButtonType) {
 		confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);
 		confirmButton.setDisable(true);
 		confirmButton.addEventFilter(ActionEvent.ACTION, event -> {
@@ -239,6 +270,9 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 			updateLevelLabels();
 			loadSourceDescriptors();
 		});
+	}
+
+	private void initialiseData() {
 		subjectBox.getItems().setAll(repository.findAllSubjects());
 	}
 
@@ -327,7 +361,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		});
 	}
 
-	private void configureSuggestionsList() {
+	private void configureSuggestionList() {
 		suggestionsList.setPrefWidth(CONTENT_WIDTH);
 		suggestionsList.setPrefHeight(320);
 		suggestionsList.setCellFactory(list -> new ListCell<>() {
@@ -481,15 +515,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	}
 
 	private void loadSourceDescriptors(long preferredSourceId) {
-		resetEditMode();
-		sourceDescriptorBox.getItems().clear();
-		sourceDescriptorText.setText("");
-		suggestionsList.getItems().clear();
-		reviewedMappingsList.getItems().clear();
-		clearReviewSelection();
-		noMatchCheckBox.setDisable(true);
-		showSuggestionsList();
-		reviewedSourceIds.clear();
+		resetSourceDescriptorState();
 		SyllabusVersion sourceVersion = sourceVersionBox.getValue();
 		SyllabusVersion targetVersion = targetVersionBox.getValue();
 		if (sourceVersion == null || targetVersion == null) {
@@ -500,34 +526,54 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 			statusLabel.setText("Source and target syllabus versions must be different.");
 			return;
 		}
+		List<CurriculumNode> availableDescriptors = findAvailableSourceDescriptors(sourceVersion, targetVersion);
+		sourceDescriptorBox.getItems().setAll(availableDescriptors);
+		if (availableDescriptors.isEmpty()) {
+			showNoAvailableSourceDescriptors();
+			return;
+		}
+		selectPreferredSourceDescriptor(availableDescriptors, preferredSourceId);
+	}
+
+	private void resetSourceDescriptorState() {
+		resetEditMode();
+		sourceDescriptorBox.getItems().clear();
+		sourceDescriptorText.setText("");
+		suggestionsList.getItems().clear();
+		reviewedMappingsList.getItems().clear();
+		clearReviewSelection();
+		noMatchCheckBox.setDisable(true);
+		showSuggestionsList();
+		reviewedSourceIds.clear();
+	}
+
+	private List<CurriculumNode> findAvailableSourceDescriptors(SyllabusVersion sourceVersion,
+			SyllabusVersion targetVersion) {
 		reviewedSourceIds.addAll(reviewRepository.findReviewedSourceIds(sourceVersion, targetVersion));
 		List<CurriculumNode> availableDescriptors = new ArrayList<>();
-
 		for (CurriculumNode node : findReviewNodes(sourceVersion)) {
 			boolean reviewed = reviewedSourceIds.contains(node.getId());
-
 			if (showReviewedCheckBox.isSelected()) {
 				if (reviewed) {
 					availableDescriptors.add(node);
 				}
-			} else {
-				if (!reviewed) {
-					availableDescriptors.add(node);
-				}
+			} else if (!reviewed) {
+				availableDescriptors.add(node);
 			}
 		}
+		return availableDescriptors;
+	}
 
-		sourceDescriptorBox.getItems().setAll(availableDescriptors);
-		if (availableDescriptors.isEmpty()) {
-			if (showReviewedCheckBox.isSelected()) {
-				statusLabel.setText("No reviewed " + reviewNodeNamePlural() + " for these syllabus versions.");
-			} else {
-				statusLabel
-						.setText("All " + reviewNodeNamePlural() + " have been reviewed for these syllabus versions.");
-			}
-			updateConfirmButtonState();
-			return;
+	private void showNoAvailableSourceDescriptors() {
+		if (showReviewedCheckBox.isSelected()) {
+			statusLabel.setText("No reviewed " + reviewNodeNamePlural() + " for these syllabus versions.");
+		} else {
+			statusLabel.setText("All " + reviewNodeNamePlural() + " have been reviewed for these syllabus versions.");
 		}
+		updateConfirmButtonState();
+	}
+
+	private void selectPreferredSourceDescriptor(List<CurriculumNode> availableDescriptors, long preferredSourceId) {
 		CurriculumNode preferredDescriptor = null;
 		if (preferredSourceId > 0) {
 			for (CurriculumNode descriptor : availableDescriptors) {

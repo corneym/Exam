@@ -326,7 +326,6 @@ final class AnswerCapturePane extends VBox {
 
 	private boolean loadRegisteredAnswerFile(Question question) {
 		List<AnswerFile> answerFiles;
-
 		try {
 			answerFiles = answerWriter.findAnswerFiles(question.getExam());
 		} catch (SQLException e) {
@@ -334,44 +333,53 @@ final class AnswerCapturePane extends VBox {
 			return false;
 		}
 
+		AnswerFile registeredAnswerFile = selectRegisteredAnswerFile(answerFiles);
+		if (registeredAnswerFile == null) {
+			return false;
+		}
+		Path pdfPath = resolveRegisteredAnswerFile(registeredAnswerFile);
+		if (pdfPath == null) {
+			return false;
+		}
+		return openRegisteredAnswerFile(registeredAnswerFile, pdfPath);
+	}
+
+	private AnswerFile selectRegisteredAnswerFile(List<AnswerFile> answerFiles) {
 		if (answerFiles.isEmpty()) {
 			selectedAnswerPdfLabel.setText("No PDF selected");
-			return false;
+			return null;
 		}
-
 		if (answerFiles.size() > 1) {
 			selectedAnswerPdfLabel.setText("Multiple answer PDFs registered — choose PDF...");
-			return false;
+			return null;
 		}
+		return answerFiles.get(0);
+	}
 
-		AnswerFile registeredAnswerFile = answerFiles.get(0);
+	private Path resolveRegisteredAnswerFile(AnswerFile registeredAnswerFile) {
 		PdfStore pdfStore = new PdfStore(pdfFilePicker.dataRoot());
-		Path pdfPath;
-
 		try {
-			pdfPath = pdfStore.resolve(registeredAnswerFile.getSourceDocument().getRelativePath());
+			return pdfStore.resolve(registeredAnswerFile.getSourceDocument().getRelativePath());
 		} catch (IllegalArgumentException e) {
 			showAnswerFileError("The registered answer PDF path is invalid.", e.getMessage());
-			return false;
+			return null;
 		}
+	}
 
+	private boolean openRegisteredAnswerFile(AnswerFile registeredAnswerFile, Path pdfPath) {
 		if (!Files.isRegularFile(pdfPath)) {
 			showAnswerFileError("The registered answer PDF is unavailable.", pdfPath.toString());
 			return false;
 		}
-
 		SelectedPdf selectedPdf = new SelectedPdf(pdfPath.toFile(), pdfPath, pdfFilePicker.dataRoot());
-
 		try {
 			answerPdfHandler.accept(selectedPdf);
 		} catch (RuntimeException e) {
 			showAnswerFileError("The registered answer PDF could not be opened.", e.getMessage());
 			return false;
 		}
-
 		answerFile = registeredAnswerFile;
 		selectedAnswerPdfLabel.setText(registeredAnswerFile.getName());
-
 		return true;
 	}
 

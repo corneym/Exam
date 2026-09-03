@@ -16,6 +16,9 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
  * identifier; ranking never confirms a mapping.
  */
 public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingSuggester {
+	private record SimilarityCorpora(List<String> descriptorTexts, List<String> contextTexts) {
+	}
+
 	private final CurriculumRepository repository;
 	private static final double DESCRIPTOR_WEIGHT = 0.85;
 	private static final double CONTEXT_WEIGHT = 0.15;
@@ -35,6 +38,23 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 
 	@Override
 	public List<CurriculumMappingSuggestion> suggest(CurriculumNode source, SyllabusVersion targetVersion) {
+		validateRequest(source, targetVersion);
+		List<CurriculumNode> sourceDescriptors = findDescriptors(source.getSyllabusVersion());
+		List<CurriculumNode> targetDescriptors = findDescriptors(targetVersion);
+		if (targetDescriptors.isEmpty()) {
+			return List.of();
+		}
+		SimilarityCorpora corpora = buildCorpora(sourceDescriptors, targetDescriptors);
+		TextSimilarityScorer descriptorScorer = new TfIdfTextSimilarityScorer(corpora.descriptorTexts());
+		TextSimilarityScorer contextScorer = new TfIdfTextSimilarityScorer(corpora.contextTexts());
+		List<CurriculumMappingSuggestion> suggestions = scoreTargets(source, targetDescriptors, descriptorScorer,
+				contextScorer);
+		sortSuggestions(suggestions);
+		int resultCount = Math.min(MAX_SUGGESTIONS, suggestions.size());
+		return List.copyOf(suggestions.subList(0, resultCount));
+	}
+
+	private void validateRequest(CurriculumNode source, SyllabusVersion targetVersion) {
 		if (source == null) {
 			throw new NullPointerException("source");
 		}
@@ -50,11 +70,10 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 		if (source.getSyllabusVersion().equals(targetVersion)) {
 			throw new IllegalArgumentException("source and target syllabus versions must be different");
 		}
-		List<CurriculumNode> sourceDescriptors = findDescriptors(source.getSyllabusVersion());
-		List<CurriculumNode> targetDescriptors = findDescriptors(targetVersion);
-		if (targetDescriptors.isEmpty()) {
-			return List.of();
-		}
+	}
+
+	private SimilarityCorpora buildCorpora(List<CurriculumNode> sourceDescriptors,
+			List<CurriculumNode> targetDescriptors) {
 		List<String> descriptorCorpus = new ArrayList<>();
 		List<String> contextCorpus = new ArrayList<>();
 		for (CurriculumNode descriptor : sourceDescriptors) {
@@ -65,8 +84,12 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 			descriptorCorpus.add(descriptor.getName());
 			contextCorpus.add(contextText(descriptor));
 		}
-		TextSimilarityScorer descriptorScorer = new TfIdfTextSimilarityScorer(descriptorCorpus);
-		TextSimilarityScorer contextScorer = new TfIdfTextSimilarityScorer(contextCorpus);
+		return new SimilarityCorpora(descriptorCorpus, contextCorpus);
+	}
+
+	private List<CurriculumMappingSuggestion> scoreTargets(CurriculumNode source,
+			List<CurriculumNode> targetDescriptors, TextSimilarityScorer descriptorScorer,
+			TextSimilarityScorer contextScorer) {
 		List<CurriculumMappingSuggestion> suggestions = new ArrayList<>();
 		for (CurriculumNode target : targetDescriptors) {
 			double descriptorScore = descriptorScorer.score(source.getName(), target.getName());
@@ -75,6 +98,10 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 			score = Math.max(0.0, Math.min(1.0, score));
 			suggestions.add(new CurriculumMappingSuggestion(source, target, score));
 		}
+		return suggestions;
+	}
+
+	private void sortSuggestions(List<CurriculumMappingSuggestion> suggestions) {
 		suggestions.sort((first, second) -> {
 			int scoreComparison = Double.compare(second.getScore(), first.getScore());
 			if (scoreComparison != 0) {
@@ -82,8 +109,6 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 			}
 			return Long.compare(first.getTarget().getId(), second.getTarget().getId());
 		});
-		int resultCount = Math.min(MAX_SUGGESTIONS, suggestions.size());
-		return List.copyOf(suggestions.subList(0, resultCount));
 	}
 
 	private String contextText(CurriculumNode descriptor) {

@@ -94,55 +94,51 @@ public class CurriculumExcelImporter {
 
 	private void readSheet(Sheet sheet, FormulaEvaluator evaluator, List<CurriculumImportRow> importRows,
 			Set<String> codes) {
-
 		Row header = sheet.getRow(sheet.getFirstRowNum());
-
-		if (header == null) {
+		if (!hasExpectedHeaders(header, evaluator)) {
 			return;
 		}
-
-		String codeHeader = getText(header, 0, evaluator);
-
-		String contentHeader = getText(header, 1, evaluator);
-
-		if (!codeHeader.toLowerCase(Locale.ROOT).equals("code")
-				|| !contentHeader.toLowerCase(Locale.ROOT).equals("content")) {
-			return;
-		}
-
 		for (int rowIndex = sheet.getFirstRowNum() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
-
 			Row row = sheet.getRow(rowIndex);
-
-			if (row == null) {
+			CurriculumImportRow importRow = readRow(sheet, row, rowIndex, evaluator);
+			if (importRow == null) {
 				continue;
 			}
-
-			String code = getText(row, 0, evaluator);
-
-			String content = getText(row, 1, evaluator);
-
-			if (code.isBlank() && content.isBlank()) {
-				continue;
+			if (!codes.add(importRow.code())) {
+				throw new IllegalArgumentException("Duplicate curriculum code: " + importRow.code());
 			}
-
-			if (code.isBlank()) {
-				throw new IllegalArgumentException(
-						"Missing curriculum code in sheet " + sheet.getSheetName() + " at Excel row " + (rowIndex + 1));
-			}
-
-			if (content.isBlank()) {
-				throw new IllegalArgumentException("Missing curriculum content for " + code);
-			}
-
-			validateCode(code);
-
-			if (!codes.add(code)) {
-				throw new IllegalArgumentException("Duplicate curriculum code: " + code);
-			}
-
-			importRows.add(new CurriculumImportRow(code, content));
+			importRows.add(importRow);
 		}
+	}
+
+	private boolean hasExpectedHeaders(Row header, FormulaEvaluator evaluator) {
+		if (header == null) {
+			return false;
+		}
+		String codeHeader = getText(header, 0, evaluator);
+		String contentHeader = getText(header, 1, evaluator);
+		return codeHeader.toLowerCase(Locale.ROOT).equals("code")
+				&& contentHeader.toLowerCase(Locale.ROOT).equals("content");
+	}
+
+	private CurriculumImportRow readRow(Sheet sheet, Row row, int rowIndex, FormulaEvaluator evaluator) {
+		if (row == null) {
+			return null;
+		}
+		String code = getText(row, 0, evaluator);
+		String content = getText(row, 1, evaluator);
+		if (code.isBlank() && content.isBlank()) {
+			return null;
+		}
+		if (code.isBlank()) {
+			throw new IllegalArgumentException(
+					"Missing curriculum code in sheet " + sheet.getSheetName() + " at Excel row " + (rowIndex + 1));
+		}
+		if (content.isBlank()) {
+			throw new IllegalArgumentException("Missing curriculum content for " + code);
+		}
+		validateCode(code);
+		return new CurriculumImportRow(code, content);
 	}
 
 	private void validateCode(String code) {

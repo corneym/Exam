@@ -138,34 +138,37 @@ public final class SqliteQuestionRepository implements QuestionRepository {
 				if (!result.next()) {
 					return Optional.empty();
 				}
-				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
-				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
-						result.getString("provider_name"));
-				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
-						result.getString("exam_name"));
-				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
-						result.getString("relative_path"));
-				ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam,
-						result.getString("booklet_name"), sourceDocument);
-				long syllabusVersionId = result.getLong("syllabus_version_id");
-				SyllabusVersion syllabusVersion = curriculumRepository.findVersionById(syllabusVersionId)
-						.orElseThrow(() -> new IllegalStateException("Missing syllabus version " + syllabusVersionId));
-				String curriculumCode = result.getString("curriculum_code");
-				CurriculumNode classification = curriculumRepository.findByCode(syllabusVersion, curriculumCode)
-						.orElseThrow(() -> new IllegalStateException("Missing curriculum node " + curriculumCode));
-				List<QuestionRegion> regions = findRegions(connection, id, booklet);
-				Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
-						result.getString("question_text"), result.getInt("marks"), regions, classification,
-						result.getInt("preamble_capture_required") != 0);
-				Answer answer = findAnswer(connection, id, exam);
-				if (answer != null) {
-					question.setAnswer(answer);
-				}
-				return Optional.of(question);
+				return Optional.of(readQuestion(connection, result, id));
 			}
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not read question " + id + " from database", e);
 		}
+	}
+
+	private Question readQuestion(Connection connection, ResultSet result, long questionId) throws SQLException {
+		Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
+		ExamProvider provider = new ExamProvider(result.getLong("provider_id"), result.getString("provider_name"));
+		Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
+				result.getString("exam_name"));
+		SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
+				result.getString("relative_path"));
+		ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam,
+				result.getString("booklet_name"), sourceDocument);
+		long syllabusVersionId = result.getLong("syllabus_version_id");
+		SyllabusVersion syllabusVersion = curriculumRepository.findVersionById(syllabusVersionId)
+				.orElseThrow(() -> new IllegalStateException("Missing syllabus version " + syllabusVersionId));
+		String curriculumCode = result.getString("curriculum_code");
+		CurriculumNode classification = curriculumRepository.findByCode(syllabusVersion, curriculumCode)
+				.orElseThrow(() -> new IllegalStateException("Missing curriculum node " + curriculumCode));
+		List<QuestionRegion> regions = findRegions(connection, questionId, booklet);
+		Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
+				result.getString("question_text"), result.getInt("marks"), regions, classification,
+				result.getInt("preamble_capture_required") != 0);
+		Answer answer = findAnswer(connection, questionId, exam);
+		if (answer != null) {
+			question.setAnswer(answer);
+		}
+		return question;
 	}
 
 	@Override

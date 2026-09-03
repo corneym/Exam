@@ -21,21 +21,6 @@ class CurriculumNodeBuilderTest {
 
 	private SyllabusVersion syllabus;
 
-	private void assertNode(CurriculumNode node, String expectedCode, String expectedContent,
-			CurriculumLevel expectedLevel) {
-
-		assertEquals(expectedCode, node.getCode());
-
-		assertEquals(expectedContent, node.getName());
-
-		assertEquals(expectedLevel, node.getLevel());
-	}
-
-	private CurriculumImportRow row(String code, String content) {
-
-		return new CurriculumImportRow(code, content);
-	}
-
 	@Test
 	void assignsDisplayOrderWithinEachParent() {
 
@@ -154,5 +139,17 @@ class CurriculumNodeBuilderTest {
 		Subject subject = new Subject(1, "Test Subject");
 
 		syllabus = new SyllabusVersion(1, subject, "2025", true);
+	}
+
+	private void assertNode(CurriculumNode node, String expectedCode, String expectedContent,
+			CurriculumLevel expectedLevel) {
+		assertEquals(expectedCode, node.getCode());
+		assertEquals(expectedContent, node.getName());
+		assertEquals(expectedLevel, node.getLevel());
+	}
+
+	private CurriculumImportRow row(String code, String content) {
+
+		return new CurriculumImportRow(code, content);
 	}
 }
