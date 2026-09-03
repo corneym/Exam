@@ -3,6 +3,7 @@
  * JavaFX user-interface components.
  */
 module au.edu.eq.questionbank {
+
 	requires java.desktop;
 	requires java.naming;
 	requires java.prefs;
@@ -32,6 +33,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.repository.curriculum;
 	opens au.edu.eq.questionbank.repository.sqlite;
 	opens au.edu.eq.questionbank.service.curriculum;
+	opens au.edu.eq.questionbank.service.retrieval;
 	opens au.edu.eq.questionbank.ui;
 	opens au.edu.eq.questionbank.ui.model;
 }
