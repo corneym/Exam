@@ -1,8 +1,8 @@
-# Sprint Design: Curriculum-aware Question Retrieval
+# Sprint Design: Question Retrieval
 
 ## Branch
 
-`feature/curriculum-aware-question-retrieval`
+`feature/question-retrieval`
 
 ## Purpose
 
