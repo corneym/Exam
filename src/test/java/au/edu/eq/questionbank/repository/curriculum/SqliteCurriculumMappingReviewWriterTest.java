@@ -1,7 +1,5 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -21,9 +19,11 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.MappingStatus;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteCurriculumMappingReviewWriterTest {
 	@TempDir
@@ -35,6 +35,9 @@ class SqliteCurriculumMappingReviewWriterTest {
 	private Descriptor targetOne;
 	private Descriptor targetTwo;
 	private Descriptor otherVersionTarget;
+	private Subtopic sourceSubtopic;
+	private Subtopic targetSubtopicOne;
+	private Subtopic targetSubtopicTwo;
 
 	@Test
 	void confirmsMultipleMappingsAndMarksReviewMatched() throws Exception {
@@ -65,6 +68,56 @@ class SqliteCurriculumMappingReviewWriterTest {
 				assertEquals("MATCHED", result.getString("review_outcome"));
 				assertFalse(result.next());
 			}
+		}
+	}
+
+	@Test
+	void confirmsMultipleSubtopicMappingsAndMarksReviewMatched() throws Exception {
+		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
+		writer.confirmMappings(sourceSubtopic, targetVersion, List.of(targetSubtopicOne, targetSubtopicTwo));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("""
+					SELECT target_node_id, mapping_status
+					FROM curriculum_mappings
+					WHERE source_node_id = 13
+					ORDER BY target_node_id
+					""")) {
+				assertTrue(result.next());
+				assertEquals(24, result.getLong("target_node_id"));
+				assertEquals("CONFIRMED", result.getString("mapping_status"));
+				assertTrue(result.next());
+				assertEquals(25, result.getLong("target_node_id"));
+				assertEquals("CONFIRMED", result.getString("mapping_status"));
+				assertFalse(result.next());
+			}
+			try (ResultSet result = statement.executeQuery("""
+					SELECT review_outcome
+					FROM curriculum_mapping_reviews
+					WHERE source_node_id = 13
+					  AND target_syllabus_version_id = 2
+					""")) {
+				assertTrue(result.next());
+				assertEquals("MATCHED", result.getString("review_outcome"));
+				assertFalse(result.next());
+			}
+		}
+	}
+
+	@Test
+	void confirmsNoMatchForSubtopic() throws Exception {
+		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
+		writer.confirmNoMatch(sourceSubtopic, targetVersion);
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT review_outcome
+						FROM curriculum_mapping_reviews
+						WHERE source_node_id = 13
+						  AND target_syllabus_version_id = 2
+						""")) {
+			assertTrue(result.next());
+			assertEquals("NO_MATCH", result.getString("review_outcome"));
+			assertFalse(result.next());
 		}
 	}
 
@@ -190,6 +243,14 @@ class SqliteCurriculumMappingReviewWriterTest {
 			assertTrue(result.next());
 			assertEquals(0, result.getInt("review_count"));
 		}
+	}
+
+	@Test
+	void rejectsMappingBetweenDifferentCurriculumLevels() {
+		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> writer.confirmMappings(sourceSubtopic, targetVersion, List.of(targetOne)));
 	}
 
 	@Test
@@ -385,10 +446,13 @@ class SqliteCurriculumMappingReviewWriterTest {
 					    (10, 1, NULL, '1', 'Old unit', 'UNIT', 0),
 					    (11, 1, 10, '1.1', 'Old topic', 'TOPIC', 0),
 					    (12, 1, 11, '1.1.1', 'Old descriptor', 'DESCRIPTOR', 0),
+					    (13, 1, 11, '1.1.9', 'Old subtopic', 'SUBTOPIC', 1),
 					    (20, 2, NULL, '1', 'New unit', 'UNIT', 0),
 					    (21, 2, 20, '1.1', 'New topic', 'TOPIC', 0),
 					    (22, 2, 21, '1.1.1', 'First new descriptor', 'DESCRIPTOR', 0),
 					    (23, 2, 21, '1.1.2', 'Second new descriptor', 'DESCRIPTOR', 1),
+					    (24, 2, 21, '1.1.8', 'First new subtopic', 'SUBTOPIC', 2),
+					    (25, 2, 21, '1.1.9', 'Second new subtopic', 'SUBTOPIC', 3),
 					    (30, 3, NULL, '1', 'Other target unit', 'UNIT', 0),
 					    (31, 3, 30, '1.1', 'Other target topic', 'TOPIC', 0),
 					    (32, 3, 31, '1.1.1', 'Other target descriptor', 'DESCRIPTOR', 0)
@@ -400,9 +464,12 @@ class SqliteCurriculumMappingReviewWriterTest {
 		otherTargetVersion = new SyllabusVersion(3, subject, "Other target syllabus", false);
 		Unit sourceUnit = new Unit(10, sourceVersion, "1", "Old unit", 0);
 		Topic sourceTopic = new Topic(11, sourceVersion, sourceUnit, "1.1", "Old topic", 0);
+		sourceSubtopic = new Subtopic(13, sourceVersion, sourceTopic, "1.1.9", "Old subtopic", 1);
 		source = new Descriptor(12, sourceVersion, sourceTopic, "1.1.1", "Old descriptor", 0);
 		Unit targetUnit = new Unit(20, targetVersion, "1", "New unit", 0);
 		Topic targetTopic = new Topic(21, targetVersion, targetUnit, "1.1", "New topic", 0);
+		targetSubtopicOne = new Subtopic(24, targetVersion, targetTopic, "1.1.8", "First new subtopic", 2);
+		targetSubtopicTwo = new Subtopic(25, targetVersion, targetTopic, "1.1.9", "Second new subtopic", 3);
 		targetOne = new Descriptor(22, targetVersion, targetTopic, "1.1.1", "First new descriptor", 0);
 		targetTwo = new Descriptor(23, targetVersion, targetTopic, "1.1.2", "Second new descriptor", 1);
 		Unit otherTargetUnit = new Unit(30, otherTargetVersion, "1", "Other target unit", 0);

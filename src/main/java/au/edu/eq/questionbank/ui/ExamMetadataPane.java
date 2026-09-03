@@ -8,6 +8,7 @@ import java.time.Year;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
@@ -115,6 +116,33 @@ final class ExamMetadataPane extends VBox {
 		setPadding(PANEL_PADDING);
 	}
 
+	/**
+	 * Activates an already-persisted exam booklet for question capture without
+	 * importing or creating any database records.
+	 *
+	 * @param booklet the existing booklet to activate
+	 * @param pdfPath the resolved path of the booklet's stored PDF
+	 */
+	void activateExistingBooklet(ExamBooklet booklet, Path pdfPath) {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (pdfPath == null) {
+			throw new NullPointerException("pdfPath");
+		}
+		Exam exam = booklet.getExam();
+		this.booklet = booklet;
+		currentPdfPath = pdfPath.toAbsolutePath().normalize();
+		subjectField.setValue(exam.getSubject());
+		providerField.setValue(exam.getProvider().getName());
+		yearField.setValue(exam.getYear());
+		assessmentField.setValue(exam.getName());
+		bookletField.setValue(booklet.getName());
+		selectedPdfLabel.setText(currentPdfPath.getFileName().toString());
+		selectionCursorHandler.accept(true);
+		examSubjectHandler.accept(exam.getSubject());
+	}
+
 	private void applyInputToControls(ExamMetadataInput input) {
 		providerField.setValue(input.providerName());
 		assessmentField.setValue(input.assessmentName());
@@ -133,6 +161,20 @@ final class ExamMetadataPane extends VBox {
 		} catch (IOException e) {
 			showFileError(e.getMessage());
 		}
+	}
+
+	/**
+	 * Clears metadata that must be re-entered for a newly selected exam PDF.
+	 */
+	void clearForNewPdf() {
+		providerField.getSelectionModel().clearSelection();
+		providerField.getEditor().clear();
+		yearField.getSelectionModel().clearSelection();
+		assessmentField.getSelectionModel().clearSelection();
+		assessmentField.getEditor().clear();
+		bookletField.getSelectionModel().clearSelection();
+		bookletField.getEditor().clear();
+		booklet = null;
 	}
 
 	private void configureActions(Stage stage) {
@@ -248,6 +290,31 @@ final class ExamMetadataPane extends VBox {
 		return null;
 	}
 
+	/**
+	 * Returns the persisted booklet currently used for question regions.
+	 *
+	 * @return the current booklet, or {@code null} before exam metadata is set
+	 */
+	ExamBooklet getBooklet() {
+		return booklet;
+	}
+
+	/**
+	 * Invalidates the active exam when classification moves to a different subject.
+	 *
+	 * @param subject the newly selected classification subject, or {@code null}
+	 */
+	void invalidateForSubjectChange(Subject subject) {
+		if (booklet == null) {
+			return;
+		}
+		Subject examSubject = booklet.getExam().getSubject();
+		if (subject == null || examSubject.getId() != subject.getId()) {
+			booklet = null;
+			selectionCursorHandler.accept(false);
+		}
+	}
+
 	private boolean isComplete(ExamMetadataInput input) {
 		return !input.providerName().isBlank() && input.year() != null && !input.assessmentName().isBlank()
 				&& !input.bookletName().isBlank();
@@ -265,11 +332,52 @@ final class ExamMetadataPane extends VBox {
 				bookletField.getEditor().getText().trim());
 	}
 
+	void refreshSubjects() {
+		Subject selectedSubject = subjectField.getValue();
+		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
+
+		if (selectedSubject != null) {
+			for (Subject subject : subjectField.getItems()) {
+				if (subject.getId() == selectedSubject.getId()) {
+					subjectField.setValue(subject);
+					return;
+				}
+			}
+		}
+
+		Subject currentSubject = curriculumSelectionModel.getSubject();
+		if (currentSubject != null) {
+			for (Subject subject : subjectField.getItems()) {
+				if (subject.getId() == currentSubject.getId()) {
+					subjectField.setValue(subject);
+					return;
+				}
+			}
+		}
+
+		subjectField.setValue(null);
+	}
+
 	private void rememberOptions(ExamMetadataInput input) {
 		optionsRepository.addProvider(input.providerName());
 		optionsRepository.addAssessment(input.assessmentName());
 		optionsRepository.addBooklet(input.bookletName());
 		loadOptions();
+	}
+
+	/**
+	 * Applies a validated PDF selection and clears metadata from the old PDF.
+	 *
+	 * @param selectedPdf the selected exam PDF
+	 */
+	void selectExamPdf(SelectedPdf selectedPdf) {
+		if (selectedPdf == null) {
+			throw new NullPointerException("selectedPdf");
+		}
+		examPdfHandler.accept(selectedPdf);
+		currentPdfPath = selectedPdf.path();
+		clearForNewPdf();
+		selectedPdfLabel.setText(selectedPdf.file().getName());
 	}
 
 	private void setExamMetadata() {
@@ -313,85 +421,5 @@ final class ExamMetadataPane extends VBox {
 		alert.setHeaderText("The exam PDF could not be imported.");
 		alert.setContentText(message);
 		alert.showAndWait();
-	}
-
-	/**
-	 * Clears metadata that must be re-entered for a newly selected exam PDF.
-	 */
-	void clearForNewPdf() {
-		providerField.getSelectionModel().clearSelection();
-		providerField.getEditor().clear();
-		yearField.getSelectionModel().clearSelection();
-		assessmentField.getSelectionModel().clearSelection();
-		assessmentField.getEditor().clear();
-		bookletField.getSelectionModel().clearSelection();
-		bookletField.getEditor().clear();
-		booklet = null;
-	}
-
-	/**
-	 * Returns the persisted booklet currently used for question regions.
-	 *
-	 * @return the current booklet, or {@code null} before exam metadata is set
-	 */
-	ExamBooklet getBooklet() {
-		return booklet;
-	}
-
-	/**
-	 * Invalidates the active exam when classification moves to a different subject.
-	 *
-	 * @param subject the newly selected classification subject, or {@code null}
-	 */
-	void invalidateForSubjectChange(Subject subject) {
-		if (booklet == null) {
-			return;
-		}
-		Subject examSubject = booklet.getExam().getSubject();
-		if (subject == null || examSubject.getId() != subject.getId()) {
-			booklet = null;
-			selectionCursorHandler.accept(false);
-		}
-	}
-
-	void refreshSubjects() {
-		Subject selectedSubject = subjectField.getValue();
-		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
-
-		if (selectedSubject != null) {
-			for (Subject subject : subjectField.getItems()) {
-				if (subject.getId() == selectedSubject.getId()) {
-					subjectField.setValue(subject);
-					return;
-				}
-			}
-		}
-
-		Subject currentSubject = curriculumSelectionModel.getSubject();
-		if (currentSubject != null) {
-			for (Subject subject : subjectField.getItems()) {
-				if (subject.getId() == currentSubject.getId()) {
-					subjectField.setValue(subject);
-					return;
-				}
-			}
-		}
-
-		subjectField.setValue(null);
-	}
-
-	/**
-	 * Applies a validated PDF selection and clears metadata from the old PDF.
-	 *
-	 * @param selectedPdf the selected exam PDF
-	 */
-	void selectExamPdf(SelectedPdf selectedPdf) {
-		if (selectedPdf == null) {
-			throw new NullPointerException("selectedPdf");
-		}
-		examPdfHandler.accept(selectedPdf);
-		currentPdfPath = selectedPdf.path();
-		clearForNewPdf();
-		selectedPdfLabel.setText(selectedPdf.file().getName());
 	}
 }

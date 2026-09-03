@@ -1,7 +1,5 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -14,6 +12,7 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumMappingReviewOutcome;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
  * Stores completed descriptor-mapping reviews in SQLite. Each operation checks
@@ -33,6 +32,21 @@ public final class SqliteCurriculumMappingReviewWriter {
 			throw new NullPointerException("database");
 		}
 		this.database = database;
+	}
+
+	private void confirmMapping(Connection connection, CurriculumNode source, CurriculumNode target)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO curriculum_mappings
+				    (source_node_id, target_node_id, mapping_status)
+				VALUES (?, ?, 'CONFIRMED')
+				ON CONFLICT (source_node_id, target_node_id)
+				DO UPDATE SET mapping_status = 'CONFIRMED'
+				""")) {
+			statement.setLong(1, source.getId());
+			statement.setLong(2, target.getId());
+			statement.executeUpdate();
+		}
 	}
 
 	/**
@@ -58,7 +72,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 			throw new NullPointerException("targets");
 		}
 		if (targets.isEmpty()) {
-			throw new IllegalArgumentException("at least one target descriptor is required");
+			throw new IllegalArgumentException("at least one target curriculum node is required");
 		}
 		validateTargets(source, targetVersion, targets);
 		try (Connection connection = database.openConnection()) {
@@ -102,7 +116,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
 				if (hasConfirmedMappings(connection, source, targetVersion)) {
 					throw new IllegalStateException(
-							"source descriptor already has confirmed mappings for the target syllabus");
+							"source curriculum node already has confirmed mappings for the target syllabus");
 				}
 				insertReview(connection, source, targetVersion, CurriculumMappingReviewOutcome.NO_MATCH);
 				connection.commit();
@@ -110,96 +124,6 @@ public final class SqliteCurriculumMappingReviewWriter {
 				rollback(connection, e);
 				throw e;
 			}
-		}
-	}
-
-	/**
-	 * Atomically replaces the mappings for an existing review with one or more
-	 * confirmed mappings. Mappings from the same source to other target syllabus
-	 * versions are not changed.
-	 *
-	 * @param source        the persisted descriptor being mapped from
-	 * @param targetVersion the persisted syllabus version whose review is edited
-	 * @param targets       one or more distinct persisted target descriptors
-	 * @throws NullPointerException     if an argument or target is {@code null}
-	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
-	 *                                  persisted state, or violates review
-	 *                                  invariants
-	 * @throws IllegalStateException    if this review does not yet exist
-	 * @throws SQLException             if the replacement transaction fails
-	 */
-	public void replaceMappings(CurriculumNode source, SyllabusVersion targetVersion, List<CurriculumNode> targets)
-			throws SQLException {
-		validateSourceAndTargetVersion(source, targetVersion);
-		if (targets == null) {
-			throw new NullPointerException("targets");
-		}
-		if (targets.isEmpty()) {
-			throw new IllegalArgumentException("at least one target descriptor is required");
-		}
-		validateTargets(source, targetVersion, targets);
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
-				requireExistingReview(connection, source, targetVersion);
-				deleteMappings(connection, source, targetVersion);
-				for (CurriculumNode target : targets) {
-					validatePersistentTarget(connection, source, targetVersion, target);
-					confirmMapping(connection, source, target);
-				}
-				updateReviewOutcome(connection, source, targetVersion, CurriculumMappingReviewOutcome.MATCHED);
-				connection.commit();
-			} catch (SQLException | RuntimeException e) {
-				rollback(connection, e);
-				throw e;
-			}
-		}
-	}
-
-	/**
-	 * Atomically removes mappings within an existing review's target-version scope
-	 * and changes its outcome to {@link CurriculumMappingReviewOutcome#NO_MATCH}.
-	 * Mappings to other syllabus versions are not changed.
-	 *
-	 * @param source        the persisted descriptor whose review is edited
-	 * @param targetVersion the persisted target syllabus version
-	 * @throws NullPointerException     if an argument is {@code null}
-	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
-	 *                                  persisted state, or violates review
-	 *                                  invariants
-	 * @throws IllegalStateException    if this review does not yet exist
-	 * @throws SQLException             if the replacement transaction fails
-	 */
-	public void replaceWithNoMatch(CurriculumNode source, SyllabusVersion targetVersion) throws SQLException {
-		validateSourceAndTargetVersion(source, targetVersion);
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
-				requireExistingReview(connection, source, targetVersion);
-				deleteMappings(connection, source, targetVersion);
-				updateReviewOutcome(connection, source, targetVersion, CurriculumMappingReviewOutcome.NO_MATCH);
-				connection.commit();
-			} catch (SQLException | RuntimeException e) {
-				rollback(connection, e);
-				throw e;
-			}
-		}
-	}
-
-	private void confirmMapping(Connection connection, CurriculumNode source, CurriculumNode target)
-			throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
-				INSERT INTO curriculum_mappings
-				    (source_node_id, target_node_id, mapping_status)
-				VALUES (?, ?, 'CONFIRMED')
-				ON CONFLICT (source_node_id, target_node_id)
-				DO UPDATE SET mapping_status = 'CONFIRMED'
-				""")) {
-			statement.setLong(1, source.getId());
-			statement.setLong(2, target.getId());
-			statement.executeUpdate();
 		}
 	}
 
@@ -251,6 +175,81 @@ public final class SqliteCurriculumMappingReviewWriter {
 			statement.setLong(2, targetVersion.getId());
 			statement.setString(3, outcome.name());
 			statement.executeUpdate();
+		}
+	}
+
+	/**
+	 * Atomically replaces the mappings for an existing review with one or more
+	 * confirmed mappings. Mappings from the same source to other target syllabus
+	 * versions are not changed.
+	 *
+	 * @param source        the persisted descriptor being mapped from
+	 * @param targetVersion the persisted syllabus version whose review is edited
+	 * @param targets       one or more distinct persisted target descriptors
+	 * @throws NullPointerException     if an argument or target is {@code null}
+	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
+	 *                                  persisted state, or violates review
+	 *                                  invariants
+	 * @throws IllegalStateException    if this review does not yet exist
+	 * @throws SQLException             if the replacement transaction fails
+	 */
+	public void replaceMappings(CurriculumNode source, SyllabusVersion targetVersion, List<CurriculumNode> targets)
+			throws SQLException {
+		validateSourceAndTargetVersion(source, targetVersion);
+		if (targets == null) {
+			throw new NullPointerException("targets");
+		}
+		if (targets.isEmpty()) {
+			throw new IllegalArgumentException("at least one target curriculum node is required");
+		}
+		validateTargets(source, targetVersion, targets);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
+				requireExistingReview(connection, source, targetVersion);
+				deleteMappings(connection, source, targetVersion);
+				for (CurriculumNode target : targets) {
+					validatePersistentTarget(connection, source, targetVersion, target);
+					confirmMapping(connection, source, target);
+				}
+				updateReviewOutcome(connection, source, targetVersion, CurriculumMappingReviewOutcome.MATCHED);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				rollback(connection, e);
+				throw e;
+			}
+		}
+	}
+
+	/**
+	 * Atomically removes mappings within an existing review's target-version scope
+	 * and changes its outcome to {@link CurriculumMappingReviewOutcome#NO_MATCH}.
+	 * Mappings to other syllabus versions are not changed.
+	 *
+	 * @param source        the persisted descriptor whose review is edited
+	 * @param targetVersion the persisted target syllabus version
+	 * @throws NullPointerException     if an argument is {@code null}
+	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
+	 *                                  persisted state, or violates review
+	 *                                  invariants
+	 * @throws IllegalStateException    if this review does not yet exist
+	 * @throws SQLException             if the replacement transaction fails
+	 */
+	public void replaceWithNoMatch(CurriculumNode source, SyllabusVersion targetVersion) throws SQLException {
+		validateSourceAndTargetVersion(source, targetVersion);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
+				requireExistingReview(connection, source, targetVersion);
+				deleteMappings(connection, source, targetVersion);
+				updateReviewOutcome(connection, source, targetVersion, CurriculumMappingReviewOutcome.NO_MATCH);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				rollback(connection, e);
+				throw e;
+			}
 		}
 	}
 
@@ -317,7 +316,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 			statement.setLong(2, source.getId());
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
-					throw new IllegalArgumentException("source descriptor or target syllabus does not exist");
+					throw new IllegalArgumentException("source curriculum node or target syllabus does not exist");
 				}
 				if (result.getLong("source_version_id") != source.getSyllabusVersion().getId()
 						|| result.getLong("source_subject_id") != source.getSyllabusVersion().getSubject().getId()
@@ -349,13 +348,16 @@ public final class SqliteCurriculumMappingReviewWriter {
 			statement.setLong(1, target.getId());
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
-					throw new IllegalArgumentException("target descriptor does not exist");
+					throw new IllegalArgumentException("target curriculum node does not exist");
 				}
 				if (result.getLong("syllabus_version_id") != targetVersion.getId()
 						|| result.getLong("syllabus_version_id") != target.getSyllabusVersion().getId()
 						|| result.getLong("subject_id") != source.getSyllabusVersion().getSubject().getId()
-						|| !result.getString("curriculum_level").equals(CurriculumLevel.DESCRIPTOR.name())) {
-					throw new IllegalArgumentException("target does not match persisted target descriptor");
+						|| !result.getString("curriculum_level").equals(target.getLevel().name())) {
+					throw new IllegalArgumentException("target does not match persisted curriculum node");
+				}
+				if (target.getLevel() != source.getLevel()) {
+					throw new IllegalArgumentException("source and target must be the same curriculum level");
 				}
 			}
 		}
@@ -368,8 +370,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 		if (targetVersion == null) {
 			throw new NullPointerException("targetVersion");
 		}
-		if (source.getLevel() != CurriculumLevel.DESCRIPTOR) {
-			throw new IllegalArgumentException("source must be a descriptor");
+		if (source.getLevel() != CurriculumLevel.DESCRIPTOR && source.getLevel() != CurriculumLevel.SUBTOPIC) {
+			throw new IllegalArgumentException("source must be a descriptor or subtopic");
 		}
 		if (!source.getSyllabusVersion().getSubject().equals(targetVersion.getSubject())) {
 			throw new IllegalArgumentException("source and target syllabus must belong to the same subject");
@@ -385,8 +387,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 			if (target == null) {
 				throw new NullPointerException("target");
 			}
-			if (target.getLevel() != CurriculumLevel.DESCRIPTOR) {
-				throw new IllegalArgumentException("target must be a descriptor");
+			if (target.getLevel() != source.getLevel()) {
+				throw new IllegalArgumentException("source and target must be the same curriculum level");
 			}
 			if (!target.getSyllabusVersion().equals(targetVersion)) {
 				throw new IllegalArgumentException("target must belong to the selected target syllabus");
@@ -395,7 +397,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 				throw new IllegalArgumentException("source and target must belong to the same subject");
 			}
 			if (!targetIds.add(target.getId())) {
-				throw new IllegalArgumentException("duplicate target descriptor");
+				throw new IllegalArgumentException("duplicate target curriculum node");
 			}
 		}
 	}

@@ -15,6 +15,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
+import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfStore;
@@ -25,10 +26,10 @@ import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
-import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingRepository;
-import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingReviewRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumImportConflictException;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumImportResult;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingRepository;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingReviewRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumImporter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRepository;
@@ -101,51 +102,37 @@ public class QuestionBankApplication extends Application {
 	public QuestionBankApplication() {
 	}
 
-	@Override
-	public void start(Stage stage) throws Exception {
-		ApplicationConfig config;
-		try {
-			config = ApplicationConfig.load(PROPERTIES_FILE);
-		} catch (ConfigurationException e) {
-			showStartupError("Configuration Error", e.getMessage());
-			return;
-		} catch (IOException e) {
-			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
-			return;
-		}
-		try {
-			startApplication(stage, config);
-		} catch (IncompatibleDatabaseException e) {
-			showStartupError("Database Upgrade Required", """
-					The existing question-bank database contains old development question data
-					that cannot be migrated safely to the current database format.
-
-					Delete the existing database and restart the application.
-
-					Database:
-					%s
-
-					You will need to re-import the curriculum and exam data afterwards.
-					""".formatted(config.databasePath()));
-		} catch (SQLException e) {
-			showStartupError("Database Error", """
-					The question-bank database could not be opened or upgraded.
-
-					Database:
-					%s
-
-					%s
-					""".formatted(config.databasePath(), e.getMessage()));
-		}
-	}
-
-	@Override
-	public void stop() throws Exception {
-		pdfWorkspace.close();
-	}
-
 	private void activateExamSubject(Subject subject) {
 		curriculumSelectorPane.selectSubject(subject);
+	}
+
+	private boolean activateImportedQuestion(Question question, ApplicationConfig config) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		Path pdfPath;
+		try {
+			pdfPath = pdfStore.resolve(question.getBooklet().getSourceDocument().getRelativePath());
+		} catch (IllegalArgumentException e) {
+			showAlert(Alert.AlertType.ERROR, "Question Capture", "The stored exam PDF path is invalid.",
+					e.getMessage());
+			return false;
+		}
+		if (!Files.isRegularFile(pdfPath)) {
+			showAlert(Alert.AlertType.ERROR, "Question Capture", "The stored exam PDF is unavailable.",
+					pdfPath.toString());
+			return false;
+		}
+		try {
+			pdfWorkspace.openExamPdf(pdfPath);
+			examMetadataPane.activateExistingBooklet(question.getBooklet(), pdfPath);
+			return true;
+		} catch (RuntimeException e) {
+			showAlert(Alert.AlertType.ERROR, "Question Capture", "The stored exam PDF could not be opened.",
+					e.getMessage());
+			return false;
+		}
 	}
 
 	private void closeViewerPdf() {
@@ -300,7 +287,7 @@ public class QuestionBankApplication extends Application {
 			} else {
 				showAlert(Alert.AlertType.INFORMATION, "Curriculum Import", "Curriculum already imported.",
 						dialog.getSubjectName() + " " + dialog.getVersionName()
-							+ " is already imported. No changes were required.");
+								+ " is already imported. No changes were required.");
 			}
 		} catch (IOException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not read the Excel file.", e.getMessage());
@@ -526,6 +513,44 @@ public class QuestionBankApplication extends Application {
 		alert.showAndWait();
 	}
 
+	@Override
+	public void start(Stage stage) throws Exception {
+		ApplicationConfig config;
+		try {
+			config = ApplicationConfig.load(PROPERTIES_FILE);
+		} catch (ConfigurationException e) {
+			showStartupError("Configuration Error", e.getMessage());
+			return;
+		} catch (IOException e) {
+			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
+			return;
+		}
+		try {
+			startApplication(stage, config);
+		} catch (IncompatibleDatabaseException e) {
+			showStartupError("Database Upgrade Required", """
+					The existing question-bank database contains old development question data
+					that cannot be migrated safely to the current database format.
+
+					Delete the existing database and restart the application.
+
+					Database:
+					%s
+
+					You will need to re-import the curriculum and exam data afterwards.
+					""".formatted(config.databasePath()));
+		} catch (SQLException e) {
+			showStartupError("Database Error", """
+					The question-bank database could not be opened or upgraded.
+
+					Database:
+					%s
+
+					%s
+					""".formatted(config.databasePath(), e.getMessage()));
+		}
+	}
+
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
@@ -544,8 +569,8 @@ public class QuestionBankApplication extends Application {
 		answerCapturePane.refreshUnansweredQuestions();
 		questionCapturePane = new QuestionCapturePane(questionRepository, questionExtractor, curriculumSelectionModel,
 				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
-				pdfWorkspace::clearSelection, answerCapturePane::refreshUnansweredQuestions);
-
+				question -> activateImportedQuestion(question, config), pdfWorkspace::clearSelection,
+				answerCapturePane::refreshUnansweredQuestions);
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
 		pdfWorkspace.setPageChangeHandler(() -> {
@@ -555,5 +580,10 @@ public class QuestionBankApplication extends Application {
 
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
+	}
+
+	@Override
+	public void stop() throws Exception {
+		pdfWorkspace.close();
 	}
 }

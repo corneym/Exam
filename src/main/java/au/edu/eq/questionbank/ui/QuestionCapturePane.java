@@ -4,8 +4,10 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -75,6 +77,7 @@ final class QuestionCapturePane extends VBox {
 	private final Supplier<PdfSession> examPdfSessionSupplier;
 	private final Runnable selectionClearHandler;
 	private final Runnable questionsChangedHandler;
+	private final Predicate<Question> importedQuestionActivationHandler;
 
 	private QuestionRegion currentSelection;
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
@@ -85,7 +88,8 @@ final class QuestionCapturePane extends VBox {
 	QuestionCapturePane(QuestionRepository questionRepository, QuestionExtractor questionExtractor,
 			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
 			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
-			Runnable selectionClearHandler, Runnable questionsChangedHandler) {
+			Predicate<Question> importedQuestionActivationHandler, Runnable selectionClearHandler,
+			Runnable questionsChangedHandler) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -110,6 +114,9 @@ final class QuestionCapturePane extends VBox {
 		if (questionsChangedHandler == null) {
 			throw new NullPointerException("questionsChangedHandler");
 		}
+		if (importedQuestionActivationHandler == null) {
+			throw new NullPointerException("importedQuestionActivationHandler");
+		}
 		this.questionRepository = questionRepository;
 		this.questionExtractor = questionExtractor;
 		this.curriculumSelectionModel = curriculumSelectionModel;
@@ -118,6 +125,7 @@ final class QuestionCapturePane extends VBox {
 		this.examPdfSessionSupplier = examPdfSessionSupplier;
 		this.selectionClearHandler = selectionClearHandler;
 		this.questionsChangedHandler = questionsChangedHandler;
+		this.importedQuestionActivationHandler = importedQuestionActivationHandler;
 		configureControls();
 		configureActions();
 		getChildren().addAll(createSectionLabel("Question"), new Label("Imported question awaiting capture"),
@@ -127,6 +135,26 @@ final class QuestionCapturePane extends VBox {
 		setSpacing(COMPACT_SPACING);
 		setPadding(PANEL_PADDING);
 		setStyle(BORDER_STYLE);
+	}
+
+	/**
+	 * Accepts a proportional exam-page selection as the current pending region.
+	 *
+	 * @param selection the selected exam-page rectangle
+	 */
+	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null) {
+			clearCurrentSelection();
+			showAlert(Alert.AlertType.WARNING, "Exam details have not been set.",
+					"Enter the exam and booklet details, then click Set Exam.");
+			return;
+		}
+
+		currentSelection = new QuestionRegion(booklet, selection.pageNumber(), selection.x(), selection.y(),
+				selection.width(), selection.height());
+		showRegionPreview(currentSelection);
+		saveStatusLabel.setText("Selection pending — click Add or Clear");
 	}
 
 	private void addCurrentRegion() {
@@ -157,6 +185,30 @@ final class QuestionCapturePane extends VBox {
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview region", e);
 		}
+	}
+
+	/**
+	 * Discards the current unaccepted region selection.
+	 */
+	void clearCurrentSelection() {
+		currentSelection = null;
+		selectionClearHandler.run();
+		previewView.setImage(null);
+	}
+
+	/**
+	 * Clears all transient question regions when the exam PDF changes.
+	 */
+	void clearForNewPdf() {
+		importedQuestion = null;
+		questionCodeField.setDisable(false);
+		marksField.setDisable(false);
+		curriculumSelectorPane.setDisable(false);
+		saveQuestionButton.setText("Save Question");
+		captureHintLabel.setVisible(false);
+		captureHintLabel.setManaged(false);
+		resetQuestionEntry();
+		refreshImportedQuestions();
 	}
 
 	private void clearImportedQuestionSelection() {
@@ -236,7 +288,10 @@ final class QuestionCapturePane extends VBox {
 				if (question == null) {
 					return "";
 				}
-				return String.format("%s — %d mark(s)", question.getQuestionCode(), question.getMarks());
+				ExamBooklet booklet = question.getBooklet();
+				Exam exam = booklet.getExam();
+				return String.format("%s %d — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
+						booklet.getName(), question.getQuestionCode(), question.getMarks());
 			}
 		});
 		newQuestionButton.setId("new-question");
@@ -296,6 +351,10 @@ final class QuestionCapturePane extends VBox {
 
 	private void loadImportedQuestion(Question question) {
 		clearRegions();
+		if (question != null && !importedQuestionActivationHandler.test(question)) {
+			clearImportedQuestionSelection();
+			return;
+		}
 		importedQuestion = question;
 		if (question == null) {
 			questionCodeField.setDisable(false);
@@ -323,6 +382,33 @@ final class QuestionCapturePane extends VBox {
 			captureHintLabel.setManaged(false);
 		}
 		showQuestionPendingStatus();
+	}
+
+	void refreshImportedQuestions() {
+		Question selected = importedQuestion;
+		List<Question> awaitingCapture = new ArrayList<>();
+		for (Question question : questionRepository.findAll()) {
+			if (question.getRegions().isEmpty()) {
+				awaitingCapture.add(question);
+			}
+		}
+		refreshingImportedQuestions = true;
+		try {
+			importedQuestionBox.getItems().setAll(awaitingCapture);
+			Question matchingSelection = null;
+			if (selected != null) {
+				for (Question question : awaitingCapture) {
+					if (question.getId() == selected.getId()) {
+						matchingSelection = question;
+						break;
+					}
+				}
+			}
+			importedQuestionBox.setValue(matchingSelection);
+			importedQuestion = matchingSelection;
+		} finally {
+			refreshingImportedQuestions = false;
+		}
 	}
 
 	private void refreshRegionPreviews() {
@@ -422,79 +508,5 @@ final class QuestionCapturePane extends VBox {
 			return;
 		}
 		saveQuestion();
-	}
-
-	/**
-	 * Accepts a proportional exam-page selection as the current pending region.
-	 *
-	 * @param selection the selected exam-page rectangle
-	 */
-	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
-		ExamBooklet booklet = bookletSupplier.get();
-		if (booklet == null) {
-			clearCurrentSelection();
-			showAlert(Alert.AlertType.WARNING, "Exam details have not been set.",
-					"Enter the exam and booklet details, then click Set Exam.");
-			return;
-		}
-
-		currentSelection = new QuestionRegion(booklet, selection.pageNumber(), selection.x(), selection.y(),
-				selection.width(), selection.height());
-		showRegionPreview(currentSelection);
-		saveStatusLabel.setText("Selection pending — click Add or Clear");
-	}
-
-	/**
-	 * Discards the current unaccepted region selection.
-	 */
-	void clearCurrentSelection() {
-		currentSelection = null;
-		selectionClearHandler.run();
-		previewView.setImage(null);
-	}
-
-	/**
-	 * Clears all transient question regions when the exam PDF changes.
-	 */
-	void clearForNewPdf() {
-		importedQuestion = null;
-		questionCodeField.setDisable(false);
-		marksField.setDisable(false);
-		curriculumSelectorPane.setDisable(false);
-		saveQuestionButton.setText("Save Question");
-		captureHintLabel.setVisible(false);
-		captureHintLabel.setManaged(false);
-		resetQuestionEntry();
-		refreshImportedQuestions();
-	}
-
-	void refreshImportedQuestions() {
-		ExamBooklet booklet = bookletSupplier.get();
-		Question selected = importedQuestion;
-		List<Question> awaitingCapture = new ArrayList<>();
-		if (booklet != null) {
-			for (Question question : questionRepository.findAll()) {
-				if (question.getBooklet().getId() == booklet.getId() && question.getRegions().isEmpty()) {
-					awaitingCapture.add(question);
-				}
-			}
-		}
-		refreshingImportedQuestions = true;
-		try {
-			importedQuestionBox.getItems().setAll(awaitingCapture);
-			Question matchingSelection = null;
-			if (selected != null) {
-				for (Question question : awaitingCapture) {
-					if (question.getId() == selected.getId()) {
-						matchingSelection = question;
-						break;
-					}
-				}
-			}
-			importedQuestionBox.setValue(matchingSelection);
-			importedQuestion = matchingSelection;
-		} finally {
-			refreshingImportedQuestions = false;
-		}
 	}
 }
