@@ -12,9 +12,10 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.MappingStatus;
 
 /**
- * Writes directional curriculum mappings. Each operation validates persisted
- * endpoint identities and writes within one transaction; syllabus names and
- * current-version flags do not determine direction.
+ * Writes directional curriculum mappings from a non-current syllabus version
+ * to the current version of the same subject. Each operation validates
+ * persisted endpoint identities and current-version flags and writes within one
+ * transaction; syllabus names do not determine direction.
  */
 public final class SqliteCurriculumMappingWriter {
 	private final SqliteDatabase database;
@@ -41,7 +42,9 @@ public final class SqliteCurriculumMappingWriter {
 	 * @return the mapping with its generated persistent identifier
 	 * @throws NullPointerException if an argument is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents its
-	 *                                  persisted identity, or violates mapping invariants
+	 *                                  persisted identity, is directed other than from
+	 *                                  a non-current version to the current version, or
+	 *                                  violates another mapping invariant
 	 * @throws SQLException if the pair already exists or the transaction fails
 	 */
 	public CurriculumMapping insertMapping(CurriculumNode source, CurriculumNode target, MappingStatus status)
@@ -155,15 +158,21 @@ public final class SqliteCurriculumMappingWriter {
 		if (source.getLevel() != target.getLevel()) {
 			throw new IllegalArgumentException("source and target must be the same curriculum level");
 		}
+		if (source.getSyllabusVersion().isCurrent()) {
+			throw new IllegalArgumentException("source syllabus version must not be current");
+		}
+		if (!target.getSyllabusVersion().isCurrent()) {
+			throw new IllegalArgumentException("target syllabus version must be current");
+		}
 	}
 
 	private void validatePersistentMapping(Connection connection, CurriculumNode source, CurriculumNode target)
 			throws SQLException {
 		PersistentMappingEndpoints endpoints = readPersistentMappingEndpoints(connection, source, target);
 		validatePersistentEndpoint(source, endpoints.sourceVersionId(), endpoints.sourceSubjectId(),
-				endpoints.sourceLevel(), "source");
+				endpoints.sourceLevel(), endpoints.sourceCurrent(), "source");
 		validatePersistentEndpoint(target, endpoints.targetVersionId(), endpoints.targetSubjectId(),
-				endpoints.targetLevel(), "target");
+				endpoints.targetLevel(), endpoints.targetCurrent(), "target");
 		validatePersistentRelationship(endpoints);
 	}
 
@@ -174,9 +183,11 @@ public final class SqliteCurriculumMappingWriter {
 				    source.syllabus_version_id AS source_version_id,
 				    source.curriculum_level AS source_level,
 				    source_version.subject_id AS source_subject_id,
+				    source_version.is_current AS source_is_current,
 				    target.syllabus_version_id AS target_version_id,
 				    target.curriculum_level AS target_level,
-				    target_version.subject_id AS target_subject_id
+				    target_version.subject_id AS target_subject_id,
+				    target_version.is_current AS target_is_current
 				FROM curriculum_nodes source
 				JOIN syllabus_versions source_version
 				    ON source_version.id = source.syllabus_version_id
@@ -195,16 +206,17 @@ public final class SqliteCurriculumMappingWriter {
 				return new PersistentMappingEndpoints(result.getLong("source_version_id"),
 						result.getLong("target_version_id"), result.getLong("source_subject_id"),
 						result.getLong("target_subject_id"), result.getString("source_level"),
-						result.getString("target_level"));
+						result.getString("target_level"), result.getInt("source_is_current") != 0,
+						result.getInt("target_is_current") != 0);
 			}
 		}
 	}
 
 	private void validatePersistentEndpoint(CurriculumNode node, long versionId, long subjectId, String level,
-			String endpointName) {
+			boolean current, String endpointName) {
 		if (versionId != node.getSyllabusVersion().getId()
 				|| subjectId != node.getSyllabusVersion().getSubject().getId()
-				|| !level.equals(node.getLevel().name())) {
+				|| !level.equals(node.getLevel().name()) || current != node.getSyllabusVersion().isCurrent()) {
 			throw new IllegalArgumentException(endpointName + " does not match persisted curriculum node");
 		}
 	}
@@ -218,6 +230,12 @@ public final class SqliteCurriculumMappingWriter {
 		}
 		if (!endpoints.sourceLevel().equals(endpoints.targetLevel())) {
 			throw new IllegalArgumentException("source and target must be the same curriculum level");
+		}
+		if (endpoints.sourceCurrent()) {
+			throw new IllegalArgumentException("source syllabus version must not be current");
+		}
+		if (!endpoints.targetCurrent()) {
+			throw new IllegalArgumentException("target syllabus version must be current");
 		}
 	}
 
@@ -243,6 +261,6 @@ public final class SqliteCurriculumMappingWriter {
 	}
 
 	private record PersistentMappingEndpoints(long sourceVersionId, long targetVersionId, long sourceSubjectId,
-			long targetSubjectId, String sourceLevel, String targetLevel) {
+			long targetSubjectId, String sourceLevel, String targetLevel, boolean sourceCurrent, boolean targetCurrent) {
 	}
 }

@@ -186,4 +186,30 @@ class TfIdfCurriculumMappingSuggesterTest {
 
 		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(source, version));
 	}
+
+	@Test
+	void rejectsSuggestionsOutsideNonCurrentToCurrentDirection() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion historicalVersion = new SyllabusVersion(1, chemistry, "Historical", false);
+		Unit historicalUnit = new Unit(1, historicalVersion, "1", "Historical unit", 1);
+		Topic historicalTopic = new Topic(2, historicalVersion, historicalUnit, "1.1", "Historical topic", 1);
+		Descriptor historicalDescriptor = new Descriptor(3, historicalVersion, historicalTopic, "1.1.1",
+				"Historical descriptor", 1);
+		SyllabusVersion currentVersion = new SyllabusVersion(2, chemistry, "Current", true);
+		Unit currentUnit = new Unit(4, currentVersion, "2", "Current unit", 1);
+		Topic currentTopic = new Topic(5, currentVersion, currentUnit, "2.1", "Current topic", 1);
+		Descriptor currentDescriptor = new Descriptor(6, currentVersion, currentTopic, "2.1.1",
+				"Current descriptor", 1);
+		SyllabusVersion otherHistoricalVersion = new SyllabusVersion(3, chemistry, "Other historical", false);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(historicalVersion, currentVersion, otherHistoricalVersion),
+				List.of(historicalUnit, historicalTopic, historicalDescriptor, currentUnit, currentTopic,
+						currentDescriptor));
+		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> suggester.suggest(currentDescriptor, historicalVersion));
+		assertThrows(IllegalArgumentException.class,
+				() -> suggester.suggest(historicalDescriptor, otherHistoricalVersion));
+	}
 }

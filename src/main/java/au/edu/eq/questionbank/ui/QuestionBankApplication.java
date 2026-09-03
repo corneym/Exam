@@ -42,6 +42,7 @@ import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.curriculum.ConfirmedDescriptorSubtopicMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
+import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
@@ -465,9 +466,12 @@ public class QuestionBankApplication extends Application {
 					mappingRepository);
 			CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
 			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
+			SubtopicMappingEvidenceService subtopicEvidenceService = new SubtopicMappingEvidenceService(repository,
+					reviewRepository);
 
 			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
-					descriptorSuggester, subtopicSuggester, reviewRepository, mappingRepository, reviewWriter);
+					descriptorSuggester, subtopicSuggester, subtopicEvidenceService, reviewRepository, mappingRepository,
+					reviewWriter);
 			dialog.showAndWait();
 		} catch (IllegalStateException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",

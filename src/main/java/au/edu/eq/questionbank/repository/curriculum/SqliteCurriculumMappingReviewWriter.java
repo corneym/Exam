@@ -15,9 +15,10 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
- * Stores completed descriptor-mapping reviews in SQLite. Each operation checks
- * persisted endpoint identities and commits its mapping and outcome changes in
- * a single transaction. Review identity is the directional source descriptor
+ * Stores completed descriptor and subtopic mapping reviews in SQLite. Each
+ * operation checks persisted endpoint identities and enforces a non-current
+ * source to current-target direction before committing mapping and outcome
+ * changes in one transaction. Review identity is the directional source node
  * and target syllabus-version pair.
  */
 public final class SqliteCurriculumMappingReviewWriter {
@@ -50,18 +51,20 @@ public final class SqliteCurriculumMappingReviewWriter {
 	}
 
 	/**
-	 * Confirms one or more directional descriptor mappings and records a
+	 * Confirms one or more directional descriptor or subtopic mappings and records a
 	 * {@link CurriculumMappingReviewOutcome#MATCHED} review atomically. A selected
 	 * source-target pair already stored as {@code SUGGESTED} is promoted to
 	 * {@code CONFIRMED}; unselected suggestions are not changed.
 	 *
-	 * @param source        the persisted descriptor being mapped from
-	 * @param targetVersion the persisted syllabus version being mapped to
-	 * @param targets       one or more distinct persisted target descriptors
+	 * @param source        the persisted descriptor or subtopic being mapped from
+	 * @param targetVersion the persisted current syllabus version being mapped to
+	 * @param targets       one or more distinct persisted target nodes at the same
+	 *                      level as {@code source}
 	 * @throws NullPointerException     if an argument or target is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
-	 *                                  persisted state, or violates review
-	 *                                  invariants
+	 *                                  persisted state, is directed other than from
+	 *                                  a non-current version to the current version,
+	 *                                  or violates another review invariant
 	 * @throws SQLException             if the review already exists or the
 	 *                                  transaction cannot be completed
 	 */
@@ -93,16 +96,17 @@ public final class SqliteCurriculumMappingReviewWriter {
 	}
 
 	/**
-	 * Records atomically that the source has no equivalent descriptor in the target
-	 * syllabus. Existing confirmed mappings in this review scope prevent the new
-	 * review from being recorded.
+	 * Records atomically that the source has no equivalent node at the same level in
+	 * the current target syllabus. Existing confirmed mappings in this review scope
+	 * prevent the new review from being recorded.
 	 *
-	 * @param source        the persisted descriptor being reviewed
-	 * @param targetVersion the persisted syllabus version being reviewed against
+	 * @param source        the persisted descriptor or subtopic being reviewed
+	 * @param targetVersion the persisted current syllabus version being reviewed against
 	 * @throws NullPointerException     if an argument is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
-	 *                                  persisted state, or violates review
-	 *                                  invariants
+	 *                                  persisted state, is directed other than from
+	 *                                  a non-current version to the current version,
+	 *                                  or violates another review invariant
 	 * @throws IllegalStateException    if confirmed mappings already exist in this
 	 *                                  review scope
 	 * @throws SQLException             if the review already exists or the
@@ -183,13 +187,15 @@ public final class SqliteCurriculumMappingReviewWriter {
 	 * confirmed mappings. Mappings from the same source to other target syllabus
 	 * versions are not changed.
 	 *
-	 * @param source        the persisted descriptor being mapped from
-	 * @param targetVersion the persisted syllabus version whose review is edited
-	 * @param targets       one or more distinct persisted target descriptors
+	 * @param source        the persisted descriptor or subtopic being mapped from
+	 * @param targetVersion the persisted current syllabus version whose review is edited
+	 * @param targets       one or more distinct persisted target nodes at the same
+	 *                      level as {@code source}
 	 * @throws NullPointerException     if an argument or target is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
-	 *                                  persisted state, or violates review
-	 *                                  invariants
+	 *                                  persisted state, is directed other than from
+	 *                                  a non-current version to the current version,
+	 *                                  or violates another review invariant
 	 * @throws IllegalStateException    if this review does not yet exist
 	 * @throws SQLException             if the replacement transaction fails
 	 */
@@ -227,12 +233,13 @@ public final class SqliteCurriculumMappingReviewWriter {
 	 * and changes its outcome to {@link CurriculumMappingReviewOutcome#NO_MATCH}.
 	 * Mappings to other syllabus versions are not changed.
 	 *
-	 * @param source        the persisted descriptor whose review is edited
-	 * @param targetVersion the persisted target syllabus version
+	 * @param source        the persisted descriptor or subtopic whose review is edited
+	 * @param targetVersion the persisted current target syllabus version
 	 * @throws NullPointerException     if an argument is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
-	 *                                  persisted state, or violates review
-	 *                                  invariants
+	 *                                  persisted state, is directed other than from
+	 *                                  a non-current version to the current version,
+	 *                                  or violates another review invariant
 	 * @throws IllegalStateException    if this review does not yet exist
 	 * @throws SQLException             if the replacement transaction fails
 	 */
@@ -304,7 +311,9 @@ public final class SqliteCurriculumMappingReviewWriter {
 				    source.syllabus_version_id AS source_version_id,
 				    source.curriculum_level AS source_level,
 				    source_version.subject_id AS source_subject_id,
-				    target_version.subject_id AS target_subject_id
+				    source_version.is_current AS source_is_current,
+				    target_version.subject_id AS target_subject_id,
+				    target_version.is_current AS target_is_current
 				FROM curriculum_nodes source
 				JOIN syllabus_versions source_version
 				    ON source_version.id = source.syllabus_version_id
@@ -320,14 +329,22 @@ public final class SqliteCurriculumMappingReviewWriter {
 				}
 				if (result.getLong("source_version_id") != source.getSyllabusVersion().getId()
 						|| result.getLong("source_subject_id") != source.getSyllabusVersion().getSubject().getId()
-						|| !result.getString("source_level").equals(source.getLevel().name())) {
+						|| !result.getString("source_level").equals(source.getLevel().name())
+						|| (result.getInt("source_is_current") != 0) != source.getSyllabusVersion().isCurrent()) {
 					throw new IllegalArgumentException("source does not match persisted curriculum node");
 				}
-				if (result.getLong("target_subject_id") != targetVersion.getSubject().getId()) {
+				if (result.getLong("target_subject_id") != targetVersion.getSubject().getId()
+						|| (result.getInt("target_is_current") != 0) != targetVersion.isCurrent()) {
 					throw new IllegalArgumentException("target syllabus does not match persisted syllabus version");
 				}
 				if (result.getLong("source_subject_id") != result.getLong("target_subject_id")) {
 					throw new IllegalArgumentException("source and target syllabus must belong to the same subject");
+				}
+				if (result.getInt("source_is_current") != 0) {
+					throw new IllegalArgumentException("source syllabus version must not be current");
+				}
+				if (result.getInt("target_is_current") == 0) {
+					throw new IllegalArgumentException("target syllabus version must be current");
 				}
 			}
 		}
@@ -339,7 +356,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 				SELECT
 				    node.syllabus_version_id,
 				    node.curriculum_level,
-				    version.subject_id
+				    version.subject_id,
+				    version.is_current
 				FROM curriculum_nodes node
 				JOIN syllabus_versions version
 				    ON version.id = node.syllabus_version_id
@@ -353,7 +371,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 				if (result.getLong("syllabus_version_id") != targetVersion.getId()
 						|| result.getLong("syllabus_version_id") != target.getSyllabusVersion().getId()
 						|| result.getLong("subject_id") != source.getSyllabusVersion().getSubject().getId()
-						|| !result.getString("curriculum_level").equals(target.getLevel().name())) {
+						|| !result.getString("curriculum_level").equals(target.getLevel().name())
+						|| (result.getInt("is_current") != 0) != target.getSyllabusVersion().isCurrent()) {
 					throw new IllegalArgumentException("target does not match persisted curriculum node");
 				}
 				if (target.getLevel() != source.getLevel()) {
@@ -379,6 +398,12 @@ public final class SqliteCurriculumMappingReviewWriter {
 		if (source.getSyllabusVersion().equals(targetVersion)) {
 			throw new IllegalArgumentException("source and target syllabus versions must be different");
 		}
+		if (source.getSyllabusVersion().isCurrent()) {
+			throw new IllegalArgumentException("source syllabus version must not be current");
+		}
+		if (!targetVersion.isCurrent()) {
+			throw new IllegalArgumentException("target syllabus version must be current");
+		}
 	}
 
 	private void validateTargets(CurriculumNode source, SyllabusVersion targetVersion, List<CurriculumNode> targets) {
@@ -392,6 +417,9 @@ public final class SqliteCurriculumMappingReviewWriter {
 			}
 			if (!target.getSyllabusVersion().equals(targetVersion)) {
 				throw new IllegalArgumentException("target must belong to the selected target syllabus");
+			}
+			if (!target.getSyllabusVersion().isCurrent()) {
+				throw new IllegalArgumentException("target must represent the current target syllabus");
 			}
 			if (!target.getSyllabusVersion().getSubject().equals(source.getSyllabusVersion().getSubject())) {
 				throw new IllegalArgumentException("source and target must belong to the same subject");

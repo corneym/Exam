@@ -70,6 +70,12 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 		if (source.getSyllabusVersion().equals(targetVersion)) {
 			throw new IllegalArgumentException("source and target syllabus versions must be different");
 		}
+		if (source.getSyllabusVersion().isCurrent()) {
+			throw new IllegalArgumentException("source syllabus version must not be current");
+		}
+		if (!targetVersion.isCurrent()) {
+			throw new IllegalArgumentException("target syllabus version must be current");
+		}
 	}
 
 	private SimilarityCorpora buildCorpora(List<CurriculumNode> sourceDescriptors,

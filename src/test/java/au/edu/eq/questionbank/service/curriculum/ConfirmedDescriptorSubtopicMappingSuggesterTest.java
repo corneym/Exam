@@ -131,4 +131,89 @@ class ConfirmedDescriptorSubtopicMappingSuggesterTest {
 
 		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(sourceUnit, targetVersion));
 	}
+
+	@Test
+	void oneSourceDescriptorCanSupportMultipleTargetSubtopicsAndTopicDescriptorsAreIgnored() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion sourceVersion = new SyllabusVersion(1, chemistry, "2019", false);
+		Unit sourceUnit = new Unit(1, sourceVersion, "1", "Source unit", 1);
+		Topic sourceTopic = new Topic(2, sourceVersion, sourceUnit, "1.1", "Source topic", 1);
+		Subtopic sourceSubtopic = new Subtopic(3, sourceVersion, sourceTopic, "1.1.1", "Source subtopic", 1);
+		Descriptor sourceDescriptor = new Descriptor(4, sourceVersion, sourceSubtopic, "1.1.1.1",
+				"Source descriptor", 1);
+
+		SyllabusVersion targetVersion = new SyllabusVersion(2, chemistry, "2025", true);
+		Unit targetUnit = new Unit(10, targetVersion, "2", "Target unit", 1);
+		Topic targetTopic = new Topic(11, targetVersion, targetUnit, "2.1", "Target topic", 1);
+		Subtopic firstTarget = new Subtopic(12, targetVersion, targetTopic, "2.1.1", "First target", 1);
+		Descriptor firstTargetDescriptor = new Descriptor(13, targetVersion, firstTarget, "2.1.1.1",
+				"First target descriptor", 1);
+		Subtopic secondTarget = new Subtopic(14, targetVersion, targetTopic, "2.1.2", "Second target", 2);
+		Descriptor secondTargetDescriptor = new Descriptor(15, targetVersion, secondTarget, "2.1.2.1",
+				"Second target descriptor", 1);
+		Descriptor topicDescriptor = new Descriptor(16, targetVersion, targetTopic, "2.1.3",
+				"Descriptor directly under topic", 3);
+
+		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(sourceVersion, targetVersion),
+				List.of(sourceUnit, sourceTopic, sourceSubtopic, sourceDescriptor, targetUnit, targetTopic, firstTarget,
+						firstTargetDescriptor, secondTarget, secondTargetDescriptor, topicDescriptor));
+		InMemoryCurriculumMappingRepository mappingRepository = new InMemoryCurriculumMappingRepository(
+				List.of(new CurriculumMapping(1, sourceDescriptor, firstTargetDescriptor, MappingStatus.CONFIRMED),
+						new CurriculumMapping(2, sourceDescriptor, secondTargetDescriptor, MappingStatus.CONFIRMED),
+						new CurriculumMapping(3, sourceDescriptor, topicDescriptor, MappingStatus.CONFIRMED)));
+		ConfirmedDescriptorSubtopicMappingSuggester suggester = new ConfirmedDescriptorSubtopicMappingSuggester(
+				curriculumRepository, mappingRepository);
+
+		List<CurriculumMappingSuggestion> suggestions = suggester.suggest(sourceSubtopic, targetVersion);
+
+		assertEquals(2, suggestions.size());
+		assertEquals(firstTarget, suggestions.get(0).getTarget());
+		assertEquals(1.0, suggestions.get(0).getScore(), 0.000001);
+		assertEquals(secondTarget, suggestions.get(1).getTarget());
+		assertEquals(1.0, suggestions.get(1).getScore(), 0.000001);
+	}
+
+	@Test
+	void sourceSubtopicWithoutDirectDescriptorsHasNoSuggestions() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion sourceVersion = new SyllabusVersion(1, chemistry, "2019", false);
+		Unit sourceUnit = new Unit(1, sourceVersion, "1", "Source unit", 1);
+		Topic sourceTopic = new Topic(2, sourceVersion, sourceUnit, "1.1", "Source topic", 1);
+		Subtopic sourceSubtopic = new Subtopic(3, sourceVersion, sourceTopic, "1.1.1", "Source subtopic", 1);
+		SyllabusVersion targetVersion = new SyllabusVersion(2, chemistry, "2025", true);
+		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(sourceVersion, targetVersion), List.of(sourceUnit, sourceTopic, sourceSubtopic));
+		ConfirmedDescriptorSubtopicMappingSuggester suggester = new ConfirmedDescriptorSubtopicMappingSuggester(
+				curriculumRepository, new InMemoryCurriculumMappingRepository(List.of()));
+
+		assertEquals(List.of(), suggester.suggest(sourceSubtopic, targetVersion));
+	}
+
+	@Test
+	void rejectsSuggestionsOutsideNonCurrentToCurrentDirection() {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion historicalVersion = new SyllabusVersion(1, chemistry, "Historical", false);
+		Unit historicalUnit = new Unit(1, historicalVersion, "1", "Historical unit", 1);
+		Topic historicalTopic = new Topic(2, historicalVersion, historicalUnit, "1.1", "Historical topic", 1);
+		Subtopic historicalSubtopic = new Subtopic(3, historicalVersion, historicalTopic, "1.1.1",
+				"Historical subtopic", 1);
+		SyllabusVersion currentVersion = new SyllabusVersion(2, chemistry, "Current", true);
+		Unit currentUnit = new Unit(4, currentVersion, "2", "Current unit", 1);
+		Topic currentTopic = new Topic(5, currentVersion, currentUnit, "2.1", "Current topic", 1);
+		Subtopic currentSubtopic = new Subtopic(6, currentVersion, currentTopic, "2.1.1", "Current subtopic", 1);
+		SyllabusVersion otherHistoricalVersion = new SyllabusVersion(3, chemistry, "Other historical", false);
+		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(historicalVersion, currentVersion, otherHistoricalVersion),
+				List.of(historicalUnit, historicalTopic, historicalSubtopic, currentUnit, currentTopic,
+						currentSubtopic));
+		InMemoryCurriculumMappingRepository mappingRepository = new InMemoryCurriculumMappingRepository(List.of());
+		ConfirmedDescriptorSubtopicMappingSuggester suggester = new ConfirmedDescriptorSubtopicMappingSuggester(
+				curriculumRepository, mappingRepository);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> suggester.suggest(currentSubtopic, historicalVersion));
+		assertThrows(IllegalArgumentException.class,
+				() -> suggester.suggest(historicalSubtopic, otherHistoricalVersion));
+	}
 }

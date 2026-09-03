@@ -18,15 +18,27 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 
 /**
  * Suggests subtopic mappings using confirmed descriptor mappings as evidence.
- * Each source descriptor contributes at most one vote to a target subtopic,
- * regardless of how many confirmed target descriptors it has inside that
- * subtopic.
+ * The score is the fraction of the source subtopic's direct descriptors that
+ * support a target subtopic. Each source descriptor contributes at most one
+ * vote to a target subtopic, regardless of how many confirmed target
+ * descriptors it has there, but may support more than one target subtopic.
+ * Target descriptors directly beneath a topic provide no subtopic evidence.
+ * Ties are ordered by persistent target identifier, and suggestions are never
+ * persisted automatically.
  */
 public final class ConfirmedDescriptorSubtopicMappingSuggester implements CurriculumMappingSuggester {
 
 	private final CurriculumRepository curriculumRepository;
 	private final CurriculumMappingRepository mappingRepository;
 
+	/**
+	 * Creates a suggester backed by curriculum hierarchy and directional mapping
+	 * lookups.
+	 *
+	 * @param curriculumRepository the hierarchy used to find direct source descriptors
+	 * @param mappingRepository    confirmed descriptor mapping lookup
+	 * @throws NullPointerException if either repository is {@code null}
+	 */
 	public ConfirmedDescriptorSubtopicMappingSuggester(CurriculumRepository curriculumRepository,
 			CurriculumMappingRepository mappingRepository) {
 		if (curriculumRepository == null) {
@@ -129,6 +141,12 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 		}
 		if (source.getSyllabusVersion().equals(targetVersion)) {
 			throw new IllegalArgumentException("source and target syllabus versions must be different");
+		}
+		if (source.getSyllabusVersion().isCurrent()) {
+			throw new IllegalArgumentException("source syllabus version must not be current");
+		}
+		if (!targetVersion.isCurrent()) {
+			throw new IllegalArgumentException("target syllabus version must be current");
 		}
 	}
 }

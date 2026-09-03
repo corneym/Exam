@@ -87,6 +87,37 @@ class SqliteCurriculumMappingWriterTest {
 	}
 
 	@Test
+	void rejectsMappingsThatAreNotDirectedFromNonCurrentToCurrent() throws Exception {
+		Fixture fixture = createFixture();
+
+		assertThrows(IllegalArgumentException.class,
+				() -> fixture.writer().insertMapping(fixture.target(), fixture.source(), MappingStatus.CONFIRMED));
+
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(fixture.database());
+		SyllabusVersion otherHistoricalVersion = curriculumWriter.insertSyllabusVersion(
+				fixture.source().getSyllabusVersion().getSubject(), "Other historical", false);
+		Unit otherHistoricalTarget = curriculumWriter.insertUnit(otherHistoricalVersion, "3", "Other historical unit", 1);
+		assertThrows(IllegalArgumentException.class, () -> fixture.writer().insertMapping(fixture.source(),
+				otherHistoricalTarget, MappingStatus.CONFIRMED));
+		assertMappingCount(fixture.database(), 0);
+	}
+
+	@Test
+	void rejectsWhenPersistedCurrentFlagsNoLongerMatchTheEndpoints() throws Exception {
+		Fixture fixture = createFixture();
+		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("UPDATE syllabus_versions SET is_current = 0 WHERE id = "
+					+ fixture.target().getSyllabusVersion().getId());
+			statement.execute("UPDATE syllabus_versions SET is_current = 1 WHERE id = "
+					+ fixture.source().getSyllabusVersion().getId());
+		}
+
+		assertThrows(IllegalArgumentException.class,
+				() -> fixture.writer().insertMapping(fixture.source(), fixture.target(), MappingStatus.CONFIRMED));
+		assertMappingCount(fixture.database(), 0);
+	}
+
+	@Test
 	void rejectsMissingTargetWithoutWritingMapping() throws Exception {
 		Fixture fixture = createFixture();
 		Unit missingTarget = new Unit(999999, fixture.target().getSyllabusVersion(), "9", "Missing target", 1);

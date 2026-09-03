@@ -29,6 +29,7 @@ class SqliteCurriculumMappingReviewWriterTest {
 	@TempDir
 	Path tempDir;
 	private SqliteDatabase database;
+	private SyllabusVersion sourceVersion;
 	private SyllabusVersion targetVersion;
 	private SyllabusVersion otherTargetVersion;
 	private Descriptor source;
@@ -151,7 +152,18 @@ class SqliteCurriculumMappingReviewWriterTest {
 	void editingOneTargetVersionPreservesMappingsAndReviewForAnotherVersion() throws Exception {
 		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
 		writer.confirmMappings(source, targetVersion, List.of(targetOne));
-		writer.confirmMappings(source, otherTargetVersion, List.of(otherVersionTarget));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO curriculum_mappings
+					    (source_node_id, target_node_id, mapping_status)
+					VALUES (12, 32, 'CONFIRMED')
+					""");
+			statement.execute("""
+					INSERT INTO curriculum_mapping_reviews
+					    (source_node_id, target_syllabus_version_id, review_outcome)
+					VALUES (12, 3, 'MATCHED')
+					""");
+		}
 
 		writer.replaceMappings(source, targetVersion, List.of(targetTwo));
 
@@ -181,6 +193,50 @@ class SqliteCurriculumMappingReviewWriterTest {
 				assertEquals(3, result.getLong("target_syllabus_version_id"));
 				assertEquals("MATCHED", result.getString("review_outcome"));
 				assertFalse(result.next());
+			}
+		}
+	}
+
+	@Test
+	void rejectsReviewsThatAreNotDirectedFromNonCurrentToCurrent() throws Exception {
+		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> writer.confirmMappings(targetOne, sourceVersion, List.of(source)));
+		assertThrows(IllegalArgumentException.class,
+				() -> writer.confirmMappings(source, otherTargetVersion, List.of(otherVersionTarget)));
+
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt(1));
+			}
+			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mapping_reviews")) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt(1));
+			}
+		}
+	}
+
+	@Test
+	void rejectsWhenPersistedCurrentFlagsNoLongerMatchTheReviewEndpoints() throws Exception {
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("UPDATE syllabus_versions SET is_current = 0 WHERE id = 2");
+			statement.execute("UPDATE syllabus_versions SET is_current = 1 WHERE id = 1");
+		}
+		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> writer.confirmMappings(source, targetVersion, List.of(targetOne)));
+
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt(1));
+			}
+			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mapping_reviews")) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt(1));
 			}
 		}
 	}
@@ -276,6 +332,31 @@ class SqliteCurriculumMappingReviewWriterTest {
 					FROM curriculum_mapping_reviews
 					WHERE source_node_id = 12
 					""")) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt(1));
+			}
+		}
+	}
+
+	@Test
+	void rejectsTargetThatMisrepresentsThePersistedCurrentFlag() throws Exception {
+		SyllabusVersion fabricatedVersion = new SyllabusVersion(targetVersion.getId(), targetVersion.getSubject(),
+				targetVersion.getName(), false);
+		Unit fabricatedUnit = new Unit(20, fabricatedVersion, "1", "New unit", 0);
+		Topic fabricatedTopic = new Topic(21, fabricatedVersion, fabricatedUnit, "1.1", "New topic", 0);
+		Descriptor fabricatedTarget = new Descriptor(targetOne.getId(), fabricatedVersion, fabricatedTopic,
+				targetOne.getCode(), targetOne.getName(), targetOne.getDisplayOrder());
+		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
+
+		assertThrows(IllegalArgumentException.class,
+				() -> writer.confirmMappings(source, targetVersion, List.of(fabricatedTarget)));
+
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt(1));
+			}
+			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mapping_reviews")) {
 				assertTrue(result.next());
 				assertEquals(0, result.getInt(1));
 			}
@@ -459,7 +540,7 @@ class SqliteCurriculumMappingReviewWriterTest {
 					""");
 		}
 		Subject subject = new Subject(1, "Chemistry");
-		SyllabusVersion sourceVersion = new SyllabusVersion(1, subject, "Old syllabus", false);
+		sourceVersion = new SyllabusVersion(1, subject, "Old syllabus", false);
 		targetVersion = new SyllabusVersion(2, subject, "New syllabus", true);
 		otherTargetVersion = new SyllabusVersion(3, subject, "Other target syllabus", false);
 		Unit sourceUnit = new Unit(10, sourceVersion, "1", "Old unit", 0);

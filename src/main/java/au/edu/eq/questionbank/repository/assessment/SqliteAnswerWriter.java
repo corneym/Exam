@@ -42,6 +42,15 @@ public final class SqliteAnswerWriter {
 		this.examWriter = examWriter;
 	}
 
+	/**
+	 * Finds the persisted answer source files registered for an exam, ordered by
+	 * persistent identifier.
+	 *
+	 * @param exam the persisted exam whose answer files are required
+	 * @return answer files reconstructed with the supplied exam
+	 * @throws NullPointerException if {@code exam} is {@code null}
+	 * @throws SQLException if the files cannot be read
+	 */
 	public List<AnswerFile> findAnswerFiles(Exam exam) throws SQLException {
 		if (exam == null) {
 			throw new NullPointerException("exam");
