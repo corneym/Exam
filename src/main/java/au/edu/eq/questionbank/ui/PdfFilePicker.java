@@ -85,6 +85,10 @@ final class PdfFilePicker {
 		return selectedFile.toPath().toAbsolutePath().normalize();
 	}
 
+	Path dataRoot() {
+		return dataRoot;
+	}
+
 	/**
 	 * Tests whether a path resolves within the configured data root.
 	 *

@@ -68,6 +68,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private DocumentMode viewerReturnDocument = DocumentMode.EXAM;
 	private int currentPageNumber = 1;
 	private int viewerReturnPageNumber = 1;
+	private int examPageNumber = 1;
+	private int answerPageNumber = 1;
 	private double selectionStartX;
 	private double selectionStartY;
 	private Predicate<DocumentMode> selectionAvailable = mode -> false;
@@ -296,12 +298,21 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
+	private void rememberCurrentPageNumber() {
+		if (displayedDocument == DocumentMode.EXAM) {
+			examPageNumber = currentPageNumber;
+		} else if (displayedDocument == DocumentMode.ANSWER) {
+			answerPageNumber = currentPageNumber;
+		}
+	}
+
 	private void showCurrentPage() {
 		pageChangeHandler.run();
 		PdfSession displayedSession = displayedPdfSession();
 		if (displayedSession == null) {
 			return;
 		}
+		currentPageNumber = Math.max(1, Math.min(currentPageNumber, displayedSession.getPageCount()));
 
 		try {
 			BufferedImage bufferedImage = displayedSession.renderPage(currentPageNumber, DISPLAY_DPI);
@@ -313,6 +324,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 					displayedSession.getPageCount()));
 			previousButton.setDisable(currentPageNumber == 1);
 			nextButton.setDisable(currentPageNumber == displayedSession.getPageCount());
+			rememberCurrentPageNumber();
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to render PDF page", e);
 		}
@@ -387,7 +399,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		try {
 			answerPdfSession = PdfSession.open(path);
 			displayedDocument = DocumentMode.ANSWER;
-			currentPageNumber = 1;
+			answerPageNumber = 1;
+			currentPageNumber = answerPageNumber;
 			pagePane.setCursor(Cursor.CROSSHAIR);
 			fullWidthSelectionCheckBox.setVisible(true);
 			fullWidthSelectionCheckBox.setManaged(true);
@@ -416,7 +429,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 			}
 			examPdfSession = PdfSession.open(path);
 			displayedDocument = DocumentMode.EXAM;
-			currentPageNumber = 1;
+			examPageNumber = 1;
+			currentPageNumber = examPageNumber;
 			pagePane.setCursor(Cursor.DEFAULT);
 			fullWidthSelectionCheckBox.setVisible(true);
 			fullWidthSelectionCheckBox.setManaged(true);
@@ -498,7 +512,16 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		if (documentMode == null) {
 			throw new NullPointerException("documentMode");
 		}
+
+		rememberCurrentPageNumber();
 		displayedDocument = documentMode;
+
+		if (documentMode == DocumentMode.EXAM) {
+			currentPageNumber = examPageNumber;
+		} else if (documentMode == DocumentMode.ANSWER) {
+			currentPageNumber = answerPageNumber;
+		}
+
 		showCurrentPage();
 	}
 }

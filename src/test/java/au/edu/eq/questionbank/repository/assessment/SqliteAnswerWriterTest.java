@@ -44,6 +44,33 @@ class SqliteAnswerWriterTest {
 	}
 
 	@Test
+	void findsRegisteredAnswerFilesForExam() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("answer-files.db"));
+		database.initialiseSchema();
+
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+
+		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Chemistry/QCAA/2025/paper1.pdf");
+
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking scheme",
+				"Chemistry/QCAA/2025/marking-scheme.pdf");
+
+		List<AnswerFile> answerFiles = answerWriter.findAnswerFiles(booklet.getExam());
+
+		assertEquals(1, answerFiles.size());
+		assertEquals("Marking scheme", answerFiles.get(0).getName());
+		assertEquals("Chemistry/QCAA/2025/marking-scheme.pdf",
+				answerFiles.get(0).getSourceDocument().getRelativePath());
+	}
+
+	@Test
 	void insertsAnswerAndOrderedRegions() throws Exception {
 		Path databasePath = tempDirectory.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);

@@ -103,6 +103,49 @@ public class QuestionBankApplication extends Application {
 	public QuestionBankApplication() {
 	}
 
+	@Override
+	public void start(Stage stage) throws Exception {
+		ApplicationConfig config;
+		try {
+			config = ApplicationConfig.load(PROPERTIES_FILE);
+		} catch (ConfigurationException e) {
+			showStartupError("Configuration Error", e.getMessage());
+			return;
+		} catch (IOException e) {
+			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
+			return;
+		}
+		try {
+			startApplication(stage, config);
+		} catch (IncompatibleDatabaseException e) {
+			showStartupError("Database Upgrade Required", """
+					The existing question-bank database contains old development question data
+					that cannot be migrated safely to the current database format.
+
+					Delete the existing database and restart the application.
+
+					Database:
+					%s
+
+					You will need to re-import the curriculum and exam data afterwards.
+					""".formatted(config.databasePath()));
+		} catch (SQLException e) {
+			showStartupError("Database Error", """
+					The question-bank database could not be opened or upgraded.
+
+					Database:
+					%s
+
+					%s
+					""".formatted(config.databasePath(), e.getMessage()));
+		}
+	}
+
+	@Override
+	public void stop() throws Exception {
+		pdfWorkspace.close();
+	}
+
 	private void activateExamSubject(Subject subject) {
 		curriculumSelectorPane.selectSubject(subject);
 	}
@@ -113,11 +156,13 @@ public class QuestionBankApplication extends Application {
 		}
 
 		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
-		if (activeBooklet != null && activeBooklet.getId() == question.getBooklet().getId() && pdfWorkspace.hasExamPdf()
-				&& pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.EXAM) {
+		if (activeBooklet != null && activeBooklet.getId() == question.getBooklet().getId()
+				&& pdfWorkspace.hasExamPdf()) {
+			if (pdfWorkspace.getDisplayedDocument() != PdfWorkspacePane.DocumentMode.EXAM) {
+				pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.EXAM);
+			}
 			return true;
 		}
-
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		Path pdfPath;
 		try {
@@ -521,44 +566,6 @@ public class QuestionBankApplication extends Application {
 		alert.showAndWait();
 	}
 
-	@Override
-	public void start(Stage stage) throws Exception {
-		ApplicationConfig config;
-		try {
-			config = ApplicationConfig.load(PROPERTIES_FILE);
-		} catch (ConfigurationException e) {
-			showStartupError("Configuration Error", e.getMessage());
-			return;
-		} catch (IOException e) {
-			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
-			return;
-		}
-		try {
-			startApplication(stage, config);
-		} catch (IncompatibleDatabaseException e) {
-			showStartupError("Database Upgrade Required", """
-					The existing question-bank database contains old development question data
-					that cannot be migrated safely to the current database format.
-
-					Delete the existing database and restart the application.
-
-					Database:
-					%s
-
-					You will need to re-import the curriculum and exam data afterwards.
-					""".formatted(config.databasePath()));
-		} catch (SQLException e) {
-			showStartupError("Database Error", """
-					The question-bank database could not be opened or upgraded.
-
-					Database:
-					%s
-
-					%s
-					""".formatted(config.databasePath(), e.getMessage()));
-		}
-	}
-
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
@@ -572,8 +579,8 @@ public class QuestionBankApplication extends Application {
 				pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
 		curriculumSelectorPane = createCurriculumSelectorPane();
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
-				this::openAnswerPdf, pdfWorkspace::clearSelection, questionExtractor,
-				pdfWorkspace::getAnswerPdfSession);
+				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
+				pdfWorkspace::clearSelection, questionExtractor, pdfWorkspace::getAnswerPdfSession);
 		answerCapturePane.refreshUnansweredQuestions();
 		questionCapturePane = new QuestionCapturePane(questionRepository, questionExtractor, curriculumSelectionModel,
 				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
@@ -589,10 +596,5 @@ public class QuestionBankApplication extends Application {
 
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
-	}
-
-	@Override
-	public void stop() throws Exception {
-		pdfWorkspace.close();
 	}
 }

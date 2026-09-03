@@ -1,11 +1,10 @@
 package au.edu.eq.questionbank.repository.assessment;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 
 import au.edu.eq.questionbank.model.Answer;
@@ -14,6 +13,7 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SourceDocument;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
  * Persists answer source files, answers, and ordered answer regions in SQLite.
@@ -40,6 +40,42 @@ public final class SqliteAnswerWriter {
 		}
 		this.database = database;
 		this.examWriter = examWriter;
+	}
+
+	public List<AnswerFile> findAnswerFiles(Exam exam) throws SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+
+		List<AnswerFile> answerFiles = new ArrayList<>();
+
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    af.id AS answer_file_id,
+						    af.answer_file_name,
+						    sd.id AS source_document_id,
+						    sd.relative_path
+						FROM answer_files af
+						JOIN source_documents sd
+						    ON sd.id = af.source_document_id
+						WHERE af.exam_id = ?
+						ORDER BY af.id
+						""")) {
+			statement.setLong(1, exam.getId());
+
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
+							result.getString("relative_path"));
+
+					answerFiles.add(new AnswerFile(result.getLong("answer_file_id"), exam,
+							result.getString("answer_file_name"), sourceDocument));
+				}
+			}
+		}
+
+		return answerFiles;
 	}
 
 	/**
