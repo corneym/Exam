@@ -4,6 +4,7 @@ import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.Optional;
 import java.util.StringJoiner;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
@@ -64,6 +65,9 @@ public class QuestionSearchPane extends BorderPane {
 	private final Label previewStatusLabel = new Label();
 	private Task<Optional<BufferedImage>> activePreviewTask;
 	private long previewGeneration;
+	private Task<?> activeHierarchyTask;
+	private long hierarchyGeneration;
+	private boolean disposed;
 
 	/**
 	 * Creates the question-search pane.
@@ -71,7 +75,7 @@ public class QuestionSearchPane extends BorderPane {
 	 * @param curriculumRepository current curriculum hierarchy lookup
 	 * @param retrievalService     curriculum-aware question retrieval
 	 * @param previewService       stored question image preview service
-	 * @throws NullPointerException if either dependency is {@code null}
+	 * @throws NullPointerException if any dependency is {@code null}
 	 */
 	public QuestionSearchPane(CurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService,
 			QuestionPreviewService previewService) {
@@ -92,7 +96,29 @@ public class QuestionSearchPane extends BorderPane {
 		configureHandlers();
 		setTop(createSelectionPane());
 		setCenter(createResultsAndDetailsPane());
-		subjectBox.getItems().setAll(curriculumRepository.findAllSubjects());
+		startSubjectLoading();
+	}
+
+	void dispose() {
+		if (disposed) {
+			return;
+		}
+		disposed = true;
+		cancelActiveHierarchyLoad();
+		cancelActiveSearch();
+		cancelActivePreview();
+		resultsList.getItems().clear();
+		detailsArea.clear();
+		clearPreview();
+		statusLabel.setText("");
+	}
+
+	private void cancelActiveHierarchyLoad() {
+		hierarchyGeneration++;
+		if (activeHierarchyTask != null) {
+			activeHierarchyTask.cancel();
+			activeHierarchyTask = null;
+		}
 	}
 
 	private void cancelActivePreview() {
@@ -112,6 +138,8 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void clearBelowSubject() {
+		cancelActiveHierarchyLoad();
+		invalidateCurrentSearch();
 		updatingControls = true;
 		try {
 			currentSyllabus = null;
@@ -123,9 +151,6 @@ public class QuestionSearchPane extends BorderPane {
 		} finally {
 			updatingControls = false;
 		}
-		cancelActiveSearch();
-		clearResults();
-		statusLabel.setText("");
 	}
 
 	private void clearBelowTopic() {
@@ -208,7 +233,7 @@ public class QuestionSearchPane extends BorderPane {
 		topicBox.setOnAction(event -> handleTopicSelection());
 		classificationBox.setOnAction(event -> handleClassificationSelection());
 		descriptorBox.setOnAction(event -> handleDescriptorSelection());
-		subjectBox.setOnMousePressed(event -> handleSubjectBoxMousePressed());
+		subjectBox.setOnMousePressed(event -> handleSubjectBoxMousePress());
 		unitBox.setOnMousePressed(event -> handleUnitBoxMousePress());
 		topicBox.setOnMousePressed(event -> handleTopicBoxMousePress());
 		classificationBox.setOnMousePressed(event -> handleClassificationBoxMousePress());
@@ -301,19 +326,32 @@ public class QuestionSearchPane extends BorderPane {
 		if (updatingControls) {
 			return;
 		}
+		cancelActiveHierarchyLoad();
+		invalidateCurrentSearch();
 		CurriculumNode classification = classificationBox.getValue();
 		updatingControls = true;
 		try {
 			resetDescriptorBox();
-			if (classification != null && classification.getLevel() == CurriculumLevel.SUBTOPIC) {
-				List<CurriculumNode> children = curriculumRepository.findChildren(classification);
-				descriptorBox.getItems().setAll(children);
-				descriptorBox.setDisable(children.isEmpty());
-			}
 		} finally {
 			updatingControls = false;
 		}
-		startAutomaticSearch(classification);
+		if (classification == null) {
+			return;
+		}
+		if (classification.getLevel() != CurriculumLevel.SUBTOPIC) {
+			startAutomaticSearch(classification);
+			return;
+		}
+		startHierarchyLoad(() -> curriculumRepository.findChildren(classification), children -> {
+			updatingControls = true;
+			try {
+				descriptorBox.getItems().setAll(children);
+				descriptorBox.setDisable(children.isEmpty());
+			} finally {
+				updatingControls = false;
+			}
+			startAutomaticSearch(classification);
+		});
 	}
 
 	private void handleDescriptorBoxMousePress() {
@@ -326,10 +364,11 @@ public class QuestionSearchPane extends BorderPane {
 		if (updatingControls) {
 			return;
 		}
+		cancelActiveHierarchyLoad();
 		startAutomaticSearch(descriptorBox.getValue());
 	}
 
-	private void handleSubjectBoxMousePressed() {
+	private void handleSubjectBoxMousePress() {
 		if (!updatingControls && subjectBox.getValue() != null) {
 			Platform.runLater(() -> handleSubjectSelection());
 		}
@@ -344,28 +383,24 @@ public class QuestionSearchPane extends BorderPane {
 		if (subject == null) {
 			return;
 		}
-		for (SyllabusVersion version : curriculumRepository.findVersionsForSubject(subject)) {
-			if (version.isCurrent()) {
-				currentSyllabus = version;
-				break;
+		startHierarchyLoad(() -> loadSubjectNavigation(subject), navigation -> {
+			currentSyllabus = navigation.currentSyllabus();
+			if (currentSyllabus == null) {
+				statusLabel.setText("No current syllabus available.");
+				return;
 			}
-		}
-		if (currentSyllabus == null) {
-			statusLabel.setText("No current syllabus available.");
-			return;
-		}
-		syllabusValue.setText(currentSyllabus.getName());
-		List<CurriculumNode> units = curriculumRepository.findRootNodes(currentSyllabus);
-		updatingControls = true;
-		try {
-			unitBox.getItems().setAll(units);
-			unitBox.getSelectionModel().clearSelection();
-			unitBox.setValue(null);
-			unitBox.setDisable(units.isEmpty());
-		} finally {
-			updatingControls = false;
-		}
-		startAutomaticSearch(subject);
+			syllabusValue.setText(currentSyllabus.getName());
+			updatingControls = true;
+			try {
+				unitBox.getItems().setAll(navigation.units());
+				unitBox.getSelectionModel().clearSelection();
+				unitBox.setValue(null);
+				unitBox.setDisable(navigation.units().isEmpty());
+			} finally {
+				updatingControls = false;
+			}
+			startAutomaticSearch(subject);
+		});
 	}
 
 	private void handleTopicBoxMousePress() {
@@ -378,10 +413,14 @@ public class QuestionSearchPane extends BorderPane {
 		if (updatingControls) {
 			return;
 		}
+		cancelActiveHierarchyLoad();
+		invalidateCurrentSearch();
 		clearBelowTopic();
 		CurriculumNode topic = topicBox.getValue();
-		if (topic != null) {
-			List<CurriculumNode> classifications = curriculumRepository.findChildren(topic);
+		if (topic == null) {
+			return;
+		}
+		startHierarchyLoad(() -> curriculumRepository.findChildren(topic), classifications -> {
 			updatingControls = true;
 			try {
 				classificationBox.getItems().setAll(classifications);
@@ -389,8 +428,8 @@ public class QuestionSearchPane extends BorderPane {
 			} finally {
 				updatingControls = false;
 			}
-		}
-		startAutomaticSearch(topic);
+			startAutomaticSearch(topic);
+		});
 	}
 
 	private void handleUnitBoxMousePress() {
@@ -403,21 +442,58 @@ public class QuestionSearchPane extends BorderPane {
 		if (updatingControls) {
 			return;
 		}
+		cancelActiveHierarchyLoad();
+		invalidateCurrentSearch();
 		CurriculumNode unit = unitBox.getValue();
 		updatingControls = true;
 		try {
 			resetTopicBox();
 			resetClassificationBox();
 			resetDescriptorBox();
-			if (unit != null) {
-				List<CurriculumNode> topics = curriculumRepository.findChildren(unit);
-				topicBox.getItems().setAll(topics);
-				topicBox.setDisable(topics.isEmpty());
-			}
 		} finally {
 			updatingControls = false;
 		}
-		startAutomaticSearch(unit);
+		if (unit == null) {
+			return;
+		}
+		startHierarchyLoad(() -> curriculumRepository.findChildren(unit), topics -> {
+			updatingControls = true;
+			try {
+				topicBox.getItems().setAll(topics);
+				topicBox.setDisable(topics.isEmpty());
+			} finally {
+				updatingControls = false;
+			}
+			startAutomaticSearch(unit);
+		});
+	}
+
+	private void invalidateCurrentSearch() {
+		cancelActiveSearch();
+		cancelActivePreview();
+		resultsList.getItems().clear();
+		detailsArea.clear();
+		clearPreview();
+		statusLabel.setText("");
+	}
+
+	private SubjectNavigation loadSubjectNavigation(Subject subject) {
+		List<SyllabusVersion> versions = curriculumRepository.findVersionsForSubject(subject);
+		SyllabusVersion currentVersion = null;
+		for (SyllabusVersion version : versions) {
+			if (!version.isCurrent()) {
+				continue;
+			}
+			if (currentVersion != null) {
+				throw new IllegalStateException("Subject has multiple current syllabus versions");
+			}
+			currentVersion = version;
+		}
+		if (currentVersion == null) {
+			return new SubjectNavigation(null, List.of());
+		}
+		List<CurriculumNode> units = curriculumRepository.findRootNodes(currentVersion);
+		return new SubjectNavigation(currentVersion, units);
 	}
 
 	private String nodeDescription(CurriculumNode node) {
@@ -552,6 +628,42 @@ public class QuestionSearchPane extends BorderPane {
 		Thread.ofVirtual().name("question-search").start(task);
 	}
 
+	private <T> void startHierarchyLoad(Supplier<T> loader, Consumer<T> onSucceeded) {
+		cancelActiveHierarchyLoad();
+		long generation = hierarchyGeneration;
+		statusLabel.setText("Loading curriculum...");
+		Task<T> task = new Task<>() {
+
+			@Override
+			protected T call() {
+				return loader.get();
+			}
+		};
+		activeHierarchyTask = task;
+		task.setOnSucceeded(event -> {
+			if (generation != hierarchyGeneration || task != activeHierarchyTask) {
+				return;
+			}
+			activeHierarchyTask = null;
+			statusLabel.setText("");
+			onSucceeded.accept(task.getValue());
+		});
+		task.setOnFailed(event -> {
+			if (generation != hierarchyGeneration || task != activeHierarchyTask) {
+				return;
+			}
+			activeHierarchyTask = null;
+			invalidateCurrentSearch();
+			Throwable failure = task.getException();
+			if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+				statusLabel.setText("Curriculum navigation failed.");
+			} else {
+				statusLabel.setText("Curriculum navigation failed: " + failure.getMessage());
+			}
+		});
+		Thread.ofVirtual().name("curriculum-navigation").start(task);
+	}
+
 	private void startQuestionPreview(Question question) {
 		if (question.getRegions().isEmpty()) {
 			previewStatusLabel.setText("No stored question image.");
@@ -594,5 +706,13 @@ public class QuestionSearchPane extends BorderPane {
 			}
 		});
 		Thread.ofVirtual().name("question-preview").start(task);
+	}
+
+	private void startSubjectLoading() {
+		startHierarchyLoad(() -> curriculumRepository.findAllSubjects(),
+				subjects -> subjectBox.getItems().setAll(subjects));
+	}
+
+	private record SubjectNavigation(SyllabusVersion currentSyllabus, List<CurriculumNode> units) {
 	}
 }

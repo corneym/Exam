@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -57,6 +58,7 @@ public class QuestionSearchPaneTest {
 	private Question historicalQuestion;
 	private Topic noMatchTopic;
 	private Descriptor noMatchDescriptor;
+	private DelayedCurriculumRepository curriculumRepository;
 
 	@Test
 	public void broadeningFromDescriptorToSubjectRestoresSubjectScope(FxRobot robot) throws TimeoutException {
@@ -124,6 +126,28 @@ public class QuestionSearchPaneTest {
 		assertTrue(detailsArea.getText().contains("Calculate the requested quantity."));
 	}
 
+	@Test
+	public void staleHierarchyLoadCannotRestoreLowerScope(FxRobot robot) throws TimeoutException {
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
+		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		curriculumRepository.delayChildrenFor(currentUnit);
+		robot.interact(() -> unitBox.setValue(currentUnit));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> curriculumRepository.hasDelayStarted());
+		robot.clickOn("#question-search-subject");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> unitBox.getValue() == null && topicBox.getItems().isEmpty());
+		curriculumRepository.releaseDelayedChildren();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> curriculumRepository.hasDelayFinished());
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(null, unitBox.getValue());
+		assertEquals("Select unit", unitBox.getButtonCell().getText());
+		assertTrue(topicBox.getItems().isEmpty());
+		assertEquals("Select topic", topicBox.getButtonCell().getText());
+	}
+
 	@Start
 	public void start(Stage stage) {
 		chemistry = new Subject(1, "Chemistry");
@@ -139,7 +163,7 @@ public class QuestionSearchPaneTest {
 		currentDescriptor = new Descriptor(10, currentVersion, currentSubtopic, "1.1.1.1", "Current descriptor", 1);
 		noMatchTopic = new Topic(16, currentVersion, currentUnit, "1.2", "No-match Topic", 2);
 		noMatchDescriptor = new Descriptor(17, currentVersion, noMatchTopic, "1.2.1", "No-match descriptor", 1);
-		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository(List.of(chemistry),
+		curriculumRepository = new DelayedCurriculumRepository(List.of(chemistry),
 				List.of(historicalVersion, currentVersion),
 				List.of(historicalUnit, historicalTopic, historicalDescriptor, currentUnit, currentTopic,
 						currentSubtopic, currentDescriptor, noMatchTopic, noMatchDescriptor));
@@ -174,29 +198,33 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
-	public void subjectSelectionUsesOnlyCurrentSyllabus(FxRobot robot) {
+	public void subjectSelectionUsesOnlyCurrentSyllabus(FxRobot robot) throws TimeoutException {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		assertEquals(1, unitBox.getItems().size());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().size() == 1);
 		assertEquals(currentUnit, unitBox.getItems().get(0));
 		assertFalse(unitBox.getItems().contains(historicalUnit));
 		assertFalse(unitBox.isDisable());
 	}
 
 	@Test
-	public void subtopicSelectionExposesDescriptorChildren(FxRobot robot) {
+	public void subtopicSelectionExposesDescriptorChildren(FxRobot robot) throws TimeoutException {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
 		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
-		assertEquals(List.of(currentSubtopic), classificationBox.getItems());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> classificationBox.getItems().equals(List.of(currentSubtopic)));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
-		assertEquals(List.of(currentDescriptor), descriptorBox.getItems());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> descriptorBox.getItems().equals(List.of(currentDescriptor)));
 		assertFalse(descriptorBox.isDisable());
 	}
 
@@ -209,5 +237,65 @@ public class QuestionSearchPaneTest {
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).getQuestion().getId());
+	}
+
+	private static final class DelayedCurriculumRepository extends InMemoryCurriculumRepository {
+
+		private volatile CurriculumNode delayedParent;
+		private volatile CountDownLatch delayStarted = new CountDownLatch(0);
+		private volatile CountDownLatch delayRelease = new CountDownLatch(0);
+		private volatile CountDownLatch delayFinished = new CountDownLatch(0);
+
+		private DelayedCurriculumRepository(List<Subject> subjects, List<SyllabusVersion> syllabusVersions,
+				List<CurriculumNode> curriculumNodes) {
+			super(subjects, syllabusVersions, curriculumNodes);
+		}
+
+		@Override
+		public List<CurriculumNode> findChildren(CurriculumNode parent) {
+			CurriculumNode parentToDelay = delayedParent;
+			if (parentToDelay == null || !parentToDelay.equals(parent)) {
+				return super.findChildren(parent);
+			}
+			CountDownLatch release = delayRelease;
+			delayStarted.countDown();
+			boolean released = false;
+			while (!released) {
+				try {
+					release.await();
+					released = true;
+				} catch (InterruptedException e) {
+					/*
+					 * Deliberately ignore cancellation so this test proves a late hierarchy result
+					 * cannot overwrite the newer UI state.
+					 */
+				}
+			}
+			try {
+				return super.findChildren(parent);
+			} finally {
+				delayFinished.countDown();
+			}
+		}
+
+		private void delayChildrenFor(CurriculumNode parent) {
+			delayStarted = new CountDownLatch(1);
+			delayRelease = new CountDownLatch(1);
+			delayFinished = new CountDownLatch(1);
+			delayedParent = parent;
+		}
+
+		private boolean hasDelayFinished() {
+			return delayFinished.getCount() == 0;
+		}
+
+		private boolean hasDelayStarted() {
+			return delayStarted.getCount() == 0;
+		}
+
+		private void releaseDelayedChildren() {
+			delayedParent = null;
+			delayRelease.countDown();
+		}
 	}
 }
