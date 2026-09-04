@@ -103,7 +103,24 @@ class QuestionRetrievalSqliteTest {
 		assertEquals(List.of(reloaded.currentSubtopic()), results.get(0).getCurrentApplicability());
 		assertEquals(List.of(reloaded.currentDescriptor()), results.get(1).getCurrentApplicability());
 		assertEquals(List.of(reloaded.currentSubtopic()), results.get(2).getCurrentApplicability());
-		assertEquals(List.of(reloaded.currentDescriptor()), results.get(3).getCurrentApplicability());
+		assertEquals(List.of(reloaded.currentDescriptor(), reloaded.secondCurrentDescriptor()),
+				results.get(3).getCurrentApplicability());
+	}
+
+	@Test
+	void subtopicSearchReturnsMultiplyMappedQuestionOnlyOnceAfterReopen() throws Exception {
+		Fixture fixture = createFixture("multiply-mapped-question.db");
+		ReloadedFixture reloaded = reloadFixture(fixture);
+		List<QuestionRetrievalResult> results = reloaded.service()
+				.findQuestionsApplicableTo(reloaded.currentSubtopic());
+		long occurrences = results.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalDescriptorQuestionId()).count();
+		assertEquals(1, occurrences);
+		QuestionRetrievalResult historicalResult = results.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalDescriptorQuestionId()).findFirst()
+				.orElseThrow();
+		assertEquals(List.of(reloaded.currentDescriptor(), reloaded.secondCurrentDescriptor()),
+				historicalResult.getCurrentApplicability());
 	}
 
 	@Test
@@ -140,6 +157,8 @@ class QuestionRetrievalSqliteTest {
 		Subtopic currentSubtopic = curriculumWriter.insertSubtopic(currentTopic, "1.1.1", "Current subtopic", 1);
 		Descriptor currentDescriptor = curriculumWriter.insertDescriptor(currentSubtopic, "1.1.1.1",
 				"Current descriptor", 1);
+		Descriptor secondCurrentDescriptor = curriculumWriter.insertDescriptor(currentSubtopic, "1.1.1.2",
+				"Second current descriptor", 2);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 		ExamBooklet currentBooklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
@@ -157,11 +176,12 @@ class QuestionRetrievalSqliteTest {
 				historicalDescriptor, false);
 		SqliteCurriculumMappingReviewWriter mappingReviewWriter = new SqliteCurriculumMappingReviewWriter(database);
 		mappingReviewWriter.confirmMappings(historicalSubtopic, currentVersion, List.of(currentSubtopic));
-		mappingReviewWriter.confirmMappings(historicalDescriptor, currentVersion, List.of(currentDescriptor));
+		mappingReviewWriter.confirmMappings(historicalDescriptor, currentVersion,
+				List.of(currentDescriptor, secondCurrentDescriptor));
 		return new Fixture(databasePath, currentVersion.getId(), currentUnit.getCode(), currentTopic.getCode(),
-				currentSubtopic.getCode(), currentDescriptor.getCode(), historicalDescriptor.getId(),
-				currentSubtopicQuestion.getId(), currentDescriptorQuestion.getId(), historicalSubtopicQuestion.getId(),
-				historicalDescriptorQuestion.getId());
+				currentSubtopic.getCode(), currentDescriptor.getCode(), secondCurrentDescriptor.getCode(),
+				historicalDescriptor.getId(), currentSubtopicQuestion.getId(), currentDescriptorQuestion.getId(),
+				historicalSubtopicQuestion.getId(), historicalDescriptorQuestion.getId());
 	}
 
 	private ReloadedFixture reloadFixture(Fixture fixture) throws SQLException {
@@ -177,20 +197,24 @@ class QuestionRetrievalSqliteTest {
 				.orElseThrow();
 		CurriculumNode currentDescriptor = curriculumRepository
 				.findByCode(currentVersion, fixture.currentDescriptorCode()).orElseThrow();
+		CurriculumNode secondCurrentDescriptor = curriculumRepository
+				.findByCode(currentVersion, fixture.secondCurrentDescriptorCode()).orElseThrow();
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(reopenedDatabase);
 		CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 				curriculumRepository);
 		QuestionRetrievalService service = new QuestionRetrievalService(questionRepository, expansionService);
-		return new ReloadedFixture(service, currentUnit, currentTopic, currentSubtopic, currentDescriptor);
+		return new ReloadedFixture(service, currentUnit, currentTopic, currentSubtopic, currentDescriptor,
+				secondCurrentDescriptor);
 	}
 
 	private record Fixture(Path databasePath, long currentVersionId, String currentUnitCode, String currentTopicCode,
-			String currentSubtopicCode, String currentDescriptorCode, long historicalDescriptorId,
-			long currentSubtopicQuestionId, long currentDescriptorQuestionId, long historicalSubtopicQuestionId,
-			long historicalDescriptorQuestionId) {
+			String currentSubtopicCode, String currentDescriptorCode, String secondCurrentDescriptorCode,
+			long historicalDescriptorId, long currentSubtopicQuestionId, long currentDescriptorQuestionId,
+			long historicalSubtopicQuestionId, long historicalDescriptorQuestionId) {
 	}
 
 	private record ReloadedFixture(QuestionRetrievalService service, CurriculumNode currentUnit,
-			CurriculumNode currentTopic, CurriculumNode currentSubtopic, CurriculumNode currentDescriptor) {
+			CurriculumNode currentTopic, CurriculumNode currentSubtopic, CurriculumNode currentDescriptor,
+			CurriculumNode secondCurrentDescriptor) {
 	}
 }
