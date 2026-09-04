@@ -23,6 +23,12 @@ public final class CurriculumSearchNodeExpansionService {
 
 	private final CurriculumRepository curriculumRepository;
 
+	/**
+	 * Creates a current-curriculum search-scope expansion service.
+	 *
+	 * @param curriculumRepository curriculum hierarchy lookup
+	 * @throws NullPointerException if {@code curriculumRepository} is {@code null}
+	 */
 	public CurriculumSearchNodeExpansionService(CurriculumRepository curriculumRepository) {
 		if (curriculumRepository == null) {
 			throw new NullPointerException("curriculumRepository");
@@ -30,6 +36,16 @@ public final class CurriculumSearchNodeExpansionService {
 		this.curriculumRepository = curriculumRepository;
 	}
 
+	/**
+	 * Expands a current Unit, Topic, Subtopic or Descriptor search scope into the
+	 * Subtopic and Descriptor nodes that can participate in question retrieval.
+	 *
+	 * @param currentNode current curriculum search node
+	 * @return question-classifiable nodes within the scope, in hierarchy order
+	 * @throws NullPointerException     if {@code currentNode} is {@code null}
+	 * @throws IllegalArgumentException if the node is historical or unsupported
+	 * @throws IllegalStateException    if the hierarchy is invalid
+	 */
 	public List<CurriculumNode> expandSearchNode(CurriculumNode currentNode) {
 		validateSearchNode(currentNode);
 		List<CurriculumNode> expandedNodes = new ArrayList<CurriculumNode>();
@@ -38,6 +54,16 @@ public final class CurriculumSearchNodeExpansionService {
 		return List.copyOf(expandedNodes);
 	}
 
+	/**
+	 * Expands a Subject into all question-classifiable nodes in its current
+	 * syllabus.
+	 *
+	 * @param subject subject to expand
+	 * @return current Subtopic and Descriptor retrieval nodes across all Units
+	 * @throws NullPointerException  if {@code subject} is {@code null}
+	 * @throws IllegalStateException if the subject has multiple current syllabuses
+	 *                               or the hierarchy is invalid
+	 */
 	public List<CurriculumNode> expandSearchSubject(Subject subject) {
 		if (subject == null) {
 			throw new NullPointerException("subject");

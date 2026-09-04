@@ -1,19 +1,46 @@
-# Sprint Design: Question Retrieval (version 2)
+# Sprint Design: Question Retrieval (version 3)
 
 ## Branch
 
 `feature/question-retrieval`
 
+## Sprint Status
+
+**Complete — ready for final branch review and merge preparation.**
+
+All planned retrieval work packages have been implemented. The automated suite is green and the search UI has been manually exercised against real stored questions, including rendered question previews.
+
+## Changelog
+
+### Version 3 — 4 September 2026
+
+- records completion of Work Packages 1–6;
+- adds `Subject` as a first-class current-curriculum search scope;
+- defines Subject search as traversal of all Units in the Subject's single current syllabus;
+- records automatic, asynchronous search refresh and stale-result protection;
+- records narrowing and broadening behaviour across Subject, Unit, Topic, Subtopic and Descriptor controls;
+- records explicit prompt restoration when broadening, such as `Select unit`;
+- records the stored-question preview path using `QuestionPreviewService`, `PdfStore` and `QuestionExtractor`;
+- records asynchronous preview loading and stale-preview protection;
+- records the three-section draggable search layout for matching questions, question details and question preview;
+- expands testing expectations for Subject search, UI broadening, preview reconstruction and zero-region legacy questions;
+- updates the acceptance criteria and Definition of Done to match the implemented retrieval boundary.
+
+### Version 2
+
+- formalised Descriptor, Subtopic, Topic and Unit hierarchy semantics;
+- defined SQLite-backed direct and confirmed-mapping retrieval;
+- established duplicate prevention, provenance preservation and restart-sensitive testing;
+- defined the minimal curriculum-aware question-search UI and merge-readiness quality gate.
+
 ## Purpose
 
-This sprint will turn the completed curriculum-applicability work into practical question retrieval.
+This sprint turns the completed curriculum-applicability work into practical question retrieval.
 
-The system can already determine the current curriculum applicability of a stored question without overwriting its original classification.
-
-This sprint will add the inverse capability:
+The system can determine the current curriculum applicability of a stored question without overwriting its original classification. This sprint adds the inverse capability:
 
 ```text
-current curriculum node
+current curriculum search scope
         |
         v
 find all stored questions applicable here
@@ -29,7 +56,7 @@ Examples include:
 
 The import mechanism is not part of retrieval semantics. Retrieval is based on the stored `Question` classification and confirmed curriculum mappings.
 
-The sprint should establish the retrieval service/repository boundary first, prove it against SQLite, and then add a minimal curriculum-aware question-search UI.
+The completed sprint establishes the retrieval service/repository boundary, proves it against SQLite, and exposes it through a minimal curriculum-aware question-search UI with stored-question preview.
 
 ---
 
@@ -110,7 +137,7 @@ Searching for a broad curriculum area includes questions applicable to valid des
 
 Questions themselves are classified only to `SUBTOPIC` or `DESCRIPTOR` nodes.
 
-`TOPIC` and `UNIT` are search scopes. They are not question-classification levels and broad retrieval must not manufacture Topic-level or Unit-level applicability.
+`SUBJECT`, `UNIT` and `TOPIC` are search scopes. They are not question-classification levels and broad retrieval must not manufacture Subject-, Unit- or Topic-level applicability.
 
 The supported search semantics are:
 
@@ -127,7 +154,13 @@ TOPIC
 
 UNIT
     -> valid question-classification nodes beneath all Topics in the Unit
+
+SUBJECT
+    -> valid question-classification nodes beneath all Units
+       in the Subject's single current syllabus
 ```
+
+Historical syllabus versions are not searched directly at Subject level. Historical questions appear in current Subject results only when their stored historical classification reaches current nodes through confirmed mappings.
 
 Do not hide hierarchy expansion inside the mapping model or `Question` domain object.
 
@@ -158,19 +191,20 @@ Indexes should only be added where the retrieval queries demonstrate a real need
 
 ## Work Package 1 — Define the retrieval contract
 
+**Status: Complete.**
+
 ### Goal
 
 Establish a clear application-facing API for curriculum-aware question lookup.
 
-Likely concepts include:
+The implemented application-facing API includes:
 
 ```java
 findQuestionsApplicableTo(CurriculumNode currentNode)
+findQuestionsApplicableTo(Subject subject)
 ```
 
-or an equivalent query/service abstraction.
-
-The exact API may evolve during implementation, but it should express current-curriculum retrieval rather than expose raw mapping traversal to UI code.
+The `CurriculumNode` overload supports Unit, Topic, Subtopic and Descriptor scopes. The `Subject` overload searches the Subject's single current syllabus. Mapping traversal remains behind the service/repository boundary and is not exposed to UI code.
 
 ### Required behaviour
 
@@ -206,16 +240,19 @@ The hierarchical inclusion of descriptor-classified questions beneath a searched
 
 ## Work Package 2 — Define and implement hierarchical curriculum search semantics
 
+**Status: Complete.**
+
 ### Goal
 
-Define explicit retrieval behaviour for all current curriculum search levels:
+Define explicit retrieval behaviour for all supported current curriculum search scopes:
 
 - Descriptor;
 - Subtopic;
 - Topic;
-- Unit.
+- Unit;
+- Subject.
 
-Questions themselves remain classified only to Descriptor or Subtopic nodes. Topic and Unit are search scopes, not question-classification levels.
+Questions themselves remain classified only to Descriptor or Subtopic nodes. Subject, Topic and Unit are search scopes, not question-classification levels.
 
 ### Descriptor search
 
@@ -292,6 +329,24 @@ Each Topic independently follows either Descriptor-mode or Subtopic-mode semanti
 
 The Unit search therefore retrieves all questions applicable to valid Descriptor and Subtopic classification nodes beneath the Unit.
 
+### Subject search
+
+A Subject search selects exactly one current syllabus version for that Subject and traverses all Unit roots beneath it.
+
+```text
+Subject
+    +-- current SyllabusVersion
+          +-- Unit
+          +-- Unit
+          +-- ...
+```
+
+Each Unit then follows the normal Unit, Topic, Subtopic and Descriptor hierarchy semantics.
+
+If the Subject has no current syllabus, the search expands to no retrieval nodes. If more than one syllabus version is marked current, hierarchy expansion fails because the current search scope is ambiguous.
+
+Historical versions are never traversed as Subject search roots. Historical questions are still returned when their stored classifications map through `CONFIRMED` mappings to current retrieval nodes.
+
 ### Important constraints
 
 Hierarchy expansion must not reverse applicability.
@@ -302,10 +357,10 @@ Subtopic applicability
 Descriptor applicability
 ```
 
-Topic and Unit searches broaden the search scope only. They do not:
+Subject, Topic and Unit searches broaden the search scope only. They do not:
 
 - change stored question classification;
-- manufacture Topic or Unit applicability;
+- manufacture Subject, Topic or Unit applicability;
 - invent Descriptor precision.
 
 Hierarchy traversal belongs in the dedicated curriculum search-node expansion service, not in `Question`, the mapping model or UI code.
@@ -324,6 +379,8 @@ Retrieval results retain the deterministic ordering defined by the retrieval ser
 - reject mixed Descriptor/Subtopic Topic children;
 - include empty Subtopics as searchable classification nodes;
 - support Unit traversal across independently structured Topics;
+- support Subject traversal across all Units of the single current syllabus;
+- reject ambiguous Subjects with multiple current syllabus versions;
 - preserve original question classifications;
 - prevent broad searches from inventing finer applicability;
 - add tests for Descriptor, Subtopic, Topic and Unit behaviour.
@@ -331,6 +388,8 @@ Retrieval results retain the deterministic ordering defined by the retrieval ser
 ---
 
 ## Work Package 3 — Implement SQLite-backed question retrieval
+
+**Status: Complete.**
 
 ### Goal
 
@@ -382,6 +441,8 @@ retrieve expected questions
 
 ## Work Package 4 — Prove direct and mapped retrieval across import origins
 
+**Status: Complete.**
+
 ### Goal
 
 Demonstrate that retrieval does not depend on the question-import workflow.
@@ -408,23 +469,30 @@ Where practical, use the real legacy-import persistence path for at least one in
 
 ## Work Package 5 — Add a minimal curriculum-aware question search UI
 
+**Status: Complete.**
+
 ### Goal
 
 Expose the retrieval capability without attempting the full Question Bank Browser sprint.
 
 ### Minimum UI
 
-The user should be able to:
+The implemented UI allows the user to:
 
-1. choose a subject;
-2. work against the current syllabus;
-3. navigate/select a current curriculum area;
-4. run or automatically refresh the search;
-5. see matching questions;
-6. see enough source metadata to identify each result;
-7. preview the stored question;
-8. inspect its original classification and current applicability;
-9. open or identify the original source examination where practical.
+1. choose a Subject and automatically search the Subject's current syllabus;
+2. narrow through Unit, Topic, Subtopic/Descriptor and Descriptor;
+3. broaden again by clicking an already-selected higher-level control;
+4. see the immediately lower control restored to an explicit prompt such as `Select unit`;
+5. refresh retrieval automatically whenever the search scope changes;
+6. keep retrieval work off the JavaFX application thread;
+7. discard stale retrieval results when the user changes scope quickly;
+8. see matching questions with identifying examination metadata;
+9. inspect original classification separately from current applicability;
+10. preview captured question regions reconstructed from the stored source PDF;
+11. see `No stored question image.` for legacy metadata-only questions with zero regions;
+12. keep preview rendering off the JavaFX application thread and discard stale previews;
+13. resize Matching questions, Question details and Question preview independently through two draggable dividers;
+14. identify the original examination through provider, year, booklet and question metadata.
 
 ### Result display
 
@@ -445,6 +513,26 @@ QCAA 2026 — Paper 1 — Q5 — 4 marks
 Current: 2025 Descriptor 2.4.7
 ```
 
+### Interaction and preview behaviour
+
+The search pane treats the selected hierarchy level as the explicit search scope rather than inferring the deepest non-null ComboBox value. This is what permits reliable broadening back from Descriptor to Subtopic, Topic, Unit or Subject.
+
+Search and preview work use background JavaFX `Task` instances started on virtual threads. Generation counters prevent completed work for an obsolete selection from overwriting newer results or previews.
+
+Captured questions are previewed through a dedicated `QuestionPreviewService`, which resolves the booklet's relative source-document path through `PdfStore` and reconstructs the stored ordered regions with `QuestionExtractor`. Legacy questions with zero regions remain valid retrieval results and simply have no image preview.
+
+The search dialog uses a vertical three-section `SplitPane`:
+
+```text
+Matching questions
+--------------------------- draggable divider
+Question details
+--------------------------- draggable divider
+Question preview
+```
+
+The preview occupies the largest initial share of the dialog while both dividers remain user-adjustable.
+
 ### Out of scope for this UI slice
 
 Do not require:
@@ -463,21 +551,27 @@ These belong to later Phase 7 work unless a tiny supporting piece is necessary f
 
 ## Work Package 6 — Quality gate and merge readiness
 
+**Status: Complete.**
+
 ### Goal
 
 Make this retrieval boundary reliable enough to become the foundation of the full browser.
 
 ### Required review
 
-Before merge:
+Completed sprint-quality work includes:
 
-- review the full branch against `main`;
-- check public API Javadocs;
-- add missing unit tests;
-- add SQLite integration tests;
-- add JavaFX/TestFX tests for important UI state;
-- run the complete Maven suite;
-- manually exercise realistic retrieval using the development database.
+- branch-level review against `main`;
+- public API Javadoc cleanup for the new retrieval and search APIs;
+- focused unit tests for retrieval contracts and hierarchy expansion;
+- SQLite integration tests using reconstructed repository/service instances;
+- real legacy-import retrieval coverage;
+- JavaFX/TestFX coverage for important search state;
+- a focused `QuestionPreviewService` regression using a real generated PDF;
+- full automated suite execution with green results;
+- manual exercise of realistic retrieval and captured-question preview in the development application.
+
+A final independent Codex branch review is recommended immediately before merge.
 
 ### Particular review risks
 
@@ -492,7 +586,7 @@ Look for:
 - N+1 query behaviour or full-bank in-memory filtering;
 - UI code directly traversing mappings;
 - mutation of stored question classification;
-- search semantics that differ incorrectly between Descriptor, Subtopic, Topic and Unit paths;
+- search semantics that differ incorrectly between Subject, Unit, Topic, Subtopic and Descriptor paths;
 - result ordering that changes unpredictably.
 
 ---
@@ -536,6 +630,9 @@ The sprint should add or update tests covering at least the following.
 - empty Subtopics remain searchable;
 - empty Topics produce no retrieval classification nodes;
 - Unit searches traverse all Topics using each Topic's valid hierarchy mode;
+- Subject searches traverse all Units of the single current syllabus;
+- Subject searches do not directly traverse historical syllabus versions;
+- Subjects with multiple current syllabus versions are rejected;
 - a question reachable through multiple descendants appears only once;
 - multiple valid applicability nodes for one returned question are preserved.
 
@@ -545,6 +642,7 @@ The sprint should add or update tests covering at least the following.
 - descriptor-mapped retrieval works after repository reconstruction;
 - subtopic-mapped retrieval works after repository reconstruction;
 - Topic and Unit hierarchy retrieval works after repository reconstruction;
+- Subject-wide retrieval remains based on the reconstructed current curriculum hierarchy;
 - edited mapping reviews immediately change retrieval after reconstruction;
 - MATCHED -> NO_MATCH removes the question from current applicability results after reload;
 - NO_MATCH -> MATCHED restores the question after reload;
@@ -552,13 +650,21 @@ The sprint should add or update tests covering at least the following.
 
 ## UI
 
-- selecting a current descriptor displays direct and mapped questions;
-- selecting a current subtopic follows the agreed hierarchical semantics;
+- selecting a Subject automatically searches its current syllabus;
+- selecting a current Descriptor displays direct and mapped questions;
+- selecting a current Subtopic follows the agreed hierarchical semantics;
 - selecting a Topic or Unit follows the agreed broad-search semantics;
+- clicking an already-selected higher level broadens back to that scope;
+- lower-level controls are cleared and the immediately lower level shows its `Select X` prompt;
 - result provenance is displayed correctly;
 - empty result sets are clear and not presented as errors;
 - changing curriculum selection refreshes or invalidates stale results;
-- a mapped historical result retains its original classification in the UI.
+- stale background searches cannot overwrite newer results;
+- a mapped historical result retains its original classification in the UI;
+- a captured question can render its stored PDF regions in the Question preview pane;
+- a zero-region legacy question reports that no stored question image is available;
+- stale preview rendering cannot overwrite the currently selected question;
+- Matching questions, Question details and Question preview are separated by draggable dividers.
 
 ## Regression
 
@@ -646,7 +752,11 @@ Before merge, manually verify at least:
 - a no-match review that does not produce a result;
 - a broad Subtopic search that demonstrates descendant Descriptor retrieval;
 - a Topic search;
-- a Unit search.
+- a Unit search;
+- a Subject search across the current syllabus;
+- narrowing to a finer scope and broadening back to a higher scope;
+- a captured question whose stored regions render correctly in the preview pane;
+- a legacy question with no stored regions, which remains selectable without a preview error.
 
 ## 10. Stop at the sprint boundary
 
@@ -682,31 +792,40 @@ The following should not be added during this sprint unless required to fix a de
 
 This sprint is complete when:
 
-1. A current descriptor can retrieve questions classified directly to it.
-2. A current descriptor can retrieve historical descriptor questions through confirmed mappings.
+1. A current Descriptor can retrieve questions classified directly to it.
+2. A current Descriptor can retrieve historical Descriptor questions through confirmed mappings.
 3. Suggested mappings and no-match reviews cannot create retrieval results.
-4. A current subtopic can retrieve questions through confirmed subtopic mappings.
-5. Descriptor, Subtopic, Topic and Unit searches follow the explicit hierarchy rules and are tested.
-6. Subtopic-level applicability does not invent descriptor-level applicability.
-7. A question is returned only once even when multiple valid applicability paths reach the searched curriculum area.
-8. Multiple valid current applicability nodes for a returned question are preserved.
-9. Retrieval works from persisted SQLite data after fresh repository/service construction.
-10. Import technique does not affect retrieval semantics.
-11. Historical question classifications remain unchanged.
-12. A minimal UI allows a teacher to select current curriculum and see matching questions.
-13. The UI can distinguish original historical classification from current applicability where relevant.
-14. The full automated test suite is green.
-15. The sprint has not expanded into full question editing or Exam Builder work.
+4. A current Subtopic can retrieve questions through confirmed Subtopic mappings.
+5. Descriptor, Subtopic, Topic, Unit and Subject searches follow the explicit hierarchy rules and are tested.
+6. Subject search uses the Subject's single current syllabus and does not directly traverse historical versions.
+7. Subtopic-level applicability does not invent Descriptor-level applicability.
+8. A question is returned only once even when multiple valid applicability paths reach the searched curriculum area.
+9. Multiple valid current applicability nodes for a returned question are preserved.
+10. Retrieval works from persisted SQLite data after fresh repository/service construction.
+11. Import technique does not affect retrieval semantics.
+12. Historical question classifications remain unchanged.
+13. A minimal UI allows a teacher to search from Subject down to Descriptor and see matching questions.
+14. The UI supports automatic narrowing and broadening without requiring a Search button.
+15. Background retrieval cannot allow stale results to overwrite the current search scope.
+16. The UI distinguishes original historical classification from current applicability.
+17. Captured questions can be previewed from their stored source PDF regions.
+18. Legacy questions with zero regions remain valid and report that no stored question image is available.
+19. Background preview rendering cannot allow a stale image to overwrite the currently selected question.
+20. The full automated test suite is green.
+21. Real captured-question preview has been manually verified in the application.
+22. The sprint has not expanded into full question editing or Exam Builder work.
 
 ---
 
 # Definition of Done
 
-A teacher can select a current Descriptor, Subtopic, Topic or Unit and see the stored questions applicable within that search scope, regardless of whether those questions were originally classified against the current syllabus or a historical syllabus.
+A teacher can select a Subject or a current Unit, Topic, Subtopic or Descriptor and see the stored questions applicable within that search scope, regardless of whether those questions were originally classified against the current syllabus or a historical syllabus.
 
 The system can explain each historical result through confirmed curriculum mappings without changing the original question record.
 
-Broad Topic and Unit searches expand only to valid Descriptor and Subtopic classification nodes and do not manufacture broader stored applicability or finer Descriptor precision.
+Broad Subject, Unit and Topic searches expand only to valid Descriptor and Subtopic classification nodes and do not manufacture broader stored applicability or finer Descriptor precision.
+
+The UI automatically narrows and broadens across the curriculum hierarchy, preserves responsive JavaFX behaviour through background retrieval, and can reconstruct captured question images from stored PDF regions without losing support for metadata-only legacy questions.
 
 The resulting retrieval API is suitable for reuse by the later Question Bank Browser, hierarchical SCORM/HTML output and Exam Builder selection workflows.
 
@@ -717,9 +836,10 @@ The resulting retrieval API is suitable for reuse by the later Question Bank Bro
 The central retrieval model for this sprint is:
 
 ```text
-Current curriculum search node
+Current curriculum search scope
+(Subject / Unit / Topic / Subtopic / Descriptor)
         |
-        +-- explicit hierarchy expansion
+        +-- explicit current-hierarchy expansion
         |
         +-- direct current classifications
         |
@@ -733,4 +853,4 @@ Unique applicable Questions
         +-- all valid current applicability nodes preserved
 ```
 
-This sprint converts curriculum applicability from a per-question concept into a practical question-bank retrieval capability.
+This sprint converts curriculum applicability from a per-question concept into a practical question-bank retrieval capability, including current-Subject search and asynchronous stored-question preview.

@@ -45,6 +45,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
+import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
@@ -540,7 +541,10 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(questionRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService);
+		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(config.pdfDataRoot()),
+				questionExtractor);
+		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
+				previewService);
 		dialog.showAndWait();
 	}
 

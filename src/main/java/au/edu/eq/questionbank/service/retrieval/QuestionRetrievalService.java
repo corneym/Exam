@@ -70,6 +70,19 @@ public final class QuestionRetrievalService {
 		return retrieveForCurrentNodes(currentNodes);
 	}
 
+	/**
+	 * Finds unique stored questions applicable anywhere within the subject's
+	 * current syllabus.
+	 * <p>
+	 * Historical classifications remain unchanged and may contribute through
+	 * confirmed mappings to current curriculum nodes.
+	 *
+	 * @param subject the subject whose current curriculum is searched
+	 * @return unique matching questions in deterministic order
+	 * @throws NullPointerException  if {@code subject} is {@code null}
+	 * @throws IllegalStateException if the current curriculum hierarchy or
+	 *                               persistence result is invalid
+	 */
 	public List<QuestionRetrievalResult> findQuestionsApplicableTo(Subject subject) {
 		List<CurriculumNode> currentNodes = searchNodeExpansionService.expandSearchSubject(subject);
 		if (currentNodes.isEmpty()) {

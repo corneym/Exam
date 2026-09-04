@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -27,10 +28,13 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
+import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.scene.Scene;
@@ -153,7 +157,9 @@ public class QuestionSearchPaneTest {
 		};
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(retrievalRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		QuestionSearchPane pane = new QuestionSearchPane(curriculumRepository, retrievalService);
+		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(Path.of(".")),
+				new QuestionExtractor());
+		QuestionSearchPane pane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
 		stage.setScene(new Scene(pane, 700, 600));
 		stage.show();
 	}

@@ -1,6 +1,8 @@
 package au.edu.eq.questionbank.ui;
 
+import java.awt.image.BufferedImage;
 import java.util.List;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.function.Supplier;
 
@@ -10,21 +12,36 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
+import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
+import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
+/**
+ * Curriculum-aware question search pane.
+ * <p>
+ * Searches automatically against the selected current-curriculum scope from
+ * Subject through Unit, Topic, Subtopic and Descriptor. Retrieval runs away
+ * from the JavaFX application thread and stale results are discarded when the
+ * user changes search scope.
+ */
 public class QuestionSearchPane extends BorderPane {
 
 	private final CurriculumRepository curriculumRepository;
@@ -42,23 +59,48 @@ public class QuestionSearchPane extends BorderPane {
 	private Task<List<QuestionRetrievalResult>> activeSearchTask;
 	private long searchGeneration;
 	private boolean updatingControls;
+	private final QuestionPreviewService previewService;
+	private final ImageView previewImageView = new ImageView();
+	private final Label previewStatusLabel = new Label();
+	private Task<Optional<BufferedImage>> activePreviewTask;
+	private long previewGeneration;
 
-	public QuestionSearchPane(CurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService) {
+	/**
+	 * Creates the question-search pane.
+	 *
+	 * @param curriculumRepository current curriculum hierarchy lookup
+	 * @param retrievalService     curriculum-aware question retrieval
+	 * @param previewService       stored question image preview service
+	 * @throws NullPointerException if either dependency is {@code null}
+	 */
+	public QuestionSearchPane(CurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService,
+			QuestionPreviewService previewService) {
 		if (curriculumRepository == null) {
 			throw new NullPointerException("curriculumRepository");
 		}
 		if (retrievalService == null) {
 			throw new NullPointerException("retrievalService");
 		}
+		if (previewService == null) {
+			throw new NullPointerException("previewService");
+		}
 		this.curriculumRepository = curriculumRepository;
 		this.retrievalService = retrievalService;
+		this.previewService = previewService;
 		setPadding(new Insets(10));
 		configureControls();
 		configureHandlers();
 		setTop(createSelectionPane());
-		setCenter(resultsList);
-		setBottom(createDetailsPane());
+		setCenter(createResultsAndDetailsPane());
 		subjectBox.getItems().setAll(curriculumRepository.findAllSubjects());
+	}
+
+	private void cancelActivePreview() {
+		previewGeneration++;
+		if (activePreviewTask != null) {
+			activePreviewTask.cancel();
+			activePreviewTask = null;
+		}
 	}
 
 	private void cancelActiveSearch() {
@@ -67,9 +109,6 @@ public class QuestionSearchPane extends BorderPane {
 			activeSearchTask.cancel();
 			activeSearchTask = null;
 		}
-	}
-
-	private void classificationBoxMousePress() {
 	}
 
 	private void clearBelowSubject() {
@@ -99,6 +138,11 @@ public class QuestionSearchPane extends BorderPane {
 		}
 	}
 
+	private void clearPreview() {
+		previewImageView.setImage(null);
+		previewStatusLabel.setText("");
+	}
+
 	private void clearResults() {
 		resultsList.getItems().clear();
 		detailsArea.clear();
@@ -123,6 +167,11 @@ public class QuestionSearchPane extends BorderPane {
 		configurePromptDisplay(topicBox);
 		configurePromptDisplay(classificationBox);
 		configurePromptDisplay(descriptorBox);
+		previewImageView.setId("question-search-preview");
+		previewStatusLabel.setId("question-search-preview-status");
+		previewImageView.setPreserveRatio(true);
+		previewImageView.setFitWidth(820);
+		previewImageView.setSmooth(true);
 		syllabusValue.setText("No current syllabus");
 		unitBox.setDisable(true);
 		topicBox.setDisable(true);
@@ -183,11 +232,36 @@ public class QuestionSearchPane extends BorderPane {
 		});
 	}
 
-	private VBox createDetailsPane() {
+	private VBox createQuestionDetailsPane() {
 		Label label = new Label("Question details");
 		label.setStyle("-fx-font-weight: bold;");
 		VBox pane = new VBox(4, label, detailsArea);
-		pane.setPadding(new Insets(10, 0, 0, 0));
+		pane.setPadding(new Insets(6, 0, 0, 0));
+		VBox.setVgrow(detailsArea, Priority.ALWAYS);
+		return pane;
+	}
+
+	private VBox createQuestionPreviewPane() {
+		Label label = new Label("Question preview");
+		label.setStyle("-fx-font-weight: bold;");
+		ScrollPane previewPane = new ScrollPane(previewImageView);
+		previewPane.setFitToWidth(true);
+		VBox pane = new VBox(4, label, previewStatusLabel, previewPane);
+		pane.setPadding(new Insets(6, 0, 0, 0));
+		VBox.setVgrow(previewPane, Priority.ALWAYS);
+		return pane;
+	}
+
+	private SplitPane createResultsAndDetailsPane() {
+		Label resultsLabel = new Label("Matching questions");
+		resultsLabel.setStyle("-fx-font-weight: bold;");
+		VBox resultsPane = new VBox(4, resultsLabel, resultsList);
+		VBox.setVgrow(resultsList, Priority.ALWAYS);
+		VBox detailsPane = createQuestionDetailsPane();
+		VBox previewPane = createQuestionPreviewPane();
+		SplitPane pane = new SplitPane(resultsPane, detailsPane, previewPane);
+		pane.setOrientation(Orientation.VERTICAL);
+		pane.setDividerPositions(0.22, 0.48);
 		return pane;
 	}
 
@@ -215,22 +289,6 @@ public class QuestionSearchPane extends BorderPane {
 		GridPane.setHgrow(classificationBox, Priority.ALWAYS);
 		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
 		return pane;
-	}
-
-	private CurriculumNode getSearchNode() {
-		CurriculumNode descriptor = descriptorBox.getValue();
-		if (descriptor != null) {
-			return descriptor;
-		}
-		CurriculumNode classification = classificationBox.getValue();
-		if (classification != null) {
-			return classification;
-		}
-		CurriculumNode topic = topicBox.getValue();
-		if (topic != null) {
-			return topic;
-		}
-		return unitBox.getValue();
 	}
 
 	private void handleClassificationBoxMousePress() {
@@ -399,6 +457,8 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void showResultDetails(QuestionRetrievalResult result) {
+		cancelActivePreview();
+		clearPreview();
 		if (result == null) {
 			detailsArea.clear();
 			return;
@@ -426,6 +486,7 @@ public class QuestionSearchPane extends BorderPane {
 				%s
 				""".formatted(question.getQuestionCode(), question.getMarks(),
 				nodeDescription(result.getOriginalClassification()), applicability, questionText));
+		startQuestionPreview(question);
 	}
 
 	private void startAutomaticSearch(CurriculumNode currentNode) {
@@ -489,5 +550,49 @@ public class QuestionSearchPane extends BorderPane {
 			}
 		});
 		Thread.ofVirtual().name("question-search").start(task);
+	}
+
+	private void startQuestionPreview(Question question) {
+		if (question.getRegions().isEmpty()) {
+			previewStatusLabel.setText("No stored question image.");
+			return;
+		}
+		long generation = previewGeneration;
+		previewStatusLabel.setText("Loading preview...");
+		Task<Optional<BufferedImage>> task = new Task<>() {
+
+			@Override
+			protected Optional<BufferedImage> call() throws Exception {
+				return previewService.loadPreview(question);
+			}
+		};
+		activePreviewTask = task;
+		task.setOnSucceeded(event -> {
+			if (generation != previewGeneration || task != activePreviewTask) {
+				return;
+			}
+			activePreviewTask = null;
+			Optional<BufferedImage> preview = task.getValue();
+			if (preview.isEmpty()) {
+				previewStatusLabel.setText("No stored question image.");
+				return;
+			}
+			Image image = SwingFXUtils.toFXImage(preview.get(), null);
+			previewImageView.setImage(image);
+			previewStatusLabel.setText("");
+		});
+		task.setOnFailed(event -> {
+			if (generation != previewGeneration || task != activePreviewTask) {
+				return;
+			}
+			activePreviewTask = null;
+			Throwable failure = task.getException();
+			if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+				previewStatusLabel.setText("Question preview unavailable.");
+			} else {
+				previewStatusLabel.setText("Question preview unavailable: " + failure.getMessage());
+			}
+		});
+		Thread.ofVirtual().name("question-preview").start(task);
 	}
 }
