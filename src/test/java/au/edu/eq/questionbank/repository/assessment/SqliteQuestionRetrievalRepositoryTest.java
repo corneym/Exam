@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,28 @@ class SqliteQuestionRetrievalRepositoryTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void noLongerCurrentTargetDoesNotCreateRetrievalMatches() throws Exception {
+		Fixture fixture = createFixture("non-current-target.db");
+		SqliteDatabase database = new SqliteDatabase(fixture.databasePath());
+		database.initialiseSchema();
+		CurriculumNode staleCurrentDescriptor = reloadCurrentDescriptor(database, fixture);
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE syllabus_versions
+						SET is_current = 0
+						WHERE id = ?
+						""")) {
+			statement.setLong(1, fixture.currentVersionId());
+			assertEquals(1, statement.executeUpdate());
+		}
+		SqliteDatabase reopenedDatabase = new SqliteDatabase(fixture.databasePath());
+		reopenedDatabase.initialiseSchema();
+		QuestionRetrievalRepository repository = new SqliteQuestionRepository(reopenedDatabase);
+		List<QuestionApplicabilityMatch> matches = repository.findApplicableToNodes(List.of(staleCurrentDescriptor));
+		assertEquals(0, matches.size());
+	}
 
 	@Test
 	void rejectsInvalidRetrievalNodes() throws Exception {
@@ -61,11 +85,13 @@ class SqliteQuestionRetrievalRepositoryTest {
 		CurriculumNode currentDescriptor = reloadCurrentDescriptor(reopenedDatabase, fixture);
 		QuestionRetrievalRepository repository = new SqliteQuestionRepository(reopenedDatabase);
 		List<QuestionApplicabilityMatch> matches = repository.findApplicableToNodes(List.of(currentDescriptor));
-		assertEquals(2, matches.size());
+		assertEquals(3, matches.size());
 		assertEquals(fixture.directQuestionId(), matches.get(0).getQuestion().getId());
 		assertEquals(fixture.confirmedQuestionId(), matches.get(1).getQuestion().getId());
-		assertEquals(currentDescriptor.getId(), matches.get(0).getCurrentNode().getId());
-		assertEquals(currentDescriptor.getId(), matches.get(1).getCurrentNode().getId());
+		assertEquals(fixture.secondConfirmedQuestionId(), matches.get(2).getQuestion().getId());
+		for (QuestionApplicabilityMatch match : matches) {
+			assertEquals(currentDescriptor.getId(), match.getCurrentNode().getId());
+		}
 		assertEquals(currentDescriptor.getId(), matches.get(0).getQuestion().getClassification().getId());
 		assertEquals(fixture.confirmedSourceDescriptorId(), matches.get(1).getQuestion().getClassification().getId());
 	}
@@ -94,6 +120,8 @@ class SqliteQuestionRetrievalRepositoryTest {
 				"Confirmed historical descriptor", 1);
 		Descriptor suggestedSourceDescriptor = curriculumWriter.insertDescriptor(historicalTopic, "1.1.2",
 				"Suggested historical descriptor", 2);
+		Descriptor secondConfirmedSourceDescriptor = curriculumWriter.insertDescriptor(historicalTopic, "1.1.3",
+				"Second confirmed historical descriptor", 3);
 		SyllabusVersion currentVersion = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
 		Unit currentUnit = curriculumWriter.insertUnit(currentVersion, "1", "Current unit", 1);
 		Topic currentTopic = curriculumWriter.insertTopic(currentUnit, "1.1", "Current topic", 1);
@@ -112,12 +140,16 @@ class SqliteQuestionRetrievalRepositoryTest {
 				confirmedSourceDescriptor, false);
 		Question suggestedQuestion = questionRepository.save(historicalBooklet, "Q3", "", 4, List.of(),
 				suggestedSourceDescriptor, false);
+		Question secondConfirmedQuestion = questionRepository.save(historicalBooklet, "Q4", "", 5, List.of(),
+				secondConfirmedSourceDescriptor, false);
 		SqliteCurriculumMappingWriter mappingWriter = new SqliteCurriculumMappingWriter(database);
 		mappingWriter.insertMapping(confirmedSourceDescriptor, currentDescriptor, MappingStatus.CONFIRMED);
 		mappingWriter.insertMapping(suggestedSourceDescriptor, currentDescriptor, MappingStatus.SUGGESTED);
+		mappingWriter.insertMapping(secondConfirmedSourceDescriptor, currentDescriptor, MappingStatus.CONFIRMED);
 		return new Fixture(databasePath, historicalVersion.getId(), currentVersion.getId(),
 				confirmedSourceDescriptor.getId(), confirmedSourceDescriptor.getCode(), currentDescriptor.getCode(),
-				directQuestion.getId(), confirmedQuestion.getId(), suggestedQuestion.getId());
+				directQuestion.getId(), confirmedQuestion.getId(), suggestedQuestion.getId(),
+				secondConfirmedQuestion.getId());
 	}
 
 	private CurriculumNode reloadCurrentDescriptor(SqliteDatabase database, Fixture fixture) {
@@ -128,6 +160,6 @@ class SqliteQuestionRetrievalRepositoryTest {
 
 	private record Fixture(Path databasePath, long historicalVersionId, long currentVersionId,
 			long confirmedSourceDescriptorId, String confirmedSourceDescriptorCode, String currentDescriptorCode,
-			long directQuestionId, long confirmedQuestionId, long suggestedQuestionId) {
+			long directQuestionId, long confirmedQuestionId, long suggestedQuestionId, long secondConfirmedQuestionId) {
 	}
 }
