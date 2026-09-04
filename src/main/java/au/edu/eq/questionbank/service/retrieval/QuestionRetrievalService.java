@@ -7,6 +7,7 @@ import java.util.TreeMap;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
 
@@ -32,14 +33,12 @@ public final class QuestionRetrievalService {
 	 */
 	public QuestionRetrievalService(QuestionRetrievalRepository retrievalRepository,
 			CurriculumSearchNodeExpansionService searchNodeExpansionService) {
-
 		if (retrievalRepository == null) {
 			throw new NullPointerException("retrievalRepository");
 		}
 		if (searchNodeExpansionService == null) {
 			throw new NullPointerException("searchNodeExpansionService");
 		}
-
 		this.retrievalRepository = retrievalRepository;
 		this.searchNodeExpansionService = searchNodeExpansionService;
 	}
@@ -64,68 +63,55 @@ public final class QuestionRetrievalService {
 	 *                                  result is invalid
 	 */
 	public List<QuestionRetrievalResult> findQuestionsApplicableTo(CurriculumNode currentNode) {
-
 		List<CurriculumNode> currentNodes = searchNodeExpansionService.expandSearchNode(currentNode);
-
 		if (currentNodes.isEmpty()) {
 			return List.of();
 		}
+		return retrieveForCurrentNodes(currentNodes);
+	}
 
+	public List<QuestionRetrievalResult> findQuestionsApplicableTo(Subject subject) {
+		List<CurriculumNode> currentNodes = searchNodeExpansionService.expandSearchSubject(subject);
+		if (currentNodes.isEmpty()) {
+			return List.of();
+		}
 		return retrieveForCurrentNodes(currentNodes);
 	}
 
 	private List<QuestionRetrievalResult> retrieveForCurrentNodes(List<CurriculumNode> currentNodes) {
-
 		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
-
 		Map<Long, Map<Long, CurriculumNode>> applicabilityByQuestionId = new TreeMap<Long, Map<Long, CurriculumNode>>();
-
 		Map<Long, CurriculumNode> requestedNodesById = new TreeMap<Long, CurriculumNode>();
-
 		for (CurriculumNode currentNode : currentNodes) {
 			requestedNodesById.put(currentNode.getId(), currentNode);
 		}
-
 		List<QuestionApplicabilityMatch> matches = retrievalRepository.findApplicableToNodes(currentNodes);
-
 		if (matches == null) {
 			throw new IllegalStateException("Question retrieval repository returned null");
 		}
-
 		for (QuestionApplicabilityMatch match : matches) {
 			if (match == null) {
 				throw new IllegalStateException("Question retrieval repository returned a null match");
 			}
-
 			Question question = match.getQuestion();
 			CurriculumNode currentNode = match.getCurrentNode();
-
 			if (!requestedNodesById.containsKey(currentNode.getId())) {
 				throw new IllegalStateException("Question retrieval repository returned an unrequested current node");
 			}
-
 			questionsById.putIfAbsent(question.getId(), question);
-
 			Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(question.getId());
-
 			if (applicability == null) {
 				applicability = new TreeMap<Long, CurriculumNode>();
-
 				applicabilityByQuestionId.put(question.getId(), applicability);
 			}
-
 			applicability.putIfAbsent(currentNode.getId(), currentNode);
 		}
-
 		List<QuestionRetrievalResult> results = new ArrayList<QuestionRetrievalResult>();
-
 		for (Map.Entry<Long, Question> entry : questionsById.entrySet()) {
 			Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(entry.getKey());
-
 			results.add(new QuestionRetrievalResult(entry.getValue(),
 					new ArrayList<CurriculumNode>(applicability.values())));
 		}
-
 		return List.copyOf(results);
 	}
 }

@@ -44,6 +44,8 @@ import au.edu.eq.questionbank.service.curriculum.ConfirmedDescriptorSubtopicMapp
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
+import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
+import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import javafx.application.Application;
@@ -76,21 +78,9 @@ public class QuestionBankApplication extends Application {
 	private static final double SCENE_HEIGHT = 840.0;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 	private static final Path PROPERTIES_FILE = Path.of("questionbank.properties");
-
-	/**
-	 * Launches the desktop application.
-	 *
-	 * @param args command-line arguments passed to JavaFX
-	 */
-	public static void main(String[] args) {
-		launch(args);
-	}
-
 	private QuestionRepository questionRepository;
-
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
-
 	private CurriculumSelectionModel curriculumSelectionModel;
 	private CurriculumSelectorPane curriculumSelectorPane;
 	private ExamMetadataPane examMetadataPane;
@@ -103,6 +93,15 @@ public class QuestionBankApplication extends Application {
 	 * Creates the desktop application instance initialized by JavaFX.
 	 */
 	public QuestionBankApplication() {
+	}
+
+	/**
+	 * Launches the desktop application.
+	 *
+	 * @param args command-line arguments passed to JavaFX
+	 */
+	public static void main(String[] args) {
+		launch(args);
 	}
 
 	@Override
@@ -156,7 +155,6 @@ public class QuestionBankApplication extends Application {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
-
 		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
 		if (activeBooklet != null && activeBooklet.getId() == question.getBooklet().getId()
 				&& pdfWorkspace.hasExamPdf()) {
@@ -251,7 +249,8 @@ public class QuestionBankApplication extends Application {
 	private MenuBar createMenuBar(Stage primaryStage, ApplicationConfig config) {
 		MenuBar menuBar = new MenuBar();
 		menuBar.getMenus().addAll(createFileMenu(primaryStage, config), createExamMenu(primaryStage, config),
-				createCurriculumMenu(primaryStage, config), createExportMenu(), createHelpMenu(config));
+				createCurriculumMenu(primaryStage, config), createQuestionMenu(primaryStage, config),
+				createExportMenu(), createHelpMenu(config));
 		return menuBar;
 	}
 
@@ -267,15 +266,11 @@ public class QuestionBankApplication extends Application {
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-
 		for (LegacyBookletImportRequest request : requests) {
 			LegacyBookletRequirement requirement = request.requirement();
-
 			Path storedPath = pdfStore.importExamPdf(request.pdfPath(), subject.getName(), requirement.providerName(),
 					requirement.year());
-
 			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
-
 			examImporter.importExam(subject, requirement.providerName(), requirement.year(), request.assessmentName(),
 					requirement.bookletName(), relativePath);
 		}
@@ -295,8 +290,13 @@ public class QuestionBankApplication extends Application {
 		scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 		scrollPane.setMinHeight(0);
 		scrollPane.setPrefWidth(PREVIEW_PANE_WIDTH + 18);
-
 		return scrollPane;
+	}
+
+	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
+		Menu questionMenu = createMenu("_Questions");
+		questionMenu.getItems().add(createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config)));
+		return questionMenu;
 	}
 
 	private BorderPane createRootLayout(Stage primaryStage, ApplicationConfig config) {
@@ -323,7 +323,6 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		if (result.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
-
 			return;
 		}
 		try {
@@ -372,7 +371,6 @@ public class QuestionBankApplication extends Application {
 			if (importedBooklets.isEmpty()) {
 				return;
 			}
-
 			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
 					subject.getName(), syllabusVersion.getName());
 			answerCapturePane.refreshUnansweredQuestions();
@@ -398,14 +396,12 @@ public class QuestionBankApplication extends Application {
 		if (missingBooklets.isEmpty()) {
 			return Optional.of(Integer.valueOf(0));
 		}
-
 		LegacyBookletImportDialog bookletDialog = new LegacyBookletImportDialog(primaryStage, missingBooklets);
 		Optional<ButtonType> bookletResult = bookletDialog.showAndWait();
 		if (bookletResult.isEmpty()
 				|| bookletResult.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
 			return Optional.empty();
 		}
-
 		List<LegacyBookletImportRequest> requests = bookletDialog.getRequests();
 		createMissingLegacyBooklets(config, subject, requests);
 		List<LegacyBookletRequirement> stillMissing = importer.findMissingBooklets(dialog.getSelectedFile(),
@@ -414,17 +410,6 @@ public class QuestionBankApplication extends Application {
 			throw new IllegalStateException("Required exam booklets are still missing after booklet import.");
 		}
 		return Optional.of(Integer.valueOf(requests.size()));
-	}
-
-	private void showLegacyQuestionImportResult(int importedBooklets, LegacyQuestionImportResult importResult) {
-		String message = """
-				Exam booklets imported: %d
-				Questions imported: %d
-				Questions already present: %d
-				Answers imported: %d
-				""".formatted(importedBooklets, importResult.insertedQuestions(), importResult.existingQuestions(),
-				importResult.insertedAnswers());
-		showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy question metadata imported.", message);
 	}
 
 	private boolean isRegionSelectionAvailable(PdfWorkspacePane.DocumentMode documentMode) {
@@ -468,10 +453,9 @@ public class QuestionBankApplication extends Application {
 			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
 			SubtopicMappingEvidenceService subtopicEvidenceService = new SubtopicMappingEvidenceService(repository,
 					reviewRepository);
-
 			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
-					descriptorSuggester, subtopicSuggester, subtopicEvidenceService, reviewRepository, mappingRepository,
-					reviewWriter);
+					descriptorSuggester, subtopicSuggester, subtopicEvidenceService, reviewRepository,
+					mappingRepository, reviewWriter);
 			dialog.showAndWait();
 		} catch (IllegalStateException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",
@@ -518,6 +502,17 @@ public class QuestionBankApplication extends Application {
 		examImportDialog.showAndWait();
 	}
 
+	private void showLegacyQuestionImportResult(int importedBooklets, LegacyQuestionImportResult importResult) {
+		String message = """
+				Exam booklets imported: %d
+				Questions imported: %d
+				Questions already present: %d
+				Answers imported: %d
+				""".formatted(importedBooklets, importResult.insertedQuestions(), importResult.existingQuestions(),
+				importResult.insertedAnswers());
+		showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy question metadata imported.", message);
+	}
+
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
 		OptionsDialog dialog = new OptionsDialog(primaryStage, config.dataRoot());
 		Optional<ButtonType> result = dialog.showAndWait();
@@ -537,6 +532,16 @@ public class QuestionBankApplication extends Application {
 		} catch (IOException e) {
 			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.", e.getMessage());
 		}
+	}
+
+	private void showQuestionSearch(Stage primaryStage, ApplicationConfig config) {
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(questionRepository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService);
+		dialog.showAndWait();
 	}
 
 	private void showStage(Stage primaryStage, BorderPane root) {
@@ -609,7 +614,6 @@ public class QuestionBankApplication extends Application {
 			questionCapturePane.clearCurrentSelection();
 			answerCapturePane.clearCurrentSelectionForPageChange();
 		});
-
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
 	}

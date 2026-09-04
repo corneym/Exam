@@ -21,7 +21,6 @@ class CurriculumSearchNodeExpansionServiceTest {
 	void descriptorModeTopicIncludesOnlyItsDescriptors() {
 		Fixture fixture = new Fixture();
 		CurriculumSearchNodeExpansionService service = fixture.createService();
-
 		assertEquals(List.of(fixture.firstTopicDescriptor, fixture.secondTopicDescriptor),
 				service.expandSearchNode(fixture.descriptorTopic));
 	}
@@ -30,7 +29,6 @@ class CurriculumSearchNodeExpansionServiceTest {
 	void descriptorSearchIsExact() {
 		Fixture fixture = new Fixture();
 		CurriculumSearchNodeExpansionService service = fixture.createService();
-
 		assertEquals(List.of(fixture.firstTopicDescriptor), service.expandSearchNode(fixture.firstTopicDescriptor));
 	}
 
@@ -54,6 +52,17 @@ class CurriculumSearchNodeExpansionServiceTest {
 		assertThrows(NullPointerException.class, () -> new CurriculumSearchNodeExpansionService(null));
 		CurriculumSearchNodeExpansionService service = fixture.createService();
 		assertThrows(NullPointerException.class, () -> service.expandSearchNode(null));
+	}
+
+	@Test
+	void subjectSearchCombinesAllCurrentUnits() {
+		Fixture fixture = new Fixture();
+		CurriculumSearchNodeExpansionService service = fixture.createService();
+		assertEquals(
+				List.of(fixture.firstTopicDescriptor, fixture.secondTopicDescriptor, fixture.firstSubtopic,
+						fixture.firstSubtopicDescriptor, fixture.secondSubtopicDescriptor, fixture.secondSubtopic,
+						fixture.thirdSubtopicDescriptor, fixture.secondUnitDescriptor),
+				service.expandSearchSubject(fixture.chemistry));
 	}
 
 	@Test
@@ -87,24 +96,22 @@ class CurriculumSearchNodeExpansionServiceTest {
 
 		private final Subject chemistry;
 		private final SyllabusVersion currentVersion;
-
 		private final Unit currentUnit;
-
 		private final Topic descriptorTopic;
 		private final Descriptor firstTopicDescriptor;
 		private final Descriptor secondTopicDescriptor;
-
 		private final Topic subtopicTopic;
 		private final Subtopic firstSubtopic;
 		private final Descriptor firstSubtopicDescriptor;
 		private final Descriptor secondSubtopicDescriptor;
 		private final Subtopic secondSubtopic;
 		private final Descriptor thirdSubtopicDescriptor;
-
+		private final Unit secondCurrentUnit;
+		private final Topic secondUnitTopic;
+		private final Descriptor secondUnitDescriptor;
 		private final Topic mixedTopic;
 		private final Descriptor mixedTopicDescriptor;
 		private final Subtopic mixedTopicSubtopic;
-
 		private final Descriptor historicalDescriptor;
 
 		private Fixture() {
@@ -125,6 +132,10 @@ class CurriculumSearchNodeExpansionServiceTest {
 			secondSubtopic = new Subtopic(24, currentVersion, subtopicTopic, "1.2.2", "Second subtopic", 2);
 			thirdSubtopicDescriptor = new Descriptor(25, currentVersion, secondSubtopic, "1.2.2.1",
 					"Third subtopic descriptor", 1);
+			secondCurrentUnit = new Unit(26, currentVersion, "2", "Current unit 2", 2);
+			secondUnitTopic = new Topic(27, currentVersion, secondCurrentUnit, "2.1", "Second unit topic", 1);
+			secondUnitDescriptor = new Descriptor(28, currentVersion, secondUnitTopic, "2.1.1",
+					"Second unit descriptor", 1);
 			mixedTopic = new Topic(30, currentVersion, currentUnit, "1.3", "Invalid mixed topic", 3);
 			mixedTopicDescriptor = new Descriptor(31, currentVersion, mixedTopic, "1.3.1", "Mixed topic descriptor", 1);
 			mixedTopicSubtopic = new Subtopic(32, currentVersion, mixedTopic, "1.3.2", "Mixed topic subtopic", 2);
@@ -139,7 +150,6 @@ class CurriculumSearchNodeExpansionServiceTest {
 			InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
 					List.of(currentVersion),
 					List.of(currentUnit, mixedTopic, mixedTopicDescriptor, mixedTopicSubtopic));
-
 			return new CurriculumSearchNodeExpansionService(repository);
 		}
 
@@ -148,8 +158,7 @@ class CurriculumSearchNodeExpansionServiceTest {
 					List.of(currentVersion),
 					List.of(currentUnit, descriptorTopic, firstTopicDescriptor, secondTopicDescriptor, subtopicTopic,
 							firstSubtopic, firstSubtopicDescriptor, secondSubtopicDescriptor, secondSubtopic,
-							thirdSubtopicDescriptor));
-
+							thirdSubtopicDescriptor, secondCurrentUnit, secondUnitTopic, secondUnitDescriptor));
 			return new CurriculumSearchNodeExpansionService(repository);
 		}
 	}

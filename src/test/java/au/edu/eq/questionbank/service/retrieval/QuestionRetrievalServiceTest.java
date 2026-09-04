@@ -8,6 +8,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -163,7 +164,8 @@ class QuestionRetrievalServiceTest {
 		assertThrows(NullPointerException.class, () -> new QuestionRetrievalService(null, expansionService));
 		assertThrows(NullPointerException.class, () -> new QuestionRetrievalService(repository, null));
 		QuestionRetrievalService service = fixture.createService(repository);
-		assertThrows(NullPointerException.class, () -> service.findQuestionsApplicableTo(null));
+		assertThrows(NullPointerException.class, () -> service.findQuestionsApplicableTo((CurriculumNode) null));
+		assertThrows(NullPointerException.class, () -> service.findQuestionsApplicableTo((Subject) null));
 	}
 
 	@Test
