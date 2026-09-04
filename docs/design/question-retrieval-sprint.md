@@ -1,4 +1,4 @@
-# Sprint Design: Question Retrieval
+# Sprint Design: Question Retrieval (version 2)
 
 ## Branch
 
@@ -106,21 +106,28 @@ It does not make the question applicable to every descriptor beneath `2025 Subto
 
 ### 5. Hierarchical search semantics must be explicit
 
-Searching for a broad curriculum area may reasonably include questions classified more precisely beneath it.
+Searching for a broad curriculum area includes questions applicable to valid descendant question-classification nodes.
 
-For example, a search for a current subtopic may include:
+Questions themselves are classified only to `SUBTOPIC` or `DESCRIPTOR` nodes.
+
+`TOPIC` and `UNIT` are search scopes. They are not question-classification levels and broad retrieval must not manufacture Topic-level or Unit-level applicability.
+
+The supported search semantics are:
 
 ```text
-questions classified directly to that current subtopic
-+
-questions classified to current descriptors beneath that subtopic
-+
-historical subtopic questions mapped to that current subtopic
-+
-historical descriptor questions mapped to current descriptors beneath that subtopic
-```
+DESCRIPTOR
+    -> exact Descriptor only
 
-This behaviour should be designed and tested explicitly.
+SUBTOPIC
+    -> that Subtopic
+    + Descriptor children
+
+TOPIC
+    -> valid question-classification nodes beneath that Topic
+
+UNIT
+    -> valid question-classification nodes beneath all Topics in the Unit
+```
 
 Do not hide hierarchy expansion inside the mapping model or `Question` domain object.
 
@@ -134,6 +141,8 @@ For example:
 - several current applicability paths converge on the same broad curriculum area.
 
 The result set must contain each question only once.
+
+Where a question is applicable through multiple current nodes, those applicability nodes must still be preserved in the retrieval result.
 
 ### 7. SQLite is the real retrieval boundary
 
@@ -182,7 +191,7 @@ current subtopic
     + historical subtopic mappings leading there
 ```
 
-The hierarchical inclusion of descriptor-classified questions beneath a searched subtopic should be resolved in Work Package 2.
+The hierarchical inclusion of descriptor-classified questions beneath a searched subtopic is defined in Work Package 2.
 
 ### Tasks
 
@@ -199,46 +208,125 @@ The hierarchical inclusion of descriptor-classified questions beneath a searched
 
 ### Goal
 
-Decide what a search at Unit, Topic or Subtopic level should mean.
+Define explicit retrieval behaviour for all current curriculum search levels:
 
-At minimum, this sprint should support descriptor and subtopic retrieval because those are the stored question-classification levels.
+- Descriptor;
+- Subtopic;
+- Topic;
+- Unit.
 
-The likely desired rule is:
+Questions themselves remain classified only to Descriptor or Subtopic nodes. Topic and Unit are search scopes, not question-classification levels.
+
+### Descriptor search
+
+A Descriptor search is exact.
 
 ```text
-searching a current curriculum node
-    -> include questions applicable directly to that node
-    + questions applicable to relevant descendant searchable nodes
+current Descriptor
+    -> questions applicable to that Descriptor only
 ```
 
-For example:
+It must not include questions known only to the parent Subtopic.
+
+### Subtopic search
+
+A Subtopic search includes:
 
 ```text
-2025 Subtopic X
-    |
-    +-- direct subtopic-classified questions
-    |
-    +-- Descriptor X1 questions
-    |
-    +-- Descriptor X2 questions
+current Subtopic
+    -> questions applicable directly to that Subtopic
+    + questions applicable to Descriptor children beneath it
 ```
 
-Historical descriptor questions mapped to `X1` or `X2` should also appear.
+This includes both direct current classifications and historical classifications connected through confirmed mappings.
 
-### Important constraint
+A question known only at Subtopic level must not be treated as Descriptor-specific.
 
-Do not reverse this rule.
+### Topic search
 
-A question known only to apply to `2025 Subtopic X` must not be treated as applicable to `Descriptor X1` or `Descriptor X2`.
+A Topic has exactly one of two valid hierarchy shapes.
+
+#### Descriptor-mode Topic
+
+All immediate children are Descriptors.
+
+```text
+Topic
+    +-- Descriptor
+    +-- Descriptor
+    +-- Descriptor
+```
+
+Searching the Topic retrieves questions applicable to all of those Descriptors.
+
+#### Subtopic-mode Topic
+
+All immediate children are Subtopics.
+
+```text
+Topic
+    +-- Subtopic
+    |      +-- Descriptor
+    |      +-- Descriptor
+    |
+    +-- Subtopic
+           +-- Descriptor
+```
+
+Searching the Topic retrieves:
+
+- questions directly applicable to each Subtopic;
+- questions applicable to Descriptor children beneath those Subtopics.
+
+Empty Subtopics are still retrieval nodes because questions may be classified directly to them.
+
+A Topic must not contain a mixture of direct Descriptor children and Subtopic children. Such a hierarchy is invalid and retrieval expansion must reject it.
+
+An empty Topic expands to no question-classification nodes.
+
+### Unit search
+
+A Unit search traverses all Topics beneath that Unit.
+
+Each Topic independently follows either Descriptor-mode or Subtopic-mode semantics.
+
+The Unit search therefore retrieves all questions applicable to valid Descriptor and Subtopic classification nodes beneath the Unit.
+
+### Important constraints
+
+Hierarchy expansion must not reverse applicability.
+
+```text
+Subtopic applicability
+    does NOT imply
+Descriptor applicability
+```
+
+Topic and Unit searches broaden the search scope only. They do not:
+
+- change stored question classification;
+- manufacture Topic or Unit applicability;
+- invent Descriptor precision.
+
+Hierarchy traversal belongs in the dedicated curriculum search-node expansion service, not in `Question`, the mapping model or UI code.
+
+### Ordering
+
+Hierarchy expansion follows `CurriculumRepository.findChildren(...)` ordering and traverses descendants depth-first.
+
+Retrieval results retain the deterministic ordering defined by the retrieval service.
 
 ### Tasks
 
-- define ancestor/descendant inclusion rules;
-- implement curriculum-node expansion in a dedicated service/repository boundary;
-- ensure descriptor searches remain precise;
-- ensure subtopic searches can include descendant descriptor applicability without inventing descriptor precision;
-- decide whether Unit/Topic searches are included in this sprint or deliberately deferred;
-- add tests for every supported hierarchy level.
+- implement exact Descriptor semantics;
+- implement Subtopic plus Descriptor-child expansion;
+- support both valid Topic hierarchy modes;
+- reject mixed Descriptor/Subtopic Topic children;
+- include empty Subtopics as searchable classification nodes;
+- support Unit traversal across independently structured Topics;
+- preserve original question classifications;
+- prevent broad searches from inventing finer applicability;
+- add tests for Descriptor, Subtopic, Topic and Unit behaviour.
 
 ---
 
@@ -254,7 +342,7 @@ The query path must account for:
 
 1. direct current classification;
 2. historical classification with confirmed current mappings;
-3. hierarchy expansion where Work Package 2 requires it.
+3. hierarchy expansion defined in Work Package 2.
 
 ### Tasks
 
@@ -264,6 +352,7 @@ The query path must account for:
 - exclude mappings whose target syllabus is no longer current;
 - ensure same-subject/current-version rules remain respected;
 - deduplicate questions reached through multiple valid mapping paths;
+- preserve all valid current applicability nodes when a question has more than one;
 - preserve stable ordering;
 - reconstruct normal `Question` objects through existing repository boundaries rather than creating a parallel partial question model unless a clear performance need appears;
 - inspect query plans before adding indexes;
@@ -403,7 +492,7 @@ Look for:
 - N+1 query behaviour or full-bank in-memory filtering;
 - UI code directly traversing mappings;
 - mutation of stored question classification;
-- search semantics that differ between descriptor and subtopic paths;
+- search semantics that differ incorrectly between Descriptor, Subtopic, Topic and Unit paths;
 - result ordering that changes unpredictably.
 
 ---
@@ -435,29 +524,37 @@ The sprint should add or update tests covering at least the following.
 
 ## Hierarchical search
 
-If implemented for current subtopics:
-
-- direct current descriptor questions beneath the subtopic are included;
-- historical descriptor questions mapped to descendant current descriptors are included;
-- direct/historical subtopic-level questions are included;
-- descriptor searches do not include questions known only at parent subtopic level;
-- a question reachable through multiple descendants appears only once.
-
-If Unit/Topic search is included, equivalent ancestor/descendant tests must be added.
+- Descriptor searches are exact;
+- Descriptor searches do not include questions known only at parent Subtopic level;
+- Subtopic searches include direct Subtopic questions;
+- Subtopic searches include questions applicable to descendant Descriptors;
+- historical Descriptor questions mapped to descendant current Descriptors are included;
+- Subtopic applicability does not imply Descriptor applicability;
+- Descriptor-mode Topic searches include all direct Descriptor children;
+- Subtopic-mode Topic searches include direct Subtopic questions and descendant Descriptor questions;
+- mixed Descriptor/Subtopic Topic hierarchies are rejected;
+- empty Subtopics remain searchable;
+- empty Topics produce no retrieval classification nodes;
+- Unit searches traverse all Topics using each Topic's valid hierarchy mode;
+- a question reachable through multiple descendants appears only once;
+- multiple valid applicability nodes for one returned question are preserved.
 
 ## Persistence/restart
 
 - direct current retrieval works after repository reconstruction;
 - descriptor-mapped retrieval works after repository reconstruction;
 - subtopic-mapped retrieval works after repository reconstruction;
+- Topic and Unit hierarchy retrieval works after repository reconstruction;
 - edited mapping reviews immediately change retrieval after reconstruction;
 - MATCHED -> NO_MATCH removes the question from current applicability results after reload;
-- NO_MATCH -> MATCHED restores the question after reload.
+- NO_MATCH -> MATCHED restores the question after reload;
+- one-to-many mappings retain all current applicability nodes after reload.
 
 ## UI
 
 - selecting a current descriptor displays direct and mapped questions;
 - selecting a current subtopic follows the agreed hierarchical semantics;
+- selecting a Topic or Unit follows the agreed broad-search semantics;
 - result provenance is displayed correctly;
 - empty result sets are clear and not presented as errors;
 - changing curriculum selection refreshes or invalidates stale results;
@@ -547,7 +644,9 @@ Before merge, manually verify at least:
 - a historical subtopic question mapped to a current subtopic;
 - a suggestion-only mapping that does not produce a result;
 - a no-match review that does not produce a result;
-- a broad subtopic search that demonstrates the agreed hierarchy rule.
+- a broad Subtopic search that demonstrates descendant Descriptor retrieval;
+- a Topic search;
+- a Unit search.
 
 ## 10. Stop at the sprint boundary
 
@@ -587,26 +686,29 @@ This sprint is complete when:
 2. A current descriptor can retrieve historical descriptor questions through confirmed mappings.
 3. Suggested mappings and no-match reviews cannot create retrieval results.
 4. A current subtopic can retrieve questions through confirmed subtopic mappings.
-5. The agreed hierarchical subtopic search behaviour is implemented and tested.
+5. Descriptor, Subtopic, Topic and Unit searches follow the explicit hierarchy rules and are tested.
 6. Subtopic-level applicability does not invent descriptor-level applicability.
 7. A question is returned only once even when multiple valid applicability paths reach the searched curriculum area.
-8. Retrieval works from persisted SQLite data after fresh repository/service construction.
-9. Import technique does not affect retrieval semantics.
-10. Historical question classifications remain unchanged.
-11. A minimal UI allows a teacher to select current curriculum and see matching questions.
-12. The UI can distinguish original historical classification from current applicability where relevant.
-13. The full automated test suite is green.
-14. The sprint has not expanded into full question editing or Exam Builder work.
+8. Multiple valid current applicability nodes for a returned question are preserved.
+9. Retrieval works from persisted SQLite data after fresh repository/service construction.
+10. Import technique does not affect retrieval semantics.
+11. Historical question classifications remain unchanged.
+12. A minimal UI allows a teacher to select current curriculum and see matching questions.
+13. The UI can distinguish original historical classification from current applicability where relevant.
+14. The full automated test suite is green.
+15. The sprint has not expanded into full question editing or Exam Builder work.
 
 ---
 
 # Definition of Done
 
-A teacher can select a current curriculum descriptor or subtopic and see the stored questions that are applicable there, regardless of whether those questions were originally classified against the current syllabus or a historical syllabus.
+A teacher can select a current Descriptor, Subtopic, Topic or Unit and see the stored questions applicable within that search scope, regardless of whether those questions were originally classified against the current syllabus or a historical syllabus.
 
 The system can explain each historical result through confirmed curriculum mappings without changing the original question record.
 
-The resulting retrieval API is suitable for reuse by the later Question Bank Browser and Exam Builder selection workflows.
+Broad Topic and Unit searches expand only to valid Descriptor and Subtopic classification nodes and do not manufacture broader stored applicability or finer Descriptor precision.
+
+The resulting retrieval API is suitable for reuse by the later Question Bank Browser, hierarchical SCORM/HTML output and Exam Builder selection workflows.
 
 ---
 
@@ -615,16 +717,20 @@ The resulting retrieval API is suitable for reuse by the later Question Bank Bro
 The central retrieval model for this sprint is:
 
 ```text
-Current curriculum node
+Current curriculum search node
+        |
+        +-- explicit hierarchy expansion
         |
         +-- direct current classifications
         |
         +-- confirmed historical mappings
         |
-        +-- explicit hierarchy expansion where supported
-        |
         v
 Unique applicable Questions
+        |
+        +-- original classification preserved
+        |
+        +-- all valid current applicability nodes preserved
 ```
 
 This sprint converts curriculum applicability from a per-question concept into a practical question-bank retrieval capability.
