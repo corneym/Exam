@@ -40,7 +40,9 @@ public final class QuestionSearchDialog extends Dialog<ButtonType> {
 		setHeaderText("Find questions by current curriculum");
 		setResizable(true);
 		getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
-		getDialogPane().setContent(new QuestionSearchPane(curriculumRepository, retrievalService, previewService));
+		QuestionSearchPane searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
+		getDialogPane().setContent(searchPane);
+		setOnHidden(event -> searchPane.dispose());
 		getDialogPane().setPrefWidth(900);
 		getDialogPane().setPrefHeight(700);
 	}

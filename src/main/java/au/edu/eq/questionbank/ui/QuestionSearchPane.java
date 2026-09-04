@@ -533,6 +533,9 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void showResultDetails(QuestionRetrievalResult result) {
+		if (disposed) {
+			return;
+		}
 		cancelActivePreview();
 		clearPreview();
 		if (result == null) {
@@ -566,6 +569,9 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startAutomaticSearch(CurriculumNode currentNode) {
+		if (disposed) {
+			return;
+		}
 		if (currentNode == null) {
 			cancelActiveSearch();
 			clearResults();
@@ -629,6 +635,9 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private <T> void startHierarchyLoad(Supplier<T> loader, Consumer<T> onSucceeded) {
+		if (disposed) {
+			return;
+		}
 		cancelActiveHierarchyLoad();
 		long generation = hierarchyGeneration;
 		statusLabel.setText("Loading curriculum...");
@@ -665,6 +674,9 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startQuestionPreview(Question question) {
+		if (disposed) {
+			return;
+		}
 		if (question.getRegions().isEmpty()) {
 			previewStatusLabel.setText("No stored question image.");
 			return;

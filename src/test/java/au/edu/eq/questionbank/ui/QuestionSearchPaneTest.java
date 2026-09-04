@@ -59,6 +59,9 @@ public class QuestionSearchPaneTest {
 	private Topic noMatchTopic;
 	private Descriptor noMatchDescriptor;
 	private DelayedCurriculumRepository curriculumRepository;
+	private QuestionPreviewService previewService;
+	private QuestionRetrievalService retrievalService;
+	private Stage stage;
 
 	@Test
 	public void broadeningFromDescriptorToSubjectRestoresSubjectScope(FxRobot robot) throws TimeoutException {
@@ -127,6 +130,27 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void hidingDialogPreventsFurtherHierarchyWork(FxRobot robot) {
+		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
+		QuestionSearchPane[] paneHolder = new QuestionSearchPane[1];
+		robot.interact(() -> {
+			QuestionSearchDialog dialog = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
+					previewService);
+			QuestionSearchPane pane = (QuestionSearchPane) dialog.getDialogPane().getContent();
+			dialogHolder[0] = dialog;
+			paneHolder[0] = pane;
+			dialog.show();
+			dialog.hide();
+		});
+		ComboBox<Subject> subjectBox = (ComboBox<Subject>) paneHolder[0].lookup("#question-search-subject");
+		ComboBox<CurriculumNode> unitBox = (ComboBox<CurriculumNode>) paneHolder[0].lookup("#question-search-unit");
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(unitBox.getItems().isEmpty());
+		assertTrue(unitBox.isDisable());
+	}
+
+	@Test
 	public void staleHierarchyLoadCannotRestoreLowerScope(FxRobot robot) throws TimeoutException {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
@@ -150,6 +174,7 @@ public class QuestionSearchPaneTest {
 
 	@Start
 	public void start(Stage stage) {
+		this.stage = stage;
 		chemistry = new Subject(1, "Chemistry");
 		SyllabusVersion historicalVersion = new SyllabusVersion(2, chemistry, "2019", false);
 		SyllabusVersion currentVersion = new SyllabusVersion(3, chemistry, "2025", true);
@@ -179,10 +204,9 @@ public class QuestionSearchPaneTest {
 			}
 			return List.of();
 		};
-		QuestionRetrievalService retrievalService = new QuestionRetrievalService(retrievalRepository,
+		retrievalService = new QuestionRetrievalService(retrievalRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(Path.of(".")),
-				new QuestionExtractor());
+		previewService = new QuestionPreviewService(new PdfStore(Path.of(".")), new QuestionExtractor());
 		QuestionSearchPane pane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
 		stage.setScene(new Scene(pane, 700, 600));
 		stage.show();

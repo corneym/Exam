@@ -1,7 +1,5 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -10,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 
@@ -19,6 +16,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteCurriculumImporterTest {
 
@@ -33,14 +31,12 @@ class SqliteCurriculumImporterTest {
 		SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
 		SyllabusVersion version = importer.importSyllabus("Chemistry", "2025", true);
 		assertTrue(version.getId() > 0);
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
 						SELECT COUNT(*)
 						FROM syllabus_versions
 						""")) {
-
 			assertTrue(result.next());
 			assertEquals(1, result.getInt(1));
 		}
@@ -72,7 +68,6 @@ class SqliteCurriculumImporterTest {
 		SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
 		CurriculumImportResult first = importer.importSyllabusWithResult("Chemistry", "2025", true);
 		CurriculumImportResult second = importer.importSyllabusWithResult("Chemistry", "2025", true);
-
 		assertTrue(first.imported());
 		assertFalse(second.imported());
 		assertEquals(first.syllabusVersion().getId(), second.syllabusVersion().getId());
