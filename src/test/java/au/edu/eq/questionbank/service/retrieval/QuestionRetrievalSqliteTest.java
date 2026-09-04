@@ -13,7 +13,6 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.MappingStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -23,7 +22,7 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
-import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingWriter;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -44,6 +43,37 @@ class QuestionRetrievalSqliteTest {
 		assertEquals(fixture.historicalDescriptorQuestionId(), results.get(1).getQuestion().getId());
 		assertEquals(List.of(reloaded.currentDescriptor()), results.get(0).getCurrentApplicability());
 		assertEquals(List.of(reloaded.currentDescriptor()), results.get(1).getCurrentApplicability());
+	}
+
+	@Test
+	void editedMappingReviewChangesRetrievalAfterReopen() throws Exception {
+		Fixture fixture = createFixture("edited-mapping-review.db");
+		ReloadedFixture initiallyReloaded = reloadFixture(fixture);
+		List<QuestionRetrievalResult> initialResults = initiallyReloaded.service()
+				.findQuestionsApplicableTo(initiallyReloaded.currentDescriptor());
+		assertEquals(2, initialResults.size());
+		QuestionRetrievalResult historicalResult = initialResults.get(1);
+		CurriculumNode historicalDescriptor = historicalResult.getOriginalClassification();
+		SyllabusVersion currentVersion = initiallyReloaded.currentDescriptor().getSyllabusVersion();
+		SqliteDatabase editDatabase = new SqliteDatabase(fixture.databasePath());
+		editDatabase.initialiseSchema();
+		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(editDatabase);
+		reviewWriter.replaceWithNoMatch(historicalDescriptor, currentVersion);
+		ReloadedFixture afterNoMatch = reloadFixture(fixture);
+		List<QuestionRetrievalResult> noMatchResults = afterNoMatch.service()
+				.findQuestionsApplicableTo(afterNoMatch.currentDescriptor());
+		assertEquals(1, noMatchResults.size());
+		assertEquals(fixture.currentDescriptorQuestionId(), noMatchResults.get(0).getQuestion().getId());
+		SqliteDatabase restoreDatabase = new SqliteDatabase(fixture.databasePath());
+		restoreDatabase.initialiseSchema();
+		SqliteCurriculumMappingReviewWriter restoreWriter = new SqliteCurriculumMappingReviewWriter(restoreDatabase);
+		restoreWriter.replaceMappings(historicalDescriptor, currentVersion, List.of(afterNoMatch.currentDescriptor()));
+		ReloadedFixture afterRestore = reloadFixture(fixture);
+		List<QuestionRetrievalResult> restoredResults = afterRestore.service()
+				.findQuestionsApplicableTo(afterRestore.currentDescriptor());
+		assertEquals(2, restoredResults.size());
+		assertEquals(fixture.currentDescriptorQuestionId(), restoredResults.get(0).getQuestion().getId());
+		assertEquals(fixture.historicalDescriptorQuestionId(), restoredResults.get(1).getQuestion().getId());
 	}
 
 	@Test
@@ -125,9 +155,9 @@ class QuestionRetrievalSqliteTest {
 				historicalSubtopic, false);
 		Question historicalDescriptorQuestion = questionRepository.save(historicalBooklet, "Q4", "", 5, List.of(),
 				historicalDescriptor, false);
-		SqliteCurriculumMappingWriter mappingWriter = new SqliteCurriculumMappingWriter(database);
-		mappingWriter.insertMapping(historicalSubtopic, currentSubtopic, MappingStatus.CONFIRMED);
-		mappingWriter.insertMapping(historicalDescriptor, currentDescriptor, MappingStatus.CONFIRMED);
+		SqliteCurriculumMappingReviewWriter mappingReviewWriter = new SqliteCurriculumMappingReviewWriter(database);
+		mappingReviewWriter.confirmMappings(historicalSubtopic, currentVersion, List.of(currentSubtopic));
+		mappingReviewWriter.confirmMappings(historicalDescriptor, currentVersion, List.of(currentDescriptor));
 		return new Fixture(databasePath, currentVersion.getId(), currentUnit.getCode(), currentTopic.getCode(),
 				currentSubtopic.getCode(), currentDescriptor.getCode(), historicalDescriptor.getId(),
 				currentSubtopicQuestion.getId(), currentDescriptorQuestion.getId(), historicalSubtopicQuestion.getId(),
