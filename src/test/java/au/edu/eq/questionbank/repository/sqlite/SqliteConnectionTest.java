@@ -305,6 +305,22 @@ class SqliteConnectionTest {
 	}
 
 	@Test
+	void rejectsAnswersWithoutQuestionForeignKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("answer-missing-foreign-key.db"));
+		database.initialiseSchema();
+		replaceTable(database, "answers", """
+				CREATE TABLE answers (
+				    id INTEGER PRIMARY KEY,
+				    question_id INTEGER NOT NULL UNIQUE,
+				    answer_text TEXT
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(
+				exception.getMessage().contains("answers is missing exact foreign key question_id -> questions(id)"));
+	}
+
+	@Test
 	void rejectsCompositeSourceForeignKeyImpostor() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("composite-review-source-foreign-key.db"));
 		database.initialiseSchema();
@@ -348,6 +364,32 @@ class SqliteConnectionTest {
 		}
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
 		assertTrue(exception.getMessage().contains("missing exact foreign key target_syllabus_version_id"));
+	}
+
+	@Test
+	void rejectsCurriculumNodesWithoutSyllabusForeignKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("curriculum-node-missing-foreign-key.db"));
+		database.initialiseSchema();
+		replaceTable(database, "curriculum_nodes", """
+				CREATE TABLE curriculum_nodes (
+				    id INTEGER PRIMARY KEY,
+				    syllabus_version_id INTEGER NOT NULL,
+				    parent_id INTEGER,
+				    curriculum_code TEXT NOT NULL,
+				    curriculum_name TEXT NOT NULL,
+				    curriculum_level TEXT NOT NULL,
+				    display_order INTEGER NOT NULL,
+				    FOREIGN KEY (parent_id)
+				        REFERENCES curriculum_nodes(id),
+				    UNIQUE (
+				        syllabus_version_id,
+				        curriculum_code
+				    )
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains(
+				"curriculum_nodes is missing exact foreign key syllabus_version_id -> syllabus_versions(id)"));
 	}
 
 	@Test
@@ -417,6 +459,27 @@ class SqliteConnectionTest {
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
 		assertTrue(
 				exception.getMessage().contains("Unsupported database schema version " + (LATEST_SCHEMA_VERSION + 1)));
+	}
+
+	@Test
+	void rejectsExamBookletsWithoutNaturalKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("booklet-missing-key.db"));
+		database.initialiseSchema();
+		replaceTable(database, "exam_booklets", """
+				CREATE TABLE exam_booklets (
+				    id INTEGER PRIMARY KEY,
+				    exam_id INTEGER NOT NULL,
+				    source_document_id INTEGER NOT NULL,
+				    booklet_name TEXT NOT NULL,
+				    FOREIGN KEY (exam_id)
+				        REFERENCES exams(id),
+				    FOREIGN KEY (source_document_id)
+				        REFERENCES source_documents(id)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(
+				exception.getMessage().contains("exam_booklets is missing exact unique key (exam_id, booklet_name)"));
 	}
 
 	@Test
@@ -492,6 +555,33 @@ class SqliteConnectionTest {
 					VALUES (1, 1, 0, 'Invalid year')
 					"""));
 		}
+	}
+
+	@Test
+	void rejectsQuestionRegionsMissingPageNumber() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-region-page.db"));
+		database.initialiseSchema();
+		replaceTable(database, "question_regions", """
+				CREATE TABLE question_regions (
+				    question_id INTEGER NOT NULL,
+				    region_order INTEGER NOT NULL,
+				    booklet_id INTEGER NOT NULL,
+				    x REAL NOT NULL,
+				    y REAL NOT NULL,
+				    width REAL NOT NULL,
+				    height REAL NOT NULL,
+				    PRIMARY KEY (
+				        question_id,
+				        region_order
+				    ),
+				    FOREIGN KEY (question_id)
+				        REFERENCES questions(id),
+				    FOREIGN KEY (booklet_id)
+				        REFERENCES exam_booklets(id)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains("question_regions is missing required column page_number"));
 	}
 
 	@Test
@@ -1177,6 +1267,14 @@ class SqliteConnectionTest {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("PRAGMA foreign_keys = OFF");
 			statement.execute("DROP TABLE questions");
+			statement.execute(createTableSql);
+		}
+	}
+
+	private void replaceTable(SqliteDatabase database, String tableName, String createTableSql) throws Exception {
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("PRAGMA foreign_keys = OFF");
+			statement.execute("DROP TABLE " + tableName);
 			statement.execute(createTableSql);
 		}
 	}

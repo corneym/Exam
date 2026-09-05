@@ -3,8 +3,11 @@ package au.edu.eq.questionbank.service.backup;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -34,6 +37,12 @@ final class BackupArchiveWriter {
 		}
 	}
 
+	private boolean sameFileState(BasicFileAttributes before, BasicFileAttributes after) {
+		return before.isRegularFile() && after.isRegularFile() && before.size() == after.size()
+				&& before.lastModifiedTime().equals(after.lastModifiedTime())
+				&& Objects.equals(before.fileKey(), after.fileKey());
+	}
+
 	private void writeDirectoryEntry(ZipOutputStream output, String entryName) throws IOException {
 		ZipEntry entry = new ZipEntry(entryName);
 		output.putNextEntry(entry);
@@ -45,6 +54,20 @@ final class BackupArchiveWriter {
 		output.putNextEntry(entry);
 		Files.copy(sourcePath, output);
 		output.closeEntry();
+	}
+
+	private void writeManagedFile(ZipOutputStream output, String entryName, Path sourcePath) throws IOException {
+		BasicFileAttributes before = Files.readAttributes(sourcePath, BasicFileAttributes.class,
+				LinkOption.NOFOLLOW_LINKS);
+		if (!before.isRegularFile()) {
+			throw new IOException("Managed data entry is not a regular file: " + sourcePath);
+		}
+		writeFile(output, entryName, sourcePath);
+		BasicFileAttributes after = Files.readAttributes(sourcePath, BasicFileAttributes.class,
+				LinkOption.NOFOLLOW_LINKS);
+		if (!sameFileState(before, after)) {
+			throw new IOException("Managed data changed during backup: " + sourcePath);
+		}
 	}
 
 	private void writeManagedTree(ZipOutputStream output, String archiveRoot, Path sourceRoot) throws IOException {
@@ -71,8 +94,8 @@ final class BackupArchiveWriter {
 			String archiveName = archiveRoot + relativeName;
 			if (Files.isDirectory(path)) {
 				writeDirectoryEntry(output, archiveName + "/");
-			} else if (Files.isRegularFile(path)) {
-				writeFile(output, archiveName, path);
+			} else if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+				writeManagedFile(output, archiveName, path);
 			} else {
 				throw new IOException("Unsupported managed data entry: " + path);
 			}

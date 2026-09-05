@@ -16,6 +16,7 @@ public final class DefaultRestoreService implements RestoreService {
 	private final BackupArchiveStager archiveStager;
 	private final BackupArchiveValidator archiveValidator;
 	private final ApplicationConfig config;
+	private final BackupFilesystemSafety filesystemSafety;
 
 	/**
 	 * Creates a restore service for the current application data location.
@@ -30,6 +31,7 @@ public final class DefaultRestoreService implements RestoreService {
 		BackupManifestCodec manifestCodec = new BackupManifestCodec();
 		this.archiveValidator = new BackupArchiveValidator(manifestCodec);
 		this.archiveStager = new BackupArchiveStager();
+		this.filesystemSafety = new BackupFilesystemSafety();
 	}
 
 	@Override
@@ -40,6 +42,7 @@ public final class DefaultRestoreService implements RestoreService {
 		Path normalisedBackupPath = backupPath.toAbsolutePath().normalize();
 		Path stagingRoot = null;
 		try {
+			filesystemSafety.validateApplicationLayout(config);
 			BackupManifest manifest = archiveValidator.validate(normalisedBackupPath);
 			Files.createDirectories(config.dataRoot());
 			stagingRoot = Files.createTempDirectory(config.dataRoot(), ".question-bank-restore-");

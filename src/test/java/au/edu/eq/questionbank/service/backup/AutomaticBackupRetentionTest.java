@@ -29,6 +29,21 @@ class AutomaticBackupRetentionTest {
 	}
 
 	@Test
+	void ignoresFilesThatOnlyResembleAutomaticBackups() throws Exception {
+		Path olderBackup = tempDir.resolve("question-bank-auto-2026-09-05T120000000Z.zip");
+		Path newerBackup = tempDir.resolve("question-bank-auto-2026-09-05T120001000Z.zip");
+		Path invalidLookalike = tempDir.resolve("question-bank-auto-ZZZ.zip");
+		Files.writeString(olderBackup, "older");
+		Files.writeString(newerBackup, "newer");
+		Files.writeString(invalidLookalike, "unrelated");
+		AutomaticBackupRetention retention = new AutomaticBackupRetention(1);
+		retention.prune(tempDir);
+		assertFalse(Files.exists(olderBackup));
+		assertTrue(Files.exists(newerBackup));
+		assertTrue(Files.exists(invalidLookalike));
+	}
+
+	@Test
 	void ignoresFullBackupsAndUnrelatedFiles() throws Exception {
 		for (int index = 0; index < 3; index++) {
 			Files.writeString(tempDir.resolve("question-bank-auto-2026-09-05T12000" + index + "000Z.zip"), "automatic");

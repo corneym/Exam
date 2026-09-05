@@ -17,6 +17,7 @@ public final class ShutdownCoordinator {
 	private final AutoCloseable resources;
 	private boolean backupCompleted;
 	private boolean readyToExit;
+	private Throwable pendingRetentionWarning;
 
 	/**
 	 * Creates a backup-aware shutdown coordinator.
@@ -92,7 +93,6 @@ public final class ShutdownCoordinator {
 		if (readyToExit) {
 			return new ShutdownResult(ShutdownStatus.ALREADY_READY, null);
 		}
-		Throwable retentionWarning = null;
 		if (!backupCompleted) {
 			try {
 				backupService.createBackup(automaticBackupRequest);
@@ -103,7 +103,7 @@ public final class ShutdownCoordinator {
 			try {
 				retention.prune(automaticBackupRequest.destinationDirectory());
 			} catch (IOException e) {
-				retentionWarning = e;
+				pendingRetentionWarning = e;
 			}
 		}
 		try {
@@ -112,8 +112,8 @@ public final class ShutdownCoordinator {
 			return new ShutdownResult(ShutdownStatus.RESOURCE_CLOSE_FAILED, e);
 		}
 		readyToExit = true;
-		if (retentionWarning != null) {
-			return new ShutdownResult(ShutdownStatus.READY_TO_EXIT_WITH_RETENTION_WARNING, retentionWarning);
+		if (pendingRetentionWarning != null) {
+			return new ShutdownResult(ShutdownStatus.READY_TO_EXIT_WITH_RETENTION_WARNING, pendingRetentionWarning);
 		}
 		return new ShutdownResult(ShutdownStatus.READY_TO_EXIT, null);
 	}

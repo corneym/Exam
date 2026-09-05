@@ -8,7 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.time.Instant;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -82,6 +85,40 @@ class DefaultRestoreServiceTest {
 	}
 
 	@Test
+	void rejectsBackupWithMalformedCurrentSchema() throws Exception {
+		Path databasePath = tempDir.resolve("malformed.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("PRAGMA foreign_keys = OFF");
+			statement.execute("DROP TABLE answers");
+			statement.execute("""
+					CREATE TABLE answers (
+					    id INTEGER PRIMARY KEY,
+					    question_id INTEGER NOT NULL UNIQUE,
+					    answer_text TEXT
+					)
+					""");
+		}
+		Path archivePath = tempDir.resolve("malformed-schema.zip");
+		BackupManifest manifest = BackupManifest.current(BackupKind.AUTOMATIC_DATABASE,
+				Instant.parse("2026-09-05T04:00:00Z"), 4, "Test");
+		BackupManifestCodec codec = new BackupManifestCodec();
+		try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(archivePath))) {
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.MANIFEST_ENTRY));
+			codec.write(manifest, output);
+			output.closeEntry();
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.DATABASE_ENTRY));
+			Files.copy(databasePath, output);
+			output.closeEntry();
+		}
+		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("target"));
+		DefaultRestoreService service = new DefaultRestoreService(config);
+		RestoreException exception = assertThrows(RestoreException.class, () -> service.prepareRestore(archivePath));
+		assertFalse(exception.applicationMustExit());
+	}
+
+	@Test
 	void rejectsCorruptBackupDatabase() throws Exception {
 		Path archivePath = tempDir.resolve("corrupt.zip");
 		BackupManifest manifest = BackupManifest.current(BackupKind.AUTOMATIC_DATABASE,
@@ -102,6 +139,49 @@ class DefaultRestoreServiceTest {
 	}
 
 	@Test
+	void rejectsFullBackupWithCorruptManagedEntry() throws Exception {
+		Path databasePath = tempDir.resolve("archive-database.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Path archivePath = tempDir.resolve("corrupt-managed-entry.zip");
+		byte[] managedContent = "managed-pdf-content".getBytes(StandardCharsets.UTF_8);
+		BackupManifest manifest = BackupManifest.current(BackupKind.FULL, Instant.parse("2026-09-05T05:00:00Z"),
+				SqliteDatabase.latestSchemaVersion(), "Test");
+		BackupManifestCodec codec = new BackupManifestCodec();
+		try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(archivePath))) {
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.MANIFEST_ENTRY));
+			codec.write(manifest, output);
+			output.closeEntry();
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.DATABASE_ENTRY));
+			Files.copy(databasePath, output);
+			output.closeEntry();
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.PDF_DIRECTORY_ENTRY));
+			output.closeEntry();
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.CURRICULUM_DIRECTORY_ENTRY));
+			output.closeEntry();
+			CRC32 crc = new CRC32();
+			crc.update(managedContent);
+			ZipEntry managedEntry = new ZipEntry(BackupArchiveLayout.PDF_DIRECTORY_ENTRY + "exam.bin");
+			managedEntry.setMethod(ZipEntry.STORED);
+			managedEntry.setSize(managedContent.length);
+			managedEntry.setCompressedSize(managedContent.length);
+			managedEntry.setCrc(crc.getValue());
+			output.putNextEntry(managedEntry);
+			output.write(managedContent);
+			output.closeEntry();
+		}
+		byte[] archiveBytes = Files.readAllBytes(archivePath);
+		int contentOffset = indexOf(archiveBytes, managedContent);
+		assertTrue(contentOffset >= 0);
+		archiveBytes[contentOffset] = (byte) (archiveBytes[contentOffset] ^ 1);
+		Files.write(archivePath, archiveBytes);
+		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("target"));
+		DefaultRestoreService service = new DefaultRestoreService(config);
+		RestoreException exception = assertThrows(RestoreException.class, () -> service.prepareRestore(archivePath));
+		assertFalse(exception.applicationMustExit());
+	}
+
+	@Test
 	void rejectsUnsafeArchiveEntry() throws Exception {
 		Path archivePath = tempDir.resolve("unsafe.zip");
 		try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(archivePath))) {
@@ -114,5 +194,21 @@ class DefaultRestoreServiceTest {
 		RestoreException exception = assertThrows(RestoreException.class, () -> service.prepareRestore(archivePath));
 		assertFalse(exception.applicationMustExit());
 		assertFalse(Files.exists(tempDir.resolve("outside.txt")));
+	}
+
+	private int indexOf(byte[] source, byte[] target) {
+		for (int sourceIndex = 0; sourceIndex <= source.length - target.length; sourceIndex++) {
+			boolean matches = true;
+			for (int targetIndex = 0; targetIndex < target.length; targetIndex++) {
+				if (source[sourceIndex + targetIndex] != target[targetIndex]) {
+					matches = false;
+					break;
+				}
+			}
+			if (matches) {
+				return sourceIndex;
+			}
+		}
+		return -1;
 	}
 }

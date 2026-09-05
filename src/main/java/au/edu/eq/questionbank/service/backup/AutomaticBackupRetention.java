@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -14,6 +15,8 @@ import java.util.stream.Stream;
 public final class AutomaticBackupRetention {
 
 	public static final int DEFAULT_RETENTION_LIMIT = 10;
+	private static final Pattern AUTOMATIC_BACKUP_FILE_NAME = Pattern
+			.compile("^question-bank-auto-" + "\\d{4}-\\d{2}-\\d{2}" + "T\\d{9}Z" + "\\.zip$");
 	private final int retentionLimit;
 
 	/**
@@ -73,7 +76,6 @@ public final class AutomaticBackupRetention {
 			return false;
 		}
 		String fileName = path.getFileName().toString();
-		String prefix = "question-bank-" + BackupKind.AUTOMATIC_DATABASE.fileNameToken() + "-";
-		return fileName.startsWith(prefix) && fileName.endsWith(".zip");
+		return AUTOMATIC_BACKUP_FILE_NAME.matcher(fileName).matches();
 	}
 }

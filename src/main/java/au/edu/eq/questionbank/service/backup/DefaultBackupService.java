@@ -27,6 +27,7 @@ public final class DefaultBackupService implements BackupService {
 	private final BackupArchiveWriter archiveWriter;
 	private final Clock clock;
 	private final BackupPathResolver pathResolver;
+	private final BackupFilesystemSafety filesystemSafety;
 
 	/**
 	 * Creates a backup service using the system UTC clock.
@@ -58,6 +59,7 @@ public final class DefaultBackupService implements BackupService {
 		this.archiveValidator = new BackupArchiveValidator(manifestCodec);
 		this.archiveWriter = new BackupArchiveWriter(manifestCodec);
 		this.pathResolver = new BackupPathResolver();
+		this.filesystemSafety = new BackupFilesystemSafety();
 	}
 
 	@Override
@@ -124,12 +126,6 @@ public final class DefaultBackupService implements BackupService {
 		}
 	}
 
-	private boolean isWithin(Path candidate, Path managedRoot) {
-		Path normalisedCandidate = candidate.toAbsolutePath().normalize();
-		Path normalisedRoot = managedRoot.toAbsolutePath().normalize();
-		return normalisedCandidate.startsWith(normalisedRoot);
-	}
-
 	private void publish(Path temporaryArchive, Path finalBackupPath) throws IOException {
 		try {
 			Files.move(temporaryArchive, finalBackupPath, StandardCopyOption.ATOMIC_MOVE);
@@ -139,12 +135,10 @@ public final class DefaultBackupService implements BackupService {
 	}
 
 	private void validateDestination(BackupRequest request) throws BackupException {
-		Path destination = request.destinationDirectory();
-		if (isWithin(destination, config.pdfDataRoot())) {
-			throw new BackupException("Backup destination must not be inside the managed PDF hierarchy");
-		}
-		if (isWithin(destination, config.curriculumDataRoot())) {
-			throw new BackupException("Backup destination must not be inside the managed curriculum hierarchy");
+		try {
+			filesystemSafety.validateBackupDestination(config, request.destinationDirectory());
+		} catch (IOException e) {
+			throw new BackupException("Unsafe backup filesystem layout", e);
 		}
 	}
 }

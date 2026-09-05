@@ -115,6 +115,29 @@ class ShutdownCoordinatorTest {
 	}
 
 	@Test
+	void retentionWarningSurvivesResourceCloseRetry() throws Exception {
+		Path notDirectory = tempDir.resolve("automatic");
+		Files.writeString(notDirectory, "not a directory");
+		BackupRequest request = new BackupRequest(BackupKind.AUTOMATIC_DATABASE, notDirectory);
+		CountingBackupService backupService = new CountingBackupService();
+		CountingCloseable resources = new CountingCloseable();
+		resources.failNextClose = true;
+		ShutdownCoordinator coordinator = new ShutdownCoordinator(backupService, request,
+				new AutomaticBackupRetention(), resources);
+		ShutdownResult first = coordinator.prepareForExit();
+		assertEquals(ShutdownStatus.RESOURCE_CLOSE_FAILED, first.status());
+		assertFalse(first.exitAllowed());
+		assertEquals(1, backupService.callCount);
+		assertEquals(1, resources.closeCount);
+		ShutdownResult second = coordinator.prepareForExit();
+		assertEquals(ShutdownStatus.READY_TO_EXIT_WITH_RETENTION_WARNING, second.status());
+		assertTrue(second.exitAllowed());
+		assertNotNull(second.failure());
+		assertEquals(1, backupService.callCount);
+		assertEquals(2, resources.closeCount);
+	}
+
+	@Test
 	void successfulShutdownCreatesBackupPrunesAndClosesResources() throws Exception {
 		Path automaticDirectory = tempDir.resolve("automatic");
 		Files.createDirectories(automaticDirectory);

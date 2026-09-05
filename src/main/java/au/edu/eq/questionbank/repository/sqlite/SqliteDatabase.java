@@ -302,6 +302,10 @@ public final class SqliteDatabase {
 		}
 	}
 
+	private ColumnRequirement column(String name, boolean notNull, int primaryKeyPosition) {
+		return new ColumnRequirement(name, notNull, primaryKeyPosition);
+	}
+
 	private void createVersionOneSchema(Connection connection) throws SQLException {
 		String sql;
 		try {
@@ -344,6 +348,33 @@ public final class SqliteDatabase {
 					"Migration did not produce schema version " + expectedVersion + "; found " + actualVersion);
 		}
 		verifySchema(connection, expectedVersion);
+	}
+
+	private String expectedPrimaryKeyDescription(List<ColumnRequirement> requirements) {
+		List<ColumnRequirement> primaryKeyColumns = requirements.stream()
+				.filter(requirement -> requirement.primaryKeyPosition() > 0)
+				.sorted(Comparator.comparingInt(ColumnRequirement::primaryKeyPosition)).toList();
+		if (primaryKeyColumns.isEmpty()) {
+			return "no primary key";
+		}
+		List<String> names = new ArrayList<>();
+		for (ColumnRequirement requirement : primaryKeyColumns) {
+			names.add(requirement.name());
+		}
+		return "(" + String.join(", ", names) + ")";
+	}
+
+	private ColumnRequirement findColumnRequirement(List<ColumnRequirement> requirements, String columnName) {
+		for (ColumnRequirement requirement : requirements) {
+			if (requirement.name().equals(columnName)) {
+				return requirement;
+			}
+		}
+		return null;
+	}
+
+	private ForeignKeyRequirement foreignKey(String fromColumn, String targetTable, String targetColumn) {
+		return new ForeignKeyRequirement(fromColumn, targetTable, targetColumn);
 	}
 
 	private int foreignKeyColumnCount(Connection connection, String tableName, int foreignKeyId) throws SQLException {
@@ -530,6 +561,15 @@ public final class SqliteDatabase {
 		verifyCurriculumMappingReviewForeignKeys(connection);
 	}
 
+	private void verifyCurriculumMappingSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "curriculum_mappings",
+				List.of(column("id", false, 1), column("source_node_id", true, 0), column("target_node_id", true, 0),
+						column("mapping_status", true, 0)),
+				List.of(foreignKey("source_node_id", "curriculum_nodes", "id"),
+						foreignKey("target_node_id", "curriculum_nodes", "id")),
+				List.of(List.of("source_node_id", "target_node_id")));
+	}
+
 	private void verifyDatabaseIntegrity(Connection connection) throws SQLException {
 		List<String> problems = new ArrayList<>();
 		try (Statement statement = connection.createStatement();
@@ -561,6 +601,15 @@ public final class SqliteDatabase {
 		}
 	}
 
+	private void verifyLegacyQuestionSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "questions",
+				List.of(column("id", false, 1), column("exam_id", true, 0), column("classification_node_id", true, 0),
+						column("question_code", true, 0), column("question_text", true, 0)),
+				List.of(foreignKey("exam_id", "exams", "id"),
+						foreignKey("classification_node_id", "curriculum_nodes", "id")),
+				List.of(List.of("exam_id", "question_code")));
+	}
+
 	private void verifySchema(Connection connection, int version) throws SQLException {
 		for (String tableName : VERSION_ONE_TABLES) {
 			if (!tableExists(connection, tableName)) {
@@ -568,9 +617,13 @@ public final class SqliteDatabase {
 						"Database schema version " + version + " is missing required table " + tableName);
 			}
 		}
-		if (version >= 2 && !tableExists(connection, "curriculum_mappings")) {
-			throw new SQLException(
-					"Database schema version " + version + " is missing required table curriculum_mappings");
+		verifyVersionOneRelationalSchema(connection, version);
+		if (version >= 2) {
+			if (!tableExists(connection, "curriculum_mappings")) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table curriculum_mappings");
+			}
+			verifyCurriculumMappingSchema(connection);
 		}
 		if (version >= 3) {
 			if (!tableExists(connection, "curriculum_mapping_reviews")) {
@@ -581,6 +634,63 @@ public final class SqliteDatabase {
 		}
 		if (version >= 4) {
 			verifyVersionFourQuestionSchema(connection);
+		}
+	}
+
+	private void verifyTableSchema(Connection connection, String tableName, List<ColumnRequirement> columnRequirements,
+			List<ForeignKeyRequirement> foreignKeyRequirements, List<List<String>> uniqueKeys) throws SQLException {
+		Set<String> missingColumns = new HashSet<>();
+		for (ColumnRequirement requirement : columnRequirements) {
+			missingColumns.add(requirement.name());
+		}
+		int actualPrimaryKeyColumnCount = 0;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(" + tableName + ")")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				int primaryKeyPosition = result.getInt("pk");
+				if (primaryKeyPosition > 0) {
+					actualPrimaryKeyColumnCount++;
+				}
+				ColumnRequirement requirement = findColumnRequirement(columnRequirements, columnName);
+				if (requirement == null) {
+					continue;
+				}
+				missingColumns.remove(columnName);
+				if (requirement.notNull() && result.getInt("notnull") == 0) {
+					throw new SQLException(tableName + " column must be NOT NULL: " + columnName);
+				}
+				if (primaryKeyPosition != requirement.primaryKeyPosition()) {
+					throw new SQLException(tableName + " has an invalid primary key; expected exactly "
+							+ expectedPrimaryKeyDescription(columnRequirements));
+				}
+			}
+		}
+		if (!missingColumns.isEmpty()) {
+			throw new SQLException(tableName + " is missing required column " + missingColumns.iterator().next());
+		}
+		int expectedPrimaryKeyColumnCount = 0;
+		for (ColumnRequirement requirement : columnRequirements) {
+			if (requirement.primaryKeyPosition() > 0) {
+				expectedPrimaryKeyColumnCount++;
+			}
+		}
+		if (actualPrimaryKeyColumnCount != expectedPrimaryKeyColumnCount) {
+			throw new SQLException(tableName + " has an invalid primary key; expected exactly "
+					+ expectedPrimaryKeyDescription(columnRequirements));
+		}
+		for (ForeignKeyRequirement requirement : foreignKeyRequirements) {
+			if (!hasExactSingleColumnForeignKey(connection, tableName, requirement.fromColumn(),
+					requirement.targetTable(), requirement.targetColumn())) {
+				throw new SQLException(tableName + " is missing exact foreign key " + requirement.fromColumn() + " -> "
+						+ requirement.targetTable() + "(" + requirement.targetColumn() + ")");
+			}
+		}
+		for (List<String> uniqueKey : uniqueKeys) {
+			if (!hasExactUniqueIndex(connection, tableName, uniqueKey)) {
+				throw new SQLException(
+						tableName + " is missing exact unique key (" + String.join(", ", uniqueKey) + ")");
+			}
 		}
 	}
 
@@ -627,6 +737,64 @@ public final class SqliteDatabase {
 		}
 	}
 
+	private void verifyVersionOneRelationalSchema(Connection connection, int version) throws SQLException {
+		verifyTableSchema(connection, "schema_version", List.of(column("version", true, 0)), List.of(), List.of());
+		verifyTableSchema(connection, "subjects", List.of(column("id", false, 1), column("subject_name", true, 0)),
+				List.of(), List.of(List.of("subject_name")));
+		verifyTableSchema(connection, "syllabus_versions",
+				List.of(column("id", false, 1), column("subject_id", true, 0), column("syllabus_name", true, 0),
+						column("is_current", true, 0)),
+				List.of(foreignKey("subject_id", "subjects", "id")), List.of(List.of("subject_id", "syllabus_name")));
+		verifyTableSchema(connection, "curriculum_nodes",
+				List.of(column("id", false, 1), column("syllabus_version_id", true, 0), column("parent_id", false, 0),
+						column("curriculum_code", true, 0), column("curriculum_name", true, 0),
+						column("curriculum_level", true, 0), column("display_order", true, 0)),
+				List.of(foreignKey("syllabus_version_id", "syllabus_versions", "id"),
+						foreignKey("parent_id", "curriculum_nodes", "id")),
+				List.of(List.of("syllabus_version_id", "curriculum_code")));
+		verifyTableSchema(connection, "exam_providers",
+				List.of(column("id", false, 1), column("provider_name", true, 0)), List.of(),
+				List.of(List.of("provider_name")));
+		verifyTableSchema(connection, "source_documents",
+				List.of(column("id", false, 1), column("relative_path", true, 0)), List.of(),
+				List.of(List.of("relative_path")));
+		verifyTableSchema(connection, "exams",
+				List.of(column("id", false, 1), column("subject_id", true, 0), column("provider_id", true, 0),
+						column("exam_year", true, 0), column("exam_name", true, 0)),
+				List.of(foreignKey("subject_id", "subjects", "id"), foreignKey("provider_id", "exam_providers", "id")),
+				List.of(List.of("subject_id", "provider_id", "exam_year", "exam_name")));
+		verifyTableSchema(connection, "exam_booklets",
+				List.of(column("id", false, 1), column("exam_id", true, 0), column("source_document_id", true, 0),
+						column("booklet_name", true, 0)),
+				List.of(foreignKey("exam_id", "exams", "id"),
+						foreignKey("source_document_id", "source_documents", "id")),
+				List.of(List.of("exam_id", "booklet_name")));
+		if (version < 4) {
+			verifyLegacyQuestionSchema(connection);
+		}
+		verifyTableSchema(connection, "question_regions",
+				List.of(column("question_id", true, 1), column("region_order", true, 2), column("booklet_id", true, 0),
+						column("page_number", true, 0), column("x", true, 0), column("y", true, 0),
+						column("width", true, 0), column("height", true, 0)),
+				List.of(foreignKey("question_id", "questions", "id"), foreignKey("booklet_id", "exam_booklets", "id")),
+				List.of());
+		verifyTableSchema(connection, "answer_files",
+				List.of(column("id", false, 1), column("exam_id", true, 0), column("source_document_id", true, 0),
+						column("answer_file_name", true, 0)),
+				List.of(foreignKey("exam_id", "exams", "id"),
+						foreignKey("source_document_id", "source_documents", "id")),
+				List.of(List.of("exam_id", "answer_file_name")));
+		verifyTableSchema(connection, "answers",
+				List.of(column("id", false, 1), column("question_id", true, 0), column("answer_text", false, 0)),
+				List.of(foreignKey("question_id", "questions", "id")), List.of(List.of("question_id")));
+		verifyTableSchema(connection, "answer_regions",
+				List.of(column("answer_id", true, 1), column("region_order", true, 2),
+						column("answer_file_id", true, 0), column("page_number", true, 0), column("x", true, 0),
+						column("y", true, 0), column("width", true, 0), column("height", true, 0)),
+				List.of(foreignKey("answer_id", "answers", "id"), foreignKey("answer_file_id", "answer_files", "id")),
+				List.of());
+	}
+
 	private void verifyVersionThreeCanBeMigrated(Connection connection) throws SQLException {
 		try (Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM questions")) {
@@ -636,5 +804,11 @@ public final class SqliteDatabase {
 						"The existing database contains question data that cannot be migrated safely.");
 			}
 		}
+	}
+
+	private record ColumnRequirement(String name, boolean notNull, int primaryKeyPosition) {
+	}
+
+	private record ForeignKeyRequirement(String fromColumn, String targetTable, String targetColumn) {
 	}
 }

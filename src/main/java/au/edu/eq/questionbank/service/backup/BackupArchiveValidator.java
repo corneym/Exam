@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -37,6 +38,7 @@ final class BackupArchiveValidator {
 			BackupManifest manifest = readManifest(archive);
 			validateRequiredEntries(archive, manifest);
 			validateAllowedEntries(archive, manifest);
+			validateEntryContents(archive);
 			validateDatabase(archive, manifest);
 			return manifest;
 		}
@@ -88,6 +90,32 @@ final class BackupArchiveValidator {
 			database.verifyIntegrity();
 		} finally {
 			Files.deleteIfExists(temporaryDatabase);
+		}
+	}
+
+	private void validateEntryContents(ZipFile archive) throws IOException, BackupFormatException {
+		Enumeration<? extends ZipEntry> entries = archive.entries();
+		byte[] buffer = new byte[8192];
+		while (entries.hasMoreElements()) {
+			ZipEntry entry = entries.nextElement();
+			if (entry.isDirectory()) {
+				continue;
+			}
+			CRC32 crc = new CRC32();
+			long actualSize = 0;
+			try (InputStream input = archive.getInputStream(entry)) {
+				int bytesRead;
+				while ((bytesRead = input.read(buffer)) != -1) {
+					crc.update(buffer, 0, bytesRead);
+					actualSize += bytesRead;
+				}
+			}
+			if (entry.getSize() >= 0 && actualSize != entry.getSize()) {
+				throw new BackupFormatException("Backup archive entry has an invalid size: " + entry.getName());
+			}
+			if (entry.getCrc() >= 0 && crc.getValue() != entry.getCrc()) {
+				throw new BackupFormatException("Backup archive entry failed CRC validation: " + entry.getName());
+			}
 		}
 	}
 

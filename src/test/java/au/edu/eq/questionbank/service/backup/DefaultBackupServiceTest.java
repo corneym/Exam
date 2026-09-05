@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -116,6 +117,38 @@ class DefaultBackupServiceTest {
 	}
 
 	@Test
+	void rejectsBackupDestinationAliasedIntoManagedRoot() throws Exception {
+		Path dataRoot = tempDir.resolve("alias");
+		Path pdfRoot = Files.createDirectories(dataRoot.resolve("pdf"));
+		Path curriculumRoot = Files.createDirectories(dataRoot.resolve("curriculum"));
+		Path databasePath = dataRoot.resolve("questionbank.db");
+		ApplicationConfig config = new ApplicationConfig(pdfRoot, curriculumRoot, databasePath);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Path alias = tempDir.resolve("pdf-alias");
+		try {
+			Files.createSymbolicLink(alias, pdfRoot);
+		} catch (UnsupportedOperationException | IOException | SecurityException e) {
+			return;
+		}
+		DefaultBackupService service = new DefaultBackupService(config, "Test");
+		assertThrows(BackupException.class, () -> service.createBackup(BackupRequest.full(alias.resolve("backups"))));
+	}
+
+	@Test
+	void rejectsDatabaseInsideManagedRoot() throws Exception {
+		Path dataRoot = tempDir.resolve("database-overlap");
+		Path pdfRoot = Files.createDirectories(dataRoot.resolve("pdf"));
+		Path curriculumRoot = Files.createDirectories(dataRoot.resolve("curriculum"));
+		Path databasePath = pdfRoot.resolve("questionbank.db");
+		ApplicationConfig config = new ApplicationConfig(pdfRoot, curriculumRoot, databasePath);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		DefaultBackupService service = new DefaultBackupService(config, "Test");
+		assertThrows(BackupException.class, () -> service.createBackup(BackupRequest.full(tempDir.resolve("backups"))));
+	}
+
+	@Test
 	void rejectsFullBackupInsideManagedPdfHierarchy() throws Exception {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("data"));
 		Files.createDirectories(config.dataRoot());
@@ -124,5 +157,30 @@ class DefaultBackupServiceTest {
 		DefaultBackupService service = new DefaultBackupService(config, "Development build");
 		assertThrows(BackupException.class,
 				() -> service.createBackup(BackupRequest.full(config.pdfDataRoot().resolve("backups"))));
+	}
+
+	@Test
+	void rejectsIdenticalManagedRoots() throws Exception {
+		Path dataRoot = tempDir.resolve("same-root");
+		Path managedRoot = Files.createDirectories(dataRoot.resolve("managed"));
+		Path databasePath = dataRoot.resolve("questionbank.db");
+		ApplicationConfig config = new ApplicationConfig(managedRoot, managedRoot, databasePath);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		DefaultBackupService service = new DefaultBackupService(config, "Test");
+		assertThrows(BackupException.class, () -> service.createBackup(BackupRequest.full(tempDir.resolve("backups"))));
+	}
+
+	@Test
+	void rejectsNestedManagedRoots() throws Exception {
+		Path dataRoot = tempDir.resolve("nested-root");
+		Path pdfRoot = Files.createDirectories(dataRoot.resolve("managed"));
+		Path curriculumRoot = Files.createDirectories(pdfRoot.resolve("curriculum"));
+		Path databasePath = dataRoot.resolve("questionbank.db");
+		ApplicationConfig config = new ApplicationConfig(pdfRoot, curriculumRoot, databasePath);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		DefaultBackupService service = new DefaultBackupService(config, "Test");
+		assertThrows(BackupException.class, () -> service.createBackup(BackupRequest.full(tempDir.resolve("backups"))));
 	}
 }
