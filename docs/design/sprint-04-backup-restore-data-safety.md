@@ -6,7 +6,28 @@
 
 ## Sprint Status
 
-**Planned — Sprint 04.**
+**Complete — Sprint 04, 5 September 2026.**
+
+## Implementation Outcome
+
+Sprint 04 delivered:
+
+- versioned backup format version 1;
+- SQLite-consistent snapshots using `VACUUM INTO`;
+- snapshot schema and integrity validation;
+- manual full backups containing the database, managed PDFs and curriculum files;
+- automatic database-only backup on normal application close;
+- bounded retention of the 10 newest successful automatic backups;
+- a common backup-aware shutdown path for File → Exit and window close;
+- explicit Retry / Exit Without Backup / Cancel Exit handling when automatic backup fails;
+- validated restore staging with ZIP path-safety checks;
+- validation that older database schemas can actually migrate before restore;
+- database-only and full restore;
+- full pre-restore safety backup;
+- automatic rollback when destructive restore fails;
+- forced restart after successful or partially destructive restore;
+- focused service, SQLite and JavaFX lifecycle tests;
+- successful manual full-backup and restore acceptance testing.
 
 ## Purpose
 

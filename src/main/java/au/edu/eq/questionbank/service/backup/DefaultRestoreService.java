@@ -64,7 +64,7 @@ public final class DefaultRestoreService implements RestoreService {
 	}
 
 	private void validateStagedDatabase(Path stagingRoot, BackupManifest manifest)
-			throws SQLException, BackupFormatException {
+			throws IOException, SQLException, BackupFormatException {
 		Path stagedDatabasePath = stagingRoot.resolve(BackupArchiveLayout.DATABASE_ENTRY);
 		if (!Files.isRegularFile(stagedDatabasePath)) {
 			throw new BackupFormatException("Staged backup database is missing");
@@ -75,8 +75,7 @@ public final class DefaultRestoreService implements RestoreService {
 			throw new BackupFormatException("Staged database schema version " + schemaVersion
 					+ " does not match manifest schema version " + manifest.databaseSchemaVersion());
 		}
-		database.verifySchema();
-		database.verifyIntegrity();
+		database.verifyMigrationCompatibility();
 	}
 
 	private void validateStagedManagedRoots(Path stagingRoot, BackupManifest manifest) throws BackupFormatException {

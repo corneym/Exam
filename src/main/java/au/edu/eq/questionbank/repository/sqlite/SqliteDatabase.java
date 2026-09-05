@@ -10,9 +10,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Owns the SQLite database location, initialises the question-bank schema, and
@@ -227,6 +229,59 @@ public final class SqliteDatabase {
 	}
 
 	/**
+	 * Verifies that this database can be migrated to the latest supported schema
+	 * using the application's existing migration path, without modifying this
+	 * database.
+	 * <p>
+	 * Databases already at the latest schema are structurally and physically
+	 * validated directly. Older supported databases are snapshotted to a temporary
+	 * location and the normal schema initialisation and migration process is run
+	 * against that temporary copy.
+	 *
+	 * @throws IOException  if the temporary migration check cannot be created or
+	 *                      cleaned up
+	 * @throws SQLException if the database is invalid, unsupported, or cannot be
+	 *                      migrated safely
+	 */
+	public void verifyMigrationCompatibility() throws IOException, SQLException {
+		int version = schemaVersion();
+		if (version == 0) {
+			throw new SQLException("Database does not contain a question-bank schema");
+		}
+		if (version > LATEST_SCHEMA_VERSION) {
+			throw new SQLException("Unsupported database schema version " + version + "; latest supported version is "
+					+ LATEST_SCHEMA_VERSION);
+		}
+		verifySchema();
+		verifyIntegrity();
+		if (version == LATEST_SCHEMA_VERSION) {
+			return;
+		}
+		Path probeDirectory = Files.createTempDirectory("question-bank-migration-check-");
+		Path probeDatabasePath = probeDirectory.resolve("questionbank.db");
+		try {
+			createConsistentSnapshot(probeDatabasePath);
+			SqliteDatabase probeDatabase = new SqliteDatabase(probeDatabasePath);
+			probeDatabase.initialiseSchema();
+			int migratedVersion = probeDatabase.schemaVersion();
+			if (migratedVersion != LATEST_SCHEMA_VERSION) {
+				throw new SQLException("Database migration check produced schema version " + migratedVersion
+						+ "; expected " + LATEST_SCHEMA_VERSION);
+			}
+			probeDatabase.verifySchema();
+			probeDatabase.verifyIntegrity();
+		} catch (IOException | SQLException | RuntimeException e) {
+			try {
+				deleteTemporaryTree(probeDirectory);
+			} catch (IOException cleanupFailure) {
+				e.addSuppressed(cleanupFailure);
+			}
+			throw e;
+		}
+		deleteTemporaryTree(probeDirectory);
+	}
+
+	/**
 	 * Verifies that this database contains a supported and structurally valid
 	 * question-bank schema without modifying or migrating it.
 	 *
@@ -260,6 +315,19 @@ public final class SqliteDatabase {
 			throw new SQLException("Schema creation did not produce version 1");
 		}
 		verifySchema(connection, 1);
+	}
+
+	private void deleteTemporaryTree(Path root) throws IOException {
+		if (!Files.exists(root)) {
+			return;
+		}
+		List<Path> paths;
+		try (Stream<Path> stream = Files.walk(root)) {
+			paths = stream.sorted(Comparator.reverseOrder()).toList();
+		}
+		for (Path path : paths) {
+			Files.deleteIfExists(path);
+		}
 	}
 
 	private void executeMigration(Connection connection, String resourcePath, int expectedVersion) throws SQLException {

@@ -6,12 +6,15 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -46,11 +49,15 @@ import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuBar;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.BorderPane;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 
 @ExtendWith(ApplicationExtension.class)
 class QuestionBankApplicationWorkflowTest {
@@ -58,6 +65,12 @@ class QuestionBankApplicationWorkflowTest {
 	private static final String CURRICULUM_2019 = "CHM Study Checklist [2019 Syllabus].xlsx";
 	private static final String CURRICULUM_2025_UNITS_1_2 = "CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx";
 	private static final String CURRICULUM_2025_UNITS_3_4 = "CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx";
+	private QuestionBankApplication application;
+	private ApplicationConfig applicationConfig;
+	private Stage primaryStage;
+	private Path examPdf;
+	private Path pdfDataRoot;
+	private Path databasePath;
 
 	private static <T> T field(Object owner, String fieldName, Class<T> type) throws Exception {
 		Field field = owner.getClass().getDeclaredField(fieldName);
@@ -82,12 +95,346 @@ class QuestionBankApplicationWorkflowTest {
 		return robot.lookup(selector).queryAs(type);
 	}
 
-	private QuestionBankApplication application;
+	private static void setField(Object owner, String fieldName, Object value) throws Exception {
+		Field field = owner.getClass().getDeclaredField(fieldName);
+		field.setAccessible(true);
+		field.set(owner, value);
+	}
 
-	private Path examPdf;
+	@Test
+	void answerRegionControlsResetAcrossSelectionAndPdfModeChanges(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "Q2");
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		Button addAnswerRegion = lookup(robot, "#add-answer-region", Button.class);
+		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
+		assertFalse(addAnswerRegion.isDisabled());
+		assertFalse(clearAnswerSelection.isDisabled());
+		robot.clickOn(clearAnswerSelection);
+		assertTrue(addAnswerRegion.isDisabled());
+		assertTrue(clearAnswerSelection.isDisabled());
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn(addAnswerRegion);
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		assertTrue(addAnswerRegion.isDisabled());
+		assertTrue(clearAnswerSelection.isDisabled());
+		showPdfMode("EXAM");
+		assertTrue(addAnswerRegion.isDisabled());
+		assertTrue(clearAnswerSelection.isDisabled());
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+	}
 
-	private Path pdfDataRoot;
-	private Path databasePath;
+	@Test
+	void canRemoveAcceptedAnswerRegions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "Q3");
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-answer-region");
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-answer-region");
+		assertEquals("Regions: 2", lookup(robot, "#answer-region-count", Label.class).getText());
+		Button firstRemoveButton = robot.lookup("Remove").queryButton();
+		robot.clickOn(firstRemoveButton);
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		Button remainingRemoveButton = robot.lookup("Remove").queryButton();
+		robot.clickOn(remainingRemoveButton);
+		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
+	}
+
+	@Test
+	void canSelectAndPersistHistoricalSyllabusClassification(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
+		ComboBox<CurriculumNode> classifications = comboBox(robot, "#curriculum-subtopic");
+		assertEquals(2, syllabuses.getItems().size());
+		assertNotNull(syllabuses.getValue());
+		assertEquals("2025", syllabuses.getValue().getName());
+		assertEquals(1, units.getItems().size());
+		assertEquals("1", units.getItems().getFirst().getCode());
+		assertNotNull(classifications.getValue());
+		assertEquals("2025", model.getClassification().getSyllabusVersion().getName());
+		SyllabusVersion historicalSelection = selectSyllabus(robot, "2019");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("2019", syllabuses.getValue().getName());
+		assertEquals(1, units.getItems().size());
+		assertEquals("3", units.getItems().getFirst().getCode());
+		assertTrue(topics.getItems().isEmpty());
+		assertTrue(classifications.getItems().isEmpty());
+		assertFalse(units.isDisabled());
+		assertTrue(topics.isDisabled());
+		assertTrue(classifications.isDisabled());
+		assertNull(units.getValue());
+		assertNull(topics.getValue());
+		assertNull(classifications.getValue());
+		assertNull(model.getUnit());
+		assertNull(model.getTopic());
+		assertNull(model.getClassification());
+		assertEquals("Chemistry", subjects.getValue().getName());
+		assertEquals(subjects.getValue(), model.getSubject());
+		assertEquals(originalBooklet, examMetadataPane().getBooklet());
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirst(robot, "#curriculum-subtopic");
+		CurriculumNode historicalClassification = model.getClassification();
+		assertEquals("3.1.1", historicalClassification.getCode());
+		assertEquals(historicalSelection, historicalClassification.getSyllabusVersion());
+		Question question = captureQuestion(robot, "H1");
+		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow();
+		assertEquals(historicalClassification.getId(), restored.getClassification().getId());
+		assertEquals(historicalSelection, restored.getClassification().getSyllabusVersion());
+		assertFalse(restored.getClassification().getSyllabusVersion().isCurrent());
+		assertEquals(2024, restored.getExam().getYear());
+		assertEquals(historicalSelection, syllabuses.getValue());
+		assertEquals(historicalSelection, model.getSyllabusVersion());
+		assertNull(model.getClassification());
+		assertFalse(units.isDisabled());
+	}
+
+	@Test
+	void canSelectSubjectWithOnlyHistoricalSyllabus(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		selectSubject(robot, "Biology");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("Biology", subjects.getValue().getName());
+		assertNull(examMetadataPane().getBooklet());
+		assertEquals(1, syllabuses.getItems().size());
+		assertEquals("2019", syllabuses.getItems().getFirst().getName());
+		assertNull(syllabuses.getValue());
+		assertFalse(syllabuses.isDisabled());
+		assertTrue(units.getItems().isEmpty());
+		assertTrue(units.isDisabled());
+		SyllabusVersion historical = syllabuses.getItems().getFirst();
+		robot.interact(() -> syllabuses.setValue(historical));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(historical, syllabuses.getValue());
+		assertEquals(1, units.getItems().size());
+		assertEquals("2", units.getItems().getFirst().getCode());
+		assertFalse(units.isDisabled());
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirst(robot, "#curriculum-subtopic");
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		assertEquals(historical, model.getClassification().getSyllabusVersion());
+		assertEquals("2.1.1", model.getClassification().getCode());
+	}
+
+	@Test
+	void capturesQuestionThenSavesTextOnlyAnswer(FxRobot robot) throws Exception {
+		assertInitialAnswerControlsDisabled(robot);
+		prepareExamAndClassification(robot);
+		Question savedQuestion = captureQuestion(robot, "Q1");
+		assertEquals(CurriculumLevel.DESCRIPTOR, savedQuestion.getClassification().getLevel());
+		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		Label questionRegionCount = lookup(robot, "#question-region-count", Label.class);
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		assertEquals("Saved Q1 (1 mark(s), 1 region(s))", saveStatus.getText());
+		assertEquals("", questionCode.getText());
+		assertEquals("Regions: 0", questionRegionCount.getText());
+		assertEquals(1, unansweredQuestions.getItems().size());
+		assertEquals(savedQuestion, unansweredQuestions.getItems().getFirst());
+		robot.interact(() -> unansweredQuestions.getSelectionModel().select(savedQuestion));
+		assertAnswerEntryControlsEnabled(robot);
+		TextField answerText = lookup(robot, "#answer-text", TextField.class);
+		robot.clickOn(answerText).write("B");
+		robot.clickOn("#save-answer");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(savedQuestion.hasAnswer());
+		assertEquals("B", savedQuestion.getAnswer().getAnswerText());
+		assertTrue(unansweredQuestions.getItems().isEmpty());
+		assertTrue(answerText.isDisabled());
+		assertEquals("", answerText.getText());
+		assertNull(unansweredQuestions.getValue());
+	}
+
+	@Test
+	void capturesQuestionWithSubtopicClassification(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Physics");
+		Question savedQuestion = captureQuestion(robot, "P1");
+		assertEquals("Physics", savedQuestion.getExam().getSubject().getName());
+		assertEquals(CurriculumLevel.SUBTOPIC, savedQuestion.getClassification().getLevel());
+		assertEquals(savedQuestion.getExam().getSubject(),
+				savedQuestion.getClassification().getSyllabusVersion().getSubject());
+	}
+
+	@Test
+	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		assertNotNull(examMetadataPane().getBooklet());
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		selectSubject(robot, "Physics");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertNull(examMetadataPane().getBooklet());
+		assertEquals("Physics", subjects.getValue().getName());
+	}
+
+	@Test
+	void clearingSyllabusThenSubjectClearsDependentControls(FxRobot robot) throws Exception {
+		selectSubject(robot, "Chemistry");
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirst(robot, "#curriculum-subtopic");
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
+		ComboBox<CurriculumNode> classifications = comboBox(robot, "#curriculum-subtopic");
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		robot.interact(() -> syllabuses.getSelectionModel().clearSelection());
+		assertEquals("Chemistry", subjects.getValue().getName());
+		assertEquals(subjects.getValue(), model.getSubject());
+		assertNull(syllabuses.getValue());
+		assertNull(model.getSyllabusVersion());
+		assertNull(model.getUnit());
+		assertNull(model.getTopic());
+		assertNull(model.getClassification());
+		assertFalse(syllabuses.isDisabled());
+		assertEquals(2, syllabuses.getItems().size());
+		for (ComboBox<CurriculumNode> box : List.of(units, topics, classifications)) {
+			assertNull(box.getValue());
+			assertTrue(box.getItems().isEmpty());
+			assertTrue(box.isDisabled());
+		}
+		selectSyllabus(robot, "2019");
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirst(robot, "#curriculum-subtopic");
+		robot.interact(() -> subjects.getSelectionModel().clearSelection());
+		assertNull(model.getSubject());
+		assertNull(model.getSyllabusVersion());
+		assertNull(model.getClassification());
+		assertNull(syllabuses.getValue());
+		assertTrue(syllabuses.getItems().isEmpty());
+		assertTrue(syllabuses.isDisabled());
+		for (ComboBox<CurriculumNode> box : List.of(units, topics, classifications)) {
+			assertNull(box.getValue());
+			assertTrue(box.getItems().isEmpty());
+			assertTrue(box.isDisabled());
+		}
+	}
+
+	@Test
+	void fileExitCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
+		AtomicInteger exitCount = new AtomicInteger();
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		assertEquals(0, automaticBackupCount());
+		MenuItem exitItem = fileExitMenuItem();
+		robot.interact(exitItem::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, exitCount.get());
+		assertEquals(1, automaticBackupCount());
+	}
+
+	@Test
+	void movingToNextAnswerPageDisablesControlsForUnacceptedSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "Q3");
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		Button addAnswerRegion = lookup(robot, "#add-answer-region", Button.class);
+		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
+		assertFalse(addAnswerRegion.isDisabled());
+		assertFalse(clearAnswerSelection.isDisabled());
+		robot.clickOn("#next-pdf-page");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(addAnswerRegion.isDisabled());
+		assertTrue(clearAnswerSelection.isDisabled());
+	}
+
+	@Test
+	void refreshingSubjectsReloadsVersionsWithoutReplacingHistoricalSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		SyllabusVersion historical = selectSyllabus(robot, "2019");
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirst(robot, "#curriculum-subtopic");
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		CurriculumNode classification = model.getClassification();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(new SqliteDatabase(databasePath));
+		SyllabusVersion imported = writer.insertSyllabusVersion(historical.getSubject(), "2015", false);
+		writer.insertSubject("Astronomy");
+		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		robot.interact(pane::refreshSubjects);
+		assertEquals(3, syllabuses.getItems().size());
+		assertTrue(syllabuses.getItems().contains(imported));
+		assertEquals(historical, syllabuses.getValue());
+		assertEquals(historical, model.getSyllabusVersion());
+		assertEquals(historical.getSubject(), model.getSubject());
+		assertEquals(classification, model.getClassification());
+		assertEquals(classification, comboBox(robot, "#curriculum-subtopic").getValue());
+		assertEquals("3", units.getItems().getFirst().getCode());
+		assertEquals(originalBooklet, examMetadataPane().getBooklet());
+		assertEquals(4, comboBox(robot, "#curriculum-subject").getItems().size());
+	}
+
+	@Test
+	void resettingClassificationWithoutSyllabusKeepsUnitsDisabled(FxRobot robot) throws Exception {
+		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		robot.interact(pane::clearClassificationBelowSubject);
+		assertTrue(units.isDisabled());
+		selectSubject(robot, "Biology");
+		robot.interact(pane::clearClassificationBelowSubject);
+		assertTrue(units.isDisabled());
+		assertNull(syllabuses.getValue());
+		assertFalse(syllabuses.isDisabled());
+	}
+
+	@Start
+	void start(Stage stage) throws Exception {
+		Path testRoot = Files.createTempDirectory("question-bank-ui-");
+		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
+		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
+		databasePath = testRoot.resolve("questionbank.db");
+		createCurriculumDatabase(databasePath);
+		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
+		applicationConfig = new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
+		primaryStage = stage;
+		application = new QuestionBankApplication();
+		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
+				applicationConfig);
+		openExamPdfForTest();
+	}
+
+	@AfterEach
+	void stopApplication() throws Exception {
+		application.stop();
+	}
+
+	@Test
+	void windowCloseCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
+		AtomicInteger exitCount = new AtomicInteger();
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		assertEquals(0, automaticBackupCount());
+		robot.interact(
+				() -> Event.fireEvent(primaryStage, new WindowEvent(primaryStage, WindowEvent.WINDOW_CLOSE_REQUEST)));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, exitCount.get());
+		assertEquals(1, automaticBackupCount());
+	}
 
 	private AnswerCapturePane answerCapturePane() {
 		try {
@@ -111,6 +458,18 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(lookup(robot, "#clear-answer-selection", Button.class).isDisabled());
 	}
 
+	private long automaticBackupCount() throws IOException {
+		Path automaticBackupDirectory = applicationConfig.dataRoot().resolve("backups").resolve("automatic");
+		if (!Files.isDirectory(automaticBackupDirectory)) {
+			return 0;
+		}
+		try (Stream<Path> stream = Files.list(automaticBackupDirectory)) {
+			return stream.filter(Files::isRegularFile)
+					.filter(path -> path.getFileName().toString().startsWith("question-bank-auto-"))
+					.filter(path -> path.getFileName().toString().endsWith(".zip")).count();
+		}
+	}
+
 	private Question captureQuestion(FxRobot robot, String questionCode) throws Exception {
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		robot.clickOn(questionCodeField).write(questionCode);
@@ -120,7 +479,6 @@ class QuestionBankApplicationWorkflowTest {
 		robot.clickOn("#add-question-region");
 		robot.clickOn("#save-question");
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question savedQuestion = null;
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		for (Question question : unansweredQuestions.getItems()) {
@@ -176,33 +534,24 @@ class QuestionBankApplicationWorkflowTest {
 		Files.createDirectories(destination.getParent());
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("Curriculum");
-
 			Row header = sheet.createRow(0);
 			header.createCell(0).setCellValue("Code");
 			header.createCell(1).setCellValue("Content");
-
 			Row unit = sheet.createRow(1);
 			unit.createCell(0).setCellValue(unitCode);
 			unit.createCell(1).setCellValue("Test unit " + unitCode);
-
 			String topicCode = unitCode + ".1";
-
 			Row topic = sheet.createRow(2);
 			topic.createCell(0).setCellValue(topicCode);
 			topic.createCell(1).setCellValue("Test topic");
-
 			String subtopicCode = topicCode + ".1";
-
 			Row subtopic = sheet.createRow(3);
 			subtopic.createCell(0).setCellValue(subtopicCode);
 			subtopic.createCell(1).setCellValue("Test subtopic");
-
 			Row descriptor = sheet.createRow(4);
 			descriptor.createCell(0).setCellValue(subtopicCode + ".1");
 			descriptor.createCell(1).setCellValue("Test descriptor");
-
 			try (OutputStream output = Files.newOutputStream(destination)) {
-
 				workbook.write(output);
 			}
 		}
@@ -243,6 +592,17 @@ class QuestionBankApplicationWorkflowTest {
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}
+	}
+
+	private MenuItem fileExitMenuItem() {
+		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
+		MenuBar menuBar = (MenuBar) root.getTop();
+		for (MenuItem item : menuBar.getMenus().get(0).getItems()) {
+			if ("E_xit".equals(item.getText())) {
+				return item;
+			}
+		}
+		throw new AssertionError("File -> Exit menu item not found");
 	}
 
 	private void openAnswerPdfForTest(Question question) throws Exception {
@@ -334,346 +694,5 @@ class QuestionBankApplicationWorkflowTest {
 
 	private ComboBox<Question> unansweredQuestions(FxRobot robot) {
 		return comboBox(robot, "#unanswered-question");
-	}
-
-	@Test
-	void answerRegionControlsResetAcrossSelectionAndPdfModeChanges(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		Question question = captureQuestion(robot, "Q2");
-		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
-		openAnswerPdfForTest(question);
-
-		dragRegionOnDisplayedPage(robot);
-		Button addAnswerRegion = lookup(robot, "#add-answer-region", Button.class);
-		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
-		assertFalse(addAnswerRegion.isDisabled());
-		assertFalse(clearAnswerSelection.isDisabled());
-
-		robot.clickOn(clearAnswerSelection);
-		assertTrue(addAnswerRegion.isDisabled());
-		assertTrue(clearAnswerSelection.isDisabled());
-
-		dragRegionOnDisplayedPage(robot);
-		robot.clickOn(addAnswerRegion);
-		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
-		assertTrue(addAnswerRegion.isDisabled());
-		assertTrue(clearAnswerSelection.isDisabled());
-
-		showPdfMode("EXAM");
-		assertTrue(addAnswerRegion.isDisabled());
-		assertTrue(clearAnswerSelection.isDisabled());
-		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
-	}
-
-	@Test
-	void canRemoveAcceptedAnswerRegions(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		Question question = captureQuestion(robot, "Q3");
-
-		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
-
-		openAnswerPdfForTest(question);
-
-		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
-
-		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
-
-		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
-
-		assertEquals("Regions: 2", lookup(robot, "#answer-region-count", Label.class).getText());
-
-		Button firstRemoveButton = robot.lookup("Remove").queryButton();
-		robot.clickOn(firstRemoveButton);
-
-		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
-
-		Button remainingRemoveButton = robot.lookup("Remove").queryButton();
-		robot.clickOn(remainingRemoveButton);
-
-		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
-	}
-
-	@Test
-	void canSelectAndPersistHistoricalSyllabusClassification(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
-		assertNotNull(originalBooklet);
-		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
-		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
-		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
-		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
-		ComboBox<CurriculumNode> classifications = comboBox(robot, "#curriculum-subtopic");
-		assertEquals(2, syllabuses.getItems().size());
-		assertNotNull(syllabuses.getValue());
-		assertEquals("2025", syllabuses.getValue().getName());
-		assertEquals(1, units.getItems().size());
-		assertEquals("1", units.getItems().getFirst().getCode());
-		assertNotNull(classifications.getValue());
-		assertEquals("2025", model.getClassification().getSyllabusVersion().getName());
-		SyllabusVersion historicalSelection = selectSyllabus(robot, "2019");
-		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals("2019", syllabuses.getValue().getName());
-		assertEquals(1, units.getItems().size());
-		assertEquals("3", units.getItems().getFirst().getCode());
-		assertTrue(topics.getItems().isEmpty());
-		assertTrue(classifications.getItems().isEmpty());
-		assertFalse(units.isDisabled());
-		assertTrue(topics.isDisabled());
-		assertTrue(classifications.isDisabled());
-		assertNull(units.getValue());
-		assertNull(topics.getValue());
-		assertNull(classifications.getValue());
-		assertNull(model.getUnit());
-		assertNull(model.getTopic());
-		assertNull(model.getClassification());
-		assertEquals("Chemistry", subjects.getValue().getName());
-		assertEquals(subjects.getValue(), model.getSubject());
-		assertEquals(originalBooklet, examMetadataPane().getBooklet());
-
-		selectFirst(robot, "#curriculum-unit");
-		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
-		CurriculumNode historicalClassification = model.getClassification();
-		assertEquals("3.1.1", historicalClassification.getCode());
-		assertEquals(historicalSelection, historicalClassification.getSyllabusVersion());
-		Question question = captureQuestion(robot, "H1");
-		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
-				.orElseThrow();
-		assertEquals(historicalClassification.getId(), restored.getClassification().getId());
-		assertEquals(historicalSelection, restored.getClassification().getSyllabusVersion());
-		assertFalse(restored.getClassification().getSyllabusVersion().isCurrent());
-		assertEquals(2024, restored.getExam().getYear());
-		assertEquals(historicalSelection, syllabuses.getValue());
-		assertEquals(historicalSelection, model.getSyllabusVersion());
-		assertNull(model.getClassification());
-		assertFalse(units.isDisabled());
-	}
-
-	@Test
-	void canSelectSubjectWithOnlyHistoricalSyllabus(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
-		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
-		selectSubject(robot, "Biology");
-		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals("Biology", subjects.getValue().getName());
-		assertNull(examMetadataPane().getBooklet());
-		assertEquals(1, syllabuses.getItems().size());
-		assertEquals("2019", syllabuses.getItems().getFirst().getName());
-		assertNull(syllabuses.getValue());
-		assertFalse(syllabuses.isDisabled());
-		assertTrue(units.getItems().isEmpty());
-		assertTrue(units.isDisabled());
-		SyllabusVersion historical = syllabuses.getItems().getFirst();
-		robot.interact(() -> syllabuses.setValue(historical));
-		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals(historical, syllabuses.getValue());
-		assertEquals(1, units.getItems().size());
-		assertEquals("2", units.getItems().getFirst().getCode());
-		assertFalse(units.isDisabled());
-		selectFirst(robot, "#curriculum-unit");
-		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
-		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
-		assertEquals(historical, model.getClassification().getSyllabusVersion());
-		assertEquals("2.1.1", model.getClassification().getCode());
-	}
-
-	@Test
-	void capturesQuestionThenSavesTextOnlyAnswer(FxRobot robot) throws Exception {
-		assertInitialAnswerControlsDisabled(robot);
-		prepareExamAndClassification(robot);
-
-		Question savedQuestion = captureQuestion(robot, "Q1");
-		assertEquals(CurriculumLevel.DESCRIPTOR, savedQuestion.getClassification().getLevel());
-
-		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
-		TextField questionCode = lookup(robot, "#question-code", TextField.class);
-		Label questionRegionCount = lookup(robot, "#question-region-count", Label.class);
-		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-
-		assertEquals("Saved Q1 (1 mark(s), 1 region(s))", saveStatus.getText());
-		assertEquals("", questionCode.getText());
-		assertEquals("Regions: 0", questionRegionCount.getText());
-		assertEquals(1, unansweredQuestions.getItems().size());
-		assertEquals(savedQuestion, unansweredQuestions.getItems().getFirst());
-
-		robot.interact(() -> unansweredQuestions.getSelectionModel().select(savedQuestion));
-		assertAnswerEntryControlsEnabled(robot);
-
-		TextField answerText = lookup(robot, "#answer-text", TextField.class);
-		robot.clickOn(answerText).write("B");
-		robot.clickOn("#save-answer");
-		WaitForAsyncUtils.waitForFxEvents();
-
-		assertTrue(savedQuestion.hasAnswer());
-		assertEquals("B", savedQuestion.getAnswer().getAnswerText());
-		assertTrue(unansweredQuestions.getItems().isEmpty());
-		assertTrue(answerText.isDisabled());
-		assertEquals("", answerText.getText());
-		assertNull(unansweredQuestions.getValue());
-	}
-
-	@Test
-	void capturesQuestionWithSubtopicClassification(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot, "Physics");
-
-		Question savedQuestion = captureQuestion(robot, "P1");
-
-		assertEquals("Physics", savedQuestion.getExam().getSubject().getName());
-		assertEquals(CurriculumLevel.SUBTOPIC, savedQuestion.getClassification().getLevel());
-		assertEquals(savedQuestion.getExam().getSubject(),
-				savedQuestion.getClassification().getSyllabusVersion().getSubject());
-	}
-
-	@Test
-	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		assertNotNull(examMetadataPane().getBooklet());
-		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-
-		selectSubject(robot, "Physics");
-		WaitForAsyncUtils.waitForFxEvents();
-
-		assertNull(examMetadataPane().getBooklet());
-		assertEquals("Physics", subjects.getValue().getName());
-	}
-
-	@Test
-	void clearingSyllabusThenSubjectClearsDependentControls(FxRobot robot) throws Exception {
-		selectSubject(robot, "Chemistry");
-		selectFirst(robot, "#curriculum-unit");
-		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
-		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
-		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
-		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
-		ComboBox<CurriculumNode> classifications = comboBox(robot, "#curriculum-subtopic");
-		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
-
-		robot.interact(() -> syllabuses.getSelectionModel().clearSelection());
-		assertEquals("Chemistry", subjects.getValue().getName());
-		assertEquals(subjects.getValue(), model.getSubject());
-		assertNull(syllabuses.getValue());
-		assertNull(model.getSyllabusVersion());
-		assertNull(model.getUnit());
-		assertNull(model.getTopic());
-		assertNull(model.getClassification());
-		assertFalse(syllabuses.isDisabled());
-		assertEquals(2, syllabuses.getItems().size());
-		for (ComboBox<CurriculumNode> box : List.of(units, topics, classifications)) {
-			assertNull(box.getValue());
-			assertTrue(box.getItems().isEmpty());
-			assertTrue(box.isDisabled());
-		}
-
-		selectSyllabus(robot, "2019");
-		selectFirst(robot, "#curriculum-unit");
-		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
-		robot.interact(() -> subjects.getSelectionModel().clearSelection());
-		assertNull(model.getSubject());
-		assertNull(model.getSyllabusVersion());
-		assertNull(model.getClassification());
-		assertNull(syllabuses.getValue());
-		assertTrue(syllabuses.getItems().isEmpty());
-		assertTrue(syllabuses.isDisabled());
-		for (ComboBox<CurriculumNode> box : List.of(units, topics, classifications)) {
-			assertNull(box.getValue());
-			assertTrue(box.getItems().isEmpty());
-			assertTrue(box.isDisabled());
-		}
-	}
-
-	@Test
-	void movingToNextAnswerPageDisablesControlsForUnacceptedSelection(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		Question question = captureQuestion(robot, "Q3");
-		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
-		openAnswerPdfForTest(question);
-
-		dragRegionOnDisplayedPage(robot);
-		Button addAnswerRegion = lookup(robot, "#add-answer-region", Button.class);
-		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
-		assertFalse(addAnswerRegion.isDisabled());
-		assertFalse(clearAnswerSelection.isDisabled());
-
-		robot.clickOn("#next-pdf-page");
-		WaitForAsyncUtils.waitForFxEvents();
-
-		assertTrue(addAnswerRegion.isDisabled());
-		assertTrue(clearAnswerSelection.isDisabled());
-	}
-
-	@Test
-	void refreshingSubjectsReloadsVersionsWithoutReplacingHistoricalSelection(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
-		SyllabusVersion historical = selectSyllabus(robot, "2019");
-		selectFirst(robot, "#curriculum-unit");
-		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
-		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
-		CurriculumNode classification = model.getClassification();
-		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(new SqliteDatabase(databasePath));
-		SyllabusVersion imported = writer.insertSyllabusVersion(historical.getSubject(), "2015", false);
-		writer.insertSubject("Astronomy");
-		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
-		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
-		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
-
-		robot.interact(pane::refreshSubjects);
-
-		assertEquals(3, syllabuses.getItems().size());
-		assertTrue(syllabuses.getItems().contains(imported));
-		assertEquals(historical, syllabuses.getValue());
-		assertEquals(historical, model.getSyllabusVersion());
-		assertEquals(historical.getSubject(), model.getSubject());
-		assertEquals(classification, model.getClassification());
-		assertEquals(classification, comboBox(robot, "#curriculum-subtopic").getValue());
-		assertEquals("3", units.getItems().getFirst().getCode());
-		assertEquals(originalBooklet, examMetadataPane().getBooklet());
-		assertEquals(4, comboBox(robot, "#curriculum-subject").getItems().size());
-	}
-
-	@Test
-	void resettingClassificationWithoutSyllabusKeepsUnitsDisabled(FxRobot robot) throws Exception {
-		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
-		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
-		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
-		robot.interact(pane::clearClassificationBelowSubject);
-		assertTrue(units.isDisabled());
-		selectSubject(robot, "Biology");
-		robot.interact(pane::clearClassificationBelowSubject);
-		assertTrue(units.isDisabled());
-		assertNull(syllabuses.getValue());
-		assertFalse(syllabuses.isDisabled());
-	}
-
-	@Start
-	void start(Stage stage) throws Exception {
-		Path testRoot = Files.createTempDirectory("question-bank-ui-");
-		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
-		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
-		databasePath = testRoot.resolve("questionbank.db");
-		createCurriculumDatabase(databasePath);
-		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
-		application = new QuestionBankApplication();
-		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
-				new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath));
-		openExamPdfForTest();
-	}
-
-	@AfterEach
-	void stopApplication() throws Exception {
-		application.stop();
 	}
 }

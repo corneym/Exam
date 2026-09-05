@@ -202,6 +202,26 @@ Major outcomes:
 - lifecycle/stale-result protection;
 - merge-readiness review completed.
 
+### Sprint 04 — Backup, Restore and Data Safety
+
+Document:
+
+`docs/design/sprint-04-backup-restore-data-safety.md`
+
+Major outcomes:
+
+- versioned and validated backup archives;
+- SQLite-consistent snapshots;
+- manual full backup;
+- automatic database backup on normal application close;
+- bounded automatic-backup retention;
+- validated database-only and full restore;
+- migration-compatibility validation before restore;
+- pre-restore safety backup and rollback;
+- safe shutdown and restore lifecycle;
+- restart boundary after restore;
+- automated and manual recovery testing.
+
 ---
 
 ## 5. Roadmap at a glance
@@ -213,8 +233,8 @@ Major outcomes:
 | Curriculum | Versioned curriculum import, mapping and applicability | Working |
 | Legacy migration | Import previous workbook metadata | Working; refinements remain |
 | Retrieval | Current-curriculum hierarchical question retrieval | **Sprint 03 complete** |
-| Data safety | Backup, restore and version resilience | **Sprint 04 — next** |
-| Revision corpus | Hierarchical corpus + student HTML/assets | Sprint 05 |
+| Data safety | Backup, restore and version resilience | **Sprint 04 complete** |
+| Revision corpus | Hierarchical corpus + student HTML/assets | **Sprint 05 — next** |
 | SCORM / QLearn | Application-generated SCORM ZIP and QLearn validation | Sprint 06 |
 | Corpus completion | Capture missing regions/answers and resolve preambles | Parallel beta/data work |
 | Full browser/edit | Rich question-bank management | Later |
