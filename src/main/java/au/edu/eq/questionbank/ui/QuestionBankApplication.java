@@ -41,10 +41,14 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.backup.AutomaticBackupRetention;
 import au.edu.eq.questionbank.service.backup.BackupException;
 import au.edu.eq.questionbank.service.backup.BackupRequest;
 import au.edu.eq.questionbank.service.backup.BackupResult;
 import au.edu.eq.questionbank.service.backup.DefaultBackupService;
+import au.edu.eq.questionbank.service.backup.ShutdownCoordinator;
+import au.edu.eq.questionbank.service.backup.ShutdownResult;
+import au.edu.eq.questionbank.service.backup.ShutdownStatus;
 import au.edu.eq.questionbank.service.curriculum.ConfirmedDescriptorSubtopicMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
@@ -59,6 +63,7 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -95,6 +100,8 @@ public class QuestionBankApplication extends Application {
 	private AnswerCapturePane answerCapturePane;
 	private ScrollPane previewScrollPane;
 	private ExamImportDialog examImportDialog;
+	private Runnable applicationExitAction = Platform::exit;
+	private ShutdownCoordinator shutdownCoordinator;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -151,7 +158,9 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void stop() throws Exception {
-		pdfWorkspace.close();
+		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
+			pdfWorkspace.close();
+		}
 	}
 
 	private void activateExamSubject(Subject subject) {
@@ -203,25 +212,6 @@ public class QuestionBankApplication extends Application {
 		return applicationVersion;
 	}
 
-	private String backupFailureMessage(BackupException exception) {
-		StringBuilder message = new StringBuilder();
-		Throwable cause = exception;
-		while (cause != null) {
-			String causeMessage = cause.getMessage();
-			if (causeMessage != null && !causeMessage.isBlank()) {
-				if (!message.isEmpty()) {
-					message.append("\n\n");
-				}
-				message.append(causeMessage);
-			}
-			cause = cause.getCause();
-		}
-		if (message.isEmpty()) {
-			return "An unexpected backup error occurred.";
-		}
-		return message.toString();
-	}
-
 	private void backupNow(Stage primaryStage, ApplicationConfig config) {
 		DirectoryChooser chooser = new DirectoryChooser();
 		chooser.setTitle("Choose Backup Destination");
@@ -235,13 +225,22 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.INFORMATION, "Backup", "Backup completed successfully.",
 					"The full question-bank backup was saved to:\n\n" + result.backupPath());
 		} catch (BackupException e) {
-			showAlert(Alert.AlertType.ERROR, "Backup", "The backup could not be completed.", backupFailureMessage(e));
+			showAlert(Alert.AlertType.ERROR, "Backup", "The backup could not be completed.", failureMessage(e));
 		}
 	}
 
 	private void closeViewerPdf() {
 		pdfWorkspace.closeViewerPdf();
 		setViewerMode(false);
+	}
+
+	private void completeExitWithoutBackup(Stage primaryStage) {
+		ShutdownResult result = shutdownCoordinator.exitWithoutBackup();
+		if (result.exitAllowed()) {
+			applicationExitAction.run();
+			return;
+		}
+		showResourceCloseFailure(primaryStage, result.failure());
 	}
 
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
@@ -281,7 +280,7 @@ public class QuestionBankApplication extends Application {
 		fileMenu.getItems().addAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
 				new SeparatorMenuItem(), createMenuItem("_Backup Now...", () -> backupNow(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("Op_tions...", () -> showOptions(primaryStage, config)),
-				new SeparatorMenuItem(), createMenuItem("E_xit", Platform::exit));
+				new SeparatorMenuItem(), createMenuItem("E_xit", () -> requestApplicationExit(primaryStage)));
 		return fileMenu;
 	}
 
@@ -358,6 +357,25 @@ public class QuestionBankApplication extends Application {
 		root.setLeft(previewScrollPane);
 		root.setCenter(pdfWorkspace);
 		return root;
+	}
+
+	private String failureMessage(Throwable failure) {
+		StringBuilder message = new StringBuilder();
+		Throwable cause = failure;
+		while (cause != null) {
+			String causeMessage = cause.getMessage();
+			if (causeMessage != null && !causeMessage.isBlank()) {
+				if (!message.isEmpty()) {
+					message.append("\n\n");
+				}
+				message.append(causeMessage);
+			}
+			cause = cause.getCause();
+		}
+		if (message.isEmpty()) {
+			return "An unexpected error occurred.";
+		}
+		return message.toString();
 	}
 
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
@@ -493,6 +511,34 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(true);
 	}
 
+	private void requestApplicationExit(Stage primaryStage) {
+		while (true) {
+			ShutdownResult result = shutdownCoordinator.prepareForExit();
+			if (result.status() == ShutdownStatus.READY_TO_EXIT_WITH_RETENTION_WARNING) {
+				showRetentionWarning(primaryStage, result.failure());
+				applicationExitAction.run();
+				return;
+			}
+			if (result.exitAllowed()) {
+				applicationExitAction.run();
+				return;
+			}
+			if (result.status() == ShutdownStatus.RESOURCE_CLOSE_FAILED) {
+				showResourceCloseFailure(primaryStage, result.failure());
+				return;
+			}
+			BackupFailureDecision decision = showAutomaticBackupFailure(primaryStage, result.failure());
+			if (decision == BackupFailureDecision.CANCEL_EXIT) {
+				return;
+			}
+			if (decision == BackupFailureDecision.EXIT_WITHOUT_BACKUP) {
+				completeExitWithoutBackup(primaryStage);
+				return;
+			}
+			// RETRY deliberately loops through prepareForExit().
+		}
+	}
+
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
@@ -542,6 +588,26 @@ public class QuestionBankApplication extends Application {
 		alert.setHeaderText(header);
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	private BackupFailureDecision showAutomaticBackupFailure(Stage primaryStage, Throwable failure) {
+		ButtonType retryButton = new ButtonType("Retry", ButtonBar.ButtonData.OK_DONE);
+		ButtonType exitWithoutBackupButton = new ButtonType("Exit Without Backup", ButtonBar.ButtonData.NO);
+		ButtonType cancelExitButton = new ButtonType("Cancel Exit", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Automatic Backup Failed");
+		alert.setHeaderText("The automatic database backup could not be completed.");
+		alert.setContentText(failureMessage(failure));
+		alert.getButtonTypes().setAll(retryButton, exitWithoutBackupButton, cancelExitButton);
+		Optional<ButtonType> result = alert.showAndWait();
+		if (result.isEmpty() || result.get() == cancelExitButton) {
+			return BackupFailureDecision.CANCEL_EXIT;
+		}
+		if (result.get() == retryButton) {
+			return BackupFailureDecision.RETRY;
+		}
+		return BackupFailureDecision.EXIT_WITHOUT_BACKUP;
 	}
 
 	private void showExamImport() {
@@ -599,6 +665,20 @@ public class QuestionBankApplication extends Application {
 		dialog.showAndWait();
 	}
 
+	private void showResourceCloseFailure(Stage primaryStage, Throwable failure) {
+		showAlert(Alert.AlertType.ERROR, "Exit", "The application could not close its active resources.",
+				failureMessage(failure));
+	}
+
+	private void showRetentionWarning(Stage primaryStage, Throwable failure) {
+		Alert alert = new Alert(Alert.AlertType.WARNING);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Automatic Backup");
+		alert.setHeaderText("The automatic backup was created, but old backups could not be removed.");
+		alert.setContentText(failureMessage(failure));
+		alert.showAndWait();
+	}
+
 	private void showStage(Stage primaryStage, BorderPane root) {
 		Scene scene = new Scene(root, SCENE_WIDTH, SCENE_HEIGHT);
 		primaryStage.setTitle("Exam Question Bank");
@@ -643,6 +723,9 @@ public class QuestionBankApplication extends Application {
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		DefaultBackupService automaticBackupService = new DefaultBackupService(config, applicationVersion());
+		shutdownCoordinator = new ShutdownCoordinator(automaticBackupService, BackupRequest.automaticDatabase(config),
+				new AutomaticBackupRetention(), pdfWorkspace);
 		questionRepository = new SqliteQuestionRepository(database);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
@@ -666,7 +749,15 @@ public class QuestionBankApplication extends Application {
 			questionCapturePane.clearCurrentSelection();
 			answerCapturePane.clearCurrentSelectionForPageChange();
 		});
+		primaryStage.setOnCloseRequest(event -> {
+			event.consume();
+			requestApplicationExit(primaryStage);
+		});
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
+	}
+
+	private enum BackupFailureDecision {
+		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
 }
