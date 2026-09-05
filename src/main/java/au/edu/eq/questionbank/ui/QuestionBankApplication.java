@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.ui;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,6 +41,10 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.backup.BackupException;
+import au.edu.eq.questionbank.service.backup.BackupRequest;
+import au.edu.eq.questionbank.service.backup.BackupResult;
+import au.edu.eq.questionbank.service.backup.DefaultBackupService;
 import au.edu.eq.questionbank.service.curriculum.ConfirmedDescriptorSubtopicMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
@@ -63,6 +68,7 @@ import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 
 /**
@@ -189,6 +195,50 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private String applicationVersion() {
+		String applicationVersion = getClass().getPackage().getImplementationVersion();
+		if (applicationVersion == null || applicationVersion.isBlank()) {
+			return "Development build";
+		}
+		return applicationVersion;
+	}
+
+	private String backupFailureMessage(BackupException exception) {
+		StringBuilder message = new StringBuilder();
+		Throwable cause = exception;
+		while (cause != null) {
+			String causeMessage = cause.getMessage();
+			if (causeMessage != null && !causeMessage.isBlank()) {
+				if (!message.isEmpty()) {
+					message.append("\n\n");
+				}
+				message.append(causeMessage);
+			}
+			cause = cause.getCause();
+		}
+		if (message.isEmpty()) {
+			return "An unexpected backup error occurred.";
+		}
+		return message.toString();
+	}
+
+	private void backupNow(Stage primaryStage, ApplicationConfig config) {
+		DirectoryChooser chooser = new DirectoryChooser();
+		chooser.setTitle("Choose Backup Destination");
+		File selectedDirectory = chooser.showDialog(primaryStage);
+		if (selectedDirectory == null) {
+			return;
+		}
+		try {
+			DefaultBackupService backupService = new DefaultBackupService(config, applicationVersion());
+			BackupResult result = backupService.createBackup(BackupRequest.full(selectedDirectory.toPath()));
+			showAlert(Alert.AlertType.INFORMATION, "Backup", "Backup completed successfully.",
+					"The full question-bank backup was saved to:\n\n" + result.backupPath());
+		} catch (BackupException e) {
+			showAlert(Alert.AlertType.ERROR, "Backup", "The backup could not be completed.", backupFailureMessage(e));
+		}
+	}
+
 	private void closeViewerPdf() {
 		pdfWorkspace.closeViewerPdf();
 		setViewerMode(false);
@@ -229,6 +279,7 @@ public class QuestionBankApplication extends Application {
 		Menu openMenu = createMenu("_Open");
 		openMenu.getItems().add(createMenuItem("_PDF...", () -> openViewerPdf(primaryStage, config)));
 		fileMenu.getItems().addAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
+				new SeparatorMenuItem(), createMenuItem("_Backup Now...", () -> backupNow(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("Op_tions...", () -> showOptions(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("E_xit", Platform::exit));
 		return fileMenu;
@@ -560,10 +611,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showVersionInformation(ApplicationConfig config) {
-		String applicationVersion = getClass().getPackage().getImplementationVersion();
-		if (applicationVersion == null || applicationVersion.isBlank()) {
-			applicationVersion = "Development build";
-		}
+		String applicationVersion = applicationVersion();
 		String javaVersion = System.getProperty("java.version", "Unknown");
 		String javaFxVersion = System.getProperty("javafx.runtime.version", "Unknown");
 		String operatingSystem = System.getProperty("os.name", "Unknown") + " " + System.getProperty("os.version", "");
