@@ -43,9 +43,15 @@ import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.backup.AutomaticBackupRetention;
 import au.edu.eq.questionbank.service.backup.BackupException;
+import au.edu.eq.questionbank.service.backup.BackupKind;
 import au.edu.eq.questionbank.service.backup.BackupRequest;
 import au.edu.eq.questionbank.service.backup.BackupResult;
 import au.edu.eq.questionbank.service.backup.DefaultBackupService;
+import au.edu.eq.questionbank.service.backup.DefaultRestoreExecutor;
+import au.edu.eq.questionbank.service.backup.DefaultRestoreService;
+import au.edu.eq.questionbank.service.backup.RestoreException;
+import au.edu.eq.questionbank.service.backup.RestorePreparation;
+import au.edu.eq.questionbank.service.backup.RestoreResult;
 import au.edu.eq.questionbank.service.backup.ShutdownCoordinator;
 import au.edu.eq.questionbank.service.backup.ShutdownResult;
 import au.edu.eq.questionbank.service.backup.ShutdownStatus;
@@ -74,6 +80,7 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 /**
@@ -102,6 +109,7 @@ public class QuestionBankApplication extends Application {
 	private ExamImportDialog examImportDialog;
 	private Runnable applicationExitAction = Platform::exit;
 	private ShutdownCoordinator shutdownCoordinator;
+	private boolean resourcesClosedForRestore;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -158,6 +166,9 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void stop() throws Exception {
+		if (resourcesClosedForRestore) {
+			return;
+		}
 		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
 			pdfWorkspace.close();
 		}
@@ -229,6 +240,15 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void closeRestorePreparation(Stage primaryStage, RestorePreparation preparation) {
+		try {
+			preparation.close();
+		} catch (IOException e) {
+			showAlert(Alert.AlertType.WARNING, "Restore Backup",
+					"Temporary restore files could not be completely removed.", e.getMessage());
+		}
+	}
+
 	private void closeViewerPdf() {
 		pdfWorkspace.closeViewerPdf();
 		setViewerMode(false);
@@ -241,6 +261,45 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		showResourceCloseFailure(primaryStage, result.failure());
+	}
+
+	private boolean confirmRestore(Stage primaryStage, RestorePreparation preparation) {
+		String restoredData;
+		if (preparation.manifest().kind() == BackupKind.FULL) {
+			restoredData = """
+					This will replace:
+					• the question-bank database
+					• managed PDF files
+					• managed curriculum files
+					""";
+		} else {
+			restoredData = """
+					This will replace the question-bank database only.
+
+					Managed PDF and curriculum files will not be changed.
+					""";
+		}
+		ButtonType restoreButton = new ButtonType("Restore Backup", ButtonBar.ButtonData.OK_DONE);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Restore Backup");
+		alert.setHeaderText("Restore this validated backup?");
+		alert.setContentText("""
+				Backup type: %s
+				Created: %s
+				Database schema: %d
+
+				%s
+
+				A full safety backup of the current data will be created before anything is replaced.
+
+				After a successful restore, the application will close and must be restarted.
+				""".formatted(preparation.manifest().kind(), preparation.manifest().createdAt(),
+				preparation.manifest().databaseSchemaVersion(), restoredData));
+		alert.getButtonTypes().setAll(restoreButton, cancelButton);
+		Optional<ButtonType> result = alert.showAndWait();
+		return result.isPresent() && result.get() == restoreButton;
 	}
 
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
@@ -279,6 +338,7 @@ public class QuestionBankApplication extends Application {
 		openMenu.getItems().add(createMenuItem("_PDF...", () -> openViewerPdf(primaryStage, config)));
 		fileMenu.getItems().addAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
 				new SeparatorMenuItem(), createMenuItem("_Backup Now...", () -> backupNow(primaryStage, config)),
+				createMenuItem("_Restore Backup...", () -> restoreBackup(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("Op_tions...", () -> showOptions(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("E_xit", () -> requestApplicationExit(primaryStage)));
 		return fileMenu;
@@ -537,6 +597,55 @@ public class QuestionBankApplication extends Application {
 			}
 			// RETRY deliberately loops through prepareForExit().
 		}
+	}
+
+	private void restoreBackup(Stage primaryStage, ApplicationConfig config) {
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Restore Question-Bank Backup");
+		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Question-bank backups (*.zip)", "*.zip"));
+		File selectedFile = chooser.showOpenDialog(primaryStage);
+		if (selectedFile == null) {
+			return;
+		}
+		DefaultRestoreService restoreService = new DefaultRestoreService(config);
+		RestorePreparation preparation;
+		try {
+			preparation = restoreService.prepareRestore(selectedFile.toPath());
+		} catch (RestoreException e) {
+			showAlert(Alert.AlertType.ERROR, "Restore Backup", "The selected backup cannot be restored.",
+					failureMessage(e));
+			return;
+		}
+		if (!confirmRestore(primaryStage, preparation)) {
+			closeRestorePreparation(primaryStage, preparation);
+			return;
+		}
+		RestoreResult restoreResult;
+		try {
+			DefaultRestoreExecutor executor = new DefaultRestoreExecutor(config, applicationVersion());
+			restoreResult = executor.applyRestore(preparation, pdfWorkspace);
+			resourcesClosedForRestore = true;
+		} catch (RestoreException e) {
+			closeRestorePreparation(primaryStage, preparation);
+			showAlert(Alert.AlertType.ERROR, "Restore Backup", "The backup could not be restored.", failureMessage(e));
+			if (e.applicationMustExit()) {
+				showAlert(Alert.AlertType.WARNING, "Restart Required", "The application must now close.",
+						"Restart Exam Question Bank before continuing.");
+				applicationExitAction.run();
+			}
+			return;
+		}
+		closeRestorePreparation(primaryStage, preparation);
+		showAlert(Alert.AlertType.INFORMATION, "Restore Backup", "Restore completed successfully.", """
+				The restored data has been installed.
+
+				A pre-restore safety backup was saved to:
+
+				%s
+
+				The application will now close. Restart Exam Question Bank to use the restored data.
+				""".formatted(restoreResult.safetyBackupPath()));
+		applicationExitAction.run();
 	}
 
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
