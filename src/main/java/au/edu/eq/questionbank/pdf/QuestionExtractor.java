@@ -57,6 +57,21 @@ public class QuestionExtractor {
 	}
 
 	/**
+	 * Opens a PDF, extracts one answer region, and writes a PNG image.
+	 *
+	 * @param pdfPath    the PDF represented by the answer region's source document
+	 * @param region     the answer region to extract
+	 * @param outputFile the destination PNG file
+	 * @throws Exception if the PDF cannot be opened, rendered, closed, or written
+	 */
+	public void extractRegion(Path pdfPath, AnswerRegion region, File outputFile) throws Exception {
+		try (PdfSession session = PdfSession.open(pdfPath)) {
+			BufferedImage image = extractRegion(session, region);
+			ImageIO.write(image, "png", outputFile);
+		}
+	}
+
+	/**
 	 * Opens a PDF, extracts one rectangular region, and writes a PNG image.
 	 *
 	 * @param pdfPath    the PDF represented by the region's booklet source document
@@ -72,6 +87,26 @@ public class QuestionExtractor {
 	}
 
 	/**
+	 * Extracts one answer region using an existing PDF session. The session remains
+	 * open.
+	 *
+	 * @param session the session for the region's answer-file source document
+	 * @param region  the rectangular answer region to extract
+	 * @return the cropped region image
+	 * @throws IOException if the page cannot be rendered
+	 */
+	public BufferedImage extractRegion(PdfSession session, AnswerRegion region) throws IOException {
+		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
+		int left = (int) Math.floor(region.x() * page.getWidth());
+		int top = (int) Math.floor(region.y() * page.getHeight());
+		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
+		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
+		right = Math.min(right, page.getWidth());
+		bottom = Math.min(bottom, page.getHeight());
+		return page.getSubimage(left, top, right - left, bottom - top);
+	}
+
+	/**
 	 * Extracts one region using an existing PDF session. The session remains open.
 	 *
 	 * @param session the session for the region's booklet source document
@@ -82,30 +117,6 @@ public class QuestionExtractor {
 	public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
 		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
 		return cropRegion(page, region);
-	}
-
-	/**
-	 * Extracts one answer region using an existing PDF session. The session remains
-	 * open.
-	 *
-	 * @param session the session for the region's answer-file source document
-	 * @param region the rectangular answer region to extract
-	 * @return the cropped region image
-	 * @throws IOException if the page cannot be rendered
-	 */
-	public BufferedImage extractRegion(PdfSession session, AnswerRegion region) throws IOException {
-
-		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
-
-		int left = (int) Math.floor(region.x() * page.getWidth());
-		int top = (int) Math.floor(region.y() * page.getHeight());
-		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
-		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
-
-		right = Math.min(right, page.getWidth());
-		bottom = Math.min(bottom, page.getHeight());
-
-		return page.getSubimage(left, top, right - left, bottom - top);
 	}
 
 	/**
@@ -126,11 +137,9 @@ public class QuestionExtractor {
 			BufferedImage cropped = cropRegion(page, region);
 			regionImages.add(cropped);
 		}
-
 		if (regionImages.isEmpty()) {
 			throw new NoSuchElementException("No value present");
 		}
-
 		int outputWidth = 0;
 		int outputHeight = 0;
 		for (BufferedImage image : regionImages) {
@@ -158,13 +167,10 @@ public class QuestionExtractor {
 		int top = (int) Math.floor(region.y() * page.getHeight());
 		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
 		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
-
 		right = Math.min(right, page.getWidth());
 		bottom = Math.min(bottom, page.getHeight());
-
 		int width = right - left;
 		int height = bottom - top;
-
 		return page.getSubimage(left, top, width, height);
 	}
 }
