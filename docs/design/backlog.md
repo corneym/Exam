@@ -228,19 +228,6 @@ Decide whether relation type/confidence/notes should remain external review/audi
 
 ## Output / Future Sprint Inputs
 
-### Sprint 05 — static web rendering rules
-
-Origin: Batching Exam Questions.
-
-When Sprint 05 is designed/implemented, retain these previously adopted rules:
-
-- web assets are generated at export/build time from authoritative PDF regions;
-- PDFBox is the preferred renderer;
-- generated images are derived artefacts;
-- browser-side PDF.js is not the primary revision-package architecture;
-- source attribution survives rebatching;
-- source PDFs are not required as ordinary web assets.
-
 ### Sprint 06 — SCORM packaging rules
 
 Origin: Batching Exam Questions + current development roadmap.
@@ -421,6 +408,13 @@ Document:
 
 Do not re-add these as unimplemented work:
 
+- Sprint 05 deterministic revision corpus;
+- static hierarchical revision HTML/assets;
+- Subject/Unit/Topic/Subtopic revision navigation;
+- empty-Descriptor suppression;
+- static answer disclosure;
+- revision-export staging and validation;
+- JavaFX revision-export workflow and progress reporting;
 - migrations through the current implemented schema;
 - syllabus selection;
 - mapping persistence/review;

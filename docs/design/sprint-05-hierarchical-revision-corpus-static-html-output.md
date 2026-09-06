@@ -6,7 +6,50 @@
 
 ## Sprint Status
 
-**Planned — Sprint 05.**
+**Complete — implemented and real-data accepted on 6 September 2026.**
+
+## Implementation Outcome
+
+Sprint 05 was implemented on `feature/html-output`.
+
+The completed implementation provides:
+
+- a transient deterministic `RevisionCorpus` built from the current syllabus and existing retrieval semantics;
+- deterministic placement numbering for renderable question placements;
+- completeness statistics distinguishing applicable, renderable and incomplete questions;
+- deterministic derived PNG assets for questions and answer regions;
+- static Subject, Unit, Topic and Subtopic HTML pages;
+- selectable Subtopic pages for Topics that use Subtopics;
+- Descriptor sections only when the Descriptor contains renderable questions;
+- direct Subtopic questions rendered on the Subtopic page without being copied into child Descriptors;
+- native HTML `<details>` / `<summary>` answer disclosure;
+- plain `Answer not yet available.` output where no Answer exists;
+- visible source attribution and original-classification provenance;
+- staged export generation and validation before publication;
+- safe relative links with no dependency on managed source PDFs after export;
+- JavaFX Subject/destination selection;
+- background export execution;
+- genuine progress reporting for question and answer asset rendering;
+- success/failure reporting and duplicate-export protection;
+- deterministic destination naming with numeric suffixes when an export directory already exists.
+
+The final static hierarchy differs slightly from the initial proposed Topic-page layout. When a Topic contains Subtopics, the Topic page is a navigation page and each Subtopic is a separate selectable page. This avoids excessively long Topic pages and preserves the curriculum navigation hierarchy.
+
+The implemented structure is therefore approximately:
+
+```text
+<export-root>/
+├── index.html
+├── assets/
+│   ├── revision.css
+│   ├── questions/
+│   └── answers/
+└── units/
+    └── unit-<id>/
+        ├── index.html
+        ├── topic-<id>.html
+        └── topic-<id>/
+            └── subtopic-<id>.html
 
 ## Repository Baseline
 

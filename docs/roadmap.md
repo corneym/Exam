@@ -2,7 +2,7 @@
 
 > Consolidated remaining work from the known state at 6 September 2026.
 >
-> Completed Sprints 01–04 are deliberately excluded from future milestones except where hardening remains. `DEVELOPMENT_ROADMAP.md` contains the more detailed development sequence; `design/backlog.md` is the authoritative deferred-work list.
+> Completed Sprints 01–05 are deliberately excluded from future milestones except where hardening remains. `DEVELOPMENT_ROADMAP.md` contains the more detailed development sequence; `design/backlog.md` is the authoritative deferred-work list.
 
 ## Already complete — do not reopen as roadmap milestones
 
@@ -21,6 +21,7 @@
 - Sprint 02 directional curriculum applicability.
 - Sprint 03 hierarchical retrieval, asynchronous search and stored-question preview.
 - Sprint 04 backup, restore and data safety.
+- Sprint 05 deterministic revision corpus and static hierarchical HTML export.
 
 ## Milestone 1 — Sprint 04: Backup, Restore and Data Safety
 
@@ -178,9 +179,29 @@ Requirements:
 
 The generated HTML/assets layer should work independently and become Sprint 06's content layer.
 
+### Implemented outcome
+
+The completed export provides:
+
+- deterministic current-curriculum corpus construction;
+- generated question and answer assets;
+- Subject -> Unit -> Topic navigation;
+- selectable Subtopic pages;
+- omission of empty Descriptor sections;
+- direct Subtopic question placement;
+- answer disclosure and missing-answer presentation;
+- source attribution;
+- completeness statistics;
+- staging and validation before publication;
+- JavaFX export selection and background execution;
+- real rendering progress;
+- successful real Chemistry browser acceptance.
+
+This static content layer is now ready for Sprint 06 packaging.
+
 ## Milestone 5 — Sprint 06: SCORM Package Generation and QLearn Validation
 
-**PROPOSED**
+**NEXT / PROPOSED**
 
 ### Goal
 

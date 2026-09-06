@@ -2,7 +2,7 @@
 
 > Authoritative status at 6 September 2026.
 >
-> Repository evidence inspected through the 4 September 2026 main-branch state, supplemented by project-chat evidence through 5 September 2026. Where a chat-produced data artifact is not established as committed/imported into the application, that limitation is stated explicitly.
+> Repository evidence inspected through the 6 September 2026 `feature/html-output` state. Where a separate data artifact is not established as committed/imported into the application, that limitation is stated explicitly.
 
 ## Status summary
 
@@ -10,7 +10,7 @@ The Exam Question Bank is a working Java/JavaFX desktop application with SQLite 
 
 The application is no longer an Excel-backed generation pipeline. Excel is an import/exchange format; SQLite is the live datastore. Original exam and marking PDFs are authoritative source material. Rendered/cropped images are derived.
 
-Completed sprint work currently extends through **Sprint 04 — Backup, Restore and Data Safety**. **Sprint 05 — Hierarchical Revision Corpus and Static HTML Output is the current development sprint.**
+Completed sprint work currently extends through **Sprint 05 — Hierarchical Revision Corpus and Static HTML Output**. **Sprint 06 — SCORM Package Generation and QLearn Validation is the next development sprint.**
 
 ## Implemented and current
 
@@ -288,13 +288,43 @@ Known branch examples include:
 
 ## Implemented foundation, but not the final product feature
 
-### HTML output
+### Revision corpus and static HTML output
 
-**IMPLEMENTED — proof/foundation only.**  
-`HtmlQuestionRenderer` and the source-PDF -> region -> image -> HTML pipeline exist.
+**IMPLEMENTED / CURRENT — Sprint 05 complete.**
 
-**NOT YET IMPLEMENTED — full revision export.**  
-The deterministic current-curriculum corpus, complete student navigation and production static HTML/assets are Sprint 05 work.
+The application can export one Subject's current syllabus as a deterministic static revision website.
+
+Implemented behaviour includes:
+
+- transient current-curriculum `RevisionCorpus` generation;
+- reuse of Sprint 03 current-applicability semantics;
+- deterministic curriculum and question ordering;
+- unique rendered question assets shared across repeated placements;
+- ordered answer-region assets;
+- generated Subject, Unit, Topic and Subtopic pages;
+- selectable Subtopics where the Topic hierarchy contains Subtopics;
+- direct Subtopic question placement;
+- omission of empty Descriptor sections;
+- Descriptor-mode Topic rendering where applicable;
+- generated revision numbering for renderable placements;
+- source attribution and original-classification provenance;
+- native HTML answer disclosure;
+- explicit missing-answer presentation;
+- omission and statistics for zero-region metadata-only questions;
+- staged generation;
+- generated-reference validation;
+- safe publication only after successful validation;
+- portable relative links;
+- no source PDFs copied into the static export;
+- JavaFX Subject/destination workflow;
+- background generation;
+- genuine question/answer progress reporting;
+- success/failure summaries;
+- collision-safe export-directory naming.
+
+The earlier `HtmlQuestionRenderer` remains a small proof/foundation class; the production revision workflow is implemented separately under the revision corpus/output packages.
+
+Real Chemistry browser acceptance was completed successfully on 6 September 2026.
 
 ### PDF/LaTeX output
 
@@ -314,17 +344,15 @@ The new application does not yet have the full SCORM exporter/validator. The tar
 
 ## Current work / next sprint
 
-### Sprint 05 — Hierarchical Revision Corpus and Static HTML Output
+### Sprint 06 — SCORM Package Generation and QLearn Validation
 
-**CURRENT / IN DEVELOPMENT.**
+**NEXT DEVELOPMENT SPRINT.**
 
-Detailed design:
+Sprint 05 now supplies the tested static HTML/assets content layer.
 
-`docs/design/sprint-05-hierarchical-revision-corpus-static-html-output.md`
+Sprint 06 will package that content as an application-generated SCORM ZIP and validate the result against QLearn.
 
-Sprint 05 turns the implemented current-curriculum retrieval semantics into a deterministic student-facing revision corpus and generates static HTML plus derived question/answer assets.
-
-SCORM packaging and QLearn validation remain Sprint 06 work.
+The known-working QLearn SCORM example should be used as an implementation/acceptance reference during Sprint 06 rather than changing the static-content model speculatively.
 
 ## Parallel data/corpus work
 
@@ -360,7 +388,6 @@ SCORM packaging and QLearn validation remain Sprint 06 work.
 
 **PROPOSED**
 
-- Sprint 05 static hierarchical HTML/assets generated at build/export time from source regions.
 - No browser-side PDF.js dependency for the primary static revision package.
 - Sprint 06 application-generated SCORM ZIP and real QLearn validation.
 - Printable assessment resources with sequential generated numbering and retained source attribution.
