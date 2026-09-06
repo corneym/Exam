@@ -124,7 +124,7 @@ public class QuestionSearchPane extends BorderPane {
 	private void cancelActivePreview() {
 		previewGeneration++;
 		if (activePreviewTask != null) {
-			activePreviewTask.cancel();
+			activePreviewTask.cancel(false);
 			activePreviewTask = null;
 		}
 	}
