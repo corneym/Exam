@@ -26,6 +26,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.importer.legacy;
 	opens au.edu.eq.questionbank.model;
 	opens au.edu.eq.questionbank.output;
+	opens au.edu.eq.questionbank.output.revision;
 	opens au.edu.eq.questionbank.pdf;
 	opens au.edu.eq.questionbank.repository.assessment;
 	opens au.edu.eq.questionbank.repository.curriculum;
@@ -33,6 +34,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.service.backup;
 	opens au.edu.eq.questionbank.service.curriculum;
 	opens au.edu.eq.questionbank.service.retrieval;
+	opens au.edu.eq.questionbank.service.revision;
 	opens au.edu.eq.questionbank.ui;
 	opens au.edu.eq.questionbank.ui.model;
 }

@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.ApplicationConfig;
@@ -20,6 +21,12 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.output.revision.RevisionAnswerAssetRenderer;
+import au.edu.eq.questionbank.output.revision.RevisionExportRequest;
+import au.edu.eq.questionbank.output.revision.RevisionExportResult;
+import au.edu.eq.questionbank.output.revision.RevisionExportService;
+import au.edu.eq.questionbank.output.revision.RevisionExportValidator;
+import au.edu.eq.questionbank.output.revision.RevisionQuestionAssetRenderer;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
@@ -62,18 +69,22 @@ import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.layout.BorderPane;
@@ -110,6 +121,8 @@ public class QuestionBankApplication extends Application {
 	private Runnable applicationExitAction = Platform::exit;
 	private ShutdownCoordinator shutdownCoordinator;
 	private boolean resourcesClosedForRestore;
+	private MenuItem revisionExportMenuItem;
+	private boolean revisionExportRunning;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -324,11 +337,12 @@ public class QuestionBankApplication extends Application {
 		return examMenu;
 	}
 
-	private Menu createExportMenu() {
+	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu exportMenu = createMenu("E_xport");
-		MenuItem exportPlaceholder = new MenuItem("No export options yet");
-		exportPlaceholder.setDisable(true);
-		exportMenu.getItems().add(exportPlaceholder);
+		revisionExportMenuItem = createMenuItem("_Revision HTML...",
+				() -> showRevisionExportDialog(primaryStage, config));
+		revisionExportMenuItem.setId("export-revision-html");
+		exportMenu.getItems().add(revisionExportMenuItem);
 		return exportMenu;
 	}
 
@@ -361,7 +375,7 @@ public class QuestionBankApplication extends Application {
 		MenuBar menuBar = new MenuBar();
 		menuBar.getMenus().addAll(createFileMenu(primaryStage, config), createExamMenu(primaryStage, config),
 				createCurriculumMenu(primaryStage, config), createQuestionMenu(primaryStage, config),
-				createExportMenu(), createHelpMenu(config));
+				createExportMenu(primaryStage, config), createHelpMenu(config));
 		return menuBar;
 	}
 
@@ -410,6 +424,19 @@ public class QuestionBankApplication extends Application {
 		return questionMenu;
 	}
 
+	private RevisionExportService createRevisionExportService(ApplicationConfig config) {
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SqliteQuestionRepository revisionQuestionRepository = new SqliteQuestionRepository(database);
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(revisionQuestionRepository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		QuestionExtractor extractor = new QuestionExtractor();
+		return new RevisionExportService(corpusBuilder, new RevisionQuestionAssetRenderer(pdfStore, extractor),
+				new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
+	}
+
 	private BorderPane createRootLayout(Stage primaryStage, ApplicationConfig config) {
 		BorderPane root = new BorderPane();
 		root.setTop(createMenuBar(primaryStage, config));
@@ -436,6 +463,13 @@ public class QuestionBankApplication extends Application {
 			return "An unexpected error occurred.";
 		}
 		return message.toString();
+	}
+
+	private void finishRevisionExport() {
+		revisionExportRunning = false;
+		if (revisionExportMenuItem != null) {
+			revisionExportMenuItem.setDisable(false);
+		}
 	}
 
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
@@ -670,6 +704,29 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private Path revisionExportDestination(Path parent, Subject subject) {
+		if (parent == null) {
+			throw new NullPointerException("parent");
+		}
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		Path normalizedParent = parent.toAbsolutePath().normalize();
+		String subjectName = subject.getName().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-")
+				.replaceAll("^-+", "").replaceAll("-+$", "");
+		if (subjectName.isBlank()) {
+			subjectName = "subject-" + subject.getId();
+		}
+		String baseName = subjectName + "-revision";
+		Path destination = normalizedParent.resolve(baseName);
+		int suffix = 2;
+		while (Files.exists(destination)) {
+			destination = normalizedParent.resolve(baseName + "-" + suffix);
+			suffix++;
+		}
+		return destination;
+	}
+
 	private void setFixedWidth(Region region, double width) {
 		region.setPrefWidth(width);
 		region.setMinWidth(width);
@@ -788,6 +845,44 @@ public class QuestionBankApplication extends Application {
 		alert.showAndWait();
 	}
 
+	private void showRevisionExportDialog(Stage primaryStage, ApplicationConfig config) {
+		if (revisionExportRunning) {
+			return;
+		}
+		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
+				curriculumSelectionModel.getSubject());
+		Optional<ButtonType> result = dialog.showAndWait();
+		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
+			return;
+		}
+		Subject subject = dialog.getSelectedSubject();
+		Path destinationParent = dialog.getDestinationParent();
+		if (subject == null || destinationParent == null) {
+			return;
+		}
+		Path destination = revisionExportDestination(destinationParent, subject);
+		startRevisionExport(primaryStage, config, subject, destination);
+	}
+
+	private void showRevisionExportSuccess(RevisionExportResult result) {
+		String message = """
+				Export location:
+				%s
+
+				Applicable questions: %d
+				Exportable questions: %d
+				Awaiting question capture: %d
+				Questions without answers: %d
+				Preamble review flags: %d
+				""".formatted(result.getDestination(), result.getStatistics().getUniqueApplicableQuestions(),
+				result.getStatistics().getRenderableQuestions(),
+				result.getStatistics().getMissingQuestionRegionQuestions(),
+				result.getStatistics().getQuestionsWithoutAnswers(),
+				result.getStatistics().getPreambleReviewQuestions());
+		showAlert(Alert.AlertType.INFORMATION, "Export Revision HTML", "Revision website exported successfully.",
+				message);
+	}
+
 	private void showStage(Stage primaryStage, BorderPane root) {
 		Scene scene = new Scene(root, SCENE_WIDTH, SCENE_HEIGHT);
 		primaryStage.setTitle("Exam Question Bank");
@@ -864,6 +959,64 @@ public class QuestionBankApplication extends Application {
 		});
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
+	}
+
+	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
+		if (revisionExportRunning) {
+			return;
+		}
+		revisionExportRunning = true;
+		if (revisionExportMenuItem != null) {
+			revisionExportMenuItem.setDisable(true);
+		}
+		RevisionExportService exportService = createRevisionExportService(config);
+		RevisionExportRequest request = new RevisionExportRequest(subject, destination);
+		Task<RevisionExportResult> task = new Task<RevisionExportResult>() {
+
+			@Override
+			protected RevisionExportResult call() throws Exception {
+				updateMessage("Starting export...");
+				updateProgress(-1, 1);
+				return exportService.export(request, (message, completed, total) -> {
+					updateMessage(message);
+					if (total > 0) {
+						updateProgress(completed, total);
+					} else {
+						updateProgress(-1, 1);
+					}
+				});
+			}
+		};
+		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
+		progressAlert.initOwner(primaryStage);
+		progressAlert.setTitle("Export Revision HTML");
+		progressAlert.setHeaderText("Creating revision website...");
+		Label progressLabel = new Label("Starting export...");
+		progressLabel.setWrapText(true);
+		progressLabel.textProperty().bind(task.messageProperty());
+		ProgressBar progressBar = new ProgressBar();
+		progressBar.setPrefWidth(360);
+		progressBar.progressProperty().bind(task.progressProperty());
+		VBox progressContent = new VBox(10, progressLabel, progressBar);
+		progressAlert.getDialogPane().setContent(progressContent);
+		progressAlert.getDialogPane().setGraphic(null);
+		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
+		progressAlert.getButtonTypes().setAll(hideButton);
+		task.setOnSucceeded(event -> {
+			finishRevisionExport();
+			progressAlert.close();
+			showRevisionExportSuccess(task.getValue());
+		});
+		task.setOnFailed(event -> {
+			finishRevisionExport();
+			progressAlert.close();
+			showAlert(Alert.AlertType.ERROR, "Export Revision HTML", "The revision export could not be completed.",
+					failureMessage(task.getException()));
+		});
+		progressAlert.show();
+		Thread thread = new Thread(task, "revision-html-export");
+		thread.setDaemon(true);
+		thread.start();
 	}
 
 	private enum BackupFailureDecision {

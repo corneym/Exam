@@ -1,7 +1,7 @@
 # Exam Question Bank — Development Roadmap
 
 > **Reference date:** 6 September 2026  
-> **Version:** 4  
+> **Version:** 5
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 
 ## 1. Project goal
@@ -129,7 +129,7 @@ The application's mapping subsystem already exists, but this new workbook is not
 
 ## 6. Sprint 04 — Backup, Restore and Data Safety
 
-**Status: planned / next.**
+**Status: complete — merged into `main` on 6 September 2026.**
 
 Detailed design: `docs/design/sprint-04-backup-restore-data-safety.md`.
 
@@ -146,7 +146,7 @@ Core deliverables:
 - restart boundary after successful restore;
 - round-trip fresh-instance tests.
 
-Do not expand Sprint 04 with unrelated capture/export work.
+Sprint 04 is complete. Its detailed sprint design remains the historical record of the implemented data-safety work.
 
 ## 7. Parallel corpus-completion work
 
@@ -182,6 +182,10 @@ Decide whether ingestion/audit needs an explicit disposition so deliberately exc
 These decisions can be documented/backlogged without blocking Sprint 04. If Sprint 05 export can operate correctly with the current one-best-fit/simple-region model, implementation may be scheduled later; but the limitation must remain explicit.
 
 ## 9. Sprint 05 — Hierarchical Revision Corpus and Static HTML Export
+
+**Status: complete — implemented and real-data accepted on 6 September 2026.**
+
+Detailed design: `docs/design/sprint-05-hierarchical-revision-corpus-static-html-output.md`.
 
 ### Goal
 
@@ -229,7 +233,28 @@ Rendered assets are derived and can be rebuilt. The source PDFs remain managed a
 - repeatable regeneration;
 - sensible resource/page boundaries.
 
+### Implemented outcome
+
+Sprint 05 delivered:
+
+- deterministic transient revision-corpus construction;
+- derived question and answer-region assets;
+- Subject and Unit navigation pages;
+- Topic pages;
+- selectable Subtopic pages where the curriculum uses Subtopics;
+- omission of empty Descriptor sections;
+- question cards with generated numbering, marks and provenance;
+- native answer disclosure and missing-answer handling;
+- staged export and reference validation;
+- JavaFX export workflow;
+- genuine rendering progress feedback;
+- real Chemistry browser acceptance.
+
+The static content layer is now the input boundary for Sprint 06.
+
 ## 10. Sprint 06 — SCORM Package Generation and QLearn Validation
+
+**Status: next development sprint.**
 
 ### Goal
 
@@ -356,7 +381,6 @@ Important current backlog themes:
 - shared-context/multipart semantics;
 - out-of-scope disposition;
 - import audit;
-- static export rules;
 - packaging/deployment;
 - future clipboard image content.
 

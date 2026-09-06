@@ -2,7 +2,7 @@
 
 > Authoritative status at 6 September 2026.
 >
-> Repository evidence inspected through the 4 September 2026 main-branch state, supplemented by project-chat evidence through 5 September 2026. Where a chat-produced data artifact is not established as committed/imported into the application, that limitation is stated explicitly.
+> Repository evidence inspected through the 6 September 2026 `feature/html-output` state. Where a separate data artifact is not established as committed/imported into the application, that limitation is stated explicitly.
 
 ## Status summary
 
@@ -10,7 +10,7 @@ The Exam Question Bank is a working Java/JavaFX desktop application with SQLite 
 
 The application is no longer an Excel-backed generation pipeline. Excel is an import/exchange format; SQLite is the live datastore. Original exam and marking PDFs are authoritative source material. Rendered/cropped images are derived.
 
-Completed sprint work currently extends through **Sprint 03 — Question Retrieval**. **Sprint 04 — Backup, Restore and Data Safety is planned, not yet implemented.**
+Completed sprint work currently extends through **Sprint 05 — Hierarchical Revision Corpus and Static HTML Output**. **Sprint 06 — SCORM Package Generation and QLearn Validation is the next development sprint.**
 
 ## Implemented and current
 
@@ -238,6 +238,27 @@ Retrieval includes:
 
 The completed sprint quality gate recorded the automated suite green and manual exercise against real stored questions.
 
+### Backup, restore and data safety
+
+**IMPLEMENTED / CURRENT — Sprint 04 complete**
+
+Sprint 04 delivered:
+
+- versioned backup archives;
+- SQLite-consistent snapshots;
+- manual full backup;
+- automatic database-only backup on normal application close;
+- bounded automatic-backup retention;
+- validated database-only and full restore;
+- pre-restore safety backup;
+- rollback after failed destructive restore;
+- migration-compatibility validation before restore;
+- backup archive path/content validation;
+- backup/restore filesystem-layout hardening;
+- restart boundary after successful or partially destructive restore.
+
+The completed sprint included focused service, SQLite and JavaFX lifecycle tests plus manual full-backup and restore acceptance testing.
+
 ### Testing and development workflow
 
 **IMPLEMENTED / CURRENT**
@@ -262,17 +283,48 @@ Known branch examples include:
 - `feature/legacy-metadata-import`
 - `feature/curriculum-applicability`
 - `feature/question-retrieval`
-- planned `feature/backup-restore`
+- `feature/backup-restore`
+- `feature/html-output`
 
 ## Implemented foundation, but not the final product feature
 
-### HTML output
+### Revision corpus and static HTML output
 
-**IMPLEMENTED — proof/foundation only.**  
-`HtmlQuestionRenderer` and the source-PDF -> region -> image -> HTML pipeline exist.
+**IMPLEMENTED / CURRENT — Sprint 05 complete.**
 
-**NOT YET IMPLEMENTED — full revision export.**  
-The deterministic current-curriculum corpus, complete student navigation and production static HTML/assets are Sprint 05 work.
+The application can export one Subject's current syllabus as a deterministic static revision website.
+
+Implemented behaviour includes:
+
+- transient current-curriculum `RevisionCorpus` generation;
+- reuse of Sprint 03 current-applicability semantics;
+- deterministic curriculum and question ordering;
+- unique rendered question assets shared across repeated placements;
+- ordered answer-region assets;
+- generated Subject, Unit, Topic and Subtopic pages;
+- selectable Subtopics where the Topic hierarchy contains Subtopics;
+- direct Subtopic question placement;
+- omission of empty Descriptor sections;
+- Descriptor-mode Topic rendering where applicable;
+- generated revision numbering for renderable placements;
+- source attribution and original-classification provenance;
+- native HTML answer disclosure;
+- explicit missing-answer presentation;
+- omission and statistics for zero-region metadata-only questions;
+- staged generation;
+- generated-reference validation;
+- safe publication only after successful validation;
+- portable relative links;
+- no source PDFs copied into the static export;
+- JavaFX Subject/destination workflow;
+- background generation;
+- genuine question/answer progress reporting;
+- success/failure summaries;
+- collision-safe export-directory naming.
+
+The earlier `HtmlQuestionRenderer` remains a small proof/foundation class; the production revision workflow is implemented separately under the revision corpus/output packages.
+
+Real Chemistry browser acceptance was completed successfully on 6 September 2026.
 
 ### PDF/LaTeX output
 
@@ -292,24 +344,15 @@ The new application does not yet have the full SCORM exporter/validator. The tar
 
 ## Current work / next sprint
 
-### Sprint 04 — Backup, Restore and Data Safety
+### Sprint 06 — SCORM Package Generation and QLearn Validation
 
-**PROPOSED / NEXT.**
+**NEXT DEVELOPMENT SPRINT.**
 
-The design exists and is explicitly marked planned.
+Sprint 05 now supplies the tested static HTML/assets content layer.
 
-Planned scope includes:
+Sprint 06 will package that content as an application-generated SCORM ZIP and validate the result against QLearn.
 
-- backup-format versioning;
-- consistent SQLite snapshots;
-- manual full backup;
-- automatic DB backup on normal close;
-- backup validation;
-- safe restore and pre-restore protection;
-- restore round-trip testing;
-- retention and explicit failure handling.
-
-Backup/restore should not be described as current functionality until the sprint is completed.
+The known-working QLearn SCORM example should be used as an implementation/acceptance reference during Sprint 06 rather than changing the static-content model speculatively.
 
 ## Parallel data/corpus work
 
@@ -345,7 +388,6 @@ Backup/restore should not be described as current functionality until the sprint
 
 **PROPOSED**
 
-- Sprint 05 static hierarchical HTML/assets generated at build/export time from source regions.
 - No browser-side PDF.js dependency for the primary static revision package.
 - Sprint 06 application-generated SCORM ZIP and real QLearn validation.
 - Printable assessment resources with sequential generated numbering and retained source attribution.
@@ -364,7 +406,6 @@ A later feature may accept image content from the system clipboard (for example 
 
 Do **not** describe the following as current application capabilities:
 
-- automatic backup/restore;
 - completed current-generation SCORM export/QLearn validation;
 - completed current-generation Exam Builder;
 - complete multi-subject current-curriculum/mapping corpus for every science;

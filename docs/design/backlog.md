@@ -228,19 +228,6 @@ Decide whether relation type/confidence/notes should remain external review/audi
 
 ## Output / Future Sprint Inputs
 
-### Sprint 05 — static web rendering rules
-
-Origin: Batching Exam Questions.
-
-When Sprint 05 is designed/implemented, retain these previously adopted rules:
-
-- web assets are generated at export/build time from authoritative PDF regions;
-- PDFBox is the preferred renderer;
-- generated images are derived artefacts;
-- browser-side PDF.js is not the primary revision-package architecture;
-- source attribution survives rebatching;
-- source PDFs are not required as ordinary web assets.
-
 ### Sprint 06 — SCORM packaging rules
 
 Origin: Batching Exam Questions + current development roadmap.
@@ -404,6 +391,22 @@ Continue focus-sensitive test isolation and repeatable clean-suite work.
 
 Retain focused tests for late hierarchy/search/preview completion, repeated disposal and detached-pane event handling.
 
+### Add SQLite-backed revision export integration coverage
+
+Origin: Sprint 05 merge-readiness review.
+
+The current revision-export integration test exercises complete PDF-region-to-HTML generation but uses an in-memory curriculum/retrieval fixture.
+
+Add a temporary-SQLite end-to-end export test using fresh production repository/service instances to cover:
+
+- persisted current/historical curriculum reconstruction;
+- confirmed mapping retrieval;
+- ordered question and answer regions;
+- answer reconstruction;
+- complete revision export after database reopen.
+
+Real Chemistry acceptance has exercised this production path manually, so this is hardening rather than a Sprint 05 merge blocker.
+
 ## Technical Debt
 
 ### Public API documentation
@@ -421,6 +424,13 @@ Document:
 
 Do not re-add these as unimplemented work:
 
+- Sprint 05 deterministic revision corpus;
+- static hierarchical revision HTML/assets;
+- Subject/Unit/Topic/Subtopic revision navigation;
+- empty-Descriptor suppression;
+- static answer disclosure;
+- revision-export staging and validation;
+- JavaFX revision-export workflow and progress reporting;
 - migrations through the current implemented schema;
 - syllabus selection;
 - mapping persistence/review;
