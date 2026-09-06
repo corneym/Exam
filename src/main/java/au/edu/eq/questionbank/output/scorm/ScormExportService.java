@@ -1,0 +1,176 @@
+package au.edu.eq.questionbank.output.scorm;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.stream.Stream;
+
+import au.edu.eq.questionbank.output.revision.RevisionExportProgressListener;
+import au.edu.eq.questionbank.output.revision.RevisionExportRequest;
+import au.edu.eq.questionbank.output.revision.RevisionExportResult;
+import au.edu.eq.questionbank.output.revision.RevisionExportService;
+
+/**
+ * Coordinates generation of a complete SCORM 1.2 revision ZIP.
+ */
+public final class ScormExportService {
+
+	private final RevisionExportService revisionExportService;
+	private final ScormManifestWriter manifestWriter;
+	private final ScormSchemaSupport schemaSupport;
+	private final ScormPackageValidator packageValidator;
+	private final ScormZipWriter zipWriter;
+
+	public ScormExportService(RevisionExportService revisionExportService, ScormManifestWriter manifestWriter,
+			ScormSchemaSupport schemaSupport, ScormPackageValidator packageValidator, ScormZipWriter zipWriter) {
+
+		if (revisionExportService == null) {
+			throw new NullPointerException("revisionExportService");
+		}
+
+		if (manifestWriter == null) {
+			throw new NullPointerException("manifestWriter");
+		}
+
+		if (schemaSupport == null) {
+			throw new NullPointerException("schemaSupport");
+		}
+
+		if (packageValidator == null) {
+			throw new NullPointerException("packageValidator");
+		}
+
+		if (zipWriter == null) {
+			throw new NullPointerException("zipWriter");
+		}
+
+		this.revisionExportService = revisionExportService;
+		this.manifestWriter = manifestWriter;
+		this.schemaSupport = schemaSupport;
+		this.packageValidator = packageValidator;
+		this.zipWriter = zipWriter;
+	}
+
+	private List<Path> collectContentFiles(Path revisionRoot) throws IOException {
+		Path root = revisionRoot.toAbsolutePath().normalize();
+
+		try (Stream<Path> paths = Files.walk(root)) {
+			return paths.filter(Files::isRegularFile).map(root::relativize)
+					.sorted(Comparator.comparing(this::portablePath)).toList();
+		}
+	}
+
+	private void deleteRecursively(Path root) throws IOException {
+		if (!Files.exists(root)) {
+			return;
+		}
+
+		try (Stream<Path> paths = Files.walk(root)) {
+			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+				Files.deleteIfExists(path);
+			}
+		}
+	}
+
+	public ScormExportResult export(ScormExportRequest request) throws IOException {
+		return export(request, (message, completed, total) -> {
+		});
+	}
+
+	public ScormExportResult export(ScormExportRequest request, RevisionExportProgressListener progress)
+			throws IOException {
+
+		if (request == null) {
+			throw new NullPointerException("request");
+		}
+
+		if (progress == null) {
+			throw new NullPointerException("progress");
+		}
+
+		Path destination = request.getDestination().toAbsolutePath().normalize();
+
+		validateDestination(destination);
+
+		Path parent = destination.getParent();
+
+		if (parent == null) {
+			throw new IOException("SCORM export destination must have a parent directory: " + destination);
+		}
+
+		Files.createDirectories(parent);
+
+		Path workspace = Files.createTempDirectory(parent, ".scorm-work-");
+		Throwable failure = null;
+
+		try {
+			Path revisionRoot = workspace.resolve("revision");
+
+			progress.update("Generating revision content...", 0, 0);
+
+			RevisionExportResult revisionResult = revisionExportService
+					.export(new RevisionExportRequest(request.getSubject(), revisionRoot), progress);
+
+			List<Path> contentFiles = collectContentFiles(revisionRoot);
+
+			progress.update("Adding SCORM support files...", 0, 0);
+			schemaSupport.copyTo(revisionRoot);
+
+			progress.update("Writing SCORM manifest...", 0, 0);
+
+			String manifestIdentifier = "eq-question-bank-subject-" + request.getSubject().getId();
+
+			String title = request.getSubject().getName() + " Revision";
+
+			manifestWriter.write(revisionRoot, manifestIdentifier, title, Path.of("index.html"), contentFiles);
+
+			progress.update("Validating SCORM package...", 0, 0);
+			packageValidator.validate(revisionRoot);
+
+			progress.update("Creating SCORM ZIP...", 0, 0);
+			zipWriter.write(revisionRoot, destination);
+
+			progress.update("SCORM export complete.", 1, 1);
+
+			return new ScormExportResult(destination, revisionResult.getStatistics());
+
+		} catch (IOException | RuntimeException exception) {
+			failure = exception;
+			throw exception;
+		} finally {
+			try {
+				deleteRecursively(workspace);
+			} catch (IOException cleanupException) {
+				if (failure != null) {
+					failure.addSuppressed(cleanupException);
+				} else {
+					throw cleanupException;
+				}
+			}
+		}
+	}
+
+	private String portablePath(Path path) {
+		return path.toString().replace(File.separatorChar, '/');
+	}
+
+	private void validateDestination(Path destination) throws IOException {
+		if (Files.exists(destination)) {
+			throw new IOException("SCORM export destination already exists: " + destination);
+		}
+
+		Path fileName = destination.getFileName();
+
+		if (fileName == null || fileName.toString().isBlank()) {
+			throw new IOException("SCORM export destination must name a ZIP file");
+		}
+
+		if (!fileName.toString().toLowerCase(Locale.ROOT).endsWith(".zip")) {
+			throw new IOException("SCORM export destination must use the .zip extension: " + destination);
+		}
+	}
+}
