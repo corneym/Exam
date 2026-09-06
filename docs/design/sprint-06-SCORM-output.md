@@ -6,9 +6,15 @@
 
 ## Status
 
-**Design phase. No production implementation has begun.**
+**IMPLEMENTED / COMPLETE**
 
-Repository baseline:
+This document originated as the pre-implementation Sprint 06 design. Its
+evidence gates, undecided questions and implementation slices are retained
+below as a record of how the sprint was planned. The implemented decisions and
+acceptance outcome are recorded separately so that the original design history
+is not lost.
+
+Original repository baseline:
 
 `main` and `feature/scorm-output` are both at Sprint 05 completion commit:
 
@@ -22,7 +28,7 @@ Sprint 05 static revision HTML/assets are the content input boundary for this sp
 
 Generate a QLearn-compatible SCORM ZIP directly from the Exam Question Bank application using the existing Sprint 05 static revision export, then prove compatibility through a real QLearn import and rendering exercise.
 
-The intended pipeline is:
+The originally intended pipeline was:
 
 ```text
 existing database/curriculum/questions
@@ -44,11 +50,35 @@ ZIP validation
 real QLearn import and browser acceptance
 ```
 
+The implemented pipeline is:
+
+```text
+existing database/curriculum/questions
+        ↓
+existing Sprint 05 RevisionExportService
+        ↓
+validated static revision directory in a private workspace
+        ↓
+SCORM 1.2 support files and manifest
+        ↓
+complete package-directory validation
+        ↓
+deterministic staging ZIP creation and successful close
+        ↓
+publication of the completed ZIP
+        ↓
+real QLearn import and browser acceptance
+```
+
+The implementation validates the complete staged package before ZIP creation.
+The ZIP is written to a staging file and is published only after the archive
+has closed successfully; there is no separate reopen-and-revalidate ZIP step.
+
 SCORM packaging is a new layer around the existing static revision output. It is not a replacement for that output.
 
 ---
 
-# 2. Mandatory QLearn Evidence Gate
+# 2. Mandatory QLearn Evidence Gate (completed)
 
 Before the SCORM profile or manifest contract is fixed, inspect the known-working QLearn SCORM ZIP supplied for this sprint.
 
@@ -79,6 +109,12 @@ Observed features should be classified as:
 QLearn acceptance, not speculation, determines whether an uncertain feature is genuinely required.
 
 No production implementation slice starts until this evidence has been incorporated into the Sprint 06 design.
+
+The evidence gate established SCORM 1.2 with one organisation, one item and one
+SCO resource as the compatibility target. The SCO launches the existing
+`index.html` revision site. Four SCORM schema-support files are included at the
+ZIP root, and no SCORM runtime/API JavaScript is required for this revision
+delivery use case.
 
 ---
 
@@ -205,9 +241,10 @@ Export
 
 ---
 
-# 5. Proposed New Responsibilities
+# 5. New Responsibilities
 
-Exact manifest-specific names may be refined after the QLearn ZIP inspection.
+The following responsibilities were proposed before the QLearn ZIP inspection
+and were subsequently implemented under the names shown.
 
 Likely package:
 
@@ -315,9 +352,10 @@ An invalid or partially written ZIP must never be presented as a successful expo
 
 ---
 
-# 6. Manifest Design Boundary
+# 6. Manifest Design Boundary (pre-implementation record)
 
-The following are intentionally **not yet decided**:
+At the beginning of the sprint, the following were intentionally **not yet
+decided**:
 
 ```text
 SCORM profile/version
@@ -334,6 +372,20 @@ identifier format
 QLearn-specific metadata
 ```
 
+The evidence gate and implementation resolved these questions as follows:
+
+- SCORM 1.2 using the IMS Content Packaging and ADL SCORM namespaces;
+- manifest metadata `schema` = `ADL SCORM` and `schemaversion` = `1.2`;
+- `imsmanifest.xml` and the four required schema-support files at ZIP root;
+- one organisation containing one item linked to one SCO resource;
+- the SCO resource launches `index.html` and declares every generated learning
+  content file exactly once;
+- SCORM control/schema files are package infrastructure and are not declared as
+  SCO learning-content files;
+- deterministic fixed identifiers within each single-manifest package;
+- no completion tracking, score reporting, sequencing, runtime API JavaScript
+  or additional QLearn-specific metadata.
+
 The preferred architectural bias, subject to the reference package, is to preserve Sprint 05 navigation rather than create a second curriculum hierarchy inside SCORM.
 
 For example, a single launch resource pointing at the existing Subject `index.html` would preserve the tested static hierarchy particularly cleanly.
@@ -344,7 +396,7 @@ No score reporting, completion tracking, sequencing or SCORM runtime API code is
 
 ---
 
-# 7. Implementation Slices
+# 7. Implementation Slices (historical plan)
 
 ## Slice 0 — QLearn package characterisation
 
@@ -629,3 +681,32 @@ It is complete only when all three layers have succeeded:
 The real QLearn exercise is therefore a release boundary, not an optional manual smoke test.
 
 A generated ZIP that passes local structural tests but cannot be imported and used in QLearn does not satisfy Sprint 06.
+
+---
+
+# 11. Implementation and Acceptance Outcome
+
+Sprint 06 was completed on 6 September 2026.
+
+The implementation:
+
+- composes `RevisionExportService` rather than duplicating Sprint 05 corpus or
+  static-site generation;
+- generates a deterministic SCORM 1.2 single-SCO manifest and ZIP;
+- validates manifest structure, profile metadata, identifiers, portable
+  references and the exact learning-content inventory;
+- rejects missing, duplicate, absolute, external and package-escaping
+  references;
+- parses the manifest with external entities, external DTD access and external
+  schema access disabled;
+- excludes authoritative source PDFs;
+- stages both the content workspace and ZIP so a partial package is not
+  published as successful;
+- cleans the private content workspace after success or failure;
+- preserves the existing `Export -> Revision HTML...` workflow and adds the
+  separate `Export -> Revision SCORM...` workflow.
+
+Automated focused, JavaFX and full Maven suites passed at sprint completion. A
+representative Chemistry ZIP generated by the application was imported into
+QLearn and launched successfully. This satisfied the Sprint 06 acceptance
+boundary.

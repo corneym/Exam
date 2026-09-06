@@ -89,6 +89,17 @@ public final class ScormZipWriter {
 		return entryName;
 	}
 
+	/**
+	 * Writes all regular package files to a deterministic staging archive and
+	 * publishes it only after the archive closes successfully.
+	 *
+	 * @param packageRoot validated package directory
+	 * @param destinationZip final ZIP path, which must not already exist
+	 * @return the published ZIP path
+	 * @throws IOException if the package is unsafe or the archive cannot be written
+	 *                     or published
+	 * @throws NullPointerException if either path is null
+	 */
 	public Path write(Path packageRoot, Path destinationZip) throws IOException {
 		if (packageRoot == null) {
 			throw new NullPointerException("packageRoot");

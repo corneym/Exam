@@ -25,6 +25,17 @@ public final class ScormExportService {
 	private final ScormPackageValidator packageValidator;
 	private final ScormZipWriter zipWriter;
 
+	/**
+	 * Creates the SCORM orchestration service from the existing revision exporter
+	 * and package-specific collaborators.
+	 *
+	 * @param revisionExportService static revision-content generator
+	 * @param manifestWriter SCORM manifest writer
+	 * @param schemaSupport bundled SCORM support-file copier
+	 * @param packageValidator staged-package validator
+	 * @param zipWriter final ZIP writer
+	 * @throws NullPointerException if any collaborator is null
+	 */
 	public ScormExportService(RevisionExportService revisionExportService, ScormManifestWriter manifestWriter,
 			ScormSchemaSupport schemaSupport, ScormPackageValidator packageValidator, ScormZipWriter zipWriter) {
 
@@ -76,11 +87,31 @@ public final class ScormExportService {
 		}
 	}
 
+	/**
+	 * Generates and publishes a SCORM package without progress notifications.
+	 *
+	 * @param request export Subject and destination
+	 * @return the completed export result
+	 * @throws IOException if content generation, validation, packaging, publication
+	 *                     or workspace cleanup fails
+	 * @throws NullPointerException if {@code request} is null
+	 */
 	public ScormExportResult export(ScormExportRequest request) throws IOException {
 		return export(request, (message, completed, total) -> {
 		});
 	}
 
+	/**
+	 * Generates the static revision content in a private workspace, adds and
+	 * validates the SCORM files, then publishes the completed ZIP.
+	 *
+	 * @param request export Subject and destination
+	 * @param progress listener for revision and packaging progress
+	 * @return the completed export result
+	 * @throws IOException if content generation, validation, packaging, publication
+	 *                     or workspace cleanup fails
+	 * @throws NullPointerException if the request or listener is null
+	 */
 	public ScormExportResult export(ScormExportRequest request, RevisionExportProgressListener progress)
 			throws IOException {
 

@@ -29,6 +29,16 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 	private Path destinationParent;
 	private final Button exportButton;
 
+	/**
+	 * Creates a SCORM export dialog for the available Subjects.
+	 *
+	 * @param owner owner for this dialog and its directory chooser
+	 * @param subjects Subjects available for export
+	 * @param defaultSubject Subject initially selected when it is in
+	 *                       {@code subjects}; otherwise no Subject is selected
+	 * @throws NullPointerException if {@code subjects} or one of its elements is
+	 *                              null
+	 */
 	public ScormExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
 		if (subjects == null) {
 			throw new NullPointerException("subjects");
@@ -110,10 +120,20 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		setDestinationParent(selected.toPath());
 	}
 
+	/**
+	 * Returns the selected directory in which the application will name the ZIP.
+	 *
+	 * @return the absolute normalised directory, or {@code null} until selected
+	 */
 	public Path getDestinationParent() {
 		return destinationParent;
 	}
 
+	/**
+	 * Returns the Subject selected for export.
+	 *
+	 * @return the selected Subject, or {@code null} when none is selected
+	 */
 	public Subject getSelectedSubject() {
 		return subjectBox.getValue();
 	}

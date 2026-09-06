@@ -740,6 +740,86 @@ class QuestionBankApplicationWorkflowTest {
 		assertEquals(parent.resolve("chemistry-revision-scorm-2.zip"), second);
 	}
 
+	@Test
+	void scormExportDoesNotStartWhenOneIsAlreadyRunning(FxRobot robot) throws Exception {
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Path exportParent = Files.createTempDirectory("scorm-ui-duplicate-");
+		Path destination = exportParent.resolve("should-not-exist.zip");
+		setField(application, "scormExportRunning", Boolean.TRUE);
+		robot.interact(() -> {
+			try {
+				invoke(application, "startScormExport",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class }, primaryStage,
+						applicationConfig, chemistry, destination);
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		});
+		assertFalse(Files.exists(destination));
+		setField(application, "scormExportRunning", Boolean.FALSE);
+	}
+
+	@Test
+	void revisionScormExportRunsFromApplicationAndRestoresMenu(FxRobot robot) throws Exception {
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Path exportParent = Files.createTempDirectory("scorm-ui-export-");
+		Path destination = exportParent.resolve("chemistry-revision-scorm.zip");
+		MenuItem exportItem = field(application, "scormExportMenuItem", MenuItem.class);
+		AtomicBoolean disabledWhileStarting = new AtomicBoolean();
+		robot.interact(() -> {
+			try {
+				invoke(application, "startScormExport",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class }, primaryStage,
+						applicationConfig, chemistry, destination);
+				disabledWhileStarting.set(exportItem.isDisable());
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		});
+		assertTrue(disabledWhileStarting.get());
+		WaitForAsyncUtils.waitFor(10, java.util.concurrent.TimeUnit.SECONDS,
+				() -> robot.lookup("OK").tryQuery().isPresent());
+		assertTrue(Files.isRegularFile(destination), "SCORM export did not complete");
+		assertTrue(Files.size(destination) > 0, "SCORM export produced an empty ZIP");
+		robot.clickOn("OK");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
+		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
+	void failedScormExportRestoresMenu(FxRobot robot) throws Exception {
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Path exportParent = Files.createTempDirectory("scorm-ui-failure-");
+		Path destination = exportParent.resolve("not-a-zip.txt");
+		MenuItem exportItem = field(application, "scormExportMenuItem", MenuItem.class);
+		AtomicBoolean disabledWhileStarting = new AtomicBoolean();
+		robot.interact(() -> {
+			try {
+				invoke(application, "startScormExport",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class }, primaryStage,
+						applicationConfig, chemistry, destination);
+				disabledWhileStarting.set(exportItem.isDisable());
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		});
+		assertTrue(disabledWhileStarting.get());
+		WaitForAsyncUtils.waitFor(10, java.util.concurrent.TimeUnit.SECONDS,
+				() -> robot.lookup("OK").tryQuery().isPresent());
+		robot.clickOn("OK");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(Files.exists(destination));
+		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
+		assertFalse(exportItem.isDisable());
+	}
+
 	private void selectFirst(FxRobot robot, String selector) throws Exception {
 		ComboBox<Object> comboBox = comboBox(robot, selector);
 		WaitForAsyncUtils.asyncFx(() -> comboBox.getSelectionModel().selectFirst()).get();

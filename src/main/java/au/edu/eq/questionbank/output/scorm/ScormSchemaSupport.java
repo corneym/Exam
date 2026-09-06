@@ -7,6 +7,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 
+/**
+ * Copies the bundled SCORM 1.2 schema-support files to a package root.
+ */
 public final class ScormSchemaSupport {
 
 	private static final String RESOURCE_ROOT = "/au/edu/eq/questionbank/output/scorm/schema/";
@@ -26,6 +29,13 @@ public final class ScormSchemaSupport {
 		}
 	}
 
+	/**
+	 * Copies all required support files, replacing incomplete staged copies.
+	 *
+	 * @param packageRoot root directory of the staged package
+	 * @throws IOException if a bundled resource is unavailable or cannot be copied
+	 * @throws NullPointerException if {@code packageRoot} is null
+	 */
 	public void copyTo(Path packageRoot) throws IOException {
 		if (packageRoot == null) {
 			throw new NullPointerException("packageRoot");

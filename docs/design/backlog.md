@@ -271,6 +271,17 @@ Origin: Question Retrieval Sprint v3 / final review.
 
 Measure large and multi-region previews. Investigate moving/restructuring image conversion only if visible FX-thread pauses are demonstrated.
 
+### Measure overlap between superseded preview renders
+
+Origin: Sprint 06 merge-readiness review.
+
+Question preview cancellation deliberately does not interrupt PDFBox rendering,
+because interruption can close a channel while PDFBox is still reading it. The
+generation guard prevents a superseded preview from reaching the UI, but a new
+preview may begin before the superseded render has finished in the background.
+Measure this under realistic rapid selection changes before deciding whether
+preview rendering needs serialisation or another bounded-work mechanism.
+
 ## Curriculum Mapping Hardening
 
 ### Decide whether mapping invariants need database enforcement
