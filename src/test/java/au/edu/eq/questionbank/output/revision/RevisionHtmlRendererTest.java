@@ -40,6 +40,25 @@ class RevisionHtmlRendererTest {
 	Path tempDir;
 
 	@Test
+	void omitsDescriptorSectionWhenItHasNoRenderableQuestions() throws Exception {
+		Fixture fixture = new Fixture();
+		RevisionCorpus corpus = fixture.createCorpus(
+				currentNodes -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.subtopic)));
+		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
+				Path.of("assets", "questions", "question-2.png"));
+		RevisionHtmlRenderer renderer = new RevisionHtmlRenderer(List.of(questionAsset), List.of());
+		Path outputRoot = tempDir.resolve("output");
+		renderer.render(corpus, outputRoot);
+		Path subtopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20", "subtopic-21.html"));
+		assertTrue(Files.isRegularFile(subtopicFile));
+		String html = Files.readString(subtopicFile);
+		assertTrue(html.contains("2.1.1 Subtopic classification"));
+		assertTrue(html.contains("question-2.png"));
+		assertFalse(html.contains("2.1.1.1 Nested descriptor"));
+		assertFalse(html.contains("No revision questions available yet."));
+	}
+
+	@Test
 	void rejectsMissingAnswerAssetForPersistedAnswerRegion() throws Exception {
 		Fixture fixture = new Fixture();
 		RevisionCorpus corpus = fixture.createCorpus(currentNodes -> List
@@ -92,18 +111,30 @@ class RevisionHtmlRendererTest {
 	}
 
 	@Test
-	void rendersSubtopicBeforeItsDescriptorSections() throws Exception {
+	void rendersSubtopicAsSelectablePage() throws Exception {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createCorpus(currentNodes -> List.of());
-		RevisionHtmlRenderer renderer = new RevisionHtmlRenderer(List.of(), List.of());
+		RevisionCorpus corpus = fixture.createCorpus(
+				currentNodes -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.subtopic)));
+		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
+				Path.of("assets", "questions", "question-2.png"));
+		RevisionHtmlRenderer renderer = new RevisionHtmlRenderer(List.of(questionAsset), List.of());
 		Path outputRoot = tempDir.resolve("output");
-		renderer.renderTopicPages(corpus, outputRoot);
+		List<Path> htmlFiles = renderer.render(corpus, outputRoot);
 		Path topicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20.html"));
-		String html = Files.readString(topicFile);
-		int subtopicPosition = html.indexOf("2.1.1 Subtopic classification");
-		int descriptorPosition = html.indexOf("2.1.1.1 Nested descriptor");
-		assertTrue(subtopicPosition >= 0);
-		assertTrue(descriptorPosition > subtopicPosition);
+		Path subtopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20", "subtopic-21.html"));
+		assertTrue(Files.isRegularFile(topicFile));
+		assertTrue(Files.isRegularFile(subtopicFile));
+		assertTrue(htmlFiles.contains(subtopicFile.toAbsolutePath().normalize()));
+		String topicHtml = Files.readString(topicFile);
+		assertTrue(topicHtml.contains("href=\"topic-20/subtopic-21.html\""));
+		assertTrue(topicHtml.contains("2.1.1 Subtopic classification"));
+		assertTrue(topicHtml.contains("1 revision question"));
+		assertFalse(topicHtml.contains("question-2.png"));
+		String subtopicHtml = Files.readString(subtopicFile);
+		assertTrue(subtopicHtml.contains("2.1.1 Subtopic classification"));
+		assertTrue(subtopicHtml.contains("src=\"../../../assets/questions/question-2.png\""));
+		assertTrue(subtopicHtml.contains("href=\"../topic-20.html\""));
+		assertFalse(subtopicHtml.contains("2.1.1.1 Nested descriptor"));
 	}
 
 	@Test
@@ -150,6 +181,8 @@ class RevisionHtmlRendererTest {
 		private final Question noAnswerQuestion;
 		private final Question incompleteQuestion;
 		private final InMemoryCurriculumRepository curriculumRepository;
+		private final Subtopic subtopic;
+		private final Descriptor nestedDescriptor;
 
 		private Fixture() {
 			chemistry = new Subject(1, "Chemistry");
@@ -163,9 +196,8 @@ class RevisionHtmlRendererTest {
 			Topic descriptorTopic = new Topic(11, currentVersion, currentUnit, "1.1", "Descriptor topic", 1);
 			directDescriptor = new Descriptor(12, currentVersion, descriptorTopic, "1.1.1", "Direct descriptor", 1);
 			Topic subtopicTopic = new Topic(20, currentVersion, currentUnit, "2.1", "Subtopic mode", 2);
-			Subtopic subtopic = new Subtopic(21, currentVersion, subtopicTopic, "2.1.1", "Subtopic classification", 1);
-			Descriptor nestedDescriptor = new Descriptor(22, currentVersion, subtopic, "2.1.1.1", "Nested descriptor",
-					1);
+			subtopic = new Subtopic(21, currentVersion, subtopicTopic, "2.1.1", "Subtopic classification", 1);
+			nestedDescriptor = new Descriptor(22, currentVersion, subtopic, "2.1.1.1", "Nested descriptor", 1);
 			ExamProvider provider = new ExamProvider(1, "QCAA");
 			Exam exam = new Exam(1, chemistry, provider, 2022, "Chemistry examination");
 			SourceDocument questionSource = new SourceDocument(1, "question.pdf");

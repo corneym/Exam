@@ -13,6 +13,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -331,6 +332,15 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void exportMenuContainsRevisionHtmlCommand(FxRobot robot) {
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		MenuItem exportItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.filter(item -> "export-revision-html".equals(item.getId())).findFirst().orElseThrow();
+		assertEquals("_Revision HTML...", exportItem.getText());
+		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
 	void fileExitCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
 		AtomicInteger exitCount = new AtomicInteger();
 		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
@@ -401,6 +411,76 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(units.isDisabled());
 		assertNull(syllabuses.getValue());
 		assertFalse(syllabuses.isDisabled());
+	}
+
+	@Test
+	void revisionExportDestinationAvoidsExistingExport() throws Exception {
+		Subject chemistry = new Subject(500, "Chemistry");
+		Path parent = Files.createTempDirectory("revision-destination-");
+		Path first = (Path) invoke(application, "revisionExportDestination",
+				new Class<?>[] { Path.class, Subject.class }, parent, chemistry);
+		assertEquals(parent.resolve("chemistry-revision"), first);
+		Files.createDirectories(first);
+		Path second = (Path) invoke(application, "revisionExportDestination",
+				new Class<?>[] { Path.class, Subject.class }, parent, chemistry);
+		assertEquals(parent.resolve("chemistry-revision-2"), second);
+	}
+
+	@Test
+	void revisionExportDoesNotStartWhenOneIsAlreadyRunning(FxRobot robot) throws Exception {
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Path exportParent = Files.createTempDirectory("revision-ui-duplicate-");
+		Path destination = exportParent.resolve("should-not-exist");
+		setField(application, "revisionExportRunning", Boolean.TRUE);
+		robot.interact(() -> {
+			try {
+				invoke(application, "startRevisionExport",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
+						primaryStage, applicationConfig, chemistry, destination);
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		});
+		assertFalse(Files.exists(destination));
+		setField(application, "revisionExportRunning", Boolean.FALSE);
+	}
+
+	@Test
+	void revisionHtmlExportRunsFromApplicationAndRestoresMenu(FxRobot robot) throws Exception {
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Path exportParent = Files.createTempDirectory("revision-ui-export-");
+		Path destination = exportParent.resolve("chemistry-revision");
+		MenuItem exportItem = field(application, "revisionExportMenuItem", MenuItem.class);
+		AtomicBoolean disabledWhileStarting = new AtomicBoolean();
+		robot.interact(() -> {
+			try {
+				invoke(application, "startRevisionExport",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
+						primaryStage, applicationConfig, chemistry, destination);
+				disabledWhileStarting.set(exportItem.isDisable());
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		});
+		assertTrue(disabledWhileStarting.get());
+		long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+		while (!Files.isRegularFile(destination.resolve("index.html")) && System.nanoTime() < deadline) {
+			Thread.sleep(25);
+		}
+		assertTrue(Files.isRegularFile(destination.resolve("index.html")), "Revision export did not complete");
+		assertTrue(Files.isRegularFile(destination.resolve(Path.of("assets", "revision.css"))));
+		/*
+		 * The successful export displays its normal information alert. Close it so the
+		 * FX success handler can finish.
+		 */
+		robot.clickOn("OK");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(field(application, "revisionExportRunning", Boolean.class).booleanValue());
+		assertFalse(exportItem.isDisable());
 	}
 
 	@Start

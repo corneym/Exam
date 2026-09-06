@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.BiConsumer;
 
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.pdf.PdfStore;
@@ -45,17 +46,28 @@ public final class RevisionQuestionAssetRenderer {
 	 *                     written
 	 */
 	public List<RevisionQuestionAsset> render(RevisionCorpus corpus, Path outputRoot) throws IOException {
+		return render(corpus, outputRoot, (completed, total) -> {
+		});
+	}
+
+	List<RevisionQuestionAsset> render(RevisionCorpus corpus, Path outputRoot, BiConsumer<Integer, Integer> progress)
+			throws IOException {
 		if (corpus == null) {
 			throw new NullPointerException("corpus");
 		}
 		if (outputRoot == null) {
 			throw new NullPointerException("outputRoot");
 		}
+		if (progress == null) {
+			throw new NullPointerException("progress");
+		}
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
 		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectRenderableQuestions(rootNode, questionsById);
 		}
+		int total = questionsById.size();
+		progress.accept(Integer.valueOf(0), Integer.valueOf(total));
 		List<RevisionQuestionAsset> assets = new ArrayList<RevisionQuestionAsset>();
 		for (Question question : questionsById.values()) {
 			Path relativePath = questionAssetPath(question);
@@ -79,6 +91,7 @@ public final class RevisionQuestionAssetRenderer {
 				throw new IOException("Question image was not written for question " + question.getId());
 			}
 			assets.add(new RevisionQuestionAsset(question, relativePath));
+			progress.accept(Integer.valueOf(assets.size()), Integer.valueOf(total));
 		}
 		return List.copyOf(assets);
 	}

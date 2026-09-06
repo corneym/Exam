@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.BiConsumer;
 
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerRegion;
@@ -47,17 +48,31 @@ public final class RevisionAnswerAssetRenderer {
 	 *                     written
 	 */
 	public List<RevisionAnswerAsset> render(RevisionCorpus corpus, Path outputRoot) throws IOException {
+		return render(corpus, outputRoot, (completed, total) -> {
+		});
+	}
+
+	List<RevisionAnswerAsset> render(RevisionCorpus corpus, Path outputRoot, BiConsumer<Integer, Integer> progress)
+			throws IOException {
 		if (corpus == null) {
 			throw new NullPointerException("corpus");
 		}
 		if (outputRoot == null) {
 			throw new NullPointerException("outputRoot");
 		}
+		if (progress == null) {
+			throw new NullPointerException("progress");
+		}
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
 		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectQuestionsWithAnswers(rootNode, questionsById);
 		}
+		int total = 0;
+		for (Question question : questionsById.values()) {
+			total += question.getAnswer().getRegions().size();
+		}
+		progress.accept(Integer.valueOf(0), Integer.valueOf(total));
 		List<RevisionAnswerAsset> assets = new ArrayList<RevisionAnswerAsset>();
 		for (Question question : questionsById.values()) {
 			Answer answer = question.getAnswer();
@@ -88,6 +103,7 @@ public final class RevisionAnswerAssetRenderer {
 							+ ", answer region " + regionNumber);
 				}
 				assets.add(new RevisionAnswerAsset(question, region, regionNumber, relativePath));
+				progress.accept(Integer.valueOf(assets.size()), Integer.valueOf(total));
 			}
 		}
 		return List.copyOf(assets);

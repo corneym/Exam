@@ -262,6 +262,14 @@ public final class RevisionHtmlRenderer {
 				Path topicFile = normalizedOutputRoot.resolve(topicRelativePath(unitNode, topicNode));
 				renderTopicPage(corpus, unitNode, topicNode, normalizedOutputRoot, topicFile);
 				htmlFiles.add(topicFile);
+				for (RevisionCorpusNode child : topicNode.getChildren()) {
+					if (child.getCurriculumNode().getLevel() != CurriculumLevel.SUBTOPIC) {
+						continue;
+					}
+					Path subtopicFile = normalizedOutputRoot.resolve(subtopicRelativePath(unitNode, topicNode, child));
+					renderSubtopicPage(corpus, unitNode, topicNode, child, normalizedOutputRoot, subtopicFile);
+					htmlFiles.add(subtopicFile);
+				}
 			}
 		}
 		return List.copyOf(htmlFiles);
@@ -294,6 +302,14 @@ public final class RevisionHtmlRenderer {
 				Path outputFile = normalizedOutputRoot.resolve(topicRelativePath(unitNode, topicNode));
 				renderTopicPage(corpus, unitNode, topicNode, normalizedOutputRoot, outputFile);
 				topicFiles.add(outputFile);
+				for (RevisionCorpusNode child : topicNode.getChildren()) {
+					if (child.getCurriculumNode().getLevel() != CurriculumLevel.SUBTOPIC) {
+						continue;
+					}
+					Path subtopicFile = normalizedOutputRoot.resolve(subtopicRelativePath(unitNode, topicNode, child));
+					renderSubtopicPage(corpus, unitNode, topicNode, child, normalizedOutputRoot, subtopicFile);
+					topicFiles.add(subtopicFile);
+				}
 			}
 		}
 		return List.copyOf(topicFiles);
@@ -339,17 +355,15 @@ public final class RevisionHtmlRenderer {
 
 	private void appendDescriptorSection(StringBuilder html, RevisionCorpusNode descriptorNode, int headingLevel,
 			Path outputRoot, Path outputFile) {
+		if (!hasRenderablePlacements(descriptorNode)) {
+			return;
+		}
 		CurriculumNode descriptor = descriptorNode.getCurriculumNode();
 		html.append("""
 				<section class="curriculum-section descriptor">
 				    <h%d>%s</h%d>
 				""".formatted(headingLevel, escapeText(nodeLabel(descriptor)), headingLevel));
-		int renderedCount = appendQuestionPlacements(html, descriptorNode, outputRoot, outputFile);
-		if (renderedCount == 0) {
-			html.append("""
-					   <p class="empty-state">No revision questions available yet.</p>
-					""");
-		}
+		appendQuestionPlacements(html, descriptorNode, outputRoot, outputFile);
 		html.append("""
 				</section>
 				""");
@@ -405,31 +419,6 @@ public final class RevisionHtmlRenderer {
 		return renderedCount;
 	}
 
-	private void appendSubtopicSection(StringBuilder html, RevisionCorpusNode subtopicNode, Path outputRoot,
-			Path outputFile) {
-		CurriculumNode subtopic = subtopicNode.getCurriculumNode();
-		html.append("""
-				<section class="curriculum-section subtopic">
-				    <h2>%s</h2>
-				""".formatted(escapeText(nodeLabel(subtopic))));
-		int directQuestionCount = appendQuestionPlacements(html, subtopicNode, outputRoot, outputFile);
-		List<RevisionCorpusNode> descriptors = subtopicNode.getChildren();
-		for (RevisionCorpusNode descriptorNode : descriptors) {
-			if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
-				throw new IllegalStateException("Subtopic corpus children must be Descriptor nodes");
-			}
-			appendDescriptorSection(html, descriptorNode, 3, outputRoot, outputFile);
-		}
-		if (directQuestionCount == 0 && descriptors.isEmpty()) {
-			html.append("""
-					   <p class="empty-state">No revision questions available yet.</p>
-					""");
-		}
-		html.append("""
-				</section>
-				""");
-	}
-
 	private int countRenderablePlacements(RevisionCorpusNode node) {
 		int count = 0;
 		for (RevisionQuestionPlacement placement : node.getQuestionPlacements()) {
@@ -449,6 +438,15 @@ public final class RevisionHtmlRenderer {
 
 	private String escapeText(String value) {
 		return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+	}
+
+	private boolean hasRenderablePlacements(RevisionCorpusNode node) {
+		for (RevisionQuestionPlacement placement : node.getQuestionPlacements()) {
+			if (placement.isRenderable()) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private Map<Long, List<RevisionAnswerAsset>> indexAnswerAssets(List<RevisionAnswerAsset> assets) {
@@ -573,6 +571,67 @@ public final class RevisionHtmlRenderer {
 		Files.writeString(outputFile, html.toString());
 	}
 
+	private void renderSubtopicPage(RevisionCorpus corpus, RevisionCorpusNode unitNode, RevisionCorpusNode topicNode,
+			RevisionCorpusNode subtopicNode, Path outputRoot, Path outputFile) throws IOException {
+		Files.createDirectories(outputFile.getParent());
+		CurriculumNode unit = unitNode.getCurriculumNode();
+		CurriculumNode topic = topicNode.getCurriculumNode();
+		CurriculumNode subtopic = subtopicNode.getCurriculumNode();
+		String stylesheetSource = relativeUrl(outputFile, outputRoot, Path.of("assets", "revision.css"));
+		String subjectHref = relativeUrl(outputFile, outputRoot, Path.of("index.html"));
+		String unitHref = relativeUrl(outputFile, outputRoot, unitRelativePath(unitNode));
+		String topicHref = relativeUrl(outputFile, outputRoot, topicRelativePath(unitNode, topicNode));
+		StringBuilder html = new StringBuilder();
+		html.append("""
+				<!DOCTYPE html>
+				<html lang="en">
+				<head>
+				    <meta charset="UTF-8">
+				    <meta name="viewport" content="width=device-width, initial-scale=1">
+				    <title>%s — %s Revision</title>
+				    <link rel="stylesheet" href="%s">
+				</head>
+				<body>
+				<main class="page">
+				    <nav class="breadcrumbs" aria-label="Breadcrumb">
+				        <a href="%s">%s</a>
+				        ›
+				        <a href="%s">%s</a>
+				        ›
+				        <a href="%s">%s</a>
+				        ›
+				        <span aria-current="page">%s</span>
+				    </nav>
+
+				    <header class="page-header">
+				        <p class="eyebrow">%s · %s</p>
+				        <h1>%s</h1>
+				    </header>
+				""".formatted(escapeText(subtopic.getName()), escapeText(corpus.getSubject().getName()),
+				stylesheetSource, subjectHref, escapeText(corpus.getSubject().getName()), unitHref,
+				escapeText(nodeLabel(unit)), topicHref, escapeText(nodeLabel(topic)), escapeText(nodeLabel(subtopic)),
+				escapeText(corpus.getSubject().getName()), escapeText(corpus.getSyllabusVersion().getName()),
+				escapeText(nodeLabel(subtopic))));
+		appendQuestionPlacements(html, subtopicNode, outputRoot, outputFile);
+		for (RevisionCorpusNode descriptorNode : subtopicNode.getChildren()) {
+			if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
+				throw new IllegalStateException("Subtopic corpus children must be Descriptor nodes");
+			}
+			appendDescriptorSection(html, descriptorNode, 2, outputRoot, outputFile);
+		}
+		if (countRenderablePlacements(subtopicNode) == 0) {
+			html.append("""
+					   <p class="empty-state">No revision questions available for this subtopic yet.</p>
+					""");
+		}
+		html.append("""
+				</main>
+				</body>
+				</html>
+				""");
+		Files.writeString(outputFile, html.toString());
+	}
+
 	private void renderTopicPage(RevisionCorpus corpus, RevisionCorpusNode unitNode, RevisionCorpusNode topicNode,
 			Path outputRoot, Path outputFile) throws IOException {
 		Files.createDirectories(outputFile.getParent());
@@ -609,20 +668,52 @@ public final class RevisionHtmlRenderer {
 				escapeText(nodeLabel(topic)), escapeText(corpus.getSubject().getName()),
 				escapeText(corpus.getSyllabusVersion().getName()), escapeText(nodeLabel(topic))));
 		List<RevisionCorpusNode> children = topicNode.getChildren();
-		for (RevisionCorpusNode child : children) {
-			CurriculumLevel level = child.getCurriculumNode().getLevel();
-			if (level == CurriculumLevel.DESCRIPTOR) {
-				appendDescriptorSection(html, child, 2, outputRoot, outputFile);
-			} else if (level == CurriculumLevel.SUBTOPIC) {
-				appendSubtopicSection(html, child, outputRoot, outputFile);
-			} else {
-				throw new IllegalStateException("Topic corpus children must be Subtopic or Descriptor nodes");
-			}
-		}
 		if (children.isEmpty()) {
 			html.append("""
 					   <p class="empty-state">No revision questions available for this topic yet.</p>
 					""");
+		} else {
+			CurriculumLevel childLevel = children.getFirst().getCurriculumNode().getLevel();
+			if (childLevel == CurriculumLevel.SUBTOPIC) {
+				html.append("""
+						   <h2>Subtopics</h2>
+						   <ul class="navigation-list">
+						""");
+				for (RevisionCorpusNode subtopicNode : children) {
+					if (subtopicNode.getCurriculumNode().getLevel() != CurriculumLevel.SUBTOPIC) {
+						throw new IllegalStateException(
+								"Topic corpus children must not mix Subtopic and Descriptor nodes");
+					}
+					String href = relativeUrl(outputFile, outputRoot,
+							subtopicRelativePath(unitNode, topicNode, subtopicNode));
+					int questionCount = countRenderablePlacements(subtopicNode);
+					html.append("""
+							      <li>
+							          <a href="%s">%s</a>
+							          <span class="resource-count">%s</span>
+							      </li>
+							""".formatted(href, escapeText(nodeLabel(subtopicNode.getCurriculumNode())),
+							escapeText(questionCountLabel(questionCount))));
+				}
+				html.append("""
+						   </ul>
+						""");
+			} else if (childLevel == CurriculumLevel.DESCRIPTOR) {
+				for (RevisionCorpusNode descriptorNode : children) {
+					if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
+						throw new IllegalStateException(
+								"Topic corpus children must not mix Subtopic and Descriptor nodes");
+					}
+					appendDescriptorSection(html, descriptorNode, 2, outputRoot, outputFile);
+				}
+				if (countRenderablePlacements(topicNode) == 0) {
+					html.append("""
+							   <p class="empty-state">No revision questions available for this topic yet.</p>
+							""");
+				}
+			} else {
+				throw new IllegalStateException("Topic corpus children must be Subtopic or Descriptor nodes");
+			}
 		}
 		html.append("""
 				</main>
@@ -688,6 +779,13 @@ public final class RevisionHtmlRenderer {
 				</html>
 				""");
 		Files.writeString(outputFile, html.toString());
+	}
+
+	private Path subtopicRelativePath(RevisionCorpusNode unitNode, RevisionCorpusNode topicNode,
+			RevisionCorpusNode subtopicNode) {
+		return Path.of("units", "unit-" + unitNode.getCurriculumNode().getId(),
+				"topic-" + topicNode.getCurriculumNode().getId(),
+				"subtopic-" + subtopicNode.getCurriculumNode().getId() + ".html");
 	}
 
 	private Path topicRelativePath(RevisionCorpusNode unitNode, RevisionCorpusNode topicNode) {

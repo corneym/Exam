@@ -47,8 +47,17 @@ public final class RevisionExportService {
 	}
 
 	public RevisionExportResult export(RevisionExportRequest request) throws IOException {
+		return export(request, (message, completed, total) -> {
+		});
+	}
+
+	public RevisionExportResult export(RevisionExportRequest request, RevisionExportProgressListener progress)
+			throws IOException {
 		if (request == null) {
 			throw new NullPointerException("request");
+		}
+		if (progress == null) {
+			throw new NullPointerException("progress");
 		}
 		Path destination = request.getDestination().toAbsolutePath().normalize();
 		validateDestination(destination);
@@ -62,17 +71,26 @@ public final class RevisionExportService {
 		if (!staging.getParent().equals(parent)) {
 			throw new IOException("Revision export staging directory escaped destination parent");
 		}
+		progress.update("Building revision corpus...", 0, 0);
 		RevisionCorpus corpus = corpusBuilder.build(request.getSubject());
 		boolean promoted = false;
 		try {
 			Files.createDirectory(staging);
-			List<RevisionQuestionAsset> questionAssets = questionAssetRenderer.render(corpus, staging);
-			List<RevisionAnswerAsset> answerAssets = answerAssetRenderer.render(corpus, staging);
+			List<RevisionQuestionAsset> questionAssets = questionAssetRenderer.render(corpus, staging,
+					(completed, total) -> progress.update("Rendering questions: " + completed + " / " + total,
+							completed.intValue(), total.intValue()));
+			List<RevisionAnswerAsset> answerAssets = answerAssetRenderer.render(corpus, staging,
+					(completed, total) -> progress.update("Rendering answers: " + completed + " / " + total,
+							completed.intValue(), total.intValue()));
+			progress.update("Writing HTML...", 0, 0);
 			RevisionHtmlRenderer htmlRenderer = new RevisionHtmlRenderer(questionAssets, answerAssets);
 			List<Path> htmlFiles = htmlRenderer.render(corpus, staging);
+			progress.update("Validating export...", 0, 0);
 			validator.validate(staging, corpus, htmlFiles, questionAssets, answerAssets);
+			progress.update("Publishing export...", 0, 0);
 			promote(staging, destination);
 			promoted = true;
+			progress.update("Export complete.", 1, 1);
 			return new RevisionExportResult(destination, corpus.getStatistics());
 		} finally {
 			if (!promoted && Files.exists(staging)) {
