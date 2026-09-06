@@ -66,12 +66,6 @@ class QuestionBankApplicationWorkflowTest {
 	private static final String CURRICULUM_2019 = "CHM Study Checklist [2019 Syllabus].xlsx";
 	private static final String CURRICULUM_2025_UNITS_1_2 = "CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx";
 	private static final String CURRICULUM_2025_UNITS_3_4 = "CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx";
-	private QuestionBankApplication application;
-	private ApplicationConfig applicationConfig;
-	private Stage primaryStage;
-	private Path examPdf;
-	private Path pdfDataRoot;
-	private Path databasePath;
 
 	private static <T> T field(Object owner, String fieldName, Class<T> type) throws Exception {
 		Field field = owner.getClass().getDeclaredField(fieldName);
@@ -102,6 +96,26 @@ class QuestionBankApplicationWorkflowTest {
 		field.set(owner, value);
 	}
 
+	private QuestionBankApplication application;
+
+	private ApplicationConfig applicationConfig;
+
+	private Stage primaryStage;
+
+	private Path examPdf;
+
+	private Path pdfDataRoot;
+
+	private Path databasePath;
+
+	private AnswerCapturePane answerCapturePane() {
+		try {
+			return field(application, "answerCapturePane", AnswerCapturePane.class);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
+
 	@Test
 	void answerRegionControlsResetAcrossSelectionAndPdfModeChanges(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
@@ -126,6 +140,32 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(addAnswerRegion.isDisabled());
 		assertTrue(clearAnswerSelection.isDisabled());
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+	}
+
+	private void assertAnswerEntryControlsEnabled(FxRobot robot) {
+		assertFalse(lookup(robot, "#answer-text", TextField.class).isDisabled());
+		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
+		assertFalse(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
+	}
+
+	private void assertInitialAnswerControlsDisabled(FxRobot robot) {
+		assertTrue(lookup(robot, "#answer-text", TextField.class).isDisabled());
+		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
+		assertTrue(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
+		assertTrue(lookup(robot, "#add-answer-region", Button.class).isDisabled());
+		assertTrue(lookup(robot, "#clear-answer-selection", Button.class).isDisabled());
+	}
+
+	private long automaticBackupCount() throws IOException {
+		Path automaticBackupDirectory = applicationConfig.dataRoot().resolve("backups").resolve("automatic");
+		if (!Files.isDirectory(automaticBackupDirectory)) {
+			return 0;
+		}
+		try (Stream<Path> stream = Files.list(automaticBackupDirectory)) {
+			return stream.filter(Files::isRegularFile)
+					.filter(path -> path.getFileName().toString().startsWith("question-bank-auto-"))
+					.filter(path -> path.getFileName().toString().endsWith(".zip")).count();
+		}
 	}
 
 	@Test
@@ -236,6 +276,28 @@ class QuestionBankApplicationWorkflowTest {
 		assertEquals("2.1.1", model.getClassification().getCode());
 	}
 
+	private Question captureQuestion(FxRobot robot, String questionCode) throws Exception {
+		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
+		robot.clickOn(questionCodeField).write(questionCode);
+		TextField marksField = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(marksField).write("1");
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-question-region");
+		robot.clickOn("#save-question");
+		WaitForAsyncUtils.waitForFxEvents();
+		Question savedQuestion = null;
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		for (Question question : unansweredQuestions.getItems()) {
+			if (questionCode.equals(question.getQuestionCode())) {
+				savedQuestion = question;
+				break;
+			}
+		}
+		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
+		assertNotNull(savedQuestion, "Question save status: " + saveStatus.getText());
+		return savedQuestion;
+	}
+
 	@Test
 	void capturesQuestionThenSavesTextOnlyAnswer(FxRobot robot) throws Exception {
 		assertInitialAnswerControlsDisabled(robot);
@@ -331,12 +393,125 @@ class QuestionBankApplicationWorkflowTest {
 		}
 	}
 
+	@SuppressWarnings("unchecked")
+	private <T> ComboBox<T> comboBox(FxRobot robot, String selector) {
+		return robot.lookup(selector).queryAs(ComboBox.class);
+	}
+
+	private void copyCurriculumFiles(Path curriculumDataRoot) throws Exception {
+		createCurriculumFile(curriculumDataRoot, "2019", CURRICULUM_2019, "1");
+		createCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_1_2, "1");
+		createCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_3_4, "3");
+	}
+
+	private void createCurriculumDatabase(Path databasePath) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SyllabusVersion syllabus2025 = writer.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = writer.insertUnit(syllabus2025, "1", "Unit one", 1);
+		Topic topic = writer.insertTopic(unit, "1.1", "Topic one", 1);
+		writer.insertDescriptor(topic, "1.1.1", "Descriptor one", 1);
+		SyllabusVersion syllabus2019 = writer.insertSyllabusVersion(chemistry, "2019", false);
+		Unit historicalUnit = writer.insertUnit(syllabus2019, "3", "Historical unit", 1);
+		Topic historicalTopic = writer.insertTopic(historicalUnit, "3.1", "Historical topic", 1);
+		writer.insertDescriptor(historicalTopic, "3.1.1", "Historical descriptor", 1);
+		Subject physics = writer.insertSubject("Physics");
+		SyllabusVersion physicsSyllabus = writer.insertSyllabusVersion(physics, "2025", true);
+		Unit physicsUnit = writer.insertUnit(physicsSyllabus, "1", "Unit one", 1);
+		Topic physicsTopic = writer.insertTopic(physicsUnit, "1.1", "Topic one", 1);
+		writer.insertSubtopic(physicsTopic, "1.1.1", "Subtopic one", 1);
+		Subject biology = writer.insertSubject("Biology");
+		SyllabusVersion biology2019 = writer.insertSyllabusVersion(biology, "2019", false);
+		Unit biologyUnit = writer.insertUnit(biology2019, "2", "Biology historical unit", 1);
+		Topic biologyTopic = writer.insertTopic(biologyUnit, "2.1", "Biology historical topic", 1);
+		writer.insertDescriptor(biologyTopic, "2.1.1", "Biology historical descriptor", 1);
+	}
+
+	private void createCurriculumFile(Path curriculumDataRoot, String version, String fileName, String unitCode)
+			throws Exception {
+		Path destination = curriculumDataRoot.resolve("chemistry").resolve(version).resolve(fileName);
+		Files.createDirectories(destination.getParent());
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet sheet = workbook.createSheet("Curriculum");
+			Row header = sheet.createRow(0);
+			header.createCell(0).setCellValue("Code");
+			header.createCell(1).setCellValue("Content");
+			Row unit = sheet.createRow(1);
+			unit.createCell(0).setCellValue(unitCode);
+			unit.createCell(1).setCellValue("Test unit " + unitCode);
+			String topicCode = unitCode + ".1";
+			Row topic = sheet.createRow(2);
+			topic.createCell(0).setCellValue(topicCode);
+			topic.createCell(1).setCellValue("Test topic");
+			String subtopicCode = topicCode + ".1";
+			Row subtopic = sheet.createRow(3);
+			subtopic.createCell(0).setCellValue(subtopicCode);
+			subtopic.createCell(1).setCellValue("Test subtopic");
+			Row descriptor = sheet.createRow(4);
+			descriptor.createCell(0).setCellValue(subtopicCode + ".1");
+			descriptor.createCell(1).setCellValue("Test descriptor");
+			try (OutputStream output = Files.newOutputStream(destination)) {
+				workbook.write(output);
+			}
+		}
+	}
+
+	private Path createTwoPagePdf(Path path) throws Exception {
+		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage());
+			document.addPage(new PDPage());
+			document.save(path.toFile());
+		}
+		try (PDDocument ignored = Loader.loadPDF(path.toFile())) {
+			return path;
+		}
+	}
+
+	private void dragRegionOnDisplayedPage(FxRobot robot) throws Exception {
+		ImageView pageView = lookup(robot, "#pdf-page-view", ImageView.class);
+		robot.interact(() -> {
+			fireMouseEvent(pageView, MouseEvent.MOUSE_PRESSED, 30, 30, true);
+			fireMouseEvent(pageView, MouseEvent.MOUSE_DRAGGED, 160, 150, true);
+			fireMouseEvent(pageView, MouseEvent.MOUSE_RELEASED, 160, 150, false);
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
+	private ExamImportDialog examImportDialog() {
+		try {
+			return field(application, "examImportDialog", ExamImportDialog.class);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	private ExamMetadataPane examMetadataPane() {
+		try {
+			return field(application, "examMetadataPane", ExamMetadataPane.class);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
+
 	@Test
 	void exportMenuContainsRevisionHtmlCommand(FxRobot robot) {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 		MenuItem exportItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
 				.filter(item -> "export-revision-html".equals(item.getId())).findFirst().orElseThrow();
 		assertEquals("_Revision HTML...", exportItem.getText());
+		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
+	void exportMenuContainsRevisionScormCommand(FxRobot robot) {
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+
+		MenuItem exportItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.filter(item -> "export-revision-scorm".equals(item.getId())).findFirst().orElseThrow();
+
+		assertEquals("Revision _SCORM...", exportItem.getText());
 		assertFalse(exportItem.isDisable());
 	}
 
@@ -350,6 +525,17 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(1, exitCount.get());
 		assertEquals(1, automaticBackupCount());
+	}
+
+	private MenuItem fileExitMenuItem() {
+		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
+		MenuBar menuBar = (MenuBar) root.getTop();
+		for (MenuItem item : menuBar.getMenus().get(0).getItems()) {
+			if ("E_xit".equals(item.getText())) {
+				return item;
+			}
+		}
+		throw new AssertionError("File -> Exit menu item not found");
 	}
 
 	@Test
@@ -368,6 +554,58 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(addAnswerRegion.isDisabled());
 		assertTrue(clearAnswerSelection.isDisabled());
+	}
+
+	private void openAnswerPdfForTest(Question question) throws Exception {
+		SelectedPdf selectedPdf = new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot);
+		WaitForAsyncUtils.asyncFx(() -> answerCapturePane().selectAnswerPdf(question, selectedPdf)).get();
+	}
+
+	private void openExamPdfForTest() throws Exception {
+		examMetadataPane().selectExamPdf(new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot));
+	}
+
+	private PdfWorkspacePane pdfWorkspace() {
+		try {
+			return field(application, "pdfWorkspace", PdfWorkspacePane.class);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	private void prepareExamAndClassification(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry");
+	}
+
+	private void prepareExamAndClassification(FxRobot robot, String subjectName) throws Exception {
+		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
+		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
+		Subject selectedSubject = null;
+		for (Subject subject : examSubject.getItems()) {
+			if (subjectName.equals(subject.getName())) {
+				selectedSubject = subject;
+				break;
+			}
+		}
+		assertNotNull(selectedSubject);
+		Subject subjectSelection = selectedSubject;
+		ComboBox<String> provider = comboBox(robot, "#exam-provider");
+		ComboBox<Integer> year = comboBox(robot, "#exam-year");
+		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
+		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
+		robot.interact(() -> {
+			examSubject.setValue(subjectSelection);
+			provider.getEditor().setText("QCAA");
+			year.getSelectionModel().select(Integer.valueOf(2024));
+			assessment.getEditor().setText("External Assessment");
+			booklet.getEditor().setText("Paper 1 MCQ");
+		});
+		robot.clickOn("#set-exam");
+		WaitForAsyncUtils.waitForFxEvents();
+		WaitForAsyncUtils.asyncFx(() -> examImportDialog().close()).get();
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirst(robot, "#curriculum-subtopic");
 	}
 
 	@Test
@@ -483,258 +721,23 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(exportItem.isDisable());
 	}
 
-	@Start
-	void start(Stage stage) throws Exception {
-		Path testRoot = Files.createTempDirectory("question-bank-ui-");
-		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
-		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
-		databasePath = testRoot.resolve("questionbank.db");
-		createCurriculumDatabase(databasePath);
-		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
-		applicationConfig = new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
-		primaryStage = stage;
-		application = new QuestionBankApplication();
-		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
-				applicationConfig);
-		openExamPdfForTest();
-	}
-
-	@AfterEach
-	void stopApplication() throws Exception {
-		application.stop();
-	}
-
 	@Test
-	void windowCloseCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
-		AtomicInteger exitCount = new AtomicInteger();
-		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
-		assertEquals(0, automaticBackupCount());
-		robot.interact(
-				() -> Event.fireEvent(primaryStage, new WindowEvent(primaryStage, WindowEvent.WINDOW_CLOSE_REQUEST)));
-		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals(1, exitCount.get());
-		assertEquals(1, automaticBackupCount());
-	}
+	void scormExportDestinationAvoidsExistingZip() throws Exception {
+		Subject chemistry = new Subject(500, "Chemistry");
 
-	private AnswerCapturePane answerCapturePane() {
-		try {
-			return field(application, "answerCapturePane", AnswerCapturePane.class);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
+		Path parent = Files.createTempDirectory("scorm-destination-");
 
-	private void assertAnswerEntryControlsEnabled(FxRobot robot) {
-		assertFalse(lookup(robot, "#answer-text", TextField.class).isDisabled());
-		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
-		assertFalse(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
-	}
+		Path first = (Path) invoke(application, "scormExportDestination", new Class<?>[] { Path.class, Subject.class },
+				parent, chemistry);
 
-	private void assertInitialAnswerControlsDisabled(FxRobot robot) {
-		assertTrue(lookup(robot, "#answer-text", TextField.class).isDisabled());
-		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
-		assertTrue(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
-		assertTrue(lookup(robot, "#add-answer-region", Button.class).isDisabled());
-		assertTrue(lookup(robot, "#clear-answer-selection", Button.class).isDisabled());
-	}
+		assertEquals(parent.resolve("chemistry-revision-scorm.zip"), first);
 
-	private long automaticBackupCount() throws IOException {
-		Path automaticBackupDirectory = applicationConfig.dataRoot().resolve("backups").resolve("automatic");
-		if (!Files.isDirectory(automaticBackupDirectory)) {
-			return 0;
-		}
-		try (Stream<Path> stream = Files.list(automaticBackupDirectory)) {
-			return stream.filter(Files::isRegularFile)
-					.filter(path -> path.getFileName().toString().startsWith("question-bank-auto-"))
-					.filter(path -> path.getFileName().toString().endsWith(".zip")).count();
-		}
-	}
+		Files.writeString(first, "existing");
 
-	private Question captureQuestion(FxRobot robot, String questionCode) throws Exception {
-		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
-		robot.clickOn(questionCodeField).write(questionCode);
-		TextField marksField = lookup(robot, "#question-marks", TextField.class);
-		robot.clickOn(marksField).write("1");
-		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
-		robot.clickOn("#save-question");
-		WaitForAsyncUtils.waitForFxEvents();
-		Question savedQuestion = null;
-		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-		for (Question question : unansweredQuestions.getItems()) {
-			if (questionCode.equals(question.getQuestionCode())) {
-				savedQuestion = question;
-				break;
-			}
-		}
-		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
-		assertNotNull(savedQuestion, "Question save status: " + saveStatus.getText());
-		return savedQuestion;
-	}
+		Path second = (Path) invoke(application, "scormExportDestination", new Class<?>[] { Path.class, Subject.class },
+				parent, chemistry);
 
-	@SuppressWarnings("unchecked")
-	private <T> ComboBox<T> comboBox(FxRobot robot, String selector) {
-		return robot.lookup(selector).queryAs(ComboBox.class);
-	}
-
-	private void copyCurriculumFiles(Path curriculumDataRoot) throws Exception {
-		createCurriculumFile(curriculumDataRoot, "2019", CURRICULUM_2019, "1");
-		createCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_1_2, "1");
-		createCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_3_4, "3");
-	}
-
-	private void createCurriculumDatabase(Path databasePath) throws Exception {
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		database.initialiseSchema();
-		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
-		Subject chemistry = writer.insertSubject("Chemistry");
-		SyllabusVersion syllabus2025 = writer.insertSyllabusVersion(chemistry, "2025", true);
-		Unit unit = writer.insertUnit(syllabus2025, "1", "Unit one", 1);
-		Topic topic = writer.insertTopic(unit, "1.1", "Topic one", 1);
-		writer.insertDescriptor(topic, "1.1.1", "Descriptor one", 1);
-		SyllabusVersion syllabus2019 = writer.insertSyllabusVersion(chemistry, "2019", false);
-		Unit historicalUnit = writer.insertUnit(syllabus2019, "3", "Historical unit", 1);
-		Topic historicalTopic = writer.insertTopic(historicalUnit, "3.1", "Historical topic", 1);
-		writer.insertDescriptor(historicalTopic, "3.1.1", "Historical descriptor", 1);
-		Subject physics = writer.insertSubject("Physics");
-		SyllabusVersion physicsSyllabus = writer.insertSyllabusVersion(physics, "2025", true);
-		Unit physicsUnit = writer.insertUnit(physicsSyllabus, "1", "Unit one", 1);
-		Topic physicsTopic = writer.insertTopic(physicsUnit, "1.1", "Topic one", 1);
-		writer.insertSubtopic(physicsTopic, "1.1.1", "Subtopic one", 1);
-		Subject biology = writer.insertSubject("Biology");
-		SyllabusVersion biology2019 = writer.insertSyllabusVersion(biology, "2019", false);
-		Unit biologyUnit = writer.insertUnit(biology2019, "2", "Biology historical unit", 1);
-		Topic biologyTopic = writer.insertTopic(biologyUnit, "2.1", "Biology historical topic", 1);
-		writer.insertDescriptor(biologyTopic, "2.1.1", "Biology historical descriptor", 1);
-	}
-
-	private void createCurriculumFile(Path curriculumDataRoot, String version, String fileName, String unitCode)
-			throws Exception {
-		Path destination = curriculumDataRoot.resolve("chemistry").resolve(version).resolve(fileName);
-		Files.createDirectories(destination.getParent());
-		try (Workbook workbook = new XSSFWorkbook()) {
-			Sheet sheet = workbook.createSheet("Curriculum");
-			Row header = sheet.createRow(0);
-			header.createCell(0).setCellValue("Code");
-			header.createCell(1).setCellValue("Content");
-			Row unit = sheet.createRow(1);
-			unit.createCell(0).setCellValue(unitCode);
-			unit.createCell(1).setCellValue("Test unit " + unitCode);
-			String topicCode = unitCode + ".1";
-			Row topic = sheet.createRow(2);
-			topic.createCell(0).setCellValue(topicCode);
-			topic.createCell(1).setCellValue("Test topic");
-			String subtopicCode = topicCode + ".1";
-			Row subtopic = sheet.createRow(3);
-			subtopic.createCell(0).setCellValue(subtopicCode);
-			subtopic.createCell(1).setCellValue("Test subtopic");
-			Row descriptor = sheet.createRow(4);
-			descriptor.createCell(0).setCellValue(subtopicCode + ".1");
-			descriptor.createCell(1).setCellValue("Test descriptor");
-			try (OutputStream output = Files.newOutputStream(destination)) {
-				workbook.write(output);
-			}
-		}
-	}
-
-	private Path createTwoPagePdf(Path path) throws Exception {
-		try (PDDocument document = new PDDocument()) {
-			document.addPage(new PDPage());
-			document.addPage(new PDPage());
-			document.save(path.toFile());
-		}
-		try (PDDocument ignored = Loader.loadPDF(path.toFile())) {
-			return path;
-		}
-	}
-
-	private void dragRegionOnDisplayedPage(FxRobot robot) throws Exception {
-		ImageView pageView = lookup(robot, "#pdf-page-view", ImageView.class);
-		robot.interact(() -> {
-			fireMouseEvent(pageView, MouseEvent.MOUSE_PRESSED, 30, 30, true);
-			fireMouseEvent(pageView, MouseEvent.MOUSE_DRAGGED, 160, 150, true);
-			fireMouseEvent(pageView, MouseEvent.MOUSE_RELEASED, 160, 150, false);
-		});
-		WaitForAsyncUtils.waitForFxEvents();
-	}
-
-	private ExamImportDialog examImportDialog() {
-		try {
-			return field(application, "examImportDialog", ExamImportDialog.class);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	private ExamMetadataPane examMetadataPane() {
-		try {
-			return field(application, "examMetadataPane", ExamMetadataPane.class);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	private MenuItem fileExitMenuItem() {
-		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
-		MenuBar menuBar = (MenuBar) root.getTop();
-		for (MenuItem item : menuBar.getMenus().get(0).getItems()) {
-			if ("E_xit".equals(item.getText())) {
-				return item;
-			}
-		}
-		throw new AssertionError("File -> Exit menu item not found");
-	}
-
-	private void openAnswerPdfForTest(Question question) throws Exception {
-		SelectedPdf selectedPdf = new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot);
-		WaitForAsyncUtils.asyncFx(() -> answerCapturePane().selectAnswerPdf(question, selectedPdf)).get();
-	}
-
-	private void openExamPdfForTest() throws Exception {
-		examMetadataPane().selectExamPdf(new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot));
-	}
-
-	private PdfWorkspacePane pdfWorkspace() {
-		try {
-			return field(application, "pdfWorkspace", PdfWorkspacePane.class);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	private void prepareExamAndClassification(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot, "Chemistry");
-	}
-
-	private void prepareExamAndClassification(FxRobot robot, String subjectName) throws Exception {
-		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
-		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
-		Subject selectedSubject = null;
-		for (Subject subject : examSubject.getItems()) {
-			if (subjectName.equals(subject.getName())) {
-				selectedSubject = subject;
-				break;
-			}
-		}
-		assertNotNull(selectedSubject);
-		Subject subjectSelection = selectedSubject;
-		ComboBox<String> provider = comboBox(robot, "#exam-provider");
-		ComboBox<Integer> year = comboBox(robot, "#exam-year");
-		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
-		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
-		robot.interact(() -> {
-			examSubject.setValue(subjectSelection);
-			provider.getEditor().setText("QCAA");
-			year.getSelectionModel().select(Integer.valueOf(2024));
-			assessment.getEditor().setText("External Assessment");
-			booklet.getEditor().setText("Paper 1 MCQ");
-		});
-		robot.clickOn("#set-exam");
-		WaitForAsyncUtils.waitForFxEvents();
-		WaitForAsyncUtils.asyncFx(() -> examImportDialog().close()).get();
-		selectFirst(robot, "#curriculum-unit");
-		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
+		assertEquals(parent.resolve("chemistry-revision-scorm-2.zip"), second);
 	}
 
 	private void selectFirst(FxRobot robot, String selector) throws Exception {
@@ -772,7 +775,40 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.asyncFx(() -> pdfWorkspace().showDocument(mode)).get();
 	}
 
+	@Start
+	void start(Stage stage) throws Exception {
+		Path testRoot = Files.createTempDirectory("question-bank-ui-");
+		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
+		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
+		databasePath = testRoot.resolve("questionbank.db");
+		createCurriculumDatabase(databasePath);
+		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
+		applicationConfig = new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
+		primaryStage = stage;
+		application = new QuestionBankApplication();
+		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
+				applicationConfig);
+		openExamPdfForTest();
+	}
+
+	@AfterEach
+	void stopApplication() throws Exception {
+		application.stop();
+	}
+
 	private ComboBox<Question> unansweredQuestions(FxRobot robot) {
 		return comboBox(robot, "#unanswered-question");
+	}
+
+	@Test
+	void windowCloseCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
+		AtomicInteger exitCount = new AtomicInteger();
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		assertEquals(0, automaticBackupCount());
+		robot.interact(
+				() -> Event.fireEvent(primaryStage, new WindowEvent(primaryStage, WindowEvent.WINDOW_CLOSE_REQUEST)));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, exitCount.get());
+		assertEquals(1, automaticBackupCount());
 	}
 }
