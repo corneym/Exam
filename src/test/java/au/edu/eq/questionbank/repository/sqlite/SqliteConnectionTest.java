@@ -19,52 +19,24 @@ import org.junit.jupiter.api.io.TempDir;
 class SqliteConnectionTest {
 
 	private static final int LATEST_SCHEMA_VERSION = 4;
-
 	@TempDir
 	Path tempDir;
-
-	private boolean tableExists(SqliteDatabase database, String tableName) throws Exception {
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT 1
-						FROM sqlite_master
-						WHERE type = 'table'
-						  AND name = ?
-						""")) {
-			statement.setString(1, tableName);
-			try (ResultSet result = statement.executeQuery()) {
-				return result.next();
-			}
-		}
-	}
-
-	private void replaceQuestionsTable(SqliteDatabase database, String createTableSql) throws Exception {
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("PRAGMA foreign_keys = OFF");
-			statement.execute("DROP TABLE questions");
-			statement.execute(createTableSql);
-		}
-	}
 
 	@Test
 	void createsNewDatabaseAtLatestSchemaVersion() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						SELECT version
 						FROM schema_version
 						""");
 				ResultSet result = statement.executeQuery()) {
-
 			assertTrue(result.next());
 			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
 			assertFalse(result.next());
 		}
-
 		assertTrue(tableExists(database, "subjects"));
 		assertTrue(tableExists(database, "curriculum_mapping_reviews"));
 	}
@@ -73,27 +45,22 @@ class SqliteConnectionTest {
 	void createsSubjectsTable() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement insert = connection.prepareStatement("""
 						INSERT INTO subjects (id, subject_name)
 						VALUES (?, ?)
 						""")) {
-
 			insert.setLong(1, 1);
 			insert.setString(2, "Chemistry");
 			assertEquals(1, insert.executeUpdate());
 		}
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
 						SELECT id, subject_name
 						FROM subjects
 						""")) {
-
 			assertTrue(result.next());
 			assertEquals(1, result.getLong("id"));
 			assertEquals("Chemistry", result.getString("subject_name"));
@@ -102,60 +69,12 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionFourQuestionTableMissingMarks() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-marks.db"));
-		database.initialiseSchema();
-		replaceQuestionsTable(database, """
-				CREATE TABLE questions (
-				    id INTEGER PRIMARY KEY,
-				    booklet_id INTEGER NOT NULL,
-				    classification_node_id INTEGER NOT NULL,
-				    question_code TEXT NOT NULL,
-				    question_text TEXT NOT NULL,
-				    preamble_capture_required INTEGER NOT NULL,
-				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
-				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id),
-				    UNIQUE (booklet_id, question_code)
-				)
-				""");
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-		assertTrue(exception.getMessage().contains("missing required column marks"));
-	}
-
-	@Test
-	void rejectsVersionFourQuestionTableWithoutItsNaturalKey() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-natural-key.db"));
-		database.initialiseSchema();
-		replaceQuestionsTable(database, """
-				CREATE TABLE questions (
-				    id INTEGER PRIMARY KEY,
-				    booklet_id INTEGER NOT NULL,
-				    classification_node_id INTEGER NOT NULL,
-				    question_code TEXT NOT NULL,
-				    question_text TEXT NOT NULL,
-				    marks INTEGER NOT NULL,
-				    preamble_capture_required INTEGER NOT NULL,
-				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
-				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id)
-				)
-				""");
-
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
-		assertTrue(exception.getMessage().contains("missing exact unique key"));
-	}
-
-	@Test
 	void enablesForeignKeyEnforcement() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("PRAGMA foreign_keys")) {
-
 			assertTrue(result.next());
 			assertEquals(1, result.getInt(1));
 		}
@@ -166,7 +85,6 @@ class SqliteConnectionTest {
 		Path databasePath = tempDir.resolve("exam-natural-keys.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 			statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
@@ -180,7 +98,6 @@ class SqliteConnectionTest {
 					INSERT INTO exam_booklets (id, exam_id, source_document_id, booklet_name)
 					VALUES (1, 1, 1, 'Paper 1')
 					""");
-
 			assertThrows(SQLException.class,
 					() -> statement.execute("INSERT INTO exam_providers (provider_name) VALUES ('QCAA')"));
 			assertThrows(SQLException.class,
@@ -200,18 +117,14 @@ class SqliteConnectionTest {
 	void generatesSubjectId() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement insert = connection.prepareStatement("""
 						INSERT INTO subjects (subject_name)
 						VALUES (?)
 						RETURNING id
 						""")) {
-
 			insert.setString(1, "Chemistry");
-
 			try (ResultSet result = insert.executeQuery()) {
 				assertTrue(result.next());
 				assertTrue(result.getLong("id") > 0);
@@ -224,20 +137,17 @@ class SqliteConnectionTest {
 	void leavesExistingLatestDatabaseUnchanged() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("INSERT INTO subjects (subject_name) VALUES ('Chemistry')");
 		}
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
 						SELECT version
 						FROM schema_version
 						""")) {
-
 			assertTrue(result.next());
 			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
 			assertFalse(result.next());
@@ -262,9 +172,9 @@ class SqliteConnectionTest {
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
 			connection.commit();
 		}
-
+		database.verifyMigrationCompatibility();
+		assertEquals(3, database.schemaVersion());
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
@@ -359,9 +269,7 @@ class SqliteConnectionTest {
 			}
 			connection.commit();
 		}
-
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
 				assertTrue(result.next());
@@ -390,12 +298,26 @@ class SqliteConnectionTest {
 	void opensFileBackedSqliteDatabase() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		try (Connection connection = database.openConnection()) {
 			assertFalse(connection.isClosed());
 		}
-
 		assertTrue(Files.exists(databasePath));
+	}
+
+	@Test
+	void rejectsAnswersWithoutQuestionForeignKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("answer-missing-foreign-key.db"));
+		database.initialiseSchema();
+		replaceTable(database, "answers", """
+				CREATE TABLE answers (
+				    id INTEGER PRIMARY KEY,
+				    question_id INTEGER NOT NULL UNIQUE,
+				    answer_text TEXT
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(
+				exception.getMessage().contains("answers is missing exact foreign key question_id -> questions(id)"));
 	}
 
 	@Test
@@ -417,9 +339,7 @@ class SqliteConnectionTest {
 					)
 					""");
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("missing exact foreign key source_node_id"));
 	}
 
@@ -442,32 +362,51 @@ class SqliteConnectionTest {
 					)
 					""");
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("missing exact foreign key target_syllabus_version_id"));
+	}
+
+	@Test
+	void rejectsCurriculumNodesWithoutSyllabusForeignKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("curriculum-node-missing-foreign-key.db"));
+		database.initialiseSchema();
+		replaceTable(database, "curriculum_nodes", """
+				CREATE TABLE curriculum_nodes (
+				    id INTEGER PRIMARY KEY,
+				    syllabus_version_id INTEGER NOT NULL,
+				    parent_id INTEGER,
+				    curriculum_code TEXT NOT NULL,
+				    curriculum_name TEXT NOT NULL,
+				    curriculum_level TEXT NOT NULL,
+				    display_order INTEGER NOT NULL,
+				    FOREIGN KEY (parent_id)
+				        REFERENCES curriculum_nodes(id),
+				    UNIQUE (
+				        syllabus_version_id,
+				        curriculum_code
+				    )
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains(
+				"curriculum_nodes is missing exact foreign key syllabus_version_id -> syllabus_versions(id)"));
 	}
 
 	@Test
 	void rejectsCurriculumNodeWithUnknownParent() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-
 			statement.execute("""
 					INSERT INTO subjects (id, subject_name)
 					VALUES (1, 'Chemistry')
 					""");
-
 			statement.execute("""
 					INSERT INTO syllabus_versions
 						(id, subject_id, syllabus_name, is_current)
 					VALUES (1, 1, '2025', 1)
 					""");
-
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO curriculum_nodes
 						(id, syllabus_version_id, parent_id,
@@ -487,9 +426,7 @@ class SqliteConnectionTest {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("schema_version table is empty"));
 		assertFalse(tableExists(database, "curriculum_mappings"));
 	}
@@ -501,9 +438,7 @@ class SqliteConnectionTest {
 			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
 			statement.execute("INSERT INTO schema_version (version) VALUES (1), (1)");
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("more than one row"));
 		assertFalse(tableExists(database, "curriculum_mappings"));
 	}
@@ -527,16 +462,35 @@ class SqliteConnectionTest {
 	}
 
 	@Test
+	void rejectsExamBookletsWithoutNaturalKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("booklet-missing-key.db"));
+		database.initialiseSchema();
+		replaceTable(database, "exam_booklets", """
+				CREATE TABLE exam_booklets (
+				    id INTEGER PRIMARY KEY,
+				    exam_id INTEGER NOT NULL,
+				    source_document_id INTEGER NOT NULL,
+				    booklet_name TEXT NOT NULL,
+				    FOREIGN KEY (exam_id)
+				        REFERENCES exams(id),
+				    FOREIGN KEY (source_document_id)
+				        REFERENCES source_documents(id)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(
+				exception.getMessage().contains("exam_booklets is missing exact unique key (exam_id, booklet_name)"));
+	}
+
+	@Test
 	void rejectsExamMetadataWithInvalidForeignKeys() throws Exception {
 		Path databasePath = tempDir.resolve("invalid-exam-relationships.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 			statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
 			statement.execute("INSERT INTO source_documents (id, relative_path) VALUES (1, 'exam.pdf')");
-
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO exams (id, subject_id, provider_id, exam_year, exam_name)
 					VALUES (1, 999, 1, 2025, 'Unknown subject')
@@ -545,12 +499,10 @@ class SqliteConnectionTest {
 					INSERT INTO exams (id, subject_id, provider_id, exam_year, exam_name)
 					VALUES (1, 1, 999, 2025, 'Unknown provider')
 					"""));
-
 			statement.execute("""
 					INSERT INTO exams (id, subject_id, provider_id, exam_year, exam_name)
 					VALUES (1, 1, 1, 2025, 'External assessment')
 					""");
-
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO exam_booklets (id, exam_id, source_document_id, booklet_name)
 					VALUES (1, 999, 1, 'Unknown exam')
@@ -572,9 +524,7 @@ class SqliteConnectionTest {
 				statement.execute("CREATE TABLE schema_version (version)");
 				statement.execute("INSERT INTO schema_version (version) VALUES (" + invalidValues[index] + ")");
 			}
-
 			SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 			assertTrue(exception.getMessage().contains("Invalid database schema version"));
 			assertFalse(tableExists(database, "curriculum_mappings"));
 		}
@@ -586,9 +536,7 @@ class SqliteConnectionTest {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("CREATE TABLE subjects (id INTEGER PRIMARY KEY, subject_name TEXT NOT NULL UNIQUE)");
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("has no schema_version table"));
 		assertTrue(tableExists(database, "subjects"));
 		assertFalse(tableExists(database, "schema_version"));
@@ -599,16 +547,41 @@ class SqliteConnectionTest {
 		Path databasePath = tempDir.resolve("invalid-exam-year.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 			statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
-
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO exams (subject_id, provider_id, exam_year, exam_name)
 					VALUES (1, 1, 0, 'Invalid year')
 					"""));
 		}
+	}
+
+	@Test
+	void rejectsQuestionRegionsMissingPageNumber() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-region-page.db"));
+		database.initialiseSchema();
+		replaceTable(database, "question_regions", """
+				CREATE TABLE question_regions (
+				    question_id INTEGER NOT NULL,
+				    region_order INTEGER NOT NULL,
+				    booklet_id INTEGER NOT NULL,
+				    x REAL NOT NULL,
+				    y REAL NOT NULL,
+				    width REAL NOT NULL,
+				    height REAL NOT NULL,
+				    PRIMARY KEY (
+				        question_id,
+				        region_order
+				    ),
+				    FOREIGN KEY (question_id)
+				        REFERENCES questions(id),
+				    FOREIGN KEY (booklet_id)
+				        REFERENCES exam_booklets(id)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains("question_regions is missing required column page_number"));
 	}
 
 	@Test
@@ -618,9 +591,7 @@ class SqliteConnectionTest {
 			statement.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)");
 			statement.execute("INSERT INTO schema_version (version) VALUES (1)");
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("missing required table subjects"));
 		assertFalse(tableExists(database, "curriculum_mappings"));
 	}
@@ -629,23 +600,61 @@ class SqliteConnectionTest {
 	void rejectsSyllabusVersionForUnknownSubject() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement insert = connection.prepareStatement("""
 						INSERT INTO syllabus_versions
 							(id, subject_id, syllabus_name, is_current)
 						VALUES (?, ?, ?, ?)
 						""")) {
-
 			insert.setLong(1, 1);
 			insert.setLong(2, 999);
 			insert.setString(3, "2025");
 			insert.setInt(4, 1);
-
 			assertThrows(SQLException.class, insert::executeUpdate);
 		}
+	}
+
+	@Test
+	void rejectsVersionFourQuestionTableMissingMarks() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-marks.db"));
+		database.initialiseSchema();
+		replaceQuestionsTable(database, """
+				CREATE TABLE questions (
+				    id INTEGER PRIMARY KEY,
+				    booklet_id INTEGER NOT NULL,
+				    classification_node_id INTEGER NOT NULL,
+				    question_code TEXT NOT NULL,
+				    question_text TEXT NOT NULL,
+				    preamble_capture_required INTEGER NOT NULL,
+				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
+				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id),
+				    UNIQUE (booklet_id, question_code)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("missing required column marks"));
+	}
+
+	@Test
+	void rejectsVersionFourQuestionTableWithoutItsNaturalKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-natural-key.db"));
+		database.initialiseSchema();
+		replaceQuestionsTable(database, """
+				CREATE TABLE questions (
+				    id INTEGER PRIMARY KEY,
+				    booklet_id INTEGER NOT NULL,
+				    classification_node_id INTEGER NOT NULL,
+				    question_code TEXT NOT NULL,
+				    question_text TEXT NOT NULL,
+				    marks INTEGER NOT NULL,
+				    preamble_capture_required INTEGER NOT NULL,
+				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
+				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("missing exact unique key"));
 	}
 
 	@Test
@@ -693,13 +702,15 @@ class SqliteConnectionTest {
 			}
 			connection.commit();
 		}
-
+		IncompatibleDatabaseException compatibilityException = assertThrows(IncompatibleDatabaseException.class,
+				database::verifyMigrationCompatibility);
+		assertEquals("The existing database contains question data that cannot be migrated safely.",
+				compatibilityException.getMessage());
+		assertEquals(3, database.schemaVersion());
 		IncompatibleDatabaseException exception = assertThrows(IncompatibleDatabaseException.class,
 				database::initialiseSchema);
-
 		assertEquals("The existing database contains question data that cannot be migrated safely.",
 				exception.getMessage());
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
@@ -720,9 +731,7 @@ class SqliteConnectionTest {
 			}
 			connection.commit();
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("missing required table curriculum_mapping_reviews"));
 		assertFalse(tableExists(database, "curriculum_mapping_reviews"));
 	}
@@ -745,9 +754,7 @@ class SqliteConnectionTest {
 					)
 					""");
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("expected exactly"));
 	}
 
@@ -842,9 +849,7 @@ class SqliteConnectionTest {
 			}
 			connection.commit();
 		}
-
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertTrue(exception.getMessage().contains("missing required table curriculum_mappings"));
 	}
 
@@ -865,9 +870,7 @@ class SqliteConnectionTest {
 			}
 			connection.commit();
 		}
-
 		assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertFalse(tableExists(database, "curriculum_mappings"));
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
@@ -897,9 +900,7 @@ class SqliteConnectionTest {
 			}
 			connection.commit();
 		}
-
 		assertThrows(SQLException.class, database::initialiseSchema);
-
 		assertFalse(tableExists(database, "curriculum_mapping_reviews"));
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
@@ -1032,22 +1033,17 @@ class SqliteConnectionTest {
 	void storesCompleteCurriculumHierarchy() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-
 			statement.execute("""
 					INSERT INTO subjects (id, subject_name)
 					VALUES (1, 'Chemistry')
 					""");
-
 			statement.execute("""
 					INSERT INTO syllabus_versions
 						(id, subject_id, syllabus_name, is_current)
 					VALUES (1, 1, '2025', 1)
 					""");
-
 			statement.execute("""
 					INSERT INTO curriculum_nodes
 						(id, syllabus_version_id, parent_id,
@@ -1059,13 +1055,11 @@ class SqliteConnectionTest {
 						(3, 1, 2, '1.1.1', 'Subtopic 1', 'SUBTOPIC', 0),
 						(4, 1, 3, '1.1.1.1', 'Descriptor text', 'DESCRIPTOR', 0)
 					""");
-
 			try (ResultSet result = statement.executeQuery("""
 					SELECT parent_id, curriculum_level
 					FROM curriculum_nodes
 					WHERE id = 4
 					""")) {
-
 				assertTrue(result.next());
 				assertEquals(3, result.getLong("parent_id"));
 				assertEquals("DESCRIPTOR", result.getString("curriculum_level"));
@@ -1149,22 +1143,16 @@ class SqliteConnectionTest {
 
 	@Test
 	void storesQuestionWithOrderedRegions() throws Exception {
-
 		Path databasePath = tempDir.resolve("questionbank.db");
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-
 			statement.execute("""
 					INSERT INTO subjects
 					    (id, subject_name)
 					VALUES
 					    (1, 'Chemistry')
 					""");
-
 			statement.execute("""
 					INSERT INTO syllabus_versions
 					    (id, subject_id,
@@ -1172,7 +1160,6 @@ class SqliteConnectionTest {
 					VALUES
 					    (1, 1, '2019', 0)
 					""");
-
 			statement.execute("""
 					INSERT INTO curriculum_nodes
 					    (id, syllabus_version_id,
@@ -1198,21 +1185,18 @@ class SqliteConnectionTest {
 					     'SUBTOPIC',
 					     1)
 					""");
-
 			statement.execute("""
 					INSERT INTO exam_providers
 					    (id, provider_name)
 					VALUES
 					    (1, 'QCAA')
 					""");
-
 			statement.execute("""
 					INSERT INTO source_documents
 					    (id, relative_path)
 					VALUES
 					    (1, 'Chemistry/2019/paper1.pdf')
 					""");
-
 			statement.execute("""
 					INSERT INTO exams
 					    (id, subject_id, provider_id,
@@ -1221,7 +1205,6 @@ class SqliteConnectionTest {
 					    (1, 1, 1,
 					     2019, 'External Assessment')
 					""");
-
 			statement.execute("""
 					INSERT INTO exam_booklets
 					    (id, exam_id,
@@ -1230,7 +1213,6 @@ class SqliteConnectionTest {
 					VALUES
 					    (1, 1, 1, 'Paper 1')
 					""");
-
 			statement.execute("""
 					INSERT INTO questions
 					    (id, booklet_id,
@@ -1242,7 +1224,6 @@ class SqliteConnectionTest {
 					VALUES
 					    (1, 1, 3, 'Q6', '', 3, 0)
 					""");
-
 			statement.execute("""
 					INSERT INTO question_regions
 					    (question_id,
@@ -1256,7 +1237,6 @@ class SqliteConnectionTest {
 					    (1, 1, 1, 5,
 					     0.10, 0.10, 0.50, 0.20)
 					""");
-
 			try (ResultSet result = statement.executeQuery("""
 					SELECT
 					    questions.question_code,
@@ -1270,18 +1250,46 @@ class SqliteConnectionTest {
 					WHERE questions.id = 1
 					ORDER BY question_regions.region_order
 					""")) {
-
 				assertTrue(result.next());
 				assertEquals("Q6", result.getString("question_code"));
 				assertEquals(3, result.getLong("classification_node_id"));
 				assertEquals(0, result.getInt("region_order"));
 				assertEquals(4, result.getInt("page_number"));
-
 				assertTrue(result.next());
 				assertEquals(1, result.getInt("region_order"));
 				assertEquals(5, result.getInt("page_number"));
-
 				assertFalse(result.next());
+			}
+		}
+	}
+
+	private void replaceQuestionsTable(SqliteDatabase database, String createTableSql) throws Exception {
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("PRAGMA foreign_keys = OFF");
+			statement.execute("DROP TABLE questions");
+			statement.execute(createTableSql);
+		}
+	}
+
+	private void replaceTable(SqliteDatabase database, String tableName, String createTableSql) throws Exception {
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("PRAGMA foreign_keys = OFF");
+			statement.execute("DROP TABLE " + tableName);
+			statement.execute(createTableSql);
+		}
+	}
+
+	private boolean tableExists(SqliteDatabase database, String tableName) throws Exception {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT 1
+						FROM sqlite_master
+						WHERE type = 'table'
+						  AND name = ?
+						""")) {
+			statement.setString(1, tableName);
+			try (ResultSet result = statement.executeQuery()) {
+				return result.next();
 			}
 		}
 	}

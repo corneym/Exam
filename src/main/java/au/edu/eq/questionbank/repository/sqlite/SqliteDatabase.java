@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -9,9 +10,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Owns the SQLite database location, initialises the question-bank schema, and
@@ -23,16 +26,6 @@ public final class SqliteDatabase {
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
-
-	/**
-	 * Returns the latest database schema version supported by this application.
-	 *
-	 * @return the latest supported schema version
-	 */
-	public static int latestSchemaVersion() {
-		return LATEST_SCHEMA_VERSION;
-	}
-
 	private final Path databasePath;
 
 	/**
@@ -50,15 +43,87 @@ public final class SqliteDatabase {
 	}
 
 	/**
+	 * Returns the latest database schema version supported by this application.
+	 *
+	 * @return the latest supported schema version
+	 */
+	public static int latestSchemaVersion() {
+		return LATEST_SCHEMA_VERSION;
+	}
+
+	/**
+	 * Creates a transactionally consistent SQLite snapshot using
+	 * {@code VACUUM INTO}, then reopens and validates the resulting database.
+	 * <p>
+	 * The destination must not already exist. If snapshot creation or validation
+	 * fails, any partial destination file is removed.
+	 *
+	 * @param snapshotPath destination SQLite file
+	 * @throws IOException              if filesystem preparation or cleanup fails
+	 * @throws SQLException             if snapshot creation or validation fails
+	 * @throws NullPointerException     if {@code snapshotPath} is {@code null}
+	 * @throws IllegalArgumentException if the destination is the live database
+	 */
+	public void createConsistentSnapshot(Path snapshotPath) throws IOException, SQLException {
+		if (snapshotPath == null) {
+			throw new NullPointerException("snapshotPath");
+		}
+		Path normalisedSnapshotPath = snapshotPath.toAbsolutePath().normalize();
+		if (normalisedSnapshotPath.equals(databasePath)) {
+			throw new IllegalArgumentException("Snapshot destination must not be the live database");
+		}
+		if (!Files.isRegularFile(databasePath)) {
+			throw new IOException("Database file does not exist: " + databasePath);
+		}
+		if (Files.exists(normalisedSnapshotPath)) {
+			throw new IOException("Snapshot destination already exists: " + normalisedSnapshotPath);
+		}
+		Path parentDirectory = normalisedSnapshotPath.getParent();
+		if (parentDirectory != null) {
+			Files.createDirectories(parentDirectory);
+		}
+		int sourceSchemaVersion = schemaVersion();
+		if (sourceSchemaVersion == 0) {
+			throw new SQLException("Database does not contain a question-bank schema");
+		}
+		if (sourceSchemaVersion > LATEST_SCHEMA_VERSION) {
+			throw new SQLException("Unsupported database schema version " + sourceSchemaVersion
+					+ "; latest supported version is " + LATEST_SCHEMA_VERSION);
+		}
+		try {
+			try (Connection connection = openConnection();
+					PreparedStatement statement = connection.prepareStatement("VACUUM INTO ?")) {
+				statement.setString(1, normalisedSnapshotPath.toString());
+				statement.execute();
+			}
+			SqliteDatabase snapshotDatabase = new SqliteDatabase(normalisedSnapshotPath);
+			int snapshotSchemaVersion = snapshotDatabase.schemaVersion();
+			if (snapshotSchemaVersion != sourceSchemaVersion) {
+				throw new SQLException("Snapshot schema version " + snapshotSchemaVersion
+						+ " does not match source schema version " + sourceSchemaVersion);
+			}
+			snapshotDatabase.verifySchema();
+			snapshotDatabase.verifyIntegrity();
+		} catch (SQLException | RuntimeException e) {
+			try {
+				Files.deleteIfExists(normalisedSnapshotPath);
+			} catch (IOException cleanupFailure) {
+				e.addSuppressed(cleanupFailure);
+			}
+			throw e;
+		}
+	}
+
+	/**
 	 * Creates a new database and applies all migrations, or upgrades an existing
 	 * supported database sequentially to the latest schema version. Creation and
 	 * migration run in one transaction. Existing databases with missing or invalid
 	 * version metadata, or missing required schema structures for their recorded
 	 * version, are rejected rather than repaired implicitly.
 	 *
-	 * @throws SQLException if the schema cannot be created, the version information
-	 *                      is invalid, or the database is newer than the
-	 *                      application
+	 * @throws SQLException                  if the schema cannot be created, the
+	 *                                       version information is invalid, or the
+	 *                                       database is newer than the application
 	 * @throws IncompatibleDatabaseException if a version-three database contains
 	 *                                       disposable development question data
 	 *                                       for which no lossless v4 migration is
@@ -105,7 +170,6 @@ public final class SqliteDatabase {
 	 */
 	public Connection openConnection() throws SQLException {
 		Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
-
 		try {
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("PRAGMA foreign_keys = ON");
@@ -118,6 +182,19 @@ public final class SqliteDatabase {
 				e.addSuppressed(closeFailure);
 			}
 			throw e;
+		}
+	}
+
+	/**
+	 * Returns the schema version recorded by this database.
+	 *
+	 * @return the recorded schema version, or {@code 0} if no schema-version table
+	 *         exists
+	 * @throws SQLException if the schema version cannot be read or is invalid
+	 */
+	public int schemaVersion() throws SQLException {
+		try (Connection connection = openConnection()) {
+			return readSchemaVersion(connection);
 		}
 	}
 
@@ -138,6 +215,97 @@ public final class SqliteDatabase {
 		}
 	}
 
+	/**
+	 * Verifies the physical integrity and foreign-key consistency of this database.
+	 *
+	 * @throws SQLException if an integrity problem or foreign-key violation is
+	 *                      found, or if the checks cannot be completed
+	 */
+	public void verifyIntegrity() throws SQLException {
+		try (Connection connection = openConnection()) {
+			verifyDatabaseIntegrity(connection);
+			verifyForeignKeyIntegrity(connection);
+		}
+	}
+
+	/**
+	 * Verifies that this database can be migrated to the latest supported schema
+	 * using the application's existing migration path, without modifying this
+	 * database.
+	 * <p>
+	 * Databases already at the latest schema are structurally and physically
+	 * validated directly. Older supported databases are snapshotted to a temporary
+	 * location and the normal schema initialisation and migration process is run
+	 * against that temporary copy.
+	 *
+	 * @throws IOException  if the temporary migration check cannot be created or
+	 *                      cleaned up
+	 * @throws SQLException if the database is invalid, unsupported, or cannot be
+	 *                      migrated safely
+	 */
+	public void verifyMigrationCompatibility() throws IOException, SQLException {
+		int version = schemaVersion();
+		if (version == 0) {
+			throw new SQLException("Database does not contain a question-bank schema");
+		}
+		if (version > LATEST_SCHEMA_VERSION) {
+			throw new SQLException("Unsupported database schema version " + version + "; latest supported version is "
+					+ LATEST_SCHEMA_VERSION);
+		}
+		verifySchema();
+		verifyIntegrity();
+		if (version == LATEST_SCHEMA_VERSION) {
+			return;
+		}
+		Path probeDirectory = Files.createTempDirectory("question-bank-migration-check-");
+		Path probeDatabasePath = probeDirectory.resolve("questionbank.db");
+		try {
+			createConsistentSnapshot(probeDatabasePath);
+			SqliteDatabase probeDatabase = new SqliteDatabase(probeDatabasePath);
+			probeDatabase.initialiseSchema();
+			int migratedVersion = probeDatabase.schemaVersion();
+			if (migratedVersion != LATEST_SCHEMA_VERSION) {
+				throw new SQLException("Database migration check produced schema version " + migratedVersion
+						+ "; expected " + LATEST_SCHEMA_VERSION);
+			}
+			probeDatabase.verifySchema();
+			probeDatabase.verifyIntegrity();
+		} catch (IOException | SQLException | RuntimeException e) {
+			try {
+				deleteTemporaryTree(probeDirectory);
+			} catch (IOException cleanupFailure) {
+				e.addSuppressed(cleanupFailure);
+			}
+			throw e;
+		}
+		deleteTemporaryTree(probeDirectory);
+	}
+
+	/**
+	 * Verifies that this database contains a supported and structurally valid
+	 * question-bank schema without modifying or migrating it.
+	 *
+	 * @throws SQLException if the schema is missing, unsupported, or structurally
+	 *                      invalid
+	 */
+	public void verifySchema() throws SQLException {
+		try (Connection connection = openConnection()) {
+			int version = readSchemaVersion(connection);
+			if (version == 0) {
+				throw new SQLException("Database does not contain a question-bank schema");
+			}
+			if (version > LATEST_SCHEMA_VERSION) {
+				throw new SQLException("Unsupported database schema version " + version
+						+ "; latest supported version is " + LATEST_SCHEMA_VERSION);
+			}
+			verifySchema(connection, version);
+		}
+	}
+
+	private ColumnRequirement column(String name, boolean notNull, int primaryKeyPosition) {
+		return new ColumnRequirement(name, notNull, primaryKeyPosition);
+	}
+
 	private void createVersionOneSchema(Connection connection) throws SQLException {
 		String sql;
 		try {
@@ -151,6 +319,19 @@ public final class SqliteDatabase {
 			throw new SQLException("Schema creation did not produce version 1");
 		}
 		verifySchema(connection, 1);
+	}
+
+	private void deleteTemporaryTree(Path root) throws IOException {
+		if (!Files.exists(root)) {
+			return;
+		}
+		List<Path> paths;
+		try (Stream<Path> stream = Files.walk(root)) {
+			paths = stream.sorted(Comparator.reverseOrder()).toList();
+		}
+		for (Path path : paths) {
+			Files.deleteIfExists(path);
+		}
 	}
 
 	private void executeMigration(Connection connection, String resourcePath, int expectedVersion) throws SQLException {
@@ -167,6 +348,33 @@ public final class SqliteDatabase {
 					"Migration did not produce schema version " + expectedVersion + "; found " + actualVersion);
 		}
 		verifySchema(connection, expectedVersion);
+	}
+
+	private String expectedPrimaryKeyDescription(List<ColumnRequirement> requirements) {
+		List<ColumnRequirement> primaryKeyColumns = requirements.stream()
+				.filter(requirement -> requirement.primaryKeyPosition() > 0)
+				.sorted(Comparator.comparingInt(ColumnRequirement::primaryKeyPosition)).toList();
+		if (primaryKeyColumns.isEmpty()) {
+			return "no primary key";
+		}
+		List<String> names = new ArrayList<>();
+		for (ColumnRequirement requirement : primaryKeyColumns) {
+			names.add(requirement.name());
+		}
+		return "(" + String.join(", ", names) + ")";
+	}
+
+	private ColumnRequirement findColumnRequirement(List<ColumnRequirement> requirements, String columnName) {
+		for (ColumnRequirement requirement : requirements) {
+			if (requirement.name().equals(columnName)) {
+				return requirement;
+			}
+		}
+		return null;
+	}
+
+	private ForeignKeyRequirement foreignKey(String fromColumn, String targetTable, String targetColumn) {
+		return new ForeignKeyRequirement(fromColumn, targetTable, targetColumn);
 	}
 
 	private int foreignKeyColumnCount(Connection connection, String tableName, int foreignKeyId) throws SQLException {
@@ -353,6 +561,139 @@ public final class SqliteDatabase {
 		verifyCurriculumMappingReviewForeignKeys(connection);
 	}
 
+	private void verifyCurriculumMappingSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "curriculum_mappings",
+				List.of(column("id", false, 1), column("source_node_id", true, 0), column("target_node_id", true, 0),
+						column("mapping_status", true, 0)),
+				List.of(foreignKey("source_node_id", "curriculum_nodes", "id"),
+						foreignKey("target_node_id", "curriculum_nodes", "id")),
+				List.of(List.of("source_node_id", "target_node_id")));
+	}
+
+	private void verifyDatabaseIntegrity(Connection connection) throws SQLException {
+		List<String> problems = new ArrayList<>();
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA integrity_check")) {
+			while (result.next()) {
+				String message = result.getString(1);
+				if (!"ok".equalsIgnoreCase(message)) {
+					problems.add(message);
+				}
+			}
+		}
+		if (!problems.isEmpty()) {
+			throw new SQLException("SQLite integrity check failed: " + String.join("; ", problems));
+		}
+	}
+
+	private void verifyForeignKeyIntegrity(Connection connection) throws SQLException {
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA foreign_key_check")) {
+			if (!result.next()) {
+				return;
+			}
+			String tableName = result.getString("table");
+			String rowId = result.getString("rowid");
+			String parentTable = result.getString("parent");
+			String foreignKeyId = result.getString("fkid");
+			throw new SQLException("SQLite foreign-key check failed" + " in table " + tableName + ", row " + rowId
+					+ ", parent table " + parentTable + ", foreign key " + foreignKeyId);
+		}
+	}
+
+	private void verifyLegacyQuestionSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "questions",
+				List.of(column("id", false, 1), column("exam_id", true, 0), column("classification_node_id", true, 0),
+						column("question_code", true, 0), column("question_text", true, 0)),
+				List.of(foreignKey("exam_id", "exams", "id"),
+						foreignKey("classification_node_id", "curriculum_nodes", "id")),
+				List.of(List.of("exam_id", "question_code")));
+	}
+
+	private void verifySchema(Connection connection, int version) throws SQLException {
+		for (String tableName : VERSION_ONE_TABLES) {
+			if (!tableExists(connection, tableName)) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table " + tableName);
+			}
+		}
+		verifyVersionOneRelationalSchema(connection, version);
+		if (version >= 2) {
+			if (!tableExists(connection, "curriculum_mappings")) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table curriculum_mappings");
+			}
+			verifyCurriculumMappingSchema(connection);
+		}
+		if (version >= 3) {
+			if (!tableExists(connection, "curriculum_mapping_reviews")) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table curriculum_mapping_reviews");
+			}
+			verifyCurriculumMappingReviewSchema(connection);
+		}
+		if (version >= 4) {
+			verifyVersionFourQuestionSchema(connection);
+		}
+	}
+
+	private void verifyTableSchema(Connection connection, String tableName, List<ColumnRequirement> columnRequirements,
+			List<ForeignKeyRequirement> foreignKeyRequirements, List<List<String>> uniqueKeys) throws SQLException {
+		Set<String> missingColumns = new HashSet<>();
+		for (ColumnRequirement requirement : columnRequirements) {
+			missingColumns.add(requirement.name());
+		}
+		int actualPrimaryKeyColumnCount = 0;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(" + tableName + ")")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				int primaryKeyPosition = result.getInt("pk");
+				if (primaryKeyPosition > 0) {
+					actualPrimaryKeyColumnCount++;
+				}
+				ColumnRequirement requirement = findColumnRequirement(columnRequirements, columnName);
+				if (requirement == null) {
+					continue;
+				}
+				missingColumns.remove(columnName);
+				if (requirement.notNull() && result.getInt("notnull") == 0) {
+					throw new SQLException(tableName + " column must be NOT NULL: " + columnName);
+				}
+				if (primaryKeyPosition != requirement.primaryKeyPosition()) {
+					throw new SQLException(tableName + " has an invalid primary key; expected exactly "
+							+ expectedPrimaryKeyDescription(columnRequirements));
+				}
+			}
+		}
+		if (!missingColumns.isEmpty()) {
+			throw new SQLException(tableName + " is missing required column " + missingColumns.iterator().next());
+		}
+		int expectedPrimaryKeyColumnCount = 0;
+		for (ColumnRequirement requirement : columnRequirements) {
+			if (requirement.primaryKeyPosition() > 0) {
+				expectedPrimaryKeyColumnCount++;
+			}
+		}
+		if (actualPrimaryKeyColumnCount != expectedPrimaryKeyColumnCount) {
+			throw new SQLException(tableName + " has an invalid primary key; expected exactly "
+					+ expectedPrimaryKeyDescription(columnRequirements));
+		}
+		for (ForeignKeyRequirement requirement : foreignKeyRequirements) {
+			if (!hasExactSingleColumnForeignKey(connection, tableName, requirement.fromColumn(),
+					requirement.targetTable(), requirement.targetColumn())) {
+				throw new SQLException(tableName + " is missing exact foreign key " + requirement.fromColumn() + " -> "
+						+ requirement.targetTable() + "(" + requirement.targetColumn() + ")");
+			}
+		}
+		for (List<String> uniqueKey : uniqueKeys) {
+			if (!hasExactUniqueIndex(connection, tableName, uniqueKey)) {
+				throw new SQLException(
+						tableName + " is missing exact unique key (" + String.join(", ", uniqueKey) + ")");
+			}
+		}
+	}
+
 	private void verifyVersionFourQuestionSchema(Connection connection) throws SQLException {
 		Set<String> requiredColumns = new HashSet<>(List.of("id", "booklet_id", "classification_node_id",
 				"question_code", "question_text", "marks", "preamble_capture_required"));
@@ -396,27 +737,62 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifySchema(Connection connection, int version) throws SQLException {
-		for (String tableName : VERSION_ONE_TABLES) {
-			if (!tableExists(connection, tableName)) {
-				throw new SQLException(
-						"Database schema version " + version + " is missing required table " + tableName);
-			}
+	private void verifyVersionOneRelationalSchema(Connection connection, int version) throws SQLException {
+		verifyTableSchema(connection, "schema_version", List.of(column("version", true, 0)), List.of(), List.of());
+		verifyTableSchema(connection, "subjects", List.of(column("id", false, 1), column("subject_name", true, 0)),
+				List.of(), List.of(List.of("subject_name")));
+		verifyTableSchema(connection, "syllabus_versions",
+				List.of(column("id", false, 1), column("subject_id", true, 0), column("syllabus_name", true, 0),
+						column("is_current", true, 0)),
+				List.of(foreignKey("subject_id", "subjects", "id")), List.of(List.of("subject_id", "syllabus_name")));
+		verifyTableSchema(connection, "curriculum_nodes",
+				List.of(column("id", false, 1), column("syllabus_version_id", true, 0), column("parent_id", false, 0),
+						column("curriculum_code", true, 0), column("curriculum_name", true, 0),
+						column("curriculum_level", true, 0), column("display_order", true, 0)),
+				List.of(foreignKey("syllabus_version_id", "syllabus_versions", "id"),
+						foreignKey("parent_id", "curriculum_nodes", "id")),
+				List.of(List.of("syllabus_version_id", "curriculum_code")));
+		verifyTableSchema(connection, "exam_providers",
+				List.of(column("id", false, 1), column("provider_name", true, 0)), List.of(),
+				List.of(List.of("provider_name")));
+		verifyTableSchema(connection, "source_documents",
+				List.of(column("id", false, 1), column("relative_path", true, 0)), List.of(),
+				List.of(List.of("relative_path")));
+		verifyTableSchema(connection, "exams",
+				List.of(column("id", false, 1), column("subject_id", true, 0), column("provider_id", true, 0),
+						column("exam_year", true, 0), column("exam_name", true, 0)),
+				List.of(foreignKey("subject_id", "subjects", "id"), foreignKey("provider_id", "exam_providers", "id")),
+				List.of(List.of("subject_id", "provider_id", "exam_year", "exam_name")));
+		verifyTableSchema(connection, "exam_booklets",
+				List.of(column("id", false, 1), column("exam_id", true, 0), column("source_document_id", true, 0),
+						column("booklet_name", true, 0)),
+				List.of(foreignKey("exam_id", "exams", "id"),
+						foreignKey("source_document_id", "source_documents", "id")),
+				List.of(List.of("exam_id", "booklet_name")));
+		if (version < 4) {
+			verifyLegacyQuestionSchema(connection);
 		}
-		if (version >= 2 && !tableExists(connection, "curriculum_mappings")) {
-			throw new SQLException(
-					"Database schema version " + version + " is missing required table curriculum_mappings");
-		}
-		if (version >= 3) {
-			if (!tableExists(connection, "curriculum_mapping_reviews")) {
-				throw new SQLException(
-						"Database schema version " + version + " is missing required table curriculum_mapping_reviews");
-			}
-			verifyCurriculumMappingReviewSchema(connection);
-		}
-		if (version >= 4) {
-			verifyVersionFourQuestionSchema(connection);
-		}
+		verifyTableSchema(connection, "question_regions",
+				List.of(column("question_id", true, 1), column("region_order", true, 2), column("booklet_id", true, 0),
+						column("page_number", true, 0), column("x", true, 0), column("y", true, 0),
+						column("width", true, 0), column("height", true, 0)),
+				List.of(foreignKey("question_id", "questions", "id"), foreignKey("booklet_id", "exam_booklets", "id")),
+				List.of());
+		verifyTableSchema(connection, "answer_files",
+				List.of(column("id", false, 1), column("exam_id", true, 0), column("source_document_id", true, 0),
+						column("answer_file_name", true, 0)),
+				List.of(foreignKey("exam_id", "exams", "id"),
+						foreignKey("source_document_id", "source_documents", "id")),
+				List.of(List.of("exam_id", "answer_file_name")));
+		verifyTableSchema(connection, "answers",
+				List.of(column("id", false, 1), column("question_id", true, 0), column("answer_text", false, 0)),
+				List.of(foreignKey("question_id", "questions", "id")), List.of(List.of("question_id")));
+		verifyTableSchema(connection, "answer_regions",
+				List.of(column("answer_id", true, 1), column("region_order", true, 2),
+						column("answer_file_id", true, 0), column("page_number", true, 0), column("x", true, 0),
+						column("y", true, 0), column("width", true, 0), column("height", true, 0)),
+				List.of(foreignKey("answer_id", "answers", "id"), foreignKey("answer_file_id", "answer_files", "id")),
+				List.of());
 	}
 
 	private void verifyVersionThreeCanBeMigrated(Connection connection) throws SQLException {
@@ -428,5 +804,11 @@ public final class SqliteDatabase {
 						"The existing database contains question data that cannot be migrated safely.");
 			}
 		}
+	}
+
+	private record ColumnRequirement(String name, boolean notNull, int primaryKeyPosition) {
+	}
+
+	private record ForeignKeyRequirement(String fromColumn, String targetTable, String targetColumn) {
 	}
 }

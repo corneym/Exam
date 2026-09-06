@@ -1,58 +1,52 @@
 # Exam Question Bank Backlog
 
-This document is the authoritative backlog for work deliberately deferred from completed sprints.
-
-Sprint design documents should remain historical records of what was planned and completed. Items that are intentionally postponed should be recorded here rather than extending a completed sprint.
-
----
+> Authoritative deferred-work list at 6 September 2026.
+>
+> Completed sprint documents remain historical records. Items intentionally deferred from completed work belong here until scheduled into a future sprint.
 
 ## High Priority
 
 ### Stabilise and isolate JavaFX tests
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
+Origin: Question Retrieval Sprint v3 / merge-readiness review.
 
-The complete suite remains sensitive to mouse/focus, particularly `JavaFxToolchainSmokeTest`.
+The complete suite remains sensitive to mouse/focus in some TestFX paths.
 
 Acceptance criteria:
 
-- TestFX tests do not depend on the developer leaving the mouse untouched.
-- UI tests can run separately from the non-UI suite.
-- CI/full-suite execution is repeatable.
-- A failure reliably indicates an application defect rather than lost window focus.
+- UI tests do not depend on the developer leaving the mouse untouched;
+- UI tests can run separately from non-UI tests where useful;
+- repeated clean execution is reliable;
+- failures distinguish application defects from lost focus/window interaction.
 
 ### Complete asynchronous question-search regression coverage
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
+Origin: Question Retrieval Sprint v3 / final review.
 
-Production lifecycle protection is implemented, but several asynchronous paths need stronger regression coverage.
-
-Add tests for:
+Add focused tests for:
 
 - stale question-search completion;
 - stale preview completion;
-- hierarchy failure clearing previous results, details and preview;
-- disposal while hierarchy, search and preview operations are in flight;
+- hierarchy failure clearing prior results/details/preview;
+- disposal while hierarchy/search/preview operations are in flight;
 - repeated/idempotent disposal;
 - no-current-syllabus Subject navigation;
 - multiple-current-syllabus failure handling;
-- zero-region legacy questions displaying `No stored question image.`;
-- missing or corrupt source PDFs displaying the controlled preview-unavailable message.
+- zero-region legacy questions;
+- missing/corrupt source PDFs.
 
 ### Build the region-capture-required work queue
 
-Origin: Legacy metadata import follow-on work.
+Origin: Legacy Metadata Import follow-on work.
 
-Create a workflow for imported questions that still require source-region capture.
-
-The queue should identify questions requiring:
+Identify questions requiring:
 
 - question-region capture;
 - answer-region capture;
 - both;
-- possible preamble capture.
+- possible preamble/shared-context capture.
 
-Useful filters should include:
+Filters:
 
 - Subject;
 - provider;
@@ -60,265 +54,394 @@ Useful filters should include:
 - booklet;
 - completion state.
 
-Attaching the required regions should remove the item from the relevant queue without altering imported metadata or historical classification.
+Completion must attach regions without changing imported historical metadata/classification.
 
----
+### Reconcile the 5 September Chemistry 2019 -> 2025 mapping workbook
+
+Origin: Curriculum Descriptor Mapping chat, 5 September 2026.
+
+A standalone normalized mapping workbook now exists, but its integration with current SQLite mapping records is not established.
+
+Required work:
+
+- manually review all `YES` Low/no-match rows;
+- check all `CHECK` Medium rows;
+- confirm 2019 removed/no-direct-equivalent content;
+- confirm 2025 new/no-direct-predecessor content;
+- compare confirmed pairwise relationships with the application's current mapping records;
+- import/reconcile confirmed mappings without overwriting historical question classifications;
+- produce coverage statistics after reconciliation;
+- retain audit notes/confidence where useful.
+
+Do not treat the standalone workbook as authoritative application state until this reconciliation is complete.
 
 ## Normal Priority
 
+### Decide whether `Question` requires multiple original classifications
+
+Origin: Batching Exam Questions / early metadata design.
+
+Evidence:
+
+- the 2021 Neap classification exercise identified a question (Q11) reasonably mapped to three descriptors;
+- the early domain design proposed many-to-many `Question <-> SyllabusDescriptor`;
+- the current `Question` model stores one best-fit Subtopic/Descriptor classification.
+
+Decision required:
+
+- explicitly affirm one-best-fit as permanent policy; or
+- implement multiple original classifications.
+
+If multiple classifications are required, review:
+
+- schema/repositories;
+- capture/import UI;
+- applicability derivation;
+- retrieval duplicate semantics;
+- export placement;
+- provenance display;
+- tests.
+
+Do not confuse multiple original classifications with one historical node mapping to several current nodes.
+
+### Decide whether source-question processing needs an explicit out-of-scope disposition
+
+Origin: Batching Exam Questions prototype.
+
+During the Neap 2021 classification exercise, several questions were deliberately marked out of scope.
+
+A later exam-ingestion/audit workflow may need to distinguish:
+
+```text
+not yet reviewed
+captured/classified
+explicitly out of scope
+```
+
+without forcing out-of-scope questions into the bank.
+
 ### Strengthen retrieval-domain invariants
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
+Origin: Question Retrieval Sprint v3 / final review.
 
-Review and strengthen construction rules for:
+Review `QuestionApplicabilityMatch` and `QuestionRetrievalResult` rules, including:
 
-- `QuestionApplicabilityMatch`;
-- `QuestionRetrievalResult`.
-
-Decide and enforce:
-
-- original and current classification must have compatible curriculum levels;
-- applicability nodes must belong to the question's Subject;
-- applicability may contain only Subtopic or Descriptor nodes;
-- duplicate applicability nodes should either be rejected or deliberately normalised;
-- directly constructed results must not admit historical applicability nodes, Unit nodes or Topic nodes.
-
-The current SQLite retrieval path already protects most normal production flows, so this is API hardening rather than a current correctness blocker.
+- compatible original/current curriculum levels;
+- same Subject;
+- only Subtopic/Descriptor applicability nodes;
+- duplicate handling;
+- rejection of historical/Unit/Topic applicability where inappropriate.
 
 ### Extend retrieval integration coverage
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
+Origin: Question Retrieval Sprint v3 / final review.
 
 Add realistic SQLite integration tests for:
 
-- Subject-wide retrieval spanning multiple Units;
+- Subject-wide retrieval across multiple Units;
 - one historical Subtopic mapping to multiple current Subtopics;
 - strict same-Subject isolation;
-- empty Subtopics as valid retrieval scopes;
-- questions directly classified under Topic-level Descriptors;
-- reconstruction after closing and reopening the database.
+- empty Subtopics;
+- Topic-level Descriptor structures;
+- database close/reopen reconstruction.
 
-### Finish preamble capture semantics
+### Finish generalized preamble/shared-context and multipart semantics
 
-Origin: Legacy metadata import follow-on work.
+Origin: Batching Exam Questions, legacy `MultiPartQuestion`, Legacy Metadata Import follow-on work.
 
-This requires a short design decision before implementation.
+This is broader than the current `preambleCaptureRequired` hint.
 
-Determine whether a preamble should be represented as:
+Decide how to represent shared stems/tables/graphs/diagrams used by several questions or parts, including possibilities such as:
 
-- an ordered region associated with several questions;
+- repeated ordinary regions attached to each question;
 - a separately persisted shared source section;
-- repeated regions attached to each affected question.
+- ordered shared content blocks;
+- question/part dependency relationships;
+- keep-together output rules.
 
-Do not implement this until ownership, ordering and document-generation behaviour are settled.
+Constraints:
+
+- source-document provenance;
+- ordering;
+- independent classification of parts where required;
+- no guessed preamble grouping during legacy import;
+- no persisted `pinned` flag merely to support capture UI.
+
+After persistence semantics are settled, consider a capture-time “pin/reuse selected region” convenience.
 
 ### Add import audit and reconciliation reporting
 
-Origin: Legacy metadata import follow-on work.
+Origin: Legacy Metadata Import follow-on work.
 
-Provide an administrative report for repeated or batch imports showing:
+Report:
 
 - records created;
 - records already identical;
 - conflicts rejected;
 - missing PDFs/booklets;
 - questions still needing regions;
-- answers supplied or absent;
-- classifications that could not be resolved.
+- answers supplied/absent/unknown;
+- unresolved classifications.
 
-A later dry-run mode could use the same validation without changing the database.
+A dry-run mode may later reuse the same validation.
 
 ### Validate additional real-world legacy workbook variants
 
-Origin: Legacy metadata import follow-on work.
+Origin: Legacy Metadata Import follow-on work.
 
-As representative workbooks become available, test:
+Test representative files for:
 
-- multiple Subjects and providers;
-- unexpected workbook formatting;
+- multiple Subjects/providers;
+- unexpected formatting;
 - blank or formula-driven cells;
-- duplicate rows with conflicting metadata;
-- unusual question codes or part-question formats;
+- duplicate conflicting rows;
+- unusual question codes;
 - missing MCQ answers;
-- preamble groups spanning multiple rows;
-- renamed or relocated source PDFs.
+- shared/preamble groups spanning rows;
+- renamed/relocated source PDFs.
 
-Do not generalise the importer speculatively before representative workbooks are available.
+Do not generalise speculatively before real files demonstrate the need.
 
----
+### Decide whether legacy image-snip import/support is still required
+
+Origin: Batching Exam Questions.
+
+The legacy application has many named question/answer snips. The current redesign correctly prefers original PDFs + regions.
+
+Decide whether any irreplaceable legacy items exist only as image snips and therefore need:
+
+- one-time attachment import;
+- managed-file compatibility;
+- or no special support because original PDFs are available.
+
+Do not convert all legacy snips merely for architectural purity.
+
+### Decide whether richer curriculum mapping relation metadata should be persisted
+
+Origin: Curriculum Descriptor Mapping.
+
+The standalone mapping work distinguishes conceptual cases such as direct/reworded, split, consolidated/merged, partial, removed and new content.
+
+Current retrieval mainly needs confirmed directional pairs.
+
+Decide whether relation type/confidence/notes should remain external review/audit metadata or become persisted application data for reporting and assisted review.
+
+## Output / Future Sprint Inputs
+
+### Sprint 05 — static web rendering rules
+
+Origin: Batching Exam Questions.
+
+When Sprint 05 is designed/implemented, retain these previously adopted rules:
+
+- web assets are generated at export/build time from authoritative PDF regions;
+- PDFBox is the preferred renderer;
+- generated images are derived artefacts;
+- browser-side PDF.js is not the primary revision-package architecture;
+- source attribution survives rebatching;
+- source PDFs are not required as ordinary web assets.
+
+### Sprint 06 — SCORM packaging rules
+
+Origin: Batching Exam Questions + current development roadmap.
+
+Retain:
+
+- static generated assets with ordinary relative paths;
+- full source exam PDFs should not normally be included in the package;
+- application generates the final ZIP;
+- manifest/resources must match actual contents;
+- validate against the real QLearn-supported profile.
+
+### Later printable output — preserve vector source content
+
+Origin: Batching Exam Questions / legacy output behaviour.
+
+For print-oriented PDF generation, evaluate direct source-PDF page/viewport clipping through LaTeX `graphicx` or equivalent vector-preserving output rather than rasterizing the web assets.
+
+Preserve generated numbering and original source attribution; question and solution numbering should stay aligned.
 
 ## Performance
 
 ### Benchmark and optimise broad question searches
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
+Origin: Question Retrieval Sprint v3 / final review.
 
-`SqliteQuestionRepository.findApplicableToNodes()` currently performs a broad requested-node/question operation followed by per-question reconstruction.
+Measure before optimizing:
 
-Work should include:
+- Subject/Unit/Topic-wide searches;
+- SQLite query plans;
+- current requested-node/question cross-product behaviour;
+- per-question reconstruction/N+1 cost;
+- deterministic ordering;
+- mapped/direct equivalence.
 
-- generate a representative large database;
-- benchmark Subject-, Unit- and Topic-wide searches;
-- inspect the SQLite query plan;
-- measure the current cross-product behaviour;
-- measure the per-question `findById()` reconstruction cost;
-- eliminate N+1 reconstruction only if measurements justify it;
-- preserve deterministic ordering;
-- preserve original classifications;
-- verify mapped and directly current classifications still produce identical results.
-
-Do not add indexes until query-plan evidence or realistic benchmarks justify them.
+Add indexes only when measurements justify them.
 
 ### Measure preview image conversion performance
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
+Origin: Question Retrieval Sprint v3 / final review.
 
-PDF rendering already occurs away from the JavaFX application thread, but `BufferedImage` to JavaFX `Image` conversion occurs on the FX thread.
+Measure large and multi-region previews. Investigate moving/restructuring image conversion only if visible FX-thread pauses are demonstrated.
 
-Measure large and multi-region previews.
-
-If visible pauses are demonstrated, investigate moving or restructuring conversion work without breaking JavaFX thread-safety.
-
----
-
-## Curriculum Mapping
+## Curriculum Mapping Hardening
 
 ### Decide whether mapping invariants need database enforcement
 
 Origin: Curriculum mapping/retrieval hardening review.
 
-The writer currently enforces:
-
-- same Subject;
-- different syllabus versions;
-- same curriculum level;
-- allowed mapping direction.
-
-Direct SQL access could bypass some of these rules because foreign keys alone do not express every invariant.
-
-Decide whether application-level enforcement is sufficient or whether a later migration should introduce triggers or another database-level mechanism.
-
-This is hardening, not a current writer defect.
+Application writers enforce same Subject, different versions, same level and allowed direction. Decide whether direct SQL bypass risk justifies triggers/other DB enforcement.
 
 ### Mapping workflow extensions
 
-Origin: Earlier curriculum-mapping work deliberately deferred.
-
-Possible later features include:
+Possible later work:
 
 - bulk mapping import;
-- assisted review of mapping gaps;
-- improved similarity scoring beyond the current TF-IDF implementation;
+- assisted review of gaps;
+- improved similarity scoring;
 - optional AI-assisted suggestions;
-- mapping coverage/reporting across whole syllabus versions.
+- whole-version coverage reporting.
 
-Any assisted mechanism must continue to require explicit confirmation. Rank or confidence must never automatically create a confirmed mapping.
+Any assisted mechanism must still require explicit confirmation.
 
----
+## UI / Usability
+
+### Maintain a deliberate UI polish backlog
+
+Origin: Exam Builder Design Slice.
+
+Spacing, alignment, sizing, label wording and visual consistency were deliberately deferred so they do not stall persistence/export work.
+
+Promote a UI issue above polish only when it:
+
+- blocks the capture workflow;
+- causes incorrect data;
+- makes an essential control unusable.
+
+### Consider assisted PDF question-boundary detection
+
+Origin: Batching Exam Questions.
+
+Possible workflow:
+
+- detect headings such as `QUESTION 12` using PDF text positions;
+- estimate crop boundaries;
+- present a suggested region;
+- require user correction/confirmation.
+
+Do not assume text extraction is reliable enough to replace visual source content.
+
+### Consider assisted part/dependency recognition
+
+Origin: Batching Exam Questions.
+
+Suggest part labels and phrases such as “using your answer to part a”, but retain manual override because semantic dependency cannot be inferred reliably in all questions.
+
+## Future Content Sources
+
+### Clipboard / image-attachment questions
+
+Origin: future image-snips discussion.
+
+Support an eventual workflow such as:
+
+```text
+Windows Snipping Tool / copied image
+        -> system clipboard
+        -> Paste Image / Ctrl+V
+        -> question content attachment
+```
+
+Design requirements:
+
+- question content can be text plus zero or more images;
+- optional drag/drop PNG/JPEG;
+- choose SQLite BLOB versus application-managed file storage;
+- define provenance metadata;
+- include images in backup/restore;
+- render consistently to HTML/PDF/SCORM;
+- avoid creating separate mutually exclusive “text question” and “image question” hierarchies unless evidence later requires it.
+
+OCR is optional later work, not a prerequisite.
+
+## Packaging / Deployment
+
+### Self-contained desktop packaging
+
+Origin: Batching Exam Questions.
+
+Investigate `jpackage` once deployment becomes a priority.
+
+Requirements:
+
+- Maven-driven reproducible packaging;
+- runtime/dependencies bundled appropriately;
+- writable SQLite/data root outside installed application files;
+- upgrade/migration/backup safety.
+
+### Shared faculty operation
+
+Origin: Batching Exam Questions.
+
+Do not treat a live SQLite DB on SharePoint/network sync as a safe concurrently edited datastore.
+
+Possible later models:
+
+- local SQLite + controlled import/export/merge;
+- SharePoint for backups, exports and distributed source files;
+- IT-supported central database when simultaneous multi-user editing becomes necessary;
+- SharePoint/Graph integration if justified.
 
 ## Testing / Reliability
 
 ### JavaFX TestFX suite isolation
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
+Origin: Question Retrieval Sprint v3 / final review.
 
-As part of stabilising JavaFX tests:
-
-- investigate focus-sensitive `JavaFxToolchainSmokeTest` behaviour;
-- separate UI tests from non-UI tests where useful;
-- ensure repeatable CI/full-suite execution;
-- keep TestFX instability separate from retrieval feature work unless evidence shows a real feature regression.
+Continue focus-sensitive test isolation and repeatable clean-suite work.
 
 ### Question Search lifecycle
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
-
-Beyond the high-priority asynchronous coverage, retain focused lifecycle hardening for:
-
-- disposal while work is deliberately held in flight;
-- late hierarchy completion after disposal;
-- late question-search completion after disposal;
-- late preview completion after disposal;
-- hierarchy failure after changing scope;
-- repeated disposal;
-- detached-pane event handling.
-
----
+Retain focused tests for late hierarchy/search/preview completion, repeated disposal and detached-pane event handling.
 
 ## Technical Debt
 
 ### Public API documentation
 
-Origin: Question Retrieval Sprint v3 / final Codex merge-readiness review.
+Origin: Question Retrieval Sprint v3 / final review.
 
-- Document in `QuestionSearchDialog` that hiding the dialog disposes its search pane and the dialog is effectively single-use.
-- Document Subject-search behaviour explicitly in `QuestionRetrievalService`:
-  - no current syllabus returns an empty result;
-  - multiple current syllabus versions are invalid and cause failure.
-- Document equivalent Subject-expansion behaviour in `CurriculumSearchNodeExpansionService`.
-- Update `QuestionRetrievalResult` Javadoc to state that historical applicability nodes are rejected.
-- Update documentation again if applicability invariants are strengthened.
+Document:
 
----
-
-## Future Features
-
-### Assessment assembly
-
-Later product work should include:
-
-- selecting and assembling questions into a new assessment;
-- reproducible question ordering;
-- question/section ordering controls;
-- answer/marking-material inclusion options.
-
-### Output generation
-
-Later output work should include:
-
-- HTML generation;
-- PDF generation;
-- reproducible pagination;
-- source attribution;
-- copyright-safe output handling.
-
-### Operational maintenance
-
-Later operational work should include:
-
-- backup and restore;
-- database maintenance beyond the existing development reset tool;
-- administrative diagnostics where justified.
-
----
+- single-use/disposal behaviour of question search UI;
+- Subject-search no-current/multiple-current semantics;
+- hierarchy-expansion behaviour;
+- historical applicability rejection and any strengthened invariants.
 
 ## Completed / Not Backlog
 
-The following are intentionally not backlog items because they are already completed or substantially addressed:
+Do not re-add these as unimplemented work:
 
-- schema migrations through version 3;
-- exact v3 structural validation;
+- migrations through the current implemented schema;
 - syllabus selection;
-- mapping persistence and review;
-- atomic review editing;
+- mapping persistence/review;
 - curriculum-import idempotency;
 - package reorganisation;
-- legacy metadata import foundations;
-- database reset tooling;
-- Question Retrieval Sprint v3 core retrieval implementation;
-- asynchronous curriculum hierarchy loading;
-- question-search lifecycle disposal;
-- stale hierarchy protection;
-- stored question preview;
-- the two merge blockers identified during the Question Retrieval Sprint review.
-
----
+- legacy metadata import foundation;
+- question/answer persistence;
+- PDF-region capture;
+- question retrieval Sprint 03;
+- async hierarchy loading;
+- stale-result protection;
+- stored-question preview;
+- arbitrary-PDF viewer mode;
+- one-root managed-data configuration.
 
 ## Backlog Rules
 
-- Add an origin for each item so its context can be traced.
-- Do not move unfinished work back into a completed sprint document.
-- When an item becomes part of a new sprint, reference the backlog item from that sprint and remove or mark the backlog entry as scheduled.
+- Include an origin for each item.
+- Preserve completed sprint documents as history.
+- When an item is scheduled into a sprint, reference it there and remove/mark it here.
 - Keep performance work measurement-driven.
-- Prefer behaviour-focused tests over coverage-percentage targets.
-- Do not implement design-decision items until the underlying ownership and semantics are agreed.
+- Prefer behaviour-focused tests over coverage percentages.
+- Do not implement unresolved ownership/semantics by inventing placeholder data.
+- Do not promote chat prototypes or standalone mapping artifacts to application implementation without repository/persistence evidence.
