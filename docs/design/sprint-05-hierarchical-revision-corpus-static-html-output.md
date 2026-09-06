@@ -50,6 +50,7 @@ The implemented structure is therefore approximately:
         ├── topic-<id>.html
         └── topic-<id>/
             └── subtopic-<id>.html
+```
 
 ## Repository Baseline
 

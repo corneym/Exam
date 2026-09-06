@@ -129,7 +129,7 @@ A capture-time “pin/reuse region” interaction may follow, but should not dic
 
 ## Milestone 4 — Sprint 05: Hierarchical Revision Corpus and Static HTML Export
 
-**CURRENT / IN DEVELOPMENT**
+**IMPLEMENTED / COMPLETE**
 
 ### Goal
 

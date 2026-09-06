@@ -391,6 +391,22 @@ Continue focus-sensitive test isolation and repeatable clean-suite work.
 
 Retain focused tests for late hierarchy/search/preview completion, repeated disposal and detached-pane event handling.
 
+### Add SQLite-backed revision export integration coverage
+
+Origin: Sprint 05 merge-readiness review.
+
+The current revision-export integration test exercises complete PDF-region-to-HTML generation but uses an in-memory curriculum/retrieval fixture.
+
+Add a temporary-SQLite end-to-end export test using fresh production repository/service instances to cover:
+
+- persisted current/historical curriculum reconstruction;
+- confirmed mapping retrieval;
+- ordered question and answer regions;
+- answer reconstruction;
+- complete revision export after database reopen.
+
+Real Chemistry acceptance has exercised this production path manually, so this is hardening rather than a Sprint 05 merge blocker.
+
 ## Technical Debt
 
 ### Public API documentation

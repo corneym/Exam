@@ -276,11 +276,12 @@ public final class RevisionHtmlRenderer {
 	}
 
 	/**
-	 * Writes the shared stylesheet and one page for every Topic in the corpus.
+	 * Writes the shared stylesheet and pages for every Topic and Subtopic in the
+	 * corpus.
 	 *
 	 * @param corpus     revision corpus
 	 * @param outputRoot root directory of the static revision export
-	 * @return topic HTML files in curriculum order
+	 * @return Topic and Subtopic HTML files in curriculum order
 	 * @throws IOException           if output cannot be written
 	 * @throws IllegalStateException if a required rendered asset is missing
 	 */
