@@ -1,7 +1,7 @@
 # Exam Question Bank — Development Roadmap
 
 > **Reference date:** 6 September 2026  
-> **Version:** 5
+> **Version:** 6
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 
 ## 1. Project goal
@@ -150,7 +150,7 @@ Sprint 04 is complete. Its detailed sprint design remains the historical record 
 
 ## 7. Parallel corpus-completion work
 
-While Sprint 04–06 development proceeds:
+With Sprint 04–06 complete, corpus-completion work continues in parallel:
 
 - attach question regions to imported metadata-only questions;
 - attach answer/marking regions;
@@ -250,37 +250,75 @@ Sprint 05 delivered:
 - genuine rendering progress feedback;
 - real Chemistry browser acceptance.
 
-The static content layer is now the input boundary for Sprint 06.
+The static content layer is the tested content boundary used by Sprint 06.
 
 ## 10. Sprint 06 — SCORM Package Generation and QLearn Validation
 
-**Status: next development sprint.**
+**Status: complete — implemented and real QLearn accepted on 6 September 2026.**
 
 ### Goal
 
 Generate the final SCORM ZIP directly from the application and prove QLearn compatibility.
 
-Package should include:
+### Confirmed QLearn profile
+
+Inspection of a known-working QLearn package established SCORM 1.2 with a single SCO as the appropriate compatibility target.
+
+The implemented package uses:
 
 ```text
 imsmanifest.xml
-+ required profile/schema support
-+ static HTML
-+ derived question/answer assets
-+ CSS/JavaScript
+adlcp_rootv1p2.xsd
+ims_xml.xsd
+imscp_rootv1p1p2.xsd
+imsmd_rootv1p2p1.xsd
+index.html
+assets/...
+units/...
 ```
 
-Do not normally include full authoritative source exam PDFs.
+`imsmanifest.xml` is at the ZIP root. There is no enclosing package directory.
 
-Required work:
+The SCO launches `index.html` and uses the existing static multi-page revision website. No SCORM runtime/API JavaScript is required for the current revision-delivery use case.
 
-- confirm supported QLearn SCORM profile/version;
-- generate deterministic manifest resources/identifiers;
-- use portable relative paths;
-- validate package contents/references;
-- create final ZIP;
-- perform real QLearn import/render exercise;
-- record any QLearn-specific rule explicitly.
+### Implemented outcome
+
+Sprint 06 delivered:
+
+- SCORM 1.2 manifest generation;
+- deterministic identifiers and manifest file ordering;
+- one organisation, item and SCO resource;
+- complete manifest `<file>` inventory for generated learning content;
+- bundled SCORM 1.2 schema support;
+- portable relative package paths;
+- package-content and manifest validation;
+- rejection of missing, duplicate, unsafe and undeclared content;
+- exclusion of source exam/answer PDFs;
+- deterministic root-level ZIP generation;
+- failure-safe temporary staging and cleanup;
+- end-to-end composition over the existing Sprint 05 `RevisionExportService`;
+- separate JavaFX `Revision SCORM...` export workflow;
+- automated manifest/package/ZIP/schema/integration/UI coverage.
+
+The implementation intentionally corrects defects tolerated by the known-working reference package rather than reproducing them. In particular:
+
+- the default organisation identifier resolves correctly;
+- manifest schema locations correspond to bundled support files;
+- every generated learning-content file is declared exactly once in the SCO resource.
+
+### Acceptance
+
+A representative Chemistry SCORM ZIP was generated directly by the application on 6 September 2026.
+
+QLearn successfully:
+
+- imported the package;
+- accepted the SCORM 1.2 manifest;
+- launched the SCO.
+
+No speculative change to the Sprint 05 static HTML/content model was required.
+
+Sprint 06 is therefore complete.
 
 ## 11. After SCORM — rich bank management
 

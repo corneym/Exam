@@ -8,6 +8,7 @@ module au.edu.eq.questionbank {
 	requires java.naming;
 	requires java.prefs;
 	requires java.sql;
+	requires java.xml;
 	requires org.apache.pdfbox;
 	requires org.apache.poi.ooxml;
 	requires org.apache.logging.log4j.core;
@@ -27,6 +28,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.model;
 	opens au.edu.eq.questionbank.output;
 	opens au.edu.eq.questionbank.output.revision;
+	opens au.edu.eq.questionbank.output.scorm;
 	opens au.edu.eq.questionbank.pdf;
 	opens au.edu.eq.questionbank.repository.assessment;
 	opens au.edu.eq.questionbank.repository.curriculum;

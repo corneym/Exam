@@ -27,6 +27,13 @@ import au.edu.eq.questionbank.output.revision.RevisionExportResult;
 import au.edu.eq.questionbank.output.revision.RevisionExportService;
 import au.edu.eq.questionbank.output.revision.RevisionExportValidator;
 import au.edu.eq.questionbank.output.revision.RevisionQuestionAssetRenderer;
+import au.edu.eq.questionbank.output.scorm.ScormExportRequest;
+import au.edu.eq.questionbank.output.scorm.ScormExportResult;
+import au.edu.eq.questionbank.output.scorm.ScormExportService;
+import au.edu.eq.questionbank.output.scorm.ScormManifestWriter;
+import au.edu.eq.questionbank.output.scorm.ScormPackageValidator;
+import au.edu.eq.questionbank.output.scorm.ScormSchemaSupport;
+import au.edu.eq.questionbank.output.scorm.ScormZipWriter;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
@@ -102,12 +109,26 @@ import javafx.stage.Stage;
  */
 public class QuestionBankApplication extends Application {
 
+	private enum BackupFailureDecision {
+		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
+	}
+
 	private static final double SECTION_SPACING = 10.0;
 	private static final double PREVIEW_PANE_WIDTH = 330.0;
 	private static final double SCENE_WIDTH = 1400.0;
 	private static final double SCENE_HEIGHT = 840.0;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 	private static final Path PROPERTIES_FILE = Path.of("questionbank.properties");
+
+	/**
+	 * Launches the desktop application.
+	 *
+	 * @param args command-line arguments passed to JavaFX
+	 */
+	public static void main(String[] args) {
+		launch(args);
+	}
+
 	private QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
@@ -124,67 +145,14 @@ public class QuestionBankApplication extends Application {
 	private MenuItem revisionExportMenuItem;
 	private boolean revisionExportRunning;
 
+	private MenuItem scormExportMenuItem;
+
+	private boolean scormExportRunning;
+
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
 	 */
 	public QuestionBankApplication() {
-	}
-
-	/**
-	 * Launches the desktop application.
-	 *
-	 * @param args command-line arguments passed to JavaFX
-	 */
-	public static void main(String[] args) {
-		launch(args);
-	}
-
-	@Override
-	public void start(Stage stage) throws Exception {
-		ApplicationConfig config;
-		try {
-			config = ApplicationConfig.load(PROPERTIES_FILE);
-		} catch (ConfigurationException e) {
-			showStartupError("Configuration Error", e.getMessage());
-			return;
-		} catch (IOException e) {
-			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
-			return;
-		}
-		try {
-			startApplication(stage, config);
-		} catch (IncompatibleDatabaseException e) {
-			showStartupError("Database Upgrade Required", """
-					The existing question-bank database contains old development question data
-					that cannot be migrated safely to the current database format.
-
-					Delete the existing database and restart the application.
-
-					Database:
-					%s
-
-					You will need to re-import the curriculum and exam data afterwards.
-					""".formatted(config.databasePath()));
-		} catch (SQLException e) {
-			showStartupError("Database Error", """
-					The question-bank database could not be opened or upgraded.
-
-					Database:
-					%s
-
-					%s
-					""".formatted(config.databasePath(), e.getMessage()));
-		}
-	}
-
-	@Override
-	public void stop() throws Exception {
-		if (resourcesClosedForRestore) {
-			return;
-		}
-		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
-			pdfWorkspace.close();
-		}
 	}
 
 	private void activateExamSubject(Subject subject) {
@@ -339,10 +307,18 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu exportMenu = createMenu("E_xport");
+
 		revisionExportMenuItem = createMenuItem("_Revision HTML...",
 				() -> showRevisionExportDialog(primaryStage, config));
+
 		revisionExportMenuItem.setId("export-revision-html");
-		exportMenu.getItems().add(revisionExportMenuItem);
+
+		scormExportMenuItem = createMenuItem("Revision _SCORM...", () -> showScormExportDialog(primaryStage, config));
+
+		scormExportMenuItem.setId("export-revision-scorm");
+
+		exportMenu.getItems().addAll(revisionExportMenuItem, scormExportMenuItem);
+
 		return exportMenu;
 	}
 
@@ -446,6 +422,12 @@ public class QuestionBankApplication extends Application {
 		return root;
 	}
 
+	private ScormExportService createScormExportService(ApplicationConfig config) {
+
+		return new ScormExportService(createRevisionExportService(config), new ScormManifestWriter(),
+				new ScormSchemaSupport(), new ScormPackageValidator(), new ScormZipWriter());
+	}
+
 	private String failureMessage(Throwable failure) {
 		StringBuilder message = new StringBuilder();
 		Throwable cause = failure;
@@ -469,6 +451,14 @@ public class QuestionBankApplication extends Application {
 		revisionExportRunning = false;
 		if (revisionExportMenuItem != null) {
 			revisionExportMenuItem.setDisable(false);
+		}
+	}
+
+	private void finishScormExport() {
+		scormExportRunning = false;
+
+		if (scormExportMenuItem != null) {
+			scormExportMenuItem.setDisable(false);
 		}
 	}
 
@@ -727,6 +717,39 @@ public class QuestionBankApplication extends Application {
 		return destination;
 	}
 
+	private Path scormExportDestination(Path parent, Subject subject) {
+		if (parent == null) {
+			throw new NullPointerException("parent");
+		}
+
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+
+		Path normalizedParent = parent.toAbsolutePath().normalize();
+
+		String subjectName = subject.getName().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-")
+				.replaceAll("^-+", "").replaceAll("-+$", "");
+
+		if (subjectName.isBlank()) {
+			subjectName = "subject-" + subject.getId();
+		}
+
+		String baseName = subjectName + "-revision-scorm";
+
+		Path destination = normalizedParent.resolve(baseName + ".zip");
+
+		int suffix = 2;
+
+		while (Files.exists(destination)) {
+			destination = normalizedParent.resolve(baseName + "-" + suffix + ".zip");
+
+			suffix++;
+		}
+
+		return destination;
+	}
+
 	private void setFixedWidth(Region region, double width) {
 		region.setPrefWidth(width);
 		region.setMinWidth(width);
@@ -883,6 +906,53 @@ public class QuestionBankApplication extends Application {
 				message);
 	}
 
+	private void showScormExportDialog(Stage primaryStage, ApplicationConfig config) {
+
+		if (scormExportRunning) {
+			return;
+		}
+
+		ScormExportDialog dialog = new ScormExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
+				curriculumSelectionModel.getSubject());
+
+		Optional<ButtonType> result = dialog.showAndWait();
+
+		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
+			return;
+		}
+
+		Subject subject = dialog.getSelectedSubject();
+		Path destinationParent = dialog.getDestinationParent();
+
+		if (subject == null || destinationParent == null) {
+			return;
+		}
+
+		Path destination = scormExportDestination(destinationParent, subject);
+
+		startScormExport(primaryStage, config, subject, destination);
+	}
+
+	private void showScormExportSuccess(ScormExportResult result) {
+		String message = """
+				SCORM ZIP:
+				%s
+
+				Applicable questions: %d
+				Exportable questions: %d
+				Awaiting question capture: %d
+				Questions without answers: %d
+				Preamble review flags: %d
+				""".formatted(result.getDestination(), result.getStatistics().getUniqueApplicableQuestions(),
+				result.getStatistics().getRenderableQuestions(),
+				result.getStatistics().getMissingQuestionRegionQuestions(),
+				result.getStatistics().getQuestionsWithoutAnswers(),
+				result.getStatistics().getPreambleReviewQuestions());
+
+		showAlert(Alert.AlertType.INFORMATION, "Export Revision SCORM", "SCORM package exported successfully.",
+				message);
+	}
+
 	private void showStage(Stage primaryStage, BorderPane root) {
 		Scene scene = new Scene(root, SCENE_WIDTH, SCENE_HEIGHT);
 		primaryStage.setTitle("Exam Question Bank");
@@ -921,6 +991,44 @@ public class QuestionBankApplication extends Application {
 		alert.setHeaderText("Exam Question Bank");
 		alert.setContentText(information);
 		alert.showAndWait();
+	}
+
+	@Override
+	public void start(Stage stage) throws Exception {
+		ApplicationConfig config;
+		try {
+			config = ApplicationConfig.load(PROPERTIES_FILE);
+		} catch (ConfigurationException e) {
+			showStartupError("Configuration Error", e.getMessage());
+			return;
+		} catch (IOException e) {
+			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
+			return;
+		}
+		try {
+			startApplication(stage, config);
+		} catch (IncompatibleDatabaseException e) {
+			showStartupError("Database Upgrade Required", """
+					The existing question-bank database contains old development question data
+					that cannot be migrated safely to the current database format.
+
+					Delete the existing database and restart the application.
+
+					Database:
+					%s
+
+					You will need to re-import the curriculum and exam data afterwards.
+					""".formatted(config.databasePath()));
+		} catch (SQLException e) {
+			showStartupError("Database Error", """
+					The question-bank database could not be opened or upgraded.
+
+					Database:
+					%s
+
+					%s
+					""".formatted(config.databasePath(), e.getMessage()));
+		}
 	}
 
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
@@ -1019,7 +1127,94 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
-	private enum BackupFailureDecision {
-		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
+	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
+
+		if (scormExportRunning) {
+			return;
+		}
+
+		scormExportRunning = true;
+
+		if (scormExportMenuItem != null) {
+			scormExportMenuItem.setDisable(true);
+		}
+
+		ScormExportService exportService = createScormExportService(config);
+
+		ScormExportRequest request = new ScormExportRequest(subject, destination);
+
+		Task<ScormExportResult> task = new Task<ScormExportResult>() {
+
+			@Override
+			protected ScormExportResult call() throws Exception {
+				updateMessage("Starting SCORM export...");
+				updateProgress(-1, 1);
+
+				return exportService.export(request, (message, completed, total) -> {
+					updateMessage(message);
+
+					if (total > 0) {
+						updateProgress(completed, total);
+					} else {
+						updateProgress(-1, 1);
+					}
+				});
+			}
+		};
+
+		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
+
+		progressAlert.initOwner(primaryStage);
+		progressAlert.setTitle("Export Revision SCORM");
+		progressAlert.setHeaderText("Creating SCORM package...");
+
+		Label progressLabel = new Label("Starting SCORM export...");
+
+		progressLabel.setWrapText(true);
+		progressLabel.textProperty().bind(task.messageProperty());
+
+		ProgressBar progressBar = new ProgressBar();
+		progressBar.setPrefWidth(360);
+		progressBar.progressProperty().bind(task.progressProperty());
+
+		VBox progressContent = new VBox(10, progressLabel, progressBar);
+
+		progressAlert.getDialogPane().setContent(progressContent);
+		progressAlert.getDialogPane().setGraphic(null);
+
+		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+		progressAlert.getButtonTypes().setAll(hideButton);
+
+		task.setOnSucceeded(event -> {
+			finishScormExport();
+			progressAlert.close();
+			showScormExportSuccess(task.getValue());
+		});
+
+		task.setOnFailed(event -> {
+			finishScormExport();
+			progressAlert.close();
+
+			showAlert(Alert.AlertType.ERROR, "Export Revision SCORM", "The SCORM export could not be completed.",
+					failureMessage(task.getException()));
+		});
+
+		progressAlert.show();
+
+		Thread thread = new Thread(task, "revision-scorm-export");
+
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	@Override
+	public void stop() throws Exception {
+		if (resourcesClosedForRestore) {
+			return;
+		}
+		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
+			pdfWorkspace.close();
+		}
 	}
 }

@@ -341,6 +341,44 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void exportMenuContainsRevisionScormCommand(FxRobot robot) {
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		MenuItem exportItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.filter(item -> "export-revision-scorm".equals(item.getId())).findFirst().orElseThrow();
+		assertEquals("Revision _SCORM...", exportItem.getText());
+		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
+	void failedScormExportRestoresMenu(FxRobot robot) throws Exception {
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Path exportParent = Files.createTempDirectory("scorm-ui-failure-");
+		Path destination = exportParent.resolve("not-a-zip.txt");
+		MenuItem exportItem = field(application, "scormExportMenuItem", MenuItem.class);
+		AtomicBoolean disabledWhileStarting = new AtomicBoolean();
+		robot.interact(() -> {
+			try {
+				invoke(application, "startScormExport",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
+						primaryStage, applicationConfig, chemistry, destination);
+				disabledWhileStarting.set(exportItem.isDisable());
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		});
+		assertTrue(disabledWhileStarting.get());
+		WaitForAsyncUtils.waitFor(10, java.util.concurrent.TimeUnit.SECONDS,
+				() -> robot.lookup("OK").tryQuery().isPresent());
+		robot.clickOn("OK");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(Files.exists(destination));
+		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
+		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
 	void fileExitCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
 		AtomicInteger exitCount = new AtomicInteger();
 		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
@@ -481,6 +519,75 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(field(application, "revisionExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
+	void revisionScormExportRunsFromApplicationAndRestoresMenu(FxRobot robot) throws Exception {
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Path exportParent = Files.createTempDirectory("scorm-ui-export-");
+		Path destination = exportParent.resolve("chemistry-revision-scorm.zip");
+		MenuItem exportItem = field(application, "scormExportMenuItem", MenuItem.class);
+		AtomicBoolean disabledWhileStarting = new AtomicBoolean();
+		robot.interact(() -> {
+			try {
+				invoke(application, "startScormExport",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
+						primaryStage, applicationConfig, chemistry, destination);
+				disabledWhileStarting.set(exportItem.isDisable());
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		});
+		assertTrue(disabledWhileStarting.get());
+		WaitForAsyncUtils.waitFor(10, java.util.concurrent.TimeUnit.SECONDS,
+				() -> robot.lookup("OK").tryQuery().isPresent());
+		assertTrue(Files.isRegularFile(destination), "SCORM export did not complete");
+		assertTrue(Files.size(destination) > 0, "SCORM export produced an empty ZIP");
+		robot.clickOn("OK");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
+		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
+	void scormExportDestinationAvoidsExistingZip() throws Exception {
+		Subject chemistry = new Subject(500, "Chemistry");
+		Path parent = Files.createTempDirectory("scorm-destination-");
+		Path first = (Path) invoke(application, "scormExportDestination", new Class<?>[] { Path.class, Subject.class },
+				parent, chemistry);
+		assertEquals(parent.resolve("chemistry-revision-scorm.zip"), first);
+		Files.writeString(first, "existing");
+		Path second = (Path) invoke(application, "scormExportDestination", new Class<?>[] { Path.class, Subject.class },
+				parent, chemistry);
+		assertEquals(parent.resolve("chemistry-revision-scorm-2.zip"), second);
+	}
+
+	@Test
+	void scormExportDoesNotStartWhenOneIsAlreadyRunning(FxRobot robot) throws Exception {
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Path exportParent = Files.createTempDirectory("scorm-ui-duplicate-");
+		Path destination = exportParent.resolve("should-not-exist.zip");
+		MenuItem exportItem = field(application, "scormExportMenuItem", MenuItem.class);
+		AtomicBoolean disabledAfterAttempt = new AtomicBoolean();
+		setField(application, "scormExportRunning", Boolean.TRUE);
+		robot.interact(() -> {
+			try {
+				invoke(application, "startScormExport",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
+						primaryStage, applicationConfig, chemistry, destination);
+				disabledAfterAttempt.set(exportItem.isDisable());
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		});
+		assertFalse(disabledAfterAttempt.get());
+		assertFalse(Files.exists(destination));
+		assertTrue(field(application, "scormExportRunning", Boolean.class).booleanValue());
+		setField(application, "scormExportRunning", Boolean.FALSE);
 	}
 
 	@Start
