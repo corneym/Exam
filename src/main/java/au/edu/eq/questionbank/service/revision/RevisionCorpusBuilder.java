@@ -152,7 +152,11 @@ public final class RevisionCorpusBuilder {
 	private RevisionCorpusNode freeze(MutableCorpusNode mutableNode, RevisionNumberSequence revisionNumbers) {
 		List<RevisionQuestionPlacement> placements = new ArrayList<RevisionQuestionPlacement>();
 		for (Question question : mutableNode.questionsById.values()) {
-			placements.add(new RevisionQuestionPlacement(question, mutableNode.curriculumNode, revisionNumbers.next()));
+			int revisionNumber = 0;
+			if (!question.getRegions().isEmpty()) {
+				revisionNumber = revisionNumbers.next();
+			}
+			placements.add(new RevisionQuestionPlacement(question, mutableNode.curriculumNode, revisionNumber));
 		}
 		List<RevisionCorpusNode> children = new ArrayList<RevisionCorpusNode>();
 		for (MutableCorpusNode child : mutableNode.children) {

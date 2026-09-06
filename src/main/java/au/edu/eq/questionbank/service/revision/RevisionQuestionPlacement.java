@@ -21,8 +21,12 @@ public final class RevisionQuestionPlacement {
 		if (currentNode == null) {
 			throw new NullPointerException("currentNode");
 		}
-		if (revisionNumber < 1) {
-			throw new IllegalArgumentException("revisionNumber must be positive");
+		boolean renderable = !question.getRegions().isEmpty();
+		if (renderable && revisionNumber < 1) {
+			throw new IllegalArgumentException("Renderable placement must have a positive revision number");
+		}
+		if (!renderable && revisionNumber != 0) {
+			throw new IllegalArgumentException("Non-renderable placement must not have a revision number");
 		}
 		if (!currentNode.getSyllabusVersion().isCurrent()) {
 			throw new IllegalArgumentException("currentNode must belong to a current syllabus");
@@ -48,11 +52,18 @@ public final class RevisionQuestionPlacement {
 	}
 
 	public int getRevisionNumber() {
+		if (!hasRevisionNumber()) {
+			throw new IllegalStateException("Non-renderable placement has no revision number");
+		}
 		return revisionNumber;
 	}
 
 	public boolean hasAnswer() {
 		return question.hasAnswer();
+	}
+
+	public boolean hasRevisionNumber() {
+		return revisionNumber > 0;
 	}
 
 	public boolean isPreambleCaptureRequired() {

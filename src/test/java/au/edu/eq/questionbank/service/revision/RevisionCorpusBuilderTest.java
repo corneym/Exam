@@ -113,11 +113,14 @@ class RevisionCorpusBuilderTest {
 		RevisionCorpus corpus = fixture.createBuilder(retrievalRepository).build(fixture.chemistry);
 		RevisionQuestionPlacement incomplete = findNode(corpus, fixture.currentSubtopic).getQuestionPlacements().get(0);
 		assertFalse(incomplete.isRenderable());
+		assertFalse(incomplete.hasRevisionNumber());
+		assertThrows(IllegalStateException.class, incomplete::getRevisionNumber);
 		assertFalse(incomplete.hasAnswer());
 		assertTrue(incomplete.isPreambleCaptureRequired());
 		RevisionQuestionPlacement renderable = findNode(corpus, fixture.directDescriptor).getQuestionPlacements()
 				.get(0);
 		assertTrue(renderable.isRenderable());
+		assertTrue(renderable.hasRevisionNumber());
 		assertTrue(renderable.hasAnswer());
 		assertFalse(renderable.isPreambleCaptureRequired());
 	}
@@ -207,10 +210,11 @@ class RevisionCorpusBuilderTest {
 		assertSame(fixture.laterQuestion, directPlacements.get(1).getQuestion());
 		RevisionQuestionPlacement subtopicPlacement = findNode(corpus, fixture.currentSubtopic).getQuestionPlacements()
 				.get(0);
-		assertEquals(3, subtopicPlacement.getRevisionNumber());
+		assertFalse(subtopicPlacement.hasRevisionNumber());
+		assertThrows(IllegalStateException.class, subtopicPlacement::getRevisionNumber);
 		RevisionQuestionPlacement descriptorPlacement = findNode(corpus, fixture.subtopicDescriptor)
 				.getQuestionPlacements().get(0);
-		assertEquals(4, descriptorPlacement.getRevisionNumber());
+		assertEquals(3, descriptorPlacement.getRevisionNumber());
 		assertSame(fixture.renderableQuestion, descriptorPlacement.getQuestion());
 	}
 
