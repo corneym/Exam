@@ -2,7 +2,7 @@
 
 > Consolidated remaining work from the known state at 6 September 2026.
 >
-> Completed Sprints 01–03 are deliberately excluded from future milestones except where hardening remains. `DEVELOPMENT_ROADMAP.md` contains the more detailed development sequence; `design/backlog.md` is the authoritative deferred-work list.
+> Completed Sprints 01–04 are deliberately excluded from future milestones except where hardening remains. `DEVELOPMENT_ROADMAP.md` contains the more detailed development sequence; `design/backlog.md` is the authoritative deferred-work list.
 
 ## Already complete — do not reopen as roadmap milestones
 
@@ -20,10 +20,11 @@
 - Sprint 01 legacy metadata import.
 - Sprint 02 directional curriculum applicability.
 - Sprint 03 hierarchical retrieval, asynchronous search and stored-question preview.
+- Sprint 04 backup, restore and data safety.
 
 ## Milestone 1 — Sprint 04: Backup, Restore and Data Safety
 
-**PROPOSED / NEXT**
+**IMPLEMENTED / COMPLETE**
 
 ### Goal
 
@@ -127,7 +128,7 @@ A capture-time “pin/reuse region” interaction may follow, but should not dic
 
 ## Milestone 4 — Sprint 05: Hierarchical Revision Corpus and Static HTML Export
 
-**PROPOSED**
+**CURRENT / IN DEVELOPMENT**
 
 ### Goal
 

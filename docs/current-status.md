@@ -10,7 +10,7 @@ The Exam Question Bank is a working Java/JavaFX desktop application with SQLite 
 
 The application is no longer an Excel-backed generation pipeline. Excel is an import/exchange format; SQLite is the live datastore. Original exam and marking PDFs are authoritative source material. Rendered/cropped images are derived.
 
-Completed sprint work currently extends through **Sprint 03 — Question Retrieval**. **Sprint 04 — Backup, Restore and Data Safety is planned, not yet implemented.**
+Completed sprint work currently extends through **Sprint 04 — Backup, Restore and Data Safety**. **Sprint 05 — Hierarchical Revision Corpus and Static HTML Output is the current development sprint.**
 
 ## Implemented and current
 
@@ -238,6 +238,27 @@ Retrieval includes:
 
 The completed sprint quality gate recorded the automated suite green and manual exercise against real stored questions.
 
+### Backup, restore and data safety
+
+**IMPLEMENTED / CURRENT — Sprint 04 complete**
+
+Sprint 04 delivered:
+
+- versioned backup archives;
+- SQLite-consistent snapshots;
+- manual full backup;
+- automatic database-only backup on normal application close;
+- bounded automatic-backup retention;
+- validated database-only and full restore;
+- pre-restore safety backup;
+- rollback after failed destructive restore;
+- migration-compatibility validation before restore;
+- backup archive path/content validation;
+- backup/restore filesystem-layout hardening;
+- restart boundary after successful or partially destructive restore.
+
+The completed sprint included focused service, SQLite and JavaFX lifecycle tests plus manual full-backup and restore acceptance testing.
+
 ### Testing and development workflow
 
 **IMPLEMENTED / CURRENT**
@@ -262,7 +283,8 @@ Known branch examples include:
 - `feature/legacy-metadata-import`
 - `feature/curriculum-applicability`
 - `feature/question-retrieval`
-- planned `feature/backup-restore`
+- `feature/backup-restore`
+- `feature/html-output`
 
 ## Implemented foundation, but not the final product feature
 
@@ -292,24 +314,17 @@ The new application does not yet have the full SCORM exporter/validator. The tar
 
 ## Current work / next sprint
 
-### Sprint 04 — Backup, Restore and Data Safety
+### Sprint 05 — Hierarchical Revision Corpus and Static HTML Output
 
-**PROPOSED / NEXT.**
+**CURRENT / IN DEVELOPMENT.**
 
-The design exists and is explicitly marked planned.
+Detailed design:
 
-Planned scope includes:
+`docs/design/sprint-05-hierarchical-revision-corpus-static-html-output.md`
 
-- backup-format versioning;
-- consistent SQLite snapshots;
-- manual full backup;
-- automatic DB backup on normal close;
-- backup validation;
-- safe restore and pre-restore protection;
-- restore round-trip testing;
-- retention and explicit failure handling.
+Sprint 05 turns the implemented current-curriculum retrieval semantics into a deterministic student-facing revision corpus and generates static HTML plus derived question/answer assets.
 
-Backup/restore should not be described as current functionality until the sprint is completed.
+SCORM packaging and QLearn validation remain Sprint 06 work.
 
 ## Parallel data/corpus work
 
@@ -364,7 +379,6 @@ A later feature may accept image content from the system clipboard (for example 
 
 Do **not** describe the following as current application capabilities:
 
-- automatic backup/restore;
 - completed current-generation SCORM export/QLearn validation;
 - completed current-generation Exam Builder;
 - complete multi-subject current-curriculum/mapping corpus for every science;
