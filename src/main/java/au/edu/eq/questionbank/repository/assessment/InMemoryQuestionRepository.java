@@ -8,6 +8,8 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SourceQuestion;
 
 /**
  * Transient question repository that retains saved questions in insertion
@@ -44,7 +46,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, existing.getClassification(),
-					existing.isPreambleCaptureRequired());
+					existing.isPreambleCaptureRequired(), existing.getSourceQuestion(), existing.getSharedContext());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -72,8 +74,16 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
+		return save(booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired, null,
+				null);
+	}
+
+	@Override
+	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
 		Question question = new Question(nextId++, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired);
+				preambleCaptureRequired, sourceQuestion, sharedContext);
 		questions.add(question);
 		return question;
 	}

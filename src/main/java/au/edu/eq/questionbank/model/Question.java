@@ -18,27 +18,6 @@ import java.util.List;
  */
 public class Question {
 
-	private static ExamBooklet bookletFromRegions(Exam exam, List<QuestionRegion> regions) {
-		if (exam == null) {
-			throw new NullPointerException("exam");
-		}
-		if (regions == null) {
-			throw new NullPointerException("regions");
-		}
-		if (regions.isEmpty()) {
-			throw new IllegalArgumentException("Question must contain at least one region");
-		}
-		QuestionRegion firstRegion = regions.get(0);
-		if (firstRegion == null) {
-			throw new NullPointerException("regions contains null");
-		}
-		ExamBooklet booklet = firstRegion.booklet();
-		if (booklet.getExam().getId() != exam.getId()) {
-			throw new IllegalArgumentException("Question region booklet must belong to the question's exam");
-		}
-		return booklet;
-	}
-
 	private final long id;
 	private final ExamBooklet booklet;
 	private final String questionCode;
@@ -47,7 +26,8 @@ public class Question {
 	private final CurriculumNode classification;
 	private final int marks;
 	private final boolean preambleCaptureRequired;
-
+	private final SourceQuestion sourceQuestion;
+	private final SharedQuestionContext sharedContext;
 	private Answer answer;
 
 	/**
@@ -67,7 +47,8 @@ public class Question {
 	 */
 	public Question(long id, Exam exam, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification) {
-		this(id, bookletFromRegions(exam, regions), questionCode, questionText, marks, regions, classification, false);
+		this(id, bookletFromRegions(exam, regions), questionCode, questionText, marks, regions, classification, false,
+				null, null);
 	}
 
 	/**
@@ -88,6 +69,28 @@ public class Question {
 	 */
 	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
+		this(id, booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired, null,
+				null);
+	}
+
+	/**
+	 * Creates a question with its optional source-question and shared-context
+	 * relationships.
+	 *
+	 * @param id                      the persistent question identifier
+	 * @param booklet                 the booklet containing the question
+	 * @param questionCode            the question or part-question identifier
+	 * @param questionText            supplementary searchable or transcribed text
+	 * @param marks                   the positive mark value
+	 * @param regions                 zero or more source regions in assembly order
+	 * @param classification          the syllabus subtopic or descriptor
+	 * @param preambleCaptureRequired historical legacy preamble-capture evidence
+	 * @param sourceQuestion          common source-question identity, or null
+	 * @param sharedContext           reusable shared question context, or null
+	 */
+	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -124,6 +127,12 @@ public class Question {
 				throw new IllegalArgumentException("All question regions must belong to the question's exam booklet");
 			}
 		}
+		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Source question must belong to the question's exam booklet");
+		}
+		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the question's exam booklet");
+		}
 		this.id = id;
 		this.booklet = booklet;
 		this.questionCode = questionCode;
@@ -132,6 +141,29 @@ public class Question {
 		this.marks = marks;
 		this.classification = classification;
 		this.preambleCaptureRequired = preambleCaptureRequired;
+		this.sourceQuestion = sourceQuestion;
+		this.sharedContext = sharedContext;
+	}
+
+	private static ExamBooklet bookletFromRegions(Exam exam, List<QuestionRegion> regions) {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("Question must contain at least one region");
+		}
+		QuestionRegion firstRegion = regions.get(0);
+		if (firstRegion == null) {
+			throw new NullPointerException("regions contains null");
+		}
+		ExamBooklet booklet = firstRegion.booklet();
+		if (booklet.getExam().getId() != exam.getId()) {
+			throw new IllegalArgumentException("Question region booklet must belong to the question's exam");
+		}
+		return booklet;
 	}
 
 	/**
@@ -186,8 +218,24 @@ public class Question {
 		return regions;
 	}
 
+	public SharedQuestionContext getSharedContext() {
+		return sharedContext;
+	}
+
+	public SourceQuestion getSourceQuestion() {
+		return sourceQuestion;
+	}
+
 	public boolean hasAnswer() {
 		return answer != null;
+	}
+
+	public boolean hasSharedContext() {
+		return sharedContext != null;
+	}
+
+	public boolean hasSourceQuestion() {
+		return sourceQuestion != null;
 	}
 
 	/**
@@ -198,6 +246,16 @@ public class Question {
 	 */
 	public boolean isPreambleCaptureRequired() {
 		return preambleCaptureRequired;
+	}
+
+	/**
+	 * Returns whether legacy metadata indicates that shared context is required but
+	 * no shared context has yet been linked.
+	 *
+	 * @return {@code true} when shared context still requires resolution
+	 */
+	public boolean isSharedContextUnresolved() {
+		return preambleCaptureRequired && sharedContext == null;
 	}
 
 	/**

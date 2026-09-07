@@ -18,7 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SqliteConnectionTest {
 
-	private static final int LATEST_SCHEMA_VERSION = 4;
+	private static final int LATEST_SCHEMA_VERSION = 5;
 	@TempDir
 	Path tempDir;
 
@@ -162,7 +162,7 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void migratesEmptyVersionThreeDatabaseToVersionFour() throws Exception {
+	void migratesEmptyVersionThreeDatabaseToLatestVersion() throws Exception {
 		Path databasePath = tempDir.resolve("version-three-to-four.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection connection = database.openConnection()) {
@@ -179,7 +179,7 @@ class SqliteConnectionTest {
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
 			assertTrue(result.next());
-			assertEquals(4, result.getInt("version"));
+			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
 			assertFalse(result.next());
 		}
 	}

@@ -21,7 +21,10 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
+import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
@@ -181,40 +184,42 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						SELECT
-						    q.id,
-						    q.question_code,
-						    q.question_text,
-						    q.marks,
-						    q.preamble_capture_required,
-						    q.classification_node_id,
-						    eb.id AS booklet_id,
-						    eb.booklet_name,
-						    sd.id AS source_document_id,
-						    sd.relative_path,
-						    e.id AS exam_id,
-						    e.exam_year,
-						    e.exam_name,
-						    s.id AS subject_id,
-						    s.subject_name,
-						    p.id AS provider_id,
-						    p.provider_name,
-						    cn.syllabus_version_id,
-						    cn.curriculum_code
+							q.id,
+							q.question_code,
+							q.question_text,
+							q.marks,
+							q.preamble_capture_required,
+							q.source_question_id,
+							q.shared_context_id,
+							q.classification_node_id,
+							eb.id AS booklet_id,
+							eb.booklet_name,
+							sd.id AS source_document_id,
+							sd.relative_path,
+							e.id AS exam_id,
+							e.exam_year,
+							e.exam_name,
+							s.id AS subject_id,
+							s.subject_name,
+							p.id AS provider_id,
+							p.provider_name,
+							cn.syllabus_version_id,
+							cn.curriculum_code
 						FROM questions q
 						JOIN exam_booklets eb
-						    ON eb.id = q.booklet_id
+							ON eb.id = q.booklet_id
 						JOIN source_documents sd
-						    ON sd.id = eb.source_document_id
+							ON sd.id = eb.source_document_id
 						JOIN exams e
-						    ON e.id = eb.exam_id
+							ON e.id = eb.exam_id
 						JOIN subjects s
-						    ON s.id = e.subject_id
+							ON s.id = e.subject_id
 						JOIN exam_providers p
-						    ON p.id = e.provider_id
+							ON p.id = e.provider_id
 						JOIN curriculum_nodes cn
-						    ON cn.id = q.classification_node_id
+							ON cn.id = q.classification_node_id
 						WHERE q.id = ?
-												""")) {
+																		""")) {
 			statement.setLong(1, id);
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
@@ -233,6 +238,18 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		try {
 			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
 					preambleCaptureRequired);
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not save question", e);
+		}
+	}
+
+	@Override
+	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		try {
+			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
+					preambleCaptureRequired, sourceQuestion, sharedContext);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
 		}
@@ -343,6 +360,77 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		return regions;
 	}
 
+	private SharedQuestionContext findSharedQuestionContext(Connection connection, long sharedContextId,
+			ExamBooklet questionBooklet) throws SQLException {
+		String label;
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT booklet_id, context_label
+				FROM shared_question_contexts
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, sharedContextId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalStateException("Missing shared question context " + sharedContextId);
+				}
+				if (result.getLong("booklet_id") != questionBooklet.getId()) {
+					throw new IllegalStateException("Shared question context belongs to a different booklet");
+				}
+				label = result.getString("context_label");
+			}
+		}
+		List<SharedQuestionContextRegion> regions = findSharedQuestionContextRegions(connection, sharedContextId);
+		if (regions.isEmpty()) {
+			throw new IllegalStateException("Shared question context has no regions: " + sharedContextId);
+		}
+		return new SharedQuestionContext(sharedContextId, questionBooklet, label, regions);
+	}
+
+	private List<SharedQuestionContextRegion> findSharedQuestionContextRegions(Connection connection,
+			long sharedContextId) throws SQLException {
+		List<SharedQuestionContextRegion> regions = new ArrayList<>();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    page_number,
+				    x,
+				    y,
+				    width,
+				    height
+				FROM shared_question_context_regions
+				WHERE shared_context_id = ?
+				ORDER BY region_order
+				""")) {
+			statement.setLong(1, sharedContextId);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					regions.add(new SharedQuestionContextRegion(result.getInt("page_number"), result.getDouble("x"),
+							result.getDouble("y"), result.getDouble("width"), result.getDouble("height")));
+				}
+			}
+		}
+		return regions;
+	}
+
+	private SourceQuestion findSourceQuestion(Connection connection, long sourceQuestionId, ExamBooklet questionBooklet)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT booklet_id, source_question_code
+				FROM source_questions
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, sourceQuestionId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalStateException("Missing source question " + sourceQuestionId);
+				}
+				if (result.getLong("booklet_id") != questionBooklet.getId()) {
+					throw new IllegalStateException("Source question belongs to a different booklet");
+				}
+				return new SourceQuestion(sourceQuestionId, questionBooklet, result.getString("source_question_code"));
+			}
+		}
+	}
+
 	private Question readQuestion(Connection connection, ResultSet result, long questionId) throws SQLException {
 		Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
 		ExamProvider provider = new ExamProvider(result.getLong("provider_id"), result.getString("provider_name"));
@@ -359,9 +447,15 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		CurriculumNode classification = curriculumRepository.findByCode(syllabusVersion, curriculumCode)
 				.orElseThrow(() -> new IllegalStateException("Missing curriculum node " + curriculumCode));
 		List<QuestionRegion> regions = findRegions(connection, questionId, booklet);
+		long sourceQuestionId = result.getLong("source_question_id");
+		SourceQuestion sourceQuestion = result.wasNull() ? null
+				: findSourceQuestion(connection, sourceQuestionId, booklet);
+		long sharedContextId = result.getLong("shared_context_id");
+		SharedQuestionContext sharedContext = result.wasNull() ? null
+				: findSharedQuestionContext(connection, sharedContextId, booklet);
 		Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
 				result.getString("question_text"), result.getInt("marks"), regions, classification,
-				result.getInt("preamble_capture_required") != 0);
+				result.getInt("preamble_capture_required") != 0, sourceQuestion, sharedContext);
 		Answer answer = findAnswer(connection, questionId, exam);
 		if (answer != null) {
 			question.setAnswer(answer);

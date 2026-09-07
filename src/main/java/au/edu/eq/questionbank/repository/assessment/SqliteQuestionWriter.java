@@ -4,12 +4,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.List;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
@@ -87,12 +90,13 @@ public final class SqliteQuestionWriter {
 	/**
 	 * Stores a classified question and all of its regions atomically.
 	 *
-	 * @param booklet        the booklet containing the question
-	 * @param questionCode   the non-blank question label
-	 * @param questionText   supplementary text, which may be blank
-	 * @param marks          the positive mark value
-	 * @param regions        zero or more source regions in extraction order
-	 * @param classification the question's syllabus subtopic or descriptor
+	 * @param booklet                 the booklet containing the question
+	 * @param questionCode            the non-blank question label
+	 * @param questionText            supplementary text, which may be blank
+	 * @param marks                   the positive mark value
+	 * @param regions                 zero or more source regions in extraction
+	 *                                order
+	 * @param classification          the question's syllabus subtopic or descriptor
 	 * @param preambleCaptureRequired whether shared or introductory material must
 	 *                                be included during later capture
 	 * @return the stored question with its generated identifier
@@ -104,12 +108,34 @@ public final class SqliteQuestionWriter {
 	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired)
 			throws SQLException {
+		return insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
+				preambleCaptureRequired, null, null);
+	}
 
+	/**
+	 * Stores a classified question and all of its regions atomically.
+	 *
+	 * @param booklet                 the booklet containing the question
+	 * @param questionCode            the non-blank question label
+	 * @param questionText            supplementary text, which may be blank
+	 * @param marks                   the positive mark value
+	 * @param regions                 zero or more source regions in extraction
+	 *                                order
+	 * @param classification          the question's syllabus subtopic or descriptor
+	 * @param preambleCaptureRequired whether shared or introductory material must
+	 *                                be included during later capture
+	 * @return the stored question with its generated identifier
+	 * @throws SQLException             if the transaction cannot be completed
+	 * @throws NullPointerException     if a required object is {@code null}
+	 * @throws IllegalArgumentException if the question metadata or relationships
+	 */
+	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
 		if (questionCode == null || questionCode.isBlank()) {
-
 			throw new IllegalArgumentException("questionCode must not be blank");
 		}
 		if (questionText == null) {
@@ -121,14 +147,22 @@ public final class SqliteQuestionWriter {
 		if (classification == null) {
 			throw new NullPointerException("classification");
 		}
+		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Source question must belong to the question's booklet");
+		}
+		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
+		}
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+				verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+				verifySharedContextRelationship(connection, booklet, sharedContext);
 				long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks,
-						classification, preambleCaptureRequired);
+						classification, preambleCaptureRequired, sourceQuestion, sharedContext);
 				insertRegions(connection, questionId, regions);
 				Question question = new Question(questionId, booklet, questionCode, questionText, marks, regions,
-						classification, preambleCaptureRequired);
+						classification, preambleCaptureRequired, sourceQuestion, sharedContext);
 				connection.commit();
 				return question;
 			} catch (SQLException | RuntimeException e) {
@@ -143,8 +177,8 @@ public final class SqliteQuestionWriter {
 	}
 
 	private long insertQuestionRow(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
-			int marks, CurriculumNode classification, boolean preambleCaptureRequired) throws SQLException {
-
+			int marks, CurriculumNode classification, boolean preambleCaptureRequired, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO questions
 				    (booklet_id,
@@ -152,8 +186,10 @@ public final class SqliteQuestionWriter {
 				     question_code,
 				     question_text,
 				     marks,
-				     preamble_capture_required)
-				VALUES (?, ?, ?, ?, ?, ?)
+				     preamble_capture_required,
+				     source_question_id,
+				     shared_context_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 				RETURNING id
 				""")) {
 			statement.setLong(1, booklet.getId());
@@ -162,6 +198,16 @@ public final class SqliteQuestionWriter {
 			statement.setString(4, questionText);
 			statement.setInt(5, marks);
 			statement.setInt(6, preambleCaptureRequired ? 1 : 0);
+			if (sourceQuestion == null) {
+				statement.setNull(7, Types.BIGINT);
+			} else {
+				statement.setLong(7, sourceQuestion.getId());
+			}
+			if (sharedContext == null) {
+				statement.setNull(8, Types.BIGINT);
+			} else {
+				statement.setLong(8, sharedContext.getId());
+			}
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Question insert did not return an id");
@@ -173,7 +219,6 @@ public final class SqliteQuestionWriter {
 
 	private void insertRegions(Connection connection, long questionId, List<QuestionRegion> regions)
 			throws SQLException {
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO question_regions
 				    (question_id,
@@ -186,7 +231,6 @@ public final class SqliteQuestionWriter {
 				     height)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 				""")) {
-
 			for (int i = 0; i < regions.size(); i++) {
 				QuestionRegion region = regions.get(i);
 				statement.setLong(1, questionId);
@@ -224,6 +268,51 @@ public final class SqliteQuestionWriter {
 				}
 				if (result.getInt("region_count") != 0) {
 					throw new IllegalArgumentException("Question already has captured regions");
+				}
+			}
+		}
+	}
+
+	private void verifySharedContextRelationship(Connection connection, ExamBooklet booklet,
+			SharedQuestionContext sharedContext) throws SQLException {
+		if (sharedContext == null) {
+			return;
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT booklet_id
+				FROM shared_question_contexts
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, sharedContext.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException(
+							"Shared question context does not exist: " + sharedContext.getId());
+				}
+				if (result.getLong("booklet_id") != booklet.getId()) {
+					throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
+				}
+			}
+		}
+	}
+
+	private void verifySourceQuestionRelationship(Connection connection, ExamBooklet booklet,
+			SourceQuestion sourceQuestion) throws SQLException {
+		if (sourceQuestion == null) {
+			return;
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT booklet_id
+				FROM source_questions
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, sourceQuestion.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Source question does not exist: " + sourceQuestion.getId());
+				}
+				if (result.getLong("booklet_id") != booklet.getId()) {
+					throw new IllegalArgumentException("Source question must belong to the question's booklet");
 				}
 			}
 		}

@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 4;
+	private static final int LATEST_SCHEMA_VERSION = 5;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -459,6 +459,10 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v3-to-v4.sql", 4);
 			return 4;
 		}
+		if (version == 4) {
+			executeMigration(connection, "/db/migration-v4-to-v5.sql", 5);
+			return 5;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -691,6 +695,54 @@ public final class SqliteDatabase {
 				throw new SQLException(
 						tableName + " is missing exact unique key (" + String.join(", ", uniqueKey) + ")");
 			}
+		}
+	}
+
+	private void verifyVersionFiveSharedQuestionSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "source_questions",
+				List.of(column("id", false, 1), column("booklet_id", true, 0), column("source_question_code", true, 0)),
+				List.of(foreignKey("booklet_id", "exam_booklets", "id")),
+				List.of(List.of("booklet_id", "source_question_code")));
+		verifyTableSchema(connection, "shared_question_contexts",
+				List.of(column("id", false, 1), column("booklet_id", true, 0), column("context_label", true, 0)),
+				List.of(foreignKey("booklet_id", "exam_booklets", "id")), List.of());
+		verifyTableSchema(connection, "shared_question_context_regions",
+				List.of(column("shared_context_id", true, 1), column("region_order", true, 2),
+						column("page_number", true, 0), column("x", true, 0), column("y", true, 0),
+						column("width", true, 0), column("height", true, 0)),
+				List.of(foreignKey("shared_context_id", "shared_question_contexts", "id")), List.of());
+		boolean hasSourceQuestionId = false;
+		boolean hasSharedContextId = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				if ("source_question_id".equals(columnName)) {
+					hasSourceQuestionId = true;
+					if (result.getInt("notnull") != 0) {
+						throw new SQLException("questions column must be nullable: source_question_id");
+					}
+				} else if ("shared_context_id".equals(columnName)) {
+					hasSharedContextId = true;
+					if (result.getInt("notnull") != 0) {
+						throw new SQLException("questions column must be nullable: shared_context_id");
+					}
+				}
+			}
+		}
+		if (!hasSourceQuestionId) {
+			throw new SQLException("questions is missing required column source_question_id");
+		}
+		if (!hasSharedContextId) {
+			throw new SQLException("questions is missing required column shared_context_id");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "questions", "source_question_id", "source_questions", "id")) {
+			throw new SQLException("questions is missing exact foreign key source_question_id -> source_questions(id)");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "questions", "shared_context_id", "shared_question_contexts",
+				"id")) {
+			throw new SQLException(
+					"questions is missing exact foreign key shared_context_id -> shared_question_contexts(id)");
 		}
 	}
 
