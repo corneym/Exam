@@ -1,7 +1,6 @@
 package au.edu.eq.questionbank.ui;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Year;
@@ -11,6 +10,7 @@ import java.util.function.Consumer;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -33,10 +33,6 @@ import javafx.stage.Stage;
  */
 final class ExamMetadataPane extends VBox {
 
-	private record ExamMetadataInput(Subject subject, String providerName, Integer year, String assessmentName,
-			String bookletName) {
-	}
-
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double PROVIDER_FIELD_WIDTH = 240.0;
 	private static final double YEAR_FIELD_WIDTH = 100.0;
@@ -45,27 +41,25 @@ final class ExamMetadataPane extends VBox {
 	private static final int YEAR_LOOKBACK_YEARS = 15;
 	private static final Insets PANEL_PADDING = new Insets(12);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;-fx-padding: 12;";
-
 	private final ComboBox<String> assessmentField = new ComboBox<>();
 	private final ComboBox<String> bookletField = new ComboBox<>();
 	private final ComboBox<String> providerField = new ComboBox<>();
 	private final ComboBox<Subject> subjectField = new ComboBox<>();
 	private final ComboBox<Integer> yearField = new ComboBox<>();
 	private final Button choosePdfButton = new Button("Choose PDF...");
-	private final Button setExamButton = new Button("Set Exam");
 	private final Label selectedPdfLabel = new Label("No PDF selected");
-
 	private final SqliteExamImporter examImporter;
 	private final CurriculumSelectionModel curriculumSelectionModel;
 	private final ExamMetadataOptionsRepository optionsRepository;
 	private final PdfFilePicker pdfFilePicker;
 	private final Path pdfDataRoot;
-	private final BooleanSupplier examPdfAvailable;
+	private final BooleanSupplier examChangeAllowed;
+	private final PdfStore pdfStore;
 	private final Consumer<SelectedPdf> examPdfHandler;
 	private final Consumer<Boolean> selectionCursorHandler;
 	private final Consumer<Subject> examSubjectHandler;
-
 	private Path currentPdfPath;
+	private Path pendingPdfPath;
 	private ExamBooklet booklet;
 
 	/**
@@ -73,7 +67,7 @@ final class ExamMetadataPane extends VBox {
 	 */
 	ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
 			ExamMetadataOptionsRepository optionsRepository, SqliteExamImporter examImporter,
-			BooleanSupplier examPdfAvailable, Consumer<SelectedPdf> examPdfHandler,
+			BooleanSupplier examChangeAllowed, Consumer<SelectedPdf> examPdfHandler,
 			Consumer<Boolean> selectionCursorHandler, Consumer<Subject> examSubjectHandler) {
 		if (pdfDataRoot == null) {
 			throw new NullPointerException("pdfDataRoot");
@@ -87,7 +81,7 @@ final class ExamMetadataPane extends VBox {
 		if (examImporter == null) {
 			throw new NullPointerException("examImporter");
 		}
-		if (examPdfAvailable == null) {
+		if (examChangeAllowed == null) {
 			throw new NullPointerException("examPdfAvailable");
 		}
 		if (examPdfHandler == null) {
@@ -102,12 +96,13 @@ final class ExamMetadataPane extends VBox {
 		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
 		this.curriculumSelectionModel = curriculumSelectionModel;
 		this.optionsRepository = optionsRepository;
-		this.examPdfAvailable = examPdfAvailable;
+		this.examChangeAllowed = examChangeAllowed;
 		this.examPdfHandler = examPdfHandler;
 		this.examImporter = examImporter;
 		this.selectionCursorHandler = selectionCursorHandler;
 		this.examSubjectHandler = examSubjectHandler;
 		pdfFilePicker = new PdfFilePicker(this.pdfDataRoot);
+		pdfStore = new PdfStore(this.pdfDataRoot);
 		configureFields();
 		configureActions(stage);
 		loadOptions();
@@ -143,24 +138,16 @@ final class ExamMetadataPane extends VBox {
 		examSubjectHandler.accept(exam.getSubject());
 	}
 
-	private void applyInputToControls(ExamMetadataInput input) {
-		providerField.setValue(input.providerName());
-		assessmentField.setValue(input.assessmentName());
-		bookletField.setValue(input.bookletName());
-	}
-
-	private void chooseExamPdf(Stage stage) {
-		Path selectedPath = pdfFilePicker.chooseAnyPdf(stage, "Choose exam PDF");
-		if (selectedPath == null) {
-			return;
-		}
-		try {
-			Path storedPath = copyIntoPdfDataRootIfNeeded(selectedPath);
-			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfDataRoot);
-			selectExamPdf(selectedPdf);
-		} catch (IOException e) {
-			showFileError(e.getMessage());
-		}
+	void beginImport() {
+		pendingPdfPath = null;
+		selectedPdfLabel.setText("No PDF selected");
+		providerField.getSelectionModel().clearSelection();
+		providerField.getEditor().clear();
+		yearField.getSelectionModel().clearSelection();
+		assessmentField.getSelectionModel().clearSelection();
+		assessmentField.getEditor().clear();
+		bookletField.getSelectionModel().clearSelection();
+		bookletField.getEditor().clear();
 	}
 
 	/**
@@ -177,11 +164,135 @@ final class ExamMetadataPane extends VBox {
 		booklet = null;
 	}
 
+	boolean confirmDetails() {
+		String prerequisiteError = findPrerequisiteError();
+		if (prerequisiteError != null) {
+			showError(prerequisiteError);
+			return false;
+		}
+		ExamMetadataInput input = readInput();
+		if (!isComplete(input)) {
+			showError("Complete all exam details.");
+			return false;
+		}
+		if (!examChangeAllowed.getAsBoolean()) {
+			return false;
+		}
+		try {
+			Path storedPath = pdfStore.importExamPdf(pendingPdfPath, input.subject().getName(), input.providerName(),
+					input.year());
+			ExamBooklet importedBooklet = createExamBooklet(input, storedPath);
+			booklet = importedBooklet;
+			currentPdfPath = storedPath;
+			pendingPdfPath = null;
+			rememberOptions(input);
+			applyInputToControls(input);
+			selectedPdfLabel.setText(currentPdfPath.getFileName().toString());
+			selectionCursorHandler.accept(true);
+			examSubjectHandler.accept(input.subject());
+			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfDataRoot);
+			examPdfHandler.accept(selectedPdf);
+			return true;
+		} catch (IOException e) {
+			showFileError(e.getMessage());
+			return false;
+		} catch (SQLException e) {
+			showDatabaseError(e.getMessage());
+			return false;
+		} catch (IllegalArgumentException e) {
+			showFileError(e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Returns the persisted booklet currently used for question regions.
+	 *
+	 * @return the current booklet, or {@code null} before exam metadata is set
+	 */
+	ExamBooklet getBooklet() {
+		return booklet;
+	}
+
+	/**
+	 * Invalidates the active exam when classification moves to a different subject.
+	 *
+	 * @param subject the newly selected classification subject, or {@code null}
+	 */
+	void invalidateForSubjectChange(Subject subject) {
+		if (booklet == null) {
+			return;
+		}
+		Subject examSubject = booklet.getExam().getSubject();
+		if (subject == null || examSubject.getId() != subject.getId()) {
+			booklet = null;
+			selectionCursorHandler.accept(false);
+		}
+	}
+
+	void refreshSubjects() {
+		Subject selectedSubject = subjectField.getValue();
+		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
+		if (selectedSubject != null) {
+			for (Subject subject : subjectField.getItems()) {
+				if (subject.getId() == selectedSubject.getId()) {
+					subjectField.setValue(subject);
+					return;
+				}
+			}
+		}
+		Subject currentSubject = curriculumSelectionModel.getSubject();
+		if (currentSubject != null) {
+			for (Subject subject : subjectField.getItems()) {
+				if (subject.getId() == currentSubject.getId()) {
+					subjectField.setValue(subject);
+					return;
+				}
+			}
+		}
+		subjectField.setValue(null);
+	}
+
+	/**
+	 * Applies a validated PDF selection and clears metadata from the old PDF.
+	 *
+	 * @param selectedPdf the selected exam PDF
+	 */
+	void selectExamPdf(SelectedPdf selectedPdf) {
+		if (selectedPdf == null) {
+			throw new NullPointerException("selectedPdf");
+		}
+		examPdfHandler.accept(selectedPdf);
+		currentPdfPath = selectedPdf.path();
+		clearForNewPdf();
+		selectedPdfLabel.setText(selectedPdf.file().getName());
+	}
+
+	void stageExamPdf(Path sourcePath) {
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		pendingPdfPath = sourcePath.toAbsolutePath().normalize();
+		selectedPdfLabel.setText(pendingPdfPath.getFileName().toString());
+	}
+
+	private void applyInputToControls(ExamMetadataInput input) {
+		providerField.setValue(input.providerName());
+		assessmentField.setValue(input.assessmentName());
+		bookletField.setValue(input.bookletName());
+	}
+
+	private void chooseExamPdf(Stage stage) {
+		Path selectedPath = pdfFilePicker.chooseAnyPdf(stage, "Choose exam PDF");
+		if (selectedPath == null) {
+			return;
+		}
+		stageExamPdf(selectedPath);
+	}
+
 	private void configureActions(Stage stage) {
 		choosePdfButton.setOnAction(event -> chooseExamPdf(stage));
-		setExamButton.setOnAction(event -> setExamMetadata());
 		choosePdfButton.setTooltip(new Tooltip("Choose the PDF containing the exam booklet."));
-		setExamButton.setTooltip(new Tooltip("Apply these exam details before selecting question regions."));
 	}
 
 	private void configureFields() {
@@ -211,18 +322,7 @@ final class ExamMetadataPane extends VBox {
 		if (currentSubject != null) {
 			subjectField.setValue(currentSubject);
 		}
-		setExamButton.setId("set-exam");
 		selectedPdfLabel.setWrapText(true);
-	}
-
-	private Path copyIntoPdfDataRootIfNeeded(Path selectedPath) throws IOException {
-		Path normalisedPath = selectedPath.toAbsolutePath().normalize();
-		if (normalisedPath.startsWith(pdfDataRoot)) {
-			return normalisedPath;
-		}
-		Files.createDirectories(pdfDataRoot);
-		Path destination = findAvailableDestination(normalisedPath.getFileName().toString());
-		return Files.copy(normalisedPath, destination);
 	}
 
 	private GridPane createDetailsGrid() {
@@ -242,17 +342,14 @@ final class ExamMetadataPane extends VBox {
 		grid.add(assessmentField, 1, 4);
 		grid.add(new Label("Booklet:"), 0, 5);
 		grid.add(bookletField, 1, 5);
-		HBox buttons = new HBox(setExamButton);
-		buttons.setAlignment(Pos.CENTER_RIGHT);
-		grid.add(buttons, 1, 6);
 		GridPane.setHgrow(providerField, Priority.ALWAYS);
 		GridPane.setHgrow(assessmentField, Priority.ALWAYS);
 		GridPane.setHgrow(bookletField, Priority.ALWAYS);
 		return grid;
 	}
 
-	private ExamBooklet createExamBooklet(ExamMetadataInput input) throws SQLException {
-		String relativePath = pdfDataRoot.relativize(currentPdfPath).toString();
+	private ExamBooklet createExamBooklet(ExamMetadataInput input, Path storedPath) throws SQLException {
+		String relativePath = pdfDataRoot.relativize(storedPath).toString();
 		return examImporter.importExam(input.subject(), input.providerName(), input.year(), input.assessmentName(),
 				input.bookletName(), relativePath);
 	}
@@ -264,55 +361,14 @@ final class ExamMetadataPane extends VBox {
 		return controls;
 	}
 
-	private Path findAvailableDestination(String fileName) {
-		Path destination = pdfDataRoot.resolve(fileName);
-		if (!Files.exists(destination)) {
-			return destination;
-		}
-		int dotPosition = fileName.lastIndexOf('.');
-		String name = dotPosition > 0 ? fileName.substring(0, dotPosition) : fileName;
-		String extension = dotPosition > 0 ? fileName.substring(dotPosition) : "";
-		int number = 2;
-		do {
-			destination = pdfDataRoot.resolve(name + " (" + number + ")" + extension);
-			number++;
-		} while (Files.exists(destination));
-		return destination;
-	}
-
 	private String findPrerequisiteError() {
-		if (!examPdfAvailable.getAsBoolean()) {
+		if (pendingPdfPath == null) {
 			return "Choose a PDF first.";
 		}
 		if (subjectField.getValue() == null) {
-			return "Select a subject before setting the exam.";
+			return "Select a subject before confirming the exam.";
 		}
 		return null;
-	}
-
-	/**
-	 * Returns the persisted booklet currently used for question regions.
-	 *
-	 * @return the current booklet, or {@code null} before exam metadata is set
-	 */
-	ExamBooklet getBooklet() {
-		return booklet;
-	}
-
-	/**
-	 * Invalidates the active exam when classification moves to a different subject.
-	 *
-	 * @param subject the newly selected classification subject, or {@code null}
-	 */
-	void invalidateForSubjectChange(Subject subject) {
-		if (booklet == null) {
-			return;
-		}
-		Subject examSubject = booklet.getExam().getSubject();
-		if (subject == null || examSubject.getId() != subject.getId()) {
-			booklet = null;
-			selectionCursorHandler.accept(false);
-		}
 	}
 
 	private boolean isComplete(ExamMetadataInput input) {
@@ -332,74 +388,11 @@ final class ExamMetadataPane extends VBox {
 				bookletField.getEditor().getText().trim());
 	}
 
-	void refreshSubjects() {
-		Subject selectedSubject = subjectField.getValue();
-		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
-
-		if (selectedSubject != null) {
-			for (Subject subject : subjectField.getItems()) {
-				if (subject.getId() == selectedSubject.getId()) {
-					subjectField.setValue(subject);
-					return;
-				}
-			}
-		}
-
-		Subject currentSubject = curriculumSelectionModel.getSubject();
-		if (currentSubject != null) {
-			for (Subject subject : subjectField.getItems()) {
-				if (subject.getId() == currentSubject.getId()) {
-					subjectField.setValue(subject);
-					return;
-				}
-			}
-		}
-
-		subjectField.setValue(null);
-	}
-
 	private void rememberOptions(ExamMetadataInput input) {
 		optionsRepository.addProvider(input.providerName());
 		optionsRepository.addAssessment(input.assessmentName());
 		optionsRepository.addBooklet(input.bookletName());
 		loadOptions();
-	}
-
-	/**
-	 * Applies a validated PDF selection and clears metadata from the old PDF.
-	 *
-	 * @param selectedPdf the selected exam PDF
-	 */
-	void selectExamPdf(SelectedPdf selectedPdf) {
-		if (selectedPdf == null) {
-			throw new NullPointerException("selectedPdf");
-		}
-		examPdfHandler.accept(selectedPdf);
-		currentPdfPath = selectedPdf.path();
-		clearForNewPdf();
-		selectedPdfLabel.setText(selectedPdf.file().getName());
-	}
-
-	private void setExamMetadata() {
-		String prerequisiteError = findPrerequisiteError();
-		if (prerequisiteError != null) {
-			showError(prerequisiteError);
-			return;
-		}
-		ExamMetadataInput input = readInput();
-		if (!isComplete(input)) {
-			showError("Complete all exam details.");
-			return;
-		}
-		try {
-			booklet = createExamBooklet(input);
-			rememberOptions(input);
-			applyInputToControls(input);
-			selectionCursorHandler.accept(true);
-			examSubjectHandler.accept(input.subject());
-		} catch (SQLException e) {
-			showDatabaseError(e.getMessage());
-		}
 	}
 
 	private void showDatabaseError(String message) {
@@ -421,5 +414,9 @@ final class ExamMetadataPane extends VBox {
 		alert.setHeaderText("The exam PDF could not be imported.");
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	private record ExamMetadataInput(Subject subject, String providerName, Integer year, String assessmentName,
+			String bookletName) {
 	}
 }

@@ -31,6 +31,31 @@ class SqliteQuestionRelationshipPersistenceTest {
 	Path tempDirectory;
 
 	@Test
+	void attachesRelationshipsWhenCapturingImportedQuestion() throws Exception {
+		Fixture fixture = createFixture("capture-relationships.db");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		Question imported = repository.save(fixture.firstBooklet(), "21a", "", 2, List.of(), fixture.classification(),
+				true);
+		assertTrue(imported.isSharedContextUnresolved());
+		SourceQuestion sourceQuestion = new SqliteSourceQuestionRepository(fixture.database())
+				.save(fixture.firstBooklet(), "21");
+		SharedQuestionContext sharedContext = new SqliteSharedQuestionContextRepository(fixture.database()).save(
+				fixture.firstBooklet(), "Question 21 preamble",
+				List.of(new SharedQuestionContextRegion(3, 0.10, 0.10, 0.70, 0.20)));
+		Question captured = repository.attachRegions(imported.getId(),
+				List.of(new QuestionRegion(fixture.firstBooklet(), 3, 0.10, 0.40, 0.70, 0.20)), sourceQuestion,
+				sharedContext);
+		assertEquals(sourceQuestion.getId(), captured.getSourceQuestion().getId());
+		assertEquals(sharedContext.getId(), captured.getSharedContext().getId());
+		assertFalse(captured.isSharedContextUnresolved());
+		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(imported.getId()).orElseThrow();
+		assertEquals(1, reloaded.getRegions().size());
+		assertEquals(sourceQuestion.getId(), reloaded.getSourceQuestion().getId());
+		assertEquals(sharedContext.getId(), reloaded.getSharedContext().getId());
+		assertFalse(reloaded.isSharedContextUnresolved());
+	}
+
+	@Test
 	void existingSavePathLeavesRelationshipsEmpty() throws Exception {
 		Fixture fixture = createFixture("unlinked-question.db");
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());

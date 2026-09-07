@@ -57,6 +57,35 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 	}
 
 	@Override
+	public Question attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) {
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("regions must not be empty");
+		}
+		for (int i = 0; i < questions.size(); i++) {
+			Question existing = questions.get(i);
+			if (existing.getId() != questionId) {
+				continue;
+			}
+			if (!existing.getRegions().isEmpty()) {
+				throw new IllegalArgumentException("Question already has captured regions");
+			}
+			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
+					existing.getQuestionText(), existing.getMarks(), regions, existing.getClassification(),
+					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext);
+			if (existing.hasAnswer()) {
+				updated.setAnswer(existing.getAnswer());
+			}
+			questions.set(i, updated);
+			return updated;
+		}
+		throw new IllegalArgumentException("Question does not exist: " + questionId);
+	}
+
+	@Override
 	public List<Question> findAll() {
 		return List.copyOf(questions);
 	}

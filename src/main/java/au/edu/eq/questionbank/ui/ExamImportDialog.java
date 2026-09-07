@@ -1,5 +1,8 @@
 package au.edu.eq.questionbank.ui;
 
+import javafx.event.ActionEvent;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.stage.Stage;
@@ -20,6 +23,17 @@ final class ExamImportDialog extends Dialog<Void> {
 		setTitle("Import Exam");
 		setHeaderText("Exam Details");
 		getDialogPane().setContent(examMetadataPane);
-		getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+		ButtonType confirmButtonType = new ButtonType("Confirm Details", ButtonBar.ButtonData.OK_DONE);
+		ButtonType cancelButtonType = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		getDialogPane().getButtonTypes().setAll(confirmButtonType, cancelButtonType);
+		Button confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);
+		confirmButton.setId("confirm-exam-details");
+		confirmButton.addEventFilter(ActionEvent.ACTION, event -> {
+			if (!examMetadataPane.confirmDetails()) {
+				event.consume();
+			}
+		});
+		Button cancelButton = (Button) getDialogPane().lookupButton(cancelButtonType);
+		cancelButton.setId("cancel-exam-import");
 	}
 }

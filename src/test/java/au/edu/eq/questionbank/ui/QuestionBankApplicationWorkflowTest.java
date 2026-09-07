@@ -332,6 +332,34 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void duplicateQuestionCodeIsRejectedWithoutLosingAcceptedRegions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		captureQuestion(robot, "Q7");
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirst(robot, "#curriculum-subtopic");
+		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
+		TextField marksField = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(questionCodeField).write("Q7");
+		robot.clickOn(marksField).write("1");
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-question-region");
+		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		robot.clickOn("#save-question");
+		WaitForAsyncUtils.waitForFxEvents();
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.clickOn(okButton);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("Q7", questionCodeField.getText());
+		assertEquals("1", marksField.getText());
+		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		long matchingQuestions = repository.findAll().stream()
+				.filter(question -> question.getQuestionCode().equals("Q7")).count();
+		assertEquals(1, matchingQuestions);
+	}
+
+	@Test
 	void exportMenuContainsRevisionHtmlCommand(FxRobot robot) {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 		MenuItem exportItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
@@ -391,7 +419,18 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
-	void movingToNextAnswerPageDisablesControlsForUnacceptedSelection(FxRobot robot) throws Exception {
+	void importedExamPdfUsesSubjectProviderYearHierarchy(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Path expectedPath = pdfDataRoot.resolve("Chemistry").resolve("QCAA").resolve("2024")
+				.resolve(examPdf.getFileName());
+		assertTrue(Files.isRegularFile(expectedPath));
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		assertEquals(pdfDataRoot.relativize(expectedPath).toString(), booklet.getSourceDocument().getRelativePath());
+	}
+
+	@Test
+	void movingToNextAnswerPageIsBlockedForUnacceptedSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q3");
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
@@ -402,10 +441,23 @@ class QuestionBankApplicationWorkflowTest {
 		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
 		assertFalse(addAnswerRegion.isDisabled());
 		assertFalse(clearAnswerSelection.isDisabled());
+		PdfWorkspacePane workspace = field(application, "pdfWorkspace", PdfWorkspacePane.class);
+		int originalPage = workspace.getCurrentPageNumber();
 		robot.clickOn("#next-pdf-page");
+		WaitForAsyncUtils.waitForFxEvents();
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.clickOn(okButton);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(originalPage, workspace.getCurrentPageNumber());
+		assertFalse(addAnswerRegion.isDisabled());
+		assertFalse(clearAnswerSelection.isDisabled());
+		robot.clickOn(addAnswerRegion);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(addAnswerRegion.isDisabled());
 		assertTrue(clearAnswerSelection.isDisabled());
+		robot.clickOn("#next-pdf-page");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(originalPage + 1, workspace.getCurrentPageNumber());
 	}
 
 	@Test
@@ -815,6 +867,7 @@ class QuestionBankApplicationWorkflowTest {
 
 	private void prepareExamAndClassification(FxRobot robot, String subjectName) throws Exception {
 		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
+		WaitForAsyncUtils.asyncFx(() -> examMetadataPane().stageExamPdf(examPdf)).get();
 		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
 		Subject selectedSubject = null;
 		for (Subject subject : examSubject.getItems()) {
@@ -836,9 +889,8 @@ class QuestionBankApplicationWorkflowTest {
 			assessment.getEditor().setText("External Assessment");
 			booklet.getEditor().setText("Paper 1 MCQ");
 		});
-		robot.clickOn("#set-exam");
+		robot.clickOn("#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
-		WaitForAsyncUtils.asyncFx(() -> examImportDialog().close()).get();
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirst(robot, "#curriculum-subtopic");

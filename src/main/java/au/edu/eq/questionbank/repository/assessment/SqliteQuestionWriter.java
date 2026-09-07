@@ -48,43 +48,12 @@ public final class SqliteQuestionWriter {
 	 *                                  regions, or the regions use another booklet
 	 */
 	public void attachRegions(long questionId, List<QuestionRegion> regions) throws SQLException {
-		if (questionId < 1) {
-			throw new IllegalArgumentException("questionId must be positive");
-		}
-		if (regions == null) {
-			throw new NullPointerException("regions");
-		}
-		if (regions.isEmpty()) {
-			throw new IllegalArgumentException("regions must not be empty");
-		}
-		QuestionRegion firstRegion = regions.getFirst();
-		if (firstRegion == null) {
-			throw new NullPointerException("regions contains null");
-		}
-		ExamBooklet booklet = firstRegion.booklet();
-		for (QuestionRegion region : regions) {
-			if (region == null) {
-				throw new NullPointerException("regions contains null");
-			}
-			if (region.booklet().getId() != booklet.getId()) {
-				throw new IllegalArgumentException("All question regions must belong to the same booklet");
-			}
-		}
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				verifyQuestionCanAcceptRegions(connection, questionId, booklet);
-				insertRegions(connection, questionId, regions);
-				connection.commit();
-			} catch (SQLException | RuntimeException e) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					e.addSuppressed(rollbackFailure);
-				}
-				throw e;
-			}
-		}
+		attachRegionsInternal(questionId, regions, null, null, false);
+	}
+
+	public void attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+		attachRegionsInternal(questionId, regions, sourceQuestion, sharedContext, true);
 	}
 
 	/**
@@ -176,6 +145,58 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
+	private void attachRegionsInternal(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext, boolean updateRelationships) throws SQLException {
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("regions must not be empty");
+		}
+		QuestionRegion firstRegion = regions.getFirst();
+		if (firstRegion == null) {
+			throw new NullPointerException("regions contains null");
+		}
+		ExamBooklet booklet = firstRegion.booklet();
+		for (QuestionRegion region : regions) {
+			if (region == null) {
+				throw new NullPointerException("regions contains null");
+			}
+			if (region.booklet().getId() != booklet.getId()) {
+				throw new IllegalArgumentException("All question regions must belong to the same booklet");
+			}
+		}
+		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Source question must belong to the question's booklet");
+		}
+		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				verifyQuestionCanAcceptRegions(connection, questionId, booklet);
+				if (updateRelationships) {
+					verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+					verifySharedContextRelationship(connection, booklet, sharedContext);
+					updateQuestionRelationships(connection, questionId, sourceQuestion, sharedContext);
+				}
+				insertRegions(connection, questionId, regions);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
 	private long insertQuestionRow(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
 			int marks, CurriculumNode classification, boolean preambleCaptureRequired, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
@@ -242,6 +263,31 @@ public final class SqliteQuestionWriter {
 				statement.setDouble(7, region.width());
 				statement.setDouble(8, region.height());
 				statement.executeUpdate();
+			}
+		}
+	}
+
+	private void updateQuestionRelationships(Connection connection, long questionId, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET source_question_id = ?,
+				    shared_context_id = ?
+				WHERE id = ?
+				""")) {
+			if (sourceQuestion == null) {
+				statement.setNull(1, Types.BIGINT);
+			} else {
+				statement.setLong(1, sourceQuestion.getId());
+			}
+			if (sharedContext == null) {
+				statement.setNull(2, Types.BIGINT);
+			} else {
+				statement.setLong(2, sharedContext.getId());
+			}
+			statement.setLong(3, questionId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Question relationship update affected an unexpected number of rows");
 			}
 		}
 	}

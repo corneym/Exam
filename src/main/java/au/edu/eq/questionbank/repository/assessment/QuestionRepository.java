@@ -31,6 +31,18 @@ public interface QuestionRepository {
 	 */
 	Question attachRegions(long questionId, List<QuestionRegion> regions);
 	/**
+	 * Attaches captured source regions and optional source-question/shared-context
+	 * relationships to an existing question that currently has no regions.
+	 *
+	 * @param questionId     the persistent question identifier
+	 * @param regions        one or more source regions in extraction order
+	 * @param sourceQuestion source-question identity, or {@code null}
+	 * @param sharedContext  reusable shared context, or {@code null}
+	 * @return the updated question
+	 */
+	Question attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext);
+	/**
 	 * Returns all stored questions in repository-defined order.
 	 *
 	 * @return the stored questions
