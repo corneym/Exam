@@ -1,8 +1,10 @@
 # Exam Question Bank Backlog
 
-> Authoritative deferred-work list at 6 September 2026.
+> Authoritative deferred-work list at 7 September 2026.
 >
 > Completed sprint documents remain historical records. Items intentionally deferred from completed work belong here until scheduled into a future sprint.
+>
+> Sprint 07 shared-context/multipart capture, editing and revision-output semantics are now scheduled and are therefore not deferred backlog work.
 
 ## High Priority
 
@@ -18,6 +20,8 @@ Acceptance criteria:
 - UI tests can run separately from non-UI tests where useful;
 - repeated clean execution is reliable;
 - failures distinguish application defects from lost focus/window interaction.
+
+Sprint 07 should add focused tests for the workflows it changes, but general TestFX stabilisation remains separate.
 
 ### Complete asynchronous question-search regression coverage
 
@@ -35,18 +39,23 @@ Add focused tests for:
 - zero-region legacy questions;
 - missing/corrupt source PDFs.
 
-### Build the region-capture-required work queue
+### Build the broad capture/audit work queue
 
 Origin: Legacy Metadata Import follow-on work.
 
-Identify questions requiring:
+Sprint 07 will provide enough status semantics to distinguish missing ordinary question regions from unresolved required shared context.
+
+A broader administrative queue remains deferred.
+
+Future queue should identify/filter questions requiring:
 
 - question-region capture;
 - answer-region capture;
 - both;
-- possible preamble/shared-context capture.
+- unresolved shared context;
+- other later completion states if adopted.
 
-Filters:
+Filters may include:
 
 - Subject;
 - provider;
@@ -54,13 +63,13 @@ Filters:
 - booklet;
 - completion state.
 
-Completion must attach regions without changing imported historical metadata/classification.
+Completion must not rewrite imported historical metadata/classification.
 
 ### Reconcile the 5 September Chemistry 2019 -> 2025 mapping workbook
 
 Origin: Curriculum Descriptor Mapping chat, 5 September 2026.
 
-A standalone normalized mapping workbook now exists, but its integration with current SQLite mapping records is not established.
+A standalone normalized mapping workbook exists, but its integration with current SQLite mapping records is not established.
 
 Required work:
 
@@ -68,12 +77,12 @@ Required work:
 - check all `CHECK` Medium rows;
 - confirm 2019 removed/no-direct-equivalent content;
 - confirm 2025 new/no-direct-predecessor content;
-- compare confirmed pairwise relationships with the application's current mapping records;
+- compare confirmed pairwise relationships with current mapping records;
 - import/reconcile confirmed mappings without overwriting historical question classifications;
 - produce coverage statistics after reconciliation;
 - retain audit notes/confidence where useful.
 
-Do not treat the standalone workbook as authoritative application state until this reconciliation is complete.
+Do not treat the standalone workbook as authoritative application state until reconciliation is complete.
 
 ## Normal Priority
 
@@ -83,7 +92,7 @@ Origin: Batching Exam Questions / early metadata design.
 
 Evidence:
 
-- the 2021 Neap classification exercise identified a question (Q11) reasonably mapped to three descriptors;
+- the 2021 Neap classification exercise identified a question reasonably mapped to three descriptors;
 - the early domain design proposed many-to-many `Question <-> SyllabusDescriptor`;
 - the current `Question` model stores one best-fit Subtopic/Descriptor classification.
 
@@ -145,30 +154,6 @@ Add realistic SQLite integration tests for:
 - Topic-level Descriptor structures;
 - database close/reopen reconstruction.
 
-### Finish generalized preamble/shared-context and multipart semantics
-
-Origin: Batching Exam Questions, legacy `MultiPartQuestion`, Legacy Metadata Import follow-on work.
-
-This is broader than the current `preambleCaptureRequired` hint.
-
-Decide how to represent shared stems/tables/graphs/diagrams used by several questions or parts, including possibilities such as:
-
-- repeated ordinary regions attached to each question;
-- a separately persisted shared source section;
-- ordered shared content blocks;
-- question/part dependency relationships;
-- keep-together output rules.
-
-Constraints:
-
-- source-document provenance;
-- ordering;
-- independent classification of parts where required;
-- no guessed preamble grouping during legacy import;
-- no persisted `pinned` flag merely to support capture UI.
-
-After persistence semantics are settled, consider a capture-time “pin/reuse selected region” convenience.
-
 ### Add import audit and reconciliation reporting
 
 Origin: Legacy Metadata Import follow-on work.
@@ -181,7 +166,8 @@ Report:
 - missing PDFs/booklets;
 - questions still needing regions;
 - answers supplied/absent/unknown;
-- unresolved classifications.
+- unresolved classifications;
+- unresolved shared-context requirements once Sprint 07 semantics exist.
 
 A dry-run mode may later reuse the same validation.
 
@@ -197,18 +183,18 @@ Test representative files for:
 - duplicate conflicting rows;
 - unusual question codes;
 - missing MCQ answers;
-- shared/preamble groups spanning rows;
+- shared/preamble evidence spanning rows;
 - renamed/relocated source PDFs.
 
-Do not generalise speculatively before real files demonstrate the need.
+Sprint 07 must still not infer relationships merely because a workbook appears to contain a pattern.
 
 ### Decide whether legacy image-snip import/support is still required
 
 Origin: Batching Exam Questions.
 
-The legacy application has many named question/answer snips. The current redesign correctly prefers original PDFs + regions.
+The legacy application has many named question/answer snips. The current redesign prefers original PDFs + regions.
 
-Decide whether any irreplaceable legacy items exist only as image snips and therefore need:
+Decide whether irreplaceable legacy items exist only as image snips and therefore need:
 
 - one-time attachment import;
 - managed-file compatibility;
@@ -226,25 +212,59 @@ Current retrieval mainly needs confirmed directional pairs.
 
 Decide whether relation type/confidence/notes should remain external review/audit metadata or become persisted application data for reporting and assisted review.
 
+## Scheduled in Sprint 07 — not deferred backlog
+
+### Shared context / preamble and multipart semantics
+
+Origin: Batching Exam Questions, legacy `MultiPartQuestion`, Legacy Metadata Import follow-on work, Sprint 07 design.
+
+Scheduled design:
+
+`docs/design/sprint-07-preamble-aware-question-capture-ui-redesign.md`
+
+Sprint 07 has decided:
+
+- explicit persisted source-question identity;
+- explicit persisted reusable shared context;
+- shared context and multipart identity are separate relationships;
+- no guessed grouping during legacy migration/import;
+- one shared-context link per question for this sprint;
+- ordinary multi-region questions remain separate;
+- multipart grouping occurs within the final current-curriculum output bucket;
+- grouped marks are derived from included parts;
+- HTML and SCORM output are amended in the same sprint;
+- no persisted UI `pinned` flag.
+
+Remove this section from the backlog after Sprint 07 is implemented and merged; until then it records that the prior unresolved backlog item is actively scheduled rather than deferred.
+
+### Capture correction, syllabus-sensitive classification and workflow-critical UI redesign
+
+Origin: current capture use / Sprint 07 design.
+
+Sprint 07 now includes:
+
+- existing-question correction;
+- existing-answer correction;
+- marks display during answer capture;
+- guarded transient selections;
+- selection ownership bug fix;
+- resizable capture workspace;
+- Descriptor-level selection where the selected syllabus branch contains Descriptors;
+- classification controls that show the hierarchy actually present in the selected syllabus;
+- validity rules allowing a Question to stop at Subtopic even when Descriptors exist below it;
+- a requirement to select a Descriptor when a selected Topic has direct Descriptor children.
+
+This is a consumer-side capture/validation change. Curriculum import, mapping, applicability and retrieval remain separate.
+
+General cosmetic UI polish remains deferred below.
+
 ## Output / Future Sprint Inputs
-
-### Sprint 06 — SCORM packaging rules
-
-Origin: Batching Exam Questions + current development roadmap.
-
-Retain:
-
-- static generated assets with ordinary relative paths;
-- full source exam PDFs should not normally be included in the package;
-- application generates the final ZIP;
-- manifest/resources must match actual contents;
-- validate against the real QLearn-supported profile.
 
 ### Later printable output — preserve vector source content
 
 Origin: Batching Exam Questions / legacy output behaviour.
 
-For print-oriented PDF generation, evaluate direct source-PDF page/viewport clipping through LaTeX `graphicx` or equivalent vector-preserving output rather than rasterizing the web assets.
+For print-oriented PDF generation, evaluate direct source-PDF page/viewport clipping through LaTeX `graphicx` or equivalent vector-preserving output rather than rasterizing web assets.
 
 Preserve generated numbering and original source attribution; question and solution numbering should stay aligned.
 
@@ -275,12 +295,11 @@ Measure large and multi-region previews. Investigate moving/restructuring image 
 
 Origin: Sprint 06 merge-readiness review.
 
-Question preview cancellation deliberately does not interrupt PDFBox rendering,
-because interruption can close a channel while PDFBox is still reading it. The
-generation guard prevents a superseded preview from reaching the UI, but a new
-preview may begin before the superseded render has finished in the background.
-Measure this under realistic rapid selection changes before deciding whether
-preview rendering needs serialisation or another bounded-work mechanism.
+Question preview cancellation deliberately does not interrupt PDFBox rendering because interruption can close a channel while PDFBox is still reading it.
+
+The generation guard prevents a superseded preview from reaching the UI, but a new preview may begin before the superseded render has finished in the background.
+
+Measure realistic rapid selection changes before deciding whether preview rendering needs serialisation or another bounded-work mechanism.
 
 ## Curriculum Mapping Hardening
 
@@ -288,7 +307,9 @@ preview rendering needs serialisation or another bounded-work mechanism.
 
 Origin: Curriculum mapping/retrieval hardening review.
 
-Application writers enforce same Subject, different versions, same level and allowed direction. Decide whether direct SQL bypass risk justifies triggers/other DB enforcement.
+Application writers enforce same Subject, different versions, same level and allowed direction.
+
+Decide whether direct SQL bypass risk justifies triggers or other DB enforcement.
 
 ### Mapping workflow extensions
 
@@ -308,13 +329,9 @@ Any assisted mechanism must still require explicit confirmation.
 
 Origin: Exam Builder Design Slice.
 
-Spacing, alignment, sizing, label wording and visual consistency were deliberately deferred so they do not stall persistence/export work.
+Spacing, alignment, sizing, label wording and visual consistency should remain separate from functional work unless they block workflow or create incorrect data.
 
-Promote a UI issue above polish only when it:
-
-- blocks the capture workflow;
-- causes incorrect data;
-- makes an essential control unusable.
+Sprint 07 promotes the capture-workspace issues that are workflow-critical. Other cosmetic polish remains here.
 
 ### Consider assisted PDF question-boundary detection
 
@@ -333,7 +350,9 @@ Do not assume text extraction is reliable enough to replace visual source conten
 
 Origin: Batching Exam Questions.
 
-Suggest part labels and phrases such as “using your answer to part a”, but retain manual override because semantic dependency cannot be inferred reliably in all questions.
+After Sprint 07 persists source-question identity, future tooling may suggest part relationships from question codes or phrases such as “using your answer to part a”.
+
+Suggestions must remain non-authoritative until confirmed.
 
 ## Future Content Sources
 
@@ -358,9 +377,9 @@ Design requirements:
 - define provenance metadata;
 - include images in backup/restore;
 - render consistently to HTML/PDF/SCORM;
-- avoid creating separate mutually exclusive “text question” and “image question” hierarchies unless evidence later requires it.
+- avoid separate mutually exclusive “text question” and “image question” hierarchies unless evidence requires it.
 
-OCR is optional later work, not a prerequisite.
+OCR is optional later work.
 
 ## Packaging / Deployment
 
@@ -406,7 +425,7 @@ Retain focused tests for late hierarchy/search/preview completion, repeated disp
 
 Origin: Sprint 05 merge-readiness review.
 
-The current revision-export integration test exercises complete PDF-region-to-HTML generation but uses an in-memory curriculum/retrieval fixture.
+The revision-export integration test exercises complete PDF-region-to-HTML generation but uses an in-memory curriculum/retrieval fixture.
 
 Add a temporary-SQLite end-to-end export test using fresh production repository/service instances to cover:
 
@@ -416,7 +435,9 @@ Add a temporary-SQLite end-to-end export test using fresh production repository/
 - answer reconstruction;
 - complete revision export after database reopen.
 
-Real Chemistry acceptance has exercised this production path manually, so this is hardening rather than a Sprint 05 merge blocker.
+After Sprint 07, include source-question/shared-context reconstruction in this hardening path where appropriate.
+
+Real Chemistry acceptance has already exercised the production path manually, so this remains hardening rather than a prior sprint blocker.
 
 ## Technical Debt
 
@@ -435,6 +456,7 @@ Document:
 
 Do not re-add these as unimplemented work:
 
+- Sprint 04 backup/restore/data safety;
 - Sprint 05 deterministic revision corpus;
 - static hierarchical revision HTML/assets;
 - Subject/Unit/Topic/Subtopic revision navigation;
@@ -442,7 +464,10 @@ Do not re-add these as unimplemented work:
 - static answer disclosure;
 - revision-export staging and validation;
 - JavaFX revision-export workflow and progress reporting;
-- migrations through the current implemented schema;
+- Sprint 06 SCORM 1.2 package generation;
+- successful QLearn import/launch acceptance;
+- current SCORM manifest/schema/ZIP profile;
+- migrations through schema v4;
 - syllabus selection;
 - mapping persistence/review;
 - curriculum-import idempotency;
@@ -456,6 +481,8 @@ Do not re-add these as unimplemented work:
 - stored-question preview;
 - arbitrary-PDF viewer mode;
 - one-root managed-data configuration.
+
+Do not mark Sprint 07 items complete until implementation and tests establish that state.
 
 ## Backlog Rules
 

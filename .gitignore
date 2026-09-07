@@ -43,3 +43,10 @@ Thumbs.db
 
 # Machine-specific application configuration
 /questionbank.properties
+
+# Microsoft Office temporary lock files
+~$*.xlsx
+~$*.xls
+~$*.docx
+~$*.doc
+

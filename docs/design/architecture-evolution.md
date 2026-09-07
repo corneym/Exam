@@ -1,8 +1,8 @@
 # Exam Question Bank — Architecture Evolution
 
-> Major architectural changes and superseded designs through 6 September 2026.
+> Major architectural changes and superseded designs through 7 September 2026.
 >
-> This file explains why the application changed shape. Use `../current-status.md` for the authoritative present-state summary.
+> This file explains why the application changed shape. Use `../current-status.md` for the authoritative present-state implementation summary. A design decision may be recorded here before implementation when its status is stated explicitly.
 
 ## 1. Legacy architecture: Excel + named snips + generators
 
@@ -87,23 +87,19 @@ Generated images are derived artefacts.
 
 **DECIDED EARLY / NOT A CURRENT CORE MODEL REQUIREMENT**
 
-Legacy image snips should not require an immediate destructive conversion. Migration can be staged. The current application, however, has been developed primarily around recovering metadata and source PDFs rather than making legacy snip files the new canonical representation.
+Legacy image snips do not require destructive conversion merely for architectural purity. The current application has been developed primarily around recovering metadata and authoritative source PDFs.
 
 ## 4. Source paths: per-question file names -> managed portable document relationships
 
-### Initial improvement
-
-`PdfStore` established one configured root and safe relative path resolution.
-
-### Domain improvement
+### Earlier
 
 **SUPERSEDED**
 
 `Question` directly carrying PDF path/page responsibility.
 
-**IMPLEMENTED / CURRENT**
+### Current
 
-Source ownership moved through document/exam/booklet relationships:
+**IMPLEMENTED / CURRENT**
 
 ```text
 managed source document
@@ -112,7 +108,7 @@ managed source document
  -> Question
 ```
 
-This avoids repeating the same path across every question and makes zero-region imported questions possible once booklet ownership is explicit.
+This avoids repeating paths and makes zero-region imported questions possible once booklet ownership is explicit.
 
 ## 5. Regions: pixel rectangles -> normalized coordinates
 
@@ -120,58 +116,56 @@ This avoids repeating the same path across every question and makes zero-region 
 
 **SUPERSEDED**
 
-Pixel-space crop rectangles tied persistent identity to a particular render size.
+Pixel-space rectangles tied persistence to a particular render size.
 
 ### Current
 
 **IMPLEMENTED / CURRENT**
 
-`QuestionRegion` uses normalized proportional coordinates with one-based domain page numbers.
+`QuestionRegion` uses normalized proportional coordinates and one-based domain page numbers.
 
-The PDF boundary alone knows PDFBox zero-based indexing and render specifics.
-
-This is both a persistence decision and a separation-of-concerns decision.
+The PDF boundary alone handles PDFBox zero-based indexing and rendering details.
 
 ## 6. PDF lifecycle: direct PDFBox use -> `PdfSession`
-
-### Problem
-
-A JavaFX viewer navigating many pages should not reopen PDFs for every action or expose PDFBox resource management throughout the UI.
-
-### Current boundary
 
 **IMPLEMENTED / CURRENT**
 
 `PdfSession` owns document opening, page count, rendering and close lifecycle. `QuestionExtractor` works through that boundary.
 
-JavaFX receives images/region results, not raw PDFBox document lifecycle responsibilities.
+JavaFX receives images/region results rather than raw PDFBox lifecycle responsibilities.
 
 ## 7. Output architecture split by delivery medium
 
 ### Static web/SCORM
 
-**DECIDED / FUTURE CURRENT-GENERATION TARGET**
+**DECIDED / IMPLEMENTED / CURRENT**
 
 ```text
 PDF + stored regions + database
         |
         v
-PDFBox build/export rendering
+PDFBox export-time rendering
         |
         +--> PNG/web assets
         +--> static HTML
-        +--> SCORM ZIP
+        +--> SCORM 1.2 ZIP
 ```
 
-Browser-side PDF.js rendering was considered and rejected for the primary static resource. Full source PDFs should not normally be included in the SCORM package.
+Browser-side PDF.js rendering was rejected as the primary static-resource architecture.
+
+Full authoritative source PDFs are not normally included in SCORM.
+
+Sprint 05 implemented the static revision-content boundary.
+
+Sprint 06 implemented SCORM 1.2 packaging over that content and achieved successful QLearn import/launch acceptance.
 
 ### Printable PDF
 
-**DECIDED / FUTURE CURRENT-GENERATION TARGET**
+**DECIDED / FUTURE DIRECTION**
 
-The preferred print path is vector-preserving source clipping where practical, for example LaTeX `graphicx` page/viewport clipping against the original PDF. This avoids unnecessary rasterization of notation and diagrams.
+Prefer vector-preserving source clipping where practical, for example LaTeX `graphicx` page/viewport clipping against the original PDF.
 
-The legacy application already generated LaTeX and externally compiled PDFs; the current application has not yet rebuilt that full print pipeline.
+The current application has not rebuilt the full legacy print pipeline.
 
 ## 8. Repository evolution: smoke-test/in-memory -> SQLite
 
@@ -179,12 +173,10 @@ The legacy application already generated LaTeX and externally compiled PDFs; the
 
 **IMPLEMENTED / SUPERSEDED AS RUNTIME**
 
-- `QuestionRepository` abstraction;
-- `InMemoryQuestionRepository`;
-- `Main` smoke tests;
-- in-memory curriculum repository.
-
-These allowed rapid domain work without premature schema coupling.
+- `QuestionRepository`;
+- in-memory question repository;
+- in-memory curriculum repository;
+- early smoke tests.
 
 ### Current persistence
 
@@ -192,19 +184,13 @@ These allowed rapid domain work without premature schema coupling.
 
 SQLite is the runtime database with foreign-key enforcement and transactional migrations.
 
-Excel remains an import/exchange format.
+Excel remains import/exchange only.
 
 ## 9. UI architecture: monolithic composition -> specialised panes/services
 
-### Early state
-
-The first JavaFX slice placed increasing orchestration inside `QuestionBankApplication`.
-
-### Refactor before persistence
-
 **IMPLEMENTED / CURRENT DIRECTION**
 
-On `refactor/application-structure`, responsibilities were split into specialised panes and validators such as:
+Responsibilities were split into specialised panes and validators including:
 
 - `QuestionCapturePane`;
 - `AnswerCapturePane`;
@@ -215,33 +201,21 @@ On `refactor/application-structure`, responsibilities were split into specialise
 - capture validators;
 - curriculum selection factory/model support.
 
-### Reason
+Reason:
 
-SQLite persistence and application services should not depend on transient JavaFX control layout or a single oversized application class.
+Persistence and application services should not depend on transient JavaFX layout or a single oversized application class.
+
+Sprint 07 retains these responsibility boundaries while redesigning the capture workspace and selection lifecycle.
 
 ## 10. Configuration: PDF-only property -> one managed `data.root`
 
-### Earlier
-
-An early `ApplicationConfig` required `pdf.dataRoot` and loaded properties relative to the working directory.
-
-### Current
-
 **IMPLEMENTED / CURRENT**
 
-One `data.root` derives the managed PDF directory, curriculum directory and SQLite file. Legacy properties remain readable.
+One `data.root` derives the managed PDF directory, curriculum directory and SQLite file.
 
-Viewer mode can open arbitrary external PDFs without treating them as managed data; Exam Import explicitly copies external source PDFs into the managed root before persistence.
-
-This cleanly separates “look at a file” from “make this file durable application data”.
+Viewer mode can open arbitrary external PDFs without treating them as managed data. Exam Import explicitly brings durable exam PDFs into the managed root.
 
 ## 11. Curriculum: one active hierarchy -> versioned histories
-
-### Legacy/early limitation
-
-The old generator largely consumed one loaded syllabus hierarchy and could not robustly preserve original historical context while also supporting a current curriculum.
-
-### Current
 
 **IMPLEMENTED / CURRENT**
 
@@ -250,12 +224,6 @@ Curriculum is explicit versioned data.
 Historical question classification remains provenance. Current applicability is derived through mappings.
 
 ## 12. Mapping semantics: simple crosswalk -> directional reviewed graph
-
-### Early mapping idea
-
-Relationship labels such as equivalent, split, merged, partial, removed and new were discussed to represent real curriculum change.
-
-### Current application semantics
 
 **IMPLEMENTED / CURRENT**
 
@@ -267,7 +235,9 @@ Relationship labels such as equivalent, split, merged, partial, removed and new 
 - one-to-many allowed;
 - only confirmed mappings authoritative.
 
-The current retrieval engine does not require a separate persisted `SPLIT`/`MERGED` label to operate; whether richer relation-type metadata from the standalone mapping workbook should be persisted remains a future design choice.
+The retrieval engine does not require persisted SPLIT/MERGED labels to operate.
+
+Whether richer relation-type/confidence/notes metadata should be persisted remains future work.
 
 ## 13. Classification: early many-to-many requirement -> current one-best-fit model
 
@@ -275,7 +245,7 @@ The current retrieval engine does not require a separate persisted `SPLIT`/`MERG
 
 **DECIDED EARLY**
 
-A real Neap question was classified to three descriptors, and the early domain discussion proposed:
+A real Neap question was classified to three descriptors, and early design proposed:
 
 ```text
 Question <-> SyllabusDescriptor
@@ -293,22 +263,44 @@ as many-to-many.
 
 **UNRESOLVED EVOLUTION / BACKLOG**
 
-No available evidence establishes a deliberate product decision that questions can never have multiple original classifications. This is therefore not safe to describe simply as a superseded requirement.
+No evidence establishes a deliberate permanent decision that questions can never have multiple original classifications.
 
 Future work must decide whether:
 
-1. one best-fit classification is the intended permanent model; or
-2. the domain/persistence/retrieval/export layers need multiple original classifications.
+1. one-best-fit remains permanent policy; or
+2. domain/persistence/retrieval/export need multiple original classifications.
 
-Any change must preserve historical provenance and avoid conflating multiple original classifications with multiple derived current-applicability nodes.
+Sprint 07 deliberately does not alter the unresolved **multiple original classifications** question.
+
+### Sprint 07 capture-hierarchy decision
+
+**DECIDED / SCHEDULED — NOT YET IMPLEMENTED**
+
+The built-in Question classification panel must no longer assume a fixed hierarchy shape.
+
+It will consume the selected syllabus branch:
+
+```text
+Unit -> Topic -> Descriptor
+```
+
+or:
+
+```text
+Unit -> Topic -> Subtopic -> Descriptor
+```
+
+and show only the levels actually present.
+
+A Descriptor control is shown where Descriptor exists.
+
+Classification may stop at Subtopic even when Descriptor children exist.
+
+Classification may not stop at Topic when that Topic has direct Descriptor children; a Descriptor must then be selected.
+
+This changes question-capture UI/validation, not curriculum import, mapping, applicability or retrieval semantics.
 
 ## 14. Assessment ownership: exam-level ambiguity -> booklet ownership
-
-### Earlier uncertainty
-
-Pre-sprint persistence discussions considered uniqueness around `(exam_id, question_code)` and questioned where paper/booklet ownership belonged.
-
-### Current
 
 **IMPLEMENTED / CURRENT**
 
@@ -316,25 +308,25 @@ Pre-sprint persistence discussions considered uniqueness around `(exam_id, quest
 Question -> ExamBooklet -> Exam
 ```
 
-Natural identity is `(booklet_id, question_code)`.
+Natural identity is:
 
-Paper is represented by the booklet; it is not duplicated as a generic question type.
+```text
+(booklet_id, question_code)
+```
+
+Paper/booklet identity is not duplicated as a generic question type.
 
 ## 15. Imported questions: mandatory regions -> staged capture
 
-### Earlier normal-capture assumption
-
-A saved captured question naturally had regions because capture began from an open PDF.
-
-### Legacy import requirement
-
 **IMPLEMENTED / CURRENT**
 
-Metadata may exist before regions. A persisted zero-region question is therefore valid for legacy import, while the normal manual capture workflow still requires at least one selected region.
+Persisted metadata may exist before question regions.
+
+A zero-region question is therefore valid for legacy import while ordinary manual capture still requires at least one accepted region.
 
 Placeholder regions were rejected.
 
-This creates an explicit staged lifecycle instead of pretending incomplete data is complete.
+Sprint 07 extends staged completeness to include an explicit unresolved shared-context condition without invalidating metadata-only import.
 
 ## 16. Answer architecture: file convention -> explicit answer aggregate
 
@@ -350,98 +342,219 @@ This creates an explicit staged lifecycle instead of pretending incomplete data 
 
 Explicit `Answer`, `AnswerFile` and `AnswerRegion` structures allow text and/or source-region answer material.
 
-Blank legacy written-answer cells do not prove “no answer”, so fake empty answers and an unnecessary early tri-state availability model were avoided.
+Blank legacy written-answer cells do not prove “no answer”, so fake empty answers were avoided.
 
-## 17. Preamble/shared context: several designs, only the hint is settled
+Sprint 07 will add correction/update workflow without changing the core answer aggregate.
+
+## 17. Preamble/shared context and multipart identity
 
 ### Legacy
 
-`MultiPartQuestion` could own a shared preamble and render it once.
+The predecessor application had a `MultiPartQuestion` concept.
 
-### Early redevelopment design
+It:
 
-Rich concepts were discussed for shared content and dependencies, including possible STEM/SHARED_DATA/TABLE/GRAPH/DIAGRAM/PART/SUBPART region roles, part dependencies and “keep together” behaviour.
+- treated parts such as `21a`, `21b`, `21c` as belonging to source question `21`;
+- grouped matching parts inside the classification bucket;
+- rendered a multipart preamble once;
+- accumulated member-part marks.
 
-### Pre-Sprint-01 persistence proposal
+It did not provide a general persisted shared-context model for otherwise independent questions such as several MCQs.
 
-A dedicated `QuestionPreamble` with ordered preamble regions was proposed.
+### Early redevelopment alternatives
 
-### Implemented Sprint-01 design
+Possible designs included:
 
-**SUPERSEDED / NOT ADOPTED — required dedicated `QuestionPreamble`.**
+- repeated ordinary regions;
+- a dedicated preamble object;
+- generic shared source sections;
+- ordered shared blocks;
+- dependency relationships;
+- keep-together flags;
+- region-role taxonomies.
 
-The implemented model retained only `preambleCaptureRequired` as a legacy capture hint. Import does not infer grouping, create placeholder preamble regions or assume a preamble means exactly two regions.
+### Sprint 01 implementation
 
-### Current unresolved requirement
+**IMPLEMENTED / CURRENT THROUGH SCHEMA V4**
 
-**PROPOSED / BACKLOG**
+Only the Boolean legacy evidence flag `preambleCaptureRequired` was persisted.
 
-Generalized shared-context semantics remain open. A future design may use repeated ordinary regions, shared source sections, or another explicit relationship. UI “pin and reuse” is a workflow convenience, not established persistent state.
+Import deliberately did not infer grouping or create placeholder preamble data.
 
-## 18. Capture interaction: several previews -> one consistent accepted-region pattern
+### Sprint 07 design decision
 
-### Earlier
+**DECIDED / SCHEDULED — NOT YET IMPLEMENTED**
 
-Question and Answer workflows diverged: Question had a separate combined preview while Answer had Undo.
+Sprint 07 resolves the prior ambiguity with two separate persisted concepts:
 
-### Current direction
+```text
+SourceQuestion
+```
 
-**SUPERSEDED**
+for common original source-question identity, and:
 
-- Answer Undo;
-- permanent separate combined-question preview.
+```text
+SharedQuestionContext
+```
 
-**IMPLEMENTED / CURRENT**
+for reusable introductory material.
 
-Both use current selection + Add/Clear + accepted-region list + per-region Remove. Visual details can differ without duplicating interaction semantics.
+The concepts are intentionally independent.
 
-A generic shared component was deliberately deferred until repetition justified abstraction.
+Example:
+
+```text
+SourceQuestion "21"
+├── Question "21a"
+├── Question "21b"
+└── Question "21c"
+
+SharedQuestionContext "Question 21 preamble"
+├── context region 1
+└── context region 2
+
+21a ──► shared context
+21b ──► shared context
+21c ──► shared context
+```
+
+A single shared context may also link otherwise independent questions without converting them into one multipart question.
+
+### Persisted scope selected for Sprint 07
+
+**DECIDED**
+
+- source-question membership is explicit;
+- question-code parsing may suggest but not silently create membership;
+- one shared-context link per question;
+- one shared context may contain several ordered regions;
+- one shared context may be reused by many questions;
+- shared context is booklet-scoped;
+- ordinary multi-region questions remain a separate concept;
+- no persisted UI `pinned` flag;
+- no general dependency graph is introduced;
+- no redundant multipart total-marks field is stored.
+
+### Legacy migration/import rule
+
+**DECIDED**
+
+Neither migration nor import may infer:
+
+```text
+21a -> SourceQuestion 21
+```
+
+or a shared-context relationship merely from:
+
+```text
+preamble_capture_required = 1
+```
+
+The legacy flag remains evidence.
+
+Operational unresolved state is derived when the flag is true and no shared context is explicitly linked.
+
+### Output rule
+
+**DECIDED**
+
+Multipart grouping is performed inside the final current-curriculum output bucket.
+
+If `21a` and `21c` occur in one bucket and `21b` in another:
+
+- `21a` + `21c` form one displayed multipart question in the first bucket;
+- `21b` is displayed separately in the second;
+- shared context is repeated across buckets where needed;
+- grouped marks are the sum of included member-part marks.
+
+Shared context alone does not create multipart grouping.
+
+Sprint 07 includes the required HTML revision-output change. SCORM continues to package that static content rather than implementing its own grouping rules.
+
+## 18. Capture interaction: accepted-region pattern -> explicit selection ownership
+
+### Previous direction
+
+**IMPLEMENTED THROUGH SPRINT 06**
+
+Question and Answer capture both use:
+
+- current selection;
+- Add/Clear;
+- accepted-region list;
+- per-region Remove.
+
+### Problem exposed by real use
+
+Both panes can invoke the shared PDF workspace selection clear operation.
+
+This permits a Question-side clear action to disturb an Answer-side selection and allows some transitions to discard unaccepted selections too silently.
+
+### Sprint 07 decision
+
+**DECIDED / SCHEDULED**
+
+Introduce explicit transient selection ownership:
+
+```text
+QUESTION
+SHARED_CONTEXT
+ANSWER
+```
+
+Only the owner may clear its selection.
+
+Guard transitions that would discard an unaccepted rectangle.
+
+Do not persist selection ownership or pin state.
 
 ## 19. Package boundaries: flat growth -> persistence-oriented packages
 
 **IMPLEMENTED / CURRENT**
 
-Package reorganisation grouped actual transactional dependencies rather than widening visibility to achieve cosmetic structure.
+Package reorganisation follows actual transactional responsibilities rather than widening visibility for cosmetic structure.
 
 Notably:
 
-- SQLite infrastructure stayed together;
-- curriculum repositories/import/mapping persistence stayed together;
-- assessment persistence stayed together;
-- UI was deliberately not split into `ui.curriculum` during that pass;
-- Preferences-backed repository location was preserved to avoid losing existing user settings.
+- SQLite infrastructure remains together;
+- curriculum persistence remains grouped;
+- assessment persistence remains grouped;
+- UI remains separated from persistence/domain logic.
+
+Sprint 07 should preserve these boundaries.
 
 ## 20. Retrieval architecture: stored classification -> derived applicability search
 
-### Problem
-
-Historical provenance and present usefulness answer different questions.
-
-### Current
-
 **IMPLEMENTED / CURRENT**
 
-The stored question retains its original classification; a retrieval service derives current applicability through confirmed mappings and explicit hierarchy expansion.
+The stored question retains its original classification.
 
-Search scopes may be Subject/Unit/Topic/Subtopic/Descriptor even though persisted question classification remains Subtopic/Descriptor.
+Retrieval derives current applicability through confirmed mappings and explicit hierarchy expansion.
 
-This is the architectural bridge between curriculum history and reusable current resources.
+Search scopes may be Subject/Unit/Topic/Subtopic/Descriptor even though persisted classification remains Subtopic/Descriptor.
+
+### Sprint 07 boundary
+
+**DECIDED**
+
+Multipart/shared-context grouping happens after retrieval has established the final output bucket.
+
+Do not push multipart grouping into curriculum retrieval or mapping logic.
 
 ## 21. Product strategy: Exam Builder first -> revision export first
 
 ### Earlier direction
 
-Assessment assembly and PDF output were central long-term goals inherited from the legacy system.
+Assessment assembly and PDF output were central inherited goals.
 
 ### Current priority
 
 **SUPERSEDED IN PRIORITY**
 
-Exam Builder is no longer the immediate next feature.
+Exam Builder is not the immediate critical path.
 
-**DECIDED / CURRENT**
-
-The near-term path is:
+**IMPLEMENTED PATH THROUGH SPRINT 06**
 
 ```text
 data safety
@@ -451,7 +564,11 @@ data safety
  -> QLearn
 ```
 
-Exam Builder and printable assessment generation remain later consumers of the same question bank.
+### Next
+
+**DECIDED**
+
+Sprint 07 improves the bank/capture/presentation semantics before moving to richer bank administration or Exam Builder.
 
 ## 22. Deployment architecture: local desktop first
 
@@ -461,11 +578,11 @@ SQLite keeps Version 1 realistic for a school desktop environment without requir
 
 **REJECTED**
 
-Treating a SharePoint-synchronised/network SQLite file as a safe concurrently edited multi-user database.
+A SharePoint-synchronised/network SQLite file is not treated as a safe concurrently edited multi-user database.
 
 **PROPOSED / LATER**
 
-- controlled import/export/merge between coordinators;
+- controlled import/export/merge;
 - IT-supported central DB if required;
 - SharePoint/Graph integration;
 - `jpackage` self-contained installer;
@@ -473,33 +590,46 @@ Treating a SharePoint-synchronised/network SQLite file as a safe concurrently ed
 
 ## 23. Future non-PDF content: source-region model -> attachment extension
 
-The PDF-region architecture assumes a durable source document. Some future questions may instead originate from transient web pages or arbitrary documents captured by Windows Snipping Tool.
+The PDF-region architecture assumes a durable source document.
+
+Some future questions may originate from transient web pages/documents captured by Windows Snipping Tool.
 
 **PROPOSED**
 
-Allow question content to include text plus zero or more image attachments obtained from clipboard or drag/drop.
+Allow text plus zero or more image attachments obtained from clipboard or drag/drop.
 
 Possible persistence:
 
 - SQLite BLOBs; or
-- application-managed image files with DB metadata.
+- managed image files with DB metadata.
 
 No choice has been made.
 
-This should extend the content model without weakening PDF provenance for normal exam questions. OCR remains optional separate future work.
+This must extend rather than weaken PDF provenance.
 
 ## 24. Data safety becomes a first-class architecture boundary
 
-**PROPOSED / NEXT**
+### Earlier
 
-Sprint 04 treats backup/restore as recoverability, not file copying:
+**PROPOSED / SPRINT 04**
+
+Backup/restore was elevated from file copying to recoverability.
+
+### Current
+
+**IMPLEMENTED / CURRENT**
+
+Sprint 04 established:
 
 - consistent SQLite snapshots;
 - versioned backup contract;
 - frequent DB backups and separate full archives;
 - staging/validation;
 - restore protection;
-- application restart after restore unless safe complete reinitialisation is later proven.
+- application restart boundary after restore;
+- retention.
+
+Schema v5 data introduced by Sprint 07 will use the same backup/restore architecture; the backup model itself is not redesigned.
 
 ## 25. Superseded/rejected design register
 
@@ -514,8 +644,12 @@ Sprint 04 treats backup/restore as recoverability, not file copying:
 | Classification subject directly drives Exam metadata | **SUPERSEDED** | Exam Import owns subject; incompatible classification invalidates exam |
 | `(exam_id, question_code)` as likely uniqueness | **SUPERSEDED** | `(booklet_id, question_code)` |
 | Placeholder regions for imported questions | **REJECTED** | valid zero-region capture-pending questions |
-| Preamble implies expected region count | **REJECTED** | independent capture hint |
-| Required dedicated `QuestionPreamble` entity | **NOT ADOPTED** | hint implemented; generalized shared context unresolved |
+| Preamble implies expected region count | **REJECTED** | explicit shared-context semantics; legacy flag is evidence only |
+| Required dedicated `QuestionPreamble` as the only model | **NOT ADOPTED** | Sprint 07 separates `SourceQuestion` and `SharedQuestionContext` |
+| Generic dependency graph for Sprint 07 | **REJECTED AS PREMATURE** | explicit source-question + one linked shared context per question |
+| Infer multipart membership by stripping question-code suffixes | **REJECTED AS AUTHORITATIVE DATA** | parsing may suggest; user-confirmed relationship is persisted |
+| Persist multipart total marks | **REJECTED** | derive sum from included member parts |
+| Persist UI pin/reuse state | **REJECTED** | transient UI convenience only |
 | Tri-state answer availability for import | **DEFERRED/UNNECESSARY FOR SPRINT 01** | actual answer data or unknown state |
 | Direction-neutral mapping | **SUPERSEDED** | explicit historical -> current |
 | Descriptor mappings alone | **SUPERSEDED AS SUFFICIENT** | Descriptor + Subtopic mappings |
@@ -524,9 +658,12 @@ Sprint 04 treats backup/restore as recoverability, not file copying:
 | Permanent combined Question preview | **SUPERSEDED** | current selection + accepted list |
 | Browser-side PDF rendering for SCORM | **REJECTED TARGET** | build-time PDFBox web assets |
 | Include full source PDFs in SCORM | **REJECTED DEFAULT** | derived portable web assets |
-| Exam Builder as immediate critical path | **SUPERSEDED IN PRIORITY** | revision/SCORM first |
+| Separate multipart logic in SCORM | **REJECTED** | SCORM packages revision presentation |
+| Exam Builder as immediate critical path | **SUPERSEDED IN PRIORITY** | revision/SCORM first, then bank semantics |
 | Live concurrent SharePoint/network SQLite | **REJECTED** | local SQLite + backups/controlled sharing; server later if needed |
 
 ### Not safely classed as superseded
 
-The early **multi-descriptor original classification requirement** is not listed as superseded because the current single-best-fit implementation does not, by itself, prove the requirement was deliberately withdrawn. It remains a design decision to revisit.
+The early **multi-descriptor original classification requirement** is not listed as superseded because the current single-best-fit implementation does not prove that requirement was deliberately withdrawn.
+
+It remains a separate design decision after Sprint 07.
