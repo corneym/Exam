@@ -111,27 +111,12 @@ import javafx.stage.Stage;
  * PDF display, question capture, and answer capture.
  */
 public class QuestionBankApplication extends Application {
-
-	private enum BackupFailureDecision {
-		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
-	}
-
 	private static final double SECTION_SPACING = 10.0;
 	private static final double PREVIEW_PANE_WIDTH = 500.0;
 	private static final double SCENE_WIDTH = 1400.0;
 	private static final double SCENE_HEIGHT = 840.0;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 	private static final Path PROPERTIES_FILE = Path.of("questionbank.properties");
-
-	/**
-	 * Launches the desktop application.
-	 *
-	 * @param args command-line arguments passed to JavaFX
-	 */
-	public static void main(String[] args) {
-		launch(args);
-	}
-
 	private QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
@@ -148,15 +133,70 @@ public class QuestionBankApplication extends Application {
 	private boolean resourcesClosedForRestore;
 	private MenuItem revisionExportMenuItem;
 	private boolean revisionExportRunning;
-
 	private MenuItem scormExportMenuItem;
-
 	private boolean scormExportRunning;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
 	 */
 	public QuestionBankApplication() {
+	}
+
+	/**
+	 * Launches the desktop application.
+	 *
+	 * @param args command-line arguments passed to JavaFX
+	 */
+	public static void main(String[] args) {
+		launch(args);
+	}
+
+	@Override
+	public void start(Stage stage) throws Exception {
+		ApplicationConfig config;
+		try {
+			config = ApplicationConfig.load(PROPERTIES_FILE);
+		} catch (ConfigurationException e) {
+			showStartupError("Configuration Error", e.getMessage());
+			return;
+		} catch (IOException e) {
+			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
+			return;
+		}
+		try {
+			startApplication(stage, config);
+		} catch (IncompatibleDatabaseException e) {
+			showStartupError("Database Upgrade Required", """
+					The existing question-bank database contains old development question data
+					that cannot be migrated safely to the current database format.
+
+					Delete the existing database and restart the application.
+
+					Database:
+					%s
+
+					You will need to re-import the curriculum and exam data afterwards.
+					""".formatted(config.databasePath()));
+		} catch (SQLException e) {
+			showStartupError("Database Error", """
+					The question-bank database could not be opened or upgraded.
+
+					Database:
+					%s
+
+					%s
+					""".formatted(config.databasePath(), e.getMessage()));
+		}
+	}
+
+	@Override
+	public void stop() throws Exception {
+		if (resourcesClosedForRestore) {
+			return;
+		}
+		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
+			pdfWorkspace.close();
+		}
 	}
 
 	private void activateExamSubject(Subject subject) {
@@ -589,7 +629,7 @@ public class QuestionBankApplication extends Application {
 			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
 					subject.getName(), syllabusVersion.getName());
 			answerCapturePane.refreshUnansweredQuestions();
-			questionCapturePane.refreshImportedQuestions();
+			questionCapturePane.showLegacyCaptureControls();
 			showLegacyQuestionImportResult(importedBooklets.get().intValue(), importResult);
 		} catch (IOException e) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
@@ -1036,44 +1076,6 @@ public class QuestionBankApplication extends Application {
 		alert.showAndWait();
 	}
 
-	@Override
-	public void start(Stage stage) throws Exception {
-		ApplicationConfig config;
-		try {
-			config = ApplicationConfig.load(PROPERTIES_FILE);
-		} catch (ConfigurationException e) {
-			showStartupError("Configuration Error", e.getMessage());
-			return;
-		} catch (IOException e) {
-			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
-			return;
-		}
-		try {
-			startApplication(stage, config);
-		} catch (IncompatibleDatabaseException e) {
-			showStartupError("Database Upgrade Required", """
-					The existing question-bank database contains old development question data
-					that cannot be migrated safely to the current database format.
-
-					Delete the existing database and restart the application.
-
-					Database:
-					%s
-
-					You will need to re-import the curriculum and exam data afterwards.
-					""".formatted(config.databasePath()));
-		} catch (SQLException e) {
-			showStartupError("Database Error", """
-					The question-bank database could not be opened or upgraded.
-
-					Database:
-					%s
-
-					%s
-					""".formatted(config.databasePath(), e.getMessage()));
-		}
-	}
-
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
@@ -1128,7 +1130,6 @@ public class QuestionBankApplication extends Application {
 		RevisionExportService exportService = createRevisionExportService(config);
 		RevisionExportRequest request = new RevisionExportRequest(subject, destination);
 		Task<RevisionExportResult> task = new Task<RevisionExportResult>() {
-
 			@Override
 			protected RevisionExportResult call() throws Exception {
 				updateMessage("Starting export...");
@@ -1186,7 +1187,6 @@ public class QuestionBankApplication extends Application {
 		ScormExportService exportService = createScormExportService(config);
 		ScormExportRequest request = new ScormExportRequest(subject, destination);
 		Task<ScormExportResult> task = new Task<ScormExportResult>() {
-
 			@Override
 			protected ScormExportResult call() throws Exception {
 				updateMessage("Starting SCORM export...");
@@ -1233,13 +1233,7 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
-	@Override
-	public void stop() throws Exception {
-		if (resourcesClosedForRestore) {
-			return;
-		}
-		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
-			pdfWorkspace.close();
-		}
+	private enum BackupFailureDecision {
+		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
 }

@@ -62,7 +62,6 @@ import javafx.stage.WindowEvent;
 
 @ExtendWith(ApplicationExtension.class)
 class QuestionBankApplicationWorkflowTest {
-
 	private static final String CURRICULUM_2019 = "CHM Study Checklist [2019 Syllabus].xlsx";
 	private static final String CURRICULUM_2025_UNITS_1_2 = "CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx";
 	private static final String CURRICULUM_2025_UNITS_3_4 = "CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx";
@@ -430,6 +429,13 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void legacyQuestionControlsAreHiddenDuringNormalCapture(FxRobot robot) {
+		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
+		assertFalse(legacyControls.isVisible());
+		assertFalse(legacyControls.isManaged());
+	}
+
+	@Test
 	void movingToNextAnswerPageIsBlockedForUnacceptedSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q3");
@@ -458,6 +464,16 @@ class QuestionBankApplicationWorkflowTest {
 		robot.clickOn("#next-pdf-page");
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(originalPage + 1, workspace.getCurrentPageNumber());
+	}
+
+	@Test
+	void multipartQuestionAutomaticallyCreatesSourceQuestion(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question saved = captureQuestion(robot, "24a");
+		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(saved.getId())
+				.orElseThrow();
+		assertTrue(restored.hasSourceQuestion());
+		assertEquals("24", restored.getSourceQuestion().getSourceQuestionCode());
 	}
 
 	@Test

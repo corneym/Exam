@@ -39,7 +39,6 @@ import javafx.util.StringConverter;
  * and save workflow.
  */
 final class QuestionCapturePane extends VBox {
-
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
 	private static final double CURRENT_SELECTION_SPACING = 6.0;
@@ -69,6 +68,7 @@ final class QuestionCapturePane extends VBox {
 	private final ComboBox<Question> importedQuestionBox = new ComboBox<>();
 	private final Button newQuestionButton = new Button("New");
 	private final Label captureHintLabel = new Label();
+	private final VBox legacyCaptureBox = new VBox(COMPACT_SPACING);
 	private Question importedQuestion;
 	private boolean refreshingImportedQuestions;
 	private final QuestionRepository questionRepository;
@@ -82,11 +82,8 @@ final class QuestionCapturePane extends VBox {
 	private final Predicate<Question> importedQuestionActivationHandler;
 	private final BooleanSupplier questionTargetChangeAllowed;
 	private final SharedContextCapturePane sharedContextCapturePane;
-
 	private QuestionRegion currentSelection;
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
-	private final ComboBox<String> sourceQuestionField = new ComboBox<>();
-	private final Button createSourceQuestionButton = new Button("Create");
 	private final SourceQuestionRepository sourceQuestionRepository;
 
 	/**
@@ -148,11 +145,13 @@ final class QuestionCapturePane extends VBox {
 		this.sharedContextCapturePane = sharedContextCapturePane;
 		configureControls();
 		configureActions();
-		getChildren().addAll(createSectionLabel("Question"), new Label("Imported question awaiting capture"),
-				createImportedQuestionControls(), captureHintLabel, createSourceQuestionControls(),
-				sharedContextCapturePane, createQuestionControls(), saveStatusLabel, new Separator(),
-				createCurrentSelectionControls(), previewView, new Separator(), new Label("Accepted regions"),
-				regionCountLabel, createRegionsScrollPane());
+		legacyCaptureBox.getChildren().addAll(new Label("Question awaiting capture"), createImportedQuestionControls(),
+				captureHintLabel);
+		setLegacyCaptureControlsVisible(false);
+		getChildren().addAll(createSectionLabel("Question"), legacyCaptureBox, sharedContextCapturePane,
+				createQuestionControls(), saveStatusLabel, new Separator(), createCurrentSelectionControls(),
+				previewView, new Separator(), new Label("Accepted regions"), regionCountLabel,
+				createRegionsScrollPane());
 		setSpacing(COMPACT_SPACING);
 		setPadding(PANEL_PADDING);
 		setStyle(BORDER_STYLE);
@@ -178,8 +177,77 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	void acceptSharedContextSelection(PdfWorkspacePane.RegionSelection selection) {
-
 		sharedContextCapturePane.acceptSelection(selection);
+	}
+
+	/**
+	 * Discards the current unaccepted region selection.
+	 */
+	void clearCurrentSelection() {
+		currentSelection = null;
+		selectionClearHandler.run();
+		previewView.setImage(null);
+	}
+
+	/**
+	 * Clears all transient question regions when the exam PDF changes.
+	 */
+	void clearForNewPdf() {
+		importedQuestion = null;
+		setLegacyCaptureControlsVisible(false);
+		questionCodeField.setDisable(false);
+		marksField.setDisable(false);
+		curriculumSelectorPane.setDisable(false);
+		saveQuestionButton.setText("Save Question");
+		captureHintLabel.setVisible(false);
+		captureHintLabel.setManaged(false);
+		resetQuestionEntry();
+		sharedContextCapturePane.refreshForCurrentBooklet();
+		refreshImportedQuestions();
+	}
+
+	void clearSharedContextCurrentSelection() {
+		sharedContextCapturePane.clearCurrentSelection();
+	}
+
+	boolean hasAcceptedRegions() {
+		return !pendingRegions.isEmpty();
+	}
+
+	boolean isCapturingSharedContext() {
+		return sharedContextCapturePane.isCaptureMode();
+	}
+
+	void refreshImportedQuestions() {
+		Question selected = importedQuestion;
+		List<Question> awaitingCapture = new ArrayList<>();
+		for (Question question : questionRepository.findAll()) {
+			if (question.getRegions().isEmpty()) {
+				awaitingCapture.add(question);
+			}
+		}
+		refreshingImportedQuestions = true;
+		try {
+			importedQuestionBox.getItems().setAll(awaitingCapture);
+			Question matchingSelection = null;
+			if (selected != null) {
+				for (Question question : awaitingCapture) {
+					if (question.getId() == selected.getId()) {
+						matchingSelection = question;
+						break;
+					}
+				}
+			}
+			importedQuestionBox.setValue(matchingSelection);
+			importedQuestion = matchingSelection;
+		} finally {
+			refreshingImportedQuestions = false;
+		}
+	}
+
+	void showLegacyCaptureControls() {
+		refreshImportedQuestions();
+		setLegacyCaptureControlsVisible(true);
 	}
 
 	private void addCurrentRegion() {
@@ -208,32 +276,6 @@ final class QuestionCapturePane extends VBox {
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview region", e);
 		}
-	}
-
-	/**
-	 * Discards the current unaccepted region selection.
-	 */
-	void clearCurrentSelection() {
-		currentSelection = null;
-		selectionClearHandler.run();
-		previewView.setImage(null);
-	}
-
-	/**
-	 * Clears all transient question regions when the exam PDF changes.
-	 */
-	void clearForNewPdf() {
-		importedQuestion = null;
-		questionCodeField.setDisable(false);
-		marksField.setDisable(false);
-		curriculumSelectorPane.setDisable(false);
-		saveQuestionButton.setText("Save Question");
-		captureHintLabel.setVisible(false);
-		captureHintLabel.setManaged(false);
-		resetQuestionEntry();
-		refreshSourceQuestionOptions();
-		sharedContextCapturePane.refreshForCurrentBooklet();
-		refreshImportedQuestions();
 	}
 
 	private void clearImportedQuestionSelection() {
@@ -270,19 +312,9 @@ final class QuestionCapturePane extends VBox {
 		setRegionCountLabel(0);
 	}
 
-	void clearSharedContextCurrentSelection() {
-		sharedContextCapturePane.clearCurrentSelection();
-	}
-
-	private void clearSourceQuestionSelection() {
-		sourceQuestionField.getSelectionModel().clearSelection();
-		sourceQuestionField.getEditor().clear();
-	}
-
 	private void configureActions() {
 		addRegionButton.setOnAction(event -> addCurrentRegion());
 		clearRegionsButton.setOnAction(event -> clearQuestionRegions());
-		createSourceQuestionButton.setOnAction(event -> createSourceQuestion());
 		removeCurrentSelectionButton.setOnAction(event -> clearPendingSelection());
 		saveQuestionButton.setOnAction(event -> validateQuestionForSave());
 		importedQuestionBox.setOnAction(event -> {
@@ -297,11 +329,6 @@ final class QuestionCapturePane extends VBox {
 		questionCodeField.setId("question-code");
 		questionCodeField.setPromptText("Q1");
 		questionCodeField.setPrefWidth(QUESTION_CODE_FIELD_WIDTH);
-		sourceQuestionField.setId("source-question");
-		sourceQuestionField.setPromptText("Optional, e.g. 21");
-		sourceQuestionField.setEditable(true);
-		sourceQuestionField.setPrefWidth(160.0);
-		createSourceQuestionButton.setId("create-source-question");
 		marksField.setId("question-marks");
 		marksField.setPromptText("1");
 		marksField.setPrefWidth(MARKS_FIELD_WIDTH);
@@ -318,7 +345,6 @@ final class QuestionCapturePane extends VBox {
 		importedQuestionBox.setPromptText("Select imported question");
 		importedQuestionBox.setMaxWidth(Double.MAX_VALUE);
 		importedQuestionBox.setConverter(new StringConverter<Question>() {
-
 			@Override
 			public Question fromString(String text) {
 				return null;
@@ -336,6 +362,7 @@ final class QuestionCapturePane extends VBox {
 			}
 		});
 		newQuestionButton.setId("new-question");
+		legacyCaptureBox.setId("legacy-question-capture");
 		captureHintLabel.setId("question-capture-hint");
 		captureHintLabel.setWrapText(true);
 		captureHintLabel.setVisible(false);
@@ -382,29 +409,24 @@ final class QuestionCapturePane extends VBox {
 		return label;
 	}
 
-	private void createSourceQuestion() {
-		ExamBooklet booklet = bookletSupplier.get();
-		if (booklet == null) {
-			showAlert(Alert.AlertType.WARNING, "Exam details have not been set.",
-					"Select an exam booklet before creating a source question.");
-			return;
+	private String deriveSourceQuestionCode(String questionCode) {
+		String code = questionCode == null ? "" : questionCode.trim();
+		if (code.length() < 2) {
+			return null;
 		}
-		String code = sourceQuestionCode();
-		if (code.isBlank()) {
-			showAlert(Alert.AlertType.WARNING, "Source question is incomplete.", "Enter a source question code.");
-			return;
+		char part = code.charAt(code.length() - 1);
+		if (!Character.isLetter(part)) {
+			return null;
 		}
-		SourceQuestion sourceQuestion = sourceQuestionRepository.findByBookletAndCode(booklet, code)
-				.orElseGet(() -> sourceQuestionRepository.save(booklet, code));
-		refreshSourceQuestionOptions();
-		sourceQuestionField.setValue(sourceQuestion.getSourceQuestionCode());
-	}
-
-	private HBox createSourceQuestionControls() {
-		Label label = new Label("Source question");
-		HBox controls = new HBox(CONTROL_SPACING, label, sourceQuestionField, createSourceQuestionButton);
-		controls.setAlignment(Pos.CENTER_LEFT);
-		return controls;
+		String sourceCode = code.substring(0, code.length() - 1);
+		if (sourceCode.isBlank()) {
+			return null;
+		}
+		char sourceLastCharacter = sourceCode.charAt(sourceCode.length() - 1);
+		if (!Character.isDigit(sourceLastCharacter)) {
+			return null;
+		}
+		return sourceCode;
 	}
 
 	private Question findExistingQuestionWithSameCode() {
@@ -430,29 +452,15 @@ final class QuestionCapturePane extends VBox {
 		if (validationError != null) {
 			return validationError;
 		}
-		String sourceCode = sourceQuestionCode();
-		if (sourceCode.isBlank()) {
-			return null;
+		if (sharedContextCapturePane.hasUnsavedContextCapture()) {
+			return "Save or cancel the new shared context before saving the question.";
 		}
 		if (importedQuestion != null && importedQuestion.isSharedContextUnresolved()
 				&& sharedContextCapturePane.getSelectedContext() == null) {
-
-			return "This imported question requires shared context. Select an existing shared context or capture and save a new one before attaching the question regions.";
-		}
-		ExamBooklet booklet = bookletSupplier.get();
-		if (sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode).isEmpty()) {
-			return "Source question " + sourceCode + " has not been created. "
-					+ "Click Create, or clear the Source question field.";
+			return "This imported question requires shared context. "
+					+ "Select an existing shared context or capture and save a new one.";
 		}
 		return null;
-	}
-
-	boolean hasAcceptedRegions() {
-		return !pendingRegions.isEmpty();
-	}
-
-	boolean isCapturingSharedContext() {
-		return sharedContextCapturePane.isCaptureMode();
 	}
 
 	private void loadImportedQuestion(Question question) {
@@ -477,7 +485,6 @@ final class QuestionCapturePane extends VBox {
 		}
 		clearRegions();
 		importedQuestion = question;
-		refreshSourceQuestionOptions();
 		sharedContextCapturePane.refreshForCurrentBooklet();
 		if (question == null) {
 			questionCodeField.setDisable(false);
@@ -490,11 +497,6 @@ final class QuestionCapturePane extends VBox {
 		}
 		questionCodeField.setText(question.getQuestionCode());
 		marksField.setText(Integer.toString(question.getMarks()));
-		if (question.hasSourceQuestion()) {
-			sourceQuestionField.setValue(question.getSourceQuestion().getSourceQuestionCode());
-		} else {
-			clearSourceQuestionSelection();
-		}
 		if (question.hasSharedContext()) {
 			sharedContextCapturePane.selectContext(question.getSharedContext());
 		}
@@ -506,42 +508,13 @@ final class QuestionCapturePane extends VBox {
 		if (question.isSharedContextUnresolved()) {
 			captureHintLabel.setText(
 					"Shared context required — select an existing shared context or capture and save a new one before attaching question regions.");
-
 			captureHintLabel.setVisible(true);
 			captureHintLabel.setManaged(true);
-
 		} else {
 			captureHintLabel.setVisible(false);
 			captureHintLabel.setManaged(false);
 		}
 		showQuestionPendingStatus();
-	}
-
-	void refreshImportedQuestions() {
-		Question selected = importedQuestion;
-		List<Question> awaitingCapture = new ArrayList<>();
-		for (Question question : questionRepository.findAll()) {
-			if (question.getRegions().isEmpty()) {
-				awaitingCapture.add(question);
-			}
-		}
-		refreshingImportedQuestions = true;
-		try {
-			importedQuestionBox.getItems().setAll(awaitingCapture);
-			Question matchingSelection = null;
-			if (selected != null) {
-				for (Question question : awaitingCapture) {
-					if (question.getId() == selected.getId()) {
-						matchingSelection = question;
-						break;
-					}
-				}
-			}
-			importedQuestionBox.setValue(matchingSelection);
-			importedQuestion = matchingSelection;
-		} finally {
-			refreshingImportedQuestions = false;
-		}
 	}
 
 	private void refreshRegionPreviews() {
@@ -550,27 +523,6 @@ final class QuestionCapturePane extends VBox {
 			addRegionPreview(pendingRegions.get(i), i);
 		}
 		updateRegionsScrollPane();
-	}
-
-	private void refreshSourceQuestionOptions() {
-		ExamBooklet booklet = bookletSupplier.get();
-		if (booklet == null) {
-			sourceQuestionField.getItems().clear();
-			clearSourceQuestionSelection();
-			return;
-		}
-		String currentCode = sourceQuestionCode();
-		List<String> codes = sourceQuestionRepository.findByBooklet(booklet).stream()
-				.map(SourceQuestion::getSourceQuestionCode).toList();
-		sourceQuestionField.getItems().setAll(codes);
-		if (currentCode.isBlank()) {
-			return;
-		}
-		if (codes.contains(currentCode)) {
-			sourceQuestionField.setValue(currentCode);
-		} else {
-			sourceQuestionField.getEditor().setText(currentCode);
-		}
 	}
 
 	private void removeRegion(int regionIndex) {
@@ -607,17 +559,28 @@ final class QuestionCapturePane extends VBox {
 	private void resetQuestionEntry() {
 		questionCodeField.clear();
 		marksField.clear();
-		clearSourceQuestionSelection();
 		sharedContextCapturePane.clearForQuestion();
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
+	}
+
+	private SourceQuestion resolveSourceQuestion(ExamBooklet booklet, String questionCode) {
+		String sourceCode = deriveSourceQuestionCode(questionCode);
+		if (sourceCode == null) {
+			if (importedQuestion != null && importedQuestion.hasSourceQuestion()) {
+				return importedQuestion.getSourceQuestion();
+			}
+			return null;
+		}
+		return sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode)
+				.orElseGet(() -> sourceQuestionRepository.save(booklet, sourceCode));
 	}
 
 	private void saveQuestion() {
 		Question question;
 		int previousImportedIndex = -1;
 		ExamBooklet booklet = bookletSupplier.get();
-		SourceQuestion sourceQuestion = selectedSourceQuestion(booklet);
+		SourceQuestion sourceQuestion = resolveSourceQuestion(booklet, questionCodeField.getText().trim());
 		SharedQuestionContext sharedContext = sharedContextCapturePane.getSelectedContext();
 		if (importedQuestion != null) {
 			previousImportedIndex = importedQuestionBox.getSelectionModel().getSelectedIndex();
@@ -639,13 +602,9 @@ final class QuestionCapturePane extends VBox {
 		resetAfterQuestionSave(previousImportedIndex);
 	}
 
-	private SourceQuestion selectedSourceQuestion(ExamBooklet booklet) {
-		String code = sourceQuestionCode();
-		if (code.isBlank()) {
-			return null;
-		}
-		return sourceQuestionRepository.findByBookletAndCode(booklet, code)
-				.orElseThrow(() -> new IllegalStateException("Source question has not been created: " + code));
+	private void setLegacyCaptureControlsVisible(boolean visible) {
+		legacyCaptureBox.setVisible(visible);
+		legacyCaptureBox.setManaged(visible);
 	}
 
 	private void setRegionCountLabel(int count) {
@@ -672,10 +631,6 @@ final class QuestionCapturePane extends VBox {
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview selected region", e);
 		}
-	}
-
-	private String sourceQuestionCode() {
-		return sourceQuestionField.getEditor().getText().trim();
 	}
 
 	private void startNewQuestion() {
