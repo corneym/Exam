@@ -8,6 +8,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -121,12 +122,21 @@ final class SharedContextCapturePane extends VBox {
 	}
 
 	boolean beginAutomaticContext(String label) {
+		return beginAutomaticContext(label, null);
+	}
+
+	boolean beginAutomaticContext(String label, QuestionRegion transferredSelection) {
 		if (label == null || label.isBlank()) {
 			throw new IllegalArgumentException("label must not be blank");
 		}
-		if (!captureStartAllowed.getAsBoolean()) {
+		/*
+		 * A transferred question selection already exists in the PDF workspace.
+		 * Starting a new automatic capture from scratch must still obey the normal
+		 * transition guard.
+		 */
+		if (transferredSelection == null && !captureStartAllowed.getAsBoolean()) {
 			showWarning("Question selection pending",
-					"Add or clear the current question selection before capturing shared context.");
+					"Add or clear the current question selection " + "before capturing shared context.");
 			return false;
 		}
 		ExamBooklet booklet = bookletSupplier.get();
@@ -134,15 +144,29 @@ final class SharedContextCapturePane extends VBox {
 			showWarning("Exam details have not been set.", "Select an exam booklet before capturing shared context.");
 			return false;
 		}
+		if (transferredSelection != null && transferredSelection.booklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Transferred selection must belong " + "to the active booklet");
+		}
 		captureMode = true;
 		existingContextField.getSelectionModel().clearSelection();
 		existingContextField.setDisable(true);
 		newContextButton.setDisable(true);
 		pendingRegions.clear();
-		clearCurrentSelection();
+		if (transferredSelection == null) {
+			clearCurrentSelection();
+		} else {
+			currentSelection = new SharedQuestionContextRegion(transferredSelection.pageNumber(),
+					transferredSelection.x(), transferredSelection.y(), transferredSelection.width(),
+					transferredSelection.height());
+			currentPreview.setImage(null);
+			setSelectionButtonsEnabled(true);
+		}
 		contextLabelField.setText(label);
 		refreshRegionPreviews();
 		setNewContextBoxVisible(false);
+		if (transferredSelection != null) {
+			statusLabel.setText("Shared preamble selection pending " + "— click Add or Clear");
+		}
 		return true;
 	}
 

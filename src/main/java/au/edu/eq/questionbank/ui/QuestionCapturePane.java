@@ -87,6 +87,7 @@ final class QuestionCapturePane extends VBox {
 	private final Runnable questionsChangedHandler;
 	private final Predicate<Question> importedQuestionActivationHandler;
 	private final BooleanSupplier questionTargetChangeAllowed;
+	private final BooleanSupplier questionSelectionTransferHandler;
 	private final SharedContextCapturePane sharedContextCapturePane;
 	private QuestionRegion currentSelection;
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
@@ -100,7 +101,8 @@ final class QuestionCapturePane extends VBox {
 			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
 			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
 			Predicate<Question> importedQuestionActivationHandler, BooleanSupplier questionTargetChangeAllowed,
-			Runnable selectionClearHandler, Runnable questionsChangedHandler) {
+			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
+			Runnable questionsChangedHandler) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -137,6 +139,9 @@ final class QuestionCapturePane extends VBox {
 		if (sharedContextCapturePane == null) {
 			throw new NullPointerException("sharedContextCapturePane");
 		}
+		if (questionSelectionTransferHandler == null) {
+			throw new NullPointerException("questionSelectionTransferHandler");
+		}
 		this.questionRepository = questionRepository;
 		this.questionExtractor = questionExtractor;
 		this.curriculumSelectionModel = curriculumSelectionModel;
@@ -149,6 +154,7 @@ final class QuestionCapturePane extends VBox {
 		this.questionTargetChangeAllowed = questionTargetChangeAllowed;
 		this.sourceQuestionRepository = sourceQuestionRepository;
 		this.sharedContextCapturePane = sharedContextCapturePane;
+		this.questionSelectionTransferHandler = questionSelectionTransferHandler;
 		configureControls();
 		configureActions();
 		legacyCaptureBox.getChildren().addAll(new Label("Question awaiting capture"), createImportedQuestionControls(),
@@ -179,11 +185,13 @@ final class QuestionCapturePane extends VBox {
 		currentSelection = new QuestionRegion(booklet, selection.pageNumber(), selection.x(), selection.y(),
 				selection.width(), selection.height());
 		saveStatusLabel.setText("Selection pending — click Add Region or Clear");
+		refreshSaveButtonState();
 	}
 
 	void acceptSharedContextSelection(PdfWorkspacePane.RegionSelection selection) {
 		sharedContextCapturePane.acceptSelection(selection);
 		saveStatusLabel.setText("Shared preamble selection pending — click Add Region or Clear");
+		refreshSaveButtonState();
 	}
 
 	/**
@@ -192,6 +200,7 @@ final class QuestionCapturePane extends VBox {
 	void clearCurrentSelection() {
 		if (sharedContextCapturePane.isCaptureMode() && sharedContextCapturePane.hasCurrentSelection()) {
 			sharedContextCapturePane.clearCurrentSelection();
+			refreshSaveButtonState();
 			return;
 		}
 		currentSelection = null;
@@ -217,6 +226,7 @@ final class QuestionCapturePane extends VBox {
 
 	void clearSharedContextCurrentSelection() {
 		sharedContextCapturePane.clearCurrentSelection();
+		refreshSaveButtonState();
 	}
 
 	boolean hasAcceptedRegions() {
@@ -270,6 +280,7 @@ final class QuestionCapturePane extends VBox {
 			String sourceCode = deriveSourceQuestionCode(questionCodeField.getText());
 			updateQuestionCodeLock();
 			saveStatusLabel.setText("Shared preamble captured — select the question region(s).");
+			refreshSaveButtonState();
 			return;
 		}
 		if (currentSelection == null) {
@@ -281,6 +292,7 @@ final class QuestionCapturePane extends VBox {
 		setRegionCountLabel(pendingRegions.size());
 		showQuestionPendingStatus();
 		updateQuestionCodeLock();
+		refreshSaveButtonState();
 	}
 
 	private void addRegionPreview(QuestionRegion region, int regionIndex) {
@@ -339,6 +351,7 @@ final class QuestionCapturePane extends VBox {
 		refreshRegionPreviews();
 		setRegionCountLabel(0);
 		updateQuestionCodeLock();
+		refreshSaveButtonState();
 	}
 
 	private void configureActions() {
@@ -346,7 +359,13 @@ final class QuestionCapturePane extends VBox {
 		clearRegionsButton.setOnAction(event -> clearQuestionRegions());
 		removeCurrentSelectionButton.setOnAction(event -> clearPendingSelection());
 		saveQuestionButton.setOnAction(event -> validateQuestionForSave());
-		questionCodeField.textProperty().addListener((observable, oldCode, newCode) -> refreshPreambleControls());
+		questionCodeField.textProperty().addListener((observable, oldCode, newCode) -> {
+			refreshPreambleControls();
+			refreshSaveButtonState();
+		});
+		marksField.textProperty().addListener((observable, oldMarks, newMarks) -> refreshSaveButtonState());
+		curriculumSelectorPane.classificationSelectedProperty()
+				.addListener((observable, oldValue, newValue) -> refreshSaveButtonState());
 		firstRegionPreambleCheckBox.selectedProperty()
 				.addListener((observable, oldValue, selected) -> handlePreambleOptionChanged(selected.booleanValue()));
 		importedQuestionBox.setOnAction(event -> checkImportedQuestionBox());
@@ -361,6 +380,7 @@ final class QuestionCapturePane extends VBox {
 		marksField.setPromptText("1");
 		marksField.setPrefWidth(MARKS_FIELD_WIDTH);
 		saveQuestionButton.setId("save-question");
+		saveQuestionButton.setDisable(true);
 		saveStatusLabel.setId("question-save-status");
 		regionCountLabel.setId("question-region-count");
 		addRegionButton.setId("add-question-region");
@@ -539,23 +559,52 @@ final class QuestionCapturePane extends VBox {
 		if (refreshingPreambleControls) {
 			return;
 		}
-		String sourceCode = deriveSourceQuestionCode(questionCodeField.getText());
-		if (!selected) {
-			sharedContextCapturePane.cancelAutomaticContext();
-			hidePreambleStatus();
+		try {
+			String sourceCode = deriveSourceQuestionCode(questionCodeField.getText());
+			if (!selected) {
+				sharedContextCapturePane.cancelAutomaticContext();
+				hidePreambleStatus();
+				updateQuestionCodeLock();
+				return;
+			}
+			if (sourceCode == null) {
+				setPreambleCheckBoxSelected(false);
+				return;
+			}
+			String label = "Question " + sourceCode + " preamble";
+			/*
+			 * If the user drew the rectangle before identifying this as a multipart
+			 * question, reinterpret that same pending rectangle as the shared preamble.
+			 */
+			if (currentSelection != null) {
+				boolean started = sharedContextCapturePane.beginAutomaticContext(label, currentSelection);
+				if (!started) {
+					setPreambleCheckBoxSelected(false);
+					return;
+				}
+				if (!questionSelectionTransferHandler.getAsBoolean()) {
+					sharedContextCapturePane.cancelAutomaticContext();
+					setPreambleCheckBoxSelected(false);
+					return;
+				}
+				/*
+				 * The rectangle now belongs to SharedContextCapturePane. Do not clear the PDF
+				 * selection.
+				 */
+				currentSelection = null;
+				saveStatusLabel.setText("Shared preamble selection pending " + "— click Add Region or Clear");
+				updateQuestionCodeLock();
+				return;
+			}
+			boolean started = sharedContextCapturePane.beginAutomaticContext(label);
+			if (!started) {
+				setPreambleCheckBoxSelected(false);
+				return;
+			}
 			updateQuestionCodeLock();
-			return;
+		} finally {
+			refreshSaveButtonState();
 		}
-		if (sourceCode == null) {
-			setPreambleCheckBoxSelected(false);
-			return;
-		}
-		boolean started = sharedContextCapturePane.beginAutomaticContext("Question " + sourceCode + " preamble");
-		if (!started) {
-			setPreambleCheckBoxSelected(false);
-			return;
-		}
-		showPreambleStatus("First selected region will be the shared preamble.");
 	}
 
 	private void hidePreambleControls() {
@@ -601,6 +650,7 @@ final class QuestionCapturePane extends VBox {
 			saveQuestionButton.setText("Save Question");
 			captureHintLabel.setVisible(false);
 			captureHintLabel.setManaged(false);
+			refreshSaveButtonState();
 			return;
 		}
 		questionCodeField.setText(question.getQuestionCode());
@@ -624,6 +674,7 @@ final class QuestionCapturePane extends VBox {
 			captureHintLabel.setManaged(false);
 		}
 		showQuestionPendingStatus();
+		refreshSaveButtonState();
 	}
 
 	private void refreshPreambleControls() {
@@ -675,12 +726,27 @@ final class QuestionCapturePane extends VBox {
 		updateRegionsScrollPane();
 	}
 
+	private void refreshSaveButtonState() {
+		boolean ready;
+		try {
+			ready = findValidationError() == null;
+		} catch (IllegalStateException e) {
+			/*
+			 * An inconsistent stored relationship must never make Save available. Save-time
+			 * validation remains the defensive backstop.
+			 */
+			ready = false;
+		}
+		saveQuestionButton.setDisable(!ready);
+	}
+
 	private void removeRegion(int regionIndex) {
 		pendingRegions.remove(regionIndex);
 		refreshRegionPreviews();
 		setRegionCountLabel(pendingRegions.size());
 		showQuestionPendingStatus();
 		updateQuestionCodeLock();
+		refreshSaveButtonState();
 	}
 
 	private void resetAfterQuestionSave(int previousImportedIndex) {
@@ -715,6 +781,7 @@ final class QuestionCapturePane extends VBox {
 		marksField.clear();
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
+		refreshSaveButtonState();
 	}
 
 	private SharedQuestionContext resolveSharedContextForSave(SourceQuestion sourceQuestion) {

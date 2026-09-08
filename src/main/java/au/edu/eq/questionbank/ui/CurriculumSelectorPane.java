@@ -5,6 +5,8 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import javafx.beans.property.ReadOnlyBooleanProperty;
+import javafx.beans.property.ReadOnlyBooleanWrapper;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.geometry.Insets;
 import javafx.scene.control.ComboBox;
@@ -32,6 +34,7 @@ public class CurriculumSelectorPane extends VBox {
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
 	private final CurriculumSelectionModel model;
+	private final ReadOnlyBooleanWrapper classificationSelected = new ReadOnlyBooleanWrapper();
 	private final TextField codeField = new TextField();
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
@@ -60,10 +63,21 @@ public class CurriculumSelectorPane extends VBox {
 		Label classificationLabel = new Label("CLASSIFICATION");
 		classificationLabel.setStyle(HEADING_STYLE);
 		configureControls();
+		classificationSelected
+				.bind(subtopicBox.valueProperty().isNotNull().or(descriptorBox.valueProperty().isNotNull()));
 		configureSelectionHandlers();
 		configureCodeEntry();
 		getChildren().addAll(classificationLabel, createGrid());
 		refreshSubjects();
+	}
+
+	/**
+	 * Indicates whether a valid final classification is currently selected.
+	 *
+	 * @return read-only final-classification state
+	 */
+	public ReadOnlyBooleanProperty classificationSelectedProperty() {
+		return classificationSelected.getReadOnlyProperty();
 	}
 
 	/**

@@ -111,6 +111,7 @@ import javafx.stage.Stage;
  * PDF display, question capture, and answer capture.
  */
 public class QuestionBankApplication extends Application {
+
 	private static final double SECTION_SPACING = 10.0;
 	private static final double PREVIEW_PANE_WIDTH = 500.0;
 	private static final double SCENE_WIDTH = 1400.0;
@@ -1105,6 +1106,7 @@ public class QuestionBankApplication extends Application {
 				sharedContextCapturePane, questionExtractor, curriculumSelectionModel, curriculumSelectorPane,
 				examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
 				question -> activateImportedQuestion(question, config), this::confirmDiscardAcceptedQuestionRegions,
+				this::transferQuestionSelectionToSharedContext,
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION),
 				answerCapturePane::refreshUnansweredQuestions);
 		questionCapturePane.refreshImportedQuestions();
@@ -1130,6 +1132,7 @@ public class QuestionBankApplication extends Application {
 		RevisionExportService exportService = createRevisionExportService(config);
 		RevisionExportRequest request = new RevisionExportRequest(subject, destination);
 		Task<RevisionExportResult> task = new Task<RevisionExportResult>() {
+
 			@Override
 			protected RevisionExportResult call() throws Exception {
 				updateMessage("Starting export...");
@@ -1187,6 +1190,7 @@ public class QuestionBankApplication extends Application {
 		ScormExportService exportService = createScormExportService(config);
 		ScormExportRequest request = new ScormExportRequest(subject, destination);
 		Task<ScormExportResult> task = new Task<ScormExportResult>() {
+
 			@Override
 			protected ScormExportResult call() throws Exception {
 				updateMessage("Starting SCORM export...");
@@ -1231,6 +1235,14 @@ public class QuestionBankApplication extends Application {
 		Thread thread = new Thread(task, "revision-scorm-export");
 		thread.setDaemon(true);
 		thread.start();
+	}
+
+	private boolean transferQuestionSelectionToSharedContext() {
+		if (!captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION)) {
+			return false;
+		}
+		captureSelectionState.claim(CaptureSelectionOwner.SHARED_CONTEXT);
+		return true;
 	}
 
 	private enum BackupFailureDecision {

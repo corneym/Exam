@@ -270,21 +270,37 @@ class QuestionBankApplicationWorkflowTest {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+		/*
+		 * Deliberately draw first. The eventual multipart intent must be allowed to
+		 * reinterpret this pending rectangle as the preamble.
+		 */
+		dragRegionOnDisplayedPage(robot);
+		assertTrue(save.isDisabled());
 		robot.clickOn(questionCode).write("24a");
 		robot.clickOn(marks).write("2");
 		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
 		assertTrue(preamble.isVisible());
 		assertFalse(preamble.isSelected());
 		robot.clickOn(preamble);
-		// First accepted region is the shared preamble.
-		dragRegionOnDisplayedPage(robot);
+		assertTrue(preamble.isSelected());
+		assertTrue(save.isDisabled());
+		/*
+		 * The already-drawn rectangle is now accepted as the shared preamble rather
+		 * than as an ordinary question region.
+		 */
 		robot.clickOn("#add-question-region");
 		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
-		// Second accepted region belongs to 24a.
+		assertTrue(save.isDisabled());
+		/*
+		 * Now capture the actual 24a question region.
+		 */
 		dragRegionOnDisplayedPage(robot);
+		assertTrue(save.isDisabled());
 		robot.clickOn("#add-question-region");
 		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
-		robot.clickOn("#save-question");
+		assertFalse(save.isDisabled());
+		robot.clickOn(save);
 		WaitForAsyncUtils.waitForFxEvents();
 		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
 				.filter(question -> "24a".equals(question.getQuestionCode())).findFirst().orElseThrow();
@@ -706,6 +722,26 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
+	void saveQuestionEnablesOnlyWhenCaptureIsComplete(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Button save = lookup(robot, "#save-question", Button.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		assertTrue(save.isDisabled());
+		robot.clickOn(questionCode).write("27");
+		assertTrue(save.isDisabled());
+		robot.clickOn(marks).write("2");
+		assertTrue(save.isDisabled());
+		dragRegionOnDisplayedPage(robot);
+		/*
+		 * A rectangle exists, but it has not yet been accepted.
+		 */
+		assertTrue(save.isDisabled());
+		robot.clickOn("#add-question-region");
+		assertFalse(save.isDisabled());
 	}
 
 	@Test
