@@ -35,7 +35,14 @@ That percentage is only a planning estimate. The remaining work contains two sub
 
 - legacy `preambleCaptureRequired` remains historical evidence.
 - unresolved shared context is derived rather than rewriting the imported flag.
-- legacy import does not infer source-question or shared-context relationships from codes or row patterns.
+- legacy `preambleCaptureRequired` remains historical evidence;
+- a legacy Preamble value of 1 records that shared introductory
+  material is required;
+- multipart-looking question codes may derive/reuse SourceQuestion
+  identity using the same conservative rule as normal capture;
+- legacy import must not manufacture a SharedQuestionContext;
+- required shared context remains unresolved until actual source
+  regions are captured and linked.
 
 ### Selection ownership and transition safety
 
