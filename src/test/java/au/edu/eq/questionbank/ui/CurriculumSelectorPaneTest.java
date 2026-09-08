@@ -32,6 +32,8 @@ import javafx.stage.Stage;
 public class CurriculumSelectorPaneTest {
 
 	private Subject chemistry;
+	private SyllabusVersion syllabus2019;
+	private SyllabusVersion syllabus2025;
 	private Unit unit3;
 	private Topic topic31;
 	private Subtopic subtopic311;
@@ -84,6 +86,26 @@ public class CurriculumSelectorPaneTest {
 		robot.write(".1");
 		assertEquals(descriptor3111, model.getDescriptor());
 		assertEquals(descriptor3111, model.getClassification());
+	}
+
+	@Test
+	public void completeCodePasteSelectsDescriptor(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		robot.interact(() -> codeField.setText("3.1.1.1"));
+		assertEquals(descriptor3111, model.getDescriptor());
+		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
+		assertTrue(pane.classificationSelectedProperty().get());
+	}
+
+	@Test
+	public void editingDescriptorCodeBackToSubtopicClearsDescriptor(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		robot.clickOn(codeField).write("3.1.1.1");
+		robot.eraseText(2);
+		assertEquals("3.1.1", codeField.getText());
+		assertEquals(subtopic311, model.getSubtopic());
+		assertNull(model.getDescriptor());
+		assertEquals(subtopic311, pane.selectedClassificationProperty().get());
 	}
 
 	@Test
@@ -140,10 +162,26 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(descriptor3111, model.getDescriptor());
 	}
 
+	@Test
+	public void changingSyllabusClearsCodeAndClassificationButRetainsSubject(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+		robot.clickOn(codeField).write("3.1.1.1");
+		robot.interact(() -> syllabuses.setValue(syllabus2019));
+		assertEquals(chemistry, model.getSubject());
+		assertEquals(syllabus2019, model.getSyllabusVersion());
+		assertEquals("", codeField.getText());
+		assertNull(model.getUnit());
+		assertNull(model.getClassification());
+		assertFalse(pane.classificationSelectedProperty().get());
+	}
+
 	@Start
 	public void start(Stage stage) {
 		chemistry = new Subject(1, "Chemistry");
-		SyllabusVersion syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
+		syllabus2019 = new SyllabusVersion(2, chemistry, "2019", false);
+		syllabus2025 = new SyllabusVersion(1, chemistry, "2025", true);
 		unit3 = new Unit(1, syllabus2025, "3", "Unit 3", 1);
 		topic31 = new Topic(2, syllabus2025, unit3, "3.1", "Topic 3.1", 1);
 		subtopic311 = new Subtopic(3, syllabus2025, topic31, "3.1.1", "Subtopic 3.1.1", 1);
@@ -151,7 +189,8 @@ public class CurriculumSelectorPaneTest {
 		topic32 = new Topic(5, syllabus2025, unit3, "3.2", "Topic 3.2", 2);
 		descriptor321 = new Descriptor(6, syllabus2025, topic32, "3.2.1", "Descriptor 3.2.1", 1);
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
-				List.of(syllabus2025), List.of(unit3, topic31, subtopic311, descriptor3111, topic32, descriptor321));
+				List.of(syllabus2019, syllabus2025),
+				List.of(unit3, topic31, subtopic311, descriptor3111, topic32, descriptor321));
 		model = new CurriculumSelectionModel(repository);
 		pane = new CurriculumSelectorPane(model);
 		pane.selectSubject(chemistry);

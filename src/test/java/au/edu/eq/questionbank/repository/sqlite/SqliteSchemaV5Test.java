@@ -267,4 +267,79 @@ class SqliteSchemaV5Test {
 			}
 		}
 	}
+
+	@Test
+	void rejectsVersionSixSchemaWithoutPreambleStatusColumn() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-missing-status.db"));
+		createVersionFiveSchema(database);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("UPDATE schema_version SET version = 6");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(failure.getMessage().contains("missing required column preamble_status"));
+		assertEquals(6, database.schemaVersion());
+	}
+
+	@Test
+	void rejectsVersionSixSchemaWithNullablePreambleStatusColumn() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-nullable-status.db"));
+		createVersionFiveSchema(database);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("ALTER TABLE source_questions ADD COLUMN preamble_status TEXT DEFAULT 'UNKNOWN'");
+			statement.execute("UPDATE schema_version SET version = 6");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(failure.getMessage().contains("column must be NOT NULL: preamble_status"));
+		assertEquals(6, database.schemaVersion());
+	}
+
+	@Test
+	void versionSixPreambleStatusDefaultsAndConstraintAreEnforced() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-status-constraint.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
+			statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
+			statement.execute("INSERT INTO source_documents (id, relative_path) VALUES (1, 'paper.pdf')");
+			statement.execute("""
+					INSERT INTO exams (id, subject_id, provider_id, exam_year, exam_name)
+					VALUES (1, 1, 1, 2025, 'External assessment')
+					""");
+			statement.execute("""
+					INSERT INTO exam_booklets (id, exam_id, source_document_id, booklet_name)
+					VALUES (1, 1, 1, 'Paper 1')
+					""");
+			statement.execute("""
+					INSERT INTO source_questions (id, booklet_id, source_question_code)
+					VALUES (1, 1, '21')
+					""");
+			try (ResultSet result = statement.executeQuery(
+					"SELECT preamble_status FROM source_questions WHERE id = 1")) {
+				assertTrue(result.next());
+				assertEquals("UNKNOWN", result.getString(1));
+			}
+			assertThrows(SQLException.class, () -> statement.execute("""
+					INSERT INTO source_questions
+					    (id, booklet_id, source_question_code, preamble_status)
+					VALUES (2, 1, '22', 'INVALID')
+					"""));
+			assertThrows(SQLException.class, () -> statement.execute("""
+					INSERT INTO source_questions
+					    (id, booklet_id, source_question_code, preamble_status)
+					VALUES (3, 1, '23', NULL)
+					"""));
+		}
+	}
+
+	private void createVersionFiveSchema(SqliteDatabase database) throws Exception {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
+			connection.commit();
+		}
+	}
 }

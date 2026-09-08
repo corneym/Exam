@@ -20,6 +20,12 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a source-question repository using the supplied SQLite database.
+	 *
+	 * @param database the database that owns the source-question rows
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
 	public SqliteSourceQuestionRepository(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -27,6 +33,12 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		this.database = database;
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @throws NullPointerException if {@code booklet} is {@code null}
+	 * @throws IllegalStateException if the query fails
+	 */
 	@Override
 	public List<SourceQuestion> findByBooklet(ExamBooklet booklet) {
 		if (booklet == null) {
@@ -54,6 +66,13 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		return List.copyOf(sourceQuestions);
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @throws NullPointerException     if {@code booklet} is {@code null}
+	 * @throws IllegalArgumentException if {@code sourceQuestionCode} is blank
+	 * @throws IllegalStateException    if the query fails
+	 */
 	@Override
 	public Optional<SourceQuestion> findByBookletAndCode(ExamBooklet booklet, String sourceQuestionCode) {
 		if (booklet == null) {
@@ -84,6 +103,14 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		}
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @throws NullPointerException     if {@code booklet} is {@code null}
+	 * @throws IllegalArgumentException if the code is blank or already exists in
+	 *                                  the booklet
+	 * @throws IllegalStateException    if persistence fails
+	 */
 	@Override
 	public SourceQuestion save(ExamBooklet booklet, String sourceQuestionCode) {
 		if (booklet == null) {
@@ -116,6 +143,13 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		}
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @throws NullPointerException  if either argument is {@code null}
+	 * @throws IllegalStateException if the identified row does not exist or the
+	 *                               update fails
+	 */
 	@Override
 	public SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, PreambleStatus preambleStatus) {
 		if (sourceQuestion == null) {

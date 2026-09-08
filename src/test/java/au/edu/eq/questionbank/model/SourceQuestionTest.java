@@ -16,6 +16,7 @@ class SourceQuestionTest {
 	void rejectsInvalidMetadata() {
 		assertAll(() -> assertThrows(IllegalArgumentException.class, () -> new SourceQuestion(0, booklet, "21")),
 				() -> assertThrows(NullPointerException.class, () -> new SourceQuestion(1, null, "21")),
+				() -> assertThrows(IllegalArgumentException.class, () -> new SourceQuestion(1, booklet, null)),
 				() -> assertThrows(IllegalArgumentException.class, () -> new SourceQuestion(1, booklet, " ")),
 				() -> assertThrows(NullPointerException.class, () -> new SourceQuestion(1, booklet, "21", null)));
 	}

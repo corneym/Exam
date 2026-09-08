@@ -1081,9 +1081,20 @@ public class QuestionBankApplication extends Application {
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		configureShutdown(config);
+		initialiseCaptureWorkflow(primaryStage, config, database, answerPdfPicker);
+		configurePdfWorkspace();
+		configurePrimaryStage(primaryStage, config);
+	}
+
+	private void configureShutdown(ApplicationConfig config) {
 		DefaultBackupService automaticBackupService = new DefaultBackupService(config, applicationVersion());
 		shutdownCoordinator = new ShutdownCoordinator(automaticBackupService, BackupRequest.automaticDatabase(config),
 				new AutomaticBackupRetention(), pdfWorkspace);
+	}
+
+	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			PdfFilePicker answerPdfPicker) {
 		questionRepository = new SqliteQuestionRepository(database);
 		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
@@ -1110,9 +1121,15 @@ public class QuestionBankApplication extends Application {
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION),
 				answerCapturePane::refreshUnansweredQuestions);
 		questionCapturePane.refreshImportedQuestions();
+	}
+
+	private void configurePdfWorkspace() {
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
 		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
+	}
+
+	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
 		primaryStage.setOnCloseRequest(event -> {
 			event.consume();
 			requestApplicationExit(primaryStage);
