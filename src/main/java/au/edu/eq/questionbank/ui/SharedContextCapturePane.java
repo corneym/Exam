@@ -31,6 +31,7 @@ import javafx.util.StringConverter;
  * Captures and selects reusable shared question context for the active booklet.
  */
 final class SharedContextCapturePane extends VBox {
+
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double PREVIEW_HEIGHT = 90.0;
@@ -93,6 +94,21 @@ final class SharedContextCapturePane extends VBox {
 		setSpacing(COMPACT_SPACING);
 	}
 
+	boolean acceptAutomaticRegion() {
+		if (!captureMode || currentSelection == null) {
+			return false;
+		}
+		if (!pendingRegions.isEmpty()) {
+			throw new IllegalStateException("Automatic shared preamble already has a region");
+		}
+		addCurrentRegion();
+		captureMode = false;
+		existingContextField.setDisable(false);
+		newContextButton.setDisable(false);
+		setNewContextBoxVisible(false);
+		return true;
+	}
+
 	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (!captureMode) {
 			throw new IllegalStateException("Shared context capture is not active");
@@ -102,6 +118,36 @@ final class SharedContextCapturePane extends VBox {
 		showCurrentPreview();
 		statusLabel.setText("Shared context selection pending — click Add or Clear");
 		setSelectionButtonsEnabled(true);
+	}
+
+	boolean beginAutomaticContext(String label) {
+		if (label == null || label.isBlank()) {
+			throw new IllegalArgumentException("label must not be blank");
+		}
+		if (!captureStartAllowed.getAsBoolean()) {
+			showWarning("Question selection pending",
+					"Add or clear the current question selection before capturing shared context.");
+			return false;
+		}
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null) {
+			showWarning("Exam details have not been set.", "Select an exam booklet before capturing shared context.");
+			return false;
+		}
+		captureMode = true;
+		existingContextField.getSelectionModel().clearSelection();
+		existingContextField.setDisable(true);
+		newContextButton.setDisable(true);
+		pendingRegions.clear();
+		clearCurrentSelection();
+		contextLabelField.setText(label);
+		refreshRegionPreviews();
+		setNewContextBoxVisible(false);
+		return true;
+	}
+
+	void cancelAutomaticContext() {
+		clearForQuestion();
 	}
 
 	void clearCurrentSelection() {
@@ -127,8 +173,16 @@ final class SharedContextCapturePane extends VBox {
 		return existingContextField.getValue();
 	}
 
+	boolean hasCurrentSelection() {
+		return currentSelection != null;
+	}
+
+	boolean hasPendingAutomaticRegion() {
+		return !pendingRegions.isEmpty();
+	}
+
 	boolean hasUnsavedContextCapture() {
-		return captureMode;
+		return captureMode || !pendingRegions.isEmpty();
 	}
 
 	boolean isCaptureMode() {
@@ -138,6 +192,34 @@ final class SharedContextCapturePane extends VBox {
 	void refreshForCurrentBooklet() {
 		clearForQuestion();
 		loadContexts(bookletSupplier.get());
+	}
+
+	SharedQuestionContext saveAutomaticContext() {
+		if (captureMode) {
+			throw new IllegalStateException("Shared preamble selection has not been accepted");
+		}
+		if (pendingRegions.size() != 1) {
+			throw new IllegalStateException("Automatic shared preamble must contain exactly one region");
+		}
+		String label = contextLabelField.getText().trim();
+		if (label.isBlank()) {
+			throw new IllegalStateException("Automatic shared preamble has no label");
+		}
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null) {
+			throw new IllegalStateException("Exam booklet is not available");
+		}
+		SharedQuestionContext saved = contextRepository.save(booklet, label, List.copyOf(pendingRegions));
+		pendingRegions.clear();
+		contextLabelField.clear();
+		currentPreview.setImage(null);
+		loadContexts(booklet);
+		SharedQuestionContext matching = findContextById(saved.getId());
+		if (matching == null) {
+			throw new IllegalStateException("Saved shared preamble could not be reloaded");
+		}
+		existingContextField.setValue(matching);
+		return matching;
 	}
 
 	void selectContext(SharedQuestionContext context) {
@@ -235,6 +317,7 @@ final class SharedContextCapturePane extends VBox {
 		existingContextField.setPromptText("No shared context");
 		existingContextField.setPrefWidth(260.0);
 		existingContextField.setConverter(new StringConverter<>() {
+
 			@Override
 			public SharedQuestionContext fromString(String text) {
 				return null;

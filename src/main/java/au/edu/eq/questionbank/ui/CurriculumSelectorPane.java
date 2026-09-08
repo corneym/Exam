@@ -9,24 +9,40 @@ import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.geometry.Insets;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
+import javafx.scene.control.TextFormatter;
+import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 
 /**
  * JavaFX controls for selecting a subject and syllabus, then navigating its
- * unit and topic hierarchy to a final classification. A subject's current
- * syllabus is the default when available; historical syllabuses remain
- * selectable.
+ * unit/topic/subtopic/descriptor hierarchy to a final classification.
+ * <p>
+ * Classification code entry and hierarchy selections remain synchronised.
+ * Subtopic and descriptor controls are displayed only when they exist in the
+ * selected syllabus path.
  */
 public class CurriculumSelectorPane extends VBox {
 
+	private static final double ROW_GAP = 4.0;
+	private static final double COLUMN_GAP = 8.0;
+	private static final Insets PANEL_PADDING = new Insets(8);
+	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
+	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
 	private final CurriculumSelectionModel model;
-
+	private final TextField codeField = new TextField();
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
+	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> unitBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> topicBox = new ComboBox<>();
-	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
-	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> subtopicBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> descriptorBox = new ComboBox<>();
+	private final Label subtopicLabel = new Label("Subtopic");
+	private final Label descriptorLabel = new Label("Descriptor");
 	private boolean refreshingSubjects;
+	private boolean refreshingCode;
 
 	/**
 	 * Creates a selector bound to the supplied selection model.
@@ -34,160 +50,103 @@ public class CurriculumSelectorPane extends VBox {
 	 * @param model the curriculum selection state and lookup model
 	 */
 	public CurriculumSelectorPane(CurriculumSelectionModel model) {
+		if (model == null) {
+			throw new NullPointerException("model");
+		}
 		this.model = model;
-
-		setSpacing(4);
-		setPadding(new Insets(8));
-		setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
-
-		Label classificationLabel = new Label("Classification");
-		classificationLabel.setStyle("-fx-font-weight: bold;");
-
-		subjectBox.setId("curriculum-subject");
-		subjectBox.setPromptText("Select subject");
-		syllabusBox.setId("curriculum-syllabus");
-		syllabusBox.setPromptText("Select syllabus");
-		unitBox.setId("curriculum-unit");
-		unitBox.setPromptText("Select unit");
-		topicBox.setId("curriculum-topic");
-		topicBox.setPromptText("Select topic");
-		classificationBox.setId("curriculum-subtopic");
-		classificationBox.setPromptText("Select subtopic or descriptor");
-
-		subjectBox.setMaxWidth(Double.MAX_VALUE);
-		unitBox.setMaxWidth(Double.MAX_VALUE);
-		topicBox.setMaxWidth(Double.MAX_VALUE);
-		classificationBox.setMaxWidth(Double.MAX_VALUE);
-		syllabusBox.setMaxWidth(Double.MAX_VALUE);
-
-		unitBox.setDisable(true);
-		topicBox.setDisable(true);
-		classificationBox.setDisable(true);
-		syllabusBox.setDisable(true);
-
+		setSpacing(ROW_GAP);
+		setPadding(PANEL_PADDING);
+		setStyle(BORDER_STYLE);
+		Label classificationLabel = new Label("CLASSIFICATION");
+		classificationLabel.setStyle(HEADING_STYLE);
+		configureControls();
 		configureSelectionHandlers();
+		configureCodeEntry();
+		getChildren().addAll(classificationLabel, createGrid());
 		refreshSubjects();
-		getChildren().addAll(classificationLabel, new Label("Subject"), subjectBox, new Label("Syllabus"), syllabusBox,
-				new Label("Unit"), unitBox, new Label("Topic"), topicBox, new Label("Subtopic / Descriptor"),
-				classificationBox);
 	}
 
 	/**
-	 * Clears unit, topic, and final-classification state while retaining the
-	 * selected subject and syllabus. Unit selection remains disabled if no syllabus
-	 * is selected.
+	 * Clears unit, topic, subtopic, descriptor, and classification-code state while
+	 * retaining the selected subject and syllabus.
 	 */
 	public void clearClassificationBelowSubject() {
-		unitBox.getSelectionModel().clearSelection();
-		topicBox.getSelectionModel().clearSelection();
-		classificationBox.getSelectionModel().clearSelection();
-
-		topicBox.getItems().clear();
-		classificationBox.getItems().clear();
-
-		unitBox.setDisable(model.getSyllabusVersion() == null);
-		topicBox.setDisable(true);
-		classificationBox.setDisable(true);
-
-		model.selectUnit(null);
-		model.selectTopic(null);
-		model.selectClassification(null);
+		refreshingCode = true;
+		try {
+			clearHierarchySelection();
+			codeField.clear();
+		} finally {
+			refreshingCode = false;
+		}
 	}
 
 	/**
 	 * Reloads subjects, syllabuses, and hierarchy choices after a repository
-	 * change. Selections are retained when still available, including an explicitly
-	 * chosen historical syllabus; unavailable selections and their dependants are
-	 * cleared.
+	 * change. Existing selections are retained when still available.
 	 */
 	public void refreshSubjects() {
 		Subject selectedSubject = subjectBox.getValue();
 		SyllabusVersion selectedSyllabus = syllabusBox.getValue();
-		CurriculumNode selectedUnit = unitBox.getValue();
-		CurriculumNode selectedTopic = topicBox.getValue();
-		CurriculumNode selectedClassification = classificationBox.getValue();
+		CurriculumNode selectedNode = deepestSelectedNode();
 		refreshingSubjects = true;
 		try {
 			subjectBox.getItems().setAll(model.getSubjects());
 			selectAvailableValue(subjectBox, selectedSubject);
 			model.selectSubject(subjectBox.getValue());
-
 			syllabusBox.getItems().setAll(model.getSyllabusVersions());
 			selectAvailableValue(syllabusBox, selectedSyllabus);
 			model.selectSyllabusVersion(syllabusBox.getValue());
 			syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
-
 			unitBox.getItems().setAll(model.getUnits());
-			selectAvailableValue(unitBox, selectedUnit);
-			model.selectUnit(unitBox.getValue());
 			unitBox.setDisable(model.getSyllabusVersion() == null);
-
-			topicBox.getItems().setAll(model.getTopics());
-			selectAvailableValue(topicBox, selectedTopic);
-			model.selectTopic(topicBox.getValue());
-			topicBox.setDisable(model.getUnit() == null);
-
-			classificationBox.getItems().setAll(model.getClassifications());
-			selectAvailableValue(classificationBox, selectedClassification);
-			model.selectClassification(classificationBox.getValue());
-			classificationBox.setDisable(model.getTopic() == null);
+			topicBox.getItems().clear();
+			topicBox.setDisable(true);
+			hideSubtopicRow();
+			hideDescriptorRow();
+			if (selectedNode != null && model.getSyllabusVersion() != null) {
+				CurriculumNode available = model.findByCode(selectedNode.getCode());
+				if (available != null && available.equals(selectedNode)) {
+					applyNodePath(available);
+				}
+			}
 		} finally {
 			refreshingSubjects = false;
 		}
+		syncCodeFromSelection();
 	}
 
 	/**
-	 * Selects the subject, syllabus, unit, topic, and final classification path for
-	 * an existing question.
+	 * Selects the subject, syllabus, and complete hierarchy path for an existing
+	 * question classification.
 	 *
 	 * @param classification the subtopic or descriptor to display
 	 * @throws NullPointerException     if {@code classification} is {@code null}
-	 * @throws IllegalArgumentException if it does not have a valid unit/topic path
+	 * @throws IllegalArgumentException if it does not have a valid path
 	 */
 	public void selectClassificationPath(CurriculumNode classification) {
 		if (classification == null) {
 			throw new NullPointerException("classification");
 		}
-		CurriculumNode topic = classification.getParent();
-		if (topic != null && topic.getLevel() == CurriculumLevel.SUBTOPIC) {
-			topic = topic.getParent();
+		if (classification.getLevel() != CurriculumLevel.SUBTOPIC
+				&& classification.getLevel() != CurriculumLevel.DESCRIPTOR) {
+			throw new IllegalArgumentException("Final classification must be a subtopic or descriptor");
 		}
-		if (topic == null || topic.getLevel() != CurriculumLevel.TOPIC) {
-			throw new IllegalArgumentException("Classification does not belong beneath a topic");
-		}
-		CurriculumNode unit = topic.getParent();
-		if (unit == null || unit.getLevel() != CurriculumLevel.UNIT) {
-			throw new IllegalArgumentException("Classification topic does not belong to a unit");
-		}
-
 		selectSubject(classification.getSyllabusVersion().getSubject());
-
 		refreshingSubjects = true;
 		try {
 			SyllabusVersion syllabusVersion = classification.getSyllabusVersion();
 			selectAvailableValue(syllabusBox, syllabusVersion);
-			model.selectSyllabusVersion(syllabusBox.getValue());
-
-			unitBox.getItems().setAll(model.getUnits());
-			selectAvailableValue(unitBox, unit);
-			model.selectUnit(unitBox.getValue());
-			unitBox.setDisable(false);
-
-			topicBox.getItems().setAll(model.getTopics());
-			selectAvailableValue(topicBox, topic);
-			model.selectTopic(topicBox.getValue());
-			topicBox.setDisable(false);
-
-			classificationBox.getItems().setAll(model.getClassifications());
-			if (!classificationBox.getItems().contains(classification)) {
-				classificationBox.getItems().add(classification);
+			if (syllabusBox.getValue() == null) {
+				throw new IllegalArgumentException("Classification syllabus is not available");
 			}
-			classificationBox.setValue(classification);
-			model.selectClassification(classification);
-			classificationBox.setDisable(false);
+			model.selectSyllabusVersion(syllabusBox.getValue());
+			unitBox.getItems().setAll(model.getUnits());
+			unitBox.setDisable(false);
+			applyNodePath(classification);
 		} finally {
 			refreshingSubjects = false;
 		}
+		setCodeText(classification.getCode());
 	}
 
 	/**
@@ -200,8 +159,7 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
-	 * Selects a subject programmatically and rebuilds the dependent syllabus and
-	 * classification choices as though the user selected it.
+	 * Selects a subject programmatically and rebuilds the dependent choices.
 	 *
 	 * @param subject the subject to select, or {@code null} to clear the selection
 	 * @throws IllegalArgumentException if the subject is not available
@@ -228,115 +186,463 @@ public class CurriculumSelectorPane extends VBox {
 		handleSubjectSelection();
 	}
 
-	private void configureSelectionHandlers() {
+	private void applyNodePath(CurriculumNode node) {
+		ClassificationPath path = classificationPath(node);
+		selectAvailableValue(unitBox, path.unit());
+		model.selectUnit(unitBox.getValue());
+		unitBox.setDisable(model.getSyllabusVersion() == null);
+		topicBox.getItems().setAll(model.getTopics());
+		selectAvailableValue(topicBox, path.topic());
+		model.selectTopic(topicBox.getValue());
+		topicBox.setDisable(model.getUnit() == null);
+		if (model.getTopic() == null) {
+			hideSubtopicRow();
+			hideDescriptorRow();
+			return;
+		}
+		refreshFinalClassificationRows();
+		if (path.subtopic() != null) {
+			selectAvailableValue(subtopicBox, path.subtopic());
+			if (subtopicBox.getValue() == null) {
+				throw new IllegalArgumentException("Subtopic is not available beneath the selected topic");
+			}
+			model.selectSubtopic(subtopicBox.getValue());
+			refreshDescriptorRow();
+		}
+		if (path.descriptor() != null) {
+			selectAvailableValue(descriptorBox, path.descriptor());
+			if (descriptorBox.getValue() == null) {
+				throw new IllegalArgumentException("Descriptor is not available beneath the selected path");
+			}
+			model.selectDescriptor(descriptorBox.getValue());
+		}
+	}
 
+	private ClassificationPath classificationPath(CurriculumNode node) {
+		if (node == null) {
+			throw new NullPointerException("node");
+		}
+		return switch (node.getLevel()) {
+		case UNIT -> new ClassificationPath(node, null, null, null);
+		case TOPIC -> {
+			CurriculumNode unit = node.getParent();
+			requireLevel(unit, CurriculumLevel.UNIT, "Topic does not belong to a unit");
+			yield new ClassificationPath(unit, node, null, null);
+		}
+		case SUBTOPIC -> {
+			CurriculumNode topic = node.getParent();
+			requireLevel(topic, CurriculumLevel.TOPIC, "Subtopic does not belong to a topic");
+			CurriculumNode unit = topic.getParent();
+			requireLevel(unit, CurriculumLevel.UNIT, "Subtopic topic does not belong to a unit");
+			yield new ClassificationPath(unit, topic, node, null);
+		}
+		case DESCRIPTOR -> {
+			CurriculumNode parent = node.getParent();
+			if (parent != null && parent.getLevel() == CurriculumLevel.SUBTOPIC) {
+				CurriculumNode topic = parent.getParent();
+				requireLevel(topic, CurriculumLevel.TOPIC, "Descriptor subtopic does not belong to a topic");
+				CurriculumNode unit = topic.getParent();
+				requireLevel(unit, CurriculumLevel.UNIT, "Descriptor topic does not belong to a unit");
+				yield new ClassificationPath(unit, topic, parent, node);
+			}
+			requireLevel(parent, CurriculumLevel.TOPIC, "Descriptor does not belong to a topic or subtopic");
+			CurriculumNode unit = parent.getParent();
+			requireLevel(unit, CurriculumLevel.UNIT, "Descriptor topic does not belong to a unit");
+			yield new ClassificationPath(unit, parent, null, node);
+		}
+		};
+	}
+
+	private void clearHierarchySelection() {
+		unitBox.getSelectionModel().clearSelection();
+		topicBox.getSelectionModel().clearSelection();
+		subtopicBox.getSelectionModel().clearSelection();
+		descriptorBox.getSelectionModel().clearSelection();
+		topicBox.getItems().clear();
+		hideSubtopicRow();
+		hideDescriptorRow();
+		model.selectUnit(null);
+		unitBox.setDisable(model.getSyllabusVersion() == null);
+		topicBox.setDisable(true);
+	}
+
+	private void configureCodeEntry() {
+		codeField.setTextFormatter(new TextFormatter<>(change -> {
+			String candidate = change.getControlNewText();
+			if (!isCodeSyntaxValid(candidate)) {
+				return null;
+			}
+			if (!isCodeValuePossible(candidate)) {
+				return null;
+			}
+			return change;
+		}));
+		codeField.textProperty().addListener((observable, oldValue, newValue) -> handleCodeInput(newValue));
+	}
+
+	private void configureControls() {
+		codeField.setId("curriculum-code");
+		codeField.setPromptText("e.g. 3.1.2");
+		subjectBox.setId("curriculum-subject");
+		subjectBox.setPromptText("Select subject");
+		syllabusBox.setId("curriculum-syllabus");
+		syllabusBox.setPromptText("Select syllabus");
+		unitBox.setId("curriculum-unit");
+		unitBox.setPromptText("Select unit");
+		topicBox.setId("curriculum-topic");
+		topicBox.setPromptText("Select topic");
+		subtopicBox.setId("curriculum-subtopic");
+		subtopicBox.setPromptText("Select subtopic");
+		descriptorBox.setId("curriculum-descriptor");
+		descriptorBox.setPromptText("Select descriptor");
+		codeField.setMaxWidth(Double.MAX_VALUE);
+		subjectBox.setMaxWidth(Double.MAX_VALUE);
+		syllabusBox.setMaxWidth(Double.MAX_VALUE);
+		unitBox.setMaxWidth(Double.MAX_VALUE);
+		topicBox.setMaxWidth(Double.MAX_VALUE);
+		subtopicBox.setMaxWidth(Double.MAX_VALUE);
+		descriptorBox.setMaxWidth(Double.MAX_VALUE);
+		codeField.setMinWidth(0);
+		subjectBox.setMinWidth(0);
+		syllabusBox.setMinWidth(0);
+		unitBox.setMinWidth(0);
+		topicBox.setMinWidth(0);
+		subtopicBox.setMinWidth(0);
+		descriptorBox.setMinWidth(0);
+		syllabusBox.setDisable(true);
+		unitBox.setDisable(true);
+		topicBox.setDisable(true);
+		subtopicBox.setDisable(true);
+		descriptorBox.setDisable(true);
+		hideSubtopicRow();
+		hideDescriptorRow();
+	}
+
+	private void configureSelectionHandlers() {
 		subjectBox.setOnAction(event -> handleSubjectSelection());
 		syllabusBox.setOnAction(event -> handleSyllabusSelection());
 		unitBox.setOnAction(event -> handleUnitSelection());
 		topicBox.setOnAction(event -> handleTopicSelection());
-		classificationBox.setOnAction(event -> handleClassificationSelection());
+		subtopicBox.setOnAction(event -> handleSubtopicSelection());
+		descriptorBox.setOnAction(event -> handleDescriptorSelection());
 	}
 
-	private void handleClassificationSelection() {
-		if (refreshingSubjects) {
+	private GridPane createGrid() {
+		GridPane grid = new GridPane();
+		grid.setHgap(COLUMN_GAP);
+		grid.setVgap(ROW_GAP);
+		ColumnConstraints labelColumn = new ColumnConstraints();
+		labelColumn.setMinWidth(75);
+		labelColumn.setPrefWidth(75);
+		ColumnConstraints controlColumn = new ColumnConstraints();
+		controlColumn.setMinWidth(0);
+		controlColumn.setHgrow(Priority.ALWAYS);
+		controlColumn.setFillWidth(true);
+		grid.getColumnConstraints().addAll(labelColumn, controlColumn);
+		grid.addRow(0, new Label("Code"), codeField);
+		grid.addRow(1, new Label("Subject"), subjectBox);
+		grid.addRow(2, new Label("Syllabus"), syllabusBox);
+		grid.addRow(3, new Label("Unit"), unitBox);
+		grid.addRow(4, new Label("Topic"), topicBox);
+		grid.addRow(5, subtopicLabel, subtopicBox);
+		grid.addRow(6, descriptorLabel, descriptorBox);
+		GridPane.setHgrow(codeField, Priority.ALWAYS);
+		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
+		GridPane.setHgrow(syllabusBox, Priority.ALWAYS);
+		GridPane.setHgrow(unitBox, Priority.ALWAYS);
+		GridPane.setHgrow(topicBox, Priority.ALWAYS);
+		GridPane.setHgrow(subtopicBox, Priority.ALWAYS);
+		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
+		return grid;
+	}
+
+	private CurriculumNode deepestSelectedNode() {
+		if (model.getDescriptor() != null) {
+			return model.getDescriptor();
+		}
+		if (model.getSubtopic() != null) {
+			return model.getSubtopic();
+		}
+		if (model.getTopic() != null) {
+			return model.getTopic();
+		}
+		return model.getUnit();
+	}
+
+	private CurriculumNode findCodePrefixMatch(String code) {
+		String candidate = code;
+		while (true) {
+			int separator = candidate.lastIndexOf('.');
+			if (separator < 0) {
+				return null;
+			}
+			candidate = candidate.substring(0, separator);
+			if (candidate.isBlank()) {
+				return null;
+			}
+			CurriculumNode node = model.findByCode(candidate);
+			if (node != null) {
+				return node;
+			}
+		}
+	}
+
+	private void handleCodeInput(String text) {
+		if (refreshingCode || refreshingSubjects) {
 			return;
 		}
-		model.selectClassification(classificationBox.getValue());
+		String code = text == null ? "" : text.trim();
+		if (code.isEmpty()) {
+			refreshingCode = true;
+			try {
+				clearHierarchySelection();
+			} finally {
+				refreshingCode = false;
+			}
+			return;
+		}
+		if (model.getSyllabusVersion() == null) {
+			return;
+		}
+		CurriculumNode exactMatch = model.findByCode(code);
+		if (exactMatch != null) {
+			refreshingCode = true;
+			try {
+				applyNodePath(exactMatch);
+			} finally {
+				refreshingCode = false;
+			}
+			return;
+		}
+		CurriculumNode current = deepestSelectedNode();
+		if (current != null && code.startsWith(current.getCode())) {
+			return;
+		}
+		CurriculumNode prefixMatch = findCodePrefixMatch(code);
+		refreshingCode = true;
+		try {
+			if (prefixMatch == null) {
+				clearHierarchySelection();
+			} else {
+				applyNodePath(prefixMatch);
+			}
+		} finally {
+			refreshingCode = false;
+		}
+	}
+
+	private void handleDescriptorSelection() {
+		if (refreshingSubjects || refreshingCode) {
+			return;
+		}
+		model.selectDescriptor(descriptorBox.getValue());
+		syncCodeFromSelection();
 	}
 
 	private void handleSubjectSelection() {
-		if (refreshingSubjects) {
+		if (refreshingSubjects || refreshingCode) {
 			return;
 		}
 		Subject subject = subjectBox.getValue();
 		syllabusBox.getSelectionModel().clearSelection();
 		syllabusBox.getItems().clear();
 		unitBox.getSelectionModel().clearSelection();
-		topicBox.getSelectionModel().clearSelection();
-		classificationBox.getSelectionModel().clearSelection();
 		unitBox.getItems().clear();
+		topicBox.getSelectionModel().clearSelection();
 		topicBox.getItems().clear();
-		classificationBox.getItems().clear();
-		syllabusBox.setDisable(true);
-		unitBox.setDisable(true);
-		topicBox.setDisable(true);
-		classificationBox.setDisable(true);
+		hideSubtopicRow();
+		hideDescriptorRow();
 		model.selectSubject(subject);
 		if (subject == null) {
+			syllabusBox.setDisable(true);
+			unitBox.setDisable(true);
+			topicBox.setDisable(true);
+			setCodeText("");
 			return;
 		}
 		syllabusBox.getItems().setAll(model.getSyllabusVersions());
 		syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
 		SyllabusVersion defaultVersion = model.getSyllabusVersion();
-		if (defaultVersion != null) {
-			syllabusBox.setValue(defaultVersion);
+		if (defaultVersion == null) {
+			unitBox.setDisable(true);
+			topicBox.setDisable(true);
+			setCodeText("");
+			return;
 		}
+		syllabusBox.setValue(defaultVersion);
+		model.selectSyllabusVersion(defaultVersion);
+		unitBox.getItems().setAll(model.getUnits());
+		unitBox.setDisable(false);
+		topicBox.setDisable(true);
+		setCodeText("");
+	}
+
+	private void handleSubtopicSelection() {
+		if (refreshingSubjects || refreshingCode) {
+			return;
+		}
+		CurriculumNode subtopic = subtopicBox.getValue();
+		model.selectSubtopic(subtopic);
+		descriptorBox.getSelectionModel().clearSelection();
+		if (subtopic == null) {
+			hideDescriptorRow();
+		} else {
+			refreshDescriptorRow();
+		}
+		syncCodeFromSelection();
 	}
 
 	private void handleSyllabusSelection() {
-		if (refreshingSubjects) {
+		if (refreshingSubjects || refreshingCode) {
 			return;
 		}
 		SyllabusVersion syllabusVersion = syllabusBox.getValue();
 		unitBox.getSelectionModel().clearSelection();
 		topicBox.getSelectionModel().clearSelection();
-		classificationBox.getSelectionModel().clearSelection();
-		unitBox.getItems().clear();
 		topicBox.getItems().clear();
-		classificationBox.getItems().clear();
-		unitBox.setDisable(true);
-		topicBox.setDisable(true);
-		classificationBox.setDisable(true);
+		hideSubtopicRow();
+		hideDescriptorRow();
 		model.selectSyllabusVersion(syllabusVersion);
 		if (syllabusVersion == null) {
+			unitBox.getItems().clear();
+			unitBox.setDisable(true);
+			topicBox.setDisable(true);
+			setCodeText("");
 			return;
 		}
 		unitBox.getItems().setAll(model.getUnits());
 		unitBox.setDisable(false);
+		topicBox.setDisable(true);
+		setCodeText("");
 	}
 
 	private void handleTopicSelection() {
-		if (refreshingSubjects) {
+		if (refreshingSubjects || refreshingCode) {
 			return;
 		}
 		CurriculumNode topic = topicBox.getValue();
-
 		model.selectTopic(topic);
-
-		classificationBox.getSelectionModel().clearSelection();
-
 		if (topic == null) {
-			classificationBox.getItems().clear();
-			classificationBox.setDisable(true);
+			hideSubtopicRow();
+			hideDescriptorRow();
+			syncCodeFromSelection();
 			return;
 		}
-
-		classificationBox.getItems().setAll(model.getClassifications());
-		classificationBox.setDisable(false);
+		refreshFinalClassificationRows();
+		syncCodeFromSelection();
 	}
 
 	private void handleUnitSelection() {
-		if (refreshingSubjects) {
+		if (refreshingSubjects || refreshingCode) {
 			return;
 		}
 		CurriculumNode unit = unitBox.getValue();
-
 		model.selectUnit(unit);
-
 		topicBox.getSelectionModel().clearSelection();
-		classificationBox.getSelectionModel().clearSelection();
-		classificationBox.getItems().clear();
-
+		hideSubtopicRow();
+		hideDescriptorRow();
 		if (unit == null) {
 			topicBox.getItems().clear();
 			topicBox.setDisable(true);
-			classificationBox.setDisable(true);
+			syncCodeFromSelection();
 			return;
 		}
-
 		topicBox.getItems().setAll(model.getTopics());
 		topicBox.setDisable(false);
-		classificationBox.setDisable(true);
+		syncCodeFromSelection();
+	}
+
+	private void hideDescriptorRow() {
+		descriptorBox.getSelectionModel().clearSelection();
+		descriptorBox.getItems().clear();
+		setDescriptorRowVisible(false);
+	}
+
+	private void hideSubtopicRow() {
+		subtopicBox.getSelectionModel().clearSelection();
+		subtopicBox.getItems().clear();
+		subtopicLabel.setVisible(false);
+		subtopicLabel.setManaged(false);
+		subtopicBox.setVisible(false);
+		subtopicBox.setManaged(false);
+		subtopicBox.setDisable(true);
+	}
+
+	private boolean isCodeSyntaxValid(String code) {
+		if (code == null || code.isEmpty()) {
+			return true;
+		}
+		return code.matches("\\d+(?:\\.\\d+)*\\.?");
+	}
+
+	private boolean isCodeValuePossible(String code) {
+		if (code == null || code.isEmpty()) {
+			return true;
+		}
+		if (model.getSyllabusVersion() == null) {
+			return false;
+		}
+		if (model.findByCode(code) != null) {
+			return true;
+		}
+		for (CurriculumNode unit : model.getUnits()) {
+			if (unit.getCode().startsWith(code)) {
+				return true;
+			}
+		}
+		if (model.getUnit() != null) {
+			for (CurriculumNode topic : model.getTopics()) {
+				if (topic.getCode().startsWith(code)) {
+					return true;
+				}
+			}
+		}
+		if (model.getTopic() != null) {
+			for (CurriculumNode subtopic : model.getSubtopics()) {
+				if (subtopic.getCode().startsWith(code)) {
+					return true;
+				}
+			}
+			for (CurriculumNode descriptor : model.getDescriptors()) {
+				if (descriptor.getCode().startsWith(code)) {
+					return true;
+				}
+			}
+		}
+		if (model.getSubtopic() != null) {
+			for (CurriculumNode descriptor : model.getDescriptors()) {
+				if (descriptor.getCode().startsWith(code)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private void refreshDescriptorRow() {
+		descriptorBox.getSelectionModel().clearSelection();
+		descriptorBox.getItems().setAll(model.getDescriptors());
+		setDescriptorRowVisible(!descriptorBox.getItems().isEmpty());
+	}
+
+	private void refreshFinalClassificationRows() {
+		subtopicBox.getSelectionModel().clearSelection();
+		descriptorBox.getSelectionModel().clearSelection();
+		if (!model.getSubtopics().isEmpty()) {
+			subtopicBox.getItems().setAll(model.getSubtopics());
+			showSubtopicRow();
+			hideDescriptorRow();
+			return;
+		}
+		hideSubtopicRow();
+		descriptorBox.getItems().setAll(model.getDescriptors());
+		setDescriptorRowVisible(!descriptorBox.getItems().isEmpty());
+	}
+
+	private void requireLevel(CurriculumNode node, CurriculumLevel level, String message) {
+		if (node == null || node.getLevel() != level) {
+			throw new IllegalArgumentException(message);
+		}
 	}
 
 	private <T> void selectAvailableValue(ComboBox<T> box, T selectedValue) {
@@ -347,5 +653,42 @@ public class CurriculumSelectorPane extends VBox {
 			}
 		}
 		box.setValue(null);
+	}
+
+	private void setCodeText(String text) {
+		refreshingCode = true;
+		try {
+			codeField.setText(text == null ? "" : text);
+		} finally {
+			refreshingCode = false;
+		}
+	}
+
+	private void setDescriptorRowVisible(boolean visible) {
+		descriptorLabel.setVisible(visible);
+		descriptorLabel.setManaged(visible);
+		descriptorBox.setVisible(visible);
+		descriptorBox.setManaged(visible);
+		descriptorBox.setDisable(!visible);
+	}
+
+	private void showSubtopicRow() {
+		subtopicLabel.setVisible(true);
+		subtopicLabel.setManaged(true);
+		subtopicBox.setVisible(true);
+		subtopicBox.setManaged(true);
+		subtopicBox.setDisable(false);
+	}
+
+	private void syncCodeFromSelection() {
+		if (refreshingCode) {
+			return;
+		}
+		CurriculumNode selected = deepestSelectedNode();
+		setCodeText(selected == null ? "" : selected.getCode());
+	}
+
+	private record ClassificationPath(CurriculumNode unit, CurriculumNode topic, CurriculumNode subtopic,
+			CurriculumNode descriptor) {
 	}
 }

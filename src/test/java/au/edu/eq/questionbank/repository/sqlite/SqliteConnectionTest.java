@@ -18,7 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SqliteConnectionTest {
 
-	private static final int LATEST_SCHEMA_VERSION = 5;
+	private static final int LATEST_SCHEMA_VERSION = 6;
 	@TempDir
 	Path tempDir;
 

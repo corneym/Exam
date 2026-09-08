@@ -25,6 +25,7 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.testfx.api.FxRobot;
@@ -36,6 +37,7 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -48,6 +50,7 @@ import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.event.Event;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuBar;
@@ -60,8 +63,10 @@ import javafx.scene.layout.BorderPane;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
 
+@Tag("ui")
 @ExtendWith(ApplicationExtension.class)
 class QuestionBankApplicationWorkflowTest {
+
 	private static final String CURRICULUM_2019 = "CHM Study Checklist [2019 Syllabus].xlsx";
 	private static final String CURRICULUM_2025_UNITS_1_2 = "CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx";
 	private static final String CURRICULUM_2025_UNITS_3_4 = "CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx";
@@ -99,6 +104,23 @@ class QuestionBankApplicationWorkflowTest {
 		Field field = owner.getClass().getDeclaredField(fieldName);
 		field.setAccessible(true);
 		field.set(owner, value);
+	}
+
+	@Test
+	void acceptedQuestionRegionDoesNotLockNewQuestionNumber(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(marks).write("2");
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-question-region");
+		assertFalse(questionCode.isDisable(), "Accepted regions must not lock the question number for a new question");
+		robot.clickOn(questionCode).write("27");
+		robot.clickOn("#save-question");
+		WaitForAsyncUtils.waitForFxEvents();
+		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
+				.filter(question -> "27".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		assertEquals(1, restored.getRegions().size());
 	}
 
 	@Test
@@ -158,13 +180,15 @@ class QuestionBankApplicationWorkflowTest {
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
 		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
-		ComboBox<CurriculumNode> classifications = comboBox(robot, "#curriculum-subtopic");
+		ComboBox<CurriculumNode> subtopics = comboBox(robot, "#curriculum-subtopic");
+		ComboBox<CurriculumNode> descriptors = comboBox(robot, "#curriculum-descriptor");
 		assertEquals(2, syllabuses.getItems().size());
 		assertNotNull(syllabuses.getValue());
 		assertEquals("2025", syllabuses.getValue().getName());
 		assertEquals(1, units.getItems().size());
 		assertEquals("1", units.getItems().getFirst().getCode());
-		assertNotNull(classifications.getValue());
+		assertTrue(subtopics.getItems().isEmpty());
+		assertNotNull(descriptors.getValue());
 		assertEquals("2025", model.getClassification().getSyllabusVersion().getName());
 		SyllabusVersion historicalSelection = selectSyllabus(robot, "2019");
 		WaitForAsyncUtils.waitForFxEvents();
@@ -172,23 +196,29 @@ class QuestionBankApplicationWorkflowTest {
 		assertEquals(1, units.getItems().size());
 		assertEquals("3", units.getItems().getFirst().getCode());
 		assertTrue(topics.getItems().isEmpty());
-		assertTrue(classifications.getItems().isEmpty());
+		assertTrue(subtopics.getItems().isEmpty());
+		assertTrue(descriptors.getItems().isEmpty());
 		assertFalse(units.isDisabled());
 		assertTrue(topics.isDisabled());
-		assertTrue(classifications.isDisabled());
+		assertTrue(subtopics.isDisabled());
+		assertTrue(descriptors.isDisabled());
 		assertNull(units.getValue());
 		assertNull(topics.getValue());
-		assertNull(classifications.getValue());
+		assertNull(subtopics.getValue());
+		assertNull(descriptors.getValue());
 		assertNull(model.getUnit());
 		assertNull(model.getTopic());
+		assertNull(model.getSubtopic());
+		assertNull(model.getDescriptor());
 		assertNull(model.getClassification());
 		assertEquals("Chemistry", subjects.getValue().getName());
 		assertEquals(subjects.getValue(), model.getSubject());
 		assertEquals(originalBooklet, examMetadataPane().getBooklet());
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
+		selectFirstFinalClassification(robot);
 		CurriculumNode historicalClassification = model.getClassification();
+		assertNotNull(historicalClassification);
 		assertEquals("3.1.1", historicalClassification.getCode());
 		assertEquals(historicalSelection, historicalClassification.getSyllabusVersion());
 		Question question = captureQuestion(robot, "H1");
@@ -229,10 +259,41 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(units.isDisabled());
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
+		selectFirstFinalClassification(robot);
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		assertEquals(historical, model.getClassification().getSyllabusVersion());
 		assertEquals("2.1.1", model.getClassification().getCode());
+	}
+
+	@Test
+	void capturesMultipartQuestionWithSharedPreamble(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(questionCode).write("24a");
+		robot.clickOn(marks).write("2");
+		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		assertTrue(preamble.isVisible());
+		assertFalse(preamble.isSelected());
+		robot.clickOn(preamble);
+		// First accepted region is the shared preamble.
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-question-region");
+		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		// Second accepted region belongs to 24a.
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-question-region");
+		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		robot.clickOn("#save-question");
+		WaitForAsyncUtils.waitForFxEvents();
+		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
+				.filter(question -> "24a".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		assertTrue(restored.hasSourceQuestion());
+		assertEquals("24", restored.getSourceQuestion().getSourceQuestionCode());
+		assertEquals(PreambleStatus.PRESENT, restored.getSourceQuestion().getPreambleStatus());
+		assertTrue(restored.hasSharedContext());
+		assertEquals(1, restored.getSharedContext().getRegions().size());
+		assertEquals(1, restored.getRegions().size());
 	}
 
 	@Test
@@ -290,12 +351,13 @@ class QuestionBankApplicationWorkflowTest {
 		selectSubject(robot, "Chemistry");
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
+		selectFirstFinalClassification(robot);
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
 		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
-		ComboBox<CurriculumNode> classifications = comboBox(robot, "#curriculum-subtopic");
+		ComboBox<CurriculumNode> subtopics = comboBox(robot, "#curriculum-subtopic");
+		ComboBox<CurriculumNode> descriptors = comboBox(robot, "#curriculum-descriptor");
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		robot.interact(() -> syllabuses.getSelectionModel().clearSelection());
 		assertEquals("Chemistry", subjects.getValue().getName());
@@ -304,10 +366,12 @@ class QuestionBankApplicationWorkflowTest {
 		assertNull(model.getSyllabusVersion());
 		assertNull(model.getUnit());
 		assertNull(model.getTopic());
+		assertNull(model.getSubtopic());
+		assertNull(model.getDescriptor());
 		assertNull(model.getClassification());
 		assertFalse(syllabuses.isDisabled());
 		assertEquals(2, syllabuses.getItems().size());
-		for (ComboBox<CurriculumNode> box : List.of(units, topics, classifications)) {
+		for (ComboBox<CurriculumNode> box : List.of(units, topics, subtopics, descriptors)) {
 			assertNull(box.getValue());
 			assertTrue(box.getItems().isEmpty());
 			assertTrue(box.isDisabled());
@@ -315,15 +379,19 @@ class QuestionBankApplicationWorkflowTest {
 		selectSyllabus(robot, "2019");
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
+		selectFirstFinalClassification(robot);
 		robot.interact(() -> subjects.getSelectionModel().clearSelection());
 		assertNull(model.getSubject());
 		assertNull(model.getSyllabusVersion());
+		assertNull(model.getUnit());
+		assertNull(model.getTopic());
+		assertNull(model.getSubtopic());
+		assertNull(model.getDescriptor());
 		assertNull(model.getClassification());
 		assertNull(syllabuses.getValue());
 		assertTrue(syllabuses.getItems().isEmpty());
 		assertTrue(syllabuses.isDisabled());
-		for (ComboBox<CurriculumNode> box : List.of(units, topics, classifications)) {
+		for (ComboBox<CurriculumNode> box : List.of(units, topics, subtopics, descriptors)) {
 			assertNull(box.getValue());
 			assertTrue(box.getItems().isEmpty());
 			assertTrue(box.isDisabled());
@@ -336,7 +404,7 @@ class QuestionBankApplicationWorkflowTest {
 		captureQuestion(robot, "Q7");
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
+		selectFirstFinalClassification(robot);
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(questionCodeField).write("Q7");
@@ -477,13 +545,34 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void multipartQuestionWithoutPreambleRecordsNone(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(questionCode).write("25a");
+		robot.clickOn(marks).write("1");
+		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		assertTrue(preamble.isVisible());
+		assertFalse(preamble.isSelected());
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-question-region");
+		robot.clickOn("#save-question");
+		WaitForAsyncUtils.waitForFxEvents();
+		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
+				.filter(question -> "25a".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		assertTrue(restored.hasSourceQuestion());
+		assertEquals(PreambleStatus.NONE, restored.getSourceQuestion().getPreambleStatus());
+		assertFalse(restored.hasSharedContext());
+	}
+
+	@Test
 	void refreshingSubjectsReloadsVersionsWithoutReplacingHistoricalSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		SyllabusVersion historical = selectSyllabus(robot, "2019");
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
+		selectFirstFinalClassification(robot);
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		CurriculumNode classification = model.getClassification();
 		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(new SqliteDatabase(databasePath));
@@ -499,7 +588,7 @@ class QuestionBankApplicationWorkflowTest {
 		assertEquals(historical, model.getSyllabusVersion());
 		assertEquals(historical.getSubject(), model.getSubject());
 		assertEquals(classification, model.getClassification());
-		assertEquals(classification, comboBox(robot, "#curriculum-subtopic").getValue());
+		assertClassificationControlShows(robot, classification);
 		assertEquals("3", units.getItems().getFirst().getCode());
 		assertEquals(originalBooklet, examMetadataPane().getBooklet());
 		assertEquals(4, comboBox(robot, "#curriculum-subject").getItems().size());
@@ -703,6 +792,19 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(lookup(robot, "#answer-text", TextField.class).isDisabled());
 		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
 		assertFalse(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
+	}
+
+	private void assertClassificationControlShows(FxRobot robot, CurriculumNode classification) {
+		assertNotNull(classification);
+		if (classification.getLevel() == CurriculumLevel.SUBTOPIC) {
+			assertEquals(classification, comboBox(robot, "#curriculum-subtopic").getValue());
+			return;
+		}
+		if (classification.getLevel() == CurriculumLevel.DESCRIPTOR) {
+			assertEquals(classification, comboBox(robot, "#curriculum-descriptor").getValue());
+			return;
+		}
+		throw new AssertionError("Unexpected final classification level: " + classification.getLevel());
 	}
 
 	private void assertInitialAnswerControlsDisabled(FxRobot robot) {
@@ -909,12 +1011,25 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
-		selectFirst(robot, "#curriculum-subtopic");
+		selectFirstFinalClassification(robot);
 	}
 
 	private void selectFirst(FxRobot robot, String selector) throws Exception {
 		ComboBox<Object> comboBox = comboBox(robot, selector);
 		WaitForAsyncUtils.asyncFx(() -> comboBox.getSelectionModel().selectFirst()).get();
+	}
+
+	private void selectFirstFinalClassification(FxRobot robot) throws Exception {
+		ComboBox<CurriculumNode> subtopics = comboBox(robot, "#curriculum-subtopic");
+		ComboBox<CurriculumNode> descriptors = comboBox(robot, "#curriculum-descriptor");
+		if (subtopics.isVisible() && !subtopics.getItems().isEmpty()) {
+			WaitForAsyncUtils.asyncFx(() -> subtopics.getSelectionModel().selectFirst()).get();
+			WaitForAsyncUtils.waitForFxEvents();
+		}
+		if (descriptors.isVisible() && !descriptors.getItems().isEmpty()) {
+			WaitForAsyncUtils.asyncFx(() -> descriptors.getSelectionModel().selectFirst()).get();
+			WaitForAsyncUtils.waitForFxEvents();
+		}
 	}
 
 	private void selectSubject(FxRobot robot, String subjectName) {

@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.SourceQuestion;
 
 /**
@@ -14,4 +15,5 @@ public interface SourceQuestionRepository {
 	List<SourceQuestion> findByBooklet(ExamBooklet booklet);
 	Optional<SourceQuestion> findByBookletAndCode(ExamBooklet booklet, String sourceQuestionCode);
 	SourceQuestion save(ExamBooklet booklet, String sourceQuestionCode);
+	SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, PreambleStatus preambleStatus);
 }

@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -426,7 +427,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	private SourceQuestion findSourceQuestion(Connection connection, long sourceQuestionId, ExamBooklet questionBooklet)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT booklet_id, source_question_code
+				SELECT booklet_id, source_question_code, preamble_status
 				FROM source_questions
 				WHERE id = ?
 				""")) {
@@ -438,7 +439,8 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				if (result.getLong("booklet_id") != questionBooklet.getId()) {
 					throw new IllegalStateException("Source question belongs to a different booklet");
 				}
-				return new SourceQuestion(sourceQuestionId, questionBooklet, result.getString("source_question_code"));
+				return new SourceQuestion(sourceQuestionId, questionBooklet, result.getString("source_question_code"),
+						PreambleStatus.valueOf(result.getString("preamble_status")));
 			}
 		}
 	}

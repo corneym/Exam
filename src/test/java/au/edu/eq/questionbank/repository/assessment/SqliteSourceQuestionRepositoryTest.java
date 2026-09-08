@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
@@ -35,6 +36,7 @@ class SqliteSourceQuestionRepositoryTest {
 		SqliteSourceQuestionRepository repository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion first = repository.save(firstBooklet, "21");
 		SourceQuestion second = repository.save(secondBooklet, "21");
+		assertEquals(PreambleStatus.UNKNOWN, first.getPreambleStatus());
 		assertEquals("21", first.getSourceQuestionCode());
 		assertEquals(firstBooklet.getId(), first.getBooklet().getId());
 		assertTrue(first.getId() > 0);
@@ -42,5 +44,9 @@ class SqliteSourceQuestionRepositoryTest {
 		assertEquals(first.getId(), repository.findByBookletAndCode(firstBooklet, "21").orElseThrow().getId());
 		assertEquals(second.getId(), repository.findByBookletAndCode(secondBooklet, "21").orElseThrow().getId());
 		assertThrows(IllegalArgumentException.class, () -> repository.save(firstBooklet, "21"));
+		SourceQuestion updated = repository.updatePreambleStatus(first, PreambleStatus.PRESENT);
+		assertEquals(PreambleStatus.PRESENT, updated.getPreambleStatus());
+		SourceQuestion reloaded = repository.findByBookletAndCode(firstBooklet, "21").orElseThrow();
+		assertEquals(PreambleStatus.PRESENT, reloaded.getPreambleStatus());
 	}
 }

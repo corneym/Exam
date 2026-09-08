@@ -16,7 +16,14 @@ class SourceQuestionTest {
 	void rejectsInvalidMetadata() {
 		assertAll(() -> assertThrows(IllegalArgumentException.class, () -> new SourceQuestion(0, booklet, "21")),
 				() -> assertThrows(NullPointerException.class, () -> new SourceQuestion(1, null, "21")),
-				() -> assertThrows(IllegalArgumentException.class, () -> new SourceQuestion(1, booklet, " ")));
+				() -> assertThrows(IllegalArgumentException.class, () -> new SourceQuestion(1, booklet, " ")),
+				() -> assertThrows(NullPointerException.class, () -> new SourceQuestion(1, booklet, "21", null)));
+	}
+
+	@Test
+	void retainsExplicitPreambleStatus() {
+		SourceQuestion sourceQuestion = new SourceQuestion(10, booklet, "21", PreambleStatus.PRESENT);
+		assertEquals(PreambleStatus.PRESENT, sourceQuestion.getPreambleStatus());
 	}
 
 	@Test
@@ -24,7 +31,8 @@ class SourceQuestionTest {
 		SourceQuestion sourceQuestion = new SourceQuestion(10, booklet, "21");
 		assertAll(() -> assertEquals(10, sourceQuestion.getId()),
 				() -> assertSame(booklet, sourceQuestion.getBooklet()),
-				() -> assertEquals("21", sourceQuestion.getSourceQuestionCode()));
+				() -> assertEquals("21", sourceQuestion.getSourceQuestionCode()),
+				() -> assertEquals(PreambleStatus.UNKNOWN, sourceQuestion.getPreambleStatus()));
 	}
 
 	@BeforeEach

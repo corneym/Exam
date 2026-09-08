@@ -11,9 +11,14 @@ public final class SourceQuestion {
 
 	private final long id;
 	private final ExamBooklet booklet;
+	private final PreambleStatus preambleStatus;
 	private final String sourceQuestionCode;
 
 	public SourceQuestion(long id, ExamBooklet booklet, String sourceQuestionCode) {
+		this(id, booklet, sourceQuestionCode, PreambleStatus.UNKNOWN);
+	}
+
+	public SourceQuestion(long id, ExamBooklet booklet, String sourceQuestionCode, PreambleStatus preambleStatus) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -23,9 +28,13 @@ public final class SourceQuestion {
 		if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
 			throw new IllegalArgumentException("sourceQuestionCode must not be blank");
 		}
+		if (preambleStatus == null) {
+			throw new NullPointerException("preambleStatus");
+		}
 		this.id = id;
 		this.booklet = booklet;
 		this.sourceQuestionCode = sourceQuestionCode;
+		this.preambleStatus = preambleStatus;
 	}
 
 	public ExamBooklet getBooklet() {
@@ -34,6 +43,10 @@ public final class SourceQuestion {
 
 	public long getId() {
 		return id;
+	}
+
+	public PreambleStatus getPreambleStatus() {
+		return preambleStatus;
 	}
 
 	public String getSourceQuestionCode() {
