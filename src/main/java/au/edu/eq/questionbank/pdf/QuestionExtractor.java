@@ -15,6 +15,7 @@ import javax.imageio.ImageIO;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 
 /**
  * Renders and crops source question or answer regions as raster images.
@@ -27,6 +28,18 @@ import au.edu.eq.questionbank.model.QuestionRegion;
 public class QuestionExtractor {
 
 	private static final float RENDER_DPI = 150;
+
+	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {
+		int left = (int) Math.floor(region.x() * page.getWidth());
+		int top = (int) Math.floor(region.y() * page.getHeight());
+		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
+		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
+		right = Math.min(right, page.getWidth());
+		bottom = Math.min(bottom, page.getHeight());
+		int width = right - left;
+		int height = bottom - top;
+		return page.getSubimage(left, top, width, height);
+	}
 
 	/**
 	 * Opens a PDF, extracts all regions of a question, and writes a PNG image.
@@ -120,6 +133,33 @@ public class QuestionExtractor {
 	}
 
 	/**
+	 * Extracts one shared-question-context region using an existing PDF session.
+	 * The session remains open.
+	 *
+	 * @param session the exam PDF session
+	 * @param region  the shared-context source region
+	 * @return the cropped region image
+	 * @throws IOException if the page cannot be rendered
+	 */
+	public BufferedImage extractRegion(PdfSession session, SharedQuestionContextRegion region) throws IOException {
+		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
+
+		int left = (int) Math.floor(region.x() * page.getWidth());
+
+		int top = (int) Math.floor(region.y() * page.getHeight());
+
+		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
+
+		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
+
+		right = Math.min(right, page.getWidth());
+
+		bottom = Math.min(bottom, page.getHeight());
+
+		return page.getSubimage(left, top, right - left, bottom - top);
+	}
+
+	/**
 	 * Extracts non-empty ordered regions from one PDF and stacks them vertically.
 	 * Narrower rendered pages are left-aligned and padded with white to the widest
 	 * region.
@@ -160,17 +200,5 @@ public class QuestionExtractor {
 			graphics.dispose();
 		}
 		return combined;
-	}
-
-	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {
-		int left = (int) Math.floor(region.x() * page.getWidth());
-		int top = (int) Math.floor(region.y() * page.getHeight());
-		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
-		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
-		right = Math.min(right, page.getWidth());
-		bottom = Math.min(bottom, page.getHeight());
-		int width = right - left;
-		int height = bottom - top;
-		return page.getSubimage(left, top, width, height);
 	}
 }
