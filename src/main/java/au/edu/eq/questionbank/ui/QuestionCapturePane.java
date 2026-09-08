@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import javafx.beans.binding.Bindings;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -300,7 +301,10 @@ final class QuestionCapturePane extends VBox {
 			BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
 			ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
 			imageView.setPreserveRatio(true);
-			imageView.fitWidthProperty().bind(regionPreviewBox.widthProperty().subtract(8));
+			imageView.fitWidthProperty()
+					.bind(Bindings.createDoubleBinding(
+							() -> Math.max(0.0, regionsScrollPane.getViewportBounds().getWidth() - 8.0),
+							regionsScrollPane.viewportBoundsProperty()));
 			imageView.setSmooth(true);
 			Label label = new Label(String.format("Region %d - Page %d", regionIndex + 1, region.pageNumber()));
 			Button removeButton = new Button("Remove");
@@ -364,7 +368,7 @@ final class QuestionCapturePane extends VBox {
 			refreshSaveButtonState();
 		});
 		marksField.textProperty().addListener((observable, oldMarks, newMarks) -> refreshSaveButtonState());
-		curriculumSelectorPane.classificationSelectedProperty()
+		curriculumSelectorPane.selectedClassificationProperty()
 				.addListener((observable, oldValue, newValue) -> refreshSaveButtonState());
 		firstRegionPreambleCheckBox.selectedProperty()
 				.addListener((observable, oldValue, selected) -> handlePreambleOptionChanged(selected.booleanValue()));

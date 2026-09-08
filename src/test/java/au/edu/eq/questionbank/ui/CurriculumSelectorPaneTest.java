@@ -100,6 +100,38 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
+	public void dropdownSelectionsSynchroniseCodeAndClassification(FxRobot robot) {
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		robot.interact(() -> units.getSelectionModel().select(unit3));
+		assertEquals("3", codeField.getText());
+		robot.interact(() -> topics.getSelectionModel().select(topic31));
+		assertEquals("3.1", codeField.getText());
+		robot.interact(() -> subtopics.getSelectionModel().select(subtopic311));
+		assertEquals("3.1.1", codeField.getText());
+		assertEquals(subtopic311, pane.selectedClassificationProperty().get());
+		robot.interact(() -> descriptors.getSelectionModel().select(descriptor3111));
+		assertEquals("3.1.1.1", codeField.getText());
+		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
+	}
+
+	@Test
+	public void leafDescriptorRejectsTrailingPeriod(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		robot.clickOn(codeField).write("3.1.1.1");
+		assertEquals("3.1.1.1", codeField.getText());
+		robot.write(".");
+		assertEquals("3.1.1.1", codeField.getText());
+	}
+
+	@Test
 	public void selectingExistingClassificationSynchronisesCodeField(FxRobot robot) {
 		robot.interact(() -> pane.selectClassificationPath(descriptor3111));
 		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);

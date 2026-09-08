@@ -35,6 +35,7 @@ public class CurriculumSelectorPane extends VBox {
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
 	private final CurriculumSelectionModel model;
 	private final ReadOnlyBooleanWrapper classificationSelected = new ReadOnlyBooleanWrapper();
+	private final javafx.beans.property.ReadOnlyObjectWrapper<CurriculumNode> selectedClassification = new javafx.beans.property.ReadOnlyObjectWrapper<>();
 	private final TextField codeField = new TextField();
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
@@ -63,8 +64,7 @@ public class CurriculumSelectorPane extends VBox {
 		Label classificationLabel = new Label("CLASSIFICATION");
 		classificationLabel.setStyle(HEADING_STYLE);
 		configureControls();
-		classificationSelected
-				.bind(subtopicBox.valueProperty().isNotNull().or(descriptorBox.valueProperty().isNotNull()));
+		classificationSelected.bind(selectedClassification.isNotNull());
 		configureSelectionHandlers();
 		configureCodeEntry();
 		getChildren().addAll(classificationLabel, createGrid());
@@ -92,6 +92,7 @@ public class CurriculumSelectorPane extends VBox {
 		} finally {
 			refreshingCode = false;
 		}
+		refreshSelectedClassificationProperty();
 	}
 
 	/**
@@ -161,6 +162,15 @@ public class CurriculumSelectorPane extends VBox {
 			refreshingSubjects = false;
 		}
 		setCodeText(classification.getCode());
+	}
+
+	/**
+	 * Returns the actual final classification selected in the pane.
+	 *
+	 * @return read-only selected classification property
+	 */
+	public ReadOnlyObjectProperty<CurriculumNode> selectedClassificationProperty() {
+		return selectedClassification.getReadOnlyProperty();
 	}
 
 	/**
@@ -292,6 +302,11 @@ public class CurriculumSelectorPane extends VBox {
 			return change;
 		}));
 		codeField.textProperty().addListener((observable, oldValue, newValue) -> handleCodeInput(newValue));
+		codeField.focusedProperty().addListener((observable, wasFocused, focused) -> {
+			if (!focused.booleanValue()) {
+				syncCodeFromSelection();
+			}
+		});
 	}
 
 	private void configureControls() {
@@ -335,10 +350,14 @@ public class CurriculumSelectorPane extends VBox {
 	private void configureSelectionHandlers() {
 		subjectBox.setOnAction(event -> handleSubjectSelection());
 		syllabusBox.setOnAction(event -> handleSyllabusSelection());
-		unitBox.setOnAction(event -> handleUnitSelection());
-		topicBox.setOnAction(event -> handleTopicSelection());
-		subtopicBox.setOnAction(event -> handleSubtopicSelection());
-		descriptorBox.setOnAction(event -> handleDescriptorSelection());
+		unitBox.getSelectionModel().selectedItemProperty()
+				.addListener((observable, oldValue, newValue) -> handleUnitSelection());
+		topicBox.getSelectionModel().selectedItemProperty()
+				.addListener((observable, oldValue, newValue) -> handleTopicSelection());
+		subtopicBox.getSelectionModel().selectedItemProperty()
+				.addListener((observable, oldValue, newValue) -> handleSubtopicSelection());
+		descriptorBox.getSelectionModel().selectedItemProperty()
+				.addListener((observable, oldValue, newValue) -> handleDescriptorSelection());
 	}
 
 	private GridPane createGrid() {
@@ -413,6 +432,7 @@ public class CurriculumSelectorPane extends VBox {
 			} finally {
 				refreshingCode = false;
 			}
+			refreshSelectedClassificationProperty();
 			return;
 		}
 		if (model.getSyllabusVersion() == null) {
@@ -426,6 +446,7 @@ public class CurriculumSelectorPane extends VBox {
 			} finally {
 				refreshingCode = false;
 			}
+			refreshSelectedClassificationProperty();
 			return;
 		}
 		CurriculumNode current = deepestSelectedNode();
@@ -653,6 +674,10 @@ public class CurriculumSelectorPane extends VBox {
 		setDescriptorRowVisible(!descriptorBox.getItems().isEmpty());
 	}
 
+	private void refreshSelectedClassificationProperty() {
+		selectedClassification.set(model.getClassification());
+	}
+
 	private void requireLevel(CurriculumNode node, CurriculumLevel level, String message) {
 		if (node == null || node.getLevel() != level) {
 			throw new IllegalArgumentException(message);
@@ -660,13 +685,15 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private <T> void selectAvailableValue(ComboBox<T> box, T selectedValue) {
-		for (T item : box.getItems()) {
-			if (item.equals(selectedValue)) {
-				box.setValue(item);
-				return;
+		if (selectedValue != null) {
+			for (T item : box.getItems()) {
+				if (item.equals(selectedValue)) {
+					box.getSelectionModel().select(item);
+					return;
+				}
 			}
 		}
-		box.setValue(null);
+		box.getSelectionModel().clearSelection();
 	}
 
 	private void setCodeText(String text) {
@@ -676,6 +703,7 @@ public class CurriculumSelectorPane extends VBox {
 		} finally {
 			refreshingCode = false;
 		}
+		refreshSelectedClassificationProperty();
 	}
 
 	private void setDescriptorRowVisible(boolean visible) {
