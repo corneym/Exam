@@ -8,10 +8,10 @@ import org.junit.jupiter.api.Test;
 class QuestionCaptureValidatorTest {
 
 	private QuestionCaptureValidator.State state(boolean examSet, String questionCode, boolean subjectSelected,
-			boolean unitSelected, boolean topicSelected, boolean subtopicSelected, boolean currentSelectionPending,
+			boolean unitSelected, boolean topicSelected, boolean classificationSelected, boolean currentSelectionPending,
 			int acceptedRegionCount) {
 		return new QuestionCaptureValidator.State(examSet, questionCode, "1", subjectSelected, unitSelected,
-				topicSelected, subtopicSelected, currentSelectionPending, acceptedRegionCount);
+				topicSelected, classificationSelected, currentSelectionPending, acceptedRegionCount);
 	}
 
 	@Test

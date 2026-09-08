@@ -44,6 +44,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -310,6 +311,19 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(restored.hasSharedContext());
 		assertEquals(1, restored.getSharedContext().getRegions().size());
 		assertEquals(1, restored.getRegions().size());
+
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+		Question secondPart = captureQuestion(robot, "24b");
+		Question restoredSecondPart = new SqliteQuestionRepository(new SqliteDatabase(databasePath))
+				.findById(secondPart.getId()).orElseThrow();
+		assertTrue(restoredSecondPart.hasSourceQuestion());
+		assertTrue(restoredSecondPart.hasSharedContext());
+		assertEquals(restored.getSourceQuestion().getId(), restoredSecondPart.getSourceQuestion().getId());
+		assertEquals(restored.getSharedContext().getId(), restoredSecondPart.getSharedContext().getId());
+		assertEquals(1, new SqliteSharedQuestionContextRepository(new SqliteDatabase(databasePath))
+				.findByBooklet(restored.getBooklet()).size());
 	}
 
 	@Test
@@ -318,6 +332,7 @@ class QuestionBankApplicationWorkflowTest {
 		prepareExamAndClassification(robot);
 		Question savedQuestion = captureQuestion(robot, "Q1");
 		assertEquals(CurriculumLevel.DESCRIPTOR, savedQuestion.getClassification().getLevel());
+		assertFalse(savedQuestion.hasSourceQuestion());
 		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Label questionRegionCount = lookup(robot, "#question-region-count", Label.class);

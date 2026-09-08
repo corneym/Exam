@@ -62,9 +62,36 @@ final class SharedContextCapturePane extends VBox {
 	private SharedQuestionContextRegion currentSelection;
 	private boolean captureMode;
 
+	/**
+	 * Creates shared-context controls for the active booklet and exam PDF. The
+	 * transition callback prevents this pane from taking selection ownership while
+	 * incompatible question capture is pending.
+	 */
 	SharedContextCapturePane(SharedQuestionContextRepository contextRepository, Supplier<ExamBooklet> bookletSupplier,
 			QuestionExtractor questionExtractor, Supplier<PdfSession> examPdfSessionSupplier,
 			Runnable selectionClearHandler, BooleanSupplier captureStartAllowed) {
+		validateDependencies(contextRepository, bookletSupplier, questionExtractor, examPdfSessionSupplier,
+				selectionClearHandler, captureStartAllowed);
+		this.contextRepository = contextRepository;
+		this.bookletSupplier = bookletSupplier;
+		this.questionExtractor = questionExtractor;
+		this.examPdfSessionSupplier = examPdfSessionSupplier;
+		this.selectionClearHandler = selectionClearHandler;
+		this.captureStartAllowed = captureStartAllowed;
+		configureControls();
+		configureActions();
+		buildContent();
+		setSpacing(COMPACT_SPACING);
+	}
+
+	private void buildContent() {
+		getChildren().addAll(createExistingContextControls(), statusLabel, newContextBox);
+	}
+
+	private void validateDependencies(SharedQuestionContextRepository contextRepository,
+			Supplier<ExamBooklet> bookletSupplier, QuestionExtractor questionExtractor,
+			Supplier<PdfSession> examPdfSessionSupplier, Runnable selectionClearHandler,
+			BooleanSupplier captureStartAllowed) {
 		if (contextRepository == null) {
 			throw new NullPointerException("contextRepository");
 		}
@@ -83,18 +110,14 @@ final class SharedContextCapturePane extends VBox {
 		if (captureStartAllowed == null) {
 			throw new NullPointerException("captureStartAllowed");
 		}
-		this.contextRepository = contextRepository;
-		this.bookletSupplier = bookletSupplier;
-		this.questionExtractor = questionExtractor;
-		this.examPdfSessionSupplier = examPdfSessionSupplier;
-		this.selectionClearHandler = selectionClearHandler;
-		this.captureStartAllowed = captureStartAllowed;
-		configureControls();
-		configureActions();
-		getChildren().addAll(createExistingContextControls(), statusLabel, newContextBox);
-		setSpacing(COMPACT_SPACING);
 	}
 
+	/**
+	 * Accepts the pending selection as the single region of an automatic preamble
+	 * capture and returns to normal question-region capture.
+	 *
+	 * @return {@code true} when a pending automatic selection was accepted
+	 */
 	boolean acceptAutomaticRegion() {
 		if (!captureMode || currentSelection == null) {
 			return false;
@@ -103,13 +126,16 @@ final class SharedContextCapturePane extends VBox {
 			throw new IllegalStateException("Automatic shared preamble already has a region");
 		}
 		addCurrentRegion();
-		captureMode = false;
-		existingContextField.setDisable(false);
-		newContextButton.setDisable(false);
-		setNewContextBoxVisible(false);
+		leaveCaptureMode();
 		return true;
 	}
 
+	/**
+	 * Accepts a PDF selection while this pane owns capture.
+	 *
+	 * @param selection the proportional source region
+	 * @throws IllegalStateException if shared-context capture is not active
+	 */
 	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (!captureMode) {
 			throw new IllegalStateException("Shared context capture is not active");
@@ -121,10 +147,28 @@ final class SharedContextCapturePane extends VBox {
 		setSelectionButtonsEnabled(true);
 	}
 
+	/**
+	 * Starts automatic capture for a preamble that will be persisted with the next
+	 * question save.
+	 *
+	 * @param label the generated context label
+	 * @return {@code true} when capture started
+	 */
 	boolean beginAutomaticContext(String label) {
 		return beginAutomaticContext(label, null);
 	}
 
+	/**
+	 * Starts automatic preamble capture, optionally taking ownership of an existing
+	 * question selection without clearing it from the PDF workspace.
+	 *
+	 * @param label                the generated context label
+	 * @param transferredSelection an existing question region to reinterpret, or
+	 *                             {@code null} to await a new selection
+	 * @return {@code true} when capture started
+	 * @throws IllegalArgumentException if the label is blank or the transferred
+	 *                                  region belongs to another booklet
+	 */
 	boolean beginAutomaticContext(String label, QuestionRegion transferredSelection) {
 		if (label == null || label.isBlank()) {
 			throw new IllegalArgumentException("label must not be blank");
@@ -147,11 +191,7 @@ final class SharedContextCapturePane extends VBox {
 		if (transferredSelection != null && transferredSelection.booklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Transferred selection must belong " + "to the active booklet");
 		}
-		captureMode = true;
-		existingContextField.getSelectionModel().clearSelection();
-		existingContextField.setDisable(true);
-		newContextButton.setDisable(true);
-		pendingRegions.clear();
+		enterCaptureMode();
 		if (transferredSelection == null) {
 			clearCurrentSelection();
 		} else {
@@ -170,10 +210,16 @@ final class SharedContextCapturePane extends VBox {
 		return true;
 	}
 
+	/**
+	 * Cancels automatic capture and discards its transient regions.
+	 */
 	void cancelAutomaticContext() {
 		clearForQuestion();
 	}
 
+	/**
+	 * Clears the unaccepted shared-context selection.
+	 */
 	void clearCurrentSelection() {
 		currentSelection = null;
 		currentPreview.setImage(null);
@@ -181,6 +227,9 @@ final class SharedContextCapturePane extends VBox {
 		setSelectionButtonsEnabled(false);
 	}
 
+	/**
+	 * Clears transient capture and selection state between questions.
+	 */
 	void clearForQuestion() {
 		if (captureMode) {
 			cancelNewContext();
@@ -213,11 +262,23 @@ final class SharedContextCapturePane extends VBox {
 		return captureMode;
 	}
 
+	/**
+	 * Reloads the contexts belonging to the active booklet after clearing transient
+	 * capture state.
+	 */
 	void refreshForCurrentBooklet() {
 		clearForQuestion();
 		loadContexts(bookletSupplier.get());
 	}
 
+	/**
+	 * Persists the one accepted automatic preamble region and selects the reloaded
+	 * context.
+	 *
+	 * @return the reconstructed persisted context
+	 * @throws IllegalStateException if capture is incomplete or the saved context
+	 *                               cannot be reloaded
+	 */
 	SharedQuestionContext saveAutomaticContext() {
 		if (captureMode) {
 			throw new IllegalStateException("Shared preamble selection has not been accepted");
@@ -233,12 +294,9 @@ final class SharedContextCapturePane extends VBox {
 		if (booklet == null) {
 			throw new IllegalStateException("Exam booklet is not available");
 		}
-		SharedQuestionContext saved = contextRepository.save(booklet, label, List.copyOf(pendingRegions));
-		pendingRegions.clear();
-		contextLabelField.clear();
-		currentPreview.setImage(null);
-		loadContexts(booklet);
-		SharedQuestionContext matching = findContextById(saved.getId());
+		SharedQuestionContext saved = savePendingContext(booklet, label);
+		clearPersistedCaptureState();
+		SharedQuestionContext matching = reloadSavedContext(booklet, saved);
 		if (matching == null) {
 			throw new IllegalStateException("Saved shared preamble could not be reloaded");
 		}
@@ -246,6 +304,13 @@ final class SharedContextCapturePane extends VBox {
 		return matching;
 	}
 
+	/**
+	 * Selects a persisted context belonging to the active booklet.
+	 *
+	 * @param context the context to select, or {@code null} to clear selection
+	 * @throws IllegalArgumentException if the context belongs to another booklet
+	 * @throws IllegalStateException    if it cannot be reloaded
+	 */
 	void selectContext(SharedQuestionContext context) {
 		if (context == null) {
 			existingContextField.getSelectionModel().clearSelection();
@@ -290,12 +355,8 @@ final class SharedContextCapturePane extends VBox {
 			showWarning("Exam details have not been set.", "Select an exam booklet before capturing shared context.");
 			return;
 		}
-		captureMode = true;
-		existingContextField.getSelectionModel().clearSelection();
-		existingContextField.setDisable(true);
-		newContextButton.setDisable(true);
+		enterCaptureMode();
 		contextLabelField.clear();
-		pendingRegions.clear();
 		clearCurrentSelection();
 		refreshRegionPreviews();
 		statusLabel.setText("Capturing new shared context");
@@ -307,11 +368,23 @@ final class SharedContextCapturePane extends VBox {
 		pendingRegions.clear();
 		refreshRegionPreviews();
 		contextLabelField.clear();
+		leaveCaptureMode();
+		statusLabel.setText("No shared context selected");
+	}
+
+	private void enterCaptureMode() {
+		captureMode = true;
+		existingContextField.getSelectionModel().clearSelection();
+		existingContextField.setDisable(true);
+		newContextButton.setDisable(true);
+		pendingRegions.clear();
+	}
+
+	private void leaveCaptureMode() {
 		captureMode = false;
 		existingContextField.setDisable(false);
 		newContextButton.setDisable(false);
 		setNewContextBoxVisible(false);
-		statusLabel.setText("No shared context selected");
 	}
 
 	private void clearRegions() {
@@ -337,6 +410,12 @@ final class SharedContextCapturePane extends VBox {
 	}
 
 	private void configureControls() {
+		configureExistingContextField();
+		configureCaptureControls();
+		buildNewContextBox();
+	}
+
+	private void configureExistingContextField() {
 		existingContextField.setId("shared-context");
 		existingContextField.setPromptText("No shared context");
 		existingContextField.setPrefWidth(260.0);
@@ -356,6 +435,9 @@ final class SharedContextCapturePane extends VBox {
 			}
 		});
 		newContextButton.setId("new-shared-context");
+	}
+
+	private void configureCaptureControls() {
 		contextLabelField.setId("shared-context-label");
 		contextLabelField.setPromptText("Context label, e.g. Question 24 preamble");
 		addRegionButton.setId("add-shared-context-region");
@@ -371,6 +453,9 @@ final class SharedContextCapturePane extends VBox {
 		acceptedRegionScroll.setPrefViewportHeight(100.0);
 		acceptedRegionScroll.setMaxHeight(120.0);
 		setSelectionButtonsEnabled(false);
+	}
+
+	private void buildNewContextBox() {
 		newContextBox.getChildren().addAll(new Label("New shared context"), contextLabelField,
 				createCurrentSelectionControls(), currentPreview, regionCountLabel, acceptedRegionScroll,
 				createSaveControls());
@@ -417,31 +502,33 @@ final class SharedContextCapturePane extends VBox {
 	private void refreshRegionPreviews() {
 		acceptedRegionBox.getChildren().clear();
 		for (int i = 0; i < pendingRegions.size(); i++) {
-			SharedQuestionContextRegion region = pendingRegions.get(i);
-			int regionIndex = i;
-			try {
-				BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
-				ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
-				imageView.setPreserveRatio(true);
-				imageView.setFitWidth(PREVIEW_WIDTH);
-				imageView.setFitHeight(PREVIEW_HEIGHT);
-				Label label = new Label(String.format("Region %d — Page %d", i + 1, region.pageNumber()));
-				Button removeButton = new Button("Remove");
-				removeButton.setOnAction(event -> {
-					pendingRegions.remove(regionIndex);
-					refreshRegionPreviews();
-				});
-				HBox row = new HBox(CONTROL_SPACING, imageView, new VBox(COMPACT_SPACING, label, removeButton));
-				row.setAlignment(Pos.CENTER_LEFT);
-				acceptedRegionBox.getChildren().add(row);
-			} catch (IOException e) {
-				throw new RuntimeException("Unable to preview shared context region", e);
-			}
+			acceptedRegionBox.getChildren().add(createRegionPreview(pendingRegions.get(i), i));
 		}
 		regionCountLabel.setText("Regions: " + pendingRegions.size());
 		boolean hasRegions = !pendingRegions.isEmpty();
 		acceptedRegionScroll.setVisible(hasRegions);
 		acceptedRegionScroll.setManaged(hasRegions);
+	}
+
+	private HBox createRegionPreview(SharedQuestionContextRegion region, int regionIndex) {
+		try {
+			BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
+			ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
+			imageView.setPreserveRatio(true);
+			imageView.setFitWidth(PREVIEW_WIDTH);
+			imageView.setFitHeight(PREVIEW_HEIGHT);
+			Label label = new Label(String.format("Region %d — Page %d", regionIndex + 1, region.pageNumber()));
+			Button removeButton = new Button("Remove");
+			removeButton.setOnAction(event -> {
+				pendingRegions.remove(regionIndex);
+				refreshRegionPreviews();
+			});
+			HBox row = new HBox(CONTROL_SPACING, imageView, new VBox(COMPACT_SPACING, label, removeButton));
+			row.setAlignment(Pos.CENTER_LEFT);
+			return row;
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview shared context region", e);
+		}
 	}
 
 	private void saveContext() {
@@ -463,18 +550,27 @@ final class SharedContextCapturePane extends VBox {
 			showWarning("Exam details have not been set.", "Select an exam booklet before saving shared context.");
 			return;
 		}
-		SharedQuestionContext saved = contextRepository.save(booklet, label, List.copyOf(pendingRegions));
-		captureMode = false;
+		SharedQuestionContext saved = savePendingContext(booklet, label);
+		leaveCaptureMode();
+		clearPersistedCaptureState();
+		SharedQuestionContext matching = reloadSavedContext(booklet, saved);
+		existingContextField.setValue(matching);
+		statusLabel.setText("Linked: " + saved.getLabel());
+	}
+
+	private void clearPersistedCaptureState() {
 		pendingRegions.clear();
 		contextLabelField.clear();
 		currentPreview.setImage(null);
-		existingContextField.setDisable(false);
-		newContextButton.setDisable(false);
-		setNewContextBoxVisible(false);
+	}
+
+	private SharedQuestionContext reloadSavedContext(ExamBooklet booklet, SharedQuestionContext saved) {
 		loadContexts(booklet);
-		SharedQuestionContext matching = findContextById(saved.getId());
-		existingContextField.setValue(matching);
-		statusLabel.setText("Linked: " + saved.getLabel());
+		return findContextById(saved.getId());
+	}
+
+	private SharedQuestionContext savePendingContext(ExamBooklet booklet, String label) {
+		return contextRepository.save(booklet, label, List.copyOf(pendingRegions));
 	}
 
 	private void setNewContextBoxVisible(boolean visible) {

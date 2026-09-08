@@ -29,6 +29,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -87,6 +88,17 @@ class QuestionExtractorTest {
 		BufferedImage image = readImage(output);
 		assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(150, image.getHeight()),
 				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(37, 75)));
+	}
+
+	@Test
+	void extractsSharedContextRegionUsingProportionalCoordinates() throws Exception {
+		Path pdf = createHorizontallySplitPdf(Color.RED, Color.BLUE);
+		try (PdfSession session = PdfSession.open(pdf)) {
+			SharedQuestionContextRegion region = new SharedQuestionContextRegion(1, 0.5, 0.0, 0.5, 1.0);
+			BufferedImage image = extractor.extractRegion(session, region);
+			assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(150, image.getHeight()),
+					() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(37, 75)));
+		}
 	}
 
 	@Test

@@ -20,6 +20,12 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a shared-context repository using the supplied SQLite database.
+	 *
+	 * @param database the database that owns the shared-context rows
+	 * @throws NullPointerException if {@code database} is {@code null}
+	 */
 	public SqliteSharedQuestionContextRepository(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -27,6 +33,12 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		this.database = database;
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @throws NullPointerException  if {@code booklet} is {@code null}
+	 * @throws IllegalStateException if reconstruction fails
+	 */
 	@Override
 	public List<SharedQuestionContext> findByBooklet(ExamBooklet booklet) {
 		if (booklet == null) {
@@ -58,6 +70,16 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		return List.copyOf(contexts);
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * @throws NullPointerException     if the booklet, region list or a region is
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if the label is blank or no regions are
+	 *                                  supplied
+	 * @throws IllegalStateException    if the context and regions cannot be saved
+	 *                                  atomically
+	 */
 	@Override
 	public SharedQuestionContext save(ExamBooklet booklet, String label, List<SharedQuestionContextRegion> regions) {
 		if (booklet == null) {

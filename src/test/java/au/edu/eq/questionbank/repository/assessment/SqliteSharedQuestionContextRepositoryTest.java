@@ -1,9 +1,15 @@
 package au.edu.eq.questionbank.repository.assessment;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -23,7 +29,64 @@ class SqliteSharedQuestionContextRepositoryTest {
 
 	@Test
 	void savesReloadsOrderedRegionsAndScopesByBooklet() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("shared-context.db"));
+		RepositoryFixture fixture = createFixture("shared-context.db");
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+		List<SharedQuestionContextRegion> regions = List.of(new SharedQuestionContextRegion(3, 0.10, 0.15, 0.70, 0.20),
+				new SharedQuestionContextRegion(4, 0.12, 0.10, 0.65, 0.25));
+		SharedQuestionContext saved = repository.save(fixture.firstBooklet(), "Question 21 preamble", regions);
+		repository.save(fixture.secondBooklet(), "Other booklet context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20)));
+		List<SharedQuestionContext> loaded = repository.findByBooklet(fixture.firstBooklet());
+		assertEquals(1, loaded.size());
+		SharedQuestionContext context = loaded.getFirst();
+		assertEquals(saved.getId(), context.getId());
+		assertEquals(fixture.firstBooklet().getId(), context.getBooklet().getId());
+		assertEquals("Question 21 preamble", context.getLabel());
+		assertEquals(regions, context.getRegions());
+		assertEquals(1, repository.findByBooklet(fixture.secondBooklet()).size());
+	}
+
+	@Test
+	void rejectsInvalidArguments() throws Exception {
+		RepositoryFixture fixture = createFixture("invalid-shared-context.db");
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+		SharedQuestionContextRegion region = new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2);
+		assertAll(() -> assertThrows(NullPointerException.class, () -> new SqliteSharedQuestionContextRepository(null)),
+				() -> assertThrows(NullPointerException.class, () -> repository.findByBooklet(null)),
+				() -> assertThrows(NullPointerException.class,
+						() -> repository.save(null, "Preamble", List.of(region))),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> repository.save(fixture.firstBooklet(), " ", List.of(region))),
+				() -> assertThrows(NullPointerException.class,
+						() -> repository.save(fixture.firstBooklet(), "Preamble", null)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> repository.save(fixture.firstBooklet(), "Preamble", List.of())),
+				() -> assertThrows(NullPointerException.class,
+						() -> repository.save(fixture.firstBooklet(), "Preamble", Arrays.asList(region, null))));
+	}
+
+	@Test
+	void rollsBackContextWhenARegionCannotBeInserted() throws Exception {
+		RepositoryFixture fixture = createFixture("shared-context-rollback.db");
+		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_test_context_region
+					BEFORE INSERT ON shared_question_context_regions
+					BEGIN
+					    SELECT RAISE(ABORT, 'deliberate test failure');
+					END
+					""");
+		}
+		List<SharedQuestionContextRegion> regions = List.of(
+				new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2));
+		assertThrows(IllegalStateException.class,
+				() -> fixture.repository().save(fixture.firstBooklet(), "Question 21 preamble", regions));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_context_regions"));
+	}
+
+	private RepositoryFixture createFixture(String databaseName) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
 		database.initialiseSchema();
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
@@ -33,23 +96,19 @@ class SqliteSharedQuestionContextRepositoryTest {
 				"Chemistry/2025/paper1.pdf");
 		ExamBooklet secondBooklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
 				"Chemistry/2025/paper2.pdf");
-		SqliteSharedQuestionContextRepository repository = new SqliteSharedQuestionContextRepository(database);
-		List<SharedQuestionContextRegion> regions = List.of(new SharedQuestionContextRegion(3, 0.10, 0.15, 0.70, 0.20),
-				new SharedQuestionContextRegion(4, 0.12, 0.10, 0.65, 0.25));
-		SharedQuestionContext saved = repository.save(firstBooklet, "Question 21 preamble", regions);
-		repository.save(secondBooklet, "Other booklet context",
-				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20)));
-		List<SharedQuestionContext> loaded = repository.findByBooklet(firstBooklet);
-		assertEquals(1, loaded.size());
-		SharedQuestionContext context = loaded.getFirst();
-		assertEquals(saved.getId(), context.getId());
-		assertEquals(firstBooklet.getId(), context.getBooklet().getId());
-		assertEquals("Question 21 preamble", context.getLabel());
-		assertEquals(2, context.getRegions().size());
-		assertEquals(3, context.getRegions().get(0).pageNumber());
-		assertEquals(4, context.getRegions().get(1).pageNumber());
-		assertEquals(0.10, context.getRegions().get(0).x());
-		assertEquals(0.12, context.getRegions().get(1).x());
-		assertTrue(repository.findByBooklet(secondBooklet).size() == 1);
+		return new RepositoryFixture(database, new SqliteSharedQuestionContextRepository(database), firstBooklet,
+				secondBooklet);
+	}
+
+	private int rowCount(SqliteDatabase database, String table) throws Exception {
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
+			assertTrue(result.next());
+			return result.getInt(1);
+		}
+	}
+
+	private record RepositoryFixture(SqliteDatabase database, SqliteSharedQuestionContextRepository repository,
+			ExamBooklet firstBooklet, ExamBooklet secondBooklet) {
 	}
 }

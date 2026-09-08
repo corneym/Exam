@@ -30,15 +30,19 @@ public class QuestionExtractor {
 	private static final float RENDER_DPI = 150;
 
 	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {
-		int left = (int) Math.floor(region.x() * page.getWidth());
-		int top = (int) Math.floor(region.y() * page.getHeight());
-		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
-		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
+		return cropRegion(page, region.x(), region.y(), region.width(), region.height());
+	}
+
+	private BufferedImage cropRegion(BufferedImage page, double x, double y, double width, double height) {
+		int left = (int) Math.floor(x * page.getWidth());
+		int top = (int) Math.floor(y * page.getHeight());
+		int right = (int) Math.ceil((x + width) * page.getWidth());
+		int bottom = (int) Math.ceil((y + height) * page.getHeight());
 		right = Math.min(right, page.getWidth());
 		bottom = Math.min(bottom, page.getHeight());
-		int width = right - left;
-		int height = bottom - top;
-		return page.getSubimage(left, top, width, height);
+		int cropWidth = right - left;
+		int cropHeight = bottom - top;
+		return page.getSubimage(left, top, cropWidth, cropHeight);
 	}
 
 	/**
@@ -110,13 +114,7 @@ public class QuestionExtractor {
 	 */
 	public BufferedImage extractRegion(PdfSession session, AnswerRegion region) throws IOException {
 		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
-		int left = (int) Math.floor(region.x() * page.getWidth());
-		int top = (int) Math.floor(region.y() * page.getHeight());
-		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
-		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
-		right = Math.min(right, page.getWidth());
-		bottom = Math.min(bottom, page.getHeight());
-		return page.getSubimage(left, top, right - left, bottom - top);
+		return cropRegion(page, region.x(), region.y(), region.width(), region.height());
 	}
 
 	/**
@@ -143,20 +141,7 @@ public class QuestionExtractor {
 	 */
 	public BufferedImage extractRegion(PdfSession session, SharedQuestionContextRegion region) throws IOException {
 		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
-
-		int left = (int) Math.floor(region.x() * page.getWidth());
-
-		int top = (int) Math.floor(region.y() * page.getHeight());
-
-		int right = (int) Math.ceil((region.x() + region.width()) * page.getWidth());
-
-		int bottom = (int) Math.ceil((region.y() + region.height()) * page.getHeight());
-
-		right = Math.min(right, page.getWidth());
-
-		bottom = Math.min(bottom, page.getHeight());
-
-		return page.getSubimage(left, top, right - left, bottom - top);
+		return cropRegion(page, region.x(), region.y(), region.width(), region.height());
 	}
 
 	/**

@@ -166,6 +166,25 @@ class CurriculumSelectionModelTest {
 	}
 
 	@Test
+	void findsTrimmedCodeOnlyWithinSelectedSyllabus() {
+		assertNull(model.findByCode("3.1.1.1"));
+		model.selectSubject(chemistry);
+		assertEquals(descriptor3111, model.findByCode(" 3.1.1.1 "));
+		assertNull(model.findByCode("1.1.1"));
+		model.selectSyllabusVersion(syllabus2019);
+		assertEquals(historicalDescriptor, model.findByCode("1.1.1"));
+		assertNull(model.findByCode("3.1.1.1"));
+	}
+
+	@Test
+	void codeLookupReturnsNullForBlankOrUnknownCode() {
+		model.selectSubject(chemistry);
+		assertNull(model.findByCode(null));
+		assertNull(model.findByCode(" "));
+		assertNull(model.findByCode("9.9.9"));
+	}
+
+	@Test
 	void exposesSubjects() {
 		assertEquals(List.of(chemistry), model.getSubjects());
 	}
