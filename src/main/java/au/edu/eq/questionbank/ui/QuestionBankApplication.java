@@ -1004,13 +1004,24 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showQuestionSearchDialog(QuestionSearchDialog dialog) {
-		Optional<Question> selectedQuestion = dialog.showAndWait();
-		if (selectedQuestion.isEmpty()) {
+		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
+		if (result.isEmpty()) {
 			dialog.dispose();
 			return;
 		}
-		Question question = selectedQuestion.get();
-		boolean editingStarted = questionCapturePane.editQuestion(question, () -> {
+		QuestionSearchDialog.EditRequest request = result.get();
+		Question question = request.question();
+		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
+			boolean editingStarted = questionCapturePane.editQuestion(question, () -> {
+				dialog.refreshAfterEdit(question.getId());
+				showQuestionSearchDialog(dialog);
+			});
+			if (!editingStarted) {
+				showQuestionSearchDialog(dialog);
+			}
+			return;
+		}
+		boolean editingStarted = answerCapturePane.editAnswer(question, () -> {
 			dialog.refreshAfterEdit(question.getId());
 			showQuestionSearchDialog(dialog);
 		});

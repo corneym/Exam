@@ -22,10 +22,10 @@ import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
@@ -34,8 +34,6 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.util.StringConverter;
@@ -48,9 +46,7 @@ final class AnswerCapturePane extends VBox {
 
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
-	private static final double ANSWER_REGIONS_VIEWPORT_HEIGHT = 70.0;
-	private static final double ANSWER_PREVIEW_WIDTH = 290.0;
-	private static final double ACCEPTED_ANSWER_PREVIEW_WIDTH = 180.0;
+	private static final double ANSWER_REGIONS_VIEWPORT_HEIGHT = 300.0;
 	private static final Insets PANEL_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
@@ -73,7 +69,7 @@ final class AnswerCapturePane extends VBox {
 		}
 	};
 	private final Button addAnswerRegionButton = new Button("Add");
-	private final Button chooseAnswerPdfButton = new Button("PDF...");
+	private final Button chooseAnswerPdfButton = new Button("Choose PDF...");
 	private final Button clearAnswerSelectionButton = new Button("Clear");
 	private final Button saveAnswerButton = new Button("Save");
 	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
@@ -98,6 +94,10 @@ final class AnswerCapturePane extends VBox {
 	private AnswerRegion currentAnswerSelection;
 	private boolean restoringUnansweredQuestionSelection;
 	private final Label answerRegionStatusLabel = new Label();
+	private final Button cancelAnswerEditButton = new Button("Cancel");
+	private Question editingAnswerQuestion;
+	private Runnable answerEditCompletedHandler = () -> {
+	};
 
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
@@ -170,7 +170,8 @@ final class AnswerCapturePane extends VBox {
 				selection.width(), selection.height());
 		showAnswerPreview(currentAnswerSelection);
 		Question question = unansweredQuestionField.getValue();
-		selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — selection pending");
+		selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
+		answerRegionStatusLabel.setText("Selection pending — Page " + selection.pageNumber());
 		setSelectionActionsEnabled(true);
 	}
 
@@ -181,6 +182,36 @@ final class AnswerCapturePane extends VBox {
 		currentAnswerSelection = null;
 		answerPreviewView.setImage(null);
 		setSelectionActionsEnabled(false);
+	}
+
+	boolean editAnswer(Question question, Runnable editCompletedHandler) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (editCompletedHandler == null) {
+			throw new NullPointerException("editCompletedHandler");
+		}
+		if (!question.hasAnswer()) {
+			throw new IllegalArgumentException("Question does not have an answer to edit");
+		}
+		if (!answerTransitionAllowed.getAsBoolean()) {
+			return false;
+		}
+		clearPendingAnswerRegions();
+		editingAnswerQuestion = question;
+		answerEditCompletedHandler = editCompletedHandler;
+		unansweredQuestionField.setDisable(true);
+		restoringUnansweredQuestionSelection = true;
+		try {
+			unansweredQuestionField.setValue(question);
+		} finally {
+			restoringUnansweredQuestionSelection = false;
+		}
+		applyUnansweredQuestionChange(question);
+		saveAnswerButton.setText("Update Answer");
+		cancelAnswerEditButton.setVisible(true);
+		cancelAnswerEditButton.setManaged(true);
+		return true;
 	}
 
 	boolean hasAcceptedRegions() {
@@ -198,19 +229,18 @@ final class AnswerCapturePane extends VBox {
 		Question selected = unansweredQuestionField.getValue();
 		List<Question> unansweredQuestions = questionRepository.findAll().stream()
 				.filter(question -> !question.hasAnswer()).toList();
-		unansweredQuestionField.getItems().setAll(unansweredQuestions);
-		if (selected == null) {
-			return;
-		}
 		Question matching = null;
-		for (Question question : unansweredQuestions) {
-			if (question.getId() == selected.getId()) {
-				matching = question;
-				break;
+		if (selected != null) {
+			for (Question question : unansweredQuestions) {
+				if (question.getId() == selected.getId()) {
+					matching = question;
+					break;
+				}
 			}
 		}
 		restoringUnansweredQuestionSelection = true;
 		try {
+			unansweredQuestionField.getItems().setAll(unansweredQuestions);
 			unansweredQuestionField.setValue(matching);
 		} finally {
 			restoringUnansweredQuestionSelection = false;
@@ -288,8 +318,7 @@ final class AnswerCapturePane extends VBox {
 			}
 			refreshAnswerRegionList();
 			showAcceptedRegionStatus();
-			selectedAnswerQuestionLabel
-					.setText(answerStatusPrefix(question) + " — " + pendingAnswerRegions.size() + " region(s) stored");
+			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — answer stored");
 			saveAnswerButton.setText("Update Answer");
 		} else {
 			if (answerFile == null) {
@@ -306,6 +335,13 @@ final class AnswerCapturePane extends VBox {
 		if (answerFile != null && !openedAnswerPdf) {
 			answerDocumentHandler.run();
 		}
+	}
+
+	private void cancelAnswerEdit() {
+		if (editingAnswerQuestion == null) {
+			return;
+		}
+		finishAnswerEdit();
 	}
 
 	private void chooseAnswerPdf(Stage stage) {
@@ -343,19 +379,22 @@ final class AnswerCapturePane extends VBox {
 		answerPreviewView.setImage(null);
 		Question question = unansweredQuestionField.getValue();
 		if (question != null) {
-			selectedAnswerQuestionLabel.setText(
-					answerStatusPrefix(question) + " — " + pendingAnswerRegions.size() + " region(s) accepted");
+			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
 		}
+		showAcceptedRegionStatus();
 	}
 
 	private void clearPendingAnswerRegions() {
 		pendingAnswerRegions.clear();
-		answerPreviewView.setImage(null);
-		refreshAnswerRegionList();
 		currentAnswerSelection = null;
+		answerPreviewView.setImage(null);
+		answerRegionListBox.getChildren().clear();
+		answerRegionsScrollPane.setVisible(false);
+		answerRegionsScrollPane.setManaged(false);
+		answerRegionCountLabel.setText("Regions: 0");
+		answerRegionStatusLabel.setText("");
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
-		answerRegionCountLabel.setText("Regions: 0");
 	}
 
 	private void configureActions(Stage stage) {
@@ -363,11 +402,12 @@ final class AnswerCapturePane extends VBox {
 		chooseAnswerPdfButton.setOnAction(event -> chooseAnswerPdf(stage));
 		clearAnswerSelectionButton.setOnAction(event -> clearCurrentAnswerSelection());
 		saveAnswerButton.setOnAction(event -> validateAnswerForSave());
+		cancelAnswerEditButton.setOnAction(event -> cancelAnswerEdit());
 	}
 
 	private void configureControls() {
 		unansweredQuestionField.setId("unanswered-question");
-		unansweredQuestionField.setPromptText("Select question");
+		unansweredQuestionField.setPromptText("Select unanswered question");
 		unansweredQuestionField.setMaxWidth(Double.MAX_VALUE);
 		unansweredQuestionField.setConverter(QUESTION_CODE_CONVERTER);
 		unansweredQuestionField.valueProperty().addListener(
@@ -386,33 +426,38 @@ final class AnswerCapturePane extends VBox {
 		answerRegionStatusLabel.setId("answer-region-status");
 		answerRegionStatusLabel.setText("");
 		selectedAnswerQuestionLabel.setId("selected-answer-question");
+		cancelAnswerEditButton.setId("cancel-answer-edit");
+		cancelAnswerEditButton.setVisible(false);
+		cancelAnswerEditButton.setManaged(false);
 		answerRegionsScrollPane.setFitToWidth(true);
+		answerRegionListBox.setFillWidth(true);
+		answerRegionListBox.setMaxWidth(Double.MAX_VALUE);
+		answerRegionsScrollPane.setMaxWidth(Double.MAX_VALUE);
 		answerRegionsScrollPane.setPrefViewportHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
 		answerRegionsScrollPane.setVisible(false);
 		answerRegionsScrollPane.setManaged(false);
 		answerPreviewView.setPreserveRatio(true);
-		answerPreviewView.setFitWidth(ANSWER_PREVIEW_WIDTH);
 		answerPreviewView.setSmooth(true);
+		answerPreviewView.fitWidthProperty()
+				.bind(Bindings.createDoubleBinding(() -> Math.max(0.0, getWidth() - 16.0), widthProperty()));
 		setSelectionActionsEnabled(false);
 	}
 
 	private ImageView createAcceptedAnswerPreview(AnswerRegion region) {
-		BufferedImage clippedImage = questionExtractor.extractAnswerRegionImage(answerPdfSessionSupplier.get(), region);
-		ImageView previewView = new ImageView(SwingFXUtils.toFXImage(clippedImage, null));
-		previewView.setPreserveRatio(true);
-		previewView.setSmooth(true);
-		previewView.setCache(true);
-		previewView.setFitWidth(0);
-		previewView.fitWidthProperty().bind(answerRegionsScrollPane.widthProperty().subtract(40));
-		return previewView;
-	}
-
-	private Node createAcceptedRegionsHeader() {
-		Region spacer = new Region();
-		HBox.setHgrow(spacer, Priority.ALWAYS);
-		HBox header = new HBox(CONTROL_SPACING, answerRegionCountLabel, answerRegionStatusLabel, spacer);
-		header.setAlignment(Pos.CENTER_LEFT);
-		return header;
+		try {
+			BufferedImage clippedImage = questionExtractor.extractRegion(answerPdfSessionSupplier.get(), region);
+			ImageView previewView = new ImageView(SwingFXUtils.toFXImage(clippedImage, null));
+			previewView.setPreserveRatio(true);
+			previewView.setSmooth(true);
+			previewView.setCache(true);
+			previewView.fitWidthProperty()
+					.bind(Bindings.createDoubleBinding(
+							() -> Math.max(0.0, answerRegionsScrollPane.getViewportBounds().getWidth() - 8.0),
+							answerRegionsScrollPane.viewportBoundsProperty()));
+			return previewView;
+		} catch (IOException e) {
+			throw new RuntimeException("Unable to preview accepted answer region", e);
+		}
 	}
 
 	private HBox createAnswerPdfControls() {
@@ -429,7 +474,7 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private HBox createAnswerTextControls() {
-		HBox controls = new HBox(CONTROL_SPACING, answerTextField, saveAnswerButton);
+		HBox controls = new HBox(CONTROL_SPACING, answerTextField, saveAnswerButton, cancelAnswerEditButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
 	}
@@ -443,6 +488,24 @@ final class AnswerCapturePane extends VBox {
 	private String findValidationError(Question question, String answerText) {
 		return AnswerCaptureValidator.findError(new AnswerCaptureValidator.State(question != null,
 				currentAnswerSelection != null, answerText, pendingAnswerRegions.size()));
+	}
+
+	private void finishAnswerEdit() {
+		Runnable completedHandler = answerEditCompletedHandler;
+		answerEditCompletedHandler = () -> {
+		};
+		editingAnswerQuestion = null;
+		clearPendingAnswerRegions();
+		answerTextField.clear();
+		answerFile = null;
+		selectedAnswerPdfLabel.setText("No PDF selected");
+		unansweredQuestionField.setDisable(false);
+		cancelAnswerEditButton.setVisible(false);
+		cancelAnswerEditButton.setManaged(false);
+		saveAnswerButton.setText("Save Answer");
+		refreshQuestions();
+		applyUnansweredQuestionChange(unansweredQuestionField.getValue());
+		completedHandler.run();
 	}
 
 	private void handleUnansweredQuestionChanged(Question previousQuestion, Question question) {
@@ -555,6 +618,7 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void saveAnswer(Question question, String answerText) {
+		int previousIndex = unansweredQuestionField.getSelectionModel().getSelectedIndex();
 		String storedText = answerText.isBlank() ? null : answerText;
 		try {
 			Answer answer;
@@ -565,23 +629,33 @@ final class AnswerCapturePane extends VBox {
 				answer = answerWriter.insertAnswer(question, storedText, pendingAnswerRegions);
 			}
 			question.setAnswer(answer);
+			if (editingAnswerQuestion != null) {
+				finishAnswerEdit();
+				return;
+			}
 			clearPendingAnswerRegions();
 			answerTextField.clear();
 			refreshQuestions();
-			Question nextQuestion = null;
-			if (!unansweredQuestionField.getItems().isEmpty()) {
-				nextQuestion = unansweredQuestionField.getItems().getFirst();
-			}
-			restoringUnansweredQuestionSelection = true;
-			try {
-				unansweredQuestionField.setValue(nextQuestion);
-			} finally {
-				restoringUnansweredQuestionSelection = false;
-			}
-			applyUnansweredQuestionChange(nextQuestion);
+			selectNextUnansweredQuestion(previousIndex);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Unable to save answer", e);
 		}
+	}
+
+	private void selectNextUnansweredQuestion(int previousIndex) {
+		Question nextQuestion = null;
+		if (!unansweredQuestionField.getItems().isEmpty()) {
+			int nextIndex = previousIndex < 0 ? 0
+					: Math.min(previousIndex, unansweredQuestionField.getItems().size() - 1);
+			nextQuestion = unansweredQuestionField.getItems().get(nextIndex);
+		}
+		restoringUnansweredQuestionSelection = true;
+		try {
+			unansweredQuestionField.setValue(nextQuestion);
+		} finally {
+			restoringUnansweredQuestionSelection = false;
+		}
+		applyUnansweredQuestionChange(nextQuestion);
 	}
 
 	private AnswerFile selectRegisteredAnswerFile(List<AnswerFile> answerFiles) {
@@ -605,14 +679,13 @@ final class AnswerCapturePane extends VBox {
 		answerRegionCountLabel.setText("Regions: " + pendingAnswerRegions.size());
 		if (pendingAnswerRegions.isEmpty()) {
 			answerRegionStatusLabel.setText("");
-		} else if (pendingAnswerRegions.size() == 1) {
-			answerRegionStatusLabel.setText("Page " + pendingAnswerRegions.getFirst().pageNumber());
-		} else {
-			answerRegionStatusLabel.setText(pendingAnswerRegions.size() + " regions selected");
+			return;
 		}
-		Question question = unansweredQuestionField.getValue();
-		selectedAnswerQuestionLabel
-				.setText(answerStatusPrefix(question) + " — " + pendingAnswerRegions.size() + " region(s) accepted");
+		if (pendingAnswerRegions.size() == 1) {
+			answerRegionStatusLabel.setText("Page " + pendingAnswerRegions.getFirst().pageNumber());
+			return;
+		}
+		answerRegionStatusLabel.setText(pendingAnswerRegions.size() + " regions selected");
 	}
 
 	private void showAnswerFileError(String header, String message) {
