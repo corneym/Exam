@@ -34,6 +34,8 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.util.StringConverter;
@@ -86,7 +88,7 @@ final class AnswerCapturePane extends VBox {
 	private final Label selectedAnswerPdfLabel = new Label("No PDF selected");
 	// Answer content and region controls.
 	private final TextField answerTextField = new TextField();
-	private final Button addAnswerRegionButton = new Button("Add");
+	private final Button addAnswerRegionButton = new Button("Add Region");
 	private final Button clearAnswerSelectionButton = new Button("Clear");
 	private final Label answerRegionCountLabel = new Label("Regions: 0");
 	private final Label answerRegionStatusLabel = new Label();
@@ -497,14 +499,17 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private HBox createAnswerRegionControls() {
+		Region spacer = new Region();
+		HBox.setHgrow(spacer, Priority.ALWAYS);
 		HBox controls = new HBox(CONTROL_SPACING, addAnswerRegionButton, clearAnswerSelectionButton,
-				answerRegionCountLabel, answerRegionStatusLabel);
+				answerRegionCountLabel, answerRegionStatusLabel, spacer, saveAnswerButton, cancelAnswerEditButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
 	}
 
 	private HBox createAnswerTextControls() {
-		HBox controls = new HBox(CONTROL_SPACING, answerTextField, saveAnswerButton, cancelAnswerEditButton);
+		HBox.setHgrow(answerTextField, Priority.ALWAYS);
+		HBox controls = new HBox(CONTROL_SPACING, answerTextField);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
 	}
