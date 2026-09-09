@@ -13,9 +13,14 @@ import org.apache.pdfbox.rendering.PDFRenderer;
  * <p>
  * Domain page numbers remain one-based; this class performs the conversion to
  * PDFBox's zero-based page indexes. Sessions own their PDFBox document and must
- * be closed.
+ * be closed by their owner. Sessions are not thread-safe; callers must serialize
+ * rendering and closing, and must not use a session after closing it.
  */
 public class PdfSession implements AutoCloseable {
+
+	private final PDDocument document;
+
+	private final PDFRenderer renderer;
 
 	/**
 	 * Opens a PDF session for a source file.
@@ -33,15 +38,16 @@ public class PdfSession implements AutoCloseable {
 		return new PdfSession(document);
 	}
 
-	private final PDDocument document;
-
-	private final PDFRenderer renderer;
-
 	private PdfSession(PDDocument document) {
 		this.document = document;
 		this.renderer = new PDFRenderer(document);
 	}
 
+	/**
+	 * Closes the owned PDFBox document.
+	 *
+	 * @throws Exception if the underlying document cannot be closed
+	 */
 	@Override
 	public void close() throws Exception {
 		document.close();

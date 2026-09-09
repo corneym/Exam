@@ -25,6 +25,15 @@ public final class RevisionExportService {
 	private final RevisionAnswerAssetRenderer answerAssetRenderer;
 	private final RevisionExportValidator validator;
 
+	/**
+	 * Creates an exporter from corpus, rendering and validation services.
+	 *
+	 * @param corpusBuilder the subject corpus builder
+	 * @param questionAssetRenderer the question image renderer
+	 * @param answerAssetRenderer the answer image renderer
+	 * @param validator the generated-site validator
+	 * @throws NullPointerException if any dependency is null
+	 */
 	public RevisionExportService(RevisionCorpusBuilder corpusBuilder,
 			RevisionQuestionAssetRenderer questionAssetRenderer, RevisionAnswerAssetRenderer answerAssetRenderer,
 			RevisionExportValidator validator) {
@@ -46,11 +55,29 @@ public final class RevisionExportService {
 		this.validator = validator;
 	}
 
+	/**
+	 * Exports a validated revision site without progress notifications.
+	 *
+	 * @param request the subject and new destination directory
+	 * @return the published location and corpus statistics
+	 * @throws IOException if generation, validation or publication fails
+	 */
 	public RevisionExportResult export(RevisionExportRequest request) throws IOException {
 		return export(request, (message, completed, total) -> {
 		});
 	}
 
+	/**
+	 * Builds and validates a revision site in a sibling staging directory, then
+	 * moves it to a destination that must not already exist. Failed staging output
+	 * is removed; publication uses an atomic move when supported by the filesystem.
+	 *
+	 * @param request the subject and new destination directory
+	 * @param progress synchronous progress callback on the exporting thread
+	 * @return the published location and corpus statistics
+	 * @throws IOException if the destination exists or export cannot complete
+	 * @throws NullPointerException if either argument is null
+	 */
 	public RevisionExportResult export(RevisionExportRequest request, RevisionExportProgressListener progress)
 			throws IOException {
 		if (request == null) {

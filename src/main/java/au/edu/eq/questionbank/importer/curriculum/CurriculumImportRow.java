@@ -6,10 +6,14 @@ package au.edu.eq.questionbank.importer.curriculum;
  *
  * @param code the non-blank curriculum code
  * @param content the non-blank curriculum label or descriptor text
- * @throws IllegalArgumentException if either value is {@code null} or blank
  */
 public record CurriculumImportRow(String code, String content) {
 
+	/**
+	 * Creates and validates this value.
+	 *
+	 * @throws IllegalArgumentException if either value is {@code null} or blank
+	 */
 	public CurriculumImportRow {
 		if (code == null || code.isBlank()) {
 			throw new IllegalArgumentException("code must not be blank");

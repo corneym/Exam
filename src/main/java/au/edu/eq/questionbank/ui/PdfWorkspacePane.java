@@ -102,6 +102,10 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		selectionRectangle.setHeight(0);
 	}
 
+	/**
+	 * Closes the standalone viewer session and restores the previously displayed
+	 * exam or answer page.
+	 */
 	void closeViewerPdf() {
 		closeExistingViewerPdfSession();
 		displayedDocument = viewerReturnDocument;
@@ -116,22 +120,37 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		showCurrentPage();
 	}
 
+	/**
+	 * @return the borrowed answer session, or {@code null}; callers must not close it
+	 */
 	PdfSession getAnswerPdfSession() {
 		return answerPdfSession;
 	}
 
+	/**
+	 * @return the one-based page currently selected in the workspace
+	 */
 	int getCurrentPageNumber() {
 		return currentPageNumber;
 	}
 
+	/**
+	 * @return the active exam, answer or viewer document mode
+	 */
 	DocumentMode getDisplayedDocument() {
 		return displayedDocument;
 	}
 
+	/**
+	 * @return the borrowed exam session, or {@code null}; callers must not close it
+	 */
 	PdfSession getExamPdfSession() {
 		return examPdfSession;
 	}
 
+	/**
+	 * @return whether an exam PDF session is open
+	 */
 	boolean hasExamPdf() {
 		return examPdfSession != null;
 	}
@@ -190,6 +209,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * Opens a standalone PDF for viewing without making it an exam or answer source.
+	 *
+	 * @param path the PDF to open
+	 */
 	void openViewerPdf(Path path) {
 		if (path == null) {
 			throw new NullPointerException("path");
@@ -238,6 +262,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		this.selectionAvailable = selectionAvailable;
 	}
 
+	/**
+	 * Updates the cursor to reflect selection availability.
+	 *
+	 * @param enabled whether region selection is enabled
+	 */
 	void setSelectionCursorEnabled(boolean enabled) {
 		pagePane.setCursor(enabled ? Cursor.CROSSHAIR : Cursor.DEFAULT);
 	}
@@ -512,6 +541,18 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * A rectangle in displayed-page coordinates, with a top-left origin. Coordinates
+	 * are proportional to the rendered page, independent of DPI; page numbers are
+	 * one-based. The document mode identifies the source workflow.
+	 *
+	 * @param documentMode the source document mode
+	 * @param pageNumber the one-based source page
+	 * @param x the proportional left edge
+	 * @param y the proportional top edge
+	 * @param width the proportional width
+	 * @param height the proportional height
+	 */
 	record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width, double height) {
 	}
 }

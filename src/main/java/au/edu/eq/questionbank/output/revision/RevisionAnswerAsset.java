@@ -41,18 +41,30 @@ public final class RevisionAnswerAsset {
 		this.relativePath = normalizedPath;
 	}
 
+	/**
+	 * @return the authoritative answer source region
+	 */
 	public AnswerRegion getAnswerRegion() {
 		return answerRegion;
 	}
 
+	/**
+	 * @return the question whose answer region was rendered
+	 */
 	public Question getQuestion() {
 		return question;
 	}
 
+	/**
+	 * @return the one-based position within the ordered answer regions
+	 */
 	public int getRegionNumber() {
 		return regionNumber;
 	}
 
+	/**
+	 * @return the normalized image path relative to the export root
+	 */
 	public Path getRelativePath() {
 		return relativePath;
 	}

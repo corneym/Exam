@@ -159,8 +159,8 @@ public interface QuestionRepository {
 	 * @param questionId     persistent question identifier
 	 * @param questionCode   replacement non-blank question code
 	 * @param marks          replacement positive mark value
-	 * @param regions        replacement ordered question regions
-	 * @param classification replacement classification
+	 * @param regions        one or more replacement regions in assembly order
+	 * @param classification replacement classification in the existing syllabus
 	 * @param sourceQuestion source-question relationship, or {@code null}
 	 * @param sharedContext  shared-context relationship, or {@code null}
 	 * @return the updated question

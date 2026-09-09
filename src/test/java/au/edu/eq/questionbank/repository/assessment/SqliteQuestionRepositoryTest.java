@@ -36,6 +36,43 @@ class SqliteQuestionRepositoryTest {
 	@TempDir
 	Path tempDirectory;
 
+	@Test
+	void failedEditRestoresMetadataAndOldRegionsAfterALaterInsertFails() throws Exception {
+		ReconstructionFixture fixture = createReconstructionFixture("edit-rollback.db");
+		Question original = fixture.question();
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_later_edit_region
+					BEFORE INSERT ON question_regions
+					WHEN NEW.page_number = 9
+					BEGIN
+					    SELECT RAISE(ABORT, 'reject later edit region');
+					END
+					""");
+		}
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		List<QuestionRegion> replacements = List.of(
+				new QuestionRegion(original.getBooklet(), 8, 0.2, 0.2, 0.4, 0.3),
+				new QuestionRegion(original.getBooklet(), 9, 0.2, 0.2, 0.4, 0.3));
+		assertThrows(IllegalStateException.class, () -> repository.updateQuestion(original.getId(), "Changed", 9,
+				replacements, original.getClassification(), null, null));
+		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(original.getId()).orElseThrow();
+		assertEquals(original.getQuestionCode(), reloaded.getQuestionCode());
+		assertEquals(original.getMarks(), reloaded.getMarks());
+		assertEquals(original.getClassification().getId(), reloaded.getClassification().getId());
+		assertEquals(original.getRegions().size(), reloaded.getRegions().size());
+		for (int i = 0; i < original.getRegions().size(); i++) {
+			QuestionRegion expected = original.getRegions().get(i);
+			QuestionRegion actual = reloaded.getRegions().get(i);
+			assertEquals(expected.pageNumber(), actual.pageNumber());
+			assertEquals(expected.x(), actual.x());
+			assertEquals(expected.y(), actual.y());
+			assertEquals(expected.width(), actual.width());
+			assertEquals(expected.height(), actual.height());
+		}
+	}
+
 	private ReconstructionFixture createReconstructionFixture(String databaseName) throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
 		database.initialiseSchema();

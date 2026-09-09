@@ -101,6 +101,11 @@ public class QuestionSearchPane extends BorderPane {
 		startSubjectLoading();
 	}
 
+	/**
+	 * Cancels outstanding loads and clears results and previews. Idempotent;
+	 * late task completions are ignored through generation and task-identity checks.
+	 * Must be called on the JavaFX application thread.
+	 */
 	void dispose() {
 		if (disposed) {
 			return;
@@ -115,11 +120,20 @@ public class QuestionSearchPane extends BorderPane {
 		statusLabel.setText("");
 	}
 
+	/**
+	 * @return the selected persisted question, or {@code null} when no result is selected
+	 */
 	Question getSelectedQuestion() {
 		QuestionRetrievalResult result = resultsList.getSelectionModel().getSelectedItem();
 		return result == null ? null : result.getQuestion();
 	}
 
+	/**
+	 * Repeats the most specific active search and reselects the edited question if
+	 * it still matches. Has no effect after disposal.
+	 *
+	 * @param questionId the persistent identifier to reselect
+	 */
 	void refreshAfterEdit(long questionId) {
 		if (disposed) {
 			return;
@@ -153,6 +167,9 @@ public class QuestionSearchPane extends BorderPane {
 		questionIdToReselect = -1;
 	}
 
+	/**
+	 * @return the selected search result property, whose value may be {@code null}
+	 */
 	ReadOnlyObjectProperty<QuestionRetrievalResult> selectedResultProperty() {
 		return resultsList.getSelectionModel().selectedItemProperty();
 	}
@@ -386,16 +403,7 @@ public class QuestionSearchPane extends BorderPane {
 			startAutomaticSearch(classification);
 			return;
 		}
-		startHierarchyLoad(() -> curriculumRepository.findChildren(classification), children -> {
-			updatingControls = true;
-			try {
-				descriptorBox.getItems().setAll(children);
-				descriptorBox.setDisable(children.isEmpty());
-			} finally {
-				updatingControls = false;
-			}
-			startAutomaticSearch(classification);
-		});
+		startHierarchyLoad(() -> curriculumRepository.findChildren(classification), children -> showDescriptors(classification, children));
 	}
 
 	private void handleDescriptorBoxMousePress() {
@@ -427,24 +435,7 @@ public class QuestionSearchPane extends BorderPane {
 		if (subject == null) {
 			return;
 		}
-		startHierarchyLoad(() -> loadSubjectNavigation(subject), navigation -> {
-			currentSyllabus = navigation.currentSyllabus();
-			if (currentSyllabus == null) {
-				statusLabel.setText("No current syllabus available.");
-				return;
-			}
-			syllabusValue.setText(currentSyllabus.getName());
-			updatingControls = true;
-			try {
-				unitBox.getItems().setAll(navigation.units());
-				unitBox.getSelectionModel().clearSelection();
-				unitBox.setValue(null);
-				unitBox.setDisable(navigation.units().isEmpty());
-			} finally {
-				updatingControls = false;
-			}
-			startAutomaticSearch(subject);
-		});
+		startHierarchyLoad(() -> loadSubjectNavigation(subject), navigation -> showSubjectNavigation(subject, navigation));
 	}
 
 	private void handleTopicBoxMousePress() {
@@ -464,16 +455,7 @@ public class QuestionSearchPane extends BorderPane {
 		if (topic == null) {
 			return;
 		}
-		startHierarchyLoad(() -> curriculumRepository.findChildren(topic), classifications -> {
-			updatingControls = true;
-			try {
-				classificationBox.getItems().setAll(classifications);
-				classificationBox.setDisable(classifications.isEmpty());
-			} finally {
-				updatingControls = false;
-			}
-			startAutomaticSearch(topic);
-		});
+		startHierarchyLoad(() -> curriculumRepository.findChildren(topic), classifications -> showClassifications(topic, classifications));
 	}
 
 	private void handleUnitBoxMousePress() {
@@ -500,16 +482,7 @@ public class QuestionSearchPane extends BorderPane {
 		if (unit == null) {
 			return;
 		}
-		startHierarchyLoad(() -> curriculumRepository.findChildren(unit), topics -> {
-			updatingControls = true;
-			try {
-				topicBox.getItems().setAll(topics);
-				topicBox.setDisable(topics.isEmpty());
-			} finally {
-				updatingControls = false;
-			}
-			startAutomaticSearch(unit);
-		});
+		startHierarchyLoad(() -> curriculumRepository.findChildren(unit), topics -> showTopics(unit, topics));
 	}
 
 	private void invalidateCurrentSearch() {
@@ -664,34 +637,8 @@ public class QuestionSearchPane extends BorderPane {
 			}
 		};
 		activeSearchTask = task;
-		task.setOnSucceeded(event -> {
-			if (generation != searchGeneration || task != activeSearchTask) {
-				return;
-			}
-			activeSearchTask = null;
-			List<QuestionRetrievalResult> results = task.getValue();
-			resultsList.getItems().setAll(results);
-			reselectEditedQuestion(results);
-			if (results.isEmpty()) {
-				statusLabel.setText("No questions found.");
-			} else if (results.size() == 1) {
-				statusLabel.setText("1 question found.");
-			} else {
-				statusLabel.setText(results.size() + " questions found.");
-			}
-		});
-		task.setOnFailed(event -> {
-			if (generation != searchGeneration || task != activeSearchTask) {
-				return;
-			}
-			activeSearchTask = null;
-			Throwable failure = task.getException();
-			if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
-				statusLabel.setText("Question search failed.");
-			} else {
-				statusLabel.setText("Question search failed: " + failure.getMessage());
-			}
-		});
+		task.setOnSucceeded(event -> completeSearch(task, generation));
+		task.setOnFailed(event -> failSearch(task, generation));
 		Thread.ofVirtual().name("question-search").start(task);
 	}
 
@@ -710,27 +657,8 @@ public class QuestionSearchPane extends BorderPane {
 			}
 		};
 		activeHierarchyTask = task;
-		task.setOnSucceeded(event -> {
-			if (generation != hierarchyGeneration || task != activeHierarchyTask) {
-				return;
-			}
-			activeHierarchyTask = null;
-			statusLabel.setText("");
-			onSucceeded.accept(task.getValue());
-		});
-		task.setOnFailed(event -> {
-			if (generation != hierarchyGeneration || task != activeHierarchyTask) {
-				return;
-			}
-			activeHierarchyTask = null;
-			invalidateCurrentSearch();
-			Throwable failure = task.getException();
-			if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
-				statusLabel.setText("Curriculum navigation failed.");
-			} else {
-				statusLabel.setText("Curriculum navigation failed: " + failure.getMessage());
-			}
-		});
+		task.setOnSucceeded(event -> completeHierarchyLoad(task, generation, onSucceeded));
+		task.setOnFailed(event -> failHierarchyLoad(task, generation));
 		Thread.ofVirtual().name("curriculum-navigation").start(task);
 	}
 
@@ -752,32 +680,8 @@ public class QuestionSearchPane extends BorderPane {
 			}
 		};
 		activePreviewTask = task;
-		task.setOnSucceeded(event -> {
-			if (generation != previewGeneration || task != activePreviewTask) {
-				return;
-			}
-			activePreviewTask = null;
-			Optional<BufferedImage> preview = task.getValue();
-			if (preview.isEmpty()) {
-				previewStatusLabel.setText("No stored question image.");
-				return;
-			}
-			Image image = SwingFXUtils.toFXImage(preview.get(), null);
-			previewImageView.setImage(image);
-			previewStatusLabel.setText("");
-		});
-		task.setOnFailed(event -> {
-			if (generation != previewGeneration || task != activePreviewTask) {
-				return;
-			}
-			activePreviewTask = null;
-			Throwable failure = task.getException();
-			if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
-				previewStatusLabel.setText("Question preview unavailable.");
-			} else {
-				previewStatusLabel.setText("Question preview unavailable: " + failure.getMessage());
-			}
-		});
+		task.setOnSucceeded(event -> completePreview(task, generation));
+		task.setOnFailed(event -> failPreview(task, generation));
 		Thread.ofVirtual().name("question-preview").start(task);
 	}
 
@@ -788,4 +692,138 @@ public class QuestionSearchPane extends BorderPane {
 
 	private record SubjectNavigation(SyllabusVersion currentSyllabus, List<CurriculumNode> units) {
 	}
+
+	private void completeSearch(Task<List<QuestionRetrievalResult>> task, long generation) {
+		if (generation != searchGeneration || task != activeSearchTask) {
+			return;
+		}
+		activeSearchTask = null;
+		List<QuestionRetrievalResult> results = task.getValue();
+		resultsList.getItems().setAll(results);
+		reselectEditedQuestion(results);
+		if (results.isEmpty()) {
+			statusLabel.setText("No questions found.");
+		} else if (results.size() == 1) {
+			statusLabel.setText("1 question found.");
+		} else {
+			statusLabel.setText(results.size() + " questions found.");
+		}
+	}
+
+	private void failSearch(Task<List<QuestionRetrievalResult>> task, long generation) {
+		if (generation != searchGeneration || task != activeSearchTask) {
+			return;
+		}
+		activeSearchTask = null;
+		Throwable failure = task.getException();
+		if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+			statusLabel.setText("Question search failed.");
+		} else {
+			statusLabel.setText("Question search failed: " + failure.getMessage());
+		}
+	}
+
+	private <T> void completeHierarchyLoad(Task<T> task, long generation, Consumer<T> onSucceeded) {
+		if (generation != hierarchyGeneration || task != activeHierarchyTask) {
+			return;
+		}
+		activeHierarchyTask = null;
+		statusLabel.setText("");
+		onSucceeded.accept(task.getValue());
+	}
+
+	private <T> void failHierarchyLoad(Task<T> task, long generation) {
+		if (generation != hierarchyGeneration || task != activeHierarchyTask) {
+			return;
+		}
+		activeHierarchyTask = null;
+		invalidateCurrentSearch();
+		Throwable failure = task.getException();
+		if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+			statusLabel.setText("Curriculum navigation failed.");
+		} else {
+			statusLabel.setText("Curriculum navigation failed: " + failure.getMessage());
+		}
+	}
+
+	private void completePreview(Task<Optional<BufferedImage>> task, long generation) {
+		if (generation != previewGeneration || task != activePreviewTask) {
+			return;
+		}
+		activePreviewTask = null;
+		Optional<BufferedImage> preview = task.getValue();
+		if (preview.isEmpty()) {
+			previewStatusLabel.setText("No stored question image.");
+			return;
+		}
+		Image image = SwingFXUtils.toFXImage(preview.get(), null);
+		previewImageView.setImage(image);
+		previewStatusLabel.setText("");
+	}
+
+	private void failPreview(Task<Optional<BufferedImage>> task, long generation) {
+		if (generation != previewGeneration || task != activePreviewTask) {
+			return;
+		}
+		activePreviewTask = null;
+		Throwable failure = task.getException();
+		if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+			previewStatusLabel.setText("Question preview unavailable.");
+		} else {
+			previewStatusLabel.setText("Question preview unavailable: " + failure.getMessage());
+		}
+	}
+
+	private void showDescriptors(CurriculumNode classification, List<CurriculumNode> children) {
+		updatingControls = true;
+		try {
+			descriptorBox.getItems().setAll(children);
+			descriptorBox.setDisable(children.isEmpty());
+		} finally {
+			updatingControls = false;
+		}
+		startAutomaticSearch(classification);
+	}
+
+	private void showSubjectNavigation(Subject subject, SubjectNavigation navigation) {
+		currentSyllabus = navigation.currentSyllabus();
+		if (currentSyllabus == null) {
+			statusLabel.setText("No current syllabus available.");
+			return;
+		}
+		syllabusValue.setText(currentSyllabus.getName());
+		updatingControls = true;
+		try {
+			unitBox.getItems().setAll(navigation.units());
+			unitBox.getSelectionModel().clearSelection();
+			unitBox.setValue(null);
+			unitBox.setDisable(navigation.units().isEmpty());
+		} finally {
+			updatingControls = false;
+		}
+		startAutomaticSearch(subject);
+	}
+
+	private void showClassifications(CurriculumNode topic, List<CurriculumNode> classifications) {
+		updatingControls = true;
+		try {
+			classificationBox.getItems().setAll(classifications);
+			classificationBox.setDisable(classifications.isEmpty());
+		} finally {
+			updatingControls = false;
+		}
+		startAutomaticSearch(topic);
+	}
+
+	private void showTopics(CurriculumNode unit, List<CurriculumNode> topics) {
+		updatingControls = true;
+		try {
+			topicBox.getItems().setAll(topics);
+			topicBox.setDisable(topics.isEmpty());
+		} finally {
+			updatingControls = false;
+		}
+		startAutomaticSearch(unit);
+	}
+
 }

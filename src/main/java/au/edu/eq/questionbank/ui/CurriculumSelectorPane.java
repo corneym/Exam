@@ -190,6 +190,12 @@ public class CurriculumSelectorPane extends VBox {
 		handleSubjectSelection();
 	}
 
+	/**
+	 * Locks subject and syllabus selection while allowing classification changes
+	 * within that syllabus during question editing.
+	 *
+	 * @param locked whether the syllabus context is fixed
+	 */
 	void setSyllabusContextLocked(boolean locked) {
 		subjectBox.setDisable(locked);
 		if (locked) {
@@ -324,11 +330,7 @@ public class CurriculumSelectorPane extends VBox {
 			return change;
 		}));
 		codeField.textProperty().addListener((observable, oldValue, newValue) -> handleCodeInput(newValue));
-		codeField.focusedProperty().addListener((observable, wasFocused, focused) -> {
-			if (!focused.booleanValue()) {
-				syncCodeFromSelection();
-			}
-		});
+		codeField.focusedProperty().addListener((observable, wasFocused, focused) -> handleCodeFocusChanged(focused));
 	}
 
 	private void configureControls() {
@@ -774,4 +776,11 @@ public class CurriculumSelectorPane extends VBox {
 
 	private record SelectionSnapshot(Subject subject, SyllabusVersion syllabus, CurriculumNode node) {
 	}
+
+	private void handleCodeFocusChanged(Boolean focused) {
+		if (!focused.booleanValue()) {
+			syncCodeFromSelection();
+		}
+	}
+
 }

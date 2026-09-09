@@ -31,6 +31,22 @@ class RevisionExportServiceTest {
 	Path tempDir;
 
 	@Test
+	void removesStagingWhenProgressConsumerFailsBeforePublication() throws Exception {
+		Fixture fixture = new Fixture(tempDir);
+		Path destination = tempDir.resolve("interrupted-export");
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> fixture.service.export(new RevisionExportRequest(fixture.chemistry, destination),
+						(message, completed, total) -> {
+							if (message.equals("Publishing export...")) {
+								throw new IllegalStateException("consumer failed");
+							}
+						}));
+		assertEquals("consumer failed", failure.getMessage());
+		assertFalse(Files.exists(destination));
+		assertFalse(hasStagingDirectory(destination));
+	}
+
+	@Test
 	void publishesValidatedExportOnlyAtFinalDestination() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
 		Path destination = tempDir.resolve("chemistry-revision");

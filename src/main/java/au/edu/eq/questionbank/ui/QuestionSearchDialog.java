@@ -74,10 +74,18 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		getDialogPane().setPrefHeight(700);
 	}
 
+	/**
+	 * Disposes the search pane and cancels its pending background work.
+	 */
 	void dispose() {
 		searchPane.dispose();
 	}
 
+	/**
+	 * Refreshes the active search after an edit.
+	 *
+	 * @param questionId the persistent question identifier to reselect if still present
+	 */
 	void refreshAfterEdit(long questionId) {
 		searchPane.refreshAfterEdit(questionId);
 	}

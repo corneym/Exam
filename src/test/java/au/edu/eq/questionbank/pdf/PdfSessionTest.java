@@ -19,6 +19,40 @@ class PdfSessionTest {
 	@TempDir
 	Path tempDir;
 
+	@Test
+	void rendersCropBoxAndRotationAtMultipleResolutions() throws Exception {
+		Path path = tempDir.resolve("rotated-crop.pdf");
+		try (PDDocument document = new PDDocument()) {
+			PDPage page = new PDPage(new PDRectangle(300, 400));
+			page.setCropBox(new PDRectangle(20, 30, 72, 144));
+			page.setRotation(90);
+			document.addPage(page);
+			document.save(path.toFile());
+		}
+		try (PdfSession session = PdfSession.open(path)) {
+			BufferedImage normal = session.renderPage(1, 72);
+			BufferedImage doubled = session.renderPage(1, 144);
+			assertAll(() -> assertEquals(144, normal.getWidth()),
+					() -> assertEquals(72, normal.getHeight()),
+					() -> assertEquals(288, doubled.getWidth()),
+					() -> assertEquals(144, doubled.getHeight()));
+		}
+	}
+
+	@Test
+	void selectsDistinctFirstAndLastPagesUsingOneBasedNumbers() throws Exception {
+		Path path = tempDir.resolve("different-pages.pdf");
+		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage(new PDRectangle(72, 144)));
+			document.addPage(new PDPage(new PDRectangle(216, 72)));
+			document.save(path.toFile());
+		}
+		try (PdfSession session = PdfSession.open(path)) {
+			assertEquals(72, session.renderPage(1, 72).getWidth());
+			assertEquals(216, session.renderPage(2, 72).getWidth());
+		}
+	}
+
 	private Path createPdf(int pageCount) throws Exception {
 		Path path = tempDir.resolve("session.pdf");
 		try (PDDocument document = new PDDocument()) {

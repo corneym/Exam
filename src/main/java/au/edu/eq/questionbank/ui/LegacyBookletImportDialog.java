@@ -56,11 +56,7 @@ final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 		getDialogPane().setContent(scrollPane);
 
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
-		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
-			if (!isValid()) {
-				event.consume();
-			}
-		});
+		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
 	}
 
 	private void choosePdf(Window owner, LegacyBookletRequirement requirement) {
@@ -148,4 +144,11 @@ final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 		}
 		return List.copyOf(requests);
 	}
+
+	private void validateImportAction(javafx.event.ActionEvent event) {
+		if (!isValid()) {
+			event.consume();
+		}
+	}
+
 }

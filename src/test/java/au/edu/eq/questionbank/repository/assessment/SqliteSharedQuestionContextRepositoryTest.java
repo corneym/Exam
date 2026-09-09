@@ -28,6 +28,27 @@ class SqliteSharedQuestionContextRepositoryTest {
 	Path tempDirectory;
 
 	@Test
+	void rollsBackEarlierRegionsWhenALaterRegionFails() throws Exception {
+		RepositoryFixture fixture = createFixture("later-region-rollback.db");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_second_context_region
+					BEFORE INSERT ON shared_question_context_regions
+					WHEN NEW.page_number = 2
+					BEGIN
+					    SELECT RAISE(ABORT, 'reject later region');
+					END
+					""");
+		}
+		assertThrows(IllegalStateException.class, () -> fixture.repository().save(fixture.firstBooklet(),
+				"Preamble", List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2),
+						new SharedQuestionContextRegion(2, 0.1, 0.1, 0.5, 0.2))));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_context_regions"));
+	}
+
+	@Test
 	void savesReloadsOrderedRegionsAndScopesByBooklet() throws Exception {
 		RepositoryFixture fixture = createFixture("shared-context.db");
 		SqliteSharedQuestionContextRepository repository = fixture.repository();

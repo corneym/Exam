@@ -224,6 +224,13 @@ public final class RevisionHtmlRenderer {
 	private final Map<Long, RevisionQuestionAsset> questionAssetsByQuestionId;
 	private final Map<Long, List<RevisionAnswerAsset>> answerAssetsByQuestionId;
 
+	/**
+	 * Indexes rendered assets for subsequent HTML generation.
+	 *
+	 * @param questionAssets rendered question images
+	 * @param answerAssets rendered answer-region images
+	 * @throws NullPointerException if either list is null
+	 */
 	public RevisionHtmlRenderer(List<RevisionQuestionAsset> questionAssets, List<RevisionAnswerAsset> answerAssets) {
 		if (questionAssets == null) {
 			throw new NullPointerException("questionAssets");
@@ -235,6 +242,14 @@ public final class RevisionHtmlRenderer {
 		answerAssetsByQuestionId = indexAnswerAssets(answerAssets);
 	}
 
+	/**
+	 * Writes the subject, unit and topic pages and shared stylesheet.
+	 *
+	 * @param corpus the current-curriculum revision corpus
+	 * @param outputRoot the destination for generated files
+	 * @return generated HTML paths in traversal order
+	 * @throws IOException if an output file cannot be written
+	 */
 	public List<Path> render(RevisionCorpus corpus, Path outputRoot) throws IOException {
 		if (corpus == null) {
 			throw new NullPointerException("corpus");

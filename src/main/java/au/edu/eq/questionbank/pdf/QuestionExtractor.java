@@ -46,7 +46,8 @@ public class QuestionExtractor {
 	}
 
 	/**
-	 * Opens a PDF, extracts all regions of a question, and writes a PNG image.
+	 * Opens a PDF, extracts the question's own ordered regions, and writes a PNG.
+	 * Linked shared-context regions are not included automatically.
 	 *
 	 * @param pdfPath    the PDF containing every question region in this call
 	 * @param question   the question whose ordered regions are extracted
@@ -61,8 +62,8 @@ public class QuestionExtractor {
 	}
 
 	/**
-	 * Extracts and combines all regions of a question using an existing session.
-	 * The session remains open.
+	 * Extracts and combines the question's own regions using an existing session.
+	 * Linked shared-context regions are not included. The session remains open.
 	 *
 	 * @param session  the PDF session containing every question region in this call
 	 * @param question the question to extract

@@ -66,6 +66,12 @@ public final class RevisionQuestionPlacement {
 		return revisionNumber > 0;
 	}
 
+	/**
+	 * Returns the historical legacy capture hint, independently of whether shared
+	 * context has subsequently been linked.
+	 *
+	 * @return whether legacy metadata requested preamble capture
+	 */
 	public boolean isPreambleCaptureRequired() {
 		return question.isPreambleCaptureRequired();
 	}

@@ -52,6 +52,45 @@ class SharedContextCapturePaneTest {
 	private AtomicInteger selectionClearCount;
 
 	@Test
+	void cancellingAcceptedAutomaticPreambleLeavesNothingToSave(FxRobot robot) {
+		robot.interact(() -> {
+			assertTrue(pane.beginAutomaticContext("Preamble", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2)));
+			assertTrue(pane.acceptAutomaticRegion());
+			assertTrue(pane.hasUnsavedContextCapture());
+			pane.cancelAutomaticContext();
+			assertFalse(pane.hasCurrentSelection());
+			assertFalse(pane.hasPendingAutomaticRegion());
+			assertFalse(pane.hasUnsavedContextCapture());
+			assertThrows(IllegalStateException.class, pane::saveAutomaticContext);
+		});
+		assertEquals(0, repository.saveCount());
+	}
+
+	@Test
+	void rejectsTransferredRegionFromAnotherBookletBeforeChangingCaptureState(FxRobot robot) {
+		ExamBooklet other = new ExamBooklet(2, booklet.getExam(), "Paper 2", new SourceDocument(2, "paper-2.pdf"));
+		robot.interact(() -> {
+			assertThrows(IllegalArgumentException.class, () -> pane.beginAutomaticContext("Preamble",
+					new QuestionRegion(other, 1, 0.1, 0.1, 0.5, 0.2)));
+			assertFalse(pane.isCaptureMode());
+			assertFalse(pane.hasUnsavedContextCapture());
+		});
+		assertEquals(0, selectionClearCount.get());
+		assertEquals(0, repository.saveCount());
+	}
+
+	@Test
+	void cannotPersistAnAutomaticSelectionBeforeItIsAccepted(FxRobot robot) {
+		robot.interact(() -> {
+			pane.beginAutomaticContext("Preamble", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2));
+			assertThrows(IllegalStateException.class, pane::saveAutomaticContext);
+			assertTrue(pane.hasCurrentSelection());
+			assertTrue(pane.isCaptureMode());
+		});
+		assertEquals(0, repository.saveCount());
+	}
+
+	@Test
 	void cancelDiscardsManualCaptureWithoutPersistence(FxRobot robot) {
 		robot.clickOn("#new-shared-context");
 		assertTrue(pane.isCaptureMode());

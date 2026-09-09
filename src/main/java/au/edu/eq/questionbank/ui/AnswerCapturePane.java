@@ -40,7 +40,8 @@ import javafx.util.StringConverter;
 
 /**
  * Owns unanswered-question selection, answer source and region state, textual
- * answers, validation, and the save-answer workflow.
+ * answers, validation, and creation or editing of persisted answers. All
+ * control and capture-state access belongs on the JavaFX application thread.
  */
 final class AnswerCapturePane extends VBox {
 
@@ -68,18 +69,7 @@ final class AnswerCapturePane extends VBox {
 					marksLabel(question.getMarks()), answerState);
 		}
 	};
-	private final Button addAnswerRegionButton = new Button("Add");
-	private final Button chooseAnswerPdfButton = new Button("Choose PDF...");
-	private final Button clearAnswerSelectionButton = new Button("Clear");
-	private final Button saveAnswerButton = new Button("Save");
-	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
-	private final Label answerRegionCountLabel = new Label("Regions: 0");
-	private final Label selectedAnswerPdfLabel = new Label("No PDF selected");
-	private final Label selectedAnswerQuestionLabel = new Label("No question selected");
-	private final TextField answerTextField = new TextField();
-	private final VBox answerRegionListBox = new VBox(COMPACT_SPACING);
-	private final ScrollPane answerRegionsScrollPane = new ScrollPane(answerRegionListBox);
-	private final ImageView answerPreviewView = new ImageView();
+	// Workflow dependencies and application callbacks.
 	private final QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor;
 	private final Supplier<PdfSession> answerPdfSessionSupplier;
@@ -87,14 +77,30 @@ final class AnswerCapturePane extends VBox {
 	private final Consumer<SelectedPdf> answerPdfHandler;
 	private final Runnable selectionClearHandler;
 	private final Runnable answerDocumentHandler;
-	private final List<AnswerRegion> pendingAnswerRegions = new ArrayList<>();
 	private final SqliteAnswerWriter answerWriter;
 	private final BooleanSupplier answerTransitionAllowed;
+	// Question and answer source selection.
+	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
+	private final Label selectedAnswerQuestionLabel = new Label("No question selected");
+	private final Button chooseAnswerPdfButton = new Button("Choose PDF...");
+	private final Label selectedAnswerPdfLabel = new Label("No PDF selected");
+	// Answer content and region controls.
+	private final TextField answerTextField = new TextField();
+	private final Button addAnswerRegionButton = new Button("Add");
+	private final Button clearAnswerSelectionButton = new Button("Clear");
+	private final Label answerRegionCountLabel = new Label("Regions: 0");
+	private final Label answerRegionStatusLabel = new Label();
+	private final VBox answerRegionListBox = new VBox(COMPACT_SPACING);
+	private final ScrollPane answerRegionsScrollPane = new ScrollPane(answerRegionListBox);
+	private final ImageView answerPreviewView = new ImageView();
+	// Save and edit controls.
+	private final Button saveAnswerButton = new Button("Save");
+	private final Button cancelAnswerEditButton = new Button("Cancel");
+	// Transient capture and edit state.
+	private final List<AnswerRegion> pendingAnswerRegions = new ArrayList<>();
 	private AnswerFile answerFile;
 	private AnswerRegion currentAnswerSelection;
 	private boolean restoringUnansweredQuestionSelection;
-	private final Label answerRegionStatusLabel = new Label();
-	private final Button cancelAnswerEditButton = new Button("Cancel");
 	private Question editingAnswerQuestion;
 	private Runnable answerEditCompletedHandler = () -> {
 	};
@@ -183,6 +189,16 @@ final class AnswerCapturePane extends VBox {
 		setSelectionActionsEnabled(false);
 	}
 
+	/**
+	 * Loads a persisted answer for editing after the transition guard succeeds. The
+	 * selected question remains locked until the edit ends.
+	 *
+	 * @param question             the question with an existing answer
+	 * @param editCompletedHandler callback when editing finishes or is cancelled
+	 * @return whether the edit was started
+	 * @throws IllegalArgumentException if the question has no answer
+	 * @throws NullPointerException     if either argument is null
+	 */
 	boolean editAnswer(Question question, Runnable editCompletedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -213,10 +229,18 @@ final class AnswerCapturePane extends VBox {
 		return true;
 	}
 
+	/**
+	 * @return whether accepted answer regions are loaded in the current capture or
+	 *         edit
+	 */
 	boolean hasAcceptedRegions() {
 		return !pendingAnswerRegions.isEmpty();
 	}
 
+	/**
+	 * @return whether an answer PDF has been selected or restored for the current
+	 *         question
+	 */
 	boolean hasAnswerFile() {
 		return answerFile != null;
 	}
@@ -279,6 +303,15 @@ final class AnswerCapturePane extends VBox {
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
 		showAcceptedRegionStatus();
+	}
+
+	private void applyRestoredQuestionSelection(Question previousQuestion) {
+		restoringUnansweredQuestionSelection = true;
+		try {
+			unansweredQuestionField.setValue(previousQuestion);
+		} finally {
+			restoringUnansweredQuestionSelection = false;
+		}
 	}
 
 	private void applyUnansweredQuestionChange(Question question) {
@@ -590,14 +623,7 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void restoreUnansweredQuestionSelection(Question previousQuestion) {
-		Platform.runLater(() -> {
-			restoringUnansweredQuestionSelection = true;
-			try {
-				unansweredQuestionField.setValue(previousQuestion);
-			} finally {
-				restoringUnansweredQuestionSelection = false;
-			}
-		});
+		Platform.runLater(() -> applyRestoredQuestionSelection(previousQuestion));
 	}
 
 	private boolean sameQuestion(Question first, Question second) {

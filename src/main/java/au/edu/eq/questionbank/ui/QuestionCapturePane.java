@@ -43,48 +43,27 @@ import javafx.util.StringConverter;
 
 /**
  * Owns the question-capture controls, pending regions, previews, validation,
- * and save workflow.
+ * and save workflow for new, imported and edited questions.
+ * Shared preambles are captured separately from ordinary question regions.
+ * All control and capture-state access belongs on the JavaFX application thread.
  */
 final class QuestionCapturePane extends VBox {
 
 	private static final double COMPACT_SPACING = 4.0;
-	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
-	private static final double CURRENT_SELECTION_SPACING = 6.0;
 	private static final double CONTROL_SPACING = 8.0;
+	private static final double CURRENT_SELECTION_SPACING = 6.0;
+	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
 	private static final double SECTION_SPACING = 10.0;
-	private static final double QUESTION_CODE_FIELD_WIDTH = 100.0;
-	private static final double REGION_PREVIEW_WIDTH = 290.0;
-	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
 	private static final double MARKS_FIELD_WIDTH = 60.0;
-	private static final Insets PANEL_PADDING = new Insets(8);
+	private static final double QUESTION_CODE_FIELD_WIDTH = 100.0;
+	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
+	private static final double REGION_PREVIEW_WIDTH = 290.0;
 	private static final Insets COMPACT_BUTTON_PADDING = new Insets(2, 8, 2, 8);
+	private static final Insets PANEL_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
 	private static final String SUCCESS_STATUS_STYLE = "-fx-text-fill: #2e7d32;";
-	private final Button addRegionButton = new Button("Add Region");
-	private final Button clearRegionsButton = new Button("Clear Regions");
-	private final Button removeCurrentSelectionButton = new Button("Clear");
-	private final Button saveQuestionButton = new Button("Save");
-	private final Label regionCountLabel = new Label("Regions: 0");
-	private final Label saveStatusLabel = new Label();
-	private final TextField questionCodeField = new TextField();
-	private final TextField marksField = new TextField();
-	private final VBox regionPreviewBox = new VBox(SECTION_SPACING);
-	private final ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
-	private final Label importedClassificationLabel = new Label();
-	private final ComboBox<Question> importedQuestionBox = new ComboBox<>();
-	private final Label captureHintLabel = new Label();
-	private final ToggleButton newQuestionsModeButton = new ToggleButton("New Questions");
-	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Imported Questions");
-	private final ToggleGroup captureModeGroup = new ToggleGroup();
-	private final VBox legacyCaptureBox = new VBox(COMPACT_SPACING);
-	private final CheckBox firstRegionPreambleCheckBox = new CheckBox("First region is shared preamble");
-	private final Label preambleStatusLabel = new Label();
-	private final VBox preambleControlsBox = new VBox(COMPACT_SPACING);
-	private boolean refreshingPreambleControls;
-	private Question importedQuestion;
-	private boolean refreshingImportedQuestions;
-	private boolean importedCaptureMode;
+	// Workflow dependencies and application callbacks.
 	private final QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor;
 	private final CurriculumSelectionModel curriculumSelectionModel;
@@ -97,12 +76,46 @@ final class QuestionCapturePane extends VBox {
 	private final BooleanSupplier questionTargetChangeAllowed;
 	private final BooleanSupplier questionSelectionTransferHandler;
 	private final SharedContextCapturePane sharedContextCapturePane;
+	private final SourceQuestionRepository sourceQuestionRepository;
+
+	// Capture mode and imported-question selection.
+	private final ToggleButton newQuestionsModeButton = new ToggleButton("New Questions");
+	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Imported Questions");
+	private final ToggleGroup captureModeGroup = new ToggleGroup();
+	private final ComboBox<Question> importedQuestionBox = new ComboBox<>();
+	private final Label importedClassificationLabel = new Label();
+	private final Label captureHintLabel = new Label();
+	private final VBox legacyCaptureBox = new VBox(COMPACT_SPACING);
+
+	// Question metadata and shared preamble controls.
+	private final TextField questionCodeField = new TextField();
+	private final TextField marksField = new TextField();
+	private final CheckBox firstRegionPreambleCheckBox = new CheckBox("First region is shared preamble");
+	private final Label preambleStatusLabel = new Label();
+	private final VBox preambleControlsBox = new VBox(COMPACT_SPACING);
+
+	// Pending and accepted region controls.
+	private final Button addRegionButton = new Button("Add Region");
+	private final Button removeCurrentSelectionButton = new Button("Clear");
+	private final Button clearRegionsButton = new Button("Clear Regions");
+	private final Label regionCountLabel = new Label("Regions: 0");
+	private final VBox regionPreviewBox = new VBox(SECTION_SPACING);
+	private final ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
+
+	// Save and edit controls.
+	private final Button saveQuestionButton = new Button("Save");
+	private final Button cancelQuestionEditButton = new Button("Cancel");
+	private final Label saveStatusLabel = new Label();
+
+	// Transient capture and edit state.
+	private boolean refreshingPreambleControls;
+	private Question importedQuestion;
+	private boolean refreshingImportedQuestions;
+	private boolean importedCaptureMode;
 	private QuestionRegion currentSelection;
 	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
-	private final SourceQuestionRepository sourceQuestionRepository;
 	private Question editingQuestion;
 	private boolean loadingQuestionEdit;
-	private final Button cancelQuestionEditButton = new Button("Cancel");
 	private Runnable questionEditCompletedHandler = () -> {
 	};
 
@@ -217,11 +230,25 @@ final class QuestionCapturePane extends VBox {
 		refreshSaveButtonState();
 	}
 
+	/**
+	 * Attempts to edit a question without a completion callback.
+	 *
+	 * @param question the persisted question to load
+	 */
 	void editQuestion(Question question) {
 		editQuestion(question, () -> {
 		});
 	}
 
+	/**
+	 * Loads a question and its ordered regions for editing after capture-transition
+	 * guards and booklet activation succeed. The existing syllabus is locked.
+	 *
+	 * @param question the persisted question to load
+	 * @param editCompletedHandler callback when the edit is saved or cancelled
+	 * @return whether the edit was started
+	 * @throws NullPointerException if either argument is null
+	 */
 	boolean editQuestion(Question question, Runnable editCompletedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -251,17 +278,7 @@ final class QuestionCapturePane extends VBox {
 		editingQuestion = question;
 		questionEditCompletedHandler = editCompletedHandler;
 		sharedContextCapturePane.refreshForCurrentBooklet();
-		loadingQuestionEdit = true;
-		try {
-			questionCodeField.setText(question.getQuestionCode());
-			marksField.setText(Integer.toString(question.getMarks()));
-			curriculumSelectorPane.selectClassificationPath(question.getClassification());
-			if (question.hasSharedContext()) {
-				sharedContextCapturePane.selectContext(question.getSharedContext());
-			}
-		} finally {
-			loadingQuestionEdit = false;
-		}
+		loadQuestionEditFields(question);
 		pendingRegions.addAll(question.getRegions());
 		refreshRegionPreviews();
 		setRegionCountLabel(pendingRegions.size());
@@ -330,6 +347,10 @@ final class QuestionCapturePane extends VBox {
 		}
 	}
 
+	/**
+	 * Attempts to switch to imported-question capture, subject to the pending-state
+	 * guards. A rejected transition restores the previous mode toggle.
+	 */
 	void showImportedQuestionCapture() {
 		if ((!importedCaptureMode || editingQuestion != null) && !captureModeChangeAllowed()) {
 			restoreCaptureModeToggle();
@@ -365,6 +386,10 @@ final class QuestionCapturePane extends VBox {
 		showImportedQuestionCapture();
 	}
 
+	/**
+	 * Attempts to switch to new-question capture, subject to pending-state guards.
+	 * Accepted state is cleared only after the transition is allowed.
+	 */
 	void showNewQuestionCapture() {
 		if (!importedCaptureMode && editingQuestion == null) {
 			selectCaptureModeToggle(false);
@@ -531,13 +556,7 @@ final class QuestionCapturePane extends VBox {
 		clearRegionsButton.setOnAction(event -> clearQuestionRegions());
 		removeCurrentSelectionButton.setOnAction(event -> clearPendingSelection());
 		saveQuestionButton.setOnAction(event -> validateQuestionForSave());
-		questionCodeField.textProperty().addListener((observable, oldCode, newCode) -> {
-			if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
-				sharedContextCapturePane.selectContext(null);
-			}
-			refreshPreambleControls();
-			refreshSaveButtonState();
-		});
+		questionCodeField.textProperty().addListener((observable, oldCode, newCode) -> handleQuestionCodeChanged(newCode));
 		marksField.textProperty().addListener((observable, oldMarks, newMarks) -> refreshSaveButtonState());
 		curriculumSelectorPane.selectedClassificationProperty()
 				.addListener((observable, oldValue, newValue) -> refreshSaveButtonState());
@@ -1383,4 +1402,27 @@ final class QuestionCapturePane extends VBox {
 					"The question was not saved. Your current question details and accepted regions have been retained.");
 		}
 	}
+
+	private void handleQuestionCodeChanged(String newCode) {
+		if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
+			sharedContextCapturePane.selectContext(null);
+		}
+		refreshPreambleControls();
+		refreshSaveButtonState();
+	}
+
+	private void loadQuestionEditFields(Question question) {
+		loadingQuestionEdit = true;
+		try {
+			questionCodeField.setText(question.getQuestionCode());
+			marksField.setText(Integer.toString(question.getMarks()));
+			curriculumSelectorPane.selectClassificationPath(question.getClassification());
+			if (question.hasSharedContext()) {
+				sharedContextCapturePane.selectContext(question.getSharedContext());
+			}
+		} finally {
+			loadingQuestionEdit = false;
+		}
+	}
+
 }

@@ -22,14 +22,18 @@ package au.edu.eq.questionbank.model;
  *                   {@code x + width <= 1.0}
  * @param height     the normalized height in the range {@code (0.0, 1.0]}, with
  *                   {@code y + height <= 1.0}
- * @throws NullPointerException     if {@code booklet} is {@code null}
- * @throws IllegalArgumentException if the page number is less than one, a
- *                                  coordinate or dimension is not finite, or the
- *                                  region lies outside the normalized page
- *                                  bounds
  */
 public record QuestionRegion(ExamBooklet booklet, int pageNumber, double x, double y, double width, double height) {
 
+	/**
+	 * Creates and validates this value.
+	 *
+	 * @throws NullPointerException     if {@code booklet} is {@code null}
+	 * @throws IllegalArgumentException if the page number is less than one, a
+	 *                                  coordinate or dimension is not finite, or the
+	 *                                  region lies outside the normalized page
+	 *                                  bounds
+	 */
 	public QuestionRegion {
 		if (booklet == null) {
 			throw new NullPointerException("booklet");

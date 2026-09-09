@@ -36,7 +36,8 @@ public final class QuestionPreviewService {
 	}
 
 	/**
-	 * Loads the stored image for a question.
+	 * Reconstructs an image from the question's stored source regions.
+	 * Linked shared-context regions are not included in this preview.
 	 *
 	 * @param question question to preview
 	 * @return the reconstructed image, or empty when the question has no stored

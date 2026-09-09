@@ -68,11 +68,7 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		getDialogPane().setContent(grid);
 
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
-		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
-			if (!isValid()) {
-				event.consume();
-			}
-		});
+		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
 	}
 
 	/**
@@ -153,4 +149,11 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		}
 		return true;
 	}
+
+	private void validateImportAction(javafx.event.ActionEvent event) {
+		if (!isValid()) {
+			event.consume();
+		}
+	}
+
 }

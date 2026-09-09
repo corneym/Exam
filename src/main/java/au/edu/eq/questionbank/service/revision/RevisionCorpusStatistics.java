@@ -48,6 +48,12 @@ public final class RevisionCorpusStatistics {
 		return missingQuestionRegionQuestions;
 	}
 
+	/**
+	 * Counts unique questions carrying the historical legacy preamble hint.
+	 * This count does not subtract questions whose shared context is now linked.
+	 *
+	 * @return the number of questions with legacy preamble evidence
+	 */
 	public int getPreambleReviewQuestions() {
 		return preambleReviewQuestions;
 	}

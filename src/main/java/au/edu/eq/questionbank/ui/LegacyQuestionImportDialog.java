@@ -93,11 +93,7 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 
 	private void wireValidation(ButtonType importButtonType) {
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
-		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
-			if (!isValid()) {
-				event.consume();
-			}
-		});
+		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
 	}
 
 	/**
@@ -188,4 +184,11 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		alert.setContentText(message);
 		alert.showAndWait();
 	}
+
+	private void validateImportAction(javafx.event.ActionEvent event) {
+		if (!isValid()) {
+			event.consume();
+		}
+	}
+
 }

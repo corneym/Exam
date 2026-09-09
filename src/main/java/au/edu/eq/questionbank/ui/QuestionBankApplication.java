@@ -340,10 +340,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
-		primaryStage.setOnCloseRequest(event -> {
-			event.consume();
-			requestApplicationExit(primaryStage);
-		});
+		primaryStage.setOnCloseRequest(event -> handleCloseRequest(event, primaryStage));
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
 	}
@@ -414,9 +411,7 @@ public class QuestionBankApplication extends Application {
 
 	private CurriculumSelectorPane createCurriculumSelectorPane() {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
-		selectorPane.selectedSubjectProperty().addListener((observable, oldSubject, newSubject) -> {
-			examMetadataPane.invalidateForSubjectChange(newSubject);
-		});
+		selectorPane.selectedSubjectProperty().addListener((observable, oldSubject, newSubject) -> handleSubjectChanged(newSubject));
 		return selectorPane;
 	}
 
@@ -1012,19 +1007,13 @@ public class QuestionBankApplication extends Application {
 		QuestionSearchDialog.EditRequest request = result.get();
 		Question question = request.question();
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
-			boolean editingStarted = questionCapturePane.editQuestion(question, () -> {
-				dialog.refreshAfterEdit(question.getId());
-				showQuestionSearchDialog(dialog);
-			});
+			boolean editingStarted = questionCapturePane.editQuestion(question, () -> resumeSearchAfterEdit(dialog, question.getId()));
 			if (!editingStarted) {
 				showQuestionSearchDialog(dialog);
 			}
 			return;
 		}
-		boolean editingStarted = answerCapturePane.editAnswer(question, () -> {
-			dialog.refreshAfterEdit(question.getId());
-			showQuestionSearchDialog(dialog);
-		});
+		boolean editingStarted = answerCapturePane.editAnswer(question, () -> resumeSearchAfterEdit(dialog, question.getId()));
 		if (!editingStarted) {
 			showQuestionSearchDialog(dialog);
 		}
@@ -1196,32 +1185,10 @@ public class QuestionBankApplication extends Application {
 				});
 			}
 		};
-		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
-		progressAlert.initOwner(primaryStage);
-		progressAlert.setTitle("Export Revision HTML");
-		progressAlert.setHeaderText("Creating revision website...");
-		Label progressLabel = new Label("Starting export...");
-		progressLabel.setWrapText(true);
-		progressLabel.textProperty().bind(task.messageProperty());
-		ProgressBar progressBar = new ProgressBar();
-		progressBar.setPrefWidth(360);
-		progressBar.progressProperty().bind(task.progressProperty());
-		VBox progressContent = new VBox(10, progressLabel, progressBar);
-		progressAlert.getDialogPane().setContent(progressContent);
-		progressAlert.getDialogPane().setGraphic(null);
-		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
-		progressAlert.getButtonTypes().setAll(hideButton);
-		task.setOnSucceeded(event -> {
-			finishRevisionExport();
-			progressAlert.close();
-			showRevisionExportSuccess(task.getValue());
-		});
-		task.setOnFailed(event -> {
-			finishRevisionExport();
-			progressAlert.close();
-			showAlert(Alert.AlertType.ERROR, "Export Revision HTML", "The revision export could not be completed.",
-					failureMessage(task.getException()));
-		});
+		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision HTML",
+				"Creating revision website...", "Starting export...");
+		task.setOnSucceeded(event -> completeRevisionExport(task, progressAlert));
+		task.setOnFailed(event -> failRevisionExport(task, progressAlert));
 		progressAlert.show();
 		Thread thread = new Thread(task, "revision-html-export");
 		thread.setDaemon(true);
@@ -1254,32 +1221,10 @@ public class QuestionBankApplication extends Application {
 				});
 			}
 		};
-		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
-		progressAlert.initOwner(primaryStage);
-		progressAlert.setTitle("Export Revision SCORM");
-		progressAlert.setHeaderText("Creating SCORM package...");
-		Label progressLabel = new Label("Starting SCORM export...");
-		progressLabel.setWrapText(true);
-		progressLabel.textProperty().bind(task.messageProperty());
-		ProgressBar progressBar = new ProgressBar();
-		progressBar.setPrefWidth(360);
-		progressBar.progressProperty().bind(task.progressProperty());
-		VBox progressContent = new VBox(10, progressLabel, progressBar);
-		progressAlert.getDialogPane().setContent(progressContent);
-		progressAlert.getDialogPane().setGraphic(null);
-		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
-		progressAlert.getButtonTypes().setAll(hideButton);
-		task.setOnSucceeded(event -> {
-			finishScormExport();
-			progressAlert.close();
-			showScormExportSuccess(task.getValue());
-		});
-		task.setOnFailed(event -> {
-			finishScormExport();
-			progressAlert.close();
-			showAlert(Alert.AlertType.ERROR, "Export Revision SCORM", "The SCORM export could not be completed.",
-					failureMessage(task.getException()));
-		});
+		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision SCORM",
+				"Creating SCORM package...", "Starting SCORM export...");
+		task.setOnSucceeded(event -> completeScormExport(task, progressAlert));
+		task.setOnFailed(event -> failScormExport(task, progressAlert));
 		progressAlert.show();
 		Thread thread = new Thread(task, "revision-scorm-export");
 		thread.setDaemon(true);
@@ -1297,4 +1242,65 @@ public class QuestionBankApplication extends Application {
 	private enum BackupFailureDecision {
 		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
+
+	private void handleCloseRequest(javafx.stage.WindowEvent event, Stage primaryStage) {
+		event.consume();
+		requestApplicationExit(primaryStage);
+	}
+
+	private void handleSubjectChanged(Subject newSubject) {
+		examMetadataPane.invalidateForSubjectChange(newSubject);
+	}
+
+	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
+		finishRevisionExport();
+		progressAlert.close();
+		showRevisionExportSuccess(task.getValue());
+	}
+
+	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
+		finishRevisionExport();
+		progressAlert.close();
+		showAlert(Alert.AlertType.ERROR, "Export Revision HTML", "The revision export could not be completed.",
+				failureMessage(task.getException()));
+	}
+
+	private void completeScormExport(Task<ScormExportResult> task, Alert progressAlert) {
+		finishScormExport();
+		progressAlert.close();
+		showScormExportSuccess(task.getValue());
+	}
+
+	private void failScormExport(Task<ScormExportResult> task, Alert progressAlert) {
+		finishScormExport();
+		progressAlert.close();
+		showAlert(Alert.AlertType.ERROR, "Export Revision SCORM", "The SCORM export could not be completed.",
+				failureMessage(task.getException()));
+	}
+
+	private Alert createExportProgressAlert(Stage primaryStage, Task<?> task, String title, String header,
+			String initialMessage) {
+		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
+		progressAlert.initOwner(primaryStage);
+		progressAlert.setTitle(title);
+		progressAlert.setHeaderText(header);
+		Label progressLabel = new Label(initialMessage);
+		progressLabel.setWrapText(true);
+		progressLabel.textProperty().bind(task.messageProperty());
+		ProgressBar progressBar = new ProgressBar();
+		progressBar.setPrefWidth(360);
+		progressBar.progressProperty().bind(task.progressProperty());
+		VBox progressContent = new VBox(10, progressLabel, progressBar);
+		progressAlert.getDialogPane().setContent(progressContent);
+		progressAlert.getDialogPane().setGraphic(null);
+		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
+		progressAlert.getButtonTypes().setAll(hideButton);
+		return progressAlert;
+	}
+
+	private void resumeSearchAfterEdit(QuestionSearchDialog dialog, long questionId) {
+		dialog.refreshAfterEdit(questionId);
+		showQuestionSearchDialog(dialog);
+	}
+
 }

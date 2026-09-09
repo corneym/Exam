@@ -252,22 +252,10 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 
 	private void configureReviewControls() {
 		noMatchCheckBox.setDisable(true);
-		noMatchCheckBox.setOnAction(event -> {
-			if (noMatchCheckBox.isSelected()) {
-				selectedTargetIds.clear();
-				suggestionsList.refresh();
-			}
-			updateReviewStatus();
-		});
+		noMatchCheckBox.setOnAction(event -> handleNoMatchSelection());
 		showReviewedCheckBox.setOnAction(event -> loadSourceDescriptors());
 		editReviewButton.setDisable(true);
-		editReviewButton.setOnAction(event -> {
-			if (editingReview) {
-				cancelEdit();
-			} else {
-				beginEditReview();
-			}
-		});
+		editReviewButton.setOnAction(event -> toggleReviewEditing());
 		sourceNodeHeading.setPadding(new Insets(4, 0, 0, 0));
 		GridPane.setValignment(sourceNodeHeading, VPos.TOP);
 		subtopicEvidenceLabel.setId("curriculum-mapping-subtopic-evidence");
@@ -839,24 +827,47 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private void wireListeners(ButtonType confirmButtonType) {
 		confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);
 		confirmButton.setDisable(true);
-		confirmButton.addEventFilter(ActionEvent.ACTION, event -> {
-			event.consume();
-			confirmReview();
-		});
+		confirmButton.addEventFilter(ActionEvent.ACTION, event -> handleConfirmReview(event));
 		subjectBox.valueProperty().addListener((observable, oldSubject, newSubject) -> loadVersions(newSubject));
 		sourceVersionBox.valueProperty().addListener((observable, oldVersion, newVersion) -> loadSourceDescriptors());
 		targetVersionBox.valueProperty().addListener((observable, oldVersion, newVersion) -> loadSourceDescriptors());
-		sourceDescriptorBox.valueProperty().addListener((observable, oldDescriptor, newDescriptor) -> {
-			resetEditMode();
-			clearReviewSelection();
-			updateSourceDescriptorText(newDescriptor);
-			updateSelectedDescriptor();
-		});
-		reviewLevelBox.valueProperty().addListener((observable, oldLevel, newLevel) -> {
-			resetEditMode();
-			clearReviewSelection();
-			updateLevelLabels();
-			loadSourceDescriptors();
-		});
+		sourceDescriptorBox.valueProperty().addListener((observable, oldDescriptor, newDescriptor) -> handleSourceDescriptorChanged(newDescriptor));
+		reviewLevelBox.valueProperty().addListener((observable, oldLevel, newLevel) -> handleReviewLevelChanged());
 	}
+
+	private void handleNoMatchSelection() {
+		if (noMatchCheckBox.isSelected()) {
+			selectedTargetIds.clear();
+			suggestionsList.refresh();
+		}
+		updateReviewStatus();
+	}
+
+	private void toggleReviewEditing() {
+		if (editingReview) {
+			cancelEdit();
+		} else {
+			beginEditReview();
+		}
+	}
+
+	private void handleConfirmReview(ActionEvent event) {
+		event.consume();
+		confirmReview();
+	}
+
+	private void handleSourceDescriptorChanged(CurriculumNode newDescriptor) {
+		resetEditMode();
+		clearReviewSelection();
+		updateSourceDescriptorText(newDescriptor);
+		updateSelectedDescriptor();
+	}
+
+	private void handleReviewLevelChanged() {
+		resetEditMode();
+		clearReviewSelection();
+		updateLevelLabels();
+		loadSourceDescriptors();
+	}
+
 }

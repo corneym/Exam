@@ -36,6 +36,16 @@ public final class SqliteQuestionWriter {
 		this.database = database;
 	}
 
+	/**
+	 * Atomically links the context to all stored parts of a source question.
+	 * Conflicting existing contexts are rejected before any rows are changed.
+	 *
+	 * @param sourceQuestion the persisted source identity
+	 * @param sharedContext the persisted context in the same booklet
+	 * @return the number of rows updated
+	 * @throws SQLException if persistence fails
+	 * @throws IllegalArgumentException if relationships are invalid or conflicting
+	 */
 	public int applySharedContextToSourceQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
 			throws SQLException {
 		if (sourceQuestion == null) {
@@ -84,11 +94,31 @@ public final class SqliteQuestionWriter {
 		attachRegionsInternal(questionId, regions, null, null, null, false);
 	}
 
+	/**
+	 * Atomically captures an empty question and replaces its classification and links.
+	 * The classification must stay in the original syllabus.
+	 *
+	 * @param questionId the persisted question identifier
+	 * @param regions nonempty regions in assembly order
+	 * @param classification replacement classification, or null to retain it
+	 * @param sourceQuestion source identity, or null to clear it
+	 * @param sharedContext context, or null to clear it
+	 * @throws SQLException if persistence fails
+	 */
 	public void attachRegions(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
 		attachRegionsInternal(questionId, regions, classification, sourceQuestion, sharedContext, true);
 	}
 
+	/**
+	 * Atomically attaches regions and replaces links while retaining classification.
+	 *
+	 * @param questionId the persisted question identifier
+	 * @param regions nonempty regions in assembly order
+	 * @param sourceQuestion source identity, or null to clear it
+	 * @param sharedContext context, or null to clear it
+	 * @throws SQLException if persistence fails
+	 */
 	public void attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
 		attachRegionsInternal(questionId, regions, null, sourceQuestion, sharedContext, true);
@@ -183,6 +213,17 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
+	/**
+	 * Atomically replaces capture links and classification, preserving stored regions.
+	 * The question must belong to the booklet and retain its existing syllabus.
+	 *
+	 * @param questionId the persisted question identifier
+	 * @param booklet the existing source booklet
+	 * @param classification replacement subtopic or descriptor
+	 * @param sourceQuestion source identity, or null to clear it
+	 * @param sharedContext context, or null to clear it
+	 * @throws SQLException if persistence fails
+	 */
 	public void updateCaptureRelationships(long questionId, ExamBooklet booklet, CurriculumNode classification,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
 		if (questionId < 1) {
@@ -218,6 +259,21 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
+	/**
+	 * Atomically replaces editable metadata and ordered regions, retaining the
+	 * question identity, booklet, text, legacy evidence and answer. A failed region
+	 * insert rolls back both the metadata update and deletion of old regions.
+	 *
+	 * @param questionId the persisted question identifier
+	 * @param booklet the existing source booklet
+	 * @param questionCode replacement non-blank code
+	 * @param marks replacement positive marks
+	 * @param regions nonempty replacement regions in assembly order
+	 * @param classification replacement classification in the existing syllabus
+	 * @param sourceQuestion source identity, or null to clear it
+	 * @param sharedContext context, or null to clear it
+	 * @throws SQLException if persistence fails
+	 */
 	public void updateQuestion(long questionId, ExamBooklet booklet, String questionCode, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
