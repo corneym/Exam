@@ -69,18 +69,6 @@ public class CurriculumSelectorPane extends VBox {
 		refreshSubjects();
 	}
 
-	private void buildContent() {
-		Label classificationLabel = new Label("CLASSIFICATION");
-		classificationLabel.setStyle(HEADING_STYLE);
-		getChildren().addAll(classificationLabel, createGrid());
-	}
-
-	private void configurePane() {
-		setSpacing(ROW_GAP);
-		setPadding(PANEL_PADDING);
-		setStyle(BORDER_STYLE);
-	}
-
 	/**
 	 * Indicates whether a valid final classification is currently selected.
 	 *
@@ -120,39 +108,6 @@ public class CurriculumSelectorPane extends VBox {
 			refreshingSubjects = false;
 		}
 		syncCodeFromSelection();
-	}
-
-	private SelectionSnapshot captureSelection() {
-		return new SelectionSnapshot(subjectBox.getValue(), syllabusBox.getValue(), deepestSelectedNode());
-	}
-
-	private void reloadSubjectAndSyllabus(SelectionSnapshot selection) {
-		subjectBox.getItems().setAll(model.getSubjects());
-		selectAvailableValue(subjectBox, selection.subject());
-		model.selectSubject(subjectBox.getValue());
-		syllabusBox.getItems().setAll(model.getSyllabusVersions());
-		selectAvailableValue(syllabusBox, selection.syllabus());
-		model.selectSyllabusVersion(syllabusBox.getValue());
-		syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
-	}
-
-	private void resetHierarchyChoices() {
-		unitBox.getItems().setAll(model.getUnits());
-		unitBox.setDisable(model.getSyllabusVersion() == null);
-		topicBox.getItems().clear();
-		topicBox.setDisable(true);
-		hideSubtopicRow();
-		hideDescriptorRow();
-	}
-
-	private void restoreNodeSelection(CurriculumNode selectedNode) {
-		if (selectedNode == null || model.getSyllabusVersion() == null) {
-			return;
-		}
-		CurriculumNode available = model.findByCode(selectedNode.getCode());
-		if (available != null && available.equals(selectedNode)) {
-			applyNodePath(available);
-		}
 	}
 
 	/**
@@ -235,20 +190,13 @@ public class CurriculumSelectorPane extends VBox {
 		handleSubjectSelection();
 	}
 
-	private void applyNodePath(CurriculumNode node) {
-		ClassificationPath path = classificationPath(node);
-		applyUnitAndTopic(path);
-		applyFinalClassification(path);
-	}
-
-	private void applyUnitAndTopic(ClassificationPath path) {
-		selectAvailableValue(unitBox, path.unit());
-		model.selectUnit(unitBox.getValue());
-		unitBox.setDisable(model.getSyllabusVersion() == null);
-		topicBox.getItems().setAll(model.getTopics());
-		selectAvailableValue(topicBox, path.topic());
-		model.selectTopic(topicBox.getValue());
-		topicBox.setDisable(model.getUnit() == null);
+	void setSyllabusContextLocked(boolean locked) {
+		subjectBox.setDisable(locked);
+		if (locked) {
+			syllabusBox.setDisable(true);
+			return;
+		}
+		syllabusBox.setDisable(subjectBox.getValue() == null || syllabusBox.getItems().isEmpty());
 	}
 
 	private void applyFinalClassification(ClassificationPath path) {
@@ -273,6 +221,32 @@ public class CurriculumSelectorPane extends VBox {
 			}
 			model.selectDescriptor(descriptorBox.getValue());
 		}
+	}
+
+	private void applyNodePath(CurriculumNode node) {
+		ClassificationPath path = classificationPath(node);
+		applyUnitAndTopic(path);
+		applyFinalClassification(path);
+	}
+
+	private void applyUnitAndTopic(ClassificationPath path) {
+		selectAvailableValue(unitBox, path.unit());
+		model.selectUnit(unitBox.getValue());
+		unitBox.setDisable(model.getSyllabusVersion() == null);
+		topicBox.getItems().setAll(model.getTopics());
+		selectAvailableValue(topicBox, path.topic());
+		model.selectTopic(topicBox.getValue());
+		topicBox.setDisable(model.getUnit() == null);
+	}
+
+	private void buildContent() {
+		Label classificationLabel = new Label("CLASSIFICATION");
+		classificationLabel.setStyle(HEADING_STYLE);
+		getChildren().addAll(classificationLabel, createGrid());
+	}
+
+	private SelectionSnapshot captureSelection() {
+		return new SelectionSnapshot(subjectBox.getValue(), syllabusBox.getValue(), deepestSelectedNode());
 	}
 
 	private ClassificationPath classificationPath(CurriculumNode node) {
@@ -323,6 +297,21 @@ public class CurriculumSelectorPane extends VBox {
 		topicBox.setDisable(true);
 	}
 
+	private void clearSubjectDependentChoices() {
+		syllabusBox.getSelectionModel().clearSelection();
+		syllabusBox.getItems().clear();
+		unitBox.getSelectionModel().clearSelection();
+		unitBox.getItems().clear();
+		clearTopicAndFinalChoices();
+	}
+
+	private void clearTopicAndFinalChoices() {
+		topicBox.getSelectionModel().clearSelection();
+		topicBox.getItems().clear();
+		hideSubtopicRow();
+		hideDescriptorRow();
+	}
+
 	private void configureCodeEntry() {
 		codeField.setTextFormatter(new TextFormatter<>(change -> {
 			String candidate = change.getControlNewText();
@@ -360,6 +349,19 @@ public class CurriculumSelectorPane extends VBox {
 		descriptorBox.setDisable(true);
 		hideSubtopicRow();
 		hideDescriptorRow();
+	}
+
+	private void configureHierarchyBox(ComboBox<?> box, String id, String promptText) {
+		box.setId(id);
+		box.setPromptText(promptText);
+		box.setMaxWidth(Double.MAX_VALUE);
+		box.setMinWidth(0);
+	}
+
+	private void configurePane() {
+		setSpacing(ROW_GAP);
+		setPadding(PANEL_PADDING);
+		setStyle(BORDER_STYLE);
 	}
 
 	private void configureSelectionHandlers() {
@@ -415,6 +417,28 @@ public class CurriculumSelectorPane extends VBox {
 			return model.getTopic();
 		}
 		return model.getUnit();
+	}
+
+	private void disableSyllabusHierarchy() {
+		syllabusBox.setDisable(true);
+		unitBox.setDisable(true);
+		topicBox.setDisable(true);
+	}
+
+	private void displayAvailableSyllabuses() {
+		syllabusBox.getItems().setAll(model.getSyllabusVersions());
+		syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
+		SyllabusVersion defaultVersion = model.getSyllabusVersion();
+		if (defaultVersion == null) {
+			unitBox.setDisable(true);
+			topicBox.setDisable(true);
+			return;
+		}
+		syllabusBox.setValue(defaultVersion);
+		model.selectSyllabusVersion(defaultVersion);
+		unitBox.getItems().setAll(model.getUnits());
+		unitBox.setDisable(false);
+		topicBox.setDisable(true);
 	}
 
 	private CurriculumNode findCodePrefixMatch(String code) {
@@ -505,50 +529,6 @@ public class CurriculumSelectorPane extends VBox {
 		setCodeText("");
 	}
 
-	private void clearSubjectDependentChoices() {
-		syllabusBox.getSelectionModel().clearSelection();
-		syllabusBox.getItems().clear();
-		unitBox.getSelectionModel().clearSelection();
-		unitBox.getItems().clear();
-		clearTopicAndFinalChoices();
-	}
-
-	private void clearTopicAndFinalChoices() {
-		topicBox.getSelectionModel().clearSelection();
-		topicBox.getItems().clear();
-		hideSubtopicRow();
-		hideDescriptorRow();
-	}
-
-	private void configureHierarchyBox(ComboBox<?> box, String id, String promptText) {
-		box.setId(id);
-		box.setPromptText(promptText);
-		box.setMaxWidth(Double.MAX_VALUE);
-		box.setMinWidth(0);
-	}
-
-	private void disableSyllabusHierarchy() {
-		syllabusBox.setDisable(true);
-		unitBox.setDisable(true);
-		topicBox.setDisable(true);
-	}
-
-	private void displayAvailableSyllabuses() {
-		syllabusBox.getItems().setAll(model.getSyllabusVersions());
-		syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
-		SyllabusVersion defaultVersion = model.getSyllabusVersion();
-		if (defaultVersion == null) {
-			unitBox.setDisable(true);
-			topicBox.setDisable(true);
-			return;
-		}
-		syllabusBox.setValue(defaultVersion);
-		model.selectSyllabusVersion(defaultVersion);
-		unitBox.getItems().setAll(model.getUnits());
-		unitBox.setDisable(false);
-		topicBox.setDisable(true);
-	}
-
 	private void handleSubtopicSelection() {
 		if (refreshingSubjects || refreshingCode) {
 			return;
@@ -621,6 +601,15 @@ public class CurriculumSelectorPane extends VBox {
 		syncCodeFromSelection();
 	}
 
+	private boolean hasCodePrefix(List<CurriculumNode> nodes, String code) {
+		for (CurriculumNode node : nodes) {
+			if (node.getCode().startsWith(code)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private void hideDescriptorRow() {
 		descriptorBox.getSelectionModel().clearSelection();
 		descriptorBox.getItems().clear();
@@ -674,15 +663,6 @@ public class CurriculumSelectorPane extends VBox {
 		return false;
 	}
 
-	private boolean hasCodePrefix(List<CurriculumNode> nodes, String code) {
-		for (CurriculumNode node : nodes) {
-			if (node.getCode().startsWith(code)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
 	private void refreshDescriptorRow() {
 		descriptorBox.getSelectionModel().clearSelection();
 		descriptorBox.getItems().setAll(model.getDescriptors());
@@ -707,9 +687,38 @@ public class CurriculumSelectorPane extends VBox {
 		selectedClassification.set(model.getClassification());
 	}
 
+	private void reloadSubjectAndSyllabus(SelectionSnapshot selection) {
+		subjectBox.getItems().setAll(model.getSubjects());
+		selectAvailableValue(subjectBox, selection.subject());
+		model.selectSubject(subjectBox.getValue());
+		syllabusBox.getItems().setAll(model.getSyllabusVersions());
+		selectAvailableValue(syllabusBox, selection.syllabus());
+		model.selectSyllabusVersion(syllabusBox.getValue());
+		syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
+	}
+
 	private void requireLevel(CurriculumNode node, CurriculumLevel level, String message) {
 		if (node == null || node.getLevel() != level) {
 			throw new IllegalArgumentException(message);
+		}
+	}
+
+	private void resetHierarchyChoices() {
+		unitBox.getItems().setAll(model.getUnits());
+		unitBox.setDisable(model.getSyllabusVersion() == null);
+		topicBox.getItems().clear();
+		topicBox.setDisable(true);
+		hideSubtopicRow();
+		hideDescriptorRow();
+	}
+
+	private void restoreNodeSelection(CurriculumNode selectedNode) {
+		if (selectedNode == null || model.getSyllabusVersion() == null) {
+			return;
+		}
+		CurriculumNode available = model.findByCode(selectedNode.getCode());
+		if (available != null && available.equals(selectedNode)) {
+			applyNodePath(available);
 		}
 	}
 
