@@ -97,8 +97,8 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.SplitPane;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
@@ -113,14 +113,17 @@ import javafx.stage.Stage;
 public class QuestionBankApplication extends Application {
 
 	private static final double SECTION_SPACING = 10.0;
-	private static final double PREVIEW_PANE_WIDTH = 500.0;
+	private static final double PREVIEW_PANE_INITIAL_WIDTH = 525.0;
+	private static final double PREVIEW_PANE_MIN_WIDTH = 400.0;
 	private static final double SCENE_WIDTH = 1400.0;
 	private static final double SCENE_HEIGHT = 840.0;
+	private static final double INITIAL_WORKSPACE_DIVIDER_POSITION = PREVIEW_PANE_INITIAL_WIDTH / SCENE_WIDTH;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 	private static final Path PROPERTIES_FILE = Path.of("questionbank.properties");
 	private QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
+	private double captureDividerPosition = INITIAL_WORKSPACE_DIVIDER_POSITION;
 	private final CaptureSelectionState captureSelectionState = new CaptureSelectionState();
 	private CurriculumSelectionModel curriculumSelectionModel;
 	private CurriculumSelectorPane curriculumSelectorPane;
@@ -136,6 +139,7 @@ public class QuestionBankApplication extends Application {
 	private boolean revisionExportRunning;
 	private MenuItem scormExportMenuItem;
 	private boolean scormExportRunning;
+	private SplitPane workspaceSplitPane;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -333,6 +337,18 @@ public class QuestionBankApplication extends Application {
 		showResourceCloseFailure(primaryStage, result.failure());
 	}
 
+	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
+		finishRevisionExport();
+		progressAlert.close();
+		showRevisionExportSuccess(task.getValue());
+	}
+
+	private void completeScormExport(Task<ScormExportResult> task, Alert progressAlert) {
+		finishScormExport();
+		progressAlert.close();
+		showScormExportSuccess(task.getValue());
+	}
+
 	private void configurePdfWorkspace() {
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
@@ -411,7 +427,8 @@ public class QuestionBankApplication extends Application {
 
 	private CurriculumSelectorPane createCurriculumSelectorPane() {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
-		selectorPane.selectedSubjectProperty().addListener((observable, oldSubject, newSubject) -> handleSubjectChanged(newSubject));
+		selectorPane.selectedSubjectProperty()
+				.addListener((observable, oldSubject, newSubject) -> handleSubjectChanged(newSubject));
 		return selectorPane;
 	}
 
@@ -431,6 +448,26 @@ public class QuestionBankApplication extends Application {
 		scormExportMenuItem.setId("export-revision-scorm");
 		exportMenu.getItems().addAll(revisionExportMenuItem, scormExportMenuItem);
 		return exportMenu;
+	}
+
+	private Alert createExportProgressAlert(Stage primaryStage, Task<?> task, String title, String header,
+			String initialMessage) {
+		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
+		progressAlert.initOwner(primaryStage);
+		progressAlert.setTitle(title);
+		progressAlert.setHeaderText(header);
+		Label progressLabel = new Label(initialMessage);
+		progressLabel.setWrapText(true);
+		progressLabel.textProperty().bind(task.messageProperty());
+		ProgressBar progressBar = new ProgressBar();
+		progressBar.setPrefWidth(360);
+		progressBar.progressProperty().bind(task.progressProperty());
+		VBox progressContent = new VBox(10, progressLabel, progressBar);
+		progressAlert.getDialogPane().setContent(progressContent);
+		progressAlert.getDialogPane().setGraphic(null);
+		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
+		progressAlert.getButtonTypes().setAll(hideButton);
+		return progressAlert;
 	}
 
 	private Menu createFileMenu(Stage primaryStage, ApplicationConfig config) {
@@ -491,7 +528,8 @@ public class QuestionBankApplication extends Application {
 	private VBox createPreviewPane() {
 		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, questionCapturePane, answerCapturePane);
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
-		setFixedWidth(previewPane, PREVIEW_PANE_WIDTH);
+		previewPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
+		previewPane.setPrefWidth(PREVIEW_PANE_INITIAL_WIDTH);
 		return previewPane;
 	}
 
@@ -501,7 +539,8 @@ public class QuestionBankApplication extends Application {
 		scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 		scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 		scrollPane.setMinHeight(0);
-		scrollPane.setPrefWidth(PREVIEW_PANE_WIDTH + 18);
+		scrollPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
+		scrollPane.setPrefWidth(PREVIEW_PANE_INITIAL_WIDTH);
 		return scrollPane;
 	}
 
@@ -534,14 +573,30 @@ public class QuestionBankApplication extends Application {
 		BorderPane root = new BorderPane();
 		root.setTop(createMenuBar(primaryStage, config));
 		previewScrollPane = createPreviewScrollPane();
-		root.setLeft(previewScrollPane);
-		root.setCenter(pdfWorkspace);
+		workspaceSplitPane = new SplitPane(previewScrollPane, pdfWorkspace);
+		workspaceSplitPane.setId("workspace-split-pane");
+		workspaceSplitPane.setDividerPositions(INITIAL_WORKSPACE_DIVIDER_POSITION);
+		root.setCenter(workspaceSplitPane);
 		return root;
 	}
 
 	private ScormExportService createScormExportService(ApplicationConfig config) {
 		return new ScormExportService(createRevisionExportService(config), new ScormManifestWriter(),
 				new ScormSchemaSupport(), new ScormPackageValidator(), new ScormZipWriter());
+	}
+
+	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
+		finishRevisionExport();
+		progressAlert.close();
+		showAlert(Alert.AlertType.ERROR, "Export Revision HTML", "The revision export could not be completed.",
+				failureMessage(task.getException()));
+	}
+
+	private void failScormExport(Task<ScormExportResult> task, Alert progressAlert) {
+		finishScormExport();
+		progressAlert.close();
+		showAlert(Alert.AlertType.ERROR, "Export Revision SCORM", "The SCORM export could not be completed.",
+				failureMessage(task.getException()));
 	}
 
 	private String failureMessage(Throwable failure) {
@@ -577,6 +632,11 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void handleCloseRequest(javafx.stage.WindowEvent event, Stage primaryStage) {
+		event.consume();
+		requestApplicationExit(primaryStage);
+	}
+
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.ANSWER) {
 			captureSelectionState.claim(CaptureSelectionOwner.ANSWER);
@@ -592,6 +652,10 @@ public class QuestionBankApplication extends Application {
 				questionCapturePane.acceptSelection(selection);
 			}
 		}
+	}
+
+	private void handleSubjectChanged(Subject newSubject) {
+		examMetadataPane.invalidateForSubjectChange(newSubject);
 	}
 
 	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
@@ -825,6 +889,11 @@ public class QuestionBankApplication extends Application {
 		applicationExitAction.run();
 	}
 
+	private void resumeSearchAfterEdit(QuestionSearchDialog dialog, long questionId) {
+		dialog.refreshAfterEdit(questionId);
+		showQuestionSearchDialog(dialog);
+	}
+
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
@@ -893,15 +962,21 @@ public class QuestionBankApplication extends Application {
 		return destination;
 	}
 
-	private void setFixedWidth(Region region, double width) {
-		region.setPrefWidth(width);
-		region.setMinWidth(width);
-		region.setMaxWidth(width);
-	}
-
 	private void setViewerMode(boolean viewerMode) {
-		previewScrollPane.setVisible(!viewerMode);
-		previewScrollPane.setManaged(!viewerMode);
+		if (viewerMode) {
+			if (workspaceSplitPane.getItems().contains(previewScrollPane)) {
+				if (!workspaceSplitPane.getDividers().isEmpty()) {
+					captureDividerPosition = workspaceSplitPane.getDividers().getFirst().getPosition();
+				}
+				workspaceSplitPane.getItems().remove(previewScrollPane);
+			}
+			return;
+		}
+		if (workspaceSplitPane.getItems().contains(previewScrollPane)) {
+			return;
+		}
+		workspaceSplitPane.getItems().add(0, previewScrollPane);
+		Platform.runLater(() -> workspaceSplitPane.setDividerPositions(captureDividerPosition));
 	}
 
 	private void showAbout() {
@@ -1007,13 +1082,15 @@ public class QuestionBankApplication extends Application {
 		QuestionSearchDialog.EditRequest request = result.get();
 		Question question = request.question();
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
-			boolean editingStarted = questionCapturePane.editQuestion(question, () -> resumeSearchAfterEdit(dialog, question.getId()));
+			boolean editingStarted = questionCapturePane.editQuestion(question,
+					() -> resumeSearchAfterEdit(dialog, question.getId()));
 			if (!editingStarted) {
 				showQuestionSearchDialog(dialog);
 			}
 			return;
 		}
-		boolean editingStarted = answerCapturePane.editAnswer(question, () -> resumeSearchAfterEdit(dialog, question.getId()));
+		boolean editingStarted = answerCapturePane.editAnswer(question,
+				() -> resumeSearchAfterEdit(dialog, question.getId()));
 		if (!editingStarted) {
 			showQuestionSearchDialog(dialog);
 		}
@@ -1242,65 +1319,4 @@ public class QuestionBankApplication extends Application {
 	private enum BackupFailureDecision {
 		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
-
-	private void handleCloseRequest(javafx.stage.WindowEvent event, Stage primaryStage) {
-		event.consume();
-		requestApplicationExit(primaryStage);
-	}
-
-	private void handleSubjectChanged(Subject newSubject) {
-		examMetadataPane.invalidateForSubjectChange(newSubject);
-	}
-
-	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
-		finishRevisionExport();
-		progressAlert.close();
-		showRevisionExportSuccess(task.getValue());
-	}
-
-	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
-		finishRevisionExport();
-		progressAlert.close();
-		showAlert(Alert.AlertType.ERROR, "Export Revision HTML", "The revision export could not be completed.",
-				failureMessage(task.getException()));
-	}
-
-	private void completeScormExport(Task<ScormExportResult> task, Alert progressAlert) {
-		finishScormExport();
-		progressAlert.close();
-		showScormExportSuccess(task.getValue());
-	}
-
-	private void failScormExport(Task<ScormExportResult> task, Alert progressAlert) {
-		finishScormExport();
-		progressAlert.close();
-		showAlert(Alert.AlertType.ERROR, "Export Revision SCORM", "The SCORM export could not be completed.",
-				failureMessage(task.getException()));
-	}
-
-	private Alert createExportProgressAlert(Stage primaryStage, Task<?> task, String title, String header,
-			String initialMessage) {
-		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
-		progressAlert.initOwner(primaryStage);
-		progressAlert.setTitle(title);
-		progressAlert.setHeaderText(header);
-		Label progressLabel = new Label(initialMessage);
-		progressLabel.setWrapText(true);
-		progressLabel.textProperty().bind(task.messageProperty());
-		ProgressBar progressBar = new ProgressBar();
-		progressBar.setPrefWidth(360);
-		progressBar.progressProperty().bind(task.progressProperty());
-		VBox progressContent = new VBox(10, progressLabel, progressBar);
-		progressAlert.getDialogPane().setContent(progressContent);
-		progressAlert.getDialogPane().setGraphic(null);
-		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
-		progressAlert.getButtonTypes().setAll(hideButton);
-		return progressAlert;
-	}
-
-	private void resumeSearchAfterEdit(QuestionSearchDialog dialog, long questionId) {
-		dialog.refreshAfterEdit(questionId);
-		showQuestionSearchDialog(dialog);
-	}
-
 }

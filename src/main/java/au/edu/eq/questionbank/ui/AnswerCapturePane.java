@@ -92,7 +92,6 @@ final class AnswerCapturePane extends VBox {
 	private final Label answerRegionStatusLabel = new Label();
 	private final VBox answerRegionListBox = new VBox(COMPACT_SPACING);
 	private final ScrollPane answerRegionsScrollPane = new ScrollPane(answerRegionListBox);
-	private final ImageView answerPreviewView = new ImageView();
 	// Save and edit controls.
 	private final Button saveAnswerButton = new Button("Save");
 	private final Button cancelAnswerEditButton = new Button("Cancel");
@@ -417,7 +416,6 @@ final class AnswerCapturePane extends VBox {
 	private void clearPendingAnswerRegions() {
 		pendingAnswerRegions.clear();
 		currentAnswerSelection = null;
-		answerPreviewView.setImage(null);
 		answerRegionListBox.getChildren().clear();
 		answerRegionsScrollPane.setVisible(false);
 		answerRegionsScrollPane.setManaged(false);
@@ -460,10 +458,16 @@ final class AnswerCapturePane extends VBox {
 		cancelAnswerEditButton.setVisible(false);
 		cancelAnswerEditButton.setManaged(false);
 		answerRegionsScrollPane.setFitToWidth(true);
+		answerRegionsScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		answerRegionsScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 		answerRegionListBox.setFillWidth(true);
 		answerRegionListBox.setMaxWidth(Double.MAX_VALUE);
+		answerRegionsScrollPane.setMinHeight(0);
+		answerRegionsScrollPane.setMaxHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
 		answerRegionsScrollPane.setMaxWidth(Double.MAX_VALUE);
-		answerRegionsScrollPane.setPrefViewportHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
+		answerRegionsScrollPane.prefHeightProperty().bind(Bindings.createDoubleBinding(
+				() -> Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, answerRegionListBox.getLayoutBounds().getHeight() + 4.0),
+				answerRegionListBox.layoutBoundsProperty()));
 		answerRegionsScrollPane.setVisible(false);
 		answerRegionsScrollPane.setManaged(false);
 		setSelectionActionsEnabled(false);

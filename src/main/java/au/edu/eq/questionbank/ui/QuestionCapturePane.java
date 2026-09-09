@@ -38,14 +38,16 @@ import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.util.StringConverter;
 
 /**
  * Owns the question-capture controls, pending regions, previews, validation,
- * and save workflow for new, imported and edited questions.
- * Shared preambles are captured separately from ordinary question regions.
- * All control and capture-state access belongs on the JavaFX application thread.
+ * and save workflow for new, imported and edited questions. Shared preambles
+ * are captured separately from ordinary question regions. All control and
+ * capture-state access belongs on the JavaFX application thread.
  */
 final class QuestionCapturePane extends VBox {
 
@@ -57,7 +59,6 @@ final class QuestionCapturePane extends VBox {
 	private static final double MARKS_FIELD_WIDTH = 60.0;
 	private static final double QUESTION_CODE_FIELD_WIDTH = 100.0;
 	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
-	private static final double REGION_PREVIEW_WIDTH = 290.0;
 	private static final Insets COMPACT_BUTTON_PADDING = new Insets(2, 8, 2, 8);
 	private static final Insets PANEL_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
@@ -77,7 +78,6 @@ final class QuestionCapturePane extends VBox {
 	private final BooleanSupplier questionSelectionTransferHandler;
 	private final SharedContextCapturePane sharedContextCapturePane;
 	private final SourceQuestionRepository sourceQuestionRepository;
-
 	// Capture mode and imported-question selection.
 	private final ToggleButton newQuestionsModeButton = new ToggleButton("New Questions");
 	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Imported Questions");
@@ -86,14 +86,12 @@ final class QuestionCapturePane extends VBox {
 	private final Label importedClassificationLabel = new Label();
 	private final Label captureHintLabel = new Label();
 	private final VBox legacyCaptureBox = new VBox(COMPACT_SPACING);
-
 	// Question metadata and shared preamble controls.
 	private final TextField questionCodeField = new TextField();
 	private final TextField marksField = new TextField();
 	private final CheckBox firstRegionPreambleCheckBox = new CheckBox("First region is shared preamble");
 	private final Label preambleStatusLabel = new Label();
 	private final VBox preambleControlsBox = new VBox(COMPACT_SPACING);
-
 	// Pending and accepted region controls.
 	private final Button addRegionButton = new Button("Add Region");
 	private final Button removeCurrentSelectionButton = new Button("Clear");
@@ -101,12 +99,10 @@ final class QuestionCapturePane extends VBox {
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final VBox regionPreviewBox = new VBox(SECTION_SPACING);
 	private final ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
-
 	// Save and edit controls.
-	private final Button saveQuestionButton = new Button("Save");
+	private final Button saveQuestionButton = new Button("Save Question");
 	private final Button cancelQuestionEditButton = new Button("Cancel");
 	private final Label saveStatusLabel = new Label();
-
 	// Transient capture and edit state.
 	private boolean refreshingPreambleControls;
 	private Question importedQuestion;
@@ -244,7 +240,7 @@ final class QuestionCapturePane extends VBox {
 	 * Loads a question and its ordered regions for editing after capture-transition
 	 * guards and booklet activation succeed. The existing syllabus is locked.
 	 *
-	 * @param question the persisted question to load
+	 * @param question             the persisted question to load
 	 * @param editCompletedHandler callback when the edit is saved or cancelled
 	 * @return whether the edit was started
 	 * @throws NullPointerException if either argument is null
@@ -491,8 +487,7 @@ final class QuestionCapturePane extends VBox {
 		setLegacyCaptureControlsVisible(false);
 		getChildren().addAll(createSectionLabel("Question"), createCaptureModeControls(), legacyCaptureBox,
 				createQuestionControls(), preambleControlsBox, saveStatusLabel, createCurrentSelectionControls(),
-				new Separator(), new Label("Accepted regions"), regionCountLabel, createRegionsScrollPane(),
-				createQuestionSaveControls());
+				new Separator(), new Label("Accepted regions"), regionCountLabel, createRegionsScrollPane());
 	}
 
 	private void cancelQuestionEdit() {
@@ -556,7 +551,8 @@ final class QuestionCapturePane extends VBox {
 		clearRegionsButton.setOnAction(event -> clearQuestionRegions());
 		removeCurrentSelectionButton.setOnAction(event -> clearPendingSelection());
 		saveQuestionButton.setOnAction(event -> validateQuestionForSave());
-		questionCodeField.textProperty().addListener((observable, oldCode, newCode) -> handleQuestionCodeChanged(newCode));
+		questionCodeField.textProperty()
+				.addListener((observable, oldCode, newCode) -> handleQuestionCodeChanged(newCode));
 		marksField.textProperty().addListener((observable, oldMarks, newMarks) -> refreshSaveButtonState());
 		curriculumSelectorPane.selectedClassificationProperty()
 				.addListener((observable, oldValue, newValue) -> refreshSaveButtonState());
@@ -646,7 +642,10 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private HBox createCurrentSelectionControls() {
-		HBox controls = new HBox(CONTROL_SPACING, addRegionButton, removeCurrentSelectionButton);
+		Region spacer = new Region();
+		HBox.setHgrow(spacer, Priority.ALWAYS);
+		HBox controls = new HBox(CONTROL_SPACING, addRegionButton, removeCurrentSelectionButton, spacer,
+				saveQuestionButton, cancelQuestionEditButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
 	}
@@ -664,17 +663,16 @@ final class QuestionCapturePane extends VBox {
 		return controls;
 	}
 
-	private HBox createQuestionSaveControls() {
-		HBox controls = new HBox(CONTROL_SPACING, saveQuestionButton, cancelQuestionEditButton);
-		controls.setAlignment(Pos.CENTER_LEFT);
-		return controls;
-	}
-
 	private ScrollPane createRegionsScrollPane() {
 		regionsScrollPane.setFitToWidth(true);
 		regionsScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		regionsScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 		regionsScrollPane.setMinHeight(0);
 		regionsScrollPane.setMaxHeight(REGIONS_VIEWPORT_HEIGHT);
+		regionsScrollPane.prefHeightProperty()
+				.bind(Bindings.createDoubleBinding(
+						() -> Math.min(REGIONS_VIEWPORT_HEIGHT, regionPreviewBox.getLayoutBounds().getHeight() + 4.0),
+						regionPreviewBox.layoutBoundsProperty()));
 		regionsScrollPane.setVisible(false);
 		regionsScrollPane.setManaged(false);
 		return regionsScrollPane;
@@ -851,6 +849,14 @@ final class QuestionCapturePane extends VBox {
 		}
 	}
 
+	private void handleQuestionCodeChanged(String newCode) {
+		if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
+			sharedContextCapturePane.selectContext(null);
+		}
+		refreshPreambleControls();
+		refreshSaveButtonState();
+	}
+
 	private void hideCaptureHint() {
 		captureHintLabel.setVisible(false);
 		captureHintLabel.setManaged(false);
@@ -899,6 +905,20 @@ final class QuestionCapturePane extends VBox {
 			return;
 		}
 		showImportedQuestionMode(question);
+	}
+
+	private void loadQuestionEditFields(Question question) {
+		loadingQuestionEdit = true;
+		try {
+			questionCodeField.setText(question.getQuestionCode());
+			marksField.setText(Integer.toString(question.getMarks()));
+			curriculumSelectorPane.selectClassificationPath(question.getClassification());
+			if (question.hasSharedContext()) {
+				sharedContextCapturePane.selectContext(question.getSharedContext());
+			}
+		} finally {
+			loadingQuestionEdit = false;
+		}
 	}
 
 	private void reconcileKnownSharedContexts() {
@@ -1206,7 +1226,7 @@ final class QuestionCapturePane extends VBox {
 		marksField.setDisable(true);
 		refreshPreambleControls();
 		if (question.getRegions().isEmpty()) {
-			saveQuestionButton.setText("Attach Regions");
+			saveQuestionButton.setText("Save Question");
 			if (question.isSharedContextUnresolved()) {
 				showCaptureHint("Shared preamble required — capture it as the first region, "
 						+ "then capture the question region(s). " + "The imported classification may also be refined.");
@@ -1323,12 +1343,6 @@ final class QuestionCapturePane extends VBox {
 		boolean hasRegions = !pendingRegions.isEmpty();
 		regionsScrollPane.setVisible(hasRegions);
 		regionsScrollPane.setManaged(hasRegions);
-		if (!hasRegions) {
-			regionsScrollPane.setPrefHeight(0);
-			return;
-		}
-		double contentHeight = regionPreviewBox.prefHeight(REGION_PREVIEW_WIDTH);
-		regionsScrollPane.setPrefHeight(Math.min(contentHeight + 4, REGIONS_VIEWPORT_HEIGHT));
 	}
 
 	private void validateDependencies(QuestionRepository questionRepository,
@@ -1402,27 +1416,4 @@ final class QuestionCapturePane extends VBox {
 					"The question was not saved. Your current question details and accepted regions have been retained.");
 		}
 	}
-
-	private void handleQuestionCodeChanged(String newCode) {
-		if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
-			sharedContextCapturePane.selectContext(null);
-		}
-		refreshPreambleControls();
-		refreshSaveButtonState();
-	}
-
-	private void loadQuestionEditFields(Question question) {
-		loadingQuestionEdit = true;
-		try {
-			questionCodeField.setText(question.getQuestionCode());
-			marksField.setText(Integer.toString(question.getMarks()));
-			curriculumSelectorPane.selectClassificationPath(question.getClassification());
-			if (question.hasSharedContext()) {
-				sharedContextCapturePane.selectContext(question.getSharedContext());
-			}
-		} finally {
-			loadingQuestionEdit = false;
-		}
-	}
-
 }
