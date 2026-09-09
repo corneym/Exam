@@ -7,8 +7,10 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 
 import javax.imageio.ImageIO;
 
@@ -29,25 +31,11 @@ public class QuestionExtractor {
 
 	private static final float RENDER_DPI = 150;
 
-	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {
-		return cropRegion(page, region.x(), region.y(), region.width(), region.height());
-	}
-
-	private BufferedImage cropRegion(BufferedImage page, double x, double y, double width, double height) {
-		int left = (int) Math.floor(x * page.getWidth());
-		int top = (int) Math.floor(y * page.getHeight());
-		int right = (int) Math.ceil((x + width) * page.getWidth());
-		int bottom = (int) Math.ceil((y + height) * page.getHeight());
-		right = Math.min(right, page.getWidth());
-		bottom = Math.min(bottom, page.getHeight());
-		int cropWidth = right - left;
-		int cropHeight = bottom - top;
-		return page.getSubimage(left, top, cropWidth, cropHeight);
-	}
-
 	/**
-	 * Opens a PDF, extracts the question's own ordered regions, and writes a PNG.
-	 * Linked shared-context regions are not included automatically.
+	 * Opens a PDF and writes the assembled question image to PNG. Linked
+	 * shared-context regions are rendered first in their stored order, followed by
+	 * the question's own regions in their stored order. Exact duplicate source
+	 * rectangles are rendered only once.
 	 *
 	 * @param pdfPath    the PDF containing every question region in this call
 	 * @param question   the question whose ordered regions are extracted
@@ -62,16 +50,38 @@ public class QuestionExtractor {
 	}
 
 	/**
-	 * Extracts and combines the question's own regions using an existing session.
-	 * Linked shared-context regions are not included. The session remains open.
+	 * Extracts the assembled question image using an existing session. Linked
+	 * shared-context regions are rendered first in their stored order, followed by
+	 * the question's own regions in their stored order. Exact duplicate source
+	 * rectangles are rendered only once. The session remains open.
 	 *
-	 * @param session  the PDF session containing every question region in this call
+	 * @param session  the PDF session containing the question and context regions
 	 * @param question the question to extract
 	 * @return the vertically combined image
-	 * @throws IOException if a page cannot be rendered
+	 * @throws IOException            if a page cannot be rendered
+	 * @throws NoSuchElementException if the question has no question regions
 	 */
 	public BufferedImage extractQuestion(PdfSession session, Question question) throws IOException {
-		return extractRegions(session, question.getRegions());
+		if (question.getRegions().isEmpty()) {
+			throw new NoSuchElementException("No value present");
+		}
+		List<BufferedImage> regionImages = new ArrayList<>();
+		Set<RegionKey> renderedRegions = new HashSet<>();
+		if (question.hasSharedContext()) {
+			for (SharedQuestionContextRegion region : question.getSharedContext().getRegions()) {
+				RegionKey key = RegionKey.from(region);
+				if (renderedRegions.add(key)) {
+					regionImages.add(extractRegion(session, region));
+				}
+			}
+		}
+		for (QuestionRegion region : question.getRegions()) {
+			RegionKey key = RegionKey.from(region);
+			if (renderedRegions.add(key)) {
+				regionImages.add(extractRegion(session, region));
+			}
+		}
+		return combineRegionImages(regionImages);
 	}
 
 	/**
@@ -145,24 +155,7 @@ public class QuestionExtractor {
 		return cropRegion(page, region.x(), region.y(), region.width(), region.height());
 	}
 
-	/**
-	 * Extracts non-empty ordered regions from one PDF and stacks them vertically.
-	 * Narrower rendered pages are left-aligned and padded with white to the widest
-	 * region.
-	 *
-	 * @param session the PDF session containing every region in this call
-	 * @param regions non-empty regions in output order
-	 * @return one combined RGB image
-	 * @throws IOException                      if a page cannot be rendered
-	 * @throws java.util.NoSuchElementException if {@code regions} is empty
-	 */
-	public BufferedImage extractRegions(PdfSession session, List<QuestionRegion> regions) throws IOException {
-		List<BufferedImage> regionImages = new ArrayList<>();
-		for (QuestionRegion region : regions) {
-			BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
-			BufferedImage cropped = cropRegion(page, region);
-			regionImages.add(cropped);
-		}
+	private BufferedImage combineRegionImages(List<BufferedImage> regionImages) {
 		if (regionImages.isEmpty()) {
 			throw new NoSuchElementException("No value present");
 		}
@@ -186,5 +179,32 @@ public class QuestionExtractor {
 			graphics.dispose();
 		}
 		return combined;
+	}
+
+	private BufferedImage cropRegion(BufferedImage page, double x, double y, double width, double height) {
+		int left = (int) Math.floor(x * page.getWidth());
+		int top = (int) Math.floor(y * page.getHeight());
+		int right = (int) Math.ceil((x + width) * page.getWidth());
+		int bottom = (int) Math.ceil((y + height) * page.getHeight());
+		right = Math.min(right, page.getWidth());
+		bottom = Math.min(bottom, page.getHeight());
+		int cropWidth = right - left;
+		int cropHeight = bottom - top;
+		return page.getSubimage(left, top, cropWidth, cropHeight);
+	}
+
+	private BufferedImage cropRegion(BufferedImage page, QuestionRegion region) {
+		return cropRegion(page, region.x(), region.y(), region.width(), region.height());
+	}
+
+	private record RegionKey(int pageNumber, double x, double y, double width, double height) {
+
+		private static RegionKey from(QuestionRegion region) {
+			return new RegionKey(region.pageNumber(), region.x(), region.y(), region.width(), region.height());
+		}
+
+		private static RegionKey from(SharedQuestionContextRegion region) {
+			return new RegionKey(region.pageNumber(), region.x(), region.y(), region.width(), region.height());
+		}
 	}
 }

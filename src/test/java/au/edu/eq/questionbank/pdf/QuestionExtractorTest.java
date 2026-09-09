@@ -29,6 +29,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
@@ -69,6 +70,21 @@ class QuestionExtractorTest {
 	}
 
 	@Test
+	void doesNotRenderSamePhysicalRegionTwiceAcrossContextAndQuestion() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.RED));
+		SharedQuestionContext sharedContext = new SharedQuestionContext(30, booklet, "Duplicated preamble",
+				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0)));
+		Question question = new Question(31, booklet, "25a", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0)), createClassification(), false, null,
+				sharedContext);
+		try (PdfSession session = PdfSession.open(pdf)) {
+			BufferedImage image = extractor.extractQuestion(session, question);
+			assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(150, image.getHeight()),
+					() -> assertEquals(Color.RED.getRGB(), image.getRGB(75, 75)));
+		}
+	}
+
+	@Test
 	void extractsAFullPageRegion() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.WHITE));
 		Path output = tempDir.resolve("full-page.png");
@@ -88,17 +104,6 @@ class QuestionExtractorTest {
 		BufferedImage image = readImage(output);
 		assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(150, image.getHeight()),
 				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(37, 75)));
-	}
-
-	@Test
-	void extractsSharedContextRegionUsingProportionalCoordinates() throws Exception {
-		Path pdf = createHorizontallySplitPdf(Color.RED, Color.BLUE);
-		try (PdfSession session = PdfSession.open(pdf)) {
-			SharedQuestionContextRegion region = new SharedQuestionContextRegion(1, 0.5, 0.0, 0.5, 1.0);
-			BufferedImage image = extractor.extractRegion(session, region);
-			assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(150, image.getHeight()),
-					() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(37, 75)));
-		}
 	}
 
 	@Test
@@ -122,6 +127,17 @@ class QuestionExtractorTest {
 	}
 
 	@Test
+	void extractsSharedContextRegionUsingProportionalCoordinates() throws Exception {
+		Path pdf = createHorizontallySplitPdf(Color.RED, Color.BLUE);
+		try (PdfSession session = PdfSession.open(pdf)) {
+			SharedQuestionContextRegion region = new SharedQuestionContextRegion(1, 0.5, 0.0, 0.5, 1.0);
+			BufferedImage image = extractor.extractRegion(session, region);
+			assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(150, image.getHeight()),
+					() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(37, 75)));
+		}
+	}
+
+	@Test
 	void padsNarrowerRegionsWithWhiteWhenCombining() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(36, 72, Color.BLUE));
 		Path output = tempDir.resolve("different-widths.png");
@@ -134,6 +150,25 @@ class QuestionExtractorTest {
 		assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(300, image.getHeight()),
 				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(25, 225)),
 				() -> assertEquals(Color.WHITE.getRGB(), image.getRGB(125, 225)));
+	}
+
+	@Test
+	void prependsSharedContextBeforeQuestionRegions() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.GREEN),
+				new PageSpec(72, 72, Color.BLUE));
+		SharedQuestionContext sharedContext = new SharedQuestionContext(20, booklet, "Question 24 preamble",
+				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0),
+						new SharedQuestionContextRegion(2, 0.0, 0.0, 1.0, 1.0)));
+		Question question = new Question(21, booklet, "24a", "", 2,
+				List.of(new QuestionRegion(booklet, 3, 0.0, 0.0, 1.0, 1.0)), createClassification(), false, null,
+				sharedContext);
+		try (PdfSession session = PdfSession.open(pdf)) {
+			BufferedImage image = extractor.extractQuestion(session, question);
+			assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(450, image.getHeight()),
+					() -> assertEquals(Color.RED.getRGB(), image.getRGB(75, 75)),
+					() -> assertEquals(Color.GREEN.getRGB(), image.getRGB(75, 225)),
+					() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(75, 375)));
+		}
 	}
 
 	@Test

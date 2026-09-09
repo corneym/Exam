@@ -7,10 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+
+import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -25,6 +28,8 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -73,6 +78,33 @@ class RevisionQuestionAssetRendererTest {
 		IOException exception = assertThrows(IOException.class, () -> renderer.render(corpus, outputRoot));
 		assertTrue(exception.getMessage().contains("Question source PDF is not available"));
 		assertTrue(exception.getMessage().contains("2"));
+	}
+
+	@Test
+	void renderedRevisionAssetIncludesSharedContext() throws Exception {
+		Fixture fixture = new Fixture(tempDir);
+		ExamBooklet booklet = fixture.renderableQuestion.getBooklet();
+		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Shared stem",
+				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.5)));
+		Question question = new Question(3, booklet, "2a", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.75, 1.0, 0.25)),
+				fixture.renderableQuestion.getClassification(), false, null, sharedContext);
+		QuestionRetrievalRepository retrievalRepository = currentNodes -> List
+				.of(new QuestionApplicabilityMatch(question, fixture.firstDescriptor));
+		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
+		Path outputRoot = tempDir.resolve("shared-context-output");
+		RevisionQuestionAssetRenderer renderer = new RevisionQuestionAssetRenderer(fixture.pdfStore,
+				new QuestionExtractor());
+		List<RevisionQuestionAsset> assets = renderer.render(corpus, outputRoot);
+		assertEquals(1, assets.size());
+		Path renderedFile = outputRoot.resolve(assets.getFirst().getRelativePath());
+		BufferedImage image = ImageIO.read(renderedFile.toFile());
+		/*
+		 * 150-pixel rendered page: shared context = 75 px; question region = 38 px
+		 * after endpoint rounding.
+		 */
+		assertEquals(150, image.getWidth());
+		assertEquals(113, image.getHeight());
 	}
 
 	@Test
