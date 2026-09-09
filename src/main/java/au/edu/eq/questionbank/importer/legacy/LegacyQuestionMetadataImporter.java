@@ -6,6 +6,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -13,6 +14,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
@@ -24,24 +26,6 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  * rejected without partially importing the workbook.
  */
 public final class LegacyQuestionMetadataImporter {
-
-	private record ExistingAnswer(boolean exists, String answerText) {
-	}
-
-	private record ExistingQuestion(long id, long classificationNodeId, int marks, boolean preambleCaptureRequired) {
-	}
-
-	private record ImportContext(long subjectId, long syllabusVersionId) {
-	}
-
-	private record QuestionKey(long bookletId, String questionCode) {
-	}
-
-	private record ResolvedQuestion(long bookletId, long classificationNodeId, String providerName, int year,
-			String paperCode, String questionCode, int marks, String answer, boolean preambleCaptureRequired,
-			Long existingQuestionId, boolean insertAnswer) {
-	}
-
 	private final SqliteDatabase database;
 	private final LegacyQuestionWorkbookReader reader;
 
@@ -282,7 +266,8 @@ public final class LegacyQuestionMetadataImporter {
 				    id,
 				    classification_node_id,
 				    marks,
-				    preamble_capture_required
+				    preamble_capture_required,
+				    source_question_id
 				FROM questions
 				WHERE booklet_id = ?
 				  AND question_code = ?
@@ -293,8 +278,12 @@ public final class LegacyQuestionMetadataImporter {
 				if (!result.next()) {
 					return null;
 				}
+				Long sourceQuestionId = null;
+				if (result.getObject("source_question_id") != null) {
+					sourceQuestionId = Long.valueOf(result.getLong("source_question_id"));
+				}
 				return new ExistingQuestion(result.getLong("id"), result.getLong("classification_node_id"),
-						result.getInt("marks"), result.getInt("preamble_capture_required") != 0);
+						result.getInt("marks"), result.getInt("preamble_capture_required") != 0, sourceQuestionId);
 			}
 		}
 	}
@@ -333,6 +322,43 @@ public final class LegacyQuestionMetadataImporter {
 		}
 	}
 
+	private Long findOrCreateSourceQuestionId(Connection connection, long bookletId, String questionCode)
+			throws SQLException {
+		String sourceQuestionCode = SourceQuestionCodeParser.derive(questionCode);
+		if (sourceQuestionCode == null) {
+			return null;
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT id
+				FROM source_questions
+				WHERE booklet_id = ?
+				  AND source_question_code = ?
+				""")) {
+			statement.setLong(1, bookletId);
+			statement.setString(2, sourceQuestionCode);
+			try (ResultSet result = statement.executeQuery()) {
+				if (result.next()) {
+					return Long.valueOf(result.getLong("id"));
+				}
+			}
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO source_questions
+				    (booklet_id, source_question_code)
+				VALUES (?, ?)
+				RETURNING id
+				""")) {
+			statement.setLong(1, bookletId);
+			statement.setString(2, sourceQuestionCode);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Source-question insert did not return an id");
+				}
+				return Long.valueOf(result.getLong("id"));
+			}
+		}
+	}
+
 	private void insertAnswer(Connection connection, long questionId, String answer) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO answers
@@ -353,8 +379,9 @@ public final class LegacyQuestionMetadataImporter {
 				     question_code,
 				     question_text,
 				     marks,
-				     preamble_capture_required)
-				VALUES (?, ?, ?, '', ?, ?)
+				     preamble_capture_required,
+				     source_question_id)
+				VALUES (?, ?, ?, '', ?, ?, ?)
 				RETURNING id
 				""")) {
 			statement.setLong(1, question.bookletId());
@@ -362,6 +389,11 @@ public final class LegacyQuestionMetadataImporter {
 			statement.setString(3, question.questionCode());
 			statement.setInt(4, question.marks());
 			statement.setInt(5, question.preambleCaptureRequired() ? 1 : 0);
+			if (question.sourceQuestionId() == null) {
+				statement.setNull(6, Types.BIGINT);
+			} else {
+				statement.setLong(6, question.sourceQuestionId().longValue());
+			}
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Question insert did not return an id");
@@ -385,11 +417,12 @@ public final class LegacyQuestionMetadataImporter {
 					throw new IllegalArgumentException(
 							"Duplicate workbook question: " + description(sheet.providerName(), row));
 				}
+				Long sourceQuestionId = findOrCreateSourceQuestionId(connection, bookletId, row.questionCode());
 				ExistingQuestion existing = findExistingQuestion(connection, bookletId, row.questionCode());
 				Long existingQuestionId = null;
 				boolean insertAnswer = row.answer() != null;
 				if (existing != null) {
-					verifyExistingQuestion(existing, classificationNodeId, sheet.providerName(), row);
+					verifyExistingQuestion(existing, classificationNodeId, sourceQuestionId, sheet.providerName(), row);
 					existingQuestionId = existing.id();
 					if (row.answer() != null) {
 						ExistingAnswer existingAnswer = findExistingAnswer(connection, existing.id());
@@ -404,14 +437,29 @@ public final class LegacyQuestionMetadataImporter {
 				}
 				resolved.add(new ResolvedQuestion(bookletId, classificationNodeId, sheet.providerName(), row.year(),
 						row.paperCode(), row.questionCode(), row.marks(), row.answer(), row.preambleCaptureRequired(),
-						existingQuestionId, insertAnswer));
+						sourceQuestionId, existingQuestionId, insertAnswer));
 			}
 		}
 		return resolved;
 	}
 
-	private void verifyExistingQuestion(ExistingQuestion existing, long classificationNodeId, String providerName,
-			LegacyQuestionRow row) {
+	private void updateExistingSourceQuestionLink(Connection connection, long questionId, long sourceQuestionId)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET source_question_id = ?
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, sourceQuestionId);
+			statement.setLong(2, questionId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Source-question relationship update affected an unexpected number of rows");
+			}
+		}
+	}
+
+	private void verifyExistingQuestion(ExistingQuestion existing, long classificationNodeId, Long sourceQuestionId,
+			String providerName, LegacyQuestionRow row) {
 		String description = description(providerName, row);
 		if (existing.classificationNodeId() != classificationNodeId) {
 			throw new IllegalArgumentException("Existing classification conflicts with " + description);
@@ -421,6 +469,10 @@ public final class LegacyQuestionMetadataImporter {
 		}
 		if (existing.preambleCaptureRequired() != row.preambleCaptureRequired()) {
 			throw new IllegalArgumentException("Existing preamble metadata conflicts with " + description);
+		}
+		if (sourceQuestionId != null && existing.sourceQuestionId() != null
+				&& !sourceQuestionId.equals(existing.sourceQuestionId())) {
+			throw new IllegalArgumentException("Existing source-question relationship conflicts with " + description);
 		}
 	}
 
@@ -436,6 +488,9 @@ public final class LegacyQuestionMetadataImporter {
 				insertedQuestions++;
 			} else {
 				questionId = question.existingQuestionId();
+				if (question.sourceQuestionId() != null) {
+					updateExistingSourceQuestionLink(connection, questionId, question.sourceQuestionId().longValue());
+				}
 				existingQuestions++;
 			}
 			if (question.insertAnswer()) {
@@ -444,5 +499,23 @@ public final class LegacyQuestionMetadataImporter {
 			}
 		}
 		return new LegacyQuestionImportResult(insertedQuestions, existingQuestions, insertedAnswers);
+	}
+
+	private record ExistingAnswer(boolean exists, String answerText) {
+	}
+
+	private record ExistingQuestion(long id, long classificationNodeId, int marks, boolean preambleCaptureRequired,
+			Long sourceQuestionId) {
+	}
+
+	private record ImportContext(long subjectId, long syllabusVersionId) {
+	}
+
+	private record QuestionKey(long bookletId, String questionCode) {
+	}
+
+	private record ResolvedQuestion(long bookletId, long classificationNodeId, String providerName, int year,
+			String paperCode, String questionCode, int marks, String answer, boolean preambleCaptureRequired,
+			Long sourceQuestionId, Long existingQuestionId, boolean insertAnswer) {
 	}
 }

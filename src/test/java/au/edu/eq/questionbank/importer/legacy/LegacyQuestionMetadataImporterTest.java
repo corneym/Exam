@@ -31,7 +31,6 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class LegacyQuestionMetadataImporterTest {
-
 	@TempDir
 	Path tempDirectory;
 
@@ -76,6 +75,7 @@ class LegacyQuestionMetadataImporterTest {
 				Statement statement = connection.createStatement()) {
 			assertEquals(0, countRows(statement, "questions"));
 			assertEquals(0, countRows(statement, "answers"));
+			assertEquals(0, countRows(statement, "source_questions"));
 		}
 	}
 
@@ -141,8 +141,20 @@ class LegacyQuestionMetadataImporterTest {
 				assertEquals("21a", questions.getString("question_code"));
 				assertEquals(3, questions.getInt("marks"));
 				assertEquals(1, questions.getInt("preamble_capture_required"));
-				assertNull(questions.getObject("source_question_id"));
+				assertTrue(questions.getObject("source_question_id") != null);
 				assertNull(questions.getObject("shared_context_id"));
+			}
+			assertEquals(1, countRows(statement, "source_questions"));
+			assertEquals(0, countRows(statement, "shared_question_contexts"));
+			try (ResultSet sourceQuestion = statement.executeQuery("""
+					SELECT
+					    source_question_code,
+					    preamble_status
+					FROM source_questions
+					""")) {
+				assertTrue(sourceQuestion.next());
+				assertEquals("21", sourceQuestion.getString("source_question_code"));
+				assertEquals("UNKNOWN", sourceQuestion.getString("preamble_status"));
 			}
 			assertEquals(0, countRows(statement, "question_regions"));
 			assertEquals(1, countRows(statement, "answers"));
@@ -180,6 +192,7 @@ class LegacyQuestionMetadataImporterTest {
 				Statement statement = connection.createStatement()) {
 			assertEquals(2, countRows(statement, "questions"));
 			assertEquals(1, countRows(statement, "answers"));
+			assertEquals(1, countRows(statement, "source_questions"));
 		}
 	}
 

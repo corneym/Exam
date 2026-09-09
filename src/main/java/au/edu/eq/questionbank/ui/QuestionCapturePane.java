@@ -15,6 +15,7 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
+import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
@@ -43,7 +44,6 @@ import javafx.util.StringConverter;
  * and save workflow.
  */
 final class QuestionCapturePane extends VBox {
-
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
 	private static final double CURRENT_SELECTION_SPACING = 6.0;
@@ -278,7 +278,7 @@ final class QuestionCapturePane extends VBox {
 			if (!sharedContextCapturePane.acceptAutomaticRegion()) {
 				return;
 			}
-			String sourceCode = deriveSourceQuestionCode(questionCodeField.getText());
+			String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 			updateQuestionCodeLock();
 			saveStatusLabel.setText("Shared preamble captured — select the question region(s).");
 			refreshSaveButtonState();
@@ -396,7 +396,6 @@ final class QuestionCapturePane extends VBox {
 		importedQuestionBox.setPromptText("Select imported question");
 		importedQuestionBox.setMaxWidth(Double.MAX_VALUE);
 		importedQuestionBox.setConverter(new StringConverter<Question>() {
-
 			@Override
 			public Question fromString(String text) {
 				return null;
@@ -465,26 +464,6 @@ final class QuestionCapturePane extends VBox {
 		return label;
 	}
 
-	private String deriveSourceQuestionCode(String questionCode) {
-		String code = questionCode == null ? "" : questionCode.trim();
-		if (code.length() < 2) {
-			return null;
-		}
-		char part = code.charAt(code.length() - 1);
-		if (!Character.isLetter(part)) {
-			return null;
-		}
-		String sourceCode = code.substring(0, code.length() - 1);
-		if (sourceCode.isBlank()) {
-			return null;
-		}
-		char sourceLastCharacter = sourceCode.charAt(sourceCode.length() - 1);
-		if (!Character.isDigit(sourceLastCharacter)) {
-			return null;
-		}
-		return sourceCode;
-	}
-
 	private Question findExistingQuestionWithSameCode() {
 		ExamBooklet booklet = bookletSupplier.get();
 		if (booklet == null) {
@@ -536,7 +515,7 @@ final class QuestionCapturePane extends VBox {
 		if (sharedContextCapturePane.isCaptureMode()) {
 			return "Capture the shared preamble region and click Add Region before saving the question.";
 		}
-		String sourceCode = deriveSourceQuestionCode(questionCodeField.getText());
+		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 		ExamBooklet booklet = bookletSupplier.get();
 		SourceQuestion sourceQuestion = null;
 		if (booklet != null && sourceCode != null) {
@@ -564,7 +543,7 @@ final class QuestionCapturePane extends VBox {
 			return;
 		}
 		try {
-			String sourceCode = deriveSourceQuestionCode(questionCodeField.getText());
+			String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 			if (!selected) {
 				sharedContextCapturePane.cancelAutomaticContext();
 				hidePreambleStatus();
@@ -683,7 +662,7 @@ final class QuestionCapturePane extends VBox {
 
 	private void refreshPreambleControls() {
 		sharedContextCapturePane.cancelAutomaticContext();
-		String sourceCode = deriveSourceQuestionCode(questionCodeField.getText());
+		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 		if (sourceCode == null) {
 			hidePreambleControls();
 			return;
@@ -821,7 +800,7 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private SourceQuestion resolveSourceQuestion(ExamBooklet booklet, String questionCode) {
-		String sourceCode = deriveSourceQuestionCode(questionCode);
+		String sourceCode = SourceQuestionCodeParser.derive(questionCode);
 		if (sourceCode == null) {
 			if (importedQuestion != null && importedQuestion.hasSourceQuestion()) {
 				return importedQuestion.getSourceQuestion();
