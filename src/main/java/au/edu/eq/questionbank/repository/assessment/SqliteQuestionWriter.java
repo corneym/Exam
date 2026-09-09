@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.util.List;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
@@ -48,12 +49,17 @@ public final class SqliteQuestionWriter {
 	 *                                  regions, or the regions use another booklet
 	 */
 	public void attachRegions(long questionId, List<QuestionRegion> regions) throws SQLException {
-		attachRegionsInternal(questionId, regions, null, null, false);
+		attachRegionsInternal(questionId, regions, null, null, null, false);
+	}
+
+	public void attachRegions(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		attachRegionsInternal(questionId, regions, classification, sourceQuestion, sharedContext, true);
 	}
 
 	public void attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
-		attachRegionsInternal(questionId, regions, sourceQuestion, sharedContext, true);
+		attachRegionsInternal(questionId, regions, null, sourceQuestion, sharedContext, true);
 	}
 
 	/**
@@ -145,8 +151,44 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
-	private void attachRegionsInternal(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
-			SharedQuestionContext sharedContext, boolean updateRelationships) throws SQLException {
+	public void updateCaptureRelationships(long questionId, ExamBooklet booklet, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		validateClassificationForBooklet(booklet, classification);
+		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Source question must belong to the question's booklet");
+		}
+		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				verifyQuestionBooklet(connection, questionId, booklet);
+				verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+				verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+				verifySharedContextRelationship(connection, booklet, sharedContext);
+				updateQuestionCaptureDetails(connection, questionId, classification, sourceQuestion, sharedContext);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
+	private void attachRegionsInternal(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, boolean updateRelationships)
+			throws SQLException {
 		if (questionId < 1) {
 			throw new IllegalArgumentException("questionId must be positive");
 		}
@@ -169,6 +211,9 @@ public final class SqliteQuestionWriter {
 				throw new IllegalArgumentException("All question regions must belong to the same booklet");
 			}
 		}
+		if (classification != null) {
+			validateClassificationForBooklet(booklet, classification);
+		}
 		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Source question must belong to the question's booklet");
 		}
@@ -182,7 +227,13 @@ public final class SqliteQuestionWriter {
 				if (updateRelationships) {
 					verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
 					verifySharedContextRelationship(connection, booklet, sharedContext);
-					updateQuestionRelationships(connection, questionId, sourceQuestion, sharedContext);
+					if (classification == null) {
+						updateQuestionRelationships(connection, questionId, sourceQuestion, sharedContext);
+					} else {
+						verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+						updateQuestionCaptureDetails(connection, questionId, classification, sourceQuestion,
+								sharedContext);
+					}
 				}
 				insertRegions(connection, questionId, regions);
 				connection.commit();
@@ -267,6 +318,33 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
+	private void updateQuestionCaptureDetails(Connection connection, long questionId, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET classification_node_id = ?,
+				    source_question_id = ?,
+				    shared_context_id = ?
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, classification.getId());
+			if (sourceQuestion == null) {
+				statement.setNull(2, Types.BIGINT);
+			} else {
+				statement.setLong(2, sourceQuestion.getId());
+			}
+			if (sharedContext == null) {
+				statement.setNull(3, Types.BIGINT);
+			} else {
+				statement.setLong(3, sharedContext.getId());
+			}
+			statement.setLong(4, questionId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Question capture update affected an unexpected number of rows");
+			}
+		}
+	}
+
 	private void updateQuestionRelationships(Connection connection, long questionId, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
@@ -288,6 +366,61 @@ public final class SqliteQuestionWriter {
 			statement.setLong(3, questionId);
 			if (statement.executeUpdate() != 1) {
 				throw new SQLException("Question relationship update affected an unexpected number of rows");
+			}
+		}
+	}
+
+	private void validateClassificationForBooklet(ExamBooklet booklet, CurriculumNode classification) {
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+		CurriculumLevel level = classification.getLevel();
+		if (level != CurriculumLevel.SUBTOPIC && level != CurriculumLevel.DESCRIPTOR) {
+			throw new IllegalArgumentException("Question classification must be a SUBTOPIC or DESCRIPTOR");
+		}
+		if (!classification.getSyllabusVersion().getSubject().equals(booklet.getExam().getSubject())) {
+			throw new IllegalArgumentException("Question classification must belong to the exam's subject");
+		}
+	}
+
+	private void verifyClassificationSyllabusUnchanged(Connection connection, long questionId,
+			CurriculumNode classification) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT cn.syllabus_version_id
+				FROM questions q
+				JOIN curriculum_nodes cn
+				    ON cn.id = q.classification_node_id
+				WHERE q.id = ?
+				""")) {
+			statement.setLong(1, questionId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Question does not exist: " + questionId);
+				}
+				long existingSyllabusId = result.getLong("syllabus_version_id");
+				if (classification.getSyllabusVersion().getId() != existingSyllabusId) {
+					throw new IllegalArgumentException(
+							"Imported question classification must remain in its existing syllabus");
+				}
+			}
+		}
+	}
+
+	private void verifyQuestionBooklet(Connection connection, long questionId, ExamBooklet booklet)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT booklet_id
+				FROM questions
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, questionId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Question does not exist: " + questionId);
+				}
+				if (result.getLong("booklet_id") != booklet.getId()) {
+					throw new IllegalArgumentException("Capture relationships must belong to the question's booklet");
+				}
 			}
 		}
 	}

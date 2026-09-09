@@ -11,6 +11,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -43,8 +44,9 @@ class SqliteQuestionRelationshipPersistenceTest {
 				fixture.firstBooklet(), "Question 21 preamble",
 				List.of(new SharedQuestionContextRegion(3, 0.10, 0.10, 0.70, 0.20)));
 		Question captured = repository.attachRegions(imported.getId(),
-				List.of(new QuestionRegion(fixture.firstBooklet(), 3, 0.10, 0.40, 0.70, 0.20)), sourceQuestion,
-				sharedContext);
+				List.of(new QuestionRegion(fixture.firstBooklet(), 3, 0.10, 0.40, 0.70, 0.20)), fixture.descriptor(),
+				sourceQuestion, sharedContext);
+		assertEquals(fixture.descriptor().getId(), captured.getClassification().getId());
 		assertEquals(sourceQuestion.getId(), captured.getSourceQuestion().getId());
 		assertEquals(sharedContext.getId(), captured.getSharedContext().getId());
 		assertFalse(captured.isSharedContextUnresolved());
@@ -90,6 +92,33 @@ class SqliteQuestionRelationshipPersistenceTest {
 	}
 
 	@Test
+	void resolvesSharedContextWithoutReplacingExistingQuestionRegions() throws Exception {
+		Fixture fixture = createFixture("relationship-only-resolution.db");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
+		SourceQuestion sourceQuestion = sourceRepository.save(fixture.firstBooklet(), "21");
+		Question imported = repository.save(fixture.firstBooklet(), "21a", "", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 4, 0.10, 0.40, 0.70, 0.20)),
+				fixture.classification(), true, sourceQuestion, null);
+		SharedQuestionContext sharedContext = new SqliteSharedQuestionContextRepository(fixture.database()).save(
+				fixture.firstBooklet(), "Question 21 preamble",
+				List.of(new SharedQuestionContextRegion(3, 0.10, 0.10, 0.70, 0.20)));
+		Question updated = repository.updateCaptureRelationships(imported.getId(), fixture.descriptor(), sourceQuestion,
+				sharedContext);
+		assertEquals(1, updated.getRegions().size());
+		assertEquals(4, updated.getRegions().getFirst().pageNumber());
+		assertEquals(fixture.descriptor().getId(), updated.getClassification().getId());
+		assertEquals(sourceQuestion.getId(), updated.getSourceQuestion().getId());
+		assertEquals(sharedContext.getId(), updated.getSharedContext().getId());
+		assertFalse(updated.isSharedContextUnresolved());
+		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(imported.getId()).orElseThrow();
+		assertEquals(1, reloaded.getRegions().size());
+		assertEquals(4, reloaded.getRegions().getFirst().pageNumber());
+		assertEquals(fixture.descriptor().getId(), reloaded.getClassification().getId());
+		assertEquals(sharedContext.getId(), reloaded.getSharedContext().getId());
+	}
+
+	@Test
 	void savesAndReloadsSourceQuestionAndSharedContext() throws Exception {
 		Fixture fixture = createFixture("linked-question.db");
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
@@ -128,16 +157,17 @@ class SqliteQuestionRelationshipPersistenceTest {
 		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
 		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		Descriptor descriptor = curriculumWriter.insertDescriptor(subtopic, "1.1.1.1", "Descriptor 1", 1);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 		ExamBooklet firstBooklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
 				"Chemistry/2025/paper1.pdf");
 		ExamBooklet secondBooklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
 				"Chemistry/2025/paper2.pdf");
-		return new Fixture(database, firstBooklet, secondBooklet, subtopic);
+		return new Fixture(database, firstBooklet, secondBooklet, subtopic, descriptor);
 	}
 
 	private record Fixture(SqliteDatabase database, ExamBooklet firstBooklet, ExamBooklet secondBooklet,
-			Subtopic classification) {
+			Subtopic classification, Descriptor descriptor) {
 	}
 }

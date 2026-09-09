@@ -14,7 +14,6 @@ import au.edu.eq.questionbank.model.SourceQuestion;
  * Persistence boundary for examination questions.
  */
 public interface QuestionRepository {
-
 	/**
 	 * Attaches captured source regions to an existing question that currently has
 	 * no regions.
@@ -30,6 +29,24 @@ public interface QuestionRepository {
 	 * @throws IllegalStateException    if the repository cannot persist the update
 	 */
 	Question attachRegions(long questionId, List<QuestionRegion> regions);
+
+	/**
+	 * Attaches regions to an imported question while also refining its
+	 * classification and capture relationships.
+	 * <p>
+	 * The classification must remain within the question's existing syllabus
+	 * version.
+	 *
+	 * @param questionId     the persistent question identifier
+	 * @param regions        one or more question regions in source order
+	 * @param classification the refined subtopic or descriptor classification
+	 * @param sourceQuestion source-question identity, or {@code null}
+	 * @param sharedContext  reusable shared context, or {@code null}
+	 * @return the updated question
+	 */
+	Question attachRegions(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext);
+
 	/**
 	 * Attaches captured source regions and optional source-question/shared-context
 	 * relationships to an existing question that currently has no regions.
@@ -42,12 +59,14 @@ public interface QuestionRepository {
 	 */
 	Question attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext);
+
 	/**
 	 * Returns all stored questions in repository-defined order.
 	 *
 	 * @return the stored questions
 	 */
 	List<Question> findAll();
+
 	/**
 	 * Finds a question by its persistent identifier.
 	 *
@@ -55,6 +74,7 @@ public interface QuestionRepository {
 	 * @return the matching question, or an empty optional when it is absent
 	 */
 	Optional<Question> findById(long id);
+
 	/**
 	 * Stores a classified question and its ordered source regions.
 	 *
@@ -77,6 +97,7 @@ public interface QuestionRepository {
 	 */
 	Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired);
+
 	/**
 	 * Stores a classified question with optional source-question and shared-context
 	 * relationships.
@@ -97,4 +118,21 @@ public interface QuestionRepository {
 	Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext);
+
+	/**
+	 * Updates an imported question's classification and capture relationships
+	 * without replacing its already-persisted question regions.
+	 * <p>
+	 * This supports legacy questions whose ordinary question regions have already
+	 * been captured but whose shared context remains unresolved. The classification
+	 * must remain within the question's existing syllabus version.
+	 *
+	 * @param questionId     the persistent question identifier
+	 * @param classification the refined subtopic or descriptor classification
+	 * @param sourceQuestion source-question identity, or {@code null}
+	 * @param sharedContext  reusable shared context, or {@code null}
+	 * @return the updated question
+	 */
+	Question updateCaptureRelationships(long questionId, CurriculumNode classification, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext);
 }

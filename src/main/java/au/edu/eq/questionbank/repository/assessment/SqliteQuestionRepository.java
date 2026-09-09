@@ -69,6 +69,18 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	}
 
 	@Override
+	public Question attachRegions(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		try {
+			writer.attachRegions(questionId, regions, classification, sourceQuestion, sharedContext);
+			return findById(questionId).orElseThrow(() -> new IllegalStateException(
+					"Question disappeared after attaching regions and capture details"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not attach question regions and capture details", e);
+		}
+	}
+
+	@Override
 	public Question attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) {
 		try {
@@ -265,6 +277,21 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 					preambleCaptureRequired, sourceQuestion, sharedContext);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
+		}
+	}
+
+	@Override
+	public Question updateCaptureRelationships(long questionId, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		Question existing = findById(questionId)
+				.orElseThrow(() -> new IllegalArgumentException("Question does not exist: " + questionId));
+		try {
+			writer.updateCaptureRelationships(questionId, existing.getBooklet(), classification, sourceQuestion,
+					sharedContext);
+			return findById(questionId).orElseThrow(
+					() -> new IllegalStateException("Question disappeared after updating capture relationships"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not update question capture relationships", e);
 		}
 	}
 

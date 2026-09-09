@@ -57,6 +57,43 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 	}
 
 	@Override
+	public Question attachRegions(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("regions must not be empty");
+		}
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+		for (int i = 0; i < questions.size(); i++) {
+			Question existing = questions.get(i);
+			if (existing.getId() != questionId) {
+				continue;
+			}
+			if (!existing.getRegions().isEmpty()) {
+				throw new IllegalArgumentException("Question already has captured regions");
+			}
+			if (classification.getSyllabusVersion().getId() != existing.getClassification().getSyllabusVersion()
+					.getId()) {
+				throw new IllegalArgumentException(
+						"Imported question classification must remain in its existing syllabus");
+			}
+			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
+					existing.getQuestionText(), existing.getMarks(), regions, classification,
+					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext);
+			if (existing.hasAnswer()) {
+				updated.setAnswer(existing.getAnswer());
+			}
+			questions.set(i, updated);
+			return updated;
+		}
+		throw new IllegalArgumentException("Question does not exist: " + questionId);
+	}
+
+	@Override
 	public Question attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) {
 		if (regions == null) {
@@ -115,5 +152,33 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 				preambleCaptureRequired, sourceQuestion, sharedContext);
 		questions.add(question);
 		return question;
+	}
+
+	@Override
+	public Question updateCaptureRelationships(long questionId, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+		for (int i = 0; i < questions.size(); i++) {
+			Question existing = questions.get(i);
+			if (existing.getId() != questionId) {
+				continue;
+			}
+			if (classification.getSyllabusVersion().getId() != existing.getClassification().getSyllabusVersion()
+					.getId()) {
+				throw new IllegalArgumentException(
+						"Imported question classification must remain in its existing syllabus");
+			}
+			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
+					existing.getQuestionText(), existing.getMarks(), existing.getRegions(), classification,
+					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext);
+			if (existing.hasAnswer()) {
+				updated.setAnswer(existing.getAnswer());
+			}
+			questions.set(i, updated);
+			return updated;
+		}
+		throw new IllegalArgumentException("Question does not exist: " + questionId);
 	}
 }
