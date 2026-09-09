@@ -34,36 +34,20 @@ class SqliteAnswerWriterTest {
 	@TempDir
 	Path tempDirectory;
 
-	private int countRows(SqliteDatabase database, String tableName) throws Exception {
-		try (Connection connection = database.openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + tableName)) {
-			assertTrue(result.next());
-			return result.getInt(1);
-		}
-	}
-
 	@Test
 	void findsRegisteredAnswerFilesForExam() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("answer-files.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-
 		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
 				"Chemistry/QCAA/2025/paper1.pdf");
-
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-
 		answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking scheme",
 				"Chemistry/QCAA/2025/marking-scheme.pdf");
-
 		List<AnswerFile> answerFiles = answerWriter.findAnswerFiles(booklet.getExam());
-
 		assertEquals(1, answerFiles.size());
 		assertEquals("Marking scheme", answerFiles.get(0).getName());
 		assertEquals("Chemistry/QCAA/2025/marking-scheme.pdf",
@@ -143,10 +127,54 @@ class SqliteAnswerWriterTest {
 		Exam otherExam = otherBooklet.getExam();
 		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(otherExam, "Answers", "Chemistry/2024/answers.pdf");
 		AnswerRegion wrongExamRegion = new AnswerRegion(answerFile, 1, 0.10, 0.10, 0.50, 0.20);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> answerWriter.insertAnswer(question, null, List.of(wrongExamRegion)));
 		assertEquals(0, countRows(database, "answers"));
 		assertEquals(0, countRows(database, "answer_regions"));
+	}
+
+	@Test
+	void updatesAnswerWithoutChangingIdentity() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("update-answer.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/2025/questions.pdf");
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question question = questionRepository.save(booklet, "Q1", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Answers",
+				"Chemistry/2025/answers.pdf");
+		Answer original = answerWriter.insertAnswer(question, "B",
+				List.of(new AnswerRegion(answerFile, 4, 0.10, 0.20, 0.40, 0.10)));
+		Answer updated = answerWriter.updateAnswer(question, original.getId(), "C",
+				List.of(new AnswerRegion(answerFile, 7, 0.15, 0.25, 0.45, 0.12)));
+		assertEquals(original.getId(), updated.getId());
+		assertEquals("C", updated.getAnswerText());
+		assertEquals(1, updated.getRegions().size());
+		assertEquals(7, updated.getRegions().getFirst().pageNumber());
+		assertEquals(1, countRows(database, "answers"));
+		assertEquals(1, countRows(database, "answer_regions"));
+		Question reloaded = new SqliteQuestionRepository(database).findById(question.getId()).orElseThrow();
+		assertTrue(reloaded.hasAnswer());
+		assertEquals(original.getId(), reloaded.getAnswer().getId());
+		assertEquals("C", reloaded.getAnswer().getAnswerText());
+		assertEquals(7, reloaded.getAnswer().getRegions().getFirst().pageNumber());
+	}
+
+	private int countRows(SqliteDatabase database, String tableName) throws Exception {
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + tableName)) {
+			assertTrue(result.next());
+			return result.getInt(1);
+		}
 	}
 }

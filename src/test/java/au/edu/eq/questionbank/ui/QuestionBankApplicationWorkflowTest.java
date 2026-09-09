@@ -152,6 +152,38 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void canEditExistingAnswerAndDisplaysQuestionMarks(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "A1");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		Label selectedQuestion = lookup(robot, "#selected-answer-question", Label.class);
+		assertTrue(selectedQuestion.getText().contains("1 mark"));
+		TextField answerText = lookup(robot, "#answer-text", TextField.class);
+		robot.clickOn(answerText).write("B");
+		robot.clickOn("#save-answer");
+		WaitForAsyncUtils.waitForFxEvents();
+		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow();
+		long answerId = stored.getAnswer().getId();
+		Question answeredItem = questions.getItems().stream().filter(candidate -> candidate.getId() == question.getId())
+				.findFirst().orElseThrow();
+		robot.interact(() -> questions.getSelectionModel().select(answeredItem));
+		assertEquals("Update Answer", lookup(robot, "#save-answer", Button.class).getText());
+		assertEquals("B", answerText.getText());
+		robot.interact(() -> {
+			answerText.selectAll();
+			answerText.replaceSelection("C");
+		});
+		robot.clickOn("#save-answer");
+		WaitForAsyncUtils.waitForFxEvents();
+		Question updated = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow();
+		assertEquals(answerId, updated.getAnswer().getId());
+		assertEquals("C", updated.getAnswer().getAnswerText());
+	}
+
+	@Test
 	void canRemoveAcceptedAnswerRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q3");

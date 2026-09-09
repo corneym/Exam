@@ -656,7 +656,7 @@ public class QuestionBankApplication extends Application {
 			}
 			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
 					subject.getName(), syllabusVersion.getName());
-			answerCapturePane.refreshUnansweredQuestions();
+			answerCapturePane.refreshQuestions();
 			questionCapturePane.showLegacyCaptureControls();
 			showLegacyQuestionImportResult(importedBooklets.get().intValue(), importResult);
 		} catch (IOException e) {
@@ -710,7 +710,7 @@ public class QuestionBankApplication extends Application {
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
 				this::allowAnswerCaptureTransition, () -> clearCaptureSelection(CaptureSelectionOwner.ANSWER),
 				questionExtractor, pdfWorkspace::getAnswerPdfSession);
-		answerCapturePane.refreshUnansweredQuestions();
+		answerCapturePane.refreshQuestions();
 		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
 				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
 				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
@@ -720,8 +720,7 @@ public class QuestionBankApplication extends Application {
 				examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
 				question -> activateImportedQuestion(question, config), this::confirmDiscardAcceptedQuestionRegions,
 				this::transferQuestionSelectionToSharedContext,
-				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION),
-				answerCapturePane::refreshUnansweredQuestions);
+				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
 		questionCapturePane.refreshImportedQuestions();
 	}
 
