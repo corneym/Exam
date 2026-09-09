@@ -132,7 +132,7 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
-	public void hidingDialogPreventsFurtherHierarchyWork(FxRobot robot) {
+	public void disposingDialogPreventsFurtherHierarchyWork(FxRobot robot) {
 		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
 		QuestionSearchPane[] paneHolder = new QuestionSearchPane[1];
 		robot.interact(() -> {
@@ -143,6 +143,7 @@ public class QuestionSearchPaneTest {
 			paneHolder[0] = pane;
 			dialog.show();
 			dialog.hide();
+			dialog.dispose();
 		});
 		ComboBox<Subject> subjectBox = (ComboBox<Subject>) paneHolder[0].lookup("#question-search-subject");
 		ComboBox<CurriculumNode> unitBox = (ComboBox<CurriculumNode>) paneHolder[0].lookup("#question-search-unit");

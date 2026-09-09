@@ -1,8 +1,11 @@
 package au.edu.eq.questionbank.ui;
 
+import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import javafx.scene.Node;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.stage.Window;
@@ -10,7 +13,9 @@ import javafx.stage.Window;
 /**
  * Dialog containing the curriculum-aware question search workflow.
  */
-public final class QuestionSearchDialog extends Dialog<ButtonType> {
+public final class QuestionSearchDialog extends Dialog<Question> {
+
+	private final QuestionSearchPane searchPane;
 
 	/**
 	 * Creates a question-search dialog owned by the supplied window.
@@ -39,11 +44,27 @@ public final class QuestionSearchDialog extends Dialog<ButtonType> {
 		setTitle("Search Questions");
 		setHeaderText("Find questions by current curriculum");
 		setResizable(true);
-		getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
-		QuestionSearchPane searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
+		ButtonType editButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
+		getDialogPane().getButtonTypes().addAll(editButtonType, ButtonType.CLOSE);
+		searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
 		getDialogPane().setContent(searchPane);
-		setOnHidden(event -> searchPane.dispose());
+		Node editButton = getDialogPane().lookupButton(editButtonType);
+		editButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
+		setResultConverter(buttonType -> {
+			if (buttonType != editButtonType) {
+				return null;
+			}
+			return searchPane.getSelectedQuestion();
+		});
 		getDialogPane().setPrefWidth(900);
 		getDialogPane().setPrefHeight(700);
+	}
+
+	void dispose() {
+		searchPane.dispose();
+	}
+
+	void refreshAfterEdit(long questionId) {
+		searchPane.refreshAfterEdit(questionId);
 	}
 }

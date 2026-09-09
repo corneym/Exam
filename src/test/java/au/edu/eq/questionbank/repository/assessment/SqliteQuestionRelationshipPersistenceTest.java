@@ -32,6 +32,30 @@ class SqliteQuestionRelationshipPersistenceTest {
 	Path tempDirectory;
 
 	@Test
+	void appliesSharedContextToEveryPartOfSourceQuestion() throws Exception {
+		Fixture fixture = createFixture("source-wide-context.db");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		SourceQuestion sourceQuestion = new SqliteSourceQuestionRepository(fixture.database())
+				.save(fixture.firstBooklet(), "22");
+		Question partA = repository.save(fixture.firstBooklet(), "22a", "", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 3, 0.10, 0.30, 0.70, 0.20)),
+				fixture.classification(), true, sourceQuestion, null);
+		Question partB = repository.save(fixture.firstBooklet(), "22b", "", 3,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 3, 0.10, 0.55, 0.70, 0.20)),
+				fixture.classification(), false, sourceQuestion, null);
+		SharedQuestionContext sharedContext = new SqliteSharedQuestionContextRepository(fixture.database()).save(
+				fixture.firstBooklet(), "Question 22 preamble",
+				List.of(new SharedQuestionContextRegion(3, 0.10, 0.10, 0.70, 0.15)));
+		assertEquals(2, repository.applySharedContextToSourceQuestion(sourceQuestion, sharedContext));
+		Question reloadedA = repository.findById(partA.getId()).orElseThrow();
+		Question reloadedB = repository.findById(partB.getId()).orElseThrow();
+		assertEquals(sharedContext.getId(), reloadedA.getSharedContext().getId());
+		assertEquals(sharedContext.getId(), reloadedB.getSharedContext().getId());
+		assertFalse(reloadedA.isSharedContextUnresolved());
+		assertEquals(0, repository.applySharedContextToSourceQuestion(sourceQuestion, sharedContext));
+	}
+
+	@Test
 	void attachesRelationshipsWhenCapturingImportedQuestion() throws Exception {
 		Fixture fixture = createFixture("capture-relationships.db");
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
@@ -68,6 +92,30 @@ class SqliteQuestionRelationshipPersistenceTest {
 		assertFalse(loaded.hasSourceQuestion());
 		assertFalse(loaded.hasSharedContext());
 		assertFalse(loaded.isSharedContextUnresolved());
+	}
+
+	@Test
+	void rejectsConflictingContextWithoutUpdatingOtherParts() throws Exception {
+		Fixture fixture = createFixture("conflicting-source-context.db");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		SourceQuestion sourceQuestion = new SqliteSourceQuestionRepository(fixture.database())
+				.save(fixture.firstBooklet(), "22");
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(
+				fixture.database());
+		SharedQuestionContext firstContext = contextRepository.save(fixture.firstBooklet(), "First preamble",
+				List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.7, 0.2)));
+		SharedQuestionContext conflictingContext = contextRepository.save(fixture.firstBooklet(),
+				"Conflicting preamble", List.of(new SharedQuestionContextRegion(1, 0.1, 0.4, 0.7, 0.2)));
+		repository.save(fixture.firstBooklet(), "22a", "", 1,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 1, 0.1, 0.6, 0.7, 0.1)), fixture.classification(),
+				true, sourceQuestion, firstContext);
+		Question partB = repository.save(fixture.firstBooklet(), "22b", "", 1,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 2, 0.1, 0.2, 0.7, 0.1)), fixture.classification(),
+				true, sourceQuestion, null);
+		assertThrows(IllegalStateException.class,
+				() -> repository.applySharedContextToSourceQuestion(sourceQuestion, conflictingContext));
+		Question reloadedB = repository.findById(partB.getId()).orElseThrow();
+		assertFalse(reloadedB.hasSharedContext());
 	}
 
 	@Test
@@ -146,6 +194,39 @@ class SqliteQuestionRelationshipPersistenceTest {
 		assertEquals(4, loaded.getSharedContext().getRegions().get(1).pageNumber());
 		assertTrue(loaded.isPreambleCaptureRequired());
 		assertFalse(loaded.isSharedContextUnresolved());
+	}
+
+	@Test
+	void updatesQuestionMetadataAndRegionsWithoutChangingIdentity() throws Exception {
+		Fixture fixture = createFixture("question-update.db");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		Question original = repository.save(fixture.firstBooklet(), "21a", "preserved text", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 2, 0.10, 0.20, 0.60, 0.15)),
+				fixture.classification(), true);
+		SourceQuestion sourceQuestion = new SqliteSourceQuestionRepository(fixture.database())
+				.save(fixture.firstBooklet(), "21");
+		SharedQuestionContext sharedContext = new SqliteSharedQuestionContextRepository(fixture.database()).save(
+				fixture.firstBooklet(), "Question 21 preamble",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.20)));
+		Question updated = repository.updateQuestion(original.getId(), "21b", 4,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 5, 0.15, 0.30, 0.65, 0.25)), fixture.descriptor(),
+				sourceQuestion, sharedContext);
+		assertEquals(original.getId(), updated.getId());
+		assertEquals(fixture.firstBooklet().getId(), updated.getBooklet().getId());
+		assertEquals("21b", updated.getQuestionCode());
+		assertEquals("preserved text", updated.getQuestionText());
+		assertEquals(4, updated.getMarks());
+		assertEquals(fixture.descriptor().getId(), updated.getClassification().getId());
+		assertEquals(1, updated.getRegions().size());
+		assertEquals(5, updated.getRegions().getFirst().pageNumber());
+		assertEquals(sourceQuestion.getId(), updated.getSourceQuestion().getId());
+		assertEquals(sharedContext.getId(), updated.getSharedContext().getId());
+		assertTrue(updated.isPreambleCaptureRequired());
+		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(original.getId()).orElseThrow();
+		assertEquals("21b", reloaded.getQuestionCode());
+		assertEquals(4, reloaded.getMarks());
+		assertEquals(1, reloaded.getRegions().size());
+		assertEquals(5, reloaded.getRegions().getFirst().pageNumber());
 	}
 
 	private Fixture createFixture(String databaseName) throws Exception {

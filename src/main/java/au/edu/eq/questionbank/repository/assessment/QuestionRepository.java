@@ -14,6 +14,21 @@ import au.edu.eq.questionbank.model.SourceQuestion;
  * Persistence boundary for examination questions.
  */
 public interface QuestionRepository {
+
+	/**
+	 * Applies one shared context to every stored question belonging to the supplied
+	 * source question.
+	 * <p>
+	 * Questions already linked to the same context are unchanged. A question
+	 * already linked to a different context is treated as inconsistent stored data
+	 * and must not be overwritten.
+	 *
+	 * @param sourceQuestion source-paper question identity
+	 * @param sharedContext  shared preamble/context for that source question
+	 * @return number of previously unlinked questions updated
+	 */
+	int applySharedContextToSourceQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext);
+
 	/**
 	 * Attaches captured source regions to an existing question that currently has
 	 * no regions.
@@ -135,4 +150,21 @@ public interface QuestionRepository {
 	 */
 	Question updateCaptureRelationships(long questionId, CurriculumNode classification, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext);
+
+	/**
+	 * Replaces the editable metadata, classification, capture relationships and
+	 * ordered regions of an existing question while preserving its identity,
+	 * booklet, supplementary text, legacy preamble evidence and answer.
+	 *
+	 * @param questionId     persistent question identifier
+	 * @param questionCode   replacement non-blank question code
+	 * @param marks          replacement positive mark value
+	 * @param regions        replacement ordered question regions
+	 * @param classification replacement classification
+	 * @param sourceQuestion source-question relationship, or {@code null}
+	 * @param sharedContext  shared-context relationship, or {@code null}
+	 * @return the updated question
+	 */
+	Question updateQuestion(long questionId, String questionCode, int marks, List<QuestionRegion> regions,
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext);
 }

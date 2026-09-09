@@ -17,6 +17,7 @@ import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.application.Platform;
+import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
@@ -68,6 +69,7 @@ public class QuestionSearchPane extends BorderPane {
 	private Task<?> activeHierarchyTask;
 	private long hierarchyGeneration;
 	private boolean disposed;
+	private long questionIdToReselect = -1;
 
 	/**
 	 * Creates the question-search pane.
@@ -111,6 +113,48 @@ public class QuestionSearchPane extends BorderPane {
 		detailsArea.clear();
 		clearPreview();
 		statusLabel.setText("");
+	}
+
+	Question getSelectedQuestion() {
+		QuestionRetrievalResult result = resultsList.getSelectionModel().getSelectedItem();
+		return result == null ? null : result.getQuestion();
+	}
+
+	void refreshAfterEdit(long questionId) {
+		if (disposed) {
+			return;
+		}
+		questionIdToReselect = questionId;
+		CurriculumNode descriptor = descriptorBox.getValue();
+		if (descriptor != null) {
+			startAutomaticSearch(descriptor);
+			return;
+		}
+		CurriculumNode classification = classificationBox.getValue();
+		if (classification != null) {
+			startAutomaticSearch(classification);
+			return;
+		}
+		CurriculumNode topic = topicBox.getValue();
+		if (topic != null) {
+			startAutomaticSearch(topic);
+			return;
+		}
+		CurriculumNode unit = unitBox.getValue();
+		if (unit != null) {
+			startAutomaticSearch(unit);
+			return;
+		}
+		Subject subject = subjectBox.getValue();
+		if (subject != null) {
+			startAutomaticSearch(subject);
+			return;
+		}
+		questionIdToReselect = -1;
+	}
+
+	ReadOnlyObjectProperty<QuestionRetrievalResult> selectedResultProperty() {
+		return resultsList.getSelectionModel().selectedItemProperty();
 	}
 
 	private void cancelActiveHierarchyLoad() {
@@ -500,6 +544,22 @@ public class QuestionSearchPane extends BorderPane {
 		return node.getSyllabusVersion().getName() + " " + node.getCode() + " " + node.getName();
 	}
 
+	private void reselectEditedQuestion(List<QuestionRetrievalResult> results) {
+		if (questionIdToReselect < 1) {
+			return;
+		}
+		long questionId = questionIdToReselect;
+		questionIdToReselect = -1;
+		for (QuestionRetrievalResult result : results) {
+			if (result.getQuestion().getId() != questionId) {
+				continue;
+			}
+			resultsList.getSelectionModel().select(result);
+			resultsList.scrollTo(result);
+			return;
+		}
+	}
+
 	private void resetClassificationBox() {
 		classificationBox.getSelectionModel().clearSelection();
 		classificationBox.setValue(null);
@@ -611,6 +671,7 @@ public class QuestionSearchPane extends BorderPane {
 			activeSearchTask = null;
 			List<QuestionRetrievalResult> results = task.getValue();
 			resultsList.getItems().setAll(results);
+			reselectEditedQuestion(results);
 			if (results.isEmpty()) {
 				statusLabel.setText("No questions found.");
 			} else if (results.size() == 1) {

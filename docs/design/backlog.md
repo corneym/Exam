@@ -84,7 +84,69 @@ Required work:
 
 Do not treat the standalone workbook as authoritative application state until reconciliation is complete.
 
+### Include shared question context in Search Questions preview
+
+Origin: Sprint 07 shared-context semantics / Search Questions usability.
+
+When an individual Question has a linked `SharedQuestionContext`, the Search
+Questions preview should reconstruct the complete material needed to understand
+that Question.
+
+Example:
+
+- SourceQuestion `21`
+- shared preamble/context
+- Question `21a`
+- Question `21b`
+
+If the user selects `21a` in Search Questions, the Question preview should show:
+
+1. the shared preamble/context for SourceQuestion `21`;
+2. the ordinary Question regions belonging specifically to `21a`.
+
+The preview should not require the user to inspect another question part to see
+the context needed to understand the selected Question.
+
+Requirements:
+
+- render linked shared-context regions before the selected Question's regions;
+- preserve region order within both the shared context and Question;
+- clearly distinguish shared context from the selected Question where useful;
+- do not duplicate the shared context if the selected Question's ordinary
+  regions already contain it due to inconsistent legacy data;
+- do not automatically display sibling parts such as `21b` merely because they
+  share the same SourceQuestion;
+- questions without shared context retain the existing preview behaviour;
+- missing or inconsistent shared-context relationships should be surfaced
+  rather than silently producing misleading previews.
+
+This is a Search Questions presentation concern. It does not change retrieval
+or curriculum applicability semantics.
+
 ## Normal Priority
+
+### Reposition question Save button beside region controls
+
+Origin: Question capture usability.
+
+Current behaviour places the imported-question `Attach Regions` action below the
+Accepted regions pane. This separates the final save action from the controls
+used immediately before it.
+
+Change the Question capture layout so that:
+
+- `Save Question` appears on the same horizontal row as `Add Region` and `Clear`;
+- `Save Question` is aligned to the right-hand side of that row;
+- the current `Attach Regions` wording is removed;
+- imported questions that are having their ordinary regions captured use
+  `Save Question` as the button text;
+- the same placement should be used consistently for normal question capture
+  and question editing where practical;
+- existing enable/disable validation behaviour is retained.
+
+Intended layout:
+
+Add Region   Clear                                  Save Question
 
 ### Decide whether `Question` requires multiple original classifications
 
@@ -211,6 +273,54 @@ The standalone mapping work distinguishes conceptual cases such as direct/reword
 Current retrieval mainly needs confirmed directional pairs.
 
 Decide whether relation type/confidence/notes should remain external review/audit metadata or become persisted application data for reporting and assisted review.
+
+### Support question-level applicability exceptions after curriculum mapping
+
+Origin: historical-to-current curriculum mapping / question review.
+
+A historical curriculum descriptor may contain several concepts. A confirmed
+mapping to a newer descriptor may carry forward only some of those concepts.
+
+Therefore, a Question classified to the historical descriptor must not be
+assumed to be applicable to the newer syllabus merely because its classification
+has a confirmed forward mapping.
+
+Example:
+
+- historical Descriptor A contains concepts X, Y and Z;
+- current Descriptor B carries forward X and Y but not Z;
+- Question Q is classified to Descriptor A but tests only Z;
+- A -> B remains a valid curriculum mapping;
+- Question Q must nevertheless be marked not applicable to the newer syllabus.
+
+Required future behaviour:
+
+- support an explicit question-level applicability review/override;
+- preserve the original historical classification and curriculum mapping;
+- allow a reviewer to mark a mapped-forward Question as not applicable to a
+  target syllabus/current curriculum context;
+- show a clear marker in the question viewer when such an exception exists;
+- do not silently rewrite or remove the underlying curriculum mapping;
+- retrieval and revision/export workflows must respect the question-level
+  exclusion once confirmed;
+- retain enough information to distinguish:
+  - applicable;
+  - not applicable;
+  - not yet reviewed, where required.
+
+The applicability exception should be separate from curriculum mapping because
+the mapping describes the relationship between curriculum concepts, whereas
+the exception describes whether a particular Question actually tests the
+carried-forward content.
+
+Design must determine whether the exception is recorded against:
+
+- the target syllabus version as a whole; or
+- a specific target curriculum node when one historical node maps to several
+  current nodes.
+
+Prefer node-specific applicability where a Question may remain valid for one
+mapped target but not another.
 
 ## Scheduled in Sprint 07 — not deferred backlog
 

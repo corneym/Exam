@@ -512,11 +512,13 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu questionMenu = createMenu("_Questions");
-		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
-		MenuItem captureImportedItem = createMenuItem("_Capture Imported Questions",
-				questionCapturePane::showLegacyCaptureControls);
+		MenuItem captureNewItem = createMenuItem("Capture _New Questions", questionCapturePane::showNewQuestionCapture);
+		captureNewItem.setId("capture-new-questions");
+		MenuItem captureImportedItem = createMenuItem("Capture _Imported Questions",
+				questionCapturePane::showImportedQuestionCapture);
 		captureImportedItem.setId("capture-imported-questions");
-		questionMenu.getItems().addAll(searchItem, new SeparatorMenuItem(), captureImportedItem);
+		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
+		questionMenu.getItems().addAll(captureNewItem, captureImportedItem, new SeparatorMenuItem(), searchItem);
 		return questionMenu;
 	}
 
@@ -999,7 +1001,23 @@ public class QuestionBankApplication extends Application {
 				questionExtractor);
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
 				previewService);
-		dialog.showAndWait();
+		showQuestionSearchDialog(dialog);
+	}
+
+	private void showQuestionSearchDialog(QuestionSearchDialog dialog) {
+		Optional<Question> selectedQuestion = dialog.showAndWait();
+		if (selectedQuestion.isEmpty()) {
+			dialog.dispose();
+			return;
+		}
+		Question question = selectedQuestion.get();
+		boolean editingStarted = questionCapturePane.editQuestion(question, () -> {
+			dialog.refreshAfterEdit(question.getId());
+			showQuestionSearchDialog(dialog);
+		});
+		if (!editingStarted) {
+			showQuestionSearchDialog(dialog);
+		}
 	}
 
 	private void showResourceCloseFailure(Stage primaryStage, Throwable failure) {

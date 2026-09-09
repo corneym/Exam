@@ -57,6 +57,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
@@ -596,17 +597,41 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
-	void questionsMenuCanOpenImportedQuestionCapture(FxRobot robot) {
+	void questionCaptureModesCanBeSelectedFromPaneAndMenu(FxRobot robot) {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		MenuItem captureNewItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.filter(item -> "capture-new-questions".equals(item.getId())).findFirst().orElseThrow();
 		MenuItem captureImportedItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
 				.filter(item -> "capture-imported-questions".equals(item.getId())).findFirst().orElseThrow();
-		assertEquals("_Capture Imported Questions", captureImportedItem.getText());
+		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
+		ToggleButton importedMode = lookup(robot, "#capture-mode-imported", ToggleButton.class);
 		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
+		assertEquals("Capture _New Questions", captureNewItem.getText());
+		assertEquals("Capture _Imported Questions", captureImportedItem.getText());
+		assertTrue(newMode.isSelected());
+		assertFalse(importedMode.isSelected());
 		assertFalse(legacyControls.isVisible());
 		assertFalse(legacyControls.isManaged());
 		robot.interact(captureImportedItem::fire);
+		assertFalse(newMode.isSelected());
+		assertTrue(importedMode.isSelected());
 		assertTrue(legacyControls.isVisible());
 		assertTrue(legacyControls.isManaged());
+		robot.interact(captureNewItem::fire);
+		assertTrue(newMode.isSelected());
+		assertFalse(importedMode.isSelected());
+		assertFalse(legacyControls.isVisible());
+		assertFalse(legacyControls.isManaged());
+		robot.clickOn(importedMode);
+		assertFalse(newMode.isSelected());
+		assertTrue(importedMode.isSelected());
+		assertTrue(legacyControls.isVisible());
+		assertTrue(legacyControls.isManaged());
+		robot.clickOn(newMode);
+		assertTrue(newMode.isSelected());
+		assertFalse(importedMode.isSelected());
+		assertFalse(legacyControls.isVisible());
+		assertFalse(legacyControls.isManaged());
 	}
 
 	@Test

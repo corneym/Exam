@@ -58,6 +58,15 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	}
 
 	@Override
+	public int applySharedContextToSourceQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		try {
+			return writer.applySharedContextToSourceQuestion(sourceQuestion, sharedContext);
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not apply shared context to source question", e);
+		}
+	}
+
+	@Override
 	public Question attachRegions(long questionId, List<QuestionRegion> regions) {
 		try {
 			writer.attachRegions(questionId, regions);
@@ -292,6 +301,21 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 					() -> new IllegalStateException("Question disappeared after updating capture relationships"));
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not update question capture relationships", e);
+		}
+	}
+
+	@Override
+	public Question updateQuestion(long questionId, String questionCode, int marks, List<QuestionRegion> regions,
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		Question existing = findById(questionId)
+				.orElseThrow(() -> new IllegalArgumentException("Question does not exist: " + questionId));
+		try {
+			writer.updateQuestion(questionId, existing.getBooklet(), questionCode, marks, regions, classification,
+					sourceQuestion, sharedContext);
+			return findById(questionId)
+					.orElseThrow(() -> new IllegalStateException("Question disappeared after update"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not update question", e);
 		}
 	}
 

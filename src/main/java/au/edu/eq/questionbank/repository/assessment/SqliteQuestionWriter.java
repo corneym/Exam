@@ -36,6 +36,38 @@ public final class SqliteQuestionWriter {
 		this.database = database;
 	}
 
+	public int applySharedContextToSourceQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
+			throws SQLException {
+		if (sourceQuestion == null) {
+			throw new NullPointerException("sourceQuestion");
+		}
+		if (sharedContext == null) {
+			throw new NullPointerException("sharedContext");
+		}
+		ExamBooklet booklet = sourceQuestion.getBooklet();
+		if (sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the source question's booklet");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+				verifySharedContextRelationship(connection, booklet, sharedContext);
+				verifySourceQuestionSharedContextConsistency(connection, sourceQuestion, sharedContext);
+				int updated = updateSourceQuestionSharedContexts(connection, sourceQuestion, sharedContext);
+				connection.commit();
+				return updated;
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
 	/**
 	 * Atomically attaches ordered regions to a persisted question that currently
 	 * has none.
@@ -186,6 +218,65 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
+	public void updateQuestion(long questionId, ExamBooklet booklet, String questionCode, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (questionCode == null || questionCode.isBlank()) {
+			throw new IllegalArgumentException("questionCode must not be blank");
+		}
+		if (marks < 1) {
+			throw new IllegalArgumentException("marks must be positive");
+		}
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("regions must not be empty");
+		}
+		for (QuestionRegion region : regions) {
+			if (region == null) {
+				throw new NullPointerException("regions contains null");
+			}
+			if (region.booklet().getId() != booklet.getId()) {
+				throw new IllegalArgumentException("All question regions must belong to the question's booklet");
+			}
+		}
+		validateClassificationForBooklet(booklet, classification);
+		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Source question must belong to the question's booklet");
+		}
+		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				verifyQuestionBooklet(connection, questionId, booklet);
+				verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+				verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+				verifySharedContextRelationship(connection, booklet, sharedContext);
+				updateQuestionEditableDetails(connection, questionId, questionCode, marks, classification,
+						sourceQuestion, sharedContext);
+				deleteQuestionRegions(connection, questionId);
+				insertRegions(connection, questionId, regions);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
 	private void attachRegionsInternal(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, boolean updateRelationships)
 			throws SQLException {
@@ -245,6 +336,16 @@ public final class SqliteQuestionWriter {
 				}
 				throw e;
 			}
+		}
+	}
+
+	private void deleteQuestionRegions(Connection connection, long questionId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM question_regions
+				WHERE question_id = ?
+				""")) {
+			statement.setLong(1, questionId);
+			statement.executeUpdate();
 		}
 	}
 
@@ -345,6 +446,38 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
+	private void updateQuestionEditableDetails(Connection connection, long questionId, String questionCode, int marks,
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET question_code = ?,
+				    marks = ?,
+				    classification_node_id = ?,
+				    source_question_id = ?,
+				    shared_context_id = ?
+				WHERE id = ?
+				""")) {
+			statement.setString(1, questionCode);
+			statement.setInt(2, marks);
+			statement.setLong(3, classification.getId());
+			if (sourceQuestion == null) {
+				statement.setNull(4, Types.BIGINT);
+			} else {
+				statement.setLong(4, sourceQuestion.getId());
+			}
+			if (sharedContext == null) {
+				statement.setNull(5, Types.BIGINT);
+			} else {
+				statement.setLong(5, sharedContext.getId());
+			}
+			statement.setLong(6, questionId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Question update affected an unexpected number of rows");
+			}
+		}
+	}
+
 	private void updateQuestionRelationships(Connection connection, long questionId, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
@@ -367,6 +500,20 @@ public final class SqliteQuestionWriter {
 			if (statement.executeUpdate() != 1) {
 				throw new SQLException("Question relationship update affected an unexpected number of rows");
 			}
+		}
+	}
+
+	private int updateSourceQuestionSharedContexts(Connection connection, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET shared_context_id = ?
+				WHERE source_question_id = ?
+				  AND shared_context_id IS NULL
+				""")) {
+			statement.setLong(1, sharedContext.getId());
+			statement.setLong(2, sourceQuestion.getId());
+			return statement.executeUpdate();
 		}
 	}
 
@@ -492,6 +639,31 @@ public final class SqliteQuestionWriter {
 				}
 				if (result.getLong("booklet_id") != booklet.getId()) {
 					throw new IllegalArgumentException("Source question must belong to the question's booklet");
+				}
+			}
+		}
+	}
+
+	private void verifySourceQuestionSharedContextConsistency(Connection connection, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT id, booklet_id, shared_context_id
+				FROM questions
+				WHERE source_question_id = ?
+				""")) {
+			statement.setLong(1, sourceQuestion.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					long questionId = result.getLong("id");
+					if (result.getLong("booklet_id") != sourceQuestion.getBooklet().getId()) {
+						throw new IllegalStateException(
+								"Question " + questionId + " is linked to a source question from another booklet");
+					}
+					long existingContextId = result.getLong("shared_context_id");
+					if (!result.wasNull() && existingContextId != sharedContext.getId()) {
+						throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()
+								+ " has inconsistent shared preamble links");
+					}
 				}
 			}
 		}
