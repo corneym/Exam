@@ -333,6 +333,27 @@ public class QuestionBankApplication extends Application {
 		showResourceCloseFailure(primaryStage, result.failure());
 	}
 
+	private void configurePdfWorkspace() {
+		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
+		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
+		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
+	}
+
+	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
+		primaryStage.setOnCloseRequest(event -> {
+			event.consume();
+			requestApplicationExit(primaryStage);
+		});
+		showStage(primaryStage, createRootLayout(primaryStage, config));
+		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
+	}
+
+	private void configureShutdown(ApplicationConfig config) {
+		DefaultBackupService automaticBackupService = new DefaultBackupService(config, applicationVersion());
+		shutdownCoordinator = new ShutdownCoordinator(automaticBackupService, BackupRequest.automaticDatabase(config),
+				new AutomaticBackupRetention(), pdfWorkspace);
+	}
+
 	private boolean confirmDiscardAcceptedQuestionRegions() {
 		if (questionCapturePane == null || !questionCapturePane.hasAcceptedRegions()) {
 			return true;
@@ -491,7 +512,11 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu questionMenu = createMenu("_Questions");
-		questionMenu.getItems().add(createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config)));
+		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
+		MenuItem captureImportedItem = createMenuItem("_Capture Imported Questions",
+				questionCapturePane::showLegacyCaptureControls);
+		captureImportedItem.setId("capture-imported-questions");
+		questionMenu.getItems().addAll(searchItem, new SeparatorMenuItem(), captureImportedItem);
 		return questionMenu;
 	}
 
@@ -666,6 +691,36 @@ public class QuestionBankApplication extends Application {
 			throw new IllegalStateException("Required exam booklets are still missing after booklet import.");
 		}
 		return Optional.of(Integer.valueOf(requests.size()));
+	}
+
+	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			PdfFilePicker answerPdfPicker) {
+		questionRepository = new SqliteQuestionRepository(database);
+		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
+				new ExamMetadataOptionsRepository(), examImporter, this::allowExamImportConfirmation, this::openExamPdf,
+				pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
+		curriculumSelectorPane = createCurriculumSelectorPane();
+		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
+				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
+				this::allowAnswerCaptureTransition, () -> clearCaptureSelection(CaptureSelectionOwner.ANSWER),
+				questionExtractor, pdfWorkspace::getAnswerPdfSession);
+		answerCapturePane.refreshUnansweredQuestions();
+		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
+				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
+				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
+				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
+				sharedContextCapturePane, questionExtractor, curriculumSelectionModel, curriculumSelectorPane,
+				examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
+				question -> activateImportedQuestion(question, config), this::confirmDiscardAcceptedQuestionRegions,
+				this::transferQuestionSelectionToSharedContext,
+				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION),
+				answerCapturePane::refreshUnansweredQuestions);
+		questionCapturePane.refreshImportedQuestions();
 	}
 
 	private boolean isRegionSelectionAvailable(PdfWorkspacePane.DocumentMode documentMode) {
@@ -1085,57 +1140,6 @@ public class QuestionBankApplication extends Application {
 		initialiseCaptureWorkflow(primaryStage, config, database, answerPdfPicker);
 		configurePdfWorkspace();
 		configurePrimaryStage(primaryStage, config);
-	}
-
-	private void configureShutdown(ApplicationConfig config) {
-		DefaultBackupService automaticBackupService = new DefaultBackupService(config, applicationVersion());
-		shutdownCoordinator = new ShutdownCoordinator(automaticBackupService, BackupRequest.automaticDatabase(config),
-				new AutomaticBackupRetention(), pdfWorkspace);
-	}
-
-	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
-			PdfFilePicker answerPdfPicker) {
-		questionRepository = new SqliteQuestionRepository(database);
-		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
-				new ExamMetadataOptionsRepository(), examImporter, this::allowExamImportConfirmation, this::openExamPdf,
-				pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
-		curriculumSelectorPane = createCurriculumSelectorPane();
-		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
-				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
-				this::allowAnswerCaptureTransition, () -> clearCaptureSelection(CaptureSelectionOwner.ANSWER),
-				questionExtractor, pdfWorkspace::getAnswerPdfSession);
-		answerCapturePane.refreshUnansweredQuestions();
-		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
-				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
-				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
-				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
-		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
-				sharedContextCapturePane, questionExtractor, curriculumSelectionModel, curriculumSelectorPane,
-				examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
-				question -> activateImportedQuestion(question, config), this::confirmDiscardAcceptedQuestionRegions,
-				this::transferQuestionSelectionToSharedContext,
-				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION),
-				answerCapturePane::refreshUnansweredQuestions);
-		questionCapturePane.refreshImportedQuestions();
-	}
-
-	private void configurePdfWorkspace() {
-		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
-		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
-		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
-	}
-
-	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
-		primaryStage.setOnCloseRequest(event -> {
-			event.consume();
-			requestApplicationExit(primaryStage);
-		});
-		showStage(primaryStage, createRootLayout(primaryStage, config));
-		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
 	}
 
 	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {

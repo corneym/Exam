@@ -308,8 +308,12 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private Question attachImportedQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
-		return questionRepository.attachRegions(importedQuestion.getId(), pendingRegions, sourceQuestion,
-				sharedContext);
+		if (importedQuestion.getRegions().isEmpty()) {
+			return questionRepository.attachRegions(importedQuestion.getId(), pendingRegions,
+					curriculumSelectionModel.getClassification(), sourceQuestion, sharedContext);
+		}
+		return questionRepository.updateCaptureRelationships(importedQuestion.getId(),
+				curriculumSelectionModel.getClassification(), sourceQuestion, sharedContext);
 	}
 
 	private void buildContent() {
@@ -642,68 +646,22 @@ final class QuestionCapturePane extends VBox {
 	private void loadImportedQuestion(Question question) {
 		Question previousQuestion = importedQuestion;
 		if (question != previousQuestion && hasAcceptedRegions() && !questionTargetChangeAllowed.getAsBoolean()) {
-			refreshingImportedQuestions = true;
-			try {
-				importedQuestionBox.setValue(previousQuestion);
-			} finally {
-				refreshingImportedQuestions = false;
-			}
+			restoreImportedQuestionSelection(previousQuestion);
 			return;
 		}
 		if (question != null && !importedQuestionActivationHandler.test(question)) {
-			refreshingImportedQuestions = true;
-			try {
-				importedQuestionBox.setValue(previousQuestion);
-			} finally {
-				refreshingImportedQuestions = false;
-			}
+			restoreImportedQuestionSelection(previousQuestion);
 			return;
 		}
 		clearRegions();
 		importedQuestion = question;
 		sharedContextCapturePane.refreshForCurrentBooklet();
 		if (question == null) {
-			questionCodeField.setDisable(false);
-			marksField.setDisable(false);
-			curriculumSelectorPane.setDisable(false);
-			curriculumSelectorPane.setSyllabusContextLocked(false);
-			hideImportedClassification();
-			saveQuestionButton.setText("Save Question");
-			captureHintLabel.setVisible(false);
-			captureHintLabel.setManaged(false);
+			showNewQuestionMode();
 			refreshSaveButtonState();
 			return;
 		}
-		questionCodeField.setText(question.getQuestionCode());
-		marksField.setText(Integer.toString(question.getMarks()));
-		if (question.hasSharedContext()) {
-			sharedContextCapturePane.selectContext(question.getSharedContext());
-		}
-		curriculumSelectorPane.selectClassificationPath(question.getClassification());
-		curriculumSelectorPane.setDisable(false);
-		curriculumSelectorPane.setSyllabusContextLocked(true);
-		showImportedClassification(question);
-		questionCodeField.setDisable(true);
-		marksField.setDisable(true);
-		refreshPreambleControls();
-		if (question.getRegions().isEmpty()) {
-			saveQuestionButton.setText("Attach Regions");
-			if (question.isSharedContextUnresolved()) {
-				captureHintLabel.setText("Shared preamble required — capture it as the first region, "
-						+ "then capture the question region(s). " + "The imported classification may also be refined.");
-			} else {
-				captureHintLabel.setText(
-						"Capture the question region(s). " + "The imported classification may also be refined.");
-			}
-		} else {
-			saveQuestionButton.setText("Save Resolution");
-			captureHintLabel.setText("Question regions are already stored. "
-					+ "Capture the shared preamble, then save. " + "The imported classification may also be refined.");
-		}
-		captureHintLabel.setVisible(true);
-		captureHintLabel.setManaged(true);
-		showQuestionPendingStatus();
-		refreshSaveButtonState();
+		showImportedQuestionMode(question);
 	}
 
 	private void refreshPreambleControls() {
@@ -719,6 +677,11 @@ final class QuestionCapturePane extends VBox {
 				}
 				return;
 			}
+			hidePreambleControls();
+			return;
+		}
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null) {
 			hidePreambleControls();
 			return;
 		}
@@ -855,34 +818,20 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void saveQuestion() {
-		Question question;
 		int previousImportedIndex = -1;
 		ExamBooklet booklet = bookletSupplier.get();
 		SourceQuestion sourceQuestion = resolveSourceQuestion(booklet, questionCodeField.getText().trim());
 		SharedQuestionContext sharedContext = resolveSharedContextForSave(sourceQuestion);
 		sourceQuestion = resolveSourcePreambleStatus(sourceQuestion, sharedContext);
+		Question question;
 		if (importedQuestion != null) {
-			previousImportedIndex = importedQuestionBox.getSelectionModel().getSelectedIndex();
-			if (previousImportedIndex < 0) {
-				previousImportedIndex = 0;
-			}
-			if (importedQuestion.getRegions().isEmpty()) {
-				question = questionRepository.attachRegions(importedQuestion.getId(), pendingRegions,
-						curriculumSelectionModel.getClassification(), sourceQuestion, sharedContext);
-				saveStatusLabel.setText(String.format("Captured %s (%d mark(s), %d region(s))",
-						question.getQuestionCode(), question.getMarks(), question.getRegions().size()));
-			} else {
-				question = questionRepository.updateCaptureRelationships(importedQuestion.getId(),
-						curriculumSelectionModel.getClassification(), sourceQuestion, sharedContext);
-				saveStatusLabel.setText(String.format("Resolved %s (%d mark(s), %d stored region(s))",
-						question.getQuestionCode(), question.getMarks(), question.getRegions().size()));
-			}
+			previousImportedIndex = selectedImportedQuestionIndex();
+			boolean hadStoredRegions = !importedQuestion.getRegions().isEmpty();
+			question = attachImportedQuestion(sourceQuestion, sharedContext);
+			showSavedQuestionStatus(hadStoredRegions ? "Resolved" : "Captured", question);
 		} else {
-			int marks = Integer.parseInt(marksField.getText().trim());
-			question = questionRepository.save(booklet, questionCodeField.getText().trim(), "", marks, pendingRegions,
-					curriculumSelectionModel.getClassification(), false, sourceQuestion, sharedContext);
-			saveStatusLabel.setText(String.format("Saved %s (%d mark(s), %d region(s))", question.getQuestionCode(),
-					question.getMarks(), question.getRegions().size()));
+			question = saveNewQuestion(booklet, sourceQuestion, sharedContext);
+			showSavedQuestionStatus("Saved", question);
 		}
 		questionsChangedHandler.run();
 		resetAfterQuestionSave(previousImportedIndex);
@@ -952,17 +901,26 @@ final class QuestionCapturePane extends VBox {
 		if (question.hasSharedContext()) {
 			sharedContextCapturePane.selectContext(question.getSharedContext());
 		}
-		refreshPreambleControls();
 		curriculumSelectorPane.selectClassificationPath(question.getClassification());
+		curriculumSelectorPane.setDisable(false);
+		curriculumSelectorPane.setSyllabusContextLocked(true);
+		showImportedClassification(question);
 		questionCodeField.setDisable(true);
 		marksField.setDisable(true);
-		curriculumSelectorPane.setDisable(true);
-		saveQuestionButton.setText("Attach Regions");
-		if (question.isSharedContextUnresolved()) {
-			showCaptureHint(
-					"Shared preamble required — capture it as the first region, then capture the question region(s).");
+		refreshPreambleControls();
+		if (question.getRegions().isEmpty()) {
+			saveQuestionButton.setText("Attach Regions");
+			if (question.isSharedContextUnresolved()) {
+				showCaptureHint("Shared preamble required — capture it as the first region, "
+						+ "then capture the question region(s). " + "The imported classification may also be refined.");
+			} else {
+				showCaptureHint(
+						"Capture the question region(s). " + "The imported classification may also be refined.");
+			}
 		} else {
-			hideCaptureHint();
+			saveQuestionButton.setText("Save Resolution");
+			showCaptureHint("Question regions are already stored. " + "Capture the shared preamble, then save. "
+					+ "The imported classification may also be refined.");
 		}
 		showQuestionPendingStatus();
 		refreshSaveButtonState();
@@ -972,6 +930,8 @@ final class QuestionCapturePane extends VBox {
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
 		curriculumSelectorPane.setDisable(false);
+		curriculumSelectorPane.setSyllabusContextLocked(false);
+		hideImportedClassification();
 		saveQuestionButton.setText("Save Question");
 		hideCaptureHint();
 	}

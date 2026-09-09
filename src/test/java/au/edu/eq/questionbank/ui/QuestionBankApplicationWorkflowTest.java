@@ -311,7 +311,6 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(restored.hasSharedContext());
 		assertEquals(1, restored.getSharedContext().getRegions().size());
 		assertEquals(1, restored.getRegions().size());
-
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
@@ -594,6 +593,20 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(restored.hasSourceQuestion());
 		assertEquals(PreambleStatus.NONE, restored.getSourceQuestion().getPreambleStatus());
 		assertFalse(restored.hasSharedContext());
+	}
+
+	@Test
+	void questionsMenuCanOpenImportedQuestionCapture(FxRobot robot) {
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		MenuItem captureImportedItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.filter(item -> "capture-imported-questions".equals(item.getId())).findFirst().orElseThrow();
+		assertEquals("_Capture Imported Questions", captureImportedItem.getText());
+		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
+		assertFalse(legacyControls.isVisible());
+		assertFalse(legacyControls.isManaged());
+		robot.interact(captureImportedItem::fire);
+		assertTrue(legacyControls.isVisible());
+		assertTrue(legacyControls.isManaged());
 	}
 
 	@Test

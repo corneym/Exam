@@ -84,34 +84,6 @@ final class SharedContextCapturePane extends VBox {
 		setSpacing(COMPACT_SPACING);
 	}
 
-	private void buildContent() {
-		getChildren().addAll(createExistingContextControls(), statusLabel, newContextBox);
-	}
-
-	private void validateDependencies(SharedQuestionContextRepository contextRepository,
-			Supplier<ExamBooklet> bookletSupplier, QuestionExtractor questionExtractor,
-			Supplier<PdfSession> examPdfSessionSupplier, Runnable selectionClearHandler,
-			BooleanSupplier captureStartAllowed) {
-		if (contextRepository == null) {
-			throw new NullPointerException("contextRepository");
-		}
-		if (bookletSupplier == null) {
-			throw new NullPointerException("bookletSupplier");
-		}
-		if (questionExtractor == null) {
-			throw new NullPointerException("questionExtractor");
-		}
-		if (examPdfSessionSupplier == null) {
-			throw new NullPointerException("examPdfSessionSupplier");
-		}
-		if (selectionClearHandler == null) {
-			throw new NullPointerException("selectionClearHandler");
-		}
-		if (captureStartAllowed == null) {
-			throw new NullPointerException("captureStartAllowed");
-		}
-	}
-
 	/**
 	 * Accepts the pending selection as the single region of an automatic preamble
 	 * capture and returns to normal question-region capture.
@@ -363,6 +335,18 @@ final class SharedContextCapturePane extends VBox {
 		setNewContextBoxVisible(true);
 	}
 
+	private void buildContent() {
+		getChildren().addAll(createExistingContextControls(), statusLabel, newContextBox);
+	}
+
+	private void buildNewContextBox() {
+		newContextBox.getChildren().addAll(new Label("New shared context"), contextLabelField,
+				createCurrentSelectionControls(), currentPreview, regionCountLabel, acceptedRegionScroll,
+				createSaveControls());
+		newContextBox.setPadding(CAPTURE_PADDING);
+		setNewContextBoxVisible(false);
+	}
+
 	private void cancelNewContext() {
 		clearCurrentSelection();
 		pendingRegions.clear();
@@ -372,19 +356,10 @@ final class SharedContextCapturePane extends VBox {
 		statusLabel.setText("No shared context selected");
 	}
 
-	private void enterCaptureMode() {
-		captureMode = true;
-		existingContextField.getSelectionModel().clearSelection();
-		existingContextField.setDisable(true);
-		newContextButton.setDisable(true);
+	private void clearPersistedCaptureState() {
 		pendingRegions.clear();
-	}
-
-	private void leaveCaptureMode() {
-		captureMode = false;
-		existingContextField.setDisable(false);
-		newContextButton.setDisable(false);
-		setNewContextBoxVisible(false);
+		contextLabelField.clear();
+		currentPreview.setImage(null);
 	}
 
 	private void clearRegions() {
@@ -407,6 +382,24 @@ final class SharedContextCapturePane extends VBox {
 			}
 			statusLabel.setText("Linked: " + newContext.getLabel());
 		});
+	}
+
+	private void configureCaptureControls() {
+		contextLabelField.setId("shared-context-label");
+		contextLabelField.setPromptText("Context label, e.g. Question 24 preamble");
+		addRegionButton.setId("add-shared-context-region");
+		clearSelectionButton.setId("clear-shared-context-selection");
+		clearRegionsButton.setId("clear-shared-context-regions");
+		saveContextButton.setId("save-shared-context");
+		cancelContextButton.setId("cancel-shared-context");
+		regionCountLabel.setId("shared-context-region-count");
+		currentPreview.setPreserveRatio(true);
+		currentPreview.setFitWidth(PREVIEW_WIDTH);
+		currentPreview.setFitHeight(PREVIEW_HEIGHT);
+		acceptedRegionScroll.setFitToWidth(true);
+		acceptedRegionScroll.setPrefViewportHeight(100.0);
+		acceptedRegionScroll.setMaxHeight(120.0);
+		setSelectionButtonsEnabled(false);
 	}
 
 	private void configureControls() {
@@ -437,32 +430,6 @@ final class SharedContextCapturePane extends VBox {
 		newContextButton.setId("new-shared-context");
 	}
 
-	private void configureCaptureControls() {
-		contextLabelField.setId("shared-context-label");
-		contextLabelField.setPromptText("Context label, e.g. Question 24 preamble");
-		addRegionButton.setId("add-shared-context-region");
-		clearSelectionButton.setId("clear-shared-context-selection");
-		clearRegionsButton.setId("clear-shared-context-regions");
-		saveContextButton.setId("save-shared-context");
-		cancelContextButton.setId("cancel-shared-context");
-		regionCountLabel.setId("shared-context-region-count");
-		currentPreview.setPreserveRatio(true);
-		currentPreview.setFitWidth(PREVIEW_WIDTH);
-		currentPreview.setFitHeight(PREVIEW_HEIGHT);
-		acceptedRegionScroll.setFitToWidth(true);
-		acceptedRegionScroll.setPrefViewportHeight(100.0);
-		acceptedRegionScroll.setMaxHeight(120.0);
-		setSelectionButtonsEnabled(false);
-	}
-
-	private void buildNewContextBox() {
-		newContextBox.getChildren().addAll(new Label("New shared context"), contextLabelField,
-				createCurrentSelectionControls(), currentPreview, regionCountLabel, acceptedRegionScroll,
-				createSaveControls());
-		newContextBox.setPadding(CAPTURE_PADDING);
-		setNewContextBoxVisible(false);
-	}
-
 	private HBox createCurrentSelectionControls() {
 		HBox controls = new HBox(CONTROL_SPACING, new Label("Current selection"), addRegionButton, clearSelectionButton,
 				clearRegionsButton);
@@ -474,40 +441,6 @@ final class SharedContextCapturePane extends VBox {
 		HBox controls = new HBox(CONTROL_SPACING, new Label("Shared context"), existingContextField, newContextButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
-	}
-
-	private HBox createSaveControls() {
-		HBox controls = new HBox(CONTROL_SPACING, saveContextButton, cancelContextButton);
-		controls.setAlignment(Pos.CENTER_LEFT);
-		return controls;
-	}
-
-	private SharedQuestionContext findContextById(long id) {
-		for (SharedQuestionContext context : existingContextField.getItems()) {
-			if (context.getId() == id) {
-				return context;
-			}
-		}
-		return null;
-	}
-
-	private void loadContexts(ExamBooklet booklet) {
-		if (booklet == null) {
-			existingContextField.getItems().clear();
-			return;
-		}
-		existingContextField.getItems().setAll(contextRepository.findByBooklet(booklet));
-	}
-
-	private void refreshRegionPreviews() {
-		acceptedRegionBox.getChildren().clear();
-		for (int i = 0; i < pendingRegions.size(); i++) {
-			acceptedRegionBox.getChildren().add(createRegionPreview(pendingRegions.get(i), i));
-		}
-		regionCountLabel.setText("Regions: " + pendingRegions.size());
-		boolean hasRegions = !pendingRegions.isEmpty();
-		acceptedRegionScroll.setVisible(hasRegions);
-		acceptedRegionScroll.setManaged(hasRegions);
 	}
 
 	private HBox createRegionPreview(SharedQuestionContextRegion region, int regionIndex) {
@@ -529,6 +462,60 @@ final class SharedContextCapturePane extends VBox {
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview shared context region", e);
 		}
+	}
+
+	private HBox createSaveControls() {
+		HBox controls = new HBox(CONTROL_SPACING, saveContextButton, cancelContextButton);
+		controls.setAlignment(Pos.CENTER_LEFT);
+		return controls;
+	}
+
+	private void enterCaptureMode() {
+		captureMode = true;
+		existingContextField.getSelectionModel().clearSelection();
+		existingContextField.setDisable(true);
+		newContextButton.setDisable(true);
+		pendingRegions.clear();
+	}
+
+	private SharedQuestionContext findContextById(long id) {
+		for (SharedQuestionContext context : existingContextField.getItems()) {
+			if (context.getId() == id) {
+				return context;
+			}
+		}
+		return null;
+	}
+
+	private void leaveCaptureMode() {
+		captureMode = false;
+		existingContextField.setDisable(false);
+		newContextButton.setDisable(false);
+		setNewContextBoxVisible(false);
+	}
+
+	private void loadContexts(ExamBooklet booklet) {
+		if (booklet == null) {
+			existingContextField.getItems().clear();
+			return;
+		}
+		existingContextField.getItems().setAll(contextRepository.findByBooklet(booklet));
+	}
+
+	private void refreshRegionPreviews() {
+		acceptedRegionBox.getChildren().clear();
+		for (int i = 0; i < pendingRegions.size(); i++) {
+			acceptedRegionBox.getChildren().add(createRegionPreview(pendingRegions.get(i), i));
+		}
+		regionCountLabel.setText("Regions: " + pendingRegions.size());
+		boolean hasRegions = !pendingRegions.isEmpty();
+		acceptedRegionScroll.setVisible(hasRegions);
+		acceptedRegionScroll.setManaged(hasRegions);
+	}
+
+	private SharedQuestionContext reloadSavedContext(ExamBooklet booklet, SharedQuestionContext saved) {
+		loadContexts(booklet);
+		return findContextById(saved.getId());
 	}
 
 	private void saveContext() {
@@ -556,17 +543,6 @@ final class SharedContextCapturePane extends VBox {
 		SharedQuestionContext matching = reloadSavedContext(booklet, saved);
 		existingContextField.setValue(matching);
 		statusLabel.setText("Linked: " + saved.getLabel());
-	}
-
-	private void clearPersistedCaptureState() {
-		pendingRegions.clear();
-		contextLabelField.clear();
-		currentPreview.setImage(null);
-	}
-
-	private SharedQuestionContext reloadSavedContext(ExamBooklet booklet, SharedQuestionContext saved) {
-		loadContexts(booklet);
-		return findContextById(saved.getId());
 	}
 
 	private SharedQuestionContext savePendingContext(ExamBooklet booklet, String label) {
@@ -597,5 +573,29 @@ final class SharedContextCapturePane extends VBox {
 		alert.setHeaderText(header);
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	private void validateDependencies(SharedQuestionContextRepository contextRepository,
+			Supplier<ExamBooklet> bookletSupplier, QuestionExtractor questionExtractor,
+			Supplier<PdfSession> examPdfSessionSupplier, Runnable selectionClearHandler,
+			BooleanSupplier captureStartAllowed) {
+		if (contextRepository == null) {
+			throw new NullPointerException("contextRepository");
+		}
+		if (bookletSupplier == null) {
+			throw new NullPointerException("bookletSupplier");
+		}
+		if (questionExtractor == null) {
+			throw new NullPointerException("questionExtractor");
+		}
+		if (examPdfSessionSupplier == null) {
+			throw new NullPointerException("examPdfSessionSupplier");
+		}
+		if (selectionClearHandler == null) {
+			throw new NullPointerException("selectionClearHandler");
+		}
+		if (captureStartAllowed == null) {
+			throw new NullPointerException("captureStartAllowed");
+		}
 	}
 }

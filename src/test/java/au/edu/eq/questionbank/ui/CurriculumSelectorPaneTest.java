@@ -44,6 +44,21 @@ public class CurriculumSelectorPaneTest {
 	private CurriculumSelectorPane pane;
 
 	@Test
+	public void changingSyllabusClearsCodeAndClassificationButRetainsSubject(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+		robot.clickOn(codeField).write("3.1.1.1");
+		robot.interact(() -> syllabuses.setValue(syllabus2019));
+		assertEquals(chemistry, model.getSubject());
+		assertEquals(syllabus2019, model.getSyllabusVersion());
+		assertEquals("", codeField.getText());
+		assertNull(model.getUnit());
+		assertNull(model.getClassification());
+		assertFalse(pane.classificationSelectedProperty().get());
+	}
+
+	@Test
 	public void codeEntryRejectsImpossibleCodeExtension(FxRobot robot) {
 		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
 		robot.clickOn(codeField).write("3.1.1");
@@ -98,17 +113,6 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
-	public void editingDescriptorCodeBackToSubtopicClearsDescriptor(FxRobot robot) {
-		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
-		robot.clickOn(codeField).write("3.1.1.1");
-		robot.eraseText(2);
-		assertEquals("3.1.1", codeField.getText());
-		assertEquals(subtopic311, model.getSubtopic());
-		assertNull(model.getDescriptor());
-		assertEquals(subtopic311, pane.selectedClassificationProperty().get());
-	}
-
-	@Test
 	public void directTopicDescriptorDoesNotShowSubtopicRow(FxRobot robot) {
 		ComboBox<?> subtopicBox = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
 		ComboBox<?> descriptorBox = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
@@ -145,6 +149,17 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
+	public void editingDescriptorCodeBackToSubtopicClearsDescriptor(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		robot.clickOn(codeField).write("3.1.1.1");
+		robot.eraseText(2);
+		assertEquals("3.1.1", codeField.getText());
+		assertEquals(subtopic311, model.getSubtopic());
+		assertNull(model.getDescriptor());
+		assertEquals(subtopic311, pane.selectedClassificationProperty().get());
+	}
+
+	@Test
 	public void leafDescriptorRejectsTrailingPeriod(FxRobot robot) {
 		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
 		robot.clickOn(codeField).write("3.1.1.1");
@@ -160,21 +175,6 @@ public class CurriculumSelectorPaneTest {
 		assertEquals("3.1.1.1", codeField.getText());
 		assertEquals(subtopic311, model.getSubtopic());
 		assertEquals(descriptor3111, model.getDescriptor());
-	}
-
-	@Test
-	public void changingSyllabusClearsCodeAndClassificationButRetainsSubject(FxRobot robot) {
-		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
-		@SuppressWarnings("unchecked")
-		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
-		robot.clickOn(codeField).write("3.1.1.1");
-		robot.interact(() -> syllabuses.setValue(syllabus2019));
-		assertEquals(chemistry, model.getSubject());
-		assertEquals(syllabus2019, model.getSyllabusVersion());
-		assertEquals("", codeField.getText());
-		assertNull(model.getUnit());
-		assertNull(model.getClassification());
-		assertFalse(pane.classificationSelectedProperty().get());
 	}
 
 	@Start
@@ -209,6 +209,27 @@ public class CurriculumSelectorPaneTest {
 		assertTrue(subtopicBox.isVisible());
 		assertTrue(descriptorBox.isVisible());
 		assertEquals(subtopic311, model.getClassification());
+	}
+
+	@Test
+	public void syllabusContextCanBeLockedWhileClassificationRemainsEditable(FxRobot robot) {
+		robot.interact(() -> pane.selectClassificationPath(subtopic311));
+		robot.interact(() -> pane.setSyllabusContextLocked(true));
+		ComboBox<?> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		ComboBox<?> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<?> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		assertTrue(subjects.isDisabled());
+		assertTrue(syllabuses.isDisabled());
+		assertFalse(codeField.isDisabled());
+		assertFalse(descriptors.isDisabled());
+		robot.interact(() -> descriptors.getSelectionModel().select(descriptors.getItems().indexOf(descriptor3111)));
+		assertEquals(descriptor3111, model.getClassification());
+		assertEquals("3.1.1.1", codeField.getText());
+		robot.interact(() -> pane.setSyllabusContextLocked(false));
+		assertFalse(subjects.isDisabled());
+		assertFalse(syllabuses.isDisabled());
 	}
 
 	@Test
