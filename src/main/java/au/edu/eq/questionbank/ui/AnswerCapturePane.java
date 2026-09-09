@@ -145,7 +145,7 @@ final class AnswerCapturePane extends VBox {
 		configureControls();
 		configureActions(stage);
 		getChildren().addAll(createSectionLabel("Answer"), unansweredQuestionField, selectedAnswerQuestionLabel,
-				createAnswerPdfControls(), createAnswerRegionControls(), answerPreviewView, answerRegionsScrollPane,
+				createAnswerPdfControls(), createAnswerRegionControls(), answerRegionsScrollPane,
 				createAnswerTextControls());
 		setSpacing(COMPACT_SPACING);
 		setPadding(PANEL_PADDING);
@@ -168,7 +168,6 @@ final class AnswerCapturePane extends VBox {
 	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
 		currentAnswerSelection = new AnswerRegion(answerFile, selection.pageNumber(), selection.x(), selection.y(),
 				selection.width(), selection.height());
-		showAnswerPreview(currentAnswerSelection);
 		Question question = unansweredQuestionField.getValue();
 		selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
 		answerRegionStatusLabel.setText("Selection pending — Page " + selection.pageNumber());
@@ -180,7 +179,7 @@ final class AnswerCapturePane extends VBox {
 	 */
 	void clearCurrentSelectionForPageChange() {
 		currentAnswerSelection = null;
-		answerPreviewView.setImage(null);
+		answerRegionStatusLabel.setText("");
 		setSelectionActionsEnabled(false);
 	}
 
@@ -277,7 +276,6 @@ final class AnswerCapturePane extends VBox {
 		pendingAnswerRegions.add(currentAnswerSelection);
 		refreshAnswerRegionList();
 		currentAnswerSelection = null;
-		answerPreviewView.setImage(null);
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
 		showAcceptedRegionStatus();
@@ -376,7 +374,6 @@ final class AnswerCapturePane extends VBox {
 		currentAnswerSelection = null;
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
-		answerPreviewView.setImage(null);
 		Question question = unansweredQuestionField.getValue();
 		if (question != null) {
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
@@ -436,10 +433,6 @@ final class AnswerCapturePane extends VBox {
 		answerRegionsScrollPane.setPrefViewportHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
 		answerRegionsScrollPane.setVisible(false);
 		answerRegionsScrollPane.setManaged(false);
-		answerPreviewView.setPreserveRatio(true);
-		answerPreviewView.setSmooth(true);
-		answerPreviewView.fitWidthProperty()
-				.bind(Bindings.createDoubleBinding(() -> Math.max(0.0, getWidth() - 16.0), widthProperty()));
 		setSelectionActionsEnabled(false);
 	}
 
@@ -700,15 +693,6 @@ final class AnswerCapturePane extends VBox {
 		alert.setHeaderText("The answer PDF could not be imported.");
 		alert.setContentText(message);
 		alert.showAndWait();
-	}
-
-	private void showAnswerPreview(AnswerRegion region) {
-		try {
-			BufferedImage preview = questionExtractor.extractRegion(answerPdfSessionSupplier.get(), region);
-			answerPreviewView.setImage(SwingFXUtils.toFXImage(preview, null));
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to preview answer region", e);
-		}
 	}
 
 	private void showError(String message) {
