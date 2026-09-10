@@ -9,8 +9,11 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -83,6 +86,7 @@ final class AnswerCapturePane extends VBox {
 	private final Supplier<PdfSession> answerPdfSessionSupplier;
 	private final PdfFilePicker pdfFilePicker;
 	private final Consumer<SelectedPdf> answerPdfHandler;
+	private final BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader;
 	private final Runnable selectionClearHandler;
 	private final Runnable answerDocumentHandler;
 	private final SqliteAnswerWriter answerWriter;
@@ -128,7 +132,8 @@ final class AnswerCapturePane extends VBox {
 	AnswerCapturePane(Stage stage, QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
 			PdfFilePicker pdfFilePicker, Consumer<SelectedPdf> answerPdfHandler, Runnable answerDocumentHandler,
 			BooleanSupplier answerTransitionAllowed, Runnable selectionClearHandler,
-			QuestionExtractor questionExtractor, Supplier<PdfSession> answerPdfSessionSupplier) {
+			QuestionExtractor questionExtractor, Supplier<PdfSession> answerPdfSessionSupplier,
+			BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -159,6 +164,7 @@ final class AnswerCapturePane extends VBox {
 		this.questionRepository = questionRepository;
 		this.pdfFilePicker = pdfFilePicker;
 		this.answerPdfHandler = answerPdfHandler;
+		this.answerPdfLoader = Objects.requireNonNull(answerPdfLoader, "answerPdfLoader");
 		this.selectionClearHandler = selectionClearHandler;
 		this.questionExtractor = questionExtractor;
 		this.answerPdfSessionSupplier = answerPdfSessionSupplier;
@@ -218,6 +224,9 @@ final class AnswerCapturePane extends VBox {
 	 * @throws NullPointerException     if either argument is null
 	 */
 	boolean editAnswer(Question question, Runnable editCompletedHandler) {
+		if (answerSaveInProgress) {
+			return false;
+		}
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
@@ -346,6 +355,10 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void applyUnansweredQuestionChange(Question question) {
+		applyUnansweredQuestionChange(question, true);
+	}
+
+	private void applyUnansweredQuestionChange(Question question, boolean loadDocument) {
 		clearPendingAnswerRegions();
 		clearMultipleChoiceAnswer();
 		if (question == null) {
@@ -381,7 +394,7 @@ final class AnswerCapturePane extends VBox {
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — answer stored");
 			saveAnswerButton.setText("Update Answer");
 		} else {
-			if (answerFile == null) {
+			if (loadDocument && answerFile == null) {
 				openedAnswerPdf = loadRegisteredAnswerFile(question);
 			}
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
@@ -392,7 +405,7 @@ final class AnswerCapturePane extends VBox {
 		updateMultipleChoiceAnswerVisibility(question);
 		chooseAnswerPdfButton.setDisable(false);
 		refreshSaveButtonState();
-		if (answerFile != null && !openedAnswerPdf) {
+		if (loadDocument && answerFile != null && !openedAnswerPdf) {
 			answerDocumentHandler.run();
 		}
 	}
@@ -595,6 +608,10 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void finishAnswerEdit() {
+		finishAnswerEdit(true);
+	}
+
+	private void finishAnswerEdit(boolean reloadQuestions) {
 		Runnable completedHandler = answerEditCompletedHandler;
 		answerEditCompletedHandler = () -> {
 		};
@@ -607,7 +624,11 @@ final class AnswerCapturePane extends VBox {
 		cancelAnswerEditButton.setVisible(false);
 		cancelAnswerEditButton.setManaged(false);
 		saveAnswerButton.setText("Save Answer");
-		refreshQuestions();
+		if (reloadQuestions) {
+			refreshQuestions();
+		} else {
+			refreshQuestions(List.copyOf(unansweredQuestionField.getItems()));
+		}
 		applyUnansweredQuestionChange(unansweredQuestionField.getValue());
 		completedHandler.run();
 	}
@@ -741,6 +762,9 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void saveAnswer(Question question, String answerText) {
+		if (answerSaveInProgress) {
+			return;
+		}
 		int previousIndex = unansweredQuestionField.getSelectionModel().getSelectedIndex();
 		String storedText = answerText.isBlank() ? null : answerText;
 		List<AnswerRegion> regions = List.copyOf(pendingAnswerRegions);
@@ -760,20 +784,21 @@ final class AnswerCapturePane extends VBox {
 			}
 		};
 		saveTask.setOnSucceeded(_ -> {
-			answerSaveInProgress = false;
-			setDisable(false);
 			Answer answer = saveTask.getValue();
 			question.setAnswer(answer);
 			locallyAnsweredQuestionIds.add(question.getId());
 			if (editing) {
-				finishAnswerEdit();
+				try {
+					finishAnswerEdit(false);
+				} finally {
+					finishAnswerSaveTransition(null);
+				}
 				return;
 			}
 			clearPendingAnswerRegions();
 			clearMultipleChoiceAnswer();
-			refreshQuestions();
-			selectNextUnansweredQuestion(previousIndex);
-			refreshSaveButtonState();
+			Question next = removeSavedQuestionAndSelectNext(question, previousIndex);
+			loadNextAnswerDocument(next);
 		});
 		saveTask.setOnFailed(_ -> {
 			answerSaveInProgress = false;
@@ -821,20 +846,90 @@ final class AnswerCapturePane extends VBox {
 		preservedAnswerText = answerText;
 	}
 
-	private void selectNextUnansweredQuestion(int previousIndex) {
+	private Question removeSavedQuestionAndSelectNext(Question savedQuestion, int previousIndex) {
 		Question nextQuestion = null;
-		if (!unansweredQuestionField.getItems().isEmpty()) {
-			int nextIndex = previousIndex < 0 ? 0
-					: Math.min(previousIndex, unansweredQuestionField.getItems().size() - 1);
-			nextQuestion = unansweredQuestionField.getItems().get(nextIndex);
-		}
 		restoringUnansweredQuestionSelection = true;
 		try {
+			unansweredQuestionField.getItems().removeIf(question -> question.getId() == savedQuestion.getId());
+			if (!unansweredQuestionField.getItems().isEmpty()) {
+				int nextIndex = previousIndex < 0 ? 0
+						: Math.min(previousIndex, unansweredQuestionField.getItems().size() - 1);
+				nextQuestion = unansweredQuestionField.getItems().get(nextIndex);
+			}
 			unansweredQuestionField.setValue(nextQuestion);
 		} finally {
 			restoringUnansweredQuestionSelection = false;
 		}
-		applyUnansweredQuestionChange(nextQuestion);
+		applyUnansweredQuestionChange(nextQuestion, false);
+		return nextQuestion;
+	}
+
+	private void loadNextAnswerDocument(Question question) {
+		if (question == null) {
+			finishAnswerSaveTransition(null);
+			return;
+		}
+		answerRegionStatusLabel.setText("Answer saved — loading next question...");
+		if (answerFile != null) {
+			openNextAnswerDocument(answerFile);
+			return;
+		}
+		Task<List<AnswerFile>> task = new Task<>() {
+			@Override
+			protected List<AnswerFile> call() throws SQLException {
+				return answerWriter.findAnswerFiles(question.getExam());
+			}
+		};
+		task.setOnSucceeded(_ -> {
+			if (!sameQuestion(question, unansweredQuestionField.getValue())) {
+				finishAnswerSaveTransition(new CancellationException("Answer selection changed"));
+				return;
+			}
+			AnswerFile file = selectRegisteredAnswerFile(task.getValue());
+			if (file == null) {
+				finishAnswerSaveTransition(null);
+			} else {
+				openNextAnswerDocument(file);
+			}
+		});
+		task.setOnFailed(_ -> finishAnswerSaveTransition(task.getException()));
+		Thread.ofVirtual().name("next-answer-file").start(task);
+	}
+
+	private void openNextAnswerDocument(AnswerFile file) {
+		try {
+			Path path = new PdfStore(pdfFilePicker.dataRoot())
+					.resolve(file.getSourceDocument().getRelativePath());
+			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfFilePicker.dataRoot());
+			answerPdfLoader.accept(selected, failure -> {
+				if (failure == null) {
+					answerFile = file;
+					selectedAnswerPdfLabel.setText(file.getName());
+				} else {
+					answerFile = null;
+					selectedAnswerPdfLabel.setText("Choose an answer PDF");
+				}
+				finishAnswerSaveTransition(failure);
+			});
+		} catch (RuntimeException e) {
+			answerFile = null;
+			finishAnswerSaveTransition(e);
+		}
+	}
+
+	private void finishAnswerSaveTransition(Throwable failure) {
+		answerSaveInProgress = false;
+		setDisable(false);
+		refreshSaveButtonState();
+		if (failure == null) {
+			answerRegionStatusLabel.setText("Answer saved");
+		} else if (failure instanceof CancellationException) {
+			answerRegionStatusLabel.setText("Answer saved — PDF view changed");
+		} else {
+			answerRegionStatusLabel.setText("Answer saved — next PDF could not be loaded");
+			showAnswerFileError("Answer saved, but the next question's PDF could not be loaded.",
+					"Your answer is stored. Choose an answer PDF to continue. " + failure.getMessage());
+		}
 	}
 
 	private AnswerFile selectRegisteredAnswerFile(List<AnswerFile> answerFiles) {

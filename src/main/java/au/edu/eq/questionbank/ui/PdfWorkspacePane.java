@@ -3,11 +3,13 @@ package au.edu.eq.questionbank.ui;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 import au.edu.eq.questionbank.pdf.PdfSession;
+import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -17,6 +19,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.image.ImageView;
+import javafx.scene.image.Image;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
@@ -47,6 +50,9 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private final CheckBox fullWidthSelectionCheckBox = new CheckBox("Full width selection");
 	private PdfSession examPdfSession;
 	private PdfSession answerPdfSession;
+	private Path answerPdfPath;
+	private long documentRequest;
+	private boolean closed;
 	private PdfSession viewerPdfSession;
 	private DocumentMode displayedDocument = DocumentMode.EXAM;
 	private DocumentMode viewerReturnDocument = DocumentMode.EXAM;
@@ -81,6 +87,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	@Override
 	public void close() throws Exception {
+		closed = true;
+		documentRequest++;
 		Exception failure = null;
 		try {
 			failure = closeSession(examPdfSession, failure);
@@ -117,6 +125,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * exam or answer page.
 	 */
 	void closeViewerPdf() {
+		documentRequest++;
 		closeExistingViewerPdfSession();
 		displayedDocument = viewerReturnDocument;
 		currentPageNumber = viewerReturnPageNumber;
@@ -172,12 +181,14 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @param path the answer PDF path
 	 */
 	void openAnswerPdf(Path path) {
+		documentRequest++;
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
 		closeExistingAnswerPdfSession();
 		try {
 			answerPdfSession = PdfSession.open(path);
+			answerPdfPath = path.toAbsolutePath().normalize();
 			displayedDocument = DocumentMode.ANSWER;
 			answerPageNumber = 1;
 			currentPageNumber = answerPageNumber;
@@ -191,11 +202,90 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Loads the answer document after a save without rendering on the FX thread.
+	 * The worker owns a fresh session until it is handed to the UI, so it never
+	 * shares a PDFBox session with selection extraction or navigation.
+	 */
+	void openAnswerPdfAsync(Path path, Consumer<Throwable> completed) {
+		if (closed) {
+			completed.accept(new CancellationException("PDF workspace has closed"));
+			return;
+		}
+		Path normalizedPath = path.toAbsolutePath().normalize();
+		long request = ++documentRequest;
+		boolean sameDocument = answerPdfSession != null && normalizedPath.equals(answerPdfPath);
+		if (sameDocument && displayedDocument == DocumentMode.ANSWER) {
+			completed.accept(null);
+			return;
+		}
+		int requestedPage = sameDocument ? answerPageNumber : 1;
+		Task<LoadedAnswerPage> task = new Task<>() {
+			@Override
+			protected LoadedAnswerPage call() throws Exception {
+				PdfSession session = PdfSession.open(normalizedPath);
+				try {
+					int page = Math.min(requestedPage, session.getPageCount());
+					BufferedImage rendered = session.renderPage(page, DISPLAY_DPI);
+					return new LoadedAnswerPage(session, SwingFXUtils.toFXImage(rendered, null), page);
+				} catch (Exception | Error failure) {
+					try {
+						session.close();
+					} catch (Exception closeFailure) {
+						failure.addSuppressed(closeFailure);
+					}
+					throw failure;
+				}
+			}
+		};
+		task.setOnSucceeded(_ -> {
+			LoadedAnswerPage loaded = task.getValue();
+			if (request != documentRequest) {
+				CancellationException stale = new CancellationException("PDF view changed during loading");
+				Exception closeFailure = closeSession(loaded.session(), null);
+				if (closeFailure != null) {
+					stale.addSuppressed(closeFailure);
+				}
+				completed.accept(stale);
+				return;
+			}
+			try {
+				closeExistingAnswerPdfSession();
+			} catch (RuntimeException failure) {
+				Exception closeFailure = closeSession(loaded.session(), null);
+				if (closeFailure != null) {
+					failure.addSuppressed(closeFailure);
+				}
+				completed.accept(failure);
+				return;
+			}
+			rememberCurrentPageNumber();
+			clearSelection();
+			answerPdfSession = loaded.session();
+			answerPdfPath = normalizedPath;
+			displayedDocument = DocumentMode.ANSWER;
+			answerPageNumber = loaded.pageNumber();
+			currentPageNumber = answerPageNumber;
+			pagePane.setCursor(Cursor.CROSSHAIR);
+			fullWidthSelectionCheckBox.setVisible(true);
+			fullWidthSelectionCheckBox.setManaged(true);
+			applyPageImage(loaded.image(), answerPdfSession);
+			completed.accept(null);
+		});
+		task.setOnFailed(_ -> completed.accept(request == documentRequest ? task.getException()
+				: new CancellationException("PDF view changed during loading")));
+		Thread.ofVirtual().name("answer-pdf-load").start(task);
+	}
+
+	private record LoadedAnswerPage(PdfSession session, Image image, int pageNumber) {
+	}
+
+	/**
 	 * Opens and displays an exam PDF, replacing any previous exam session.
 	 *
 	 * @param path the exam PDF path
 	 */
 	void openExamPdf(Path path) {
+		documentRequest++;
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
@@ -227,6 +317,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @param path the PDF to open
 	 */
 	void openViewerPdf(Path path) {
+		documentRequest++;
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
@@ -301,6 +392,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @param documentMode the document to display
 	 */
 	void showDocument(DocumentMode documentMode) {
+		documentRequest++;
 		if (documentMode == null) {
 			throw new NullPointerException("documentMode");
 		}
@@ -614,18 +706,22 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 		try {
 			BufferedImage bufferedImage = displayedSession.renderPage(currentPageNumber, DISPLAY_DPI);
-			pageView.setImage(SwingFXUtils.toFXImage(bufferedImage, null));
-			double aspectRatio = (double) bufferedImage.getHeight() / bufferedImage.getWidth();
-			pagePane.prefHeightProperty().unbind();
-			pagePane.prefHeightProperty().bind(pagePane.widthProperty().multiply(aspectRatio));
-			pageLabel.setText(String.format("%s %d of %d", displayedDocument.pageLabel(), currentPageNumber,
-					displayedSession.getPageCount()));
-			previousButton.setDisable(currentPageNumber == 1);
-			nextButton.setDisable(currentPageNumber == displayedSession.getPageCount());
-			rememberCurrentPageNumber();
+			applyPageImage(SwingFXUtils.toFXImage(bufferedImage, null), displayedSession);
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to render PDF page", e);
 		}
+	}
+
+	private void applyPageImage(Image image, PdfSession session) {
+		pageView.setImage(image);
+		double aspectRatio = image.getHeight() / image.getWidth();
+		pagePane.prefHeightProperty().unbind();
+		pagePane.prefHeightProperty().bind(pagePane.widthProperty().multiply(aspectRatio));
+		pageLabel.setText(String.format("%s %d of %d", displayedDocument.pageLabel(), currentPageNumber,
+				session.getPageCount()));
+		previousButton.setDisable(currentPageNumber == 1);
+		nextButton.setDisable(currentPageNumber == session.getPageCount());
+		rememberCurrentPageNumber();
 	}
 
 	private void updateHorizontalSelection(double pageWidth, double eventX) {

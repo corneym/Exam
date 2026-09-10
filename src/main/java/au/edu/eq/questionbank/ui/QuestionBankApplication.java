@@ -789,7 +789,8 @@ public class QuestionBankApplication extends Application {
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
 				this::allowAnswerCaptureTransition, () -> clearCaptureSelection(CaptureSelectionOwner.ANSWER),
-				questionExtractor, pdfWorkspace::getAnswerPdfSession);
+				questionExtractor, pdfWorkspace::getAnswerPdfSession,
+				(selected, completed) -> pdfWorkspace.openAnswerPdfAsync(selected.path(), completed));
 		answerCapturePane.refreshQuestions();
 		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
 				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,

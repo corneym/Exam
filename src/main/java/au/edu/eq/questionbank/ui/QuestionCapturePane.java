@@ -77,6 +77,7 @@ final class QuestionCapturePane extends VBox {
 	private final Supplier<PdfSession> examPdfSessionSupplier;
 	private final Runnable selectionClearHandler;
 	private final Consumer<List<Question>> questionsChangedHandler;
+	// Reuse the worker's snapshot throughout synchronous listeners fired by save completion.
 	private List<Question> completionQuestions;
 	private final Predicate<Question> importedQuestionActivationHandler;
 	private final BooleanSupplier questionTargetChangeAllowed;
@@ -487,7 +488,7 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void backfillDerivedSourceQuestions() {
-		for (Question question : currentQuestions()) {
+		for (Question question : questionRepository.findAll()) {
 			if (question.hasSourceQuestion()) {
 				continue;
 			}
@@ -968,7 +969,7 @@ final class QuestionCapturePane extends VBox {
 
 	private void reconcileKnownSharedContexts() {
 		List<Long> processedSourceQuestionIds = new ArrayList<>();
-		for (Question question : currentQuestions()) {
+		for (Question question : questionRepository.findAll()) {
 			if (!question.hasSourceQuestion() || !question.hasSharedContext()) {
 				continue;
 			}
@@ -1162,8 +1163,13 @@ final class QuestionCapturePane extends VBox {
 				} else {
 					resetAfterQuestionSave(savedPreviousImportedIndex);
 				}
-				showSavedQuestionStatus(editing ? "Updated" : imported
-						? (savedHadStoredRegions ? "Resolved" : "Captured") : "Saved", question);
+				String action = "Saved";
+				if (editing) {
+					action = "Updated";
+				} else if (imported) {
+					action = savedHadStoredRegions ? "Resolved" : "Captured";
+				}
+				showSavedQuestionStatus(action, question);
 				if (result.refreshFailure() != null) {
 					saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
 					showAlert(Alert.AlertType.WARNING, "Question saved; lists could not be fully refreshed.",
@@ -1495,5 +1501,8 @@ final class QuestionCapturePane extends VBox {
 
 	private record QuestionSaveResult(Question question, List<Question> questions, String validationError,
 			RuntimeException refreshFailure) {
+		private QuestionSaveResult {
+			questions = List.copyOf(questions);
+		}
 	}
 }

@@ -16,6 +16,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.apache.pdfbox.Loader;
@@ -211,6 +214,40 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		robot.interact(() -> answers.refreshQuestions(oldSnapshot));
 		assertTrue(unansweredQuestions(robot).getItems().isEmpty());
+	}
+
+	@Test
+	void importedCaptureAdvancesUsingTheBackgroundSnapshot(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = field(application, "examMetadataPane", ExamMetadataPane.class).getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question first = stored.save(booklet, "41", "", 1, List.of(), classification, false, null, null);
+		Question second = stored.save(booklet, "42", "", 1, List.of(), classification, false, null, null);
+		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+		robot.interact(pane::showImportedQuestionCapture);
+		ComboBox<Question> imported = comboBox(robot, "#imported-question");
+		robot.interact(() -> imported.getSelectionModel().selectFirst());
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-question-region");
+		AtomicInteger reads = new AtomicInteger();
+		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
+			@Override
+			public List<Question> findAll() {
+				assertFalse(Platform.isFxApplicationThread(), "Advancing the queue must reuse the loaded questions");
+				reads.incrementAndGet();
+				return stored.findAll();
+			}
+		});
+		robot.clickOn("#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(second.getId(), imported.getValue().getId());
+		assertEquals(1, imported.getItems().size());
+		assertEquals(1, stored.findById(first.getId()).orElseThrow().getRegions().size());
+		assertEquals(2, reads.get());
+		assertEquals(2, unansweredQuestions(robot).getItems().size());
 	}
 
 	@Test
@@ -432,7 +469,94 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
-	void capturesQuestionThenSavesTextOnlyAnswer(FxRobot robot) throws Exception {
+	void answerRemainsSavedWhenNextPdfLoadingFailsAndFxEventsKeepRunning(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question first = captureQuestion(robot, "51");
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+		Question second = captureQuestion(robot, "52");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(first));
+		openAnswerPdfForTest(first);
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-answer-region");
+		CountDownLatch loading = new CountDownLatch(1);
+		AtomicReference<Consumer<Throwable>> completeLoad = new AtomicReference<>();
+		setField(answerCapturePane(), "answerPdfLoader", (BiConsumer<SelectedPdf, Consumer<Throwable>>) (_, callback) -> {
+			completeLoad.set(callback);
+			loading.countDown();
+		});
+		robot.clickOn("#save-answer");
+		assertTrue(loading.await(10, TimeUnit.SECONDS));
+		CountDownLatch pulse = new CountDownLatch(1);
+		Platform.runLater(pulse::countDown);
+		assertTrue(pulse.await(2, TimeUnit.SECONDS));
+		robot.interact(() -> lookup(robot, "#next-pdf-page", Button.class).fire());
+		assertEquals(2, field(pdfWorkspace(), "currentPageNumber", Integer.class));
+		assertEquals(second.getId(), questions.getValue().getId());
+		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(first.getId()).orElseThrow();
+		assertTrue(stored.hasAnswer(), "PDF loading follows the committed transaction");
+		Platform.runLater(() -> completeLoad.get().accept(new IOException("Simulated next-PDF failure")));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Answer saved, but the next question's PDF could not be loaded.").tryQuery().isPresent());
+		robot.clickOn("OK");
+		assertFalse(answerCapturePane().isSaveInProgress());
+		assertTrue(questions.getItems().stream().noneMatch(question -> question.getId() == first.getId()));
+		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
+	}
+
+	@Test
+	void failedAnswerWriteRetainsTheQuestionAndAcceptedRegions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "53");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-answer-region");
+		try (var connection = new SqliteDatabase(databasePath).openConnection(); var statement = connection.createStatement()) {
+			statement.execute("CREATE TRIGGER reject_answer BEFORE INSERT ON answers BEGIN SELECT RAISE(ABORT, 'Test write failure'); END");
+		}
+		robot.clickOn("#save-answer");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Answer could not be saved.").tryQuery().isPresent());
+		robot.clickOn("OK");
+		assertFalse(answerCapturePane().isSaveInProgress());
+		assertEquals(question.getId(), questions.getValue().getId());
+		assertEquals(1, questions.getItems().size());
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		assertFalse(new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId()).orElseThrow().hasAnswer());
+	}
+
+	@Test
+	void editingAnswerCompletesWithoutReloadingTheQuestionBank(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "54");
+		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
+				new Class<?>[] { Question.class, String.class }, question, "A")).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		long answerId = question.getAnswer().getId();
+		AtomicInteger completed = new AtomicInteger();
+		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, completed::incrementAndGet)));
+		setField(answerCapturePane(), "questionRepository", new InMemoryQuestionRepository() {
+			@Override
+			public List<Question> findAll() {
+				throw new AssertionError("Updating an answer must not reload the bank");
+			}
+		});
+		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
+				new Class<?>[] { Question.class, String.class }, question, "B")).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		assertEquals(1, completed.get());
+		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId()).orElseThrow();
+		assertEquals(answerId, stored.getAnswer().getId());
+		assertEquals("B", stored.getAnswer().getAnswerText());
+		assertTrue(unansweredQuestions(robot).getItems().isEmpty());
+	}
+
+	@Test
+	void capturesQuestionThenSavesRegionAnswer(FxRobot robot) throws Exception {
 		assertInitialAnswerControlsDisabled(robot);
 		prepareExamAndClassification(robot);
 		Question savedQuestion = captureQuestion(robot, "Q1");
@@ -449,15 +573,23 @@ class QuestionBankApplicationWorkflowTest {
 		assertEquals(savedQuestion, unansweredQuestions.getItems().getFirst());
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(savedQuestion));
 		assertAnswerEntryControlsEnabled(robot);
-		TextField answerText = lookup(robot, "#answer-text", TextField.class);
-		robot.clickOn(answerText).write("B");
+		openAnswerPdfForTest(savedQuestion);
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-answer-region");
+		setField(answerCapturePane(), "questionRepository", new InMemoryQuestionRepository() {
+			@Override
+			public List<Question> findAll() {
+				throw new AssertionError("Saving an answer must not reload the bank");
+			}
+		});
 		robot.clickOn("#save-answer");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(savedQuestion.hasAnswer());
-		assertEquals("B", savedQuestion.getAnswer().getAnswerText());
+		assertNull(savedQuestion.getAnswer().getAnswerText());
+		assertEquals(1, savedQuestion.getAnswer().getRegions().size());
 		assertTrue(unansweredQuestions.getItems().isEmpty());
-		assertTrue(answerText.isDisabled());
-		assertEquals("", answerText.getText());
+		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
 		assertNull(unansweredQuestions.getValue());
 	}
 
@@ -894,9 +1026,23 @@ class QuestionBankApplicationWorkflowTest {
 		robot.interact(() -> questions.getSelectionModel().select(first));
 		Label selectedQuestion = lookup(robot, "#selected-answer-question", Label.class);
 		assertTrue(selectedQuestion.getText().contains("1 mark"));
-		TextField answerText = lookup(robot, "#answer-text", TextField.class);
-		robot.clickOn(answerText).write("B");
+		openAnswerPdfForTest(first);
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-answer-region");
+		javafx.scene.image.Image previousImage = lookup(robot, "#pdf-page-view", ImageView.class).getImage();
+		AtomicInteger transitions = new AtomicInteger();
+		setField(answerCapturePane(), "answerTransitionAllowed", (java.util.function.BooleanSupplier) () -> {
+			transitions.incrementAndGet();
+			return true;
+		});
+		setField(answerCapturePane(), "questionRepository", new InMemoryQuestionRepository() {
+			@Override
+			public List<Question> findAll() {
+				throw new AssertionError("Saving an answer must not reload the bank");
+			}
+		});
 		robot.clickOn("#save-answer");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
 		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(first.getId())
 				.orElseThrow();
@@ -904,7 +1050,10 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(questions.getItems().stream().noneMatch(question -> question.getId() == first.getId()));
 		assertNotNull(questions.getValue());
 		assertEquals(second.getId(), questions.getValue().getId());
-		assertEquals("", answerText.getText());
+		assertEquals(0, transitions.get(), "Programmatic queue removal must not fire the selection transition");
+		org.junit.jupiter.api.Assertions.assertSame(previousImage,
+				lookup(robot, "#pdf-page-view", ImageView.class).getImage(), "The displayed answer PDF must not be re-rendered");
+		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
 	}
 
@@ -1009,8 +1158,7 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	private void assertAnswerEntryControlsEnabled(FxRobot robot) {
-		assertFalse(lookup(robot, "#answer-text", TextField.class).isDisabled());
-		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
+		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
 		assertFalse(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
 	}
 
@@ -1028,7 +1176,6 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	private void assertInitialAnswerControlsDisabled(FxRobot robot) {
-		assertTrue(lookup(robot, "#answer-text", TextField.class).isDisabled());
 		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
 		assertTrue(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
 		assertTrue(lookup(robot, "#add-answer-region", Button.class).isDisabled());
