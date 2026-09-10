@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -75,7 +76,8 @@ final class QuestionCapturePane extends VBox {
 	private final Supplier<ExamBooklet> bookletSupplier;
 	private final Supplier<PdfSession> examPdfSessionSupplier;
 	private final Runnable selectionClearHandler;
-	private final Runnable questionsChangedHandler;
+	private final Consumer<List<Question>> questionsChangedHandler;
+	private List<Question> completionQuestions;
 	private final Predicate<Question> importedQuestionActivationHandler;
 	private final BooleanSupplier questionTargetChangeAllowed;
 	private final BooleanSupplier questionSelectionTransferHandler;
@@ -132,7 +134,7 @@ final class QuestionCapturePane extends VBox {
 			CurriculumSelectorPane curriculumSelectorPane, Supplier<ExamBooklet> bookletSupplier,
 			Supplier<PdfSession> examPdfSessionSupplier, Predicate<Question> importedQuestionActivationHandler,
 			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
-			Runnable selectionClearHandler, Runnable questionsChangedHandler) {
+			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler) {
 		validateDependencies(questionRepository, sourceQuestionRepository, questionCaptureService,
 				sharedContextCapturePane, questionExtractor, curriculumSelectionModel, curriculumSelectorPane,
 				bookletSupplier, examPdfSessionSupplier, importedQuestionActivationHandler, questionTargetChangeAllowed,
@@ -337,9 +339,13 @@ final class QuestionCapturePane extends VBox {
 	 * retaining the selected item when it remains available.
 	 */
 	void refreshImportedQuestions() {
+		refreshImportedQuestions(currentQuestions());
+	}
+
+	private void refreshImportedQuestions(List<Question> questions) {
 		Question selected = importedQuestion;
 		List<Question> awaitingCapture = new ArrayList<>();
-		for (Question question : questionRepository.findAll()) {
+		for (Question question : questions) {
 			if (question.getRegions().isEmpty() || question.isSharedContextUnresolved()) {
 				awaitingCapture.add(question);
 			}
@@ -481,7 +487,7 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void backfillDerivedSourceQuestions() {
-		for (Question question : questionRepository.findAll()) {
+		for (Question question : currentQuestions()) {
 			if (question.hasSourceQuestion()) {
 				continue;
 			}
@@ -724,20 +730,6 @@ final class QuestionCapturePane extends VBox {
 		return editingQuestion.getSourceQuestion().getSourceQuestionCode().equals(derivedSourceCode);
 	}
 
-	private Question findExistingQuestionWithSameCode() {
-		ExamBooklet booklet = bookletSupplier.get();
-		if (booklet == null) {
-			return null;
-		}
-		String questionCode = questionCodeField.getText().trim();
-		for (Question question : questionRepository.findAll()) {
-			if (question.getBooklet().getId() == booklet.getId() && question.getQuestionCode().equals(questionCode)) {
-				return question;
-			}
-		}
-		return null;
-	}
-
 	private String findQuestionDetailsValidationError() {
 		int effectiveRegionCount = pendingRegions.size();
 		if (importedQuestion != null && !importedQuestion.getRegions().isEmpty()) {
@@ -752,8 +744,13 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private SharedQuestionContext findSharedContextForSourceQuestion(SourceQuestion sourceQuestion) {
+		return findSharedContextForSourceQuestion(sourceQuestion, currentQuestions());
+	}
+
+	private SharedQuestionContext findSharedContextForSourceQuestion(SourceQuestion sourceQuestion,
+			List<Question> questions) {
 		SharedQuestionContext matchingContext = null;
-		for (Question question : questionRepository.findAll()) {
+		for (Question question : questions) {
 			if (question.getBooklet().getId() != sourceQuestion.getBooklet().getId()) {
 				continue;
 			}
@@ -794,6 +791,11 @@ final class QuestionCapturePane extends VBox {
 				|| sharedContextCapturePane.hasPendingAutomaticRegion() || existingContext != null;
 		boolean unresolvedSharedContext = (importedQuestion != null && importedQuestion.isSharedContextUnresolved())
 				|| (editingQuestion != null && editingQuestion.isSharedContextUnresolved());
+		return sharedContextValidationError(sourceCode, sourceQuestion, unresolvedSharedContext, contextAvailable);
+	}
+
+	private String sharedContextValidationError(String sourceCode, SourceQuestion sourceQuestion,
+			boolean unresolvedSharedContext, boolean contextAvailable) {
 		if (unresolvedSharedContext && !contextAvailable) {
 			return "This imported question requires a shared preamble. " + "Capture the preamble as the first region.";
 		}
@@ -803,6 +805,10 @@ final class QuestionCapturePane extends VBox {
 					+ "but its shared preamble could not be found.";
 		}
 		return null;
+	}
+
+	private List<Question> currentQuestions() {
+		return completionQuestions == null ? questionRepository.findAll() : completionQuestions;
 	}
 
 	private String findValidationError() {
@@ -962,7 +968,7 @@ final class QuestionCapturePane extends VBox {
 
 	private void reconcileKnownSharedContexts() {
 		List<Long> processedSourceQuestionIds = new ArrayList<>();
-		for (Question question : questionRepository.findAll()) {
+		for (Question question : currentQuestions()) {
 			if (!question.hasSourceQuestion() || !question.hasSharedContext()) {
 				continue;
 			}
@@ -1019,6 +1025,10 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshSaveButtonState() {
+		if (questionSaveInProgress) {
+			saveQuestionButton.setDisable(true);
+			return;
+		}
 		addRegionButton.setText(sharedContextCapturePane.isCaptureMode() ? "Add Preamble" : "Add Region");
 		boolean ready;
 		try {
@@ -1116,30 +1126,58 @@ final class QuestionCapturePane extends VBox {
 		questionSaveInProgress = true;
 		setDisable(true);
 		saveStatusLabel.setText("Saving " + request.questionCode() + "...");
-		Task<Question> saveTask = new Task<>() {
-
+		Task<QuestionSaveResult> saveTask = new Task<>() {
 			@Override
-			protected Question call() {
-				return questionCaptureService.save(request);
+			protected QuestionSaveResult call() {
+				List<Question> beforeSave = questionRepository.findAll();
+				String validationError = validateStoredQuestion(request, beforeSave);
+				if (validationError != null) {
+					return new QuestionSaveResult(null, beforeSave, validationError, null);
+				}
+				Question saved = questionCaptureService.save(request);
+				try {
+					return new QuestionSaveResult(saved, questionRepository.findAll(), null, null);
+				} catch (RuntimeException refreshFailure) {
+					// The transaction has committed. Never report a refresh failure as a failed save.
+					List<Question> fallback = new ArrayList<>(beforeSave);
+					fallback.removeIf(question -> question.getId() == saved.getId());
+					fallback.add(saved);
+					return new QuestionSaveResult(saved, List.copyOf(fallback), null, refreshFailure);
+				}
 			}
 		};
 		saveTask.setOnSucceeded(_ -> {
-			questionSaveInProgress = false;
-			setDisable(false);
-			Question question = saveTask.getValue();
-			if (editing) {
-				showSavedQuestionStatus("Updated", question);
-				questionsChangedHandler.run();
-				finishQuestionEdit();
-				return;
+			QuestionSaveResult result = saveTask.getValue();
+			completionQuestions = result.questions();
+			try {
+				if (result.validationError() != null) {
+					saveStatusLabel.setText("Question not saved — check question details");
+					showAlert(Alert.AlertType.WARNING, "Question could not be saved.", result.validationError());
+					return;
+				}
+				Question question = result.question();
+				questionsChangedHandler.accept(result.questions());
+				if (editing) {
+					finishQuestionEdit();
+				} else {
+					resetAfterQuestionSave(savedPreviousImportedIndex);
+				}
+				showSavedQuestionStatus(editing ? "Updated" : imported
+						? (savedHadStoredRegions ? "Resolved" : "Captured") : "Saved", question);
+				if (result.refreshFailure() != null) {
+					saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
+					showAlert(Alert.AlertType.WARNING, "Question saved; lists could not be fully refreshed.",
+							"The question is stored. Do not save it again. Reopen capture to reload the question lists.");
+				}
+			} finally {
+				questionSaveInProgress = false;
+				setDisable(false);
+				try {
+					refreshSaveButtonState();
+				} finally {
+					completionQuestions = null;
+				}
 			}
-			if (imported) {
-				showSavedQuestionStatus(savedHadStoredRegions ? "Resolved" : "Captured", question);
-			} else {
-				showSavedQuestionStatus("Saved", question);
-			}
-			questionsChangedHandler.run();
-			resetAfterQuestionSave(savedPreviousImportedIndex);
 		});
 		saveTask.setOnFailed(_ -> {
 			questionSaveInProgress = false;
@@ -1374,7 +1412,7 @@ final class QuestionCapturePane extends VBox {
 			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
 			Predicate<Question> importedQuestionActivationHandler, BooleanSupplier questionTargetChangeAllowed,
 			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
-			Runnable questionsChangedHandler) {
+			Consumer<List<Question>> questionsChangedHandler) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -1420,21 +1458,42 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void validateQuestionForSave() {
-		String validationError = findValidationError();
+		if (questionSaveInProgress) {
+			return;
+		}
+		String validationError = findQuestionDetailsValidationError();
+		if (validationError == null && sharedContextCapturePane.isCaptureMode()) {
+			validationError = "Capture the shared preamble region and click Add Region before saving the question.";
+		}
 		if (validationError != null) {
 			showAlert(Alert.AlertType.WARNING, "Question is incomplete.", validationError);
 			return;
 		}
-		if (importedQuestion == null) {
-			Question existingQuestion = findExistingQuestionWithSameCode();
-			boolean duplicateOtherQuestion = existingQuestion != null
-					&& (editingQuestion == null || existingQuestion.getId() != editingQuestion.getId());
-			if (duplicateOtherQuestion) {
-				showAlert(Alert.AlertType.WARNING, "Question already exists.",
-						"Question " + existingQuestion.getQuestionCode() + " already exists for this booklet.");
-				return;
+		saveQuestion();
+	}
+
+	private String validateStoredQuestion(SqliteQuestionCaptureService.Request request, List<Question> questions) {
+		if (request.operation() != SqliteQuestionCaptureService.Operation.IMPORTED) {
+			for (Question question : questions) {
+				if (question.getBooklet().getId() == request.booklet().getId()
+						&& question.getQuestionCode().equals(request.questionCode())
+						&& (request.existingQuestion() == null || question.getId() != request.existingQuestion().getId())) {
+					return "Question " + request.questionCode() + " already exists for this booklet.";
+				}
 			}
 		}
-		saveQuestion();
+		String sourceCode = SourceQuestionCodeParser.derive(request.questionCode());
+		SourceQuestion source = sourceCode == null ? null : sourceQuestionRepository
+				.findByBookletAndCode(request.booklet(), sourceCode).orElse(null);
+		SharedQuestionContext storedContext = source == null ? null
+				: findSharedContextForSourceQuestion(source, questions);
+		boolean contextAvailable = request.selectedSharedContext() != null || request.pendingSharedContext() != null
+				|| storedContext != null;
+		boolean unresolved = request.existingQuestion() != null && request.existingQuestion().isSharedContextUnresolved();
+		return sharedContextValidationError(sourceCode, source, unresolved, contextAvailable);
+	}
+
+	private record QuestionSaveResult(Question question, List<Question> questions, String validationError,
+			RuntimeException refreshFailure) {
 	}
 }

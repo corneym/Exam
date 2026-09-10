@@ -6,8 +6,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -112,6 +114,8 @@ final class AnswerCapturePane extends VBox {
 	private AnswerFile answerFile;
 	private AnswerRegion currentAnswerSelection;
 	private boolean restoringUnansweredQuestionSelection;
+	// A question-save snapshot may predate an answer committed while it was loading.
+	private final Set<Long> locallyAnsweredQuestionIds = new HashSet<>();
 	private Question editingAnswerQuestion;
 	private boolean answerSaveInProgress;
 	private String preservedAnswerText;
@@ -270,9 +274,14 @@ final class AnswerCapturePane extends VBox {
 	 * Reloads persisted questions that do not yet have an answer.
 	 */
 	void refreshQuestions() {
+		refreshQuestions(questionRepository.findAll());
+	}
+
+	void refreshQuestions(List<Question> questions) {
 		Question selected = unansweredQuestionField.getValue();
-		List<Question> unansweredQuestions = questionRepository.findAll().stream()
-				.filter(question -> !question.hasAnswer()).toList();
+		List<Question> unansweredQuestions = questions.stream()
+				.filter(question -> !question.hasAnswer() && !locallyAnsweredQuestionIds.contains(question.getId()))
+				.toList();
 		Question matching = null;
 		if (selected != null) {
 			for (Question question : unansweredQuestions) {
@@ -755,6 +764,7 @@ final class AnswerCapturePane extends VBox {
 			setDisable(false);
 			Answer answer = saveTask.getValue();
 			question.setAnswer(answer);
+			locallyAnsweredQuestionIds.add(question.getId());
 			if (editing) {
 				finishAnswerEdit();
 				return;
