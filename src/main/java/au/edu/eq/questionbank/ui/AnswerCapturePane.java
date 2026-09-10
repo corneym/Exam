@@ -408,7 +408,7 @@ final class AnswerCapturePane extends VBox {
 		}
 		updateMultipleChoiceAnswerVisibility(question);
 		chooseAnswerPdfButton.setDisable(false);
-		updateAnswerPdfControlsVisibility(null);
+		updateAnswerPdfControlsVisibility(question);
 		refreshSaveButtonState();
 		if (loadDocument && answerFile != null && !openedAnswerPdf) {
 			answerDocumentHandler.run();
