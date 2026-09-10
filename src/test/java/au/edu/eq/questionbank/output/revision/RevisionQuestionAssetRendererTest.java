@@ -81,7 +81,7 @@ class RevisionQuestionAssetRendererTest {
 	}
 
 	@Test
-	void renderedRevisionAssetIncludesSharedContext() throws Exception {
+	void renderedRevisionAssetContainsQuestionBodyOnly() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
 		ExamBooklet booklet = fixture.renderableQuestion.getBooklet();
 		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Shared stem",
@@ -92,19 +92,15 @@ class RevisionQuestionAssetRendererTest {
 		QuestionRetrievalRepository retrievalRepository = currentNodes -> List
 				.of(new QuestionApplicabilityMatch(question, fixture.firstDescriptor));
 		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
-		Path outputRoot = tempDir.resolve("shared-context-output");
+		Path outputRoot = tempDir.resolve("question-body-output");
 		RevisionQuestionAssetRenderer renderer = new RevisionQuestionAssetRenderer(fixture.pdfStore,
 				new QuestionExtractor());
 		List<RevisionQuestionAsset> assets = renderer.render(corpus, outputRoot);
 		assertEquals(1, assets.size());
 		Path renderedFile = outputRoot.resolve(assets.getFirst().getRelativePath());
 		BufferedImage image = ImageIO.read(renderedFile.toFile());
-		/*
-		 * 150-pixel rendered page: shared context = 75 px; question region = 38 px
-		 * after endpoint rounding.
-		 */
 		assertEquals(150, image.getWidth());
-		assertEquals(113, image.getHeight());
+		assertEquals(38, image.getHeight());
 	}
 
 	@Test
