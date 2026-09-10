@@ -271,7 +271,7 @@ public class QuestionSearchPane extends BorderPane {
 		detailsArea.setEditable(false);
 		detailsArea.setWrapText(true);
 		detailsArea.setPrefRowCount(6);
-		resultsList.setCellFactory(listView -> new ListCell<>() {
+		resultsList.setCellFactory(_ -> new ListCell<>() {
 
 			@Override
 			protected void updateItem(QuestionRetrievalResult result, boolean empty) {
@@ -289,18 +289,18 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void configureHandlers() {
-		subjectBox.setOnAction(event -> handleSubjectSelection());
-		unitBox.setOnAction(event -> handleUnitSelection());
-		topicBox.setOnAction(event -> handleTopicSelection());
-		classificationBox.setOnAction(event -> handleClassificationSelection());
-		descriptorBox.setOnAction(event -> handleDescriptorSelection());
-		subjectBox.setOnMousePressed(event -> handleSubjectBoxMousePress());
-		unitBox.setOnMousePressed(event -> handleUnitBoxMousePress());
-		topicBox.setOnMousePressed(event -> handleTopicBoxMousePress());
-		classificationBox.setOnMousePressed(event -> handleClassificationBoxMousePress());
-		descriptorBox.setOnMousePressed(event -> handleDescriptorBoxMousePress());
+		subjectBox.setOnAction(_ -> handleSubjectSelection());
+		unitBox.setOnAction(_ -> handleUnitSelection());
+		topicBox.setOnAction(_ -> handleTopicSelection());
+		classificationBox.setOnAction(_ -> handleClassificationSelection());
+		descriptorBox.setOnAction(_ -> handleDescriptorSelection());
+		subjectBox.setOnMousePressed(_ -> handleSubjectBoxMousePress());
+		unitBox.setOnMousePressed(_ -> handleUnitBoxMousePress());
+		topicBox.setOnMousePressed(_ -> handleTopicBoxMousePress());
+		classificationBox.setOnMousePressed(_ -> handleClassificationBoxMousePress());
+		descriptorBox.setOnMousePressed(_ -> handleDescriptorBoxMousePress());
 		resultsList.getSelectionModel().selectedItemProperty()
-				.addListener((observable, oldResult, newResult) -> showResultDetails(newResult));
+				.addListener((_, _, newResult) -> showResultDetails(newResult));
 	}
 
 	private <T> void configurePromptDisplay(ComboBox<T> comboBox) {
@@ -637,8 +637,8 @@ public class QuestionSearchPane extends BorderPane {
 			}
 		};
 		activeSearchTask = task;
-		task.setOnSucceeded(event -> completeSearch(task, generation));
-		task.setOnFailed(event -> failSearch(task, generation));
+		task.setOnSucceeded(_ -> completeSearch(task, generation));
+		task.setOnFailed(_ -> failSearch(task, generation));
 		Thread.ofVirtual().name("question-search").start(task);
 	}
 
@@ -657,8 +657,8 @@ public class QuestionSearchPane extends BorderPane {
 			}
 		};
 		activeHierarchyTask = task;
-		task.setOnSucceeded(event -> completeHierarchyLoad(task, generation, onSucceeded));
-		task.setOnFailed(event -> failHierarchyLoad(task, generation));
+		task.setOnSucceeded(_ -> completeHierarchyLoad(task, generation, onSucceeded));
+		task.setOnFailed(_ -> failHierarchyLoad(task, generation));
 		Thread.ofVirtual().name("curriculum-navigation").start(task);
 	}
 
@@ -680,8 +680,8 @@ public class QuestionSearchPane extends BorderPane {
 			}
 		};
 		activePreviewTask = task;
-		task.setOnSucceeded(event -> completePreview(task, generation));
-		task.setOnFailed(event -> failPreview(task, generation));
+		task.setOnSucceeded(_ -> completePreview(task, generation));
+		task.setOnFailed(_ -> failPreview(task, generation));
 		Thread.ofVirtual().name("question-preview").start(task);
 	}
 

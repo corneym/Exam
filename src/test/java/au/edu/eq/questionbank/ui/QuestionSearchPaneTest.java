@@ -145,8 +145,8 @@ public class QuestionSearchPaneTest {
 			dialog.hide();
 			dialog.dispose();
 		});
-		ComboBox<Subject> subjectBox = (ComboBox<Subject>) paneHolder[0].lookup("#question-search-subject");
-		ComboBox<CurriculumNode> unitBox = (ComboBox<CurriculumNode>) paneHolder[0].lookup("#question-search-unit");
+		ComboBox<Subject> subjectBox = robot.from(paneHolder[0]).lookup("#question-search-subject").queryComboBox();
+		ComboBox<CurriculumNode> unitBox = robot.from(paneHolder[0]).lookup("#question-search-unit").queryComboBox();
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(unitBox.getItems().isEmpty());

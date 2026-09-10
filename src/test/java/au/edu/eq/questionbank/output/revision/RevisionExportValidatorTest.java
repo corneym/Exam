@@ -152,8 +152,8 @@ class RevisionExportValidatorTest {
 							currentUnit, currentTopic, currentDescriptor));
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
 			QuestionRetrievalService withQuestion = new QuestionRetrievalService(
-					currentNodes -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
-			QuestionRetrievalService empty = new QuestionRetrievalService(currentNodes -> List.of(), expansion);
+					_ -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
+			QuestionRetrievalService empty = new QuestionRetrievalService(_ -> List.of(), expansion);
 			corpus = new RevisionCorpusBuilder(repository, withQuestion).build(chemistry);
 			emptyCorpus = new RevisionCorpusBuilder(repository, empty).build(chemistry);
 		}

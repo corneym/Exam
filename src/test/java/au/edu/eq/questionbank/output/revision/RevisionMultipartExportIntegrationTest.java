@@ -83,7 +83,7 @@ class RevisionMultipartExportIntegrationTest {
 		CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 				curriculumRepository);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(
-				currentNodes -> List.of(new QuestionApplicabilityMatch(partA, currentDescriptor),
+				_ -> List.of(new QuestionApplicabilityMatch(partA, currentDescriptor),
 						new QuestionApplicabilityMatch(partB, currentDescriptor)),
 				expansionService);
 		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);

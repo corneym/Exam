@@ -125,6 +125,18 @@ or curriculum applicability semantics.
 
 ## Normal Priority
 
+### Question-level response type
+- persist MULTIPLE_CHOICE / WRITTEN_RESPONSE / UNKNOWN
+- capture/edit at Question level
+- legacy import populates where known
+- Answer UI driven by question type
+- mixed booklets explicitly supported
+
+### MCQ explanation capture
+- retain A/B/C/D as primary answer
+- optionally capture one or more answer-PDF regions as explanation
+- render correct option plus explanation in revision output
+
 ### Reposition question Save button beside region controls
 
 Origin: Question capture usability.

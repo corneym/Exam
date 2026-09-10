@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -20,10 +19,6 @@ import java.util.stream.Stream;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.poi.ss.usermodel.Row;
-import org.apache.poi.ss.usermodel.Sheet;
-import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -69,9 +64,6 @@ import javafx.stage.WindowEvent;
 @ExtendWith(ApplicationExtension.class)
 class QuestionBankApplicationWorkflowTest {
 
-	private static final String CURRICULUM_2019 = "CHM Study Checklist [2019 Syllabus].xlsx";
-	private static final String CURRICULUM_2025_UNITS_1_2 = "CHM Study Checklist - Unit 1 and 2 [2025 Syllabus].xlsx";
-	private static final String CURRICULUM_2025_UNITS_3_4 = "CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx";
 	private QuestionBankApplication application;
 	private ApplicationConfig applicationConfig;
 	private Stage primaryStage;
@@ -969,12 +961,6 @@ class QuestionBankApplicationWorkflowTest {
 		return robot.lookup(selector).queryAs(ComboBox.class);
 	}
 
-	private void copyCurriculumFiles(Path curriculumDataRoot) throws Exception {
-		createCurriculumFile(curriculumDataRoot, "2019", CURRICULUM_2019, "1");
-		createCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_1_2, "1");
-		createCurriculumFile(curriculumDataRoot, "2025", CURRICULUM_2025_UNITS_3_4, "3");
-	}
-
 	private void createCurriculumDatabase(Path databasePath) throws Exception {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
@@ -1000,42 +986,13 @@ class QuestionBankApplicationWorkflowTest {
 		writer.insertDescriptor(biologyTopic, "2.1.1", "Biology historical descriptor", 1);
 	}
 
-	private void createCurriculumFile(Path curriculumDataRoot, String version, String fileName, String unitCode)
-			throws Exception {
-		Path destination = curriculumDataRoot.resolve("chemistry").resolve(version).resolve(fileName);
-		Files.createDirectories(destination.getParent());
-		try (Workbook workbook = new XSSFWorkbook()) {
-			Sheet sheet = workbook.createSheet("Curriculum");
-			Row header = sheet.createRow(0);
-			header.createCell(0).setCellValue("Code");
-			header.createCell(1).setCellValue("Content");
-			Row unit = sheet.createRow(1);
-			unit.createCell(0).setCellValue(unitCode);
-			unit.createCell(1).setCellValue("Test unit " + unitCode);
-			String topicCode = unitCode + ".1";
-			Row topic = sheet.createRow(2);
-			topic.createCell(0).setCellValue(topicCode);
-			topic.createCell(1).setCellValue("Test topic");
-			String subtopicCode = topicCode + ".1";
-			Row subtopic = sheet.createRow(3);
-			subtopic.createCell(0).setCellValue(subtopicCode);
-			subtopic.createCell(1).setCellValue("Test subtopic");
-			Row descriptor = sheet.createRow(4);
-			descriptor.createCell(0).setCellValue(subtopicCode + ".1");
-			descriptor.createCell(1).setCellValue("Test descriptor");
-			try (OutputStream output = Files.newOutputStream(destination)) {
-				workbook.write(output);
-			}
-		}
-	}
-
 	private Path createTwoPagePdf(Path path) throws Exception {
 		try (PDDocument document = new PDDocument()) {
 			document.addPage(new PDPage());
 			document.addPage(new PDPage());
 			document.save(path.toFile());
 		}
-		try (PDDocument ignored = Loader.loadPDF(path.toFile())) {
+		try (PDDocument _ = Loader.loadPDF(path.toFile())) {
 			return path;
 		}
 	}

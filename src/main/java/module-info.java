@@ -1,6 +1,9 @@
 /**
  * Exam question-bank domain, PDF extraction, curriculum import, output, and
  * JavaFX user-interface components.
+ * <p>
+ * This standalone application exposes no compile-time API to other modules.
+ * Packages remain open for reflective access by JavaFX and the test tooling.
  */
 module au.edu.eq.questionbank {
 
@@ -17,9 +20,6 @@ module au.edu.eq.questionbank {
 	requires javafx.controls;
 	requires javafx.swing;
 	requires org.apache.poi.poi;
-
-	exports au.edu.eq.questionbank;
-	exports au.edu.eq.questionbank.ui;
 
 	opens au.edu.eq.questionbank;
 	opens au.edu.eq.questionbank.admin;

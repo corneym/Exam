@@ -290,7 +290,7 @@ final class ExamMetadataPane extends VBox {
 	}
 
 	private void configureActions(Stage stage) {
-		choosePdfButton.setOnAction(event -> chooseExamPdf(stage));
+		choosePdfButton.setOnAction(_ -> chooseExamPdf(stage));
 		choosePdfButton.setTooltip(new Tooltip("Choose the PDF containing the exam booklet."));
 	}
 

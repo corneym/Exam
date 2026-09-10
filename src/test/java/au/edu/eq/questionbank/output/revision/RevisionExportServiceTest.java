@@ -62,7 +62,7 @@ class RevisionExportServiceTest {
 		Fixture fixture = new Fixture(tempDir);
 		Path destination = tempDir.resolve("interrupted-export");
 		IllegalStateException failure = assertThrows(IllegalStateException.class, () -> fixture.service
-				.export(new RevisionExportRequest(fixture.chemistry, destination), (message, completed, total) -> {
+				.export(new RevisionExportRequest(fixture.chemistry, destination), (message, _, _) -> {
 					if (message.equals("Publishing export...")) {
 						throw new IllegalStateException("consumer failed");
 					}
@@ -94,7 +94,7 @@ class RevisionExportServiceTest {
 			InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
 					List.of(current), List.of(unit, topic, descriptor));
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
-			QuestionRetrievalService retrieval = new QuestionRetrievalService(currentNodes -> List.of(), expansion);
+			QuestionRetrievalService retrieval = new QuestionRetrievalService(_ -> List.of(), expansion);
 			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval);
 			Path pdfRoot = tempDir.resolve("pdf");
 			Files.createDirectories(pdfRoot);

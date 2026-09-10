@@ -97,7 +97,7 @@ public final class ScormExportService {
 	 * @throws NullPointerException if {@code request} is null
 	 */
 	public ScormExportResult export(ScormExportRequest request) throws IOException {
-		return export(request, (message, completed, total) -> {
+		return export(request, (_, _, _) -> {
 		});
 	}
 

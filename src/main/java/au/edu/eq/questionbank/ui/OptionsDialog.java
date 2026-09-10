@@ -44,7 +44,7 @@ final class OptionsDialog extends Dialog<ButtonType> {
 		dataRootField.setText(currentDataRoot.toString());
 		dataRootField.setPrefColumnCount(40);
 		Button browseButton = new Button("Browse...");
-		browseButton.setOnAction(event -> browseForDataRoot(owner));
+		browseButton.setOnAction(_ -> browseForDataRoot(owner));
 		GridPane grid = new GridPane();
 		grid.setHgap(8);
 		grid.setVgap(8);

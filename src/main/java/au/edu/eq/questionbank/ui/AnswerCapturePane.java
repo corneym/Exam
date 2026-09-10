@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -23,6 +24,7 @@ import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
+import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -30,8 +32,9 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
-import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleGroup;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -87,7 +90,13 @@ final class AnswerCapturePane extends VBox {
 	private final Button chooseAnswerPdfButton = new Button("Choose PDF...");
 	private final Label selectedAnswerPdfLabel = new Label("No PDF selected");
 	// Answer content and region controls.
-	private final TextField answerTextField = new TextField();
+	private final ToggleGroup multipleChoiceAnswerGroup = new ToggleGroup();
+	private final RadioButton answerAButton = new RadioButton("A");
+	private final RadioButton answerBButton = new RadioButton("B");
+	private final RadioButton answerCButton = new RadioButton("C");
+	private final RadioButton answerDButton = new RadioButton("D");
+	private final HBox multipleChoiceAnswerControls = new HBox();
+	private final Button clearMultipleChoiceAnswerButton = new Button("Clear choice");
 	private final Button addAnswerRegionButton = new Button("Add Region");
 	private final Button clearAnswerSelectionButton = new Button("Clear");
 	private final Label answerRegionCountLabel = new Label("Regions: 0");
@@ -103,6 +112,8 @@ final class AnswerCapturePane extends VBox {
 	private AnswerRegion currentAnswerSelection;
 	private boolean restoringUnansweredQuestionSelection;
 	private Question editingAnswerQuestion;
+	private boolean answerSaveInProgress;
+	private String preservedAnswerText;
 	private Runnable answerEditCompletedHandler = () -> {
 	};
 
@@ -153,7 +164,7 @@ final class AnswerCapturePane extends VBox {
 		configureActions(stage);
 		getChildren().addAll(createSectionLabel("Answer"), unansweredQuestionField, selectedAnswerQuestionLabel,
 				createAnswerPdfControls(), createAnswerRegionControls(), answerRegionsScrollPane,
-				createAnswerTextControls());
+				createMultipleChoiceAnswerControls());
 		setSpacing(COMPACT_SPACING);
 		setPadding(PANEL_PADDING);
 		setStyle(BORDER_STYLE);
@@ -179,6 +190,7 @@ final class AnswerCapturePane extends VBox {
 		selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
 		answerRegionStatusLabel.setText("Selection pending — Page " + selection.pageNumber());
 		setSelectionActionsEnabled(true);
+		refreshSaveButtonState();
 	}
 
 	/**
@@ -247,6 +259,13 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * @return whether answer persistence is currently running
+	 */
+	boolean isSaveInProgress() {
+		return answerSaveInProgress;
+	}
+
+	/**
 	 * Reloads persisted questions that do not yet have an answer.
 	 */
 	void refreshQuestions() {
@@ -304,6 +323,7 @@ final class AnswerCapturePane extends VBox {
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
 		showAcceptedRegionStatus();
+		refreshSaveButtonState();
 	}
 
 	private void applyRestoredQuestionSelection(Question previousQuestion) {
@@ -317,10 +337,10 @@ final class AnswerCapturePane extends VBox {
 
 	private void applyUnansweredQuestionChange(Question question) {
 		clearPendingAnswerRegions();
-		answerTextField.clear();
+		clearMultipleChoiceAnswer();
 		if (question == null) {
 			selectedAnswerQuestionLabel.setText("No question selected");
-			answerTextField.setDisable(true);
+			updateMultipleChoiceAnswerVisibility(null);
 			saveAnswerButton.setDisable(true);
 			chooseAnswerPdfButton.setDisable(true);
 			saveAnswerButton.setText("Save Answer");
@@ -335,9 +355,7 @@ final class AnswerCapturePane extends VBox {
 		boolean openedAnswerPdf = false;
 		if (question.hasAnswer()) {
 			Answer answer = question.getAnswer();
-			if (answer.getAnswerText() != null) {
-				answerTextField.setText(answer.getAnswerText());
-			}
+			selectMultipleChoiceAnswer(answer.getAnswerText());
 			pendingAnswerRegions.addAll(answer.getRegions());
 			if (!answer.getRegions().isEmpty()) {
 				AnswerFile storedAnswerFile = answer.getRegions().getFirst().answerFile();
@@ -361,9 +379,9 @@ final class AnswerCapturePane extends VBox {
 			answerRegionCountLabel.setText("Regions: 0");
 			answerRegionStatusLabel.setText("");
 		}
-		answerTextField.setDisable(false);
-		saveAnswerButton.setDisable(false);
+		updateMultipleChoiceAnswerVisibility(question);
 		chooseAnswerPdfButton.setDisable(false);
+		refreshSaveButtonState();
 		if (answerFile != null && !openedAnswerPdf) {
 			answerDocumentHandler.run();
 		}
@@ -413,6 +431,12 @@ final class AnswerCapturePane extends VBox {
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
 		}
 		showAcceptedRegionStatus();
+		refreshSaveButtonState();
+	}
+
+	private void clearMultipleChoiceAnswer() {
+		multipleChoiceAnswerGroup.selectToggle(null);
+		preservedAnswerText = null;
 	}
 
 	private void clearPendingAnswerRegions() {
@@ -425,14 +449,19 @@ final class AnswerCapturePane extends VBox {
 		answerRegionStatusLabel.setText("");
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
+		refreshSaveButtonState();
 	}
 
 	private void configureActions(Stage stage) {
-		addAnswerRegionButton.setOnAction(event -> addCurrentAnswerRegion());
-		chooseAnswerPdfButton.setOnAction(event -> chooseAnswerPdf(stage));
-		clearAnswerSelectionButton.setOnAction(event -> clearCurrentAnswerSelection());
-		saveAnswerButton.setOnAction(event -> validateAnswerForSave());
-		cancelAnswerEditButton.setOnAction(event -> cancelAnswerEdit());
+		addAnswerRegionButton.setOnAction(_ -> addCurrentAnswerRegion());
+		chooseAnswerPdfButton.setOnAction(_ -> chooseAnswerPdf(stage));
+		clearAnswerSelectionButton.setOnAction(_ -> clearCurrentAnswerSelection());
+		saveAnswerButton.setOnAction(_ -> validateAnswerForSave());
+		cancelAnswerEditButton.setOnAction(_ -> cancelAnswerEdit());
+		clearMultipleChoiceAnswerButton.setOnAction(_ -> {
+			clearMultipleChoiceAnswer();
+			refreshSaveButtonState();
+		});
 	}
 
 	private void configureControls() {
@@ -440,11 +469,29 @@ final class AnswerCapturePane extends VBox {
 		unansweredQuestionField.setPromptText("Select unanswered question");
 		unansweredQuestionField.setMaxWidth(Double.MAX_VALUE);
 		unansweredQuestionField.setConverter(QUESTION_CODE_CONVERTER);
+		unansweredQuestionField.setOnShowing(_ -> showSelectedAnswerDocument());
 		unansweredQuestionField.valueProperty().addListener(
-				(observable, oldQuestion, newQuestion) -> handleUnansweredQuestionChanged(oldQuestion, newQuestion));
-		answerTextField.setId("answer-text");
-		answerTextField.setPromptText("Answer text, e.g. B");
-		answerTextField.setDisable(true);
+				(_, oldQuestion, newQuestion) -> handleUnansweredQuestionChanged(oldQuestion, newQuestion));
+		answerAButton.setId("answer-choice-a");
+		answerBButton.setId("answer-choice-b");
+		answerCButton.setId("answer-choice-c");
+		answerDButton.setId("answer-choice-d");
+		answerAButton.setToggleGroup(multipleChoiceAnswerGroup);
+		answerBButton.setToggleGroup(multipleChoiceAnswerGroup);
+		answerCButton.setToggleGroup(multipleChoiceAnswerGroup);
+		answerDButton.setToggleGroup(multipleChoiceAnswerGroup);
+		answerAButton.setUserData("A");
+		answerBButton.setUserData("B");
+		answerCButton.setUserData("C");
+		answerDButton.setUserData("D");
+		clearMultipleChoiceAnswerButton.setId("clear-answer-choice");
+		multipleChoiceAnswerGroup.selectedToggleProperty().addListener((_, _, newToggle) -> {
+			if (newToggle != null) {
+				preservedAnswerText = null;
+			}
+			refreshSaveButtonState();
+		});
+		setMultipleChoiceAnswerEnabled(false);
 		saveAnswerButton.setId("save-answer");
 		saveAnswerButton.setDisable(true);
 		saveAnswerButton.setText("Save Answer");
@@ -507,17 +554,28 @@ final class AnswerCapturePane extends VBox {
 		return controls;
 	}
 
-	private HBox createAnswerTextControls() {
-		HBox.setHgrow(answerTextField, Priority.ALWAYS);
-		HBox controls = new HBox(CONTROL_SPACING, answerTextField);
-		controls.setAlignment(Pos.CENTER_LEFT);
-		return controls;
+	private HBox createMultipleChoiceAnswerControls() {
+		Label label = new Label("Multiple choice answer:");
+		multipleChoiceAnswerControls.getChildren().setAll(label, answerAButton, answerBButton, answerCButton,
+				answerDButton, clearMultipleChoiceAnswerButton);
+		multipleChoiceAnswerControls.setSpacing(CONTROL_SPACING);
+		multipleChoiceAnswerControls.setAlignment(Pos.CENTER_LEFT);
+		multipleChoiceAnswerControls.setVisible(false);
+		multipleChoiceAnswerControls.setManaged(false);
+		return multipleChoiceAnswerControls;
 	}
 
 	private Label createSectionLabel(String text) {
 		Label label = new Label(text);
 		label.setStyle(SECTION_HEADING_STYLE);
 		return label;
+	}
+
+	private String currentAnswerText() {
+		if (multipleChoiceAnswerGroup.getSelectedToggle() != null) {
+			return (String) multipleChoiceAnswerGroup.getSelectedToggle().getUserData();
+		}
+		return preservedAnswerText == null ? "" : preservedAnswerText;
 	}
 
 	private String findValidationError(Question question, String answerText) {
@@ -531,7 +589,7 @@ final class AnswerCapturePane extends VBox {
 		};
 		editingAnswerQuestion = null;
 		clearPendingAnswerRegions();
-		answerTextField.clear();
+		clearMultipleChoiceAnswer();
 		answerFile = null;
 		selectedAnswerPdfLabel.setText("No PDF selected");
 		unansweredQuestionField.setDisable(false);
@@ -552,6 +610,14 @@ final class AnswerCapturePane extends VBox {
 			return;
 		}
 		applyUnansweredQuestionChange(question);
+	}
+
+	private boolean isMultipleChoiceQuestion(Question question) {
+		if (question == null) {
+			return false;
+		}
+		String bookletName = question.getBooklet().getName().toLowerCase(Locale.ROOT).replace('-', ' ');
+		return bookletName.contains("mcq") || bookletName.contains("multiple choice");
 	}
 
 	private boolean loadRegisteredAnswerFile(Question question) {
@@ -596,7 +662,7 @@ final class AnswerCapturePane extends VBox {
 			AnswerRegion region = pendingAnswerRegions.get(i);
 			int regionIndex = i;
 			Button removeButton = new Button("Remove");
-			removeButton.setOnAction(event -> removeAnswerRegion(regionIndex));
+			removeButton.setOnAction(_ -> removeAnswerRegion(regionIndex));
 			HBox controls = new HBox(removeButton);
 			controls.setAlignment(Pos.CENTER_LEFT);
 			VBox row = new VBox(COMPACT_SPACING);
@@ -615,10 +681,18 @@ final class AnswerCapturePane extends VBox {
 		answerRegionsScrollPane.setManaged(hasRegions);
 	}
 
+	private void refreshSaveButtonState() {
+		Question question = unansweredQuestionField.getValue();
+		String answerText = currentAnswerText();
+		boolean ready = !answerSaveInProgress && findValidationError(question, answerText) == null;
+		saveAnswerButton.setDisable(!ready);
+	}
+
 	private void removeAnswerRegion(int regionIndex) {
 		pendingAnswerRegions.remove(regionIndex);
 		refreshAnswerRegionList();
 		showAcceptedRegionStatus();
+		refreshSaveButtonState();
 	}
 
 	private Path resolveRegisteredAnswerFile(AnswerFile registeredAnswerFile) {
@@ -648,26 +722,81 @@ final class AnswerCapturePane extends VBox {
 	private void saveAnswer(Question question, String answerText) {
 		int previousIndex = unansweredQuestionField.getSelectionModel().getSelectedIndex();
 		String storedText = answerText.isBlank() ? null : answerText;
-		try {
-			Answer answer;
-			if (question.hasAnswer()) {
-				answer = answerWriter.updateAnswer(question, question.getAnswer().getId(), storedText,
-						pendingAnswerRegions);
-			} else {
-				answer = answerWriter.insertAnswer(question, storedText, pendingAnswerRegions);
+		List<AnswerRegion> regions = List.copyOf(pendingAnswerRegions);
+		boolean updating = question.hasAnswer();
+		long existingAnswerId = updating ? question.getAnswer().getId() : 0;
+		boolean editing = editingAnswerQuestion != null;
+		answerSaveInProgress = true;
+		setDisable(true);
+		Task<Answer> saveTask = new Task<>() {
+
+			@Override
+			protected Answer call() throws Exception {
+				if (updating) {
+					return answerWriter.updateAnswer(question, existingAnswerId, storedText, regions);
+				}
+				return answerWriter.insertAnswer(question, storedText, regions);
 			}
+		};
+		saveTask.setOnSucceeded(_ -> {
+			answerSaveInProgress = false;
+			setDisable(false);
+			Answer answer = saveTask.getValue();
 			question.setAnswer(answer);
-			if (editingAnswerQuestion != null) {
+			if (editing) {
 				finishAnswerEdit();
 				return;
 			}
 			clearPendingAnswerRegions();
-			answerTextField.clear();
+			clearMultipleChoiceAnswer();
 			refreshQuestions();
 			selectNextUnansweredQuestion(previousIndex);
-		} catch (SQLException e) {
-			throw new IllegalStateException("Unable to save answer", e);
+			refreshSaveButtonState();
+		});
+		saveTask.setOnFailed(_ -> {
+			answerSaveInProgress = false;
+			setDisable(false);
+			refreshSaveButtonState();
+			Throwable failure = saveTask.getException();
+			Alert alert = new Alert(Alert.AlertType.ERROR);
+			alert.setHeaderText("Answer could not be saved.");
+			alert.setContentText(failure == null || failure.getMessage() == null ? "The answer was not saved."
+					: failure.getMessage());
+			alert.showAndWait();
+		});
+		Thread saveThread = new Thread(saveTask, "answer-save");
+		saveThread.setDaemon(true);
+		saveThread.start();
+	}
+
+	private void selectMultipleChoiceAnswer(String answerText) {
+		multipleChoiceAnswerGroup.selectToggle(null);
+		preservedAnswerText = null;
+		if (answerText == null || answerText.isBlank()) {
+			return;
 		}
+		String value = answerText.trim();
+		if ("A".equalsIgnoreCase(value)) {
+			multipleChoiceAnswerGroup.selectToggle(answerAButton);
+			return;
+		}
+		if ("B".equalsIgnoreCase(value)) {
+			multipleChoiceAnswerGroup.selectToggle(answerBButton);
+			return;
+		}
+		if ("C".equalsIgnoreCase(value)) {
+			multipleChoiceAnswerGroup.selectToggle(answerCButton);
+			return;
+		}
+		if ("D".equalsIgnoreCase(value)) {
+			multipleChoiceAnswerGroup.selectToggle(answerDButton);
+			return;
+		}
+		/*
+		 * Preserve older arbitrary textual answers even though the current capture UI
+		 * only exposes A-D choices.
+		 */
+		preservedAnswerText = answerText;
 	}
 
 	private void selectNextUnansweredQuestion(int previousIndex) {
@@ -696,6 +825,14 @@ final class AnswerCapturePane extends VBox {
 			return null;
 		}
 		return answerFiles.get(0);
+	}
+
+	private void setMultipleChoiceAnswerEnabled(boolean enabled) {
+		answerAButton.setDisable(!enabled);
+		answerBButton.setDisable(!enabled);
+		answerCButton.setDisable(!enabled);
+		answerDButton.setDisable(!enabled);
+		clearMultipleChoiceAnswerButton.setDisable(!enabled);
 	}
 
 	private void setSelectionActionsEnabled(boolean enabled) {
@@ -737,9 +874,28 @@ final class AnswerCapturePane extends VBox {
 		alert.showAndWait();
 	}
 
+	private void showSelectedAnswerDocument() {
+		Question question = unansweredQuestionField.getValue();
+		if (question == null || answerSaveInProgress) {
+			return;
+		}
+		if (answerFile != null && answerFile.getExam().getId() == question.getExam().getId()) {
+			answerDocumentHandler.run();
+			return;
+		}
+		loadRegisteredAnswerFile(question);
+	}
+
+	private void updateMultipleChoiceAnswerVisibility(Question question) {
+		boolean visible = isMultipleChoiceQuestion(question);
+		multipleChoiceAnswerControls.setVisible(visible);
+		multipleChoiceAnswerControls.setManaged(visible);
+		setMultipleChoiceAnswerEnabled(visible);
+	}
+
 	private void validateAnswerForSave() {
 		Question question = unansweredQuestionField.getValue();
-		String answerText = answerTextField.getText().trim();
+		String answerText = currentAnswerText();
 		String validationError = findValidationError(question, answerText);
 		if (validationError != null) {
 			showError(validationError);

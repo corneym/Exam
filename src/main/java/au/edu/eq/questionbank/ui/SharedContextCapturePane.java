@@ -377,14 +377,14 @@ final class SharedContextCapturePane extends VBox {
 	}
 
 	private void configureActions() {
-		newContextButton.setOnAction(event -> beginNewContext());
-		addRegionButton.setOnAction(event -> addCurrentRegion());
-		clearSelectionButton.setOnAction(event -> clearCurrentSelection());
-		clearRegionsButton.setOnAction(event -> clearRegions());
-		saveContextButton.setOnAction(event -> saveContext());
-		cancelContextButton.setOnAction(event -> cancelNewContext());
+		newContextButton.setOnAction(_ -> beginNewContext());
+		addRegionButton.setOnAction(_ -> addCurrentRegion());
+		clearSelectionButton.setOnAction(_ -> clearCurrentSelection());
+		clearRegionsButton.setOnAction(_ -> clearRegions());
+		saveContextButton.setOnAction(_ -> saveContext());
+		cancelContextButton.setOnAction(_ -> cancelNewContext());
 		existingContextField.valueProperty()
-				.addListener((observable, oldContext, newContext) -> updateSelectedContextStatus(newContext));
+				.addListener((_, _, newContext) -> updateSelectedContextStatus(newContext));
 	}
 
 	private void configureCaptureControls() {
@@ -455,7 +455,7 @@ final class SharedContextCapturePane extends VBox {
 			imageView.setFitHeight(PREVIEW_HEIGHT);
 			Label label = new Label(String.format("Region %d — Page %d", regionIndex + 1, region.pageNumber()));
 			Button removeButton = new Button("Remove");
-			removeButton.setOnAction(event -> removeRegion(regionIndex));
+			removeButton.setOnAction(_ -> removeRegion(regionIndex));
 			HBox row = new HBox(CONTROL_SPACING, imageView, new VBox(COMPACT_SPACING, label, removeButton));
 			row.setAlignment(Pos.CENTER_LEFT);
 			return row;

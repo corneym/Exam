@@ -111,9 +111,9 @@ class CurriculumMappingReviewDialogTest {
 		CurriculumRepository repository = new SqliteCurriculumRepository(database);
 		reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
 		CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
-		CurriculumMappingSuggester descriptorSuggester = (source, target) -> List
+		CurriculumMappingSuggester descriptorSuggester = (source, _) -> List
 				.of(new CurriculumMappingSuggestion(source, targetDescriptor, 1.0));
-		CurriculumMappingSuggester emptySubtopicSuggester = (source, target) -> List.of();
+		CurriculumMappingSuggester emptySubtopicSuggester = (_, _) -> List.of();
 		SubtopicMappingEvidenceService evidenceService = new SubtopicMappingEvidenceService(repository,
 				reviewRepository);
 		dialog = new CurriculumMappingReviewDialog(stage, repository, descriptorSuggester, emptySubtopicSuggester,

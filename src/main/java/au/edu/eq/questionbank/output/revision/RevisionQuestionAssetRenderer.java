@@ -53,7 +53,7 @@ public final class RevisionQuestionAssetRenderer {
 	 *                     written
 	 */
 	public List<RevisionQuestionAsset> render(RevisionCorpus corpus, Path outputRoot) throws IOException {
-		return render(corpus, outputRoot, (completed, total) -> {
+		return render(corpus, outputRoot, (_, _) -> {
 		});
 	}
 

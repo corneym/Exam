@@ -50,9 +50,8 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		getDialogPane().getButtonTypes().addAll(importButtonType, ButtonType.CANCEL);
 		fileField.setEditable(false);
 		Button browseButton = new Button("Browse...");
-		browseButton.setOnAction(event -> chooseFile(owner));
+		browseButton.setOnAction(_ -> chooseFile(owner));
 		HBox fileBox = new HBox(6, fileField, browseButton);
-
 		GridPane grid = new GridPane();
 		grid.setHgap(10);
 		grid.setVgap(8);
@@ -66,7 +65,6 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		grid.add(new Label("Excel file:"), 0, 3);
 		grid.add(fileBox, 1, 3);
 		getDialogPane().setContent(grid);
-
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
 		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
 	}
@@ -111,17 +109,14 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Select Curriculum Excel File");
 		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel workbooks", "*.xlsx"));
-
 		File root = curriculumDataRoot.toFile();
 		if (root.isDirectory()) {
 			chooser.setInitialDirectory(root);
 		}
-
 		File file = chooser.showOpenDialog(owner);
 		if (file == null) {
 			return;
 		}
-
 		Path selectedPath = file.toPath().toAbsolutePath().normalize();
 		if (!selectedPath.startsWith(curriculumDataRoot)) {
 			Alert alert = new Alert(Alert.AlertType.ERROR);
@@ -130,7 +125,6 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 			alert.showAndWait();
 			return;
 		}
-
 		selectedFile = selectedPath;
 		fileField.setText(selectedFile.toString());
 	}
@@ -155,5 +149,4 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 			event.consume();
 		}
 	}
-
 }

@@ -38,7 +38,7 @@ public final class RevisionSharedContextAssetRenderer {
 	}
 
 	public List<RevisionSharedContextAsset> render(RevisionCorpus corpus, Path outputRoot) throws IOException {
-		return render(corpus, outputRoot, (completed, total) -> {
+		return render(corpus, outputRoot, (_, _) -> {
 		});
 	}
 

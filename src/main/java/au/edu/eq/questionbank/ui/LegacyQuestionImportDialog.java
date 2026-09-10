@@ -51,51 +51,6 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		wireValidation(importButtonType);
 	}
 
-	private ButtonType configureDialog(Window owner) {
-		setTitle("Import Legacy Question Metadata");
-		setHeaderText("Import legacy question metadata from Excel");
-		initOwner(owner);
-		ButtonType importButtonType = new ButtonType("Import", ButtonBar.ButtonData.OK_DONE);
-		getDialogPane().getButtonTypes().addAll(importButtonType, ButtonType.CANCEL);
-		return importButtonType;
-	}
-
-	private void configureSelectors() {
-		subjectBox.getItems().setAll(curriculumRepository.findAllSubjects());
-		subjectBox.setPrefWidth(220);
-		subjectBox.valueProperty()
-				.addListener((observable, oldSubject, newSubject) -> loadSyllabusVersions(newSubject));
-		syllabusBox.setPrefWidth(220);
-		syllabusBox.setDisable(true);
-	}
-
-	private HBox configureFileControls(Window owner) {
-		fileField.setEditable(false);
-		fileField.setPrefWidth(300);
-		Button browseButton = new Button("Browse...");
-		browseButton.setOnAction(event -> chooseFile(owner));
-		return new HBox(6, fileField, browseButton);
-	}
-
-	private void buildContent(HBox fileBox) {
-		GridPane grid = new GridPane();
-		grid.setHgap(10);
-		grid.setVgap(8);
-		grid.setPadding(new Insets(10));
-		grid.add(new Label("Subject:"), 0, 0);
-		grid.add(subjectBox, 1, 0);
-		grid.add(new Label("Syllabus version:"), 0, 1);
-		grid.add(syllabusBox, 1, 1);
-		grid.add(new Label("Excel file:"), 0, 2);
-		grid.add(fileBox, 1, 2);
-		getDialogPane().setContent(grid);
-	}
-
-	private void wireValidation(ButtonType importButtonType) {
-		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
-		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
-	}
-
 	/**
 	 * Returns the selected workbook, or {@code null} before a valid selection.
 	 *
@@ -123,6 +78,20 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		return syllabusBox.getValue();
 	}
 
+	private void buildContent(HBox fileBox) {
+		GridPane grid = new GridPane();
+		grid.setHgap(10);
+		grid.setVgap(8);
+		grid.setPadding(new Insets(10));
+		grid.add(new Label("Subject:"), 0, 0);
+		grid.add(subjectBox, 1, 0);
+		grid.add(new Label("Syllabus version:"), 0, 1);
+		grid.add(syllabusBox, 1, 1);
+		grid.add(new Label("Excel file:"), 0, 2);
+		grid.add(fileBox, 1, 2);
+		getDialogPane().setContent(grid);
+	}
+
 	private void chooseFile(Window owner) {
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Select Legacy Question Metadata Workbook");
@@ -133,6 +102,32 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		}
 		selectedFile = file.toPath();
 		fileField.setText(selectedFile.toString());
+	}
+
+	private ButtonType configureDialog(Window owner) {
+		setTitle("Import Legacy Question Metadata");
+		setHeaderText("Import legacy question metadata from Excel");
+		initOwner(owner);
+		ButtonType importButtonType = new ButtonType("Import", ButtonBar.ButtonData.OK_DONE);
+		getDialogPane().getButtonTypes().addAll(importButtonType, ButtonType.CANCEL);
+		return importButtonType;
+	}
+
+	private HBox configureFileControls(Window owner) {
+		fileField.setEditable(false);
+		fileField.setPrefWidth(300);
+		Button browseButton = new Button("Browse...");
+		browseButton.setOnAction(_ -> chooseFile(owner));
+		return new HBox(6, fileField, browseButton);
+	}
+
+	private void configureSelectors() {
+		subjectBox.getItems().setAll(curriculumRepository.findAllSubjects());
+		subjectBox.setPrefWidth(220);
+		subjectBox.valueProperty()
+				.addListener((_, _, newSubject) -> loadSyllabusVersions(newSubject));
+		syllabusBox.setPrefWidth(220);
+		syllabusBox.setDisable(true);
 	}
 
 	private boolean isValid() {
@@ -191,4 +186,8 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		}
 	}
 
+	private void wireValidation(ButtonType importButtonType) {
+		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
+		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
+	}
 }

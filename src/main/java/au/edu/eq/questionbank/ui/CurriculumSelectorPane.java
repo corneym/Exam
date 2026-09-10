@@ -329,8 +329,8 @@ public class CurriculumSelectorPane extends VBox {
 			}
 			return change;
 		}));
-		codeField.textProperty().addListener((observable, oldValue, newValue) -> handleCodeInput(newValue));
-		codeField.focusedProperty().addListener((observable, wasFocused, focused) -> handleCodeFocusChanged(focused));
+		codeField.textProperty().addListener((_, _, newValue) -> handleCodeInput(newValue));
+		codeField.focusedProperty().addListener((_, _, focused) -> handleCodeFocusChanged(focused));
 	}
 
 	private void configureControls() {
@@ -367,16 +367,16 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void configureSelectionHandlers() {
-		subjectBox.setOnAction(event -> handleSubjectSelection());
-		syllabusBox.setOnAction(event -> handleSyllabusSelection());
+		subjectBox.setOnAction(_ -> handleSubjectSelection());
+		syllabusBox.setOnAction(_ -> handleSyllabusSelection());
 		unitBox.getSelectionModel().selectedItemProperty()
-				.addListener((observable, oldValue, newValue) -> handleUnitSelection());
+				.addListener((_, _, _) -> handleUnitSelection());
 		topicBox.getSelectionModel().selectedItemProperty()
-				.addListener((observable, oldValue, newValue) -> handleTopicSelection());
+				.addListener((_, _, _) -> handleTopicSelection());
 		subtopicBox.getSelectionModel().selectedItemProperty()
-				.addListener((observable, oldValue, newValue) -> handleSubtopicSelection());
+				.addListener((_, _, _) -> handleSubtopicSelection());
 		descriptorBox.getSelectionModel().selectedItemProperty()
-				.addListener((observable, oldValue, newValue) -> handleDescriptorSelection());
+				.addListener((_, _, _) -> handleDescriptorSelection());
 	}
 
 	private GridPane createGrid() {
@@ -458,6 +458,12 @@ public class CurriculumSelectorPane extends VBox {
 			if (node != null) {
 				return node;
 			}
+		}
+	}
+
+	private void handleCodeFocusChanged(Boolean focused) {
+		if (!focused.booleanValue()) {
+			syncCodeFromSelection();
 		}
 	}
 
@@ -776,11 +782,4 @@ public class CurriculumSelectorPane extends VBox {
 
 	private record SelectionSnapshot(Subject subject, SyllabusVersion syllabus, CurriculumNode node) {
 	}
-
-	private void handleCodeFocusChanged(Boolean focused) {
-		if (!focused.booleanValue()) {
-			syncCodeFromSelection();
-		}
-	}
-
 }

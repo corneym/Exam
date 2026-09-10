@@ -53,7 +53,7 @@ class RevisionQuestionAssetRendererTest {
 	@Test
 	void doesNotRenderMetadataOnlyQuestionWithoutRegions() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List
+		QuestionRetrievalRepository retrievalRepository = _ -> List
 				.of(new QuestionApplicabilityMatch(fixture.metadataOnlyQuestion, fixture.firstDescriptor));
 		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
 		Path outputRoot = tempDir.resolve("output");
@@ -69,7 +69,7 @@ class RevisionQuestionAssetRendererTest {
 		Fixture fixture = new Fixture(tempDir);
 		Files.delete(fixture.pdfStore
 				.resolve(fixture.renderableQuestion.getBooklet().getSourceDocument().getRelativePath()));
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List
+		QuestionRetrievalRepository retrievalRepository = _ -> List
 				.of(new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.firstDescriptor));
 		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
 		Path outputRoot = tempDir.resolve("output");
@@ -89,7 +89,7 @@ class RevisionQuestionAssetRendererTest {
 		Question question = new Question(3, booklet, "2a", "", 3,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.75, 1.0, 0.25)),
 				fixture.renderableQuestion.getClassification(), false, null, sharedContext);
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List
+		QuestionRetrievalRepository retrievalRepository = _ -> List
 				.of(new QuestionApplicabilityMatch(question, fixture.firstDescriptor));
 		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
 		Path outputRoot = tempDir.resolve("question-body-output");
@@ -106,7 +106,7 @@ class RevisionQuestionAssetRendererTest {
 	@Test
 	void rendersOneDeterministicAssetPerUniqueRenderableQuestion() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.firstDescriptor),
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.secondDescriptor));
 		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
@@ -135,7 +135,7 @@ class RevisionQuestionAssetRendererTest {
 		Question secondQuestion = new Question(4, booklet, "24b", "", 3,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.75, 1.0, 0.25)),
 				fixture.renderableQuestion.getClassification(), false, null, sharedContext);
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(firstQuestion, fixture.firstDescriptor),
 				new QuestionApplicabilityMatch(secondQuestion, fixture.firstDescriptor));
 		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);

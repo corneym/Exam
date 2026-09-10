@@ -24,7 +24,7 @@ public class JavaFxToolchainSmokeTest {
 	public void start(Stage stage) {
 		button = new Button("Ready");
 		button.setId("toolchain-button");
-		button.setOnAction(event -> button.setText("Clicked"));
+		button.setOnAction(_ -> button.setText("Clicked"));
 		stage.setScene(new Scene(new StackPane(button), 240, 120));
 		stage.show();
 	}

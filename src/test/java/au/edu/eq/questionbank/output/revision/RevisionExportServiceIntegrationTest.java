@@ -138,7 +138,7 @@ class RevisionExportServiceIntegrationTest {
 							currentUnit, currentTopic, currentDescriptor));
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
 			QuestionRetrievalService retrieval = new QuestionRetrievalService(
-					currentNodes -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
+					_ -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
 			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval);
 			PdfStore pdfStore = new PdfStore(pdfRoot);
 			QuestionExtractor extractor = new QuestionExtractor();

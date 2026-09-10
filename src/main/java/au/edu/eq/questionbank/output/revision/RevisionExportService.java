@@ -76,7 +76,7 @@ public final class RevisionExportService {
 	 * @throws IOException if generation, validation or publication fails
 	 */
 	public RevisionExportResult export(RevisionExportRequest request) throws IOException {
-		return export(request, (message, completed, total) -> {
+		return export(request, (_, _, _) -> {
 		});
 	}
 

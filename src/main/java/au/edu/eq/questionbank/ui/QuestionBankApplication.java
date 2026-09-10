@@ -5,9 +5,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ConfigurationException;
@@ -431,7 +433,7 @@ public class QuestionBankApplication extends Application {
 	private CurriculumSelectorPane createCurriculumSelectorPane() {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
 		selectorPane.selectedSubjectProperty()
-				.addListener((observable, oldSubject, newSubject) -> handleSubjectChanged(newSubject));
+				.addListener((_, _, newSubject) -> handleSubjectChanged(newSubject));
 		return selectorPane;
 	}
 
@@ -508,7 +510,7 @@ public class QuestionBankApplication extends Application {
 
 	private MenuItem createMenuItem(String text, Runnable action) {
 		MenuItem item = new MenuItem(text);
-		item.setOnAction(event -> action.run());
+		item.setOnAction(_ -> action.run());
 		item.setMnemonicParsing(true);
 		return item;
 	}
@@ -516,15 +518,28 @@ public class QuestionBankApplication extends Application {
 	private void createMissingLegacyBooklets(ApplicationConfig config, Subject subject,
 			List<LegacyBookletImportRequest> requests) throws IOException, SQLException {
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		Set<Long> importedAnswerFileExamIds = new HashSet<>();
 		for (LegacyBookletImportRequest request : requests) {
 			LegacyBookletRequirement requirement = request.requirement();
 			Path storedPath = pdfStore.importExamPdf(request.pdfPath(), subject.getName(), requirement.providerName(),
 					requirement.year());
 			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
-			examImporter.importExam(subject, requirement.providerName(), requirement.year(), request.assessmentName(),
-					requirement.bookletName(), relativePath);
+			ExamBooklet booklet = examImporter.importExam(subject, requirement.providerName(), requirement.year(),
+					request.assessmentName(), requirement.bookletName(), relativePath);
+			if (request.answerPdfPath() == null) {
+				continue;
+			}
+			if (!importedAnswerFileExamIds.add(booklet.getExam().getId())) {
+				continue;
+			}
+			Path storedAnswerPath = pdfStore.importExamPdf(request.answerPdfPath(), subject.getName(),
+					requirement.providerName(), requirement.year());
+			String answerRelativePath = config.pdfDataRoot().relativize(storedAnswerPath).toString();
+			answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide", answerRelativePath);
 		}
 	}
 
@@ -794,9 +809,9 @@ public class QuestionBankApplication extends Application {
 			return false;
 		}
 		if (documentMode == PdfWorkspacePane.DocumentMode.ANSWER) {
-			return answerCapturePane.hasAnswerFile();
+			return answerCapturePane.hasAnswerFile() && !answerCapturePane.isSaveInProgress();
 		}
-		return examMetadataPane.getBooklet() != null;
+		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
 	}
 
 	private void openAnswerPdf(SelectedPdf selectedPdf) {
@@ -1083,6 +1098,7 @@ public class QuestionBankApplication extends Application {
 		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
 		if (result.isEmpty()) {
 			dialog.dispose();
+			questionCapturePane.clearSaveStatus();
 			return;
 		}
 		QuestionSearchDialog.EditRequest request = result.get();
@@ -1270,8 +1286,8 @@ public class QuestionBankApplication extends Application {
 		};
 		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision HTML",
 				"Creating revision website...", "Starting export...");
-		task.setOnSucceeded(event -> completeRevisionExport(task, progressAlert));
-		task.setOnFailed(event -> failRevisionExport(task, progressAlert));
+		task.setOnSucceeded(_ -> completeRevisionExport(task, progressAlert));
+		task.setOnFailed(_ -> failRevisionExport(task, progressAlert));
 		progressAlert.show();
 		Thread thread = new Thread(task, "revision-html-export");
 		thread.setDaemon(true);
@@ -1306,8 +1322,8 @@ public class QuestionBankApplication extends Application {
 		};
 		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision SCORM",
 				"Creating SCORM package...", "Starting SCORM export...");
-		task.setOnSucceeded(event -> completeScormExport(task, progressAlert));
-		task.setOnFailed(event -> failScormExport(task, progressAlert));
+		task.setOnSucceeded(_ -> completeScormExport(task, progressAlert));
+		task.setOnFailed(_ -> failScormExport(task, progressAlert));
 		progressAlert.show();
 		Thread thread = new Thread(task, "revision-scorm-export");
 		thread.setDaemon(true);

@@ -55,7 +55,7 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		destinationField.setPromptText("Choose destination folder");
 		Button browseButton = new Button("Browse...");
 		browseButton.setId("revision-export-browse");
-		browseButton.setOnAction(event -> chooseDestination(owner));
+		browseButton.setOnAction(_ -> chooseDestination(owner));
 		HBox destinationBox = new HBox(6, destinationField, browseButton);
 		GridPane grid = new GridPane();
 		grid.setHgap(10);
@@ -70,7 +70,7 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		exportButton.setId("revision-export-start");
 		exportButton.setDisable(true);
 		subjectBox.valueProperty()
-				.addListener((observable, oldSubject, newSubject) -> updateExportButton(exportButton));
+				.addListener((_, _, _) -> updateExportButton(exportButton));
 		updateExportButton(exportButton);
 	}
 

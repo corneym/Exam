@@ -217,7 +217,6 @@ public class CurriculumSelectorPaneTest {
 		robot.interact(() -> pane.setSyllabusContextLocked(true));
 		ComboBox<?> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
 		ComboBox<?> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
-		@SuppressWarnings("unchecked")
 		ComboBox<?> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
 		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
 		assertTrue(subjects.isDisabled());
