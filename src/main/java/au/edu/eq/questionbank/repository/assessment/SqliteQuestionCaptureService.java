@@ -186,10 +186,6 @@ public final class SqliteQuestionCaptureService {
 	private SourceQuestion resolveSourceQuestion(Connection connection, Request request) throws SQLException {
 		String sourceCode = SourceQuestionCodeParser.derive(request.questionCode());
 		if (sourceCode == null) {
-			Question existing = request.existingQuestion();
-			if (existing != null && existing.hasSourceQuestion()) {
-				return existing.getSourceQuestion();
-			}
 			return null;
 		}
 		SourceQuestion existing = sourceQuestionRepository

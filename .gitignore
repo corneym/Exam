@@ -34,6 +34,9 @@ Thumbs.db
 *.swp
 *~
 
+# Local application-data archive
+/data.zip
+
 # Local exam source files
 /data/pdf/
 /data/backups

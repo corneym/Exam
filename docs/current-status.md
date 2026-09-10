@@ -1,11 +1,10 @@
 # Exam Question Bank — Current Status
 
-> Authoritative project status at 10 September 2026.
+> Authoritative project status at 11 September 2026.
 >
 > Current development branch: `feature/preamble-capture`.
 >
-> Latest pushed head inspected: `2fbcf3df054a38b800e66d9cfc1bfd16d0f7cc1c`
-> (`fixed Answer PDF button control issue`).
+> Final Sprint 07 merge-readiness review performed: 11 September 2026.
 
 ## Status summary
 
@@ -16,8 +15,8 @@ historical-to-current curriculum mapping, current-curriculum retrieval,
 revision HTML generation, SCORM 1.2 packaging, backup/restore, and correction of
 persisted Questions and Answers.
 
-Sprint 07 implementation is substantially complete on
-`feature/preamble-capture` and is in closeout. The sprint introduced persisted
+Sprint 07 implementation and closeout are complete on
+`feature/preamble-capture`. The sprint introduced persisted
 source-question identity and reusable shared question context, preamble-aware
 capture, multipart presentation semantics, syllabus-sensitive classification,
 Question/Answer correction, capture-workflow protection, and a substantial set
@@ -209,7 +208,9 @@ Important semantics:
 - shared-context reuse is persisted explicitly;
 - multipart grouping and shared-context identity are not the same relationship;
 - ordinary multi-region Questions remain ordinary Questions;
-- relationships are not inferred automatically from codes such as `21a`, `21b`;
+- recognised multipart question codes may be conservatively used during
+  capture/backfill to create persisted `SourceQuestion` identity;
+- shared-context relationships are never inferred from question codes alone;
 - legacy preamble evidence is preserved rather than rewritten away;
 - shared context can be reused by later parts after initial capture.
 
@@ -292,12 +293,12 @@ Retrieval includes:
 - SQLite repository/service retrieval;
 - asynchronous JavaFX search;
 - stale-result/lifecycle protection;
-- Question details and reconstructed Question-region preview;
+- Question details and reconstructed Question preview;
+- linked `SharedQuestionContext` regions rendered before the selected
+  Question's ordinary regions without automatically displaying sibling parts;
 - existing Question and Answer correction entry points.
 
-**DEFERRED:** Search Questions preview does not yet fully reconstruct linked
-shared context before the selected Question's ordinary regions. This is a
-high-priority backlog item.
+
 
 ### Revision corpus and HTML output
 
@@ -395,31 +396,22 @@ architecture.
 
 `feature/preamble-capture` is the active feature branch.
 
-Sprint 07 functional implementation is complete enough for closeout. Remaining
-work should be limited to documentation reconciliation, final regression checks,
-and merge-readiness review rather than additional feature expansion unless a
-concrete defect is discovered.
+Sprint 07 implementation, documentation consolidation and final
+branch-versus-`main` merge-readiness review are complete.
 
-Recent verification reported during Sprint 07 includes:
+The final review identified one edit-transition defect: changing a multipart
+Question to a non-multipart question code could retain its old `SourceQuestion`
+and shared-context relationships. The capture service was corrected so those
+relationships are cleared, with regression coverage for the transition.
 
-- standard Maven tests green;
-- headless TestFX/UI tests green after asynchronous-save timing updates;
-- Javadoc/doclint build green;
-- manual acceptance of shared-preamble capture/reuse and editing workflows;
-- manual confirmation that the Answer PDF chooser now disappears immediately
-  when the selected Question already resolves to a registered answer PDF.
+Final verification includes:
 
-Because the final Answer-PDF visibility adjustment was made after earlier suite
-runs, a final complete regression pass remains appropriate before merge
-readiness is declared.
+- standard Maven test suite green;
+- full headless TestFX/UI suite green;
+- Javadoc/doclint green;
+- manual Sprint 07 acceptance complete.
 
-Recommended closeout quality gate:
-
-```text
-mvn test
-mvn -Pheadless-ui-tests test
-mvn javadoc:javadoc -Ddoclint=all,-missing -Dshow=private
-```
+No known Sprint 07 merge blocker remains.
 
 ## Active backlog themes
 
@@ -427,12 +419,9 @@ The authoritative deferred-work list is `docs/design/backlog.md`.
 
 Current major deferred themes include:
 
-- Save-button readiness recalculation after clearing a pending region;
-- general TestFX stabilisation/isolation;
 - additional asynchronous Question Search regression coverage;
 - broad capture/audit work queue;
 - reconciliation of the 5 September Chemistry mapping workbook;
-- Search Questions preview including shared context;
 - Answer-pane layout annoyances;
 - multi-page automatic shared-preamble capture;
 - supported editing of persisted exam-specific metadata;
@@ -470,7 +459,6 @@ Do **not** describe the following as current application capabilities:
 - automatic multi-page shared-preamble capture;
 - general dependency graphs between Questions/shared contexts;
 - Question-level response type persisted independently of booklet naming;
-- complete shared-context reconstruction in Search Questions preview;
 - clipboard/image-attachment Question capture;
 - current-generation LaTeX/PDF assessment assembly;
 - self-contained installer/deployment packaging;
@@ -486,5 +474,4 @@ Do **not** describe the following as current application capabilities:
 - Sprint 06: SCORM 1.2 generation and QLearn validation — complete.
 - Sprint 07: preamble-aware capture, persisted SourceQuestion/shared context,
   correction workflows, multipart revision presentation and capture UI redesign
-  — implementation complete on feature branch; documentation/final regression/
-  merge-readiness closeout remains.
+  — implementation and merge-readiness closeout complete on the feature branch.
