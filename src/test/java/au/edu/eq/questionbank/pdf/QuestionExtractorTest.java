@@ -127,6 +127,21 @@ class QuestionExtractorTest {
 	}
 
 	@Test
+	void extractsQuestionBodyWithoutLinkedSharedContext() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.BLUE));
+		SharedQuestionContext sharedContext = new SharedQuestionContext(40, booklet, "Shared stem",
+				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0)));
+		Question question = new Question(41, booklet, "30a", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.0, 0.0, 1.0, 1.0)), createClassification(), false, null,
+				sharedContext);
+		try (PdfSession session = PdfSession.open(pdf)) {
+			BufferedImage image = extractor.extractQuestionBody(session, question);
+			assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(150, image.getHeight()),
+					() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(75, 75)));
+		}
+	}
+
+	@Test
 	void extractsSharedContextRegionUsingProportionalCoordinates() throws Exception {
 		Path pdf = createHorizontallySplitPdf(Color.RED, Color.BLUE);
 		try (PdfSession session = PdfSession.open(pdf)) {
@@ -134,6 +149,20 @@ class QuestionExtractorTest {
 			BufferedImage image = extractor.extractRegion(session, region);
 			assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(150, image.getHeight()),
 					() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(37, 75)));
+		}
+	}
+
+	@Test
+	void extractsWholeSharedContextInStoredOrder() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.GREEN));
+		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Two-part context",
+				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0),
+						new SharedQuestionContextRegion(2, 0.0, 0.0, 1.0, 1.0)));
+		try (PdfSession session = PdfSession.open(pdf)) {
+			BufferedImage image = extractor.extractSharedContext(session, sharedContext);
+			assertAll(() -> assertEquals(150, image.getWidth()), () -> assertEquals(300, image.getHeight()),
+					() -> assertEquals(Color.RED.getRGB(), image.getRGB(75, 75)),
+					() -> assertEquals(Color.GREEN.getRGB(), image.getRGB(75, 225)));
 		}
 	}
 

@@ -17,6 +17,7 @@ import javax.imageio.ImageIO;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 
 /**
@@ -75,6 +76,48 @@ public class QuestionExtractor {
 				}
 			}
 		}
+		for (QuestionRegion region : question.getRegions()) {
+			RegionKey key = RegionKey.from(region);
+			if (renderedRegions.add(key)) {
+				regionImages.add(extractRegion(session, region));
+			}
+		}
+		return combineRegionImages(regionImages);
+	}
+
+	/**
+	 * Opens a PDF and writes only the question's own ordered regions to PNG. Linked
+	 * shared context is deliberately excluded.
+	 *
+	 * @param pdfPath    the PDF containing the question regions
+	 * @param question   the question whose own regions are extracted
+	 * @param outputFile the destination PNG file
+	 * @throws Exception if the PDF cannot be opened, rendered, closed, or written
+	 */
+	public void extractQuestionBody(Path pdfPath, Question question, File outputFile) throws Exception {
+		try (PdfSession session = PdfSession.open(pdfPath)) {
+			BufferedImage image = extractQuestionBody(session, question);
+			ImageIO.write(image, "png", outputFile);
+		}
+	}
+
+	/**
+	 * Extracts only the question's own ordered regions using an existing session.
+	 * Linked shared context is deliberately excluded. Exact duplicate source
+	 * rectangles are rendered only once. The session remains open.
+	 *
+	 * @param session  the PDF session containing the question regions
+	 * @param question the question to extract
+	 * @return the vertically combined question-body image
+	 * @throws IOException            if a page cannot be rendered
+	 * @throws NoSuchElementException if the question has no question regions
+	 */
+	public BufferedImage extractQuestionBody(PdfSession session, Question question) throws IOException {
+		if (question.getRegions().isEmpty()) {
+			throw new NoSuchElementException("No value present");
+		}
+		List<BufferedImage> regionImages = new ArrayList<>();
+		Set<RegionKey> renderedRegions = new HashSet<>();
 		for (QuestionRegion region : question.getRegions()) {
 			RegionKey key = RegionKey.from(region);
 			if (renderedRegions.add(key)) {
@@ -153,6 +196,43 @@ public class QuestionExtractor {
 	public BufferedImage extractRegion(PdfSession session, SharedQuestionContextRegion region) throws IOException {
 		BufferedImage page = session.renderPage(region.pageNumber(), RENDER_DPI);
 		return cropRegion(page, region.x(), region.y(), region.width(), region.height());
+	}
+
+	/**
+	 * Opens a PDF and writes one complete shared context to PNG.
+	 *
+	 * @param pdfPath    the PDF containing the shared-context regions
+	 * @param context    the shared context to extract
+	 * @param outputFile the destination PNG file
+	 * @throws Exception if the PDF cannot be opened, rendered, closed, or written
+	 */
+	public void extractSharedContext(Path pdfPath, SharedQuestionContext context, File outputFile) throws Exception {
+		try (PdfSession session = PdfSession.open(pdfPath)) {
+			BufferedImage image = extractSharedContext(session, context);
+			ImageIO.write(image, "png", outputFile);
+		}
+	}
+
+	/**
+	 * Extracts all ordered regions belonging to one shared context using an
+	 * existing session. Exact duplicate source rectangles are rendered only once.
+	 * The session remains open.
+	 *
+	 * @param session the PDF session containing the shared-context regions
+	 * @param context the shared context to extract
+	 * @return the vertically combined shared-context image
+	 * @throws IOException if a page cannot be rendered
+	 */
+	public BufferedImage extractSharedContext(PdfSession session, SharedQuestionContext context) throws IOException {
+		List<BufferedImage> regionImages = new ArrayList<>();
+		Set<RegionKey> renderedRegions = new HashSet<>();
+		for (SharedQuestionContextRegion region : context.getRegions()) {
+			RegionKey key = RegionKey.from(region);
+			if (renderedRegions.add(key)) {
+				regionImages.add(extractRegion(session, region));
+			}
+		}
+		return combineRegionImages(regionImages);
 	}
 
 	private BufferedImage combineRegionImages(List<BufferedImage> regionImages) {

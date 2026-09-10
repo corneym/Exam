@@ -127,6 +127,37 @@ class RevisionQuestionAssetRendererTest {
 		assertTrue(Files.size(renderedFile) > 0);
 	}
 
+	@Test
+	void rendersSharedContextOnceWhenUsedByMultipleQuestions() throws Exception {
+		Fixture fixture = new Fixture(tempDir);
+		ExamBooklet booklet = fixture.renderableQuestion.getBooklet();
+		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Shared stem",
+				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.5)));
+		Question firstQuestion = new Question(3, booklet, "24a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.5, 1.0, 0.25)),
+				fixture.renderableQuestion.getClassification(), false, null, sharedContext);
+		Question secondQuestion = new Question(4, booklet, "24b", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.75, 1.0, 0.25)),
+				fixture.renderableQuestion.getClassification(), false, null, sharedContext);
+		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+				new QuestionApplicabilityMatch(firstQuestion, fixture.firstDescriptor),
+				new QuestionApplicabilityMatch(secondQuestion, fixture.firstDescriptor));
+		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
+		Path outputRoot = tempDir.resolve("context-output");
+		RevisionSharedContextAssetRenderer renderer = new RevisionSharedContextAssetRenderer(fixture.pdfStore,
+				new QuestionExtractor());
+		List<RevisionSharedContextAsset> assets = renderer.render(corpus, outputRoot);
+		assertEquals(1, assets.size());
+		RevisionSharedContextAsset asset = assets.getFirst();
+		assertSame(sharedContext, asset.getSharedContext());
+		assertEquals(Path.of("assets", "contexts", "context-50.png"), asset.getRelativePath());
+		Path renderedFile = outputRoot.resolve(asset.getRelativePath());
+		assertTrue(Files.isRegularFile(renderedFile));
+		BufferedImage image = ImageIO.read(renderedFile.toFile());
+		assertEquals(150, image.getWidth());
+		assertEquals(75, image.getHeight());
+	}
+
 	private static final class Fixture {
 
 		private final Subject chemistry;
