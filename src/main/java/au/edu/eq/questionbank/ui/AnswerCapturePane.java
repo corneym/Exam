@@ -12,8 +12,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
-import java.util.function.BooleanSupplier;
 import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -109,6 +109,7 @@ final class AnswerCapturePane extends VBox {
 	private final Label answerRegionCountLabel = new Label("Regions: 0");
 	private final Label answerRegionStatusLabel = new Label();
 	private final VBox answerRegionListBox = new VBox(COMPACT_SPACING);
+	private final HBox answerPdfControls = new HBox();
 	private final ScrollPane answerRegionsScrollPane = new ScrollPane(answerRegionListBox);
 	// Save and edit controls.
 	private final Button saveAnswerButton = new Button("Save");
@@ -118,7 +119,8 @@ final class AnswerCapturePane extends VBox {
 	private AnswerFile answerFile;
 	private AnswerRegion currentAnswerSelection;
 	private boolean restoringUnansweredQuestionSelection;
-	// A question-save snapshot may predate an answer committed while it was loading.
+	// A question-save snapshot may predate an answer committed while it was
+	// loading.
 	private final Set<Long> locallyAnsweredQuestionIds = new HashSet<>();
 	private Question editingAnswerQuestion;
 	private boolean answerSaveInProgress;
@@ -330,6 +332,7 @@ final class AnswerCapturePane extends VBox {
 		}
 		answerPdfHandler.accept(selectedPdf);
 		selectedAnswerPdfLabel.setText(selectedPdf.file().getName());
+		updateAnswerPdfControlsVisibility(question);
 	}
 
 	private void addCurrentAnswerRegion() {
@@ -369,6 +372,7 @@ final class AnswerCapturePane extends VBox {
 			saveAnswerButton.setText("Save Answer");
 			answerRegionCountLabel.setText("Regions: 0");
 			answerRegionStatusLabel.setText("");
+			updateAnswerPdfControlsVisibility(null);
 			return;
 		}
 		if (answerFile != null && answerFile.getExam().getId() != question.getExam().getId()) {
@@ -404,6 +408,7 @@ final class AnswerCapturePane extends VBox {
 		}
 		updateMultipleChoiceAnswerVisibility(question);
 		chooseAnswerPdfButton.setDisable(false);
+		updateAnswerPdfControlsVisibility(null);
 		refreshSaveButtonState();
 		if (loadDocument && answerFile != null && !openedAnswerPdf) {
 			answerDocumentHandler.run();
@@ -564,9 +569,10 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private HBox createAnswerPdfControls() {
-		HBox controls = new HBox(CONTROL_SPACING, chooseAnswerPdfButton, selectedAnswerPdfLabel);
-		controls.setAlignment(Pos.CENTER_LEFT);
-		return controls;
+		answerPdfControls.getChildren().setAll(chooseAnswerPdfButton, selectedAnswerPdfLabel);
+		answerPdfControls.setSpacing(CONTROL_SPACING);
+		answerPdfControls.setAlignment(Pos.CENTER_LEFT);
+		return answerPdfControls;
 	}
 
 	private HBox createAnswerRegionControls() {
@@ -633,6 +639,22 @@ final class AnswerCapturePane extends VBox {
 		completedHandler.run();
 	}
 
+	private void finishAnswerSaveTransition(Throwable failure) {
+		answerSaveInProgress = false;
+		setDisable(false);
+		updateAnswerPdfControlsVisibility(unansweredQuestionField.getValue());
+		refreshSaveButtonState();
+		if (failure == null) {
+			answerRegionStatusLabel.setText("Answer saved");
+		} else if (failure instanceof CancellationException) {
+			answerRegionStatusLabel.setText("Answer saved — PDF view changed");
+		} else {
+			answerRegionStatusLabel.setText("Answer saved — next PDF could not be loaded");
+			showAnswerFileError("Answer saved, but the next question's PDF could not be loaded.",
+					"Your answer is stored. Choose an answer PDF to continue. " + failure.getMessage());
+		}
+	}
+
 	private void handleUnansweredQuestionChanged(Question previousQuestion, Question question) {
 		if (restoringUnansweredQuestionSelection || sameQuestion(previousQuestion, question)) {
 			return;
@@ -652,23 +674,81 @@ final class AnswerCapturePane extends VBox {
 		return bookletName.contains("mcq") || bookletName.contains("multiple choice");
 	}
 
+	private void loadNextAnswerDocument(Question question) {
+		if (question == null) {
+			finishAnswerSaveTransition(null);
+			return;
+		}
+		answerRegionStatusLabel.setText("Answer saved — loading next question...");
+		if (answerFile != null) {
+			openNextAnswerDocument(answerFile);
+			return;
+		}
+		Task<List<AnswerFile>> task = new Task<>() {
+
+			@Override
+			protected List<AnswerFile> call() throws SQLException {
+				return answerWriter.findAnswerFiles(question.getExam());
+			}
+		};
+		task.setOnSucceeded(_ -> {
+			if (!sameQuestion(question, unansweredQuestionField.getValue())) {
+				finishAnswerSaveTransition(new CancellationException("Answer selection changed"));
+				return;
+			}
+			AnswerFile file = selectRegisteredAnswerFile(task.getValue());
+			if (file == null) {
+				finishAnswerSaveTransition(null);
+			} else {
+				openNextAnswerDocument(file);
+			}
+		});
+		task.setOnFailed(_ -> finishAnswerSaveTransition(task.getException()));
+		Thread.ofVirtual().name("next-answer-file").start(task);
+	}
+
 	private boolean loadRegisteredAnswerFile(Question question) {
 		List<AnswerFile> answerFiles;
 		try {
 			answerFiles = answerWriter.findAnswerFiles(question.getExam());
 		} catch (SQLException e) {
 			showAnswerFileError("Could not read the registered answer files.", e.getMessage());
+			updateAnswerPdfControlsVisibility(question);
 			return false;
 		}
 		AnswerFile registeredAnswerFile = selectRegisteredAnswerFile(answerFiles);
 		if (registeredAnswerFile == null) {
+			updateAnswerPdfControlsVisibility(question);
 			return false;
 		}
 		Path pdfPath = resolveRegisteredAnswerFile(registeredAnswerFile);
 		if (pdfPath == null) {
+			updateAnswerPdfControlsVisibility(question);
 			return false;
 		}
-		return openRegisteredAnswerFile(registeredAnswerFile, pdfPath);
+		boolean opened = openRegisteredAnswerFile(registeredAnswerFile, pdfPath);
+		updateAnswerPdfControlsVisibility(question);
+		return opened;
+	}
+
+	private void openNextAnswerDocument(AnswerFile file) {
+		try {
+			Path path = new PdfStore(pdfFilePicker.dataRoot()).resolve(file.getSourceDocument().getRelativePath());
+			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfFilePicker.dataRoot());
+			answerPdfLoader.accept(selected, failure -> {
+				if (failure == null) {
+					answerFile = file;
+					selectedAnswerPdfLabel.setText(file.getName());
+				} else {
+					answerFile = null;
+					selectedAnswerPdfLabel.setText("Choose an answer PDF");
+				}
+				finishAnswerSaveTransition(failure);
+			});
+		} catch (RuntimeException e) {
+			answerFile = null;
+			finishAnswerSaveTransition(e);
+		}
 	}
 
 	private boolean openRegisteredAnswerFile(AnswerFile registeredAnswerFile, Path pdfPath) {
@@ -685,6 +765,7 @@ final class AnswerCapturePane extends VBox {
 		}
 		answerFile = registeredAnswerFile;
 		selectedAnswerPdfLabel.setText(registeredAnswerFile.getName());
+		updateAnswerPdfControlsVisibility(unansweredQuestionField.getValue());
 		return true;
 	}
 
@@ -735,6 +816,24 @@ final class AnswerCapturePane extends VBox {
 		refreshAnswerRegionList();
 		showAcceptedRegionStatus();
 		refreshSaveButtonState();
+	}
+
+	private Question removeSavedQuestionAndSelectNext(Question savedQuestion, int previousIndex) {
+		Question nextQuestion = null;
+		restoringUnansweredQuestionSelection = true;
+		try {
+			unansweredQuestionField.getItems().removeIf(question -> question.getId() == savedQuestion.getId());
+			if (!unansweredQuestionField.getItems().isEmpty()) {
+				int nextIndex = previousIndex < 0 ? 0
+						: Math.min(previousIndex, unansweredQuestionField.getItems().size() - 1);
+				nextQuestion = unansweredQuestionField.getItems().get(nextIndex);
+			}
+			unansweredQuestionField.setValue(nextQuestion);
+		} finally {
+			restoringUnansweredQuestionSelection = false;
+		}
+		applyUnansweredQuestionChange(nextQuestion, false);
+		return nextQuestion;
 	}
 
 	private Path resolveRegisteredAnswerFile(AnswerFile registeredAnswerFile) {
@@ -846,92 +945,6 @@ final class AnswerCapturePane extends VBox {
 		preservedAnswerText = answerText;
 	}
 
-	private Question removeSavedQuestionAndSelectNext(Question savedQuestion, int previousIndex) {
-		Question nextQuestion = null;
-		restoringUnansweredQuestionSelection = true;
-		try {
-			unansweredQuestionField.getItems().removeIf(question -> question.getId() == savedQuestion.getId());
-			if (!unansweredQuestionField.getItems().isEmpty()) {
-				int nextIndex = previousIndex < 0 ? 0
-						: Math.min(previousIndex, unansweredQuestionField.getItems().size() - 1);
-				nextQuestion = unansweredQuestionField.getItems().get(nextIndex);
-			}
-			unansweredQuestionField.setValue(nextQuestion);
-		} finally {
-			restoringUnansweredQuestionSelection = false;
-		}
-		applyUnansweredQuestionChange(nextQuestion, false);
-		return nextQuestion;
-	}
-
-	private void loadNextAnswerDocument(Question question) {
-		if (question == null) {
-			finishAnswerSaveTransition(null);
-			return;
-		}
-		answerRegionStatusLabel.setText("Answer saved — loading next question...");
-		if (answerFile != null) {
-			openNextAnswerDocument(answerFile);
-			return;
-		}
-		Task<List<AnswerFile>> task = new Task<>() {
-			@Override
-			protected List<AnswerFile> call() throws SQLException {
-				return answerWriter.findAnswerFiles(question.getExam());
-			}
-		};
-		task.setOnSucceeded(_ -> {
-			if (!sameQuestion(question, unansweredQuestionField.getValue())) {
-				finishAnswerSaveTransition(new CancellationException("Answer selection changed"));
-				return;
-			}
-			AnswerFile file = selectRegisteredAnswerFile(task.getValue());
-			if (file == null) {
-				finishAnswerSaveTransition(null);
-			} else {
-				openNextAnswerDocument(file);
-			}
-		});
-		task.setOnFailed(_ -> finishAnswerSaveTransition(task.getException()));
-		Thread.ofVirtual().name("next-answer-file").start(task);
-	}
-
-	private void openNextAnswerDocument(AnswerFile file) {
-		try {
-			Path path = new PdfStore(pdfFilePicker.dataRoot())
-					.resolve(file.getSourceDocument().getRelativePath());
-			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfFilePicker.dataRoot());
-			answerPdfLoader.accept(selected, failure -> {
-				if (failure == null) {
-					answerFile = file;
-					selectedAnswerPdfLabel.setText(file.getName());
-				} else {
-					answerFile = null;
-					selectedAnswerPdfLabel.setText("Choose an answer PDF");
-				}
-				finishAnswerSaveTransition(failure);
-			});
-		} catch (RuntimeException e) {
-			answerFile = null;
-			finishAnswerSaveTransition(e);
-		}
-	}
-
-	private void finishAnswerSaveTransition(Throwable failure) {
-		answerSaveInProgress = false;
-		setDisable(false);
-		refreshSaveButtonState();
-		if (failure == null) {
-			answerRegionStatusLabel.setText("Answer saved");
-		} else if (failure instanceof CancellationException) {
-			answerRegionStatusLabel.setText("Answer saved — PDF view changed");
-		} else {
-			answerRegionStatusLabel.setText("Answer saved — next PDF could not be loaded");
-			showAnswerFileError("Answer saved, but the next question's PDF could not be loaded.",
-					"Your answer is stored. Choose an answer PDF to continue. " + failure.getMessage());
-		}
-	}
-
 	private AnswerFile selectRegisteredAnswerFile(List<AnswerFile> answerFiles) {
 		if (answerFiles.isEmpty()) {
 			selectedAnswerPdfLabel.setText("No PDF selected");
@@ -1001,6 +1014,13 @@ final class AnswerCapturePane extends VBox {
 			return;
 		}
 		loadRegisteredAnswerFile(question);
+	}
+
+	private void updateAnswerPdfControlsVisibility(Question question) {
+		boolean answerPdfKnown = question != null && answerFile != null
+				&& answerFile.getExam().getId() == question.getExam().getId();
+		answerPdfControls.setVisible(!answerPdfKnown);
+		answerPdfControls.setManaged(!answerPdfKnown);
 	}
 
 	private void updateMultipleChoiceAnswerVisibility(Question question) {

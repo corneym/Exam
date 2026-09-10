@@ -128,6 +128,10 @@ or curriculum applicability semantics.
 
 ## Normal Priority
 
+### Answer pane annoyances
+- when a region is added to the answer pane, a lot of extra blank vertical space gets added to the pane.  This is bad.
+- when the status text is selected and it says Regions: n Selection pending - Page x, the buttons can shrink and lose their text.   I don't care about the page number.  I don't want the buttons to change size
+
 ### Multi-page automatic shared-preamble capture
 
 Origin: Sprint 07 preamble-aware question capture.

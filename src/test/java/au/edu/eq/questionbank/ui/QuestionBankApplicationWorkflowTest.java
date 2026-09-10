@@ -651,6 +651,24 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void hidesAnswerPdfControlsWhenAnswerPdfIsKnown(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "56");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		Button choosePdf = lookup(robot, "#choose-answer-pdf", Button.class);
+		Label pdfLabel = field(answerCapturePane(), "selectedAnswerPdfLabel", Label.class);
+		assertTrue(choosePdf.isVisible());
+		assertTrue(pdfLabel.isVisible());
+		openAnswerPdfForTest(question);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(choosePdf.isVisible());
+		assertFalse(choosePdf.isManaged());
+		assertFalse(pdfLabel.isVisible());
+		assertFalse(pdfLabel.isManaged());
+	}
+
+	@Test
 	void importedCaptureAdvancesUsingTheBackgroundSnapshot(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = field(application, "examMetadataPane", ExamMetadataPane.class).getBooklet();
