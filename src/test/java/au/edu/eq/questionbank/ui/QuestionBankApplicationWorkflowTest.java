@@ -656,16 +656,14 @@ class QuestionBankApplicationWorkflowTest {
 		Question question = captureQuestion(robot, "56");
 		ComboBox<Question> questions = unansweredQuestions(robot);
 		robot.interact(() -> questions.getSelectionModel().select(question));
-		Button choosePdf = lookup(robot, "#choose-answer-pdf", Button.class);
-		Label pdfLabel = field(answerCapturePane(), "selectedAnswerPdfLabel", Label.class);
-		assertTrue(choosePdf.isVisible());
-		assertTrue(pdfLabel.isVisible());
+		Node pdfControls = field(answerCapturePane(), "answerPdfControls", Node.class);
+		assertTrue(pdfControls.isVisible());
+		assertTrue(pdfControls.isManaged());
 		openAnswerPdfForTest(question);
 		WaitForAsyncUtils.waitForFxEvents();
-		assertFalse(choosePdf.isVisible());
-		assertFalse(choosePdf.isManaged());
-		assertFalse(pdfLabel.isVisible());
-		assertFalse(pdfLabel.isManaged());
+		// Visibility and layout participation are controlled by the containing HBox.
+		assertFalse(pdfControls.isVisible());
+		assertFalse(pdfControls.isManaged());
 	}
 
 	@Test

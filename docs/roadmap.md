@@ -1,148 +1,105 @@
 # Exam Question Bank — Roadmap
 
-> Consolidated remaining work from the known state at 7 September 2026.
+> Consolidated forward plan at 10 September 2026.
 >
-> Completed Sprints 01–06 are deliberately excluded from future milestones except where hardening remains. `DEVELOPMENT_ROADMAP.md` contains the detailed development sequence; `design/backlog.md` is the authoritative deferred-work list.
+> Completed Sprints 01–07 are not future milestones. `DEVELOPMENT_ROADMAP.md`
+> contains the detailed sequence and `design/backlog.md` is the authoritative
+> deferred-work list.
 
-## Already complete — do not reopen as roadmap milestones
+## Completed foundation
 
 **IMPLEMENTED / CURRENT**
 
-- Java 25 / JavaFX / Maven application foundation.
-- Managed source-PDF handling and safe relative paths.
-- PDF viewer and managed Exam Import.
-- Normalized multi-region question capture and preview.
-- Answer domain, answer-region capture and persistence.
+- Java 25 / JavaFX / Maven desktop application.
+- SQLite runtime with foreign keys and migrations through schema v6.
+- Managed source PDFs and portable relative paths.
+- PDF viewer and managed Exam import.
+- Multi-region Question and Answer capture.
 - Versioned curriculum and Excel curriculum import.
-- SQLite runtime, foreign keys and migrations through schema v4.
-- Syllabus-version selection.
-- Descriptor and Subtopic historical-to-current mapping/review.
+- Historical-to-current curriculum mapping and review.
 - Sprint 01 legacy metadata import.
 - Sprint 02 directional curriculum applicability.
-- Sprint 03 hierarchical retrieval, asynchronous search and stored-question preview.
+- Sprint 03 hierarchical retrieval, asynchronous search and preview.
 - Sprint 04 backup, restore and data safety.
-- Sprint 05 deterministic revision corpus and static hierarchical HTML export.
-- Sprint 06 SCORM 1.2 package generation and successful QLearn import/launch acceptance.
+- Sprint 05 deterministic revision corpus and hierarchical HTML export.
+- Sprint 06 SCORM 1.2 packaging with successful QLearn acceptance.
+- Sprint 07 persisted SourceQuestion/shared-context semantics, preamble-aware
+  capture, Question/Answer correction, syllabus-sensitive classification,
+  multipart/shared-context revision output and capture responsiveness work.
 
-## Milestone 1 — Sprint 07: Preamble-aware Question Capture and UI Redesign
+## Immediate closeout
 
-**DESIGN COMPLETE / NEXT IMPLEMENTATION**
+Sprint 07 is implemented on `feature/preamble-capture` and requires only the
+normal final documentation/branch-versus-`main` merge-readiness checkpoint.
 
-Detailed design:
+Canonical Sprint 07 record:
 
 `docs/design/sprint-07-preamble-aware-question-capture-ui-redesign.md`
 
-Feature branch:
+## Milestone 1 — Corpus completion and mapping reconciliation
 
-`feature/preamble-capture`
+**HIGH PRIORITY / NEXT PRODUCT VALUE**
 
-### Goal
+Continue real-data completion without redesigning the implemented core model:
 
-Represent shared introductory material and multipart source-question identity explicitly, improve capture/editing, and make revision HTML/SCORM present those relationships correctly.
-
-### Domain and persistence
-
-Implement schema v5 with:
-
-- persisted `SourceQuestion` identity;
-- persisted `SharedQuestionContext`;
-- ordered shared-context regions;
-- optional Question -> SourceQuestion link;
-- optional Question -> SharedQuestionContext link;
-- preservation of the legacy `preamble_capture_required` evidence flag.
-
-Migration/import must not guess relationships from question codes or legacy preamble flags.
-
-### Capture workflow
-
-- capture shared context separately from ordinary question regions;
-- link/reuse existing shared context;
-- retain ordinary multi-region questions as a separate concept;
-- suggest but do not silently persist source-question identity;
-- show unresolved legacy preamble requirements explicitly;
-- allow correction of persisted question metadata, classification, regions and relationships;
-- display marks during answer capture;
-- allow existing answer correction;
-- prevent silent loss of pending selections;
-- fix selection ownership so Question controls cannot clear Answer-owned selections;
-- replace the fixed narrow capture column with a resizable workspace;
-- make the Question classification panel syllabus-sensitive;
-- show a Descriptor selector where Descriptor exists in the selected syllabus branch;
-- allow classification to stop at Subtopic even when Descriptor children exist;
-- require Descriptor when a selected Topic has direct Descriptor children.
-
-### Revision output
-
-Within each final current-curriculum output bucket:
-
-- group parts sharing one `SourceQuestion`;
-- render shared context once where appropriate;
-- derive grouped marks by summing included member-part marks;
-- keep parts in different curriculum buckets separate;
-- keep independent questions sharing context as independent questions.
-
-HTML implements the presentation semantics.
-
-SCORM continues to package the same static revision website and must not acquire a second grouping implementation.
-
-### Explicitly unaffected
-
-Sprint 07 does not redesign:
-
-- curriculum import;
-- curriculum hierarchy persistence;
-- curriculum mapping semantics (the capture panel only consumes the existing syllabus hierarchy);
-- curriculum mapping/review;
-- applicability;
-- Sprint 03 retrieval semantics;
-- exam/provider/booklet persistence;
-- managed-PDF/path rules;
-- backup/restore architecture;
-- SCORM 1.2 profile/manifest/ZIP mechanics;
-- multiple original classifications.
-
-## Milestone 2 — Corpus completion and mapping reconciliation
-
-**PROPOSED / PARALLEL HIGH PRIORITY**
-
-Continue manual corpus work in parallel with feature development where practical:
-
-- attach remaining question regions;
-- attach remaining answer regions;
+- capture remaining Question regions;
+- capture remaining Answer/marking regions;
 - resolve missing source documents;
-- verify historical classification;
-- reconcile the 5 September Chemistry 2019 -> 2025 descriptor mapping workbook with SQLite;
-- validate larger real datasets.
+- verify historical classifications;
+- review and reconcile the 5 September Chemistry 2019 -> 2025 mapping workbook
+  with SQLite mapping records;
+- establish coverage statistics after reconciliation;
+- exercise larger real datasets.
 
-A broad filtered capture/audit queue remains deferred beyond the targeted Sprint 07 unresolved-context workflow.
+A broad filtered capture/audit queue is useful follow-on work rather than a
+prerequisite for data capture.
 
-## Milestone 3 — Resolve remaining classification and ingestion gaps
+## Milestone 2 — Bank-management and retrieval hardening
 
-**PROPOSED / DESIGN DECISIONS REQUIRED**
+**HIGH/NORMAL PRIORITY**
+
+Focus on the workflows needed to maintain a growing real question bank:
+
+- broad capture/audit queue and completeness filters;
+- shared-context reconstruction in Search Questions preview;
+- exam-specific metadata correction;
+- import audit/reconciliation reporting;
+- additional real-world legacy-workbook validation;
+- TestFX focus/isolation hardening;
+- remaining asynchronous search/preview lifecycle tests;
+- retrieval-domain and SQLite integration hardening;
+- measurement-driven search/preview performance work.
+
+Do not let cosmetic UI work displace data-correctness or corpus-management work.
+
+## Milestone 3 — Resolve outstanding question semantics
+
+**DESIGN DECISIONS REQUIRED**
 
 ### Multiple original classifications
 
-The current model stores one best-fit original classification, but earlier real classification work showed that one question may relate to several descriptors.
+Decide whether one-best-fit original classification remains permanent policy or
+whether a Question may carry multiple original classifications.
 
-Decide whether:
+Any change must review schema, repositories, capture/editing, applicability,
+retrieval duplicate semantics, provenance and output placement.
 
-- one-best-fit remains permanent policy; or
-- `Question` needs multiple original classifications.
+### Question-level response type
 
-If changed, review:
+Replace booklet-name inference with persisted Question-level response type such
+as `MULTIPLE_CHOICE`, `WRITTEN_RESPONSE` and `UNKNOWN`.
 
-- schema/repositories;
-- capture/import UI;
-- applicability derivation;
-- retrieval duplicate semantics;
-- export placement/provenance;
-- tests.
+Use it to drive Answer UI behaviour and support mixed-response booklets.
 
-Do not confuse multiple original classifications with one historical node mapping to several current nodes.
+### Question-level applicability exceptions
 
-### Out-of-scope source-question disposition
+Allow a historically classified Question to be excluded from a target mapped
+current node when the Question tests only content that did not carry forward,
+without rewriting either the original classification or the curriculum mapping.
 
-Decide whether ingestion/audit needs an explicit reviewed state distinguishing:
+### Out-of-scope ingestion disposition
+
+Decide whether ingestion/audit requires explicit states such as:
 
 ```text
 not yet reviewed
@@ -150,80 +107,69 @@ captured/classified
 explicitly out of scope
 ```
 
-## Milestone 4 — Retrieval, mapping and UI hardening
+## Milestone 4 — Complete remaining capture refinements
 
-**PROPOSED / BACKLOG**
+**BACKLOG / SMALLER WORK**
 
-### JavaFX/TestFX
+- multi-page automatic shared-preamble capture;
+- Answer-pane layout stability;
+- Save-button ready-state recalculation after clearing a newly selected region;
+- Full-width-selection state change clearing a pending selection;
+- optional MCQ explanation-region capture.
 
-- isolate focus-sensitive tests;
-- add stale search/preview/disposal regressions;
-- keep infrastructure flakiness separate from application defects.
-
-### Retrieval/domain
-
-- strengthen result invariants;
-- broaden SQLite integration cases;
-- verify same-Subject isolation and reopen reconstruction;
-- benchmark broad searches before optimizing.
-
-### Mapping
-
-- decide whether DB triggers/constraints are warranted for mapping invariants;
-- preserve explicit human confirmation;
-- improve coverage reporting and review tooling where useful.
-
-### UI polish
-
-Keep cosmetic polish separate from workflow-critical defects.
+These are bounded follow-on improvements, not reasons to reopen Sprint 07.
 
 ## Milestone 5 — Rich Question Bank Browser and Administration
 
-**PROPOSED / LATER**
+**LATER**
 
 Add richer:
 
-- filters;
-- metadata correction beyond the capture workflow;
-- source inspection;
-- completeness indicators;
+- filtering and source inspection;
+- completeness/status indicators;
 - capture/audit queues;
+- metadata correction;
 - mapping/import reconciliation reports;
-- out-of-scope disposition if adopted.
+- out-of-scope disposition if adopted;
+- applicability review/overrides;
+- multiple-classification editing if adopted.
 
 ## Milestone 6 — Exam Builder
 
-**PROPOSED / LATER**
+**LATER**
 
-- select questions into assessments;
-- order questions/sections;
-- total marks;
-- saved drafts;
-- answer/marking inclusion choices;
-- reproducible question ordering.
+- select Questions into assessments;
+- order Questions and sections;
+- calculate total marks;
+- save reproducible drafts;
+- choose inclusion of Answer/marking material;
+- preserve stable source/provenance information.
 
-Exam Builder consumes the bank. It must not become a dependency of revision/SCORM export.
+Exam Builder consumes the question bank. It must not become a dependency of
+revision HTML/SCORM export.
 
 ## Milestone 7 — Printable assessment and solution output
 
-**PROPOSED / LATER**
+**LATER**
 
-Goals:
+Goals include:
 
 - generated sequential numbering;
-- matching question/solution numbering;
+- matching Question/solution numbering;
 - source attribution where appropriate;
 - page-break/layout controls;
 - school headers/instructions;
 - marking versions.
 
-Prefer vector-preserving inclusion/clipping of original PDF content where practical rather than using raster web assets as the print master.
+Prefer vector-preserving inclusion/clipping of authoritative source-PDF content
+where practical rather than using raster web assets as the print master.
 
-## Milestone 8 — Clipboard/image attachment questions
+## Milestone 8 — Clipboard/image attachment content
 
-**PROPOSED / LATER**
+**LATER**
 
-Support durable question content originating from transient webpages/documents, for example Windows Snipping Tool clipboard captures.
+Support durable Question content originating from transient documents or web
+sources, for example Windows Snipping Tool clipboard captures.
 
 Design work includes:
 
@@ -239,52 +185,59 @@ Do not weaken normal PDF-region provenance.
 
 ## Milestone 9 — Packaging and deployment
 
-**PROPOSED / LATER**
+**LATER**
 
 ### Desktop packaging
 
 - self-contained installer/executable, likely `jpackage`;
-- Maven-driven packaging;
-- writable DB/data root outside installed application files;
-- migration/backup safety across upgrades.
+- Maven-driven reproducible packaging;
+- writable database/data root outside installed application files;
+- migration and backup safety across upgrades.
 
 ### Faculty sharing
 
 - do not use a concurrently edited SharePoint-synchronised SQLite file;
-- use SharePoint for backups, exports, source distributions and published resources;
+- use SharePoint for backups, exports, source distribution and published
+  resources;
 - consider controlled import/export/merge;
-- consider a central DB only when simultaneous multi-user requirements justify it.
+- move to an IT-supported central database only when simultaneous multi-user
+  editing requirements justify it.
 
 ## Milestone 10 — Assisted classification and automation
 
-**PROPOSED / FUTURE**
+**FUTURE**
 
-Possible tools:
+Possible assistance:
 
 - PDF text extraction for search/classification;
 - descriptor ranking;
 - question-heading/boundary suggestions;
-- part/dependency suggestions;
-- OCR pasted image questions;
+- multipart/dependency suggestions;
+- OCR for image attachments;
 - duplicate detection;
 - coverage analytics;
 - difficulty metadata;
 - assessment-blueprint suggestions.
 
-Automation suggests; teachers confirm.
+Automation may suggest. Teachers confirm authoritative classifications and
+mappings.
 
 ## Recommended order
 
 ```text
-Sprint 07 — preamble/shared-context + multipart capture/editing + output
-        |
-        +------ parallel corpus completion + mapping reconciliation
+Sprint 07 closeout / merge-readiness
         |
         v
-Remaining classification/ingestion decisions
+Corpus completion + Chemistry mapping reconciliation
         |
         v
-Retrieval/UI hardening + richer bank management
+Bank-management + retrieval/testing hardening
+        |
+        v
+Resolve remaining Question semantics
+        |
+        v
+Rich Question Bank administration
         |
         v
 Exam Builder + printable output
