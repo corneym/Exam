@@ -125,6 +125,12 @@ or curriculum applicability semantics.
 
 ## Normal Priority
 
+### Changing state of Full width selection
+- this should clear any selected region
+
+### AnswerPane controls display
+- if the question the answer is being provided for knows its PDF, there should be no need for the PDF button to pick a file.
+
 ### Question-level response type
 - persist MULTIPLE_CHOICE / WRITTEN_RESPONSE / UNKNOWN
 - capture/edit at Question level

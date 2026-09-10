@@ -50,9 +50,10 @@ import javafx.util.StringConverter;
  */
 final class AnswerCapturePane extends VBox {
 
+	private static final double ANSWER_REGIONS_VIEWPORT_HEIGHT = 300.0;
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
-	private static final double ANSWER_REGIONS_VIEWPORT_HEIGHT = 300.0;
+	private static final double REGION_PREVIEW_HORIZONTAL_INSET = 40.0;
 	private static final Insets PANEL_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
@@ -512,11 +513,9 @@ final class AnswerCapturePane extends VBox {
 		answerRegionListBox.setFillWidth(true);
 		answerRegionListBox.setMaxWidth(Double.MAX_VALUE);
 		answerRegionsScrollPane.setMinHeight(0);
+		answerRegionsScrollPane.setPrefHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
 		answerRegionsScrollPane.setMaxHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
 		answerRegionsScrollPane.setMaxWidth(Double.MAX_VALUE);
-		answerRegionsScrollPane.prefHeightProperty().bind(Bindings.createDoubleBinding(
-				() -> Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, answerRegionListBox.getLayoutBounds().getHeight() + 4.0),
-				answerRegionListBox.layoutBoundsProperty()));
 		answerRegionsScrollPane.setVisible(false);
 		answerRegionsScrollPane.setManaged(false);
 		setSelectionActionsEnabled(false);
@@ -529,10 +528,13 @@ final class AnswerCapturePane extends VBox {
 			previewView.setPreserveRatio(true);
 			previewView.setSmooth(true);
 			previewView.setCache(true);
-			previewView.fitWidthProperty()
-					.bind(Bindings.createDoubleBinding(
-							() -> Math.max(0.0, answerRegionsScrollPane.getViewportBounds().getWidth() - 8.0),
-							answerRegionsScrollPane.viewportBoundsProperty()));
+			/*
+			 * Bind to the containing Answer pane rather than the ScrollPane viewport. The
+			 * Answer pane is already laid out when the first region is accepted, and its
+			 * width is unaffected by the ScrollPane's vertical scrollbar.
+			 */
+			previewView.fitWidthProperty().bind(Bindings.createDoubleBinding(
+					() -> Math.max(0.0, getWidth() - REGION_PREVIEW_HORIZONTAL_INSET), widthProperty()));
 			return previewView;
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview accepted answer region", e);
@@ -657,7 +659,18 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void refreshAnswerRegionList() {
+		boolean hasRegions = !pendingAnswerRegions.isEmpty();
+		/*
+		 * Put the ScrollPane back into the layout before constructing its preview
+		 * content. In particular, the first accepted region must not be created while
+		 * its parent ScrollPane is unmanaged.
+		 */
+		answerRegionsScrollPane.setManaged(hasRegions);
+		answerRegionsScrollPane.setVisible(hasRegions);
 		answerRegionListBox.getChildren().clear();
+		if (!hasRegions) {
+			return;
+		}
 		for (int i = 0; i < pendingAnswerRegions.size(); i++) {
 			AnswerRegion region = pendingAnswerRegions.get(i);
 			int regionIndex = i;
@@ -676,9 +689,8 @@ final class AnswerCapturePane extends VBox {
 			row.setFillWidth(true);
 			answerRegionListBox.getChildren().add(row);
 		}
-		boolean hasRegions = !pendingAnswerRegions.isEmpty();
-		answerRegionsScrollPane.setVisible(hasRegions);
-		answerRegionsScrollPane.setManaged(hasRegions);
+		answerRegionListBox.requestLayout();
+		answerRegionsScrollPane.requestLayout();
 	}
 
 	private void refreshSaveButtonState() {

@@ -55,11 +55,12 @@ final class QuestionCapturePane extends VBox {
 
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
-	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
-	private static final double SECTION_SPACING = 10.0;
 	private static final double MARKS_FIELD_WIDTH = 60.0;
 	private static final double QUESTION_CODE_FIELD_WIDTH = 100.0;
+	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
+	private static final double REGION_PREVIEW_HORIZONTAL_INSET = 24.0;
 	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
+	private static final double SECTION_SPACING = 10.0;
 	private static final Insets COMPACT_BUTTON_PADDING = new Insets(2, 8, 2, 8);
 	private static final Insets PANEL_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
@@ -459,10 +460,15 @@ final class QuestionCapturePane extends VBox {
 			BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
 			ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
 			imageView.setPreserveRatio(true);
+			/*
+			 * Do not bind the image width to the viewport width. The viewport changes width
+			 * when its vertical scrollbar appears or disappears, which can otherwise cause
+			 * continuous resizing.
+			 */
 			imageView.fitWidthProperty()
 					.bind(Bindings.createDoubleBinding(
-							() -> Math.max(0.0, regionsScrollPane.getViewportBounds().getWidth() - 8.0),
-							regionsScrollPane.viewportBoundsProperty()));
+							() -> Math.max(0.0, regionsScrollPane.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
+							regionsScrollPane.widthProperty()));
 			imageView.setSmooth(true);
 			Label label = new Label(String.format("Region %d - Page %d", regionIndex + 1, region.pageNumber()));
 			Button removeButton = new Button("Remove");
@@ -575,11 +581,9 @@ final class QuestionCapturePane extends VBox {
 		clearRegionsButton.setOnAction(_ -> clearQuestionRegions());
 		removeCurrentSelectionButton.setOnAction(_ -> clearPendingSelection());
 		saveQuestionButton.setOnAction(_ -> validateQuestionForSave());
-		questionCodeField.textProperty()
-				.addListener((_, _, newCode) -> handleQuestionCodeChanged(newCode));
+		questionCodeField.textProperty().addListener((_, _, newCode) -> handleQuestionCodeChanged(newCode));
 		marksField.textProperty().addListener((_, _, _) -> refreshSaveButtonState());
-		curriculumSelectorPane.selectedClassificationProperty()
-				.addListener((_, _, _) -> refreshSaveButtonState());
+		curriculumSelectorPane.selectedClassificationProperty().addListener((_, _, _) -> refreshSaveButtonState());
 		firstRegionPreambleCheckBox.selectedProperty()
 				.addListener((_, _, selected) -> handlePreambleOptionChanged(selected.booleanValue()));
 		importedQuestionBox.setOnAction(_ -> checkImportedQuestionBox());
