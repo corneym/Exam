@@ -24,14 +24,9 @@ public final class RevisionExportValidator {
 	private static final Pattern REFERENCE_PATTERN = Pattern.compile("(?:href|src)\\s*=\\s*\"([^\"]+)\"",
 			Pattern.CASE_INSENSITIVE);
 
-	public void public void validate(
-			Path exportRoot,
-			RevisionCorpus corpus,
-			List<Path> htmlFiles,
-			List<RevisionQuestionAsset> questionAssets,
-			List<RevisionAnswerAsset> answerAssets,
-			List<RevisionSharedContextAsset> sharedContextAssets)
-			throws IOException {
+	public void validate(Path exportRoot, RevisionCorpus corpus, List<Path> htmlFiles,
+			List<RevisionQuestionAsset> questionAssets, List<RevisionAnswerAsset> answerAssets,
+			List<RevisionSharedContextAsset> sharedContextAssets) throws IOException {
 		if (exportRoot == null) {
 			throw new NullPointerException("exportRoot");
 		}
@@ -52,33 +47,14 @@ public final class RevisionExportValidator {
 			throw new IOException("Revision export root does not exist: " + root);
 		}
 		if (sharedContextAssets == null) {
-			throw new NullPointerException(
-					"sharedContextAssets");
+			throw new NullPointerException("sharedContextAssets");
 		}
 		validateSubjectIndex(root);
 		validateHtmlFiles(root, htmlFiles);
 		validateQuestionAssets(root, corpus, questionAssets);
-		validateSharedContextAssets(
-				root,
-				corpus,
-				sharedContextAssets);
+		validateSharedContextAssets(root, corpus, sharedContextAssets);
 		validateAnswerAssets(root, corpus, answerAssets);
 		validateHtmlReferences(root, htmlFiles);
-	}
-
-	private void collectExpectedSharedContextIds(List<RevisionCorpusNode> nodes, Set<Long> expectedContextIds) {
-		for (RevisionCorpusNode node : nodes) {
-			for (RevisionQuestionPlacement placement : node.getQuestionPlacements()) {
-				if (!placement.isRenderable()) {
-					continue;
-				}
-				Question question = placement.getQuestion();
-				if (question.hasSharedContext()) {
-					expectedContextIds.add(question.getSharedContext().getId());
-				}
-			}
-			collectExpectedSharedContextIds(node.getChildren(), expectedContextIds);
-		}
 	}
 
 	private void collectExpectedAnswerRegions(List<RevisionCorpusNode> nodes, Set<String> expectedRegions) {
@@ -108,29 +84,18 @@ public final class RevisionExportValidator {
 		}
 	}
 
-	private void validateSharedContextAssets(Path root, RevisionCorpus corpus,
-			List<RevisionSharedContextAsset> sharedContextAssets) throws IOException {
-		Set<String> claimedPaths = new HashSet<>();
-		Set<Long> suppliedContextIds = new HashSet<>();
-		for (RevisionSharedContextAsset asset : sharedContextAssets) {
-			if (asset == null) {
-				throw new IOException("Shared-context asset list contains null");
+	private void collectExpectedSharedContextIds(List<RevisionCorpusNode> nodes, Set<Long> expectedContextIds) {
+		for (RevisionCorpusNode node : nodes) {
+			for (RevisionQuestionPlacement placement : node.getQuestionPlacements()) {
+				if (!placement.isRenderable()) {
+					continue;
+				}
+				Question question = placement.getQuestion();
+				if (question.hasSharedContext()) {
+					expectedContextIds.add(question.getSharedContext().getId());
+				}
 			}
-			Path relativePath = asset.getRelativePath();
-			validateClaimedRelativePath(relativePath, "shared-context asset", claimedPaths);
-			Path file = root.resolve(relativePath).normalize();
-			validateInsideRoot(root, file, "Shared-context asset");
-			validateNonEmptyFile(file, "Shared-context asset");
-			long contextId = asset.getSharedContext().getId();
-			if (!suppliedContextIds.add(contextId)) {
-				throw new IOException("Duplicate shared-context asset for context " + contextId);
-			}
-		}
-		Set<Long> expectedContextIds = new HashSet<>();
-		collectExpectedSharedContextIds(corpus.getRootNodes(), expectedContextIds);
-		if (!suppliedContextIds.equals(expectedContextIds)) {
-			throw new IOException("Shared-context assets do not match renderable questions. Expected "
-					+ expectedContextIds + " but found " + suppliedContextIds);
+			collectExpectedSharedContextIds(node.getChildren(), expectedContextIds);
 		}
 	}
 
@@ -264,6 +229,32 @@ public final class RevisionExportValidator {
 		Path target = htmlFile.getParent().resolve(reference.replace('/', java.io.File.separatorChar)).normalize();
 		validateInsideRoot(root, target, "HTML reference");
 		validateNonEmptyFile(target, "HTML reference");
+	}
+
+	private void validateSharedContextAssets(Path root, RevisionCorpus corpus,
+			List<RevisionSharedContextAsset> sharedContextAssets) throws IOException {
+		Set<String> claimedPaths = new HashSet<>();
+		Set<Long> suppliedContextIds = new HashSet<>();
+		for (RevisionSharedContextAsset asset : sharedContextAssets) {
+			if (asset == null) {
+				throw new IOException("Shared-context asset list contains null");
+			}
+			Path relativePath = asset.getRelativePath();
+			validateClaimedRelativePath(relativePath, "shared-context asset", claimedPaths);
+			Path file = root.resolve(relativePath).normalize();
+			validateInsideRoot(root, file, "Shared-context asset");
+			validateNonEmptyFile(file, "Shared-context asset");
+			long contextId = asset.getSharedContext().getId();
+			if (!suppliedContextIds.add(contextId)) {
+				throw new IOException("Duplicate shared-context asset for context " + contextId);
+			}
+		}
+		Set<Long> expectedContextIds = new HashSet<>();
+		collectExpectedSharedContextIds(corpus.getRootNodes(), expectedContextIds);
+		if (!suppliedContextIds.equals(expectedContextIds)) {
+			throw new IOException("Shared-context assets do not match renderable questions. Expected "
+					+ expectedContextIds + " but found " + suppliedContextIds);
+		}
 	}
 
 	private void validateSubjectIndex(Path root) throws IOException {

@@ -122,6 +122,9 @@ public final class RevisionExportService {
 			List<RevisionQuestionAsset> questionAssets = questionAssetRenderer.render(corpus, staging,
 					(completed, total) -> progress.update("Rendering questions: " + completed + " / " + total,
 							completed.intValue(), total.intValue()));
+			List<RevisionSharedContextAsset> sharedContextAssets = sharedContextAssetRenderer.render(corpus, staging,
+					(completed, total) -> progress.update("Rendering shared context: " + completed + " / " + total,
+							completed.intValue(), total.intValue()));
 			List<RevisionAnswerAsset> answerAssets = answerAssetRenderer.render(corpus, staging,
 					(completed, total) -> progress.update("Rendering answers: " + completed + " / " + total,
 							completed.intValue(), total.intValue()));
@@ -135,9 +138,6 @@ public final class RevisionExportService {
 			promote(staging, destination);
 			promoted = true;
 			progress.update("Export complete.", 1, 1);
-			List<RevisionSharedContextAsset> sharedContextAssets = sharedContextAssetRenderer.render(corpus, staging,
-					(completed, total) -> progress.update("Rendering shared context: " + completed + " / " + total,
-							completed.intValue(), total.intValue()));
 			return new RevisionExportResult(destination, corpus.getStatistics());
 		} finally {
 			if (!promoted && Files.exists(staging)) {

@@ -24,27 +24,12 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
 class RevisionExportServiceTest {
 
 	@TempDir
 	Path tempDir;
-
-	@Test
-	void removesStagingWhenProgressConsumerFailsBeforePublication() throws Exception {
-		Fixture fixture = new Fixture(tempDir);
-		Path destination = tempDir.resolve("interrupted-export");
-		IllegalStateException failure = assertThrows(IllegalStateException.class,
-				() -> fixture.service.export(new RevisionExportRequest(fixture.chemistry, destination),
-						(message, completed, total) -> {
-							if (message.equals("Publishing export...")) {
-								throw new IllegalStateException("consumer failed");
-							}
-						}));
-		assertEquals("consumer failed", failure.getMessage());
-		assertFalse(Files.exists(destination));
-		assertFalse(hasStagingDirectory(destination));
-	}
 
 	@Test
 	void publishesValidatedExportOnlyAtFinalDestination() throws Exception {
@@ -69,6 +54,21 @@ class RevisionExportServiceTest {
 		assertThrows(IOException.class,
 				() -> fixture.service.export(new RevisionExportRequest(fixture.chemistry, destination)));
 		assertEquals("existing content", Files.readString(marker));
+		assertFalse(hasStagingDirectory(destination));
+	}
+
+	@Test
+	void removesStagingWhenProgressConsumerFailsBeforePublication() throws Exception {
+		Fixture fixture = new Fixture(tempDir);
+		Path destination = tempDir.resolve("interrupted-export");
+		IllegalStateException failure = assertThrows(IllegalStateException.class, () -> fixture.service
+				.export(new RevisionExportRequest(fixture.chemistry, destination), (message, completed, total) -> {
+					if (message.equals("Publishing export...")) {
+						throw new IllegalStateException("consumer failed");
+					}
+				}));
+		assertEquals("consumer failed", failure.getMessage());
+		assertFalse(Files.exists(destination));
 		assertFalse(hasStagingDirectory(destination));
 	}
 
@@ -100,7 +100,9 @@ class RevisionExportServiceTest {
 			Files.createDirectories(pdfRoot);
 			PdfStore pdfStore = new PdfStore(pdfRoot);
 			QuestionExtractor extractor = new QuestionExtractor();
-			service = new RevisionExportService(corpusBuilder, new RevisionQuestionAssetRenderer(pdfStore, extractor),
+			service = new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
+					new RevisionQuestionAssetRenderer(pdfStore, extractor),
+					new RevisionSharedContextAssetRenderer(pdfStore, extractor),
 					new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
 		}
 	}

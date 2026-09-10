@@ -27,6 +27,7 @@ import au.edu.eq.questionbank.output.revision.RevisionExportResult;
 import au.edu.eq.questionbank.output.revision.RevisionExportService;
 import au.edu.eq.questionbank.output.revision.RevisionExportValidator;
 import au.edu.eq.questionbank.output.revision.RevisionQuestionAssetRenderer;
+import au.edu.eq.questionbank.output.revision.RevisionSharedContextAssetRenderer;
 import au.edu.eq.questionbank.output.scorm.ScormExportRequest;
 import au.edu.eq.questionbank.output.scorm.ScormExportResult;
 import au.edu.eq.questionbank.output.scorm.ScormExportService;
@@ -81,6 +82,7 @@ import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionSer
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import javafx.application.Application;
@@ -566,7 +568,9 @@ public class QuestionBankApplication extends Application {
 		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		QuestionExtractor extractor = new QuestionExtractor();
-		return new RevisionExportService(corpusBuilder, new RevisionQuestionAssetRenderer(pdfStore, extractor),
+		return new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
+				new RevisionQuestionAssetRenderer(pdfStore, extractor),
+				new RevisionSharedContextAssetRenderer(pdfStore, extractor),
 				new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
 	}
 
