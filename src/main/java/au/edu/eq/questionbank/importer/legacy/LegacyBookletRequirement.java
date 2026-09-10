@@ -1,8 +1,10 @@
 package au.edu.eq.questionbank.importer.legacy;
 
 /**
- * One exam booklet required by a legacy question workbook but not currently
- * present in the database.
+ * One exam booklet referenced by a legacy question workbook.
+ * <p>
+ * Instances may represent either an already-persisted booklet or a booklet
+ * identified as missing during legacy-import preflight.
  *
  * @param providerName the examination provider named by the worksheet
  * @param year         the examination year

@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
@@ -432,8 +433,7 @@ public class QuestionBankApplication extends Application {
 
 	private CurriculumSelectorPane createCurriculumSelectorPane() {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
-		selectorPane.selectedSubjectProperty()
-				.addListener((_, _, newSubject) -> handleSubjectChanged(newSubject));
+		selectorPane.selectedSubjectProperty().addListener((_, _, newSubject) -> handleSubjectChanged(newSubject));
 		return selectorPane;
 	}
 
@@ -716,6 +716,25 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void importLegacyAnswerPdfs(ApplicationConfig config, Subject subject,
+			List<LegacyAnswerPdfImportDialog.AnswerPdfSelection> selections) throws IOException, SQLException {
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		for (LegacyAnswerPdfImportDialog.AnswerPdfSelection selection : selections) {
+			Exam exam = examWriter.findExamByProviderAndYear(subject, selection.providerName(), selection.year());
+			if (exam == null) {
+				throw new IllegalStateException("No existing exam matches " + selection.providerName() + " "
+						+ selection.year() + " for " + subject.getName());
+			}
+			Path storedPath = pdfStore.importExamPdf(selection.pdfPath(), subject.getName(), selection.providerName(),
+					selection.year());
+			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
+			answerWriter.findOrCreateAnswerFile(exam, "Marking guide", relativePath);
+		}
+	}
+
 	private void importLegacyQuestionMetadata(Stage primaryStage, ApplicationConfig config) {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
@@ -756,12 +775,22 @@ public class QuestionBankApplication extends Application {
 		List<LegacyBookletRequirement> missingBooklets = importer.findMissingBooklets(dialog.getSelectedFile(),
 				subject.getName(), syllabusVersion.getName());
 		if (missingBooklets.isEmpty()) {
+			List<LegacyBookletRequirement> requiredBooklets = importer.findRequiredBooklets(dialog.getSelectedFile(),
+					subject.getName(), syllabusVersion.getName());
+			if (!requiredBooklets.isEmpty()) {
+				LegacyAnswerPdfImportDialog answerDialog = new LegacyAnswerPdfImportDialog(primaryStage,
+						requiredBooklets);
+				Optional<ButtonType> answerResult = answerDialog.showAndWait();
+				if (answerResult.isEmpty() || answerResult.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
+					return Optional.empty();
+				}
+				importLegacyAnswerPdfs(config, subject, answerDialog.getSelections());
+			}
 			return Optional.of(Integer.valueOf(0));
 		}
 		LegacyBookletImportDialog bookletDialog = new LegacyBookletImportDialog(primaryStage, missingBooklets);
 		Optional<ButtonType> bookletResult = bookletDialog.showAndWait();
-		if (bookletResult.isEmpty()
-				|| bookletResult.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+		if (bookletResult.isEmpty() || bookletResult.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return Optional.empty();
 		}
 		List<LegacyBookletImportRequest> requests = bookletDialog.getRequests();
@@ -769,7 +798,7 @@ public class QuestionBankApplication extends Application {
 		List<LegacyBookletRequirement> stillMissing = importer.findMissingBooklets(dialog.getSelectedFile(),
 				subject.getName(), syllabusVersion.getName());
 		if (!stillMissing.isEmpty()) {
-			throw new IllegalStateException("Required exam booklets are still missing after booklet import.");
+			throw new IllegalStateException("Required exam booklets are still missing " + "after booklet import.");
 		}
 		return Optional.of(Integer.valueOf(requests.size()));
 	}

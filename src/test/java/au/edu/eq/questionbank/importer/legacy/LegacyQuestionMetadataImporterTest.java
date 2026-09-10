@@ -31,6 +31,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class LegacyQuestionMetadataImporterTest {
+
 	@TempDir
 	Path tempDirectory;
 
@@ -199,9 +200,15 @@ class LegacyQuestionMetadataImporterTest {
 	@Test
 	void reportsNoMissingBookletsWhenAllRequiredBookletsExist() throws Exception {
 		Fixture fixture = createFixture("all-booklets-present.db", false);
-		List<LegacyBookletRequirement> missing = new LegacyQuestionMetadataImporter(fixture.database())
-				.findMissingBooklets(fixture.workbookPath(), "Chemistry", "2019");
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		List<LegacyBookletRequirement> missing = importer.findMissingBooklets(fixture.workbookPath(), "Chemistry",
+				"2019");
 		assertTrue(missing.isEmpty());
+		List<LegacyBookletRequirement> required = importer.findRequiredBooklets(fixture.workbookPath(), "Chemistry",
+				"2019");
+		assertEquals(2, required.size());
+		assertTrue(required.contains(new LegacyBookletRequirement("QCAA", 2020, "MCQ booklet")));
+		assertTrue(required.contains(new LegacyBookletRequirement("QCAA", 2020, "Paper 1")));
 	}
 
 	private int countRows(Statement statement, String tableName) throws Exception {

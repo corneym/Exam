@@ -8,6 +8,9 @@
 
 ## High Priority
 
+### Save Button does not properly Capture Ready to Save
+- If save status is OK and then a new region is selected and then cleared, the Save button does not come back to ready to save as expected.
+
 ### Stabilise and isolate JavaFX tests
 
 Origin: Question Retrieval Sprint v3 / merge-readiness review.
@@ -125,6 +128,27 @@ or curriculum applicability semantics.
 
 ## Normal Priority
 
+### Multi-page automatic shared-preamble capture
+
+Origin: Sprint 07 preamble-aware question capture.
+
+Sprint 07 supports shared preamble/context capture and reuse, including large
+same-page regions using anchored selection. The automatic imported-question
+preamble workflow currently completes after one accepted source region.
+
+Future work should support a shared preamble that spans multiple PDF pages by:
+
+- allowing multiple ordered SharedQuestionContextRegions to be captured;
+- allowing page navigation between accepted preamble regions;
+- providing an explicit way to finish preamble capture before ordinary Question
+  region capture begins;
+- preserving the existing single-page workflow;
+- retaining shared-context reuse for later parts of the same SourceQuestion;
+- adding regression coverage for multi-page preambles.
+
+### Edit Exam specific metadata
+- If exam name is wrong it needs to be edited.
+
 ### Changing state of Full width selection
 - this should clear any selected region
 
@@ -142,29 +166,6 @@ or curriculum applicability semantics.
 - retain A/B/C/D as primary answer
 - optionally capture one or more answer-PDF regions as explanation
 - render correct option plus explanation in revision output
-
-### Reposition question Save button beside region controls
-
-Origin: Question capture usability.
-
-Current behaviour places the imported-question `Attach Regions` action below the
-Accepted regions pane. This separates the final save action from the controls
-used immediately before it.
-
-Change the Question capture layout so that:
-
-- `Save Question` appears on the same horizontal row as `Add Region` and `Clear`;
-- `Save Question` is aligned to the right-hand side of that row;
-- the current `Attach Regions` wording is removed;
-- imported questions that are having their ordinary regions captured use
-  `Save Question` as the button text;
-- the same placement should be used consistently for normal question capture
-  and question editing where practical;
-- existing enable/disable validation behaviour is retained.
-
-Intended layout:
-
-Add Region   Clear                                  Save Question
 
 ### Decide whether `Question` requires multiple original classifications
 

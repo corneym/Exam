@@ -26,6 +26,7 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  * rejected without partially importing the workbook.
  */
 public final class LegacyQuestionMetadataImporter {
+
 	private final SqliteDatabase database;
 	private final LegacyQuestionWorkbookReader reader;
 
@@ -80,6 +81,48 @@ public final class LegacyQuestionMetadataImporter {
 				}
 			}
 			List<LegacyBookletRequirement> result = new ArrayList<>(missing);
+			result.sort(Comparator.comparing(LegacyBookletRequirement::providerName)
+					.thenComparingInt(LegacyBookletRequirement::year)
+					.thenComparing(LegacyBookletRequirement::bookletName));
+			return List.copyOf(result);
+		}
+	}
+
+	/**
+	 * Validates workbook classifications and reports every exam booklet referenced
+	 * by the workbook, irrespective of whether it already exists.
+	 *
+	 * @param workbookPath the legacy workbook
+	 * @param subjectName  the existing subject receiving the questions
+	 * @param syllabusName the existing historical syllabus used by workbook topic
+	 *                     codes
+	 * @return immutable, provider/year/booklet-sorted requirements
+	 * @throws IOException              if the workbook cannot be read
+	 * @throws SQLException             if validation queries fail
+	 * @throws NullPointerException     if {@code workbookPath} is {@code null}
+	 * @throws IllegalArgumentException if import context or workbook data is
+	 *                                  invalid
+	 */
+	public List<LegacyBookletRequirement> findRequiredBooklets(Path workbookPath, String subjectName,
+			String syllabusName) throws IOException, SQLException {
+		if (subjectName == null || subjectName.isBlank()) {
+			throw new IllegalArgumentException("subjectName must not be blank");
+		}
+		if (syllabusName == null || syllabusName.isBlank()) {
+			throw new IllegalArgumentException("syllabusName must not be blank");
+		}
+		List<LegacyQuestionSheet> sheets = reader.read(workbookPath);
+		try (Connection connection = database.openConnection()) {
+			ImportContext context = findImportContext(connection, subjectName, syllabusName);
+			Set<LegacyBookletRequirement> required = new LinkedHashSet<>();
+			for (LegacyQuestionSheet sheet : sheets) {
+				for (LegacyQuestionRow row : sheet.questions()) {
+					findClassificationNodeId(connection, context.syllabusVersionId(), sheet.providerName(), row);
+					required.add(new LegacyBookletRequirement(sheet.providerName(), row.year(),
+							bookletName(row.paperCode())));
+				}
+			}
+			List<LegacyBookletRequirement> result = new ArrayList<>(required);
 			result.sort(Comparator.comparing(LegacyBookletRequirement::providerName)
 					.thenComparingInt(LegacyBookletRequirement::year)
 					.thenComparing(LegacyBookletRequirement::bookletName));
