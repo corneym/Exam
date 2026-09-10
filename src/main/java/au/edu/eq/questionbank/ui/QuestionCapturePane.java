@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.beans.binding.Bindings;
 import javafx.embed.swing.SwingFXUtils;
@@ -78,6 +79,7 @@ final class QuestionCapturePane extends VBox {
 	private final BooleanSupplier questionSelectionTransferHandler;
 	private final SharedContextCapturePane sharedContextCapturePane;
 	private final SourceQuestionRepository sourceQuestionRepository;
+	private final SqliteQuestionCaptureService questionCaptureService;
 	// Capture mode and imported-question selection.
 	private final ToggleButton newQuestionsModeButton = new ToggleButton("New Questions");
 	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Imported Questions");
@@ -122,16 +124,16 @@ final class QuestionCapturePane extends VBox {
 	 * question refreshes with the containing application.
 	 */
 	QuestionCapturePane(QuestionRepository questionRepository, SourceQuestionRepository sourceQuestionRepository,
-			SharedContextCapturePane sharedContextCapturePane, QuestionExtractor questionExtractor,
-			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
-			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
-			Predicate<Question> importedQuestionActivationHandler, BooleanSupplier questionTargetChangeAllowed,
-			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
-			Runnable questionsChangedHandler) {
-		validateDependencies(questionRepository, sourceQuestionRepository, sharedContextCapturePane, questionExtractor,
-				curriculumSelectionModel, curriculumSelectorPane, bookletSupplier, examPdfSessionSupplier,
-				importedQuestionActivationHandler, questionTargetChangeAllowed, questionSelectionTransferHandler,
-				selectionClearHandler, questionsChangedHandler);
+			SqliteQuestionCaptureService questionCaptureService, SharedContextCapturePane sharedContextCapturePane,
+			QuestionExtractor questionExtractor, CurriculumSelectionModel curriculumSelectionModel,
+			CurriculumSelectorPane curriculumSelectorPane, Supplier<ExamBooklet> bookletSupplier,
+			Supplier<PdfSession> examPdfSessionSupplier, Predicate<Question> importedQuestionActivationHandler,
+			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
+			Runnable selectionClearHandler, Runnable questionsChangedHandler) {
+		validateDependencies(questionRepository, sourceQuestionRepository, questionCaptureService,
+				sharedContextCapturePane, questionExtractor, curriculumSelectionModel, curriculumSelectorPane,
+				bookletSupplier, examPdfSessionSupplier, importedQuestionActivationHandler, questionTargetChangeAllowed,
+				questionSelectionTransferHandler, selectionClearHandler, questionsChangedHandler);
 		this.questionRepository = questionRepository;
 		this.questionExtractor = questionExtractor;
 		this.curriculumSelectionModel = curriculumSelectionModel;
@@ -145,6 +147,7 @@ final class QuestionCapturePane extends VBox {
 		this.sourceQuestionRepository = sourceQuestionRepository;
 		this.sharedContextCapturePane = sharedContextCapturePane;
 		this.questionSelectionTransferHandler = questionSelectionTransferHandler;
+		this.questionCaptureService = questionCaptureService;
 		configureControls();
 		configureActions();
 		buildContent();
@@ -454,15 +457,6 @@ final class QuestionCapturePane extends VBox {
 		}
 	}
 
-	private Question attachImportedQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
-		if (importedQuestion.getRegions().isEmpty()) {
-			return questionRepository.attachRegions(importedQuestion.getId(), pendingRegions,
-					curriculumSelectionModel.getClassification(), sourceQuestion, sharedContext);
-		}
-		return questionRepository.updateCaptureRelationships(importedQuestion.getId(),
-				curriculumSelectionModel.getClassification(), sourceQuestion, sharedContext);
-	}
-
 	private void backfillDerivedSourceQuestions() {
 		for (Question question : questionRepository.findAll()) {
 			if (question.hasSourceQuestion()) {
@@ -507,6 +501,16 @@ final class QuestionCapturePane extends VBox {
 			return false;
 		}
 		return true;
+	}
+
+	private SqliteQuestionCaptureService.Operation captureOperation() {
+		if (editingQuestion != null) {
+			return SqliteQuestionCaptureService.Operation.EDIT;
+		}
+		if (importedQuestion != null) {
+			return SqliteQuestionCaptureService.Operation.IMPORTED;
+		}
+		return SqliteQuestionCaptureService.Operation.NEW;
 	}
 
 	private void checkImportedQuestionBox() {
@@ -921,6 +925,15 @@ final class QuestionCapturePane extends VBox {
 		}
 	}
 
+	private SqliteQuestionCaptureService.PendingSharedContext pendingSharedContextForSave() {
+		if (!sharedContextCapturePane.hasPendingAutomaticRegion()) {
+			return null;
+		}
+		return new SqliteQuestionCaptureService.PendingSharedContext(
+				sharedContextCapturePane.getPendingAutomaticContextLabel(),
+				sharedContextCapturePane.getPendingAutomaticContextRegions());
+	}
+
 	private void reconcileKnownSharedContexts() {
 		List<Long> processedSourceQuestionIds = new ArrayList<>();
 		for (Question question : questionRepository.findAll()) {
@@ -1036,57 +1049,6 @@ final class QuestionCapturePane extends VBox {
 		refreshSaveButtonState();
 	}
 
-	private SharedQuestionContext resolveSharedContextForSave(SourceQuestion sourceQuestion) {
-		if (importedQuestion != null && importedQuestion.hasSharedContext()) {
-			return importedQuestion.getSharedContext();
-		}
-		SharedQuestionContext selected = sharedContextCapturePane.getSelectedContext();
-		if (selected != null) {
-			return selected;
-		}
-		if (editingQuestion != null && editingQuestion.hasSharedContext()
-				&& editingSourceMatches(questionCodeField.getText())) {
-			return editingQuestion.getSharedContext();
-		}
-		if (sourceQuestion != null) {
-			SharedQuestionContext existing = findSharedContextForSourceQuestion(sourceQuestion);
-			if (existing != null) {
-				return existing;
-			}
-		}
-		if (sharedContextCapturePane.hasPendingAutomaticRegion()) {
-			return sharedContextCapturePane.saveAutomaticContext();
-		}
-		return null;
-	}
-
-	private SourceQuestion resolveSourcePreambleStatus(SourceQuestion sourceQuestion,
-			SharedQuestionContext sharedContext) {
-		if (sourceQuestion == null) {
-			return null;
-		}
-		if (sourceQuestion.getPreambleStatus() != PreambleStatus.UNKNOWN) {
-			return sourceQuestion;
-		}
-		PreambleStatus resolvedStatus = sharedContext == null ? PreambleStatus.NONE : PreambleStatus.PRESENT;
-		return sourceQuestionRepository.updatePreambleStatus(sourceQuestion, resolvedStatus);
-	}
-
-	private SourceQuestion resolveSourceQuestion(ExamBooklet booklet, String questionCode) {
-		String sourceCode = SourceQuestionCodeParser.derive(questionCode);
-		if (sourceCode == null) {
-			if (importedQuestion != null && importedQuestion.hasSourceQuestion()) {
-				return importedQuestion.getSourceQuestion();
-			}
-			if (editingQuestion != null && editingQuestion.hasSourceQuestion()) {
-				return editingQuestion.getSourceQuestion();
-			}
-			return null;
-		}
-		return sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode)
-				.orElseGet(() -> sourceQuestionRepository.save(booklet, sourceCode));
-	}
-
 	private void restoreCaptureModeToggle() {
 		if (editingQuestion != null) {
 			captureModeGroup.selectToggle(null);
@@ -1104,40 +1066,32 @@ final class QuestionCapturePane extends VBox {
 		}
 	}
 
-	private Question saveNewQuestion(ExamBooklet booklet, SourceQuestion sourceQuestion,
-			SharedQuestionContext sharedContext) {
-		int marks = Integer.parseInt(marksField.getText().trim());
-		return questionRepository.save(booklet, questionCodeField.getText().trim(), "", marks, pendingRegions,
-				curriculumSelectionModel.getClassification(), false, sourceQuestion, sharedContext);
-	}
-
 	private void saveQuestion() {
 		int previousImportedIndex = -1;
-		ExamBooklet booklet = bookletSupplier.get();
-		SourceQuestion sourceQuestion = resolveSourceQuestion(booklet, questionCodeField.getText().trim());
-		SharedQuestionContext sharedContext = resolveSharedContextForSave(sourceQuestion);
-		if (sourceQuestion != null && sharedContext != null) {
-			questionRepository.applySharedContextToSourceQuestion(sourceQuestion, sharedContext);
-		}
-		sourceQuestion = resolveSourcePreambleStatus(sourceQuestion, sharedContext);
+		boolean hadStoredRegions = false;
+		Question existingQuestion = null;
 		if (editingQuestion != null) {
-			int marks = Integer.parseInt(marksField.getText().trim());
-			Question question = questionRepository.updateQuestion(editingQuestion.getId(),
-					questionCodeField.getText().trim(), marks, pendingRegions,
-					curriculumSelectionModel.getClassification(), sourceQuestion, sharedContext);
+			existingQuestion = editingQuestion;
+		} else if (importedQuestion != null) {
+			existingQuestion = importedQuestion;
+			previousImportedIndex = selectedImportedQuestionIndex();
+			hadStoredRegions = !importedQuestion.getRegions().isEmpty();
+		}
+		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(captureOperation(),
+				bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(),
+				Integer.parseInt(marksField.getText().trim()), List.copyOf(pendingRegions),
+				curriculumSelectionModel.getClassification(), sharedContextCapturePane.getSelectedContext(),
+				pendingSharedContextForSave());
+		Question question = questionCaptureService.save(request);
+		if (editingQuestion != null) {
 			showSavedQuestionStatus("Updated", question);
 			questionsChangedHandler.run();
 			finishQuestionEdit();
 			return;
 		}
-		Question question;
 		if (importedQuestion != null) {
-			previousImportedIndex = selectedImportedQuestionIndex();
-			boolean hadStoredRegions = !importedQuestion.getRegions().isEmpty();
-			question = attachImportedQuestion(sourceQuestion, sharedContext);
 			showSavedQuestionStatus(hadStoredRegions ? "Resolved" : "Captured", question);
 		} else {
-			question = saveNewQuestion(booklet, sourceQuestion, sharedContext);
 			showSavedQuestionStatus("Saved", question);
 		}
 		questionsChangedHandler.run();
@@ -1346,12 +1300,13 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void validateDependencies(QuestionRepository questionRepository,
-			SourceQuestionRepository sourceQuestionRepository, SharedContextCapturePane sharedContextCapturePane,
-			QuestionExtractor questionExtractor, CurriculumSelectionModel curriculumSelectionModel,
-			CurriculumSelectorPane curriculumSelectorPane, Supplier<ExamBooklet> bookletSupplier,
-			Supplier<PdfSession> examPdfSessionSupplier, Predicate<Question> importedQuestionActivationHandler,
-			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
-			Runnable selectionClearHandler, Runnable questionsChangedHandler) {
+			SourceQuestionRepository sourceQuestionRepository, SqliteQuestionCaptureService questionCaptureService,
+			SharedContextCapturePane sharedContextCapturePane, QuestionExtractor questionExtractor,
+			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
+			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
+			Predicate<Question> importedQuestionActivationHandler, BooleanSupplier questionTargetChangeAllowed,
+			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
+			Runnable questionsChangedHandler) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -1390,6 +1345,9 @@ final class QuestionCapturePane extends VBox {
 		}
 		if (questionSelectionTransferHandler == null) {
 			throw new NullPointerException("questionSelectionTransferHandler");
+		}
+		if (questionCaptureService == null) {
+			throw new NullPointerException("questionCaptureService");
 		}
 	}
 

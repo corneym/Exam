@@ -42,6 +42,7 @@ import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
@@ -758,6 +759,7 @@ public class QuestionBankApplication extends Application {
 			PdfFilePicker answerPdfPicker) {
 		questionRepository = new SqliteQuestionRepository(database);
 		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
+		SqliteQuestionCaptureService questionCaptureService = new SqliteQuestionCaptureService(database);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
@@ -775,8 +777,8 @@ public class QuestionBankApplication extends Application {
 				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
 				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
 		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
-				sharedContextCapturePane, questionExtractor, curriculumSelectionModel, curriculumSelectorPane,
-				examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
+				questionCaptureService, sharedContextCapturePane, questionExtractor, curriculumSelectionModel,
+				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
 				question -> activateImportedQuestion(question, config), this::confirmDiscardAcceptedQuestionRegions,
 				this::transferQuestionSelectionToSharedContext,
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);

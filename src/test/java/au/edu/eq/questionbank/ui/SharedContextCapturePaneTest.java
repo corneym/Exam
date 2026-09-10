@@ -2,7 +2,6 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,7 +9,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -44,7 +42,6 @@ class SharedContextCapturePaneTest {
 
 	@TempDir
 	Path tempDirectory;
-
 	private ExamBooklet booklet;
 	private RecordingContextRepository repository;
 	private PdfSession session;
@@ -52,38 +49,35 @@ class SharedContextCapturePaneTest {
 	private AtomicInteger selectionClearCount;
 
 	@Test
-	void cancellingAcceptedAutomaticPreambleLeavesNothingToSave(FxRobot robot) {
+	void acceptedAutomaticPreambleIsExposedWithoutBeingPersisted(FxRobot robot) {
+		QuestionRegion transferred = new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2);
+		robot.interact(() -> assertTrue(pane.beginAutomaticContext("Question 21 preamble", transferred)));
+		assertTrue(pane.isCaptureMode());
+		assertTrue(pane.hasCurrentSelection());
+		robot.interact(() -> assertTrue(pane.acceptAutomaticRegion()));
+		assertFalse(pane.isCaptureMode());
+		assertTrue(pane.hasPendingAutomaticRegion());
 		robot.interact(() -> {
-			assertTrue(pane.beginAutomaticContext("Preamble", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2)));
-			assertTrue(pane.acceptAutomaticRegion());
-			assertTrue(pane.hasUnsavedContextCapture());
-			pane.cancelAutomaticContext();
-			assertFalse(pane.hasCurrentSelection());
-			assertFalse(pane.hasPendingAutomaticRegion());
-			assertFalse(pane.hasUnsavedContextCapture());
-			assertThrows(IllegalStateException.class, pane::saveAutomaticContext);
+			assertEquals("Question 21 preamble", pane.getPendingAutomaticContextLabel());
+			assertEquals(List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2)),
+					pane.getPendingAutomaticContextRegions());
 		});
 		assertEquals(0, repository.saveCount());
+		assertTrue(pane.hasPendingAutomaticRegion());
+		robot.interact(pane::cancelAutomaticContext);
+		assertFalse(pane.hasPendingAutomaticRegion());
+		robot.interact(() -> {
+			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextLabel);
+			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextRegions);
+		});
 	}
 
 	@Test
-	void rejectsTransferredRegionFromAnotherBookletBeforeChangingCaptureState(FxRobot robot) {
-		ExamBooklet other = new ExamBooklet(2, booklet.getExam(), "Paper 2", new SourceDocument(2, "paper-2.pdf"));
-		robot.interact(() -> {
-			assertThrows(IllegalArgumentException.class, () -> pane.beginAutomaticContext("Preamble",
-					new QuestionRegion(other, 1, 0.1, 0.1, 0.5, 0.2)));
-			assertFalse(pane.isCaptureMode());
-			assertFalse(pane.hasUnsavedContextCapture());
-		});
-		assertEquals(0, selectionClearCount.get());
-		assertEquals(0, repository.saveCount());
-	}
-
-	@Test
-	void cannotPersistAnAutomaticSelectionBeforeItIsAccepted(FxRobot robot) {
+	void automaticContextDataIsNotAvailableBeforeSelectionIsAccepted(FxRobot robot) {
 		robot.interact(() -> {
 			pane.beginAutomaticContext("Preamble", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2));
-			assertThrows(IllegalStateException.class, pane::saveAutomaticContext);
+			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextLabel);
+			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextRegions);
 			assertTrue(pane.hasCurrentSelection());
 			assertTrue(pane.isCaptureMode());
 		});
@@ -106,25 +100,32 @@ class SharedContextCapturePaneTest {
 	}
 
 	@Test
-	void transferredQuestionSelectionIsSavedExactlyOnceAsAutomaticPreamble(FxRobot robot) {
-		QuestionRegion transferred = new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2);
-		robot.interact(() -> assertTrue(pane.beginAutomaticContext("Question 21 preamble", transferred)));
-		assertTrue(pane.isCaptureMode());
-		assertTrue(pane.hasCurrentSelection());
-		robot.interact(() -> assertTrue(pane.acceptAutomaticRegion()));
-		assertFalse(pane.isCaptureMode());
-		assertTrue(pane.hasPendingAutomaticRegion());
+	void cancellingAcceptedAutomaticPreambleLeavesNothingToSave(FxRobot robot) {
+		robot.interact(() -> {
+			assertTrue(pane.beginAutomaticContext("Preamble", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2)));
+			assertTrue(pane.acceptAutomaticRegion());
+			assertTrue(pane.hasUnsavedContextCapture());
+			pane.cancelAutomaticContext();
+			assertFalse(pane.hasCurrentSelection());
+			assertFalse(pane.hasPendingAutomaticRegion());
+			assertFalse(pane.hasUnsavedContextCapture());
+			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextLabel);
+			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextRegions);
+		});
+		assertEquals(0, repository.saveCount());
+	}
 
-		AtomicReference<SharedQuestionContext> savedReference = new AtomicReference<>();
-		robot.interact(() -> savedReference.set(pane.saveAutomaticContext()));
-		SharedQuestionContext saved = savedReference.get();
-		assertNotNull(saved);
-		assertEquals(1, repository.saveCount());
-		assertEquals("Question 21 preamble", saved.getLabel());
-		assertEquals(List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2)), saved.getRegions());
-		assertEquals(saved.getId(), pane.getSelectedContext().getId());
-		assertFalse(pane.hasPendingAutomaticRegion());
-		assertThrows(IllegalStateException.class, pane::saveAutomaticContext);
+	@Test
+	void rejectsTransferredRegionFromAnotherBookletBeforeChangingCaptureState(FxRobot robot) {
+		ExamBooklet other = new ExamBooklet(2, booklet.getExam(), "Paper 2", new SourceDocument(2, "paper-2.pdf"));
+		robot.interact(() -> {
+			assertThrows(IllegalArgumentException.class,
+					() -> pane.beginAutomaticContext("Preamble", new QuestionRegion(other, 1, 0.1, 0.1, 0.5, 0.2)));
+			assertFalse(pane.isCaptureMode());
+			assertFalse(pane.hasUnsavedContextCapture());
+		});
+		assertEquals(0, selectionClearCount.get());
+		assertEquals(0, repository.saveCount());
 	}
 
 	@Start

@@ -6,6 +6,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -82,6 +83,56 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 	 */
 	@Override
 	public SharedQuestionContext save(ExamBooklet booklet, String label, List<SharedQuestionContextRegion> regions) {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				SharedQuestionContext context = save(connection, booklet, label, regions);
+				connection.commit();
+				return context;
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not save shared question context", e);
+		}
+	}
+
+	Optional<SharedQuestionContext> findById(Connection connection, ExamBooklet booklet, long contextId)
+			throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT context_label
+				FROM shared_question_contexts
+				WHERE id = ?
+				  AND booklet_id = ?
+				""")) {
+			statement.setLong(1, contextId);
+			statement.setLong(2, booklet.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				return Optional.of(new SharedQuestionContext(contextId, booklet, result.getString("context_label"),
+						findRegions(connection, contextId)));
+			}
+		}
+	}
+
+	SharedQuestionContext save(Connection connection, ExamBooklet booklet, String label,
+			List<SharedQuestionContextRegion> regions) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
@@ -99,25 +150,9 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				throw new NullPointerException("regions contains null");
 			}
 		}
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				long contextId = insertContext(connection, booklet, label);
-				insertRegions(connection, contextId, regions);
-				SharedQuestionContext context = new SharedQuestionContext(contextId, booklet, label, regions);
-				connection.commit();
-				return context;
-			} catch (SQLException | RuntimeException e) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					e.addSuppressed(rollbackFailure);
-				}
-				throw e;
-			}
-		} catch (SQLException e) {
-			throw new IllegalStateException("Could not save shared question context", e);
-		}
+		long contextId = insertContext(connection, booklet, label);
+		insertRegions(connection, contextId, regions);
+		return new SharedQuestionContext(contextId, booklet, label, regions);
 	}
 
 	private List<SharedQuestionContextRegion> findRegions(Connection connection, long contextId) throws SQLException {

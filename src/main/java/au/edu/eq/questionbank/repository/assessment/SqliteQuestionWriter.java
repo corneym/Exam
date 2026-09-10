@@ -41,30 +41,17 @@ public final class SqliteQuestionWriter {
 	 * Conflicting existing contexts are rejected before any rows are changed.
 	 *
 	 * @param sourceQuestion the persisted source identity
-	 * @param sharedContext the persisted context in the same booklet
+	 * @param sharedContext  the persisted context in the same booklet
 	 * @return the number of rows updated
-	 * @throws SQLException if persistence fails
+	 * @throws SQLException             if persistence fails
 	 * @throws IllegalArgumentException if relationships are invalid or conflicting
 	 */
 	public int applySharedContextToSourceQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
 			throws SQLException {
-		if (sourceQuestion == null) {
-			throw new NullPointerException("sourceQuestion");
-		}
-		if (sharedContext == null) {
-			throw new NullPointerException("sharedContext");
-		}
-		ExamBooklet booklet = sourceQuestion.getBooklet();
-		if (sharedContext.getBooklet().getId() != booklet.getId()) {
-			throw new IllegalArgumentException("Shared question context must belong to the source question's booklet");
-		}
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
-				verifySharedContextRelationship(connection, booklet, sharedContext);
-				verifySourceQuestionSharedContextConsistency(connection, sourceQuestion, sharedContext);
-				int updated = updateSourceQuestionSharedContexts(connection, sourceQuestion, sharedContext);
+				int updated = applySharedContextToSourceQuestion(connection, sourceQuestion, sharedContext);
 				connection.commit();
 				return updated;
 			} catch (SQLException | RuntimeException e) {
@@ -95,14 +82,14 @@ public final class SqliteQuestionWriter {
 	}
 
 	/**
-	 * Atomically captures an empty question and replaces its classification and links.
-	 * The classification must stay in the original syllabus.
+	 * Atomically captures an empty question and replaces its classification and
+	 * links. The classification must stay in the original syllabus.
 	 *
-	 * @param questionId the persisted question identifier
-	 * @param regions nonempty regions in assembly order
+	 * @param questionId     the persisted question identifier
+	 * @param regions        nonempty regions in assembly order
 	 * @param classification replacement classification, or null to retain it
 	 * @param sourceQuestion source identity, or null to clear it
-	 * @param sharedContext context, or null to clear it
+	 * @param sharedContext  context, or null to clear it
 	 * @throws SQLException if persistence fails
 	 */
 	public void attachRegions(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
@@ -111,12 +98,13 @@ public final class SqliteQuestionWriter {
 	}
 
 	/**
-	 * Atomically attaches regions and replaces links while retaining classification.
+	 * Atomically attaches regions and replaces links while retaining
+	 * classification.
 	 *
-	 * @param questionId the persisted question identifier
-	 * @param regions nonempty regions in assembly order
+	 * @param questionId     the persisted question identifier
+	 * @param regions        nonempty regions in assembly order
 	 * @param sourceQuestion source identity, or null to clear it
-	 * @param sharedContext context, or null to clear it
+	 * @param sharedContext  context, or null to clear it
 	 * @throws SQLException if persistence fails
 	 */
 	public void attachRegions(long questionId, List<QuestionRegion> regions, SourceQuestion sourceQuestion,
@@ -169,6 +157,123 @@ public final class SqliteQuestionWriter {
 	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				Question question = insertQuestion(connection, booklet, questionCode, questionText, marks, regions,
+						classification, preambleCaptureRequired, sourceQuestion, sharedContext);
+				connection.commit();
+				return question;
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
+	/**
+	 * Atomically replaces capture links and classification, preserving stored
+	 * regions. The question must belong to the booklet and retain its existing
+	 * syllabus.
+	 *
+	 * @param questionId     the persisted question identifier
+	 * @param booklet        the existing source booklet
+	 * @param classification replacement subtopic or descriptor
+	 * @param sourceQuestion source identity, or null to clear it
+	 * @param sharedContext  context, or null to clear it
+	 * @throws SQLException if persistence fails
+	 */
+	public void updateCaptureRelationships(long questionId, ExamBooklet booklet, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				updateCaptureRelationships(connection, questionId, booklet, classification, sourceQuestion,
+						sharedContext);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
+	/**
+	 * Atomically replaces editable metadata and ordered regions, retaining the
+	 * question identity, booklet, text, legacy evidence and answer. A failed region
+	 * insert rolls back both the metadata update and deletion of old regions.
+	 *
+	 * @param questionId     the persisted question identifier
+	 * @param booklet        the existing source booklet
+	 * @param questionCode   replacement non-blank code
+	 * @param marks          replacement positive marks
+	 * @param regions        nonempty replacement regions in assembly order
+	 * @param classification replacement classification in the existing syllabus
+	 * @param sourceQuestion source identity, or null to clear it
+	 * @param sharedContext  context, or null to clear it
+	 * @throws SQLException if persistence fails
+	 */
+	public void updateQuestion(long questionId, ExamBooklet booklet, String questionCode, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				updateQuestion(connection, questionId, booklet, questionCode, marks, regions, classification,
+						sourceQuestion, sharedContext);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
+	int applySharedContextToSourceQuestion(Connection connection, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (sourceQuestion == null) {
+			throw new NullPointerException("sourceQuestion");
+		}
+		if (sharedContext == null) {
+			throw new NullPointerException("sharedContext");
+		}
+		ExamBooklet booklet = sourceQuestion.getBooklet();
+		if (sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the source question's booklet");
+		}
+		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+		verifySharedContextRelationship(connection, booklet, sharedContext);
+		verifySourceQuestionSharedContextConsistency(connection, sourceQuestion, sharedContext);
+		return updateSourceQuestionSharedContexts(connection, sourceQuestion, sharedContext);
+	}
+
+	void attachRegions(Connection connection, long questionId, List<QuestionRegion> regions,
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
+			throws SQLException {
+		attachRegionsInternal(connection, questionId, regions, classification, sourceQuestion, sharedContext, true);
+	}
+
+	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
+			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
@@ -190,42 +295,21 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
-				verifySharedContextRelationship(connection, booklet, sharedContext);
-				long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks,
-						classification, preambleCaptureRequired, sourceQuestion, sharedContext);
-				insertRegions(connection, questionId, regions);
-				Question question = new Question(questionId, booklet, questionCode, questionText, marks, regions,
-						classification, preambleCaptureRequired, sourceQuestion, sharedContext);
-				connection.commit();
-				return question;
-			} catch (SQLException | RuntimeException e) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					e.addSuppressed(rollbackFailure);
-				}
-				throw e;
-			}
-		}
+		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+		verifySharedContextRelationship(connection, booklet, sharedContext);
+		long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks, classification,
+				preambleCaptureRequired, sourceQuestion, sharedContext);
+		insertRegions(connection, questionId, regions);
+		return new Question(questionId, booklet, questionCode, questionText, marks, regions, classification,
+				preambleCaptureRequired, sourceQuestion, sharedContext);
 	}
 
-	/**
-	 * Atomically replaces capture links and classification, preserving stored regions.
-	 * The question must belong to the booklet and retain its existing syllabus.
-	 *
-	 * @param questionId the persisted question identifier
-	 * @param booklet the existing source booklet
-	 * @param classification replacement subtopic or descriptor
-	 * @param sourceQuestion source identity, or null to clear it
-	 * @param sharedContext context, or null to clear it
-	 * @throws SQLException if persistence fails
-	 */
-	public void updateCaptureRelationships(long questionId, ExamBooklet booklet, CurriculumNode classification,
-			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+	void updateCaptureRelationships(Connection connection, long questionId, ExamBooklet booklet,
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
+			throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
 		if (questionId < 1) {
 			throw new IllegalArgumentException("questionId must be positive");
 		}
@@ -239,44 +323,19 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				verifyQuestionBooklet(connection, questionId, booklet);
-				verifyClassificationSyllabusUnchanged(connection, questionId, classification);
-				verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
-				verifySharedContextRelationship(connection, booklet, sharedContext);
-				updateQuestionCaptureDetails(connection, questionId, classification, sourceQuestion, sharedContext);
-				connection.commit();
-			} catch (SQLException | RuntimeException e) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					e.addSuppressed(rollbackFailure);
-				}
-				throw e;
-			}
-		}
+		verifyQuestionBooklet(connection, questionId, booklet);
+		verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+		verifySharedContextRelationship(connection, booklet, sharedContext);
+		updateQuestionCaptureDetails(connection, questionId, classification, sourceQuestion, sharedContext);
 	}
 
-	/**
-	 * Atomically replaces editable metadata and ordered regions, retaining the
-	 * question identity, booklet, text, legacy evidence and answer. A failed region
-	 * insert rolls back both the metadata update and deletion of old regions.
-	 *
-	 * @param questionId the persisted question identifier
-	 * @param booklet the existing source booklet
-	 * @param questionCode replacement non-blank code
-	 * @param marks replacement positive marks
-	 * @param regions nonempty replacement regions in assembly order
-	 * @param classification replacement classification in the existing syllabus
-	 * @param sourceQuestion source identity, or null to clear it
-	 * @param sharedContext context, or null to clear it
-	 * @throws SQLException if persistence fails
-	 */
-	public void updateQuestion(long questionId, ExamBooklet booklet, String questionCode, int marks,
+	void updateQuestion(Connection connection, long questionId, ExamBooklet booklet, String questionCode, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
 		if (questionId < 1) {
 			throw new IllegalArgumentException("questionId must be positive");
 		}
@@ -310,32 +369,22 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				verifyQuestionBooklet(connection, questionId, booklet);
-				verifyClassificationSyllabusUnchanged(connection, questionId, classification);
-				verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
-				verifySharedContextRelationship(connection, booklet, sharedContext);
-				updateQuestionEditableDetails(connection, questionId, questionCode, marks, classification,
-						sourceQuestion, sharedContext);
-				deleteQuestionRegions(connection, questionId);
-				insertRegions(connection, questionId, regions);
-				connection.commit();
-			} catch (SQLException | RuntimeException e) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					e.addSuppressed(rollbackFailure);
-				}
-				throw e;
-			}
-		}
+		verifyQuestionBooklet(connection, questionId, booklet);
+		verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+		verifySharedContextRelationship(connection, booklet, sharedContext);
+		updateQuestionEditableDetails(connection, questionId, questionCode, marks, classification, sourceQuestion,
+				sharedContext);
+		deleteQuestionRegions(connection, questionId);
+		insertRegions(connection, questionId, regions);
 	}
 
-	private void attachRegionsInternal(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
-			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, boolean updateRelationships)
-			throws SQLException {
+	private void attachRegionsInternal(Connection connection, long questionId, List<QuestionRegion> regions,
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
+			boolean updateRelationships) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
 		if (questionId < 1) {
 			throw new IllegalArgumentException("questionId must be positive");
 		}
@@ -367,22 +416,28 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
+		verifyQuestionCanAcceptRegions(connection, questionId, booklet);
+		if (updateRelationships) {
+			verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+			verifySharedContextRelationship(connection, booklet, sharedContext);
+			if (classification == null) {
+				updateQuestionRelationships(connection, questionId, sourceQuestion, sharedContext);
+			} else {
+				verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+				updateQuestionCaptureDetails(connection, questionId, classification, sourceQuestion, sharedContext);
+			}
+		}
+		insertRegions(connection, questionId, regions);
+	}
+
+	private void attachRegionsInternal(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, boolean updateRelationships)
+			throws SQLException {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				verifyQuestionCanAcceptRegions(connection, questionId, booklet);
-				if (updateRelationships) {
-					verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
-					verifySharedContextRelationship(connection, booklet, sharedContext);
-					if (classification == null) {
-						updateQuestionRelationships(connection, questionId, sourceQuestion, sharedContext);
-					} else {
-						verifyClassificationSyllabusUnchanged(connection, questionId, classification);
-						updateQuestionCaptureDetails(connection, questionId, classification, sourceQuestion,
-								sharedContext);
-					}
-				}
-				insertRegions(connection, questionId, regions);
+				attachRegionsInternal(connection, questionId, regions, classification, sourceQuestion, sharedContext,
+						updateRelationships);
 				connection.commit();
 			} catch (SQLException | RuntimeException e) {
 				try {

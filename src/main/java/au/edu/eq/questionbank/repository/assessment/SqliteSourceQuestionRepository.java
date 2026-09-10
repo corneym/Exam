@@ -36,7 +36,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 	/**
 	 * {@inheritDoc}
 	 *
-	 * @throws NullPointerException if {@code booklet} is {@code null}
+	 * @throws NullPointerException  if {@code booklet} is {@code null}
 	 * @throws IllegalStateException if the query fails
 	 */
 	@Override
@@ -75,29 +75,8 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 	 */
 	@Override
 	public Optional<SourceQuestion> findByBookletAndCode(ExamBooklet booklet, String sourceQuestionCode) {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
-			throw new IllegalArgumentException("sourceQuestionCode must not be blank");
-		}
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT id, source_question_code, preamble_status
-						FROM source_questions
-						WHERE booklet_id = ?
-						  AND source_question_code = ?
-						""")) {
-			statement.setLong(1, booklet.getId());
-			statement.setString(2, sourceQuestionCode);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return Optional.empty();
-				}
-				return Optional
-						.of(new SourceQuestion(result.getLong("id"), booklet, result.getString("source_question_code"),
-								PreambleStatus.valueOf(result.getString("preamble_status"))));
-			}
+		try (Connection connection = database.openConnection()) {
+			return findByBookletAndCode(connection, booklet, sourceQuestionCode);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not read source question", e);
 		}
@@ -113,31 +92,8 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 	 */
 	@Override
 	public SourceQuestion save(ExamBooklet booklet, String sourceQuestionCode) {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
-			throw new IllegalArgumentException("sourceQuestionCode must not be blank");
-		}
-		if (findByBookletAndCode(booklet, sourceQuestionCode).isPresent()) {
-			throw new IllegalArgumentException("Source question already exists in this booklet: " + sourceQuestionCode);
-		}
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						INSERT INTO source_questions
-						    (booklet_id, source_question_code)
-						VALUES (?, ?)
-						RETURNING id, preamble_status
-						""")) {
-			statement.setLong(1, booklet.getId());
-			statement.setString(2, sourceQuestionCode);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new SQLException("Source question insert did not return an id");
-				}
-				return new SourceQuestion(result.getLong("id"), booklet, sourceQuestionCode,
-						PreambleStatus.valueOf(result.getString("preamble_status")));
-			}
+		try (Connection connection = database.openConnection()) {
+			return save(connection, booklet, sourceQuestionCode);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save source question", e);
 		}
@@ -152,30 +108,99 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 	 */
 	@Override
 	public SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, PreambleStatus preambleStatus) {
+		try (Connection connection = database.openConnection()) {
+			return updatePreambleStatus(connection, sourceQuestion, preambleStatus);
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not update source question preamble status", e);
+		}
+	}
+
+	Optional<SourceQuestion> findByBookletAndCode(Connection connection, ExamBooklet booklet, String sourceQuestionCode)
+			throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
+			throw new IllegalArgumentException("sourceQuestionCode must not be blank");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT id, source_question_code, preamble_status
+				FROM source_questions
+				WHERE booklet_id = ?
+				  AND source_question_code = ?
+				""")) {
+			statement.setLong(1, booklet.getId());
+			statement.setString(2, sourceQuestionCode);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				return Optional
+						.of(new SourceQuestion(result.getLong("id"), booklet, result.getString("source_question_code"),
+								PreambleStatus.valueOf(result.getString("preamble_status"))));
+			}
+		}
+	}
+
+	SourceQuestion save(Connection connection, ExamBooklet booklet, String sourceQuestionCode) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
+			throw new IllegalArgumentException("sourceQuestionCode must not be blank");
+		}
+		if (findByBookletAndCode(connection, booklet, sourceQuestionCode).isPresent()) {
+			throw new IllegalArgumentException("Source question already exists in this booklet: " + sourceQuestionCode);
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO source_questions
+				    (booklet_id, source_question_code)
+				VALUES (?, ?)
+				RETURNING id, preamble_status
+				""")) {
+			statement.setLong(1, booklet.getId());
+			statement.setString(2, sourceQuestionCode);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Source question insert did not return an id");
+				}
+				return new SourceQuestion(result.getLong("id"), booklet, sourceQuestionCode,
+						PreambleStatus.valueOf(result.getString("preamble_status")));
+			}
+		}
+	}
+
+	SourceQuestion updatePreambleStatus(Connection connection, SourceQuestion sourceQuestion,
+			PreambleStatus preambleStatus) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
 		if (sourceQuestion == null) {
 			throw new NullPointerException("sourceQuestion");
 		}
 		if (preambleStatus == null) {
 			throw new NullPointerException("preambleStatus");
 		}
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						UPDATE source_questions
-						SET preamble_status = ?
-						WHERE id = ?
-						  AND booklet_id = ?
-						""")) {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE source_questions
+				SET preamble_status = ?
+				WHERE id = ?
+				  AND booklet_id = ?
+				""")) {
 			statement.setString(1, preambleStatus.name());
 			statement.setLong(2, sourceQuestion.getId());
 			statement.setLong(3, sourceQuestion.getBooklet().getId());
-			int updated = statement.executeUpdate();
-			if (updated != 1) {
+			if (statement.executeUpdate() != 1) {
 				throw new IllegalStateException("Source question could not be updated: " + sourceQuestion.getId());
 			}
-			return new SourceQuestion(sourceQuestion.getId(), sourceQuestion.getBooklet(),
-					sourceQuestion.getSourceQuestionCode(), preambleStatus);
-		} catch (SQLException e) {
-			throw new IllegalStateException("Could not update source question preamble status", e);
 		}
+		return new SourceQuestion(sourceQuestion.getId(), sourceQuestion.getBooklet(),
+				sourceQuestion.getSourceQuestionCode(), preambleStatus);
 	}
 }
