@@ -5,8 +5,9 @@
 > Completed sprint documents remain historical records. Items intentionally
 > deferred from completed work belong here until scheduled into a future sprint.
 >
-> Sprint 07 implementation is complete on `feature/preamble-capture` and is in
-> closeout. Implemented Sprint 07 work is not active backlog work.
+> Sprint 07 is complete and merged. Work scheduled into Sprint 08 is governed by
+> `sprint-08-Curriculum-and-Corpus-Completion.md`; implemented Sprint 08 work
+> should be removed from this backlog as it is completed.
 
 ## High Priority
 
@@ -53,27 +54,31 @@ Filters may include:
 
 Completion must not rewrite imported historical metadata/classification.
 
-### Reconcile the 5 September Chemistry 2019 -> 2025 mapping workbook
+### Complete curriculum mapping through application review and coverage
 
-Origin: Curriculum Descriptor Mapping chat, 5 September 2026.
+Origin: Sprint 08 — Curriculum and Corpus Completion.
 
-A standalone normalised mapping workbook exists, but its integration with
-current SQLite mapping records is not established.
+Application SQLite mapping/review state is authoritative. The standalone
+Chemistry 2019 -> 2025 mapping workbook may be consulted as reference material
+but is not an input requiring reconciliation with application state.
 
 Required work:
 
-- manually review all `YES` Low/no-match rows;
-- check all `CHECK` Medium rows;
-- confirm 2019 removed/no-direct-equivalent content;
-- confirm 2025 new/no-direct-predecessor content;
-- compare confirmed pairwise relationships with current mapping records;
-- import/reconcile confirmed mappings without overwriting historical question
-  classifications;
-- produce coverage statistics after reconciliation;
-- retain audit notes/confidence where useful.
+- add pair-specific mapping coverage reporting for Descriptor and Subtopic
+  levels;
+- distinguish matched, explicit no-match and unreviewed historical nodes;
+- report the percentage of historical nodes that have received a deliberate
+  review decision;
+- identify current target nodes with no confirmed predecessor from the selected
+  historical syllabus version;
+- use the existing application mapping-review workflow to complete outstanding
+  historical-node decisions;
+- complete Descriptor review first, followed by Subtopic review.
 
-Do not treat the standalone workbook as authoritative application state until
-reconciliation is complete.
+Absence of a mapping or review record must not silently mean no-match.
+
+Topic mapping is not required merely for hierarchy symmetry. Add it only if a
+concrete applicability or retrieval requirement demonstrates a need.
 
 
 

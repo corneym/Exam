@@ -1,7 +1,7 @@
 # Exam Question Bank — Development Roadmap
 
 > **Reference date:** 11 September 2026  
-> **Version:** 9  
+> **Version:** 10  
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 
 ## 1. Project goal
@@ -35,7 +35,7 @@ Completed SCORM 1.2 / QLearn validation
         ↓
 Completed Sprint 07 shared-context/capture/edit/output work
         ↓
-Complete and reconcile Question + mapping data
+Complete Question data + application-authoritative mapping review
         ↓
 Harden bank management / retrieval / audit workflows
         ↓
@@ -44,9 +44,10 @@ Resolve remaining Question semantics
 Exam Builder / printable output
 ```
 
-Curriculum mapping reconciliation and corpus completion remain compatible with
-the implemented Sprint 07 model and can proceed without reopening its core
-architecture.
+Curriculum mapping completion and corpus completion remain compatible with the
+implemented Sprint 07 model and can proceed without reopening its core
+architecture. Application SQLite review state is authoritative for mapping;
+external mapping workbooks remain reference artefacts only.
 
 ## 3. Current architecture constraints
 
@@ -240,50 +241,59 @@ Canonical design/final implementation record:
 The temporary Sprint 07 status/backlog and cleanup-review documents were
 retired after consolidation.
 
-## 5. Current data work
+## 5. Current Sprint 08 data work
 
-The standalone 5 September
-`Chemistry_2019_to_2025_Descriptor_Mapping.xlsx` remains useful reviewed-analysis
-data but is not established as reconciled/imported into SQLite.
+Sprint 08 treats application SQLite state as authoritative for curriculum
+mapping. Historical-to-current relationships are completed through the
+application's human-reviewed mapping workflow.
 
-Parallel work includes:
+The standalone Chemistry 2019 -> 2025 mapping workbook remains useful reference
+analysis, but it is not an application input requiring reconciliation.
 
-- manual review of Low/no-match rows;
-- review of Medium/check rows;
-- confirmation of genuinely new/removed content;
-- reconciliation with SQLite mappings;
-- coverage reporting after reconciliation;
-- completion of Question and Answer region capture;
-- larger real-data retrieval/export checks.
+Current data work includes:
+
+- completing remaining Question and Answer source-region capture;
+- correcting inaccurate legacy metadata where inspection of the original paper
+  demonstrates that it is wrong;
+- adding Descriptor and Subtopic mapping-coverage reporting;
+- distinguishing matched, explicit no-match and unreviewed historical nodes;
+- identifying current nodes with no confirmed predecessor from the selected
+  historical version;
+- completing outstanding mapping decisions through the application;
+- establishing corpus completeness reporting;
+- exercising subject-neutral curriculum structures with real non-Chemistry
+  syllabus data.
+
+Sprint 08 Slice 1 has confirmed through regression coverage that a
+`Unit -> Topic -> Descriptor` hierarchy with no Subtopic already survives
+curriculum import, SQLite persistence/reload, Question classification and
+current-curriculum retrieval.
 
 ## 6. Immediate development sequence after Sprint 07
 
-### 6.1 Final Sprint 07 checkpoint — complete
+### 6.1 Sprint 07 — complete
 
-Completed closeout checks:
+Sprint 07 is complete, merged and no longer active development work.
 
-- standard test suite green;
-- headless UI suite green;
-- Javadoc/doclint green;
-- final branch-versus-`main` review completed;
-- multipart-to-non-multipart edit transition regression covered;
-- current status, roadmap, backlog and canonical Sprint 07 record reconciled.
+Its final implementation is recorded in:
 
-No known Sprint 07 merge blocker remains.
+`docs/design/sprint-07-preamble-aware-question-capture-ui-redesign.md`
 
-### 6.2 Corpus completion and mapping reconciliation
+### 6.2 Sprint 08 — Curriculum and Corpus Completion
 
-Use the implemented capture/edit workflows to complete real data rather than
-adding new architecture first.
+Sprint 08 is the current development sprint.
 
-Priorities:
+Its ordered work is defined by:
 
-- remaining Question regions;
-- remaining Answer regions;
-- missing source documents;
-- historical classification verification;
-- Chemistry 2019 -> 2025 mapping reconciliation;
-- coverage reporting.
+`docs/design/sprint-08-Curriculum-and-Corpus-Completion.md`
+
+The initial hierarchy baseline has confirmed that direct Topic-to-Descriptor
+curriculum already works through the existing import, persistence,
+classification and retrieval path. No production hierarchy change was required
+for that behaviour.
+
+Subsequent work therefore builds on the existing generic curriculum model rather
+than redesigning it around a no-Subtopic case.
 
 ### 6.3 Broad capture/audit queue
 

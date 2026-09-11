@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -16,6 +17,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -33,43 +38,14 @@ import javafx.stage.Stage;
 @Tag("ui")
 @ExtendWith(ApplicationExtension.class)
 class PdfWorkspacePaneAsyncTest {
+
 	@TempDir
 	Path tempDir;
 	private PdfWorkspacePane pane;
 
-	@Start
-	void start(Stage stage) {
-		pane = new PdfWorkspacePane();
-		stage.setScene(new Scene(pane, 640, 480));
-		stage.show();
-	}
-
 	@AfterEach
 	void close() throws Exception {
 		pane.close();
-	}
-
-	@Test
-	void loadsAnswerPdfAndReusesTheDisplayedPage(FxRobot robot) throws Exception {
-		Path path = createPdf("answer.pdf");
-		CountDownLatch done = new CountDownLatch(1);
-		AtomicReference<Throwable> failure = new AtomicReference<>();
-		robot.interact(() -> pane.openAnswerPdfAsync(path, error -> {
-			failure.set(error);
-			done.countDown();
-		}));
-		assertTrue(done.await(10, TimeUnit.SECONDS));
-		assertNull(failure.get());
-		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pane.getDisplayedDocument());
-		assertEquals(2, pane.getAnswerPdfSession().getPageCount());
-		robot.interact(() -> ((Button) pane.lookup("#next-pdf-page")).fire());
-		var session = pane.getAnswerPdfSession();
-		var image = ((ImageView) pane.lookup("#pdf-page-view")).getImage();
-		robot.interact(() -> pane.openAnswerPdfAsync(path, failure::set));
-		assertNull(failure.get());
-		assertSame(session, pane.getAnswerPdfSession());
-		assertSame(image, ((ImageView) pane.lookup("#pdf-page-view")).getImage());
-		assertTrue(((Button) pane.lookup("#next-pdf-page")).isDisabled(), "Remain on page two");
 	}
 
 	@Test
@@ -93,6 +69,17 @@ class PdfWorkspacePaneAsyncTest {
 	}
 
 	@Test
+	void extractsTextFromTheCurrentlyDisplayedViewerPage(FxRobot robot) throws Exception {
+		Path path = createTextPdf("syllabus.pdf", "Unit one content", "Unit two content");
+		robot.interact(() -> pane.openViewerPdf(path));
+		assertEquals("Unit one content", pane.extractDisplayedPageText().trim());
+		assertEquals(1, pane.getCurrentPageNumber());
+		robot.interact(() -> ((Button) pane.lookup("#next-pdf-page")).fire());
+		assertEquals("Unit two content", pane.extractDisplayedPageText().trim());
+		assertEquals(2, pane.getCurrentPageNumber());
+	}
+
+	@Test
 	void failedLoadRetainsTheExistingAnswerDocument(FxRobot robot) throws Exception {
 		Path path = createPdf("existing.pdf");
 		robot.interact(() -> pane.openAnswerPdf(path));
@@ -109,11 +96,65 @@ class PdfWorkspacePaneAsyncTest {
 		assertEquals(2, session.getPageCount());
 	}
 
+	@Test
+	void loadsAnswerPdfAndReusesTheDisplayedPage(FxRobot robot) throws Exception {
+		Path path = createPdf("answer.pdf");
+		CountDownLatch done = new CountDownLatch(1);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		robot.interact(() -> pane.openAnswerPdfAsync(path, error -> {
+			failure.set(error);
+			done.countDown();
+		}));
+		assertTrue(done.await(10, TimeUnit.SECONDS));
+		assertNull(failure.get());
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pane.getDisplayedDocument());
+		assertEquals(2, pane.getAnswerPdfSession().getPageCount());
+		robot.interact(() -> ((Button) pane.lookup("#next-pdf-page")).fire());
+		var session = pane.getAnswerPdfSession();
+		var image = ((ImageView) pane.lookup("#pdf-page-view")).getImage();
+		robot.interact(() -> pane.openAnswerPdfAsync(path, failure::set));
+		assertNull(failure.get());
+		assertSame(session, pane.getAnswerPdfSession());
+		assertSame(image, ((ImageView) pane.lookup("#pdf-page-view")).getImage());
+		assertTrue(pane.lookup("#next-pdf-page").isDisabled(), "Remain on page two");
+	}
+
+	@Test
+	void rejectsTextExtractionWhenNoPdfIsDisplayed() {
+		assertThrows(IllegalStateException.class, () -> pane.extractDisplayedPageText());
+	}
+
+	@Start
+	void start(Stage stage) {
+		pane = new PdfWorkspacePane();
+		stage.setScene(new Scene(pane, 640, 480));
+		stage.show();
+	}
+
 	private Path createPdf(String name) throws Exception {
 		Path path = tempDir.resolve(name);
 		try (PDDocument document = new PDDocument()) {
 			document.addPage(new PDPage());
 			document.addPage(new PDPage());
+			document.save(path.toFile());
+		}
+		return path;
+	}
+
+	private Path createTextPdf(String name, String... pageTexts) throws Exception {
+		Path path = tempDir.resolve(name);
+		try (PDDocument document = new PDDocument()) {
+			for (String pageText : pageTexts) {
+				PDPage page = new PDPage(new PDRectangle(300, 300));
+				document.addPage(page);
+				try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
+					contentStream.beginText();
+					contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+					contentStream.newLineAtOffset(40, 250);
+					contentStream.showText(pageText);
+					contentStream.endText();
+				}
+			}
 			document.save(path.toFile());
 		}
 		return path;

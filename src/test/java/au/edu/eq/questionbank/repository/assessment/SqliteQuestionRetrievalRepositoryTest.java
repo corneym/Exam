@@ -12,6 +12,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -21,6 +22,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumImporter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
@@ -94,6 +96,51 @@ class SqliteQuestionRetrievalRepositoryTest {
 		}
 		assertEquals(currentDescriptor.getId(), matches.get(0).getQuestion().getClassification().getId());
 		assertEquals(fixture.confirmedSourceDescriptorId(), matches.get(1).getQuestion().getClassification().getId());
+	}
+
+	@Test
+	void retrievesQuestionFromImportedThreeLevelCurriculumAfterReopen() throws Exception {
+		Path databasePath = tempDirectory.resolve("three-level-retrieval.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		SqliteCurriculumImporter curriculumImporter = new SqliteCurriculumImporter(database, curriculumWriter);
+		curriculumImporter.importSyllabus("Psychology", "2025", true,
+				List.of(new CurriculumImportRow("2", "Individual development"),
+						new CurriculumImportRow("2.3", "Psychological disorders"),
+						new CurriculumImportRow("2.3.5", "Describe approaches to diagnosis")));
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		Subject psychology = curriculumRepository.findAllSubjects().stream()
+				.filter(subject -> subject.getName().equals("Psychology")).findFirst().orElseThrow();
+		SyllabusVersion syllabus2025 = curriculumRepository.findVersionsForSubject(psychology).stream()
+				.filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
+		CurriculumNode descriptor = curriculumRepository.findByCode(syllabus2025, "2.3.5").orElseThrow();
+		assertEquals(Descriptor.class, descriptor.getClass());
+		assertEquals("2.3", descriptor.getParent().getCode());
+		assertEquals(Topic.class, descriptor.getParent().getClass());
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(psychology, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Psychology/2025/paper1.pdf");
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question storedQuestion = questionRepository.save(booklet, "Q1", "", 2, List.of(), descriptor, false);
+		SqliteDatabase reopenedDatabase = new SqliteDatabase(databasePath);
+		reopenedDatabase.initialiseSchema();
+		SqliteCurriculumRepository reopenedCurriculumRepository = new SqliteCurriculumRepository(reopenedDatabase);
+		SyllabusVersion reopenedSyllabus = reopenedCurriculumRepository.findVersionById(syllabus2025.getId())
+				.orElseThrow();
+		CurriculumNode reopenedDescriptor = reopenedCurriculumRepository.findByCode(reopenedSyllabus, "2.3.5")
+				.orElseThrow();
+		assertEquals(Descriptor.class, reopenedDescriptor.getClass());
+		assertEquals("2.3", reopenedDescriptor.getParent().getCode());
+		assertEquals(Topic.class, reopenedDescriptor.getParent().getClass());
+		QuestionRetrievalRepository retrievalRepository = new SqliteQuestionRepository(reopenedDatabase);
+		List<QuestionApplicabilityMatch> matches = retrievalRepository
+				.findApplicableToNodes(List.of(reopenedDescriptor));
+		assertEquals(1, matches.size());
+		assertEquals(storedQuestion.getId(), matches.get(0).getQuestion().getId());
+		assertEquals(reopenedDescriptor.getId(), matches.get(0).getCurrentNode().getId());
+		assertEquals("2.3.5", matches.get(0).getQuestion().getClassification().getCode());
 	}
 
 	@Test

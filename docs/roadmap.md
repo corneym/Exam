@@ -27,34 +27,41 @@
   capture, Question/Answer correction, syllabus-sensitive classification,
   multipart/shared-context revision output and capture responsiveness work.
 
-## Immediate closeout
+## Current sprint
 
-Sprint 07 is implemented on `feature/preamble-capture`. Documentation
-consolidation and the final branch-versus-`main` merge-readiness review are
-complete, with no known merge blocker remaining after final regression
-verification.
+Sprint 07 is complete and merged.
 
-Canonical Sprint 07 record:
+Sprint 08 — Curriculum and Corpus Completion is in progress on
+`feature/data-completion`.
 
-`docs/design/sprint-07-preamble-aware-question-capture-ui-redesign.md`
+Canonical Sprint 08 design:
 
-## Milestone 1 — Corpus completion and mapping reconciliation
+`docs/design/sprint-08-Curriculum-and-Corpus-Completion.md`
 
-**HIGH PRIORITY / NEXT PRODUCT VALUE**
+## Milestone 1 — Curriculum and corpus completion
 
-Continue real-data completion without redesigning the implemented core model:
+**HIGH PRIORITY / CURRENT PRODUCT VALUE**
 
-- capture remaining Question regions;
-- capture remaining Answer/marking regions;
-- resolve missing source documents;
-- verify historical classifications;
-- review and reconcile the 5 September Chemistry 2019 -> 2025 mapping workbook
-  with SQLite mapping records;
-- establish coverage statistics after reconciliation;
-- exercise larger real datasets.
+Continue real-data completion while extending the application where required to
+make curriculum and corpus completeness explicit and measurable:
 
-A broad filtered capture/audit queue is useful follow-on work rather than a
-prerequisite for data capture.
+- support expert-authored curriculum from authoritative syllabus PDFs without
+  inferring hierarchy from document structure or curriculum codes;
+- preserve `Unit -> Topic -> Descriptor` as a first-class hierarchy with
+  Subtopic remaining optional;
+- complete remaining Question and Answer source-region capture;
+- resolve missing source documents and inaccurate legacy metadata;
+- measure historical-to-current mapping coverage from authoritative application
+  review state;
+- complete deliberate Descriptor and Subtopic mapping review through the
+  application;
+- add a broad corpus audit/completeness queue;
+- exercise a real non-Chemistry syllabus through classification, retrieval and
+  output workflows.
+
+The separate Chemistry 2019 -> 2025 mapping workbook remains reference material.
+It is not authoritative application state and does not require reconciliation
+with SQLite.
 
 ## Milestone 2 — Bank-management and retrieval hardening
 
@@ -64,7 +71,7 @@ Focus on the workflows needed to maintain a growing real question bank:
 
 - broad capture/audit queue and completeness filters;
 - exam-specific metadata correction;
-- import audit/reconciliation reporting;
+- import and data-integrity audit reporting;
 - additional real-world legacy-workbook validation;
 - remaining asynchronous search/preview lifecycle tests;
 - retrieval-domain and SQLite integration hardening;

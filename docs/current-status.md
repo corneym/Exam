@@ -2,9 +2,10 @@
 
 > Authoritative project status at 11 September 2026.
 >
-> Current development branch: `feature/preamble-capture`.
+> Current development branch: `feature/data-completion`.
 >
-> Final Sprint 07 merge-readiness review performed: 11 September 2026.
+> Sprint 07 is complete and merged. Sprint 08 — Curriculum and Corpus Completion
+> is in progress.
 
 ## Status summary
 
@@ -15,13 +16,17 @@ historical-to-current curriculum mapping, current-curriculum retrieval,
 revision HTML generation, SCORM 1.2 packaging, backup/restore, and correction of
 persisted Questions and Answers.
 
-Sprint 07 implementation and closeout are complete on
-`feature/preamble-capture`. The sprint introduced persisted
-source-question identity and reusable shared question context, preamble-aware
-capture, multipart presentation semantics, syllabus-sensitive classification,
-Question/Answer correction, capture-workflow protection, and a substantial set
-of UI and responsiveness improvements.
+Sprint 07 implementation and closeout are complete and merged. The sprint
+introduced persisted source-question identity and reusable shared question
+context, preamble-aware capture, multipart presentation semantics,
+syllabus-sensitive classification, Question/Answer correction,
+capture-workflow protection, and a substantial set of UI and responsiveness
+improvements.
 
+Sprint 08 is now in progress on `feature/data-completion`. Its focus is
+curriculum and corpus completion: subject-neutral curriculum authoring,
+measurable curriculum-mapping coverage, legacy metadata correction, corpus
+audit/completeness tooling, and remaining capture/search hardening.
 The application is no longer an Excel-backed generation pipeline. Excel is an
 import/exchange format. SQLite is the live datastore. Original PDFs are the
 authoritative source material; extracted/cropped images are derived content.
@@ -143,9 +148,15 @@ Chemistry remains the most complete development dataset. Full current-version,
 mapping and question-corpus parity across every science subject is not yet
 established.
 
-A separate 5 September Chemistry 2019 -> 2025 descriptor-mapping workbook exists
-as a reviewed data artefact, but its complete reconciliation with application
-SQLite mapping records remains separate work.
+Application SQLite state is authoritative for curriculum mapping. Mapping
+decisions are established through the application's human-reviewed mapping
+workflow rather than by reconciling against an external workbook.
+
+The separate Chemistry 2019 -> 2025 mapping workbook remains a useful reference
+artefact only. Sprint 08 will add coverage reporting so application state can
+distinguish matched, explicit no-match and unreviewed historical nodes, together
+with current nodes having no confirmed predecessor from the selected historical
+version.
 
 ### Managed PDF workflows
 
