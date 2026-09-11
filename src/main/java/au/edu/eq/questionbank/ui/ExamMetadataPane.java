@@ -32,7 +32,6 @@ import javafx.stage.Stage;
  * PDF.
  */
 final class ExamMetadataPane extends VBox {
-
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double PROVIDER_FIELD_WIDTH = 240.0;
 	private static final double YEAR_FIELD_WIDTH = 100.0;
@@ -188,10 +187,10 @@ final class ExamMetadataPane extends VBox {
 			rememberOptions(input);
 			applyInputToControls(input);
 			selectedPdfLabel.setText(currentPdfPath.getFileName().toString());
-			selectionCursorHandler.accept(true);
 			examSubjectHandler.accept(input.subject());
 			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfDataRoot);
 			examPdfHandler.accept(selectedPdf);
+			selectionCursorHandler.accept(true);
 			return true;
 		} catch (IOException e) {
 			showFileError(e.getMessage());
@@ -291,7 +290,7 @@ final class ExamMetadataPane extends VBox {
 	}
 
 	private void configureActions(Stage stage) {
-		choosePdfButton.setOnAction(event -> chooseExamPdf(stage));
+		choosePdfButton.setOnAction(_ -> chooseExamPdf(stage));
 		choosePdfButton.setTooltip(new Tooltip("Choose the PDF containing the exam booklet."));
 	}
 

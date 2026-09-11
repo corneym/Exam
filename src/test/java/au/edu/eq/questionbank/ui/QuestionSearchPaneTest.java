@@ -10,6 +10,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.testfx.api.FxRobot;
@@ -45,6 +46,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.TextArea;
 import javafx.stage.Stage;
 
+@Tag("ui")
 @ExtendWith(ApplicationExtension.class)
 public class QuestionSearchPaneTest {
 
@@ -130,7 +132,7 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
-	public void hidingDialogPreventsFurtherHierarchyWork(FxRobot robot) {
+	public void disposingDialogPreventsFurtherHierarchyWork(FxRobot robot) {
 		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
 		QuestionSearchPane[] paneHolder = new QuestionSearchPane[1];
 		robot.interact(() -> {
@@ -141,9 +143,10 @@ public class QuestionSearchPaneTest {
 			paneHolder[0] = pane;
 			dialog.show();
 			dialog.hide();
+			dialog.dispose();
 		});
-		ComboBox<Subject> subjectBox = (ComboBox<Subject>) paneHolder[0].lookup("#question-search-subject");
-		ComboBox<CurriculumNode> unitBox = (ComboBox<CurriculumNode>) paneHolder[0].lookup("#question-search-unit");
+		ComboBox<Subject> subjectBox = robot.from(paneHolder[0]).lookup("#question-search-subject").queryComboBox();
+		ComboBox<CurriculumNode> unitBox = robot.from(paneHolder[0]).lookup("#question-search-unit").queryComboBox();
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(unitBox.getItems().isEmpty());

@@ -167,7 +167,8 @@ public class Question {
 	}
 
 	/**
-	 * Returns the associated answer, or {@code null} when none has been persisted.
+	 * Returns the answer associated in memory, or {@code null} when none is set.
+	 * Association alone does not persist an answer.
 	 *
 	 * @return the answer, or {@code null}
 	 */
@@ -185,14 +186,23 @@ public class Question {
 		return booklet;
 	}
 
+	/**
+	 * @return the best-fit subtopic or descriptor in the exam subject
+	 */
 	public CurriculumNode getClassification() {
 		return classification;
 	}
 
+	/**
+	 * @return the exam owning the source booklet
+	 */
 	public Exam getExam() {
 		return booklet.getExam();
 	}
 
+	/**
+	 * @return the positive persistent identifier
+	 */
 	public long getId() {
 		return id;
 	}
@@ -206,34 +216,58 @@ public class Question {
 		return marks;
 	}
 
+	/**
+	 * @return the non-blank question or part code, preserved as supplied
+	 */
 	public String getQuestionCode() {
 		return questionCode;
 	}
 
+	/**
+	 * @return supplementary text, which may be blank but is never null
+	 */
 	public String getQuestionText() {
 		return questionText;
 	}
 
+	/**
+	 * @return an immutable list in assembly order; empty for metadata-only questions
+	 */
 	public List<QuestionRegion> getRegions() {
 		return regions;
 	}
 
+	/**
+	 * @return the reusable preamble context, or {@code null} when unlinked
+	 */
 	public SharedQuestionContext getSharedContext() {
 		return sharedContext;
 	}
 
+	/**
+	 * @return the common source identity, or {@code null} when unlinked
+	 */
 	public SourceQuestion getSourceQuestion() {
 		return sourceQuestion;
 	}
 
+	/**
+	 * @return whether an answer is associated in memory
+	 */
 	public boolean hasAnswer() {
 		return answer != null;
 	}
 
+	/**
+	 * @return whether reusable source context is linked
+	 */
 	public boolean hasSharedContext() {
 		return sharedContext != null;
 	}
 
+	/**
+	 * @return whether the question belongs to a common source identity
+	 */
 	public boolean hasSourceQuestion() {
 		return sourceQuestion != null;
 	}
@@ -249,8 +283,8 @@ public class Question {
 	}
 
 	/**
-	 * Returns whether legacy metadata indicates that shared context is required but
-	 * no shared context has yet been linked.
+	 * Returns whether the historical legacy hint requires shared context and none
+	 * is linked. This does not consult the source question's preamble status.
 	 *
 	 * @return {@code true} when shared context still requires resolution
 	 */
@@ -259,7 +293,7 @@ public class Question {
 	}
 
 	/**
-	 * Associates an answer with this question.
+	 * Associates or replaces this question's in-memory answer without persisting it.
 	 *
 	 * @param answer the answer to associate with the question
 	 * @throws NullPointerException     if {@code answer} is {@code null}

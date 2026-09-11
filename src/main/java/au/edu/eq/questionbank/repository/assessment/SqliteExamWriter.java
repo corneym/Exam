@@ -1,7 +1,5 @@
 package au.edu.eq.questionbank.repository.assessment;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -12,6 +10,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
  * Inserts examination metadata and source-document references into SQLite,
@@ -34,6 +33,62 @@ public final class SqliteExamWriter {
 			throw new NullPointerException("database");
 		}
 		this.database = database;
+	}
+
+	/**
+	 * Finds the single exam for a subject, provider, and year.
+	 *
+	 * @param subject      the persisted subject
+	 * @param providerName the examination provider name
+	 * @param year         the examination year
+	 * @return the matching exam, or {@code null} when none exists
+	 * @throws SQLException             if the lookup fails
+	 * @throws NullPointerException     if {@code subject} is {@code null}
+	 * @throws IllegalArgumentException if provider name is blank, year is invalid,
+	 *                                  or more than one exam matches
+	 */
+	public Exam findExamByProviderAndYear(Subject subject, String providerName, int year) throws SQLException {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (providerName == null || providerName.isBlank()) {
+			throw new IllegalArgumentException("providerName must not be blank");
+		}
+		if (year < 1) {
+			throw new IllegalArgumentException("year must be positive");
+		}
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    e.id AS exam_id,
+						    e.exam_name,
+						    p.id AS provider_id,
+						    p.provider_name
+						FROM exams e
+						JOIN exam_providers p
+						    ON p.id = e.provider_id
+						WHERE e.subject_id = ?
+						  AND p.provider_name = ?
+						  AND e.exam_year = ?
+						ORDER BY e.id
+						""")) {
+			statement.setLong(1, subject.getId());
+			statement.setString(2, providerName);
+			statement.setInt(3, year);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return null;
+				}
+				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
+						result.getString("provider_name"));
+				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, year, result.getString("exam_name"));
+				if (result.next()) {
+					throw new IllegalArgumentException(
+							"More than one exam matches " + providerName + " " + year + " for " + subject.getName());
+				}
+				return exam;
+			}
+		}
 	}
 
 	/**
@@ -233,7 +288,6 @@ public final class SqliteExamWriter {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
 		}
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO exams
 				    (subject_id,

@@ -17,6 +17,8 @@ class SharedQuestionContextTest {
 
 	@Test
 	void rejectsInvalidMetadataAndRegions() {
+		List<SharedQuestionContextRegion> nullRegionList = new ArrayList<>();
+		nullRegionList.add(null);
 		assertAll(
 				() -> assertThrows(IllegalArgumentException.class,
 						() -> new SharedQuestionContext(0, booklet, "Preamble",
@@ -27,8 +29,12 @@ class SharedQuestionContextTest {
 				() -> assertThrows(IllegalArgumentException.class,
 						() -> new SharedQuestionContext(1, booklet, " ",
 								List.of(new SharedQuestionContextRegion(1, 0, 0, 1, 1)))),
+				() -> assertThrows(NullPointerException.class,
+						() -> new SharedQuestionContext(1, booklet, "Preamble", null)),
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> new SharedQuestionContext(1, booklet, "Preamble", List.of())));
+						() -> new SharedQuestionContext(1, booklet, "Preamble", List.of())),
+				() -> assertThrows(NullPointerException.class,
+						() -> new SharedQuestionContext(1, booklet, "Preamble", nullRegionList)));
 	}
 
 	@Test

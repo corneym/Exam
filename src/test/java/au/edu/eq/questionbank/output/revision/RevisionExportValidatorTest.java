@@ -53,7 +53,7 @@ class RevisionExportValidatorTest {
 		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.question,
 				Path.of("assets", "questions", "question-1.png"));
 		RevisionExportValidator validator = new RevisionExportValidator();
-		validator.validate(root, fixture.corpus, List.of(index), List.of(questionAsset), List.of());
+		validator.validate(root, fixture.corpus, List.of(index), List.of(questionAsset), List.of(), List.of());
 	}
 
 	@Test
@@ -71,7 +71,7 @@ class RevisionExportValidatorTest {
 				</html>
 				""");
 		assertThrows(IOException.class, () -> new RevisionExportValidator().validate(root, fixture.emptyCorpus,
-				List.of(index), List.of(), List.of()));
+				List.of(index), List.of(), List.of(), List.of()));
 	}
 
 	@Test
@@ -82,7 +82,7 @@ class RevisionExportValidatorTest {
 		Path index = root.resolve("index.html");
 		Files.writeString(index, "<html><body></body></html>");
 		assertThrows(IOException.class, () -> new RevisionExportValidator().validate(root, fixture.corpus,
-				List.of(index), List.of(), List.of()));
+				List.of(index), List.of(), List.of(), List.of()));
 	}
 
 	@Test
@@ -100,7 +100,7 @@ class RevisionExportValidatorTest {
 				</html>
 				""");
 		assertThrows(IOException.class, () -> new RevisionExportValidator().validate(root, fixture.emptyCorpus,
-				List.of(index), List.of(), List.of()));
+				List.of(index), List.of(), List.of(), List.of()));
 	}
 
 	@Test
@@ -121,7 +121,7 @@ class RevisionExportValidatorTest {
 				</html>
 				""");
 		assertThrows(IOException.class, () -> new RevisionExportValidator().validate(root, fixture.emptyCorpus,
-				List.of(index), List.of(), List.of()));
+				List.of(index), List.of(), List.of(), List.of()));
 	}
 
 	private static final class Fixture {
@@ -152,8 +152,8 @@ class RevisionExportValidatorTest {
 							currentUnit, currentTopic, currentDescriptor));
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
 			QuestionRetrievalService withQuestion = new QuestionRetrievalService(
-					currentNodes -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
-			QuestionRetrievalService empty = new QuestionRetrievalService(currentNodes -> List.of(), expansion);
+					_ -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
+			QuestionRetrievalService empty = new QuestionRetrievalService(_ -> List.of(), expansion);
 			corpus = new RevisionCorpusBuilder(repository, withQuestion).build(chemistry);
 			emptyCorpus = new RevisionCorpusBuilder(repository, empty).build(chemistry);
 		}

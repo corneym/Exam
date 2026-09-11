@@ -5,6 +5,8 @@ package au.edu.eq.questionbank;
  */
 public class ConfigurationException extends RuntimeException {
 
+	private static final long serialVersionUID = 1L;
+
 	/**
 	 * Creates a configuration exception with a user-facing explanation.
 	 *

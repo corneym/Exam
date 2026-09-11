@@ -33,10 +33,16 @@ public final class RevisionQuestionAsset {
 		this.relativePath = normalizedPath;
 	}
 
+	/**
+	 * @return the question represented by this image
+	 */
 	public Question getQuestion() {
 		return question;
 	}
 
+	/**
+	 * @return the normalized image path relative to the export root
+	 */
 	public Path getRelativePath() {
 		return relativePath;
 	}

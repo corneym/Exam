@@ -92,7 +92,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void deterministicOrderingUsesQuestionIdentifier() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> List.of(
+		QuestionRetrievalRepository repository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.secondQuestion, fixture.currentDescriptor),
 				new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.currentDescriptor));
 		QuestionRetrievalService service = fixture.createService(repository);
@@ -105,7 +105,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void duplicateMatchesProduceOneQuestionResult() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> List.of(
+		QuestionRetrievalRepository repository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.currentDescriptor),
 				new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.currentDescriptor),
 				new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.currentDescriptor));
@@ -119,7 +119,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void emptyRepositoryResultProducesEmptySearchResult() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> List.of();
+		QuestionRetrievalRepository repository = _ -> List.of();
 		QuestionRetrievalService service = fixture.createService(repository);
 		assertEquals(List.of(), service.findQuestionsApplicableTo(fixture.currentDescriptor));
 	}
@@ -127,7 +127,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void emptyTopicProducesEmptyResultWithoutRepositoryCall() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> {
+		QuestionRetrievalRepository repository = _ -> {
 			throw new AssertionError("Question repository should not be called");
 		};
 		QuestionRetrievalService service = fixture.createService(repository);
@@ -137,7 +137,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void historicalClassificationRemainsAuthoritativeProvenance() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> List
+		QuestionRetrievalRepository repository = _ -> List
 				.of(new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.currentDescriptor));
 		QuestionRetrievalService service = fixture.createService(repository);
 		List<QuestionRetrievalResult> results = service.findQuestionsApplicableTo(fixture.currentDescriptor);
@@ -150,7 +150,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void rejectsHistoricalSearchNode() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> List.of();
+		QuestionRetrievalRepository repository = _ -> List.of();
 		QuestionRetrievalService service = fixture.createService(repository);
 		assertThrows(IllegalArgumentException.class,
 				() -> service.findQuestionsApplicableTo(fixture.historicalDescriptor));
@@ -159,7 +159,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void rejectsNullDependenciesAndSearchNode() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> List.of();
+		QuestionRetrievalRepository repository = _ -> List.of();
 		CurriculumSearchNodeExpansionService expansionService = fixture.createExpansionService();
 		assertThrows(NullPointerException.class, () -> new QuestionRetrievalService(null, expansionService));
 		assertThrows(NullPointerException.class, () -> new QuestionRetrievalService(repository, null));
@@ -171,7 +171,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void rejectsRepositoryMatchForUnrequestedNode() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> List
+		QuestionRetrievalRepository repository = _ -> List
 				.of(new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.otherCurrentDescriptor));
 		QuestionRetrievalService service = fixture.createService(repository);
 		assertThrows(IllegalStateException.class, () -> service.findQuestionsApplicableTo(fixture.currentDescriptor));
@@ -180,7 +180,7 @@ class QuestionRetrievalServiceTest {
 	@Test
 	void rejectsRepositoryReturningNullList() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository repository = currentNodes -> null;
+		QuestionRetrievalRepository repository = _ -> null;
 		QuestionRetrievalService service = fixture.createService(repository);
 		assertThrows(IllegalStateException.class, () -> service.findQuestionsApplicableTo(fixture.currentDescriptor));
 	}

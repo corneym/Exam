@@ -24,6 +24,13 @@ public final class RevisionQuestionAssetRenderer {
 	private final PdfStore pdfStore;
 	private final QuestionExtractor questionExtractor;
 
+	/**
+	 * Creates an asset renderer using the configured source PDF store.
+	 *
+	 * @param pdfStore          the source path resolver
+	 * @param questionExtractor the PDF region renderer
+	 * @throws NullPointerException if either dependency is null
+	 */
 	public RevisionQuestionAssetRenderer(PdfStore pdfStore, QuestionExtractor questionExtractor) {
 		if (pdfStore == null) {
 			throw new NullPointerException("pdfStore");
@@ -46,10 +53,21 @@ public final class RevisionQuestionAssetRenderer {
 	 *                     written
 	 */
 	public List<RevisionQuestionAsset> render(RevisionCorpus corpus, Path outputRoot) throws IOException {
-		return render(corpus, outputRoot, (completed, total) -> {
+		return render(corpus, outputRoot, (_, _) -> {
 		});
 	}
 
+	/**
+	 * Renders unique question-body images required by a revision corpus. Shared
+	 * context is rendered separately by {@link RevisionSharedContextAssetRenderer}.
+	 *
+	 * @param corpus     the revision corpus
+	 * @param outputRoot the generated-site root
+	 * @param progress   completed and total asset counts, invoked on the caller
+	 *                   thread
+	 * @return the generated assets
+	 * @throws IOException if a source cannot be read or an image cannot be written
+	 */
 	List<RevisionQuestionAsset> render(RevisionCorpus corpus, Path outputRoot, BiConsumer<Integer, Integer> progress)
 			throws IOException {
 		if (corpus == null) {
@@ -83,7 +101,7 @@ public final class RevisionQuestionAssetRenderer {
 						"Question source PDF is not available for question " + question.getId() + ": " + sourcePdf);
 			}
 			try {
-				questionExtractor.extractQuestion(sourcePdf, question, outputFile.toFile());
+				questionExtractor.extractQuestionBody(sourcePdf, question, outputFile.toFile());
 			} catch (Exception e) {
 				throw new IOException("Could not render question " + question.getId() + " from " + sourcePdf, e);
 			}

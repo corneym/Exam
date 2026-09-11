@@ -62,7 +62,7 @@ class RevisionCorpusBuilderTest {
 	@Test
 	void buildsCompleteCurrentHierarchyInDisplayOrder() {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createBuilder(currentNodes -> List.of()).build(fixture.chemistry);
+		RevisionCorpus corpus = fixture.createBuilder(_ -> List.of()).build(fixture.chemistry);
 		assertSame(fixture.chemistry, corpus.getSubject());
 		assertSame(fixture.currentVersion, corpus.getSyllabusVersion());
 		assertEquals(List.of(fixture.firstUnit, fixture.secondUnit), curriculumNodes(corpus.getRootNodes()));
@@ -79,7 +79,7 @@ class RevisionCorpusBuilderTest {
 	@Test
 	void duplicateMatchesProduceOnePlacementAndQuestionsAreOrderedById() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.laterQuestion, fixture.directDescriptor),
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor),
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor));
@@ -93,7 +93,7 @@ class RevisionCorpusBuilderTest {
 	@Test
 	void emptyCorpusHasZeroStatistics() {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createBuilder(currentNodes -> List.of()).build(fixture.chemistry);
+		RevisionCorpus corpus = fixture.createBuilder(_ -> List.of()).build(fixture.chemistry);
 		RevisionCorpusStatistics statistics = corpus.getStatistics();
 		assertEquals(0, statistics.getApplicablePlacements());
 		assertEquals(0, statistics.getUniqueApplicableQuestions());
@@ -107,7 +107,7 @@ class RevisionCorpusBuilderTest {
 	@Test
 	void placementExposesRenderabilityAnswerAndPreambleState() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.subtopicQuestion, fixture.currentSubtopic),
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor));
 		RevisionCorpus corpus = fixture.createBuilder(retrievalRepository).build(fixture.chemistry);
@@ -128,7 +128,7 @@ class RevisionCorpusBuilderTest {
 	@Test
 	void placesQuestionAtEachReturnedCurrentApplicabilityNode() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor),
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.subtopicDescriptor),
 				new QuestionApplicabilityMatch(fixture.subtopicQuestion, fixture.currentSubtopic));
@@ -148,7 +148,7 @@ class RevisionCorpusBuilderTest {
 	@Test
 	void rebuildingSameCorpusProducesSameRevisionNumbers() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor),
 				new QuestionApplicabilityMatch(fixture.laterQuestion, fixture.directDescriptor));
 		RevisionCorpusBuilder builder = fixture.createBuilder(retrievalRepository);
@@ -173,7 +173,7 @@ class RevisionCorpusBuilderTest {
 				List.of(firstCurrent, secondCurrent), List.of());
 		CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 				curriculumRepository);
-		QuestionRetrievalService retrievalService = new QuestionRetrievalService(currentNodes -> List.of(),
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(_ -> List.of(),
 				expansionService);
 		RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
 		assertThrows(IllegalStateException.class, () -> builder.build(chemistry));
@@ -187,7 +187,7 @@ class RevisionCorpusBuilderTest {
 				List.of(historicalVersion), List.of());
 		CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 				curriculumRepository);
-		QuestionRetrievalService retrievalService = new QuestionRetrievalService(currentNodes -> List.of(),
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(_ -> List.of(),
 				expansionService);
 		RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
 		assertThrows(IllegalStateException.class, () -> builder.build(chemistry));
@@ -196,7 +196,7 @@ class RevisionCorpusBuilderTest {
 	@Test
 	void revisionNumbersFollowDeterministicCorpusTraversal() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.laterQuestion, fixture.directDescriptor),
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor),
 				new QuestionApplicabilityMatch(fixture.subtopicQuestion, fixture.currentSubtopic),
@@ -221,7 +221,7 @@ class RevisionCorpusBuilderTest {
 	@Test
 	void statisticsDistinguishUniqueQuestionsFromPlacements() {
 		Fixture fixture = new Fixture();
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor),
 				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.subtopicDescriptor),
 				new QuestionApplicabilityMatch(fixture.subtopicQuestion, fixture.currentSubtopic),

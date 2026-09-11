@@ -1,16 +1,32 @@
 # Exam Question Bank — Current Status
 
-> Authoritative status at 6 September 2026.
+> Authoritative project status at 11 September 2026.
 >
-> Repository evidence inspected through the 6 September 2026 `feature/scorm-output` state. Where a separate data artifact is not established as committed/imported into the application, that limitation is stated explicitly.
+> Current development branch: `feature/preamble-capture`.
+>
+> Final Sprint 07 merge-readiness review performed: 11 September 2026.
 
 ## Status summary
 
-The Exam Question Bank is a working Java/JavaFX desktop application with SQLite persistence, managed source PDFs, versioned curriculum data, PDF-region question/answer capture, legacy metadata import, directional curriculum mapping and current-curriculum question retrieval.
+The Exam Question Bank is a working Java/JavaFX desktop application backed by
+SQLite. It manages original exam and marking PDFs, versioned curriculum data,
+legacy metadata import, question and answer capture from PDF regions,
+historical-to-current curriculum mapping, current-curriculum retrieval,
+revision HTML generation, SCORM 1.2 packaging, backup/restore, and correction of
+persisted Questions and Answers.
 
-The application is no longer an Excel-backed generation pipeline. Excel is an import/exchange format; SQLite is the live datastore. Original exam and marking PDFs are authoritative source material. Rendered/cropped images are derived.
+Sprint 07 implementation and closeout are complete on
+`feature/preamble-capture`. The sprint introduced persisted
+source-question identity and reusable shared question context, preamble-aware
+capture, multipart presentation semantics, syllabus-sensitive classification,
+Question/Answer correction, capture-workflow protection, and a substantial set
+of UI and responsiveness improvements.
 
-Completed sprint work currently extends through **Sprint 06 — SCORM Package Generation and QLearn Validation**. The application now generates SCORM 1.2 revision packages directly from the tested Sprint 05 static-content pipeline, and real QLearn import/launch acceptance has been completed.
+The application is no longer an Excel-backed generation pipeline. Excel is an
+import/exchange format. SQLite is the live datastore. Original PDFs are the
+authoritative source material; extracted/cropped images are derived content.
+
+The latest supported SQLite schema version is **6**.
 
 ## Implemented and current
 
@@ -18,21 +34,21 @@ Completed sprint work currently extends through **Sprint 06 — SCORM Package Ge
 
 **IMPLEMENTED / CURRENT**
 
-- Maven-based Java application configured for Java 25.
-- Proper Java module `au.edu.eq.questionbank`.
+- Maven-based Java application using Java 25.
+- Java module `au.edu.eq.questionbank`.
 - JavaFX desktop UI.
-- Apache PDFBox PDF handling/extraction.
-- SQLite runtime database.
-- SQLite foreign-key enforcement.
-- Transactional schema migrations.
-- JUnit 6 automated tests and TestFX workflow coverage.
+- Apache PDFBox for PDF loading, rendering and region extraction.
+- SQLite persistence with foreign-key enforcement.
+- Transactional schema creation and migration.
+- JUnit and TestFX coverage.
 - Repository/service/importer/PDF/output/UI package separation.
+- Repository guidance for Codex in `AGENTS.md`.
 
 ### Configuration and managed data root
 
 **IMPLEMENTED / CURRENT**
 
-One configured `data.root` derives managed locations for:
+One configured `data.root` derives managed application locations including:
 
 ```text
 pdf/
@@ -40,21 +56,33 @@ curriculum/
 questionbank.db
 ```
 
-Legacy configuration is still readable. Options can change the root, taking effect after restart.
+Persisted document paths are portable paths beneath the managed data root rather
+than machine-specific absolute paths.
 
-Persisted managed documents use portable paths beneath the configured data root rather than machine-specific absolute paths.
+Legacy configuration remains readable. Data-root changes take effect after
+restart.
 
-### PDF viewer and managed exam import
+### Database schema and persistence
 
-**IMPLEMENTED / CURRENT**
+**IMPLEMENTED / CURRENT — schema version 6**
 
-- File -> Open -> PDF can view an arbitrary external PDF without importing it.
-- Viewer mode disables region capture and does not replace the active exam.
-- Closing viewer mode restores the prior managed PDF/page where applicable.
-- Exam Import owns subject/exam metadata.
-- An external exam PDF selected for persistence is copied into the managed PDF hierarchy before it is stored.
-- Changing Classification to a subject incompatible with the active exam invalidates the active exam/booklet rather than leaving inconsistent state.
-- Help -> Version Information exposes build/runtime, SQLite and schema information.
+The schema supports:
+
+- subjects and syllabus versions;
+- generic curriculum hierarchy nodes;
+- examination providers, exams and booklets;
+- managed source documents;
+- questions and ordered question regions;
+- answer files, answers and ordered answer regions;
+- historical-to-current curriculum mappings;
+- persisted `SourceQuestion` identity;
+- persisted `SharedQuestionContext` and ordered shared-context regions;
+- nullable Question links to SourceQuestion/shared context;
+- persisted source-question `preamble_status` with `UNKNOWN`, `NONE` and
+  `PRESENT` states.
+
+Migration preserves existing data and does not infer multipart/shared-context
+relationships merely from question-code naming patterns.
 
 ### Assessment domain
 
@@ -64,157 +92,188 @@ Persisted managed documents use portable paths beneath the configured data root 
 Subject
   -> Exam
        -> ExamBooklet
+            -> SourceQuestion (optional grouping identity)
             -> Question
                  -> ordered QuestionRegion(s)
-                 -> optional Answer / marking material
+                 -> optional SharedQuestionContext
+                 -> optional Answer
+                      -> text and/or ordered AnswerRegion(s)
 ```
 
-- A `Question` belongs to one `ExamBooklet`.
-- Its `Exam` is obtained through that booklet.
-- Natural identity is `(booklet_id, question_code)`.
-- Question codes are text and support values such as `21a`.
-- Marks are positive whole numbers.
-- Legacy-imported questions may exist with zero question regions while capture is pending.
-- Normal manual capture requires at least one question region before save.
+Current invariants include:
 
-### Current original-classification model
+- a Question belongs to one ExamBooklet;
+- Question natural identity is `(booklet_id, question_code)`;
+- question codes are text and support values such as `21a`;
+- marks are positive whole numbers;
+- Question classification is one original Subtopic or Descriptor;
+- legacy-imported Questions may exist with zero ordinary regions while capture
+  is incomplete;
+- normal manual Question capture requires at least one ordinary region.
 
-**IMPLEMENTED / CURRENT — one best-fit classification.**
+### Original classification model
 
-The current `Question` model stores one original curriculum classification, which must be a Subtopic or Descriptor.
+**IMPLEMENTED / CURRENT — one best-fit classification**
 
-**KNOWN HISTORICAL REQUIREMENT / DESIGN GAP.**  
-The 17 August Neap classification exercise demonstrated at least one real question reasonably classified against three descriptors. An early many-to-many `Question <-> Descriptor` design was therefore proposed. The current one-best-fit model does not implement that direct multi-classification requirement, and no available history establishes that the requirement was deliberately withdrawn. This should be resolved explicitly rather than silently assumed away.
+A Question stores one original curriculum classification at Subtopic or
+Descriptor level.
 
-### PDF-region question storage
+A historical requirement remains unresolved: some real questions may reasonably
+belong to several original descriptors. Whether direct multi-classification is
+required remains a design decision in the backlog.
 
-**IMPLEMENTED / CURRENT**
-
-`QuestionRegion` stores:
-
-- source `ExamBooklet`;
-- one-based page number;
-- normalized `x`, `y`, `width`, `height`;
-- meaningful list order.
-
-Coordinates are independent of render DPI/zoom. The PDF boundary performs any zero-based page conversion required by PDFBox.
-
-### Question capture UI
+### Versioned curriculum and mapping
 
 **IMPLEMENTED / CURRENT**
 
-- rendered PDF page viewer;
-- draggable current selection;
-- normalized region creation;
-- current-selection preview generated directly from PDFBox output;
-- accepted question-region list;
-- multiple ordered regions;
-- per-region Remove;
-- dynamic accepted-region area.
+- Subject and SyllabusVersion persistence.
+- Unit, Topic, Subtopic and Descriptor hierarchy.
+- Curriculum Excel import.
+- Current/historical syllabus selection.
+- Historical-to-current mapping.
+- Descriptor -> Descriptor and Subtopic -> Subtopic mapping.
+- One-to-many mappings.
+- Confirmed/suggested/no-match/unreviewed semantics.
+- Only confirmed mappings affect retrieval.
+- Original historical classification remains provenance.
+- Current applicability is derived rather than overwriting original
+  classification.
 
-A separate permanent combined-question preview area was intentionally removed from the final capture interaction.
+Chemistry remains the most complete development dataset. Full current-version,
+mapping and question-corpus parity across every science subject is not yet
+established.
 
-### Answer capture
+A separate 5 September Chemistry 2019 -> 2025 descriptor-mapping workbook exists
+as a reviewed data artefact, but its complete reconciliation with application
+SQLite mapping records remains separate work.
 
-**IMPLEMENTED / CURRENT**
-
-- explicit `Answer`, `AnswerFile`, `AnswerRegion` model;
-- text-only, region-only or combined answers;
-- current answer-selection preview;
-- accepted answer-region thumbnails;
-- multiple answer regions;
-- per-region Remove;
-- answer persistence;
-- answer preview clearing on page change/acceptance.
-
-MCQ letters can be represented as text-only answers.
-
-### Subject, exam and question metadata
+### Managed PDF workflows
 
 **IMPLEMENTED / CURRENT**
 
-- subject-neutral domain rather than Chemistry-specific core code;
-- exam provider/year/booklet relationships;
-- managed source documents;
+- arbitrary external PDF viewer mode;
+- managed exam-PDF import;
+- managed marking-guide/answer-PDF import;
+- separate exam and answer PDF sessions;
+- page navigation;
+- proportional region selection;
+- full-width selection mode;
+- large same-page anchored selection for shared-preamble capture;
+- restoration/switching between exam and answer documents where appropriate.
+
+PDF loading used during post-save Answer transitions now has asynchronous support
+so answer persistence does not wait for PDF opening/rendering on the FX thread.
+
+### Question capture
+
+**IMPLEMENTED / CURRENT**
+
+Question capture supports:
+
+- rendered source-PDF page selection;
+- multiple ordered ordinary Question regions;
+- per-region removal;
 - question code and marks;
-- historical curriculum classification;
-- optional answer material;
-- legacy `preambleCaptureRequired` hint.
+- syllabus-sensitive classification;
+- Descriptor-level controls where present in the selected syllabus branch;
+- valid Subtopic stopping points where the hierarchy permits them;
+- required Descriptor selection where a Topic has direct Descriptor children;
+- imported legacy Questions with incomplete region state;
+- editing/correction of an existing persisted Question while retaining its ID;
+- preservation of an existing Answer when the Question is corrected;
+- source-question assignment;
+- shared-context link/capture/reuse;
+- explicit unresolved shared-preamble status;
+- automatic preamble workflow for the current single-region case;
+- safe clearing/ownership of transient selections;
+- confirmation/guarding around destructive transitions;
+- resizable capture workspace;
+- asynchronous Question save/validation/refresh work so repository I/O does not
+  block the FX thread.
 
-### Versioned curriculum
+### SourceQuestion and shared context
+
+**IMPLEMENTED / CURRENT — Sprint 07**
+
+`SourceQuestion` provides explicit persisted multipart identity. It is separate
+from `SharedQuestionContext`.
+
+`SharedQuestionContext` represents reusable material such as a preamble, table,
+graph or diagram. It contains one or more ordered PDF source regions and may be
+linked to multiple Questions in the same booklet.
+
+Important semantics:
+
+- multipart membership is persisted explicitly;
+- shared-context reuse is persisted explicitly;
+- multipart grouping and shared-context identity are not the same relationship;
+- ordinary multi-region Questions remain ordinary Questions;
+- recognised multipart question codes may be conservatively used during
+  capture/backfill to create persisted `SourceQuestion` identity;
+- shared-context relationships are never inferred from question codes alone;
+- legacy preamble evidence is preserved rather than rewritten away;
+- shared context can be reused by later parts after initial capture.
+
+**CURRENT WORKFLOW LIMIT:** automatic imported-question preamble capture currently
+finishes after one accepted shared-context region. The persistence model supports
+multiple ordered shared-context regions, but automatic multi-page capture is
+deferred to the backlog.
+
+### Answer capture and correction
 
 **IMPLEMENTED / CURRENT**
 
-- Subject and `SyllabusVersion` data;
-- generic curriculum nodes;
-- Unit, Topic, Subtopic and Descriptor hierarchy;
-- curriculum Excel import;
-- current/historical syllabus selection;
-- Chemistry 2019 and 2025 curriculum workbooks;
-- Physics 2019 curriculum data in the repository.
+Answer capture supports:
 
-**CURRENT LIMIT.**  
-Chemistry is the first and most complete development dataset. Complete current-version/mapping/question-corpus parity for every science subject is not established.
+- an unanswered-question queue for ordinary capture;
+- Question marks shown during Answer capture;
+- text-only, region-only or combined Answers;
+- multiple ordered Answer regions;
+- current selection and accepted-region previews;
+- per-region removal;
+- A/B/C/D multiple-choice capture where currently inferred from booklet naming;
+- persisted Answer correction/editing reached through Question Search;
+- stable Question/Answer relationships while editing;
+- asynchronous Answer persistence;
+- automatic loading/reuse of a registered marking-guide PDF;
+- asynchronous post-save transition to the next Answer PDF;
+- retention of a committed Answer even when loading the next PDF fails;
+- hiding the Answer PDF chooser/decorative row when the selected Question's
+  answer PDF is already known;
+- exposing the PDF chooser when no registered answer PDF is available.
 
-### Historical -> current curriculum mapping
-
-**IMPLEMENTED / CURRENT**
-
-- explicit historical-to-current direction;
-- Descriptor -> Descriptor mapping;
-- Subtopic -> Subtopic mapping;
-- one-to-many mappings;
-- confirmed/suggested/no-match/unreviewed semantics;
-- only confirmed mappings affect retrieval;
-- original historical classification remains provenance;
-- current applicability is derived;
-- Subtopic mapping does not invent Descriptor-level precision.
-
-### 5 September Chemistry mapping workbook
-
-**IMPLEMENTED AS A DATA ARTIFACT; APPLICATION INTEGRATION NOT ESTABLISHED.**
-
-A separate `Chemistry_2019_to_2025_Descriptor_Mapping.xlsx` was produced from supplied 2019/2025 workbooks with normalized pairwise relationships and coverage sheets.
-
-Recorded counts:
-
-- 98 source descriptors;
-- 120 target descriptors;
-- 57 High, 21 Medium, 9 Low confidence;
-- 11 source descriptors with no direct target;
-- 23 target descriptors with no direct predecessor.
-
-Low/no-match mappings require manual review; Medium mappings require checking.
-
-The application already has curriculum-mapping functionality, but the available history does **not** establish that this new 5 September workbook has been imported into or reconciled with the SQLite mapping records.
+The Answer pane is intentionally an unanswered queue for normal capture.
+Already-answered Questions are edited through Question Search rather than by
+adding a second selector mode to the Answer pane.
 
 ### Legacy metadata import
 
-**IMPLEMENTED / CURRENT — Sprint 01 complete**
+**IMPLEMENTED / CURRENT**
 
-- imports legacy Excel question metadata;
-- reconstructs source Exam/ExamBooklet relationships;
-- treats question codes as text;
-- preserves historical classification;
-- imports MCQ answer letters when supplied;
-- supports metadata-only questions with zero regions;
-- supports managed source-document resolution/import;
-- uses idempotent/conflict-aware persistence;
-- does not create placeholder regions or fake empty answers.
+Legacy import supports:
 
-### Preamble/shared-context state
+- Excel question metadata import;
+- exam/provider/year/booklet reconstruction;
+- text question codes;
+- preserved historical classification;
+- MCQ answer letters when supplied;
+- metadata-only Questions with zero captured regions;
+- managed source-document handling;
+- idempotent/conflict-aware persistence;
+- preamble evidence without guessed grouping;
+- missing-booklet discovery and import;
+- optional marking-guide registration while importing missing booklets;
+- marking-guide registration even when all required question booklets already
+  exist.
 
-**IMPLEMENTED / CURRENT — limited.**  
-The current persistence model retains a legacy `preambleCaptureRequired` hint.
+The importer does not create fake regions, fake answers or guessed
+SourceQuestion/shared-context relationships.
 
-**NOT CURRENTLY IMPLEMENTED — generalized shared-context model.**  
-There is no established persisted `QuestionPreamble` entity, no generalized dependency graph between part questions and no confirmed “pin region” state. Long-term shared-context/multipart semantics remain backlog work.
+### Question retrieval and Search Questions
 
-### Current-curriculum retrieval
+**IMPLEMENTED / CURRENT — Sprint 03 foundation retained**
 
-**IMPLEMENTED / CURRENT — Sprint 03 complete**
-
-Search scopes:
+Retrieval scopes include:
 
 ```text
 Subject
@@ -226,227 +285,193 @@ Descriptor
 
 Retrieval includes:
 
-- questions directly classified to the current curriculum;
-- historical questions connected through confirmed mappings;
-- explicit hierarchy expansion;
+- Questions directly classified to current curriculum;
+- historical Questions connected by confirmed mappings;
+- hierarchy expansion;
 - duplicate prevention;
 - original provenance;
 - SQLite repository/service retrieval;
 - asynchronous JavaFX search;
 - stale-result/lifecycle protection;
-- question details and reconstructed source preview.
+- Question details and reconstructed Question preview;
+- linked `SharedQuestionContext` regions rendered before the selected
+  Question's ordinary regions without automatically displaying sibling parts;
+- existing Question and Answer correction entry points.
 
-The completed sprint quality gate recorded the automated suite green and manual exercise against real stored questions.
+
+
+### Revision corpus and HTML output
+
+**IMPLEMENTED / CURRENT — Sprint 05 plus Sprint 07 semantics**
+
+The application exports a deterministic static revision website for a Subject's
+current syllabus.
+
+Implemented behaviour includes:
+
+- transient current-curriculum revision-corpus generation;
+- deterministic hierarchy/question ordering;
+- reusable generated assets;
+- ordered Question and Answer region rendering;
+- Subject, Unit, Topic and Subtopic pages;
+- Descriptor-mode presentation where applicable;
+- native answer disclosure;
+- source attribution and original-classification provenance;
+- omission/reporting of zero-region metadata-only Questions;
+- staged generation and validation before publication;
+- background generation and progress reporting;
+- collision-safe export-directory naming;
+- Sprint 07 presentation grouping by persisted SourceQuestion;
+- shared context rendered with applicable Question parts;
+- multipart marks derived from included parts rather than persisted separately;
+- independent Questions sharing context remaining independent Questions.
+
+Real Chemistry browser acceptance was completed successfully during Sprint 05.
+
+### SCORM 1.2 output
+
+**IMPLEMENTED / CURRENT — Sprint 06 plus Sprint 07 presentation changes**
+
+The application generates SCORM 1.2 revision ZIPs from the static revision
+content pipeline.
+
+Current package profile includes:
+
+- one organisation, one item and one SCO;
+- launch from root `index.html`;
+- deterministic manifest identifiers/file ordering;
+- complete learning-content file inventory;
+- bundled schema support;
+- package/reference validation before publication;
+- portable relative paths;
+- no authoritative source PDFs copied into the package;
+- deterministic ZIP structure;
+- background JavaFX export workflow.
+
+A real generated Chemistry package was imported into QLearn and launched
+successfully during Sprint 06.
+
+Sprint 07 altered presentation content, not the underlying SCORM packaging
+architecture.
 
 ### Backup, restore and data safety
 
-**IMPLEMENTED / CURRENT — Sprint 04 complete**
-
-Sprint 04 delivered:
+**IMPLEMENTED / CURRENT — Sprint 04**
 
 - versioned backup archives;
 - SQLite-consistent snapshots;
 - manual full backup;
-- automatic database-only backup on normal application close;
+- automatic database-only backup on normal close;
 - bounded automatic-backup retention;
 - validated database-only and full restore;
 - pre-restore safety backup;
 - rollback after failed destructive restore;
-- migration-compatibility validation before restore;
-- backup archive path/content validation;
-- backup/restore filesystem-layout hardening;
+- migration-compatibility validation;
+- archive path/content validation;
+- filesystem-layout hardening;
 - restart boundary after successful or partially destructive restore.
 
-The completed sprint included focused service, SQLite and JavaFX lifecycle tests plus manual full-backup and restore acceptance testing.
-
-### Testing and development workflow
+### UI workflow improvements completed in Sprint 07
 
 **IMPLEMENTED / CURRENT**
 
-- feature branches and logical commits;
-- Maven clean/full-suite checks at major boundaries;
-- SQLite integration tests where persistence crosses layers;
-- TestFX coverage for UI workflow/regressions;
-- manual visual verification where needed;
-- merge-readiness review for substantial branches;
-- `AGENTS.md` repository guidance for Codex;
-- project chats used for architectural/schema decisions, with Codex used selectively for repository-wide review/refactors.
+- resizable PDF/capture workspace;
+- explicit selection ownership between Question, shared-context and Answer
+  capture;
+- large same-page anchored selections;
+- visible required-preamble messaging;
+- Add Preamble -> Add Region workflow transition;
+- shared preamble reuse for later parts;
+- Question Search status cleared when the dialog closes;
+- Question correction preserving existing Answer;
+- Answer correction preserving existing Question;
+- multiple-choice button selection;
+- ordinary Answer PDF-region capture;
+- stable Answer-region preview sizing;
+- Question and Answer save work moved off blocking FX-thread paths;
+- automatic registered Answer PDF reuse;
+- Answer PDF chooser controls suppressed when unnecessary.
 
-Known branch examples include:
+## Current branch and Sprint 07 closeout
 
-- `feature/pdf-region-selection`
-- `feature/question-metadata`
-- `feature/question-answers`
-- `refactor/application-structure`
-- `feature/menu-bar`
-- `feature/syllabus-version-selection`
-- `feature/legacy-metadata-import`
-- `feature/curriculum-applicability`
-- `feature/question-retrieval`
-- `feature/backup-restore`
-- `feature/html-output`
-- `feature/scorm-output`
+`feature/preamble-capture` is the active feature branch.
 
-## Implemented foundation, but not the final product feature
+Sprint 07 implementation, documentation consolidation and final
+branch-versus-`main` merge-readiness review are complete.
 
-### Revision corpus and static HTML output
+The final review identified one edit-transition defect: changing a multipart
+Question to a non-multipart question code could retain its old `SourceQuestion`
+and shared-context relationships. The capture service was corrected so those
+relationships are cleared, with regression coverage for the transition.
 
-**IMPLEMENTED / CURRENT — Sprint 05 complete.**
+Final verification includes:
 
-The application can export one Subject's current syllabus as a deterministic static revision website.
+- standard Maven test suite green;
+- full headless TestFX/UI suite green;
+- Javadoc/doclint green;
+- manual Sprint 07 acceptance complete.
 
-Implemented behaviour includes:
+No known Sprint 07 merge blocker remains.
 
-- transient current-curriculum `RevisionCorpus` generation;
-- reuse of Sprint 03 current-applicability semantics;
-- deterministic curriculum and question ordering;
-- unique rendered question assets shared across repeated placements;
-- ordered answer-region assets;
-- generated Subject, Unit, Topic and Subtopic pages;
-- selectable Subtopics where the Topic hierarchy contains Subtopics;
-- direct Subtopic question placement;
-- omission of empty Descriptor sections;
-- Descriptor-mode Topic rendering where applicable;
-- generated revision numbering for renderable placements;
-- source attribution and original-classification provenance;
-- native HTML answer disclosure;
-- explicit missing-answer presentation;
-- omission and statistics for zero-region metadata-only questions;
-- staged generation;
-- generated-reference validation;
-- safe publication only after successful validation;
-- portable relative links;
-- no source PDFs copied into the static export;
-- JavaFX Subject/destination workflow;
-- background generation;
-- genuine question/answer progress reporting;
-- success/failure summaries;
-- collision-safe export-directory naming.
+## Active backlog themes
 
-The earlier `HtmlQuestionRenderer` remains a small proof/foundation class; the production revision workflow is implemented separately under the revision corpus/output packages.
+The authoritative deferred-work list is `docs/design/backlog.md`.
 
-Real Chemistry browser acceptance was completed successfully on 6 September 2026.
+Current major deferred themes include:
 
-### PDF/LaTeX output
-
-**IMPLEMENTED — legacy application only.**  
-The predecessor generated LaTeX and invoked an external executable for PDF generation.
-
-**PROPOSED — current application later.**  
-For printable current-generation output, the recorded preferred approach is direct clipping of original PDF pages in LaTeX (or an equivalent vector-preserving method), rather than using rasterized intermediate question images.
-
-### SCORM
-
-**IMPLEMENTED / CURRENT — Sprint 06 complete.**
-
-The application can generate a complete SCORM 1.2 revision ZIP directly from the existing static revision-content pipeline.
-
-Implemented behaviour includes:
-
-- SCORM 1.2 packaging;
-- one organisation, one item and one SCO resource;
-- launch from root `index.html`;
-- deterministic manifest identifiers and resource-file ordering;
-- complete `<file>` inventory for every generated learning-content file;
-- portable relative paths;
-- bundled SCORM 1.2 schema support;
-- package validation before ZIP publication;
-- exact checking that generated learning-content files and manifest `<file>` declarations match;
-- rejection of missing, duplicate, absolute, external or package-escaping references;
-- exclusion of authoritative source PDFs;
-- deterministic ZIP entry ordering and timestamps;
-- `imsmanifest.xml` at the ZIP root with no enclosing wrapper directory;
-- temporary-workspace cleanup after success or failure;
-- separate `Export -> Revision SCORM...` JavaFX workflow;
-- background generation with progress and success/failure reporting.
-
-The existing `Export -> Revision HTML...` workflow remains independently available and unchanged as the static-content source layer.
-
-The supported QLearn profile was established empirically using a known-working package and then verified against an application-generated package:
-
-- SCORM 1.2;
-- single SCO;
-- static multi-page HTML navigation;
-- no SCORM runtime/API JavaScript required for the current revision-delivery use case;
-- launch target `index.html`.
-
-A real Chemistry package generated by the application was imported into QLearn and launched successfully on 6 September 2026.
-
-The application deliberately does not reproduce defects found in the older known-working QLearn package. In particular, generated manifests use a valid default organisation reference, matching schema support files and a complete learning-content file inventory.
-
-## Current work / next development focus
-
-### Sprint 06 — SCORM Package Generation and QLearn Validation
-
-**COMPLETE — implemented and real QLearn accepted on 6 September 2026.**
-
-Sprint 06 packaged the tested Sprint 05 static revision content as an application-generated SCORM 1.2 ZIP.
-
-The implementation was validated at three levels:
-
-1. focused automated manifest, package, schema-support and ZIP tests;
-2. end-to-end generation from stored PDF question/answer regions;
-3. successful import and launch of a real application-generated Chemistry package in QLearn.
-
-No change to the Sprint 05 static-content architecture was required for QLearn compatibility.
-
-The next development focus can therefore return to corpus/data completion and richer question-bank management rather than further speculative SCORM work.
-
-## Parallel data/corpus work
-
-**CURRENT / IN PROGRESS AS DATA WORK**
-
-- capture missing question regions;
-- capture missing answer/marking regions;
-- verify historical classifications;
-- review/reconcile 2019 -> 2025 mappings;
-- manually review CHECK/YES rows in the 5 September mapping workbook;
-- determine whether/how that workbook should be imported or reconciled with current SQLite mapping records;
-- resolve missing source documents;
-- test retrieval/preview against larger real datasets.
-
-## Known backlog / unresolved design requirements
-
-**CURRENT BACKLOG**
-
-- dedicated capture-required work queue;
-- generalized shared-context/multipart semantics;
-- explicit decision on multi-descriptor original classification;
-- possible out-of-scope disposition for source questions during exam processing;
+- additional asynchronous Question Search regression coverage;
+- broad capture/audit work queue;
+- reconciliation of the 5 September Chemistry mapping workbook;
+- Answer-pane layout annoyances;
+- multi-page automatic shared-preamble capture;
+- supported editing of persisted exam-specific metadata;
+- clearing a pending selection when Full width selection changes;
+- Question-level response type rather than booklet-name MCQ inference;
+- optional MCQ explanation-region capture;
+- explicit decision on multiple original classifications;
+- question-level applicability exceptions after curriculum mapping;
 - import audit/reconciliation reporting;
-- additional real-world workbook variants;
-- TestFX focus stability and async regression hardening;
-- retrieval-domain/integration hardening;
-- measurement-driven broad-search and preview performance work;
-- mapping workbook/database reconciliation and review completion;
-- later clipboard/drag-drop image-question support;
-- later installer/packaging/deployment design.
+- broader real-world legacy workbook validation;
+- measurement-driven retrieval/preview performance work;
+- later image/clipboard content support;
+- later desktop packaging/deployment work.
 
-## Future output/deployment requirements
+## Future output/deployment work
 
-**PROPOSED**
+**PROPOSED / NOT CURRENT**
 
-- No browser-side PDF.js dependency for the primary static revision package.
-- Printable assessment resources with sequential generated numbering and retained source attribution.
-- Vector-preserving PDF output where practical.
-- `jpackage`-style self-contained desktop packaging.
-- Writable data outside the installed application directory.
-- SharePoint useful for backups/exports/source distribution, not a concurrently edited live SQLite database.
+- current-generation printable exam/revision PDF assembly;
+- vector-preserving clipping of original source PDFs where practical;
+- self-contained `jpackage`-style desktop deployment;
+- broader multi-user/faculty deployment model;
+- clipboard or drag/drop image-question attachments.
 
-## Future non-PDF source content
-
-**PROPOSED / NOT IMPLEMENTED**
-
-A later feature may accept image content from the system clipboard (for example Windows Snipping Tool), and possibly drag/drop PNG/JPEG files. The storage model has not been chosen. OCR is explicitly optional later work rather than a prerequisite.
+A live SQLite database on SharePoint/network sync is not considered a safe
+concurrently edited multi-user datastore.
 
 ## Explicit non-current claims
 
 Do **not** describe the following as current application capabilities:
 
-- completed current-generation Exam Builder;
-- complete multi-subject current-curriculum/mapping corpus for every science;
-- multiple direct original classifications on one `Question`;
-- a finalized generalized shared-preamble/part-dependency model;
-- clipboard/image-attachment question capture;
-- current-generation LaTeX/PDF assembly from clipped source PDFs;
-- self-contained installer/jpackage deployment.
+- completed current-generation Exam Builder/assessment assembly workflow;
+- complete current-curriculum/mapping/question corpus for every science Subject;
+- multiple direct original classifications on one Question;
+- automatic multi-page shared-preamble capture;
+- general dependency graphs between Questions/shared contexts;
+- Question-level response type persisted independently of booklet naming;
+- clipboard/image-attachment Question capture;
+- current-generation LaTeX/PDF assessment assembly;
+- self-contained installer/deployment packaging;
+- safe simultaneous multi-user editing of one shared SQLite database.
+
+## Completed sprint position
+
+- Sprint 01: legacy metadata import foundation — complete.
+- Sprint 02: curriculum applicability/mapping foundations — complete.
+- Sprint 03: current-curriculum Question retrieval/Search Questions — complete.
+- Sprint 04: backup/restore/data safety — complete.
+- Sprint 05: deterministic revision corpus/static HTML output — complete.
+- Sprint 06: SCORM 1.2 generation and QLearn validation — complete.
+- Sprint 07: preamble-aware capture, persisted SourceQuestion/shared context,
+  correction workflows, multipart revision presentation and capture UI redesign
+  — implementation and merge-readiness closeout complete on the feature branch.

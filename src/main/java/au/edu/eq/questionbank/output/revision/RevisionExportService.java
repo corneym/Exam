@@ -11,6 +11,8 @@ import java.util.UUID;
 
 import au.edu.eq.questionbank.service.revision.RevisionCorpus;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlan;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
 /**
  * Coordinates complete static revision export generation.
@@ -24,15 +26,33 @@ public final class RevisionExportService {
 	private final RevisionQuestionAssetRenderer questionAssetRenderer;
 	private final RevisionAnswerAssetRenderer answerAssetRenderer;
 	private final RevisionExportValidator validator;
+	private final RevisionPresentationPlanner presentationPlanner;
+	private final RevisionSharedContextAssetRenderer sharedContextAssetRenderer;
 
-	public RevisionExportService(RevisionCorpusBuilder corpusBuilder,
-			RevisionQuestionAssetRenderer questionAssetRenderer, RevisionAnswerAssetRenderer answerAssetRenderer,
-			RevisionExportValidator validator) {
+	/**
+	 * Creates an exporter from corpus, rendering and validation services.
+	 *
+	 * @param corpusBuilder         the subject corpus builder
+	 * @param questionAssetRenderer the question image renderer
+	 * @param answerAssetRenderer   the answer image renderer
+	 * @param validator             the generated-site validator
+	 * @throws NullPointerException if any dependency is null
+	 */
+	public RevisionExportService(RevisionCorpusBuilder corpusBuilder, RevisionPresentationPlanner presentationPlanner,
+			RevisionQuestionAssetRenderer questionAssetRenderer,
+			RevisionSharedContextAssetRenderer sharedContextAssetRenderer,
+			RevisionAnswerAssetRenderer answerAssetRenderer, RevisionExportValidator validator) {
 		if (corpusBuilder == null) {
 			throw new NullPointerException("corpusBuilder");
 		}
+		if (presentationPlanner == null) {
+			throw new NullPointerException("presentationPlanner");
+		}
 		if (questionAssetRenderer == null) {
 			throw new NullPointerException("questionAssetRenderer");
+		}
+		if (sharedContextAssetRenderer == null) {
+			throw new NullPointerException("sharedContextAssetRenderer");
 		}
 		if (answerAssetRenderer == null) {
 			throw new NullPointerException("answerAssetRenderer");
@@ -41,16 +61,37 @@ public final class RevisionExportService {
 			throw new NullPointerException("validator");
 		}
 		this.corpusBuilder = corpusBuilder;
+		this.presentationPlanner = presentationPlanner;
 		this.questionAssetRenderer = questionAssetRenderer;
+		this.sharedContextAssetRenderer = sharedContextAssetRenderer;
 		this.answerAssetRenderer = answerAssetRenderer;
 		this.validator = validator;
 	}
 
+	/**
+	 * Exports a validated revision site without progress notifications.
+	 *
+	 * @param request the subject and new destination directory
+	 * @return the published location and corpus statistics
+	 * @throws IOException if generation, validation or publication fails
+	 */
 	public RevisionExportResult export(RevisionExportRequest request) throws IOException {
-		return export(request, (message, completed, total) -> {
+		return export(request, (_, _, _) -> {
 		});
 	}
 
+	/**
+	 * Builds and validates a revision site in a sibling staging directory, then
+	 * moves it to a destination that must not already exist. Failed staging output
+	 * is removed; publication uses an atomic move when supported by the filesystem.
+	 *
+	 * @param request  the subject and new destination directory
+	 * @param progress synchronous progress callback on the exporting thread
+	 * @return the published location and corpus statistics
+	 * @throws IOException          if the destination exists or export cannot
+	 *                              complete
+	 * @throws NullPointerException if either argument is null
+	 */
 	public RevisionExportResult export(RevisionExportRequest request, RevisionExportProgressListener progress)
 			throws IOException {
 		if (request == null) {
@@ -73,20 +114,26 @@ public final class RevisionExportService {
 		}
 		progress.update("Building revision corpus...", 0, 0);
 		RevisionCorpus corpus = corpusBuilder.build(request.getSubject());
+		progress.update("Planning revision presentation...", 0, 0);
+		RevisionPresentationPlan presentationPlan = presentationPlanner.plan(corpus);
 		boolean promoted = false;
 		try {
 			Files.createDirectory(staging);
 			List<RevisionQuestionAsset> questionAssets = questionAssetRenderer.render(corpus, staging,
 					(completed, total) -> progress.update("Rendering questions: " + completed + " / " + total,
 							completed.intValue(), total.intValue()));
+			List<RevisionSharedContextAsset> sharedContextAssets = sharedContextAssetRenderer.render(corpus, staging,
+					(completed, total) -> progress.update("Rendering shared context: " + completed + " / " + total,
+							completed.intValue(), total.intValue()));
 			List<RevisionAnswerAsset> answerAssets = answerAssetRenderer.render(corpus, staging,
 					(completed, total) -> progress.update("Rendering answers: " + completed + " / " + total,
 							completed.intValue(), total.intValue()));
 			progress.update("Writing HTML...", 0, 0);
-			RevisionHtmlRenderer htmlRenderer = new RevisionHtmlRenderer(questionAssets, answerAssets);
+			RevisionHtmlRenderer htmlRenderer = new RevisionHtmlRenderer(presentationPlan, questionAssets, answerAssets,
+					sharedContextAssets);
 			List<Path> htmlFiles = htmlRenderer.render(corpus, staging);
 			progress.update("Validating export...", 0, 0);
-			validator.validate(staging, corpus, htmlFiles, questionAssets, answerAssets);
+			validator.validate(staging, corpus, htmlFiles, questionAssets, answerAssets, sharedContextAssets);
 			progress.update("Publishing export...", 0, 0);
 			promote(staging, destination);
 			promoted = true;

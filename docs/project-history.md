@@ -1,6 +1,6 @@
 # Exam Question Bank — Project History
 
-> Historical reconstruction through 6 September 2026.
+> Historical reconstruction through 11 September 2026.
 >
 > Evidence basis: project development chats and their evidence extracts, the current `corneym/Exam` repository and sprint/design documents, and the preserved `corneym/ExamBuilderLegacy` repository.
 >
@@ -527,7 +527,114 @@ Descriptors were split, combined, narrowed, expanded, removed, added and moved w
 **PROPOSED / CURRENT DATA WORK — manual review and reconciliation.**  
 The project history does not establish that this 5 September workbook has been imported into or reconciled with the application's existing SQLite mapping records. That remains future work.
 
-## 18. Future content-source extension — clipboard/image questions
+## 18. Early September 2026 — Sprint 04: Backup, Restore and Data Safety
+
+Branch: `feature/backup-restore`
+
+**IMPLEMENTED / CURRENT — backup and restore became first-class application
+workflows.**
+
+The sprint added versioned backup archives, SQLite-consistent snapshots, manual
+full backup, automatic database-only backup on normal close, bounded automatic
+backup retention, validated database-only and full restore, pre-restore safety
+backup, rollback after failed destructive restore, migration-compatibility
+validation and a restart boundary after successful or partially destructive
+restore.
+
+**DECIDED — manually captured and reviewed data is expensive project data.**
+Backup/restore therefore remains an architectural requirement for later schema
+and workflow changes rather than an optional deployment feature.
+
+**TEST / RESULT — Sprint 04 completed with the automated suite green.**
+
+## 19. Early September 2026 — Sprint 05: Hierarchical Revision Corpus and Static HTML Export
+
+**IMPLEMENTED / CURRENT — deterministic revision corpus and static website
+generation.**
+
+Sprint 05 added current-curriculum revision-corpus construction, deterministic
+hierarchy and Question ordering, derived Question/Answer assets, hierarchical
+Subject/Unit/Topic/Subtopic navigation, Descriptor presentation where
+applicable, generated numbering and marks, answer disclosure, provenance,
+staged export validation and background JavaFX generation.
+
+Metadata-only zero-region Questions are omitted/reported rather than rendered as
+invented content.
+
+**TEST / RESULT — real Chemistry revision output was exercised successfully in a
+browser.**
+
+## 20. Early September 2026 — Sprint 06: SCORM 1.2 Generation and QLearn Validation
+
+**IMPLEMENTED / CURRENT — SCORM became a packaging layer over the static revision
+site.**
+
+Sprint 06 added deterministic SCORM 1.2 package generation with one
+organisation/item/SCO, root `index.html` launch, complete learning-content
+inventory, schema support, package/reference validation, deterministic ZIP
+structure and background JavaFX export.
+
+**DECIDED / CURRENT — authoritative source PDFs are not normally copied into the
+SCORM package.** Derived portable web assets are used instead.
+
+**TEST / RESULT — a real generated Chemistry package imported into QLearn and
+launched successfully.**
+
+## 21. 7–11 September 2026 — Sprint 07: Preamble-aware Capture and UI Redesign
+
+Branch: `feature/preamble-capture`
+
+**IMPLEMENTED / CURRENT — explicit source-question and shared-context
+semantics.**
+
+Schema v5 added persisted `SourceQuestion`, `SharedQuestionContext`, ordered
+shared-context regions and nullable Question relationships. Schema v6 added
+persisted source-question `PreambleStatus` values `UNKNOWN`, `NONE` and
+`PRESENT`.
+
+Multipart source identity and shared source material are separate concepts.
+Shared context may be reused by several Questions without making them one
+multipart Question.
+
+**IMPLEMENTED — capture and correction workflows.**
+
+Sprint 07 added preamble-aware normal/imported capture, shared-context reuse,
+same-page anchored large-region selection, explicit selection ownership,
+syllabus-sensitive classification, Question correction preserving Answer
+identity, Answer correction through Question Search, MCQ letter entry,
+registered Answer-PDF reuse and conditional Answer-PDF chooser visibility.
+
+Question and Answer persistence work was moved away from blocking JavaFX paths,
+and post-save Answer PDF loading became asynchronous.
+
+**IMPLEMENTED — revision/search presentation semantics.**
+
+Revision presentation groups applicable members by persisted `SourceQuestion`
+inside the final current-curriculum bucket, derives multipart marks from member
+Questions and renders shared context once where appropriate. Search Questions
+preview reconstructs linked shared context before the selected Question's own
+regions without automatically including sibling parts.
+
+**DEFERRED — bounded follow-on work.**
+
+Automatic imported preamble capture remains single-region even though
+persistence supports several ordered shared-context regions. Multi-page
+automatic preamble capture, Question-level response type, MCQ explanation
+regions and other deferred work remain in `docs/design/backlog.md`.
+
+**TEST / RESULT — Sprint 07 closeout.**
+
+The standard Maven suite, full headless TestFX suite and Javadoc/doclint were
+green. Manual acceptance covered the principal preamble, editing, Answer and
+responsiveness workflows.
+
+The final branch-versus-`main` review identified one edit-transition defect:
+changing a multipart Question to a non-multipart code could retain the old
+`SourceQuestion`/shared-context links. The capture service was corrected and a
+regression test added. No known Sprint 07 merge blocker remained after final
+verification.
+
+## 22. Future content-source extension — clipboard/image questions
 
 **PROPOSED / UNIMPLEMENTED.**  
 A later-stage workflow may allow a teacher to use Windows Snipping Tool or another source, then paste an image from the system clipboard into the application.
@@ -539,7 +646,7 @@ Possible persistence approaches discussed were SQLite BLOB storage or applicatio
 **PROPOSED — drag/drop image support and optional OCR later.**  
 OCR is not required for the basic feature; it would be a separate future search/classification enhancement.
 
-## 19. Current development discipline
+## 23. Current development discipline
 
 **CURRENT — Git/GitHub is the implementation record.**  
 Feature branches, commits, sprint documents, tests and merge-readiness review are used to distinguish implementation from discussion.

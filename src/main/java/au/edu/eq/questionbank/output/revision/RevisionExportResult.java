@@ -23,10 +23,16 @@ public final class RevisionExportResult {
 		this.statistics = statistics;
 	}
 
+	/**
+	 * @return the published export directory
+	 */
 	public Path getDestination() {
 		return destination;
 	}
 
+	/**
+	 * @return corpus counts for the completed export
+	 */
 	public RevisionCorpusStatistics getStatistics() {
 		return statistics;
 	}

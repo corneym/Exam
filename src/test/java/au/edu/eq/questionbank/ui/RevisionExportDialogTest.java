@@ -10,6 +10,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.List;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.testfx.framework.junit5.ApplicationExtension;
@@ -23,6 +24,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
+@Tag("ui")
 @ExtendWith(ApplicationExtension.class)
 class RevisionExportDialogTest {
 

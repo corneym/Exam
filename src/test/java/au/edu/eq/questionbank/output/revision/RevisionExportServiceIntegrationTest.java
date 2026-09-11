@@ -39,6 +39,7 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
 class RevisionExportServiceIntegrationTest {
 
@@ -137,11 +138,13 @@ class RevisionExportServiceIntegrationTest {
 							currentUnit, currentTopic, currentDescriptor));
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
 			QuestionRetrievalService retrieval = new QuestionRetrievalService(
-					currentNodes -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
+					_ -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
 			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval);
 			PdfStore pdfStore = new PdfStore(pdfRoot);
 			QuestionExtractor extractor = new QuestionExtractor();
-			service = new RevisionExportService(corpusBuilder, new RevisionQuestionAssetRenderer(pdfStore, extractor),
+			service = new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
+					new RevisionQuestionAssetRenderer(pdfStore, extractor),
+					new RevisionSharedContextAssetRenderer(pdfStore, extractor),
 					new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
 		}
 

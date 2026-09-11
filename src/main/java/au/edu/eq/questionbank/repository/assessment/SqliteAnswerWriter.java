@@ -49,15 +49,13 @@ public final class SqliteAnswerWriter {
 	 * @param exam the persisted exam whose answer files are required
 	 * @return answer files reconstructed with the supplied exam
 	 * @throws NullPointerException if {@code exam} is {@code null}
-	 * @throws SQLException if the files cannot be read
+	 * @throws SQLException         if the files cannot be read
 	 */
 	public List<AnswerFile> findAnswerFiles(Exam exam) throws SQLException {
 		if (exam == null) {
 			throw new NullPointerException("exam");
 		}
-
 		List<AnswerFile> answerFiles = new ArrayList<>();
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						SELECT
@@ -72,18 +70,15 @@ public final class SqliteAnswerWriter {
 						ORDER BY af.id
 						""")) {
 			statement.setLong(1, exam.getId());
-
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
 					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 							result.getString("relative_path"));
-
 					answerFiles.add(new AnswerFile(result.getLong("answer_file_id"), exam,
 							result.getString("answer_file_name"), sourceDocument));
 				}
 			}
 		}
-
 		return answerFiles;
 	}
 
@@ -175,6 +170,70 @@ public final class SqliteAnswerWriter {
 		}
 	}
 
+	/**
+	 * Replaces an existing answer's text and ordered regions while preserving its
+	 * persistent identity and question ownership.
+	 *
+	 * @param question   question owning the answer
+	 * @param answerId   persistent answer identifier
+	 * @param answerText optional replacement text
+	 * @param regions    replacement ordered answer regions
+	 * @return the updated answer with its existing identifier
+	 * @throws SQLException if the transaction fails
+	 */
+	public Answer updateAnswer(Question question, long answerId, String answerText, List<AnswerRegion> regions)
+			throws SQLException {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (answerId < 1) {
+			throw new IllegalArgumentException("answerId must be positive");
+		}
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if ((answerText == null || answerText.isBlank()) && regions.isEmpty()) {
+			throw new IllegalArgumentException("Answer must contain text or at least one region");
+		}
+		for (AnswerRegion region : regions) {
+			if (region == null) {
+				throw new NullPointerException("regions must not contain null");
+			}
+			if (region.answerFile().getExam().getId() != question.getExam().getId()) {
+				throw new IllegalArgumentException("Answer region file must belong to the question's exam");
+			}
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				verifyAnswerBelongsToQuestion(connection, answerId, question);
+				updateAnswerRow(connection, answerId, answerText);
+				deleteAnswerRegions(connection, answerId);
+				insertAnswerRegions(connection, answerId, regions);
+				Answer answer = new Answer(answerId, answerText, regions);
+				connection.commit();
+				return answer;
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
+	private void deleteAnswerRegions(Connection connection, long answerId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM answer_regions
+				WHERE answer_id = ?
+				""")) {
+			statement.setLong(1, answerId);
+			statement.executeUpdate();
+		}
+	}
+
 	private AnswerFile findAnswerFile(Connection connection, Exam exam, String name, SourceDocument sourceDocument)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
@@ -261,6 +320,39 @@ public final class SqliteAnswerWriter {
 					throw new SQLException("Answer insert did not return an id");
 				}
 				return result.getLong("id");
+			}
+		}
+	}
+
+	private void updateAnswerRow(Connection connection, long answerId, String answerText) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE answers
+				SET answer_text = ?
+				WHERE id = ?
+				""")) {
+			statement.setString(1, answerText);
+			statement.setLong(2, answerId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Answer update affected an unexpected number of rows");
+			}
+		}
+	}
+
+	private void verifyAnswerBelongsToQuestion(Connection connection, long answerId, Question question)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT question_id
+				FROM answers
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, answerId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Answer does not exist: " + answerId);
+				}
+				if (result.getLong("question_id") != question.getId()) {
+					throw new IllegalArgumentException("Answer does not belong to the supplied question");
+				}
 			}
 		}
 	}

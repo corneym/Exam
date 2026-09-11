@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 5;
+	private static final int LATEST_SCHEMA_VERSION = 6;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -463,6 +463,10 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v4-to-v5.sql", 5);
 			return 5;
 		}
+		if (version == 5) {
+			executeMigration(connection, "/db/migration-v5-to-v6.sql", 6);
+			return 6;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -638,6 +642,12 @@ public final class SqliteDatabase {
 		}
 		if (version >= 4) {
 			verifyVersionFourQuestionSchema(connection);
+		}
+		if (version >= 5) {
+			verifyVersionFiveSharedQuestionSchema(connection);
+		}
+		if (version >= 6) {
+			verifyVersionSixSourceQuestionSchema(connection);
 		}
 	}
 
@@ -845,6 +855,25 @@ public final class SqliteDatabase {
 						column("y", true, 0), column("width", true, 0), column("height", true, 0)),
 				List.of(foreignKey("answer_id", "answers", "id"), foreignKey("answer_file_id", "answer_files", "id")),
 				List.of());
+	}
+
+	private void verifyVersionSixSourceQuestionSchema(Connection connection) throws SQLException {
+		boolean hasPreambleStatus = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(source_questions)")) {
+			while (result.next()) {
+				if (!"preamble_status".equals(result.getString("name"))) {
+					continue;
+				}
+				hasPreambleStatus = true;
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("source_questions column must be NOT NULL: preamble_status");
+				}
+			}
+		}
+		if (!hasPreambleStatus) {
+			throw new SQLException("source_questions is missing required column preamble_status");
+		}
 	}
 
 	private void verifyVersionThreeCanBeMigrated(Connection connection) throws SQLException {

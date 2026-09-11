@@ -1,0 +1,121 @@
+package au.edu.eq.questionbank.ui;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
+import org.testfx.api.FxRobot;
+import org.testfx.framework.junit5.ApplicationExtension;
+import org.testfx.framework.junit5.Start;
+
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
+import javafx.scene.image.ImageView;
+import javafx.stage.Stage;
+
+@Tag("ui")
+@ExtendWith(ApplicationExtension.class)
+class PdfWorkspacePaneAsyncTest {
+	@TempDir
+	Path tempDir;
+	private PdfWorkspacePane pane;
+
+	@Start
+	void start(Stage stage) {
+		pane = new PdfWorkspacePane();
+		stage.setScene(new Scene(pane, 640, 480));
+		stage.show();
+	}
+
+	@AfterEach
+	void close() throws Exception {
+		pane.close();
+	}
+
+	@Test
+	void loadsAnswerPdfAndReusesTheDisplayedPage(FxRobot robot) throws Exception {
+		Path path = createPdf("answer.pdf");
+		CountDownLatch done = new CountDownLatch(1);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		robot.interact(() -> pane.openAnswerPdfAsync(path, error -> {
+			failure.set(error);
+			done.countDown();
+		}));
+		assertTrue(done.await(10, TimeUnit.SECONDS));
+		assertNull(failure.get());
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pane.getDisplayedDocument());
+		assertEquals(2, pane.getAnswerPdfSession().getPageCount());
+		robot.interact(() -> ((Button) pane.lookup("#next-pdf-page")).fire());
+		var session = pane.getAnswerPdfSession();
+		var image = ((ImageView) pane.lookup("#pdf-page-view")).getImage();
+		robot.interact(() -> pane.openAnswerPdfAsync(path, failure::set));
+		assertNull(failure.get());
+		assertSame(session, pane.getAnswerPdfSession());
+		assertSame(image, ((ImageView) pane.lookup("#pdf-page-view")).getImage());
+		assertTrue(((Button) pane.lookup("#next-pdf-page")).isDisabled(), "Remain on page two");
+	}
+
+	@Test
+	void discardsAndClosesALoadWhenTheUserChangesDocument(FxRobot robot) throws Exception {
+		Path path = createPdf("stale.pdf");
+		CountDownLatch done = new CountDownLatch(1);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		robot.interact(() -> {
+			pane.openAnswerPdfAsync(path, error -> {
+				failure.set(error);
+				done.countDown();
+			});
+			// Invalidate before the worker's completion can run on the FX thread.
+			pane.showDocument(PdfWorkspacePane.DocumentMode.EXAM);
+		});
+		assertTrue(done.await(10, TimeUnit.SECONDS));
+		assertInstanceOf(CancellationException.class, failure.get());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pane.getDisplayedDocument());
+		assertNull(pane.getAnswerPdfSession());
+		Files.delete(path);
+	}
+
+	@Test
+	void failedLoadRetainsTheExistingAnswerDocument(FxRobot robot) throws Exception {
+		Path path = createPdf("existing.pdf");
+		robot.interact(() -> pane.openAnswerPdf(path));
+		var session = pane.getAnswerPdfSession();
+		CountDownLatch done = new CountDownLatch(1);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		robot.interact(() -> pane.openAnswerPdfAsync(tempDir.resolve("missing.pdf"), error -> {
+			failure.set(error);
+			done.countDown();
+		}));
+		assertTrue(done.await(10, TimeUnit.SECONDS));
+		assertNotNull(failure.get());
+		assertSame(session, pane.getAnswerPdfSession());
+		assertEquals(2, session.getPageCount());
+	}
+
+	private Path createPdf(String name) throws Exception {
+		Path path = tempDir.resolve(name);
+		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage());
+			document.addPage(new PDPage());
+			document.save(path.toFile());
+		}
+		return path;
+	}
+}

@@ -36,7 +36,9 @@ public final class QuestionPreviewService {
 	}
 
 	/**
-	 * Loads the stored image for a question.
+	 * Reconstructs the assembled question image from its stored source regions.
+	 * When shared context is linked, its ordered regions precede the question's own
+	 * ordered regions.
 	 *
 	 * @param question question to preview
 	 * @return the reconstructed image, or empty when the question has no stored

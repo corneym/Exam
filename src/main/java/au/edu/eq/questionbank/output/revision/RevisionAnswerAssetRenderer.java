@@ -26,6 +26,13 @@ public final class RevisionAnswerAssetRenderer {
 	private final PdfStore pdfStore;
 	private final QuestionExtractor questionExtractor;
 
+	/**
+	 * Creates an asset renderer using the configured source PDF store.
+	 *
+	 * @param pdfStore          the source path resolver
+	 * @param questionExtractor the PDF region renderer
+	 * @throws NullPointerException if either dependency is null
+	 */
 	public RevisionAnswerAssetRenderer(PdfStore pdfStore, QuestionExtractor questionExtractor) {
 		if (pdfStore == null) {
 			throw new NullPointerException("pdfStore");
@@ -48,10 +55,20 @@ public final class RevisionAnswerAssetRenderer {
 	 *                     written
 	 */
 	public List<RevisionAnswerAsset> render(RevisionCorpus corpus, Path outputRoot) throws IOException {
-		return render(corpus, outputRoot, (completed, total) -> {
+		return render(corpus, outputRoot, (_, _) -> {
 		});
 	}
 
+	/**
+	 * Renders assets while reporting synchronous per-phase progress.
+	 *
+	 * @param corpus     the revision corpus
+	 * @param outputRoot the generated-site root
+	 * @param progress   completed and total asset counts, invoked on the caller
+	 *                   thread
+	 * @return the generated assets
+	 * @throws IOException if a source cannot be read or an image cannot be written
+	 */
 	List<RevisionAnswerAsset> render(RevisionCorpus corpus, Path outputRoot, BiConsumer<Integer, Integer> progress)
 			throws IOException {
 		if (corpus == null) {

@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.testfx.api.FxRobot;
@@ -13,6 +14,7 @@ import javafx.scene.control.Button;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
+@Tag("ui")
 @ExtendWith(ApplicationExtension.class)
 public class JavaFxToolchainSmokeTest {
 
@@ -22,8 +24,7 @@ public class JavaFxToolchainSmokeTest {
 	public void start(Stage stage) {
 		button = new Button("Ready");
 		button.setId("toolchain-button");
-		button.setOnAction(event -> button.setText("Clicked"));
-
+		button.setOnAction(_ -> button.setText("Clicked"));
 		stage.setScene(new Scene(new StackPane(button), 240, 120));
 		stage.show();
 	}
@@ -31,9 +32,7 @@ public class JavaFxToolchainSmokeTest {
 	@Test
 	public void testFxCanClickJavaFxControlUnderCurrentToolchain(FxRobot robot) {
 		assertEquals("Ready", button.getText());
-
 		robot.clickOn("#toolchain-button");
-
 		assertEquals("Clicked", button.getText());
 	}
 }

@@ -28,12 +28,15 @@ final class ExamImportDialog extends Dialog<Void> {
 		getDialogPane().getButtonTypes().setAll(confirmButtonType, cancelButtonType);
 		Button confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);
 		confirmButton.setId("confirm-exam-details");
-		confirmButton.addEventFilter(ActionEvent.ACTION, event -> {
-			if (!examMetadataPane.confirmDetails()) {
-				event.consume();
-			}
-		});
+		confirmButton.addEventFilter(ActionEvent.ACTION, event -> confirmExamDetails(event, examMetadataPane));
 		Button cancelButton = (Button) getDialogPane().lookupButton(cancelButtonType);
 		cancelButton.setId("cancel-exam-import");
 	}
+
+	private void confirmExamDetails(ActionEvent event, ExamMetadataPane examMetadataPane) {
+		if (!examMetadataPane.confirmDetails()) {
+			event.consume();
+		}
+	}
+
 }

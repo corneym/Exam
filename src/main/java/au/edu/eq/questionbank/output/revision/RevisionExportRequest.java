@@ -12,6 +12,13 @@ public final class RevisionExportRequest {
 	private final Subject subject;
 	private final Path destination;
 
+	/**
+	 * Creates an export request. Destination existence is checked when exporting.
+	 *
+	 * @param subject the subject whose current curriculum is exported
+	 * @param destination the new output directory, absolute or relative to the working directory
+	 * @throws NullPointerException if either argument is null
+	 */
 	public RevisionExportRequest(Subject subject, Path destination) {
 		if (subject == null) {
 			throw new NullPointerException("subject");
@@ -23,10 +30,16 @@ public final class RevisionExportRequest {
 		this.destination = destination;
 	}
 
+	/**
+	 * @return the requested output directory, as supplied
+	 */
 	public Path getDestination() {
 		return destination;
 	}
 
+	/**
+	 * @return the subject to export
+	 */
 	public Subject getSubject() {
 		return subject;
 	}

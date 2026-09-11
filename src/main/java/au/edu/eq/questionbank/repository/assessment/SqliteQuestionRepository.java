@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -57,6 +58,15 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	}
 
 	@Override
+	public int applySharedContextToSourceQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		try {
+			return writer.applySharedContextToSourceQuestion(sourceQuestion, sharedContext);
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not apply shared context to source question", e);
+		}
+	}
+
+	@Override
 	public Question attachRegions(long questionId, List<QuestionRegion> regions) {
 		try {
 			writer.attachRegions(questionId, regions);
@@ -64,6 +74,18 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 					.orElseThrow(() -> new IllegalStateException("Question disappeared after attaching regions"));
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not attach question regions", e);
+		}
+	}
+
+	@Override
+	public Question attachRegions(long questionId, List<QuestionRegion> regions, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		try {
+			writer.attachRegions(questionId, regions, classification, sourceQuestion, sharedContext);
+			return findById(questionId).orElseThrow(() -> new IllegalStateException(
+					"Question disappeared after attaching regions and capture details"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not attach question regions and capture details", e);
 		}
 	}
 
@@ -267,6 +289,36 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		}
 	}
 
+	@Override
+	public Question updateCaptureRelationships(long questionId, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		Question existing = findById(questionId)
+				.orElseThrow(() -> new IllegalArgumentException("Question does not exist: " + questionId));
+		try {
+			writer.updateCaptureRelationships(questionId, existing.getBooklet(), classification, sourceQuestion,
+					sharedContext);
+			return findById(questionId).orElseThrow(
+					() -> new IllegalStateException("Question disappeared after updating capture relationships"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not update question capture relationships", e);
+		}
+	}
+
+	@Override
+	public Question updateQuestion(long questionId, String questionCode, int marks, List<QuestionRegion> regions,
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		Question existing = findById(questionId)
+				.orElseThrow(() -> new IllegalArgumentException("Question does not exist: " + questionId));
+		try {
+			writer.updateQuestion(questionId, existing.getBooklet(), questionCode, marks, regions, classification,
+					sourceQuestion, sharedContext);
+			return findById(questionId)
+					.orElseThrow(() -> new IllegalStateException("Question disappeared after update"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not update question", e);
+		}
+	}
+
 	private String createRequestedNodeValues(int nodeCount) {
 		StringBuilder values = new StringBuilder();
 		for (int index = 0; index < nodeCount; index++) {
@@ -426,7 +478,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	private SourceQuestion findSourceQuestion(Connection connection, long sourceQuestionId, ExamBooklet questionBooklet)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT booklet_id, source_question_code
+				SELECT booklet_id, source_question_code, preamble_status
 				FROM source_questions
 				WHERE id = ?
 				""")) {
@@ -438,7 +490,8 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				if (result.getLong("booklet_id") != questionBooklet.getId()) {
 					throw new IllegalStateException("Source question belongs to a different booklet");
 				}
-				return new SourceQuestion(sourceQuestionId, questionBooklet, result.getString("source_question_code"));
+				return new SourceQuestion(sourceQuestionId, questionBooklet, result.getString("source_question_code"),
+						PreambleStatus.valueOf(result.getString("preamble_status")));
 			}
 		}
 	}

@@ -23,6 +23,8 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -60,6 +62,23 @@ class QuestionPreviewServiceTest {
 		assertEquals(Color.GREEN.getRGB(), image.getRGB(37, 75));
 	}
 
+	@Test
+	void prependsLinkedSharedContextToPreview() throws Exception {
+		createPdf(tempDir.resolve("exam.pdf"), Color.RED, Color.BLUE);
+		SharedQuestionContext sharedContext = new SharedQuestionContext(12, booklet, "Question 24 preamble",
+				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0)));
+		Question question = new Question(13, booklet, "24a", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.0, 0.0, 1.0, 1.0)), classification, false, null,
+				sharedContext);
+		Optional<BufferedImage> preview = service.loadPreview(question);
+		assertTrue(preview.isPresent());
+		BufferedImage image = preview.get();
+		assertEquals(150, image.getWidth());
+		assertEquals(300, image.getHeight());
+		assertEquals(Color.RED.getRGB(), image.getRGB(75, 75));
+		assertEquals(Color.BLUE.getRGB(), image.getRGB(75, 225));
+	}
+
 	@BeforeEach
 	void setUp() {
 		Subject subject = new Subject(1, "Chemistry");
@@ -74,14 +93,16 @@ class QuestionPreviewServiceTest {
 		service = new QuestionPreviewService(new PdfStore(tempDir), new QuestionExtractor());
 	}
 
-	private void createPdf(Path path, Color color) throws Exception {
+	private void createPdf(Path path, Color... colors) throws Exception {
 		try (PDDocument document = new PDDocument()) {
-			PDPage page = new PDPage(new PDRectangle(72, 72));
-			document.addPage(page);
-			try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-				content.setNonStrokingColor(color);
-				content.addRect(0, 0, 72, 72);
-				content.fill();
+			for (Color color : colors) {
+				PDPage page = new PDPage(new PDRectangle(72, 72));
+				document.addPage(page);
+				try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+					content.setNonStrokingColor(color);
+					content.addRect(0, 0, 72, 72);
+					content.fill();
+				}
 			}
 			document.save(path.toFile());
 		}

@@ -1,11 +1,8 @@
 package au.edu.eq.questionbank.repository.assessment;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
-import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,6 +20,8 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteExamWriterTest {
 
@@ -49,6 +48,10 @@ class SqliteExamWriterTest {
 					writer.findExam(connection, chemistry, provider, 2019, "External Assessment").getId());
 			assertEquals(booklet.getId(), writer.findExamBooklet(connection, exam, "Paper 1", sourceDocument).getId());
 		}
+		Exam foundByLegacyIdentity = writer.findExamByProviderAndYear(chemistry, "QCAA", 2019);
+		assertNotNull(foundByLegacyIdentity);
+		assertEquals(exam.getId(), foundByLegacyIdentity.getId());
+		assertEquals("External Assessment", foundByLegacyIdentity.getName());
 	}
 
 	@Test
@@ -63,7 +66,6 @@ class SqliteExamWriterTest {
 		SourceDocument sourceDocument = writer.insertSourceDocument("Chemistry/2019/paper1.pdf");
 		Exam exam = writer.insertExam(chemistry, provider, 2019, "External Assessment");
 		ExamBooklet booklet = writer.insertExamBooklet(exam, sourceDocument, "Paper 1");
-
 		assertTrue(provider.getId() > 0);
 		assertTrue(sourceDocument.getId() > 0);
 		assertTrue(exam.getId() > 0);
@@ -73,7 +75,6 @@ class SqliteExamWriterTest {
 		assertEquals(2019, exam.getYear());
 		assertEquals("Paper 1", booklet.getName());
 		assertEquals("Chemistry/2019/paper1.pdf", booklet.getSourceDocument().getRelativePath());
-
 		SqliteDatabase reopenedDatabase = new SqliteDatabase(databasePath);
 		try (Connection connection = reopenedDatabase.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
@@ -125,12 +126,9 @@ class SqliteExamWriterTest {
 		SourceDocument sourceDocument = writer.insertSourceDocument("Chemistry/2019/paper1.pdf");
 		Exam exam = writer.insertExam(chemistry, provider, 2019, "External Assessment");
 		writer.insertExamBooklet(exam, sourceDocument, "Paper 1");
-
 		assertThrows(SQLException.class, () -> writer.insertExamProvider("QCAA"));
-		assertThrows(SQLException.class,
-				() -> writer.insertSourceDocument("Chemistry/2019/paper1.pdf"));
-		assertThrows(SQLException.class,
-				() -> writer.insertExam(chemistry, provider, 2019, "External Assessment"));
+		assertThrows(SQLException.class, () -> writer.insertSourceDocument("Chemistry/2019/paper1.pdf"));
+		assertThrows(SQLException.class, () -> writer.insertExam(chemistry, provider, 2019, "External Assessment"));
 		assertThrows(SQLException.class, () -> writer.insertExamBooklet(exam,
 				writer.insertSourceDocument("Chemistry/2019/paper1-alternate.pdf"), "Paper 1"));
 	}

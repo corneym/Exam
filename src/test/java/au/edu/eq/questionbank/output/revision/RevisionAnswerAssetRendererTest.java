@@ -50,7 +50,7 @@ class RevisionAnswerAssetRendererTest {
 	void failsWhenAnswerRegionSourcePdfIsMissing() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
 		Files.delete(fixture.firstAnswerPdf);
-		RevisionCorpus corpus = fixture.createCorpus(currentNodes -> List
+		RevisionCorpus corpus = fixture.createCorpus(_ -> List
 				.of(new QuestionApplicabilityMatch(fixture.regionAnswerQuestion, fixture.firstDescriptor)));
 		RevisionAnswerAssetRenderer renderer = new RevisionAnswerAssetRenderer(fixture.pdfStore,
 				new QuestionExtractor());
@@ -63,7 +63,7 @@ class RevisionAnswerAssetRendererTest {
 	@Test
 	void multipleCurriculumPlacementsRenderOneSetOfAnswerAssets() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
-		QuestionRetrievalRepository retrievalRepository = currentNodes -> List.of(
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.regionAnswerQuestion, fixture.firstDescriptor),
 				new QuestionApplicabilityMatch(fixture.regionAnswerQuestion, fixture.secondDescriptor));
 		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
@@ -76,7 +76,7 @@ class RevisionAnswerAssetRendererTest {
 	@Test
 	void rendersAnswerRegionsInPersistedOrderWithDeterministicNames() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
-		RevisionCorpus corpus = fixture.createCorpus(currentNodes -> List
+		RevisionCorpus corpus = fixture.createCorpus(_ -> List
 				.of(new QuestionApplicabilityMatch(fixture.regionAnswerQuestion, fixture.firstDescriptor)));
 		RevisionAnswerAssetRenderer renderer = new RevisionAnswerAssetRenderer(fixture.pdfStore,
 				new QuestionExtractor());
@@ -95,7 +95,7 @@ class RevisionAnswerAssetRendererTest {
 	@Test
 	void textOnlyAnswerProducesNoImageAssets() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
-		RevisionCorpus corpus = fixture.createCorpus(currentNodes -> List
+		RevisionCorpus corpus = fixture.createCorpus(_ -> List
 				.of(new QuestionApplicabilityMatch(fixture.textAnswerQuestion, fixture.firstDescriptor)));
 		RevisionAnswerAssetRenderer renderer = new RevisionAnswerAssetRenderer(fixture.pdfStore,
 				new QuestionExtractor());

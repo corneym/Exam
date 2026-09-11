@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
 class RevisionExportServiceTest {
 
@@ -56,6 +57,21 @@ class RevisionExportServiceTest {
 		assertFalse(hasStagingDirectory(destination));
 	}
 
+	@Test
+	void removesStagingWhenProgressConsumerFailsBeforePublication() throws Exception {
+		Fixture fixture = new Fixture(tempDir);
+		Path destination = tempDir.resolve("interrupted-export");
+		IllegalStateException failure = assertThrows(IllegalStateException.class, () -> fixture.service
+				.export(new RevisionExportRequest(fixture.chemistry, destination), (message, _, _) -> {
+					if (message.equals("Publishing export...")) {
+						throw new IllegalStateException("consumer failed");
+					}
+				}));
+		assertEquals("consumer failed", failure.getMessage());
+		assertFalse(Files.exists(destination));
+		assertFalse(hasStagingDirectory(destination));
+	}
+
 	private boolean hasStagingDirectory(Path destination) throws IOException {
 		Path parent = destination.getParent();
 		String prefix = destination.getFileName() + ".staging-";
@@ -78,13 +94,15 @@ class RevisionExportServiceTest {
 			InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
 					List.of(current), List.of(unit, topic, descriptor));
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
-			QuestionRetrievalService retrieval = new QuestionRetrievalService(currentNodes -> List.of(), expansion);
+			QuestionRetrievalService retrieval = new QuestionRetrievalService(_ -> List.of(), expansion);
 			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval);
 			Path pdfRoot = tempDir.resolve("pdf");
 			Files.createDirectories(pdfRoot);
 			PdfStore pdfStore = new PdfStore(pdfRoot);
 			QuestionExtractor extractor = new QuestionExtractor();
-			service = new RevisionExportService(corpusBuilder, new RevisionQuestionAssetRenderer(pdfStore, extractor),
+			service = new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
+					new RevisionQuestionAssetRenderer(pdfStore, extractor),
+					new RevisionSharedContextAssetRenderer(pdfStore, extractor),
 					new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
 		}
 	}

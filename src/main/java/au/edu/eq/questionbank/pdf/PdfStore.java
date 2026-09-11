@@ -10,6 +10,7 @@ import java.nio.file.Path;
  * <p>
  * Stored paths are treated as untrusted: they must be relative and their
  * normalized resolved paths must remain inside the configured root.
+ * Containment is lexical: these checks do not resolve symbolic links or junctions.
  */
 public class PdfStore {
 
@@ -91,7 +92,8 @@ public class PdfStore {
 	}
 
 	/**
-	 * Safely resolves a stored relative path beneath this store's data root.
+	 * Lexically resolves a stored relative path beneath this store's data root.
+	 * This does not check existence or resolve filesystem links.
 	 *
 	 * @param relativePath a non-blank, data-root-relative source path
 	 * @return the normalized absolute path beneath the configured root

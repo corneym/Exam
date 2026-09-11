@@ -5,9 +5,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ConfigurationException;
@@ -17,6 +19,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
@@ -27,6 +30,7 @@ import au.edu.eq.questionbank.output.revision.RevisionExportResult;
 import au.edu.eq.questionbank.output.revision.RevisionExportService;
 import au.edu.eq.questionbank.output.revision.RevisionExportValidator;
 import au.edu.eq.questionbank.output.revision.RevisionQuestionAssetRenderer;
+import au.edu.eq.questionbank.output.revision.RevisionSharedContextAssetRenderer;
 import au.edu.eq.questionbank.output.scorm.ScormExportRequest;
 import au.edu.eq.questionbank.output.scorm.ScormExportResult;
 import au.edu.eq.questionbank.output.scorm.ScormExportService;
@@ -42,7 +46,9 @@ import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumImportConflictException;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumImportResult;
@@ -79,6 +85,7 @@ import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionSer
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import javafx.application.Application;
@@ -96,8 +103,8 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.SplitPane;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
@@ -112,14 +119,17 @@ import javafx.stage.Stage;
 public class QuestionBankApplication extends Application {
 
 	private static final double SECTION_SPACING = 10.0;
-	private static final double PREVIEW_PANE_WIDTH = 330.0;
+	private static final double PREVIEW_PANE_INITIAL_WIDTH = 525.0;
+	private static final double PREVIEW_PANE_MIN_WIDTH = 400.0;
 	private static final double SCENE_WIDTH = 1400.0;
 	private static final double SCENE_HEIGHT = 840.0;
+	private static final double INITIAL_WORKSPACE_DIVIDER_POSITION = PREVIEW_PANE_INITIAL_WIDTH / SCENE_WIDTH;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 	private static final Path PROPERTIES_FILE = Path.of("questionbank.properties");
 	private QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
+	private double captureDividerPosition = INITIAL_WORKSPACE_DIVIDER_POSITION;
 	private final CaptureSelectionState captureSelectionState = new CaptureSelectionState();
 	private CurriculumSelectionModel curriculumSelectionModel;
 	private CurriculumSelectorPane curriculumSelectorPane;
@@ -135,6 +145,7 @@ public class QuestionBankApplication extends Application {
 	private boolean revisionExportRunning;
 	private MenuItem scormExportMenuItem;
 	private boolean scormExportRunning;
+	private SplitPane workspaceSplitPane;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -303,6 +314,17 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private boolean blockWhileCaptureSaveInProgress(Stage primaryStage, String actionDescription) {
+		boolean questionSaveInProgress = questionCapturePane != null && questionCapturePane.isSaveInProgress();
+		boolean answerSaveInProgress = answerCapturePane != null && answerCapturePane.isSaveInProgress();
+		if (!questionSaveInProgress && !answerSaveInProgress) {
+			return false;
+		}
+		showAlert(Alert.AlertType.WARNING, "Save in progress", "Save in progress",
+				"Wait for the current Question or Answer save to finish before " + actionDescription + ".");
+		return true;
+	}
+
 	private void clearCaptureSelection(CaptureSelectionOwner owner) {
 		if (captureSelectionState.clear(owner)) {
 			pdfWorkspace.clearSelection();
@@ -330,6 +352,36 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		showResourceCloseFailure(primaryStage, result.failure());
+	}
+
+	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
+		finishRevisionExport();
+		progressAlert.close();
+		showRevisionExportSuccess(task.getValue());
+	}
+
+	private void completeScormExport(Task<ScormExportResult> task, Alert progressAlert) {
+		finishScormExport();
+		progressAlert.close();
+		showScormExportSuccess(task.getValue());
+	}
+
+	private void configurePdfWorkspace() {
+		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
+		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
+		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
+	}
+
+	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
+		primaryStage.setOnCloseRequest(event -> handleCloseRequest(event, primaryStage));
+		showStage(primaryStage, createRootLayout(primaryStage, config));
+		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
+	}
+
+	private void configureShutdown(ApplicationConfig config) {
+		DefaultBackupService automaticBackupService = new DefaultBackupService(config, applicationVersion());
+		shutdownCoordinator = new ShutdownCoordinator(automaticBackupService, BackupRequest.automaticDatabase(config),
+				new AutomaticBackupRetention(), pdfWorkspace);
 	}
 
 	private boolean confirmDiscardAcceptedQuestionRegions() {
@@ -392,9 +444,7 @@ public class QuestionBankApplication extends Application {
 
 	private CurriculumSelectorPane createCurriculumSelectorPane() {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
-		selectorPane.selectedSubjectProperty().addListener((observable, oldSubject, newSubject) -> {
-			examMetadataPane.invalidateForSubjectChange(newSubject);
-		});
+		selectorPane.selectedSubjectProperty().addListener((_, _, newSubject) -> handleSubjectChanged(newSubject));
 		return selectorPane;
 	}
 
@@ -414,6 +464,26 @@ public class QuestionBankApplication extends Application {
 		scormExportMenuItem.setId("export-revision-scorm");
 		exportMenu.getItems().addAll(revisionExportMenuItem, scormExportMenuItem);
 		return exportMenu;
+	}
+
+	private Alert createExportProgressAlert(Stage primaryStage, Task<?> task, String title, String header,
+			String initialMessage) {
+		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
+		progressAlert.initOwner(primaryStage);
+		progressAlert.setTitle(title);
+		progressAlert.setHeaderText(header);
+		Label progressLabel = new Label(initialMessage);
+		progressLabel.setWrapText(true);
+		progressLabel.textProperty().bind(task.messageProperty());
+		ProgressBar progressBar = new ProgressBar();
+		progressBar.setPrefWidth(360);
+		progressBar.progressProperty().bind(task.progressProperty());
+		VBox progressContent = new VBox(10, progressLabel, progressBar);
+		progressAlert.getDialogPane().setContent(progressContent);
+		progressAlert.getDialogPane().setGraphic(null);
+		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
+		progressAlert.getButtonTypes().setAll(hideButton);
+		return progressAlert;
 	}
 
 	private Menu createFileMenu(Stage primaryStage, ApplicationConfig config) {
@@ -451,7 +521,7 @@ public class QuestionBankApplication extends Application {
 
 	private MenuItem createMenuItem(String text, Runnable action) {
 		MenuItem item = new MenuItem(text);
-		item.setOnAction(event -> action.run());
+		item.setOnAction(_ -> action.run());
 		item.setMnemonicParsing(true);
 		return item;
 	}
@@ -459,22 +529,36 @@ public class QuestionBankApplication extends Application {
 	private void createMissingLegacyBooklets(ApplicationConfig config, Subject subject,
 			List<LegacyBookletImportRequest> requests) throws IOException, SQLException {
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		Set<Long> importedAnswerFileExamIds = new HashSet<>();
 		for (LegacyBookletImportRequest request : requests) {
 			LegacyBookletRequirement requirement = request.requirement();
 			Path storedPath = pdfStore.importExamPdf(request.pdfPath(), subject.getName(), requirement.providerName(),
 					requirement.year());
 			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
-			examImporter.importExam(subject, requirement.providerName(), requirement.year(), request.assessmentName(),
-					requirement.bookletName(), relativePath);
+			ExamBooklet booklet = examImporter.importExam(subject, requirement.providerName(), requirement.year(),
+					request.assessmentName(), requirement.bookletName(), relativePath);
+			if (request.answerPdfPath() == null) {
+				continue;
+			}
+			if (!importedAnswerFileExamIds.add(booklet.getExam().getId())) {
+				continue;
+			}
+			Path storedAnswerPath = pdfStore.importExamPdf(request.answerPdfPath(), subject.getName(),
+					requirement.providerName(), requirement.year());
+			String answerRelativePath = config.pdfDataRoot().relativize(storedAnswerPath).toString();
+			answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide", answerRelativePath);
 		}
 	}
 
 	private VBox createPreviewPane() {
 		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, questionCapturePane, answerCapturePane);
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
-		setFixedWidth(previewPane, PREVIEW_PANE_WIDTH);
+		previewPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
+		previewPane.setPrefWidth(PREVIEW_PANE_INITIAL_WIDTH);
 		return previewPane;
 	}
 
@@ -484,13 +568,20 @@ public class QuestionBankApplication extends Application {
 		scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 		scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 		scrollPane.setMinHeight(0);
-		scrollPane.setPrefWidth(PREVIEW_PANE_WIDTH + 18);
+		scrollPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
+		scrollPane.setPrefWidth(PREVIEW_PANE_INITIAL_WIDTH);
 		return scrollPane;
 	}
 
 	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu questionMenu = createMenu("_Questions");
-		questionMenu.getItems().add(createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config)));
+		MenuItem captureNewItem = createMenuItem("Capture _New Questions", questionCapturePane::showNewQuestionCapture);
+		captureNewItem.setId("capture-new-questions");
+		MenuItem captureImportedItem = createMenuItem("Capture _Imported Questions",
+				questionCapturePane::showImportedQuestionCapture);
+		captureImportedItem.setId("capture-imported-questions");
+		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
+		questionMenu.getItems().addAll(captureNewItem, captureImportedItem, new SeparatorMenuItem(), searchItem);
 		return questionMenu;
 	}
 
@@ -503,7 +594,9 @@ public class QuestionBankApplication extends Application {
 		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		QuestionExtractor extractor = new QuestionExtractor();
-		return new RevisionExportService(corpusBuilder, new RevisionQuestionAssetRenderer(pdfStore, extractor),
+		return new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
+				new RevisionQuestionAssetRenderer(pdfStore, extractor),
+				new RevisionSharedContextAssetRenderer(pdfStore, extractor),
 				new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
 	}
 
@@ -511,14 +604,30 @@ public class QuestionBankApplication extends Application {
 		BorderPane root = new BorderPane();
 		root.setTop(createMenuBar(primaryStage, config));
 		previewScrollPane = createPreviewScrollPane();
-		root.setLeft(previewScrollPane);
-		root.setCenter(pdfWorkspace);
+		workspaceSplitPane = new SplitPane(previewScrollPane, pdfWorkspace);
+		workspaceSplitPane.setId("workspace-split-pane");
+		workspaceSplitPane.setDividerPositions(INITIAL_WORKSPACE_DIVIDER_POSITION);
+		root.setCenter(workspaceSplitPane);
 		return root;
 	}
 
 	private ScormExportService createScormExportService(ApplicationConfig config) {
 		return new ScormExportService(createRevisionExportService(config), new ScormManifestWriter(),
 				new ScormSchemaSupport(), new ScormPackageValidator(), new ScormZipWriter());
+	}
+
+	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
+		finishRevisionExport();
+		progressAlert.close();
+		showAlert(Alert.AlertType.ERROR, "Export Revision HTML", "The revision export could not be completed.",
+				failureMessage(task.getException()));
+	}
+
+	private void failScormExport(Task<ScormExportResult> task, Alert progressAlert) {
+		finishScormExport();
+		progressAlert.close();
+		showAlert(Alert.AlertType.ERROR, "Export Revision SCORM", "The SCORM export could not be completed.",
+				failureMessage(task.getException()));
 	}
 
 	private String failureMessage(Throwable failure) {
@@ -554,6 +663,11 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void handleCloseRequest(javafx.stage.WindowEvent event, Stage primaryStage) {
+		event.consume();
+		requestApplicationExit(primaryStage);
+	}
+
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.ANSWER) {
 			captureSelectionState.claim(CaptureSelectionOwner.ANSWER);
@@ -561,9 +675,18 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.EXAM) {
-			captureSelectionState.claim(CaptureSelectionOwner.QUESTION);
-			questionCapturePane.acceptSelection(selection);
+			if (questionCapturePane.isCapturingSharedContext()) {
+				captureSelectionState.claim(CaptureSelectionOwner.SHARED_CONTEXT);
+				questionCapturePane.acceptSharedContextSelection(selection);
+			} else {
+				captureSelectionState.claim(CaptureSelectionOwner.QUESTION);
+				questionCapturePane.acceptSelection(selection);
+			}
 		}
+	}
+
+	private void handleSubjectChanged(Subject newSubject) {
+		examMetadataPane.invalidateForSubjectChange(newSubject);
 	}
 
 	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
@@ -604,6 +727,25 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void importLegacyAnswerPdfs(ApplicationConfig config, Subject subject,
+			List<LegacyAnswerPdfImportDialog.AnswerPdfSelection> selections) throws IOException, SQLException {
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		for (LegacyAnswerPdfImportDialog.AnswerPdfSelection selection : selections) {
+			Exam exam = examWriter.findExamByProviderAndYear(subject, selection.providerName(), selection.year());
+			if (exam == null) {
+				throw new IllegalStateException("No existing exam matches " + selection.providerName() + " "
+						+ selection.year() + " for " + subject.getName());
+			}
+			Path storedPath = pdfStore.importExamPdf(selection.pdfPath(), subject.getName(), selection.providerName(),
+					selection.year());
+			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
+			answerWriter.findOrCreateAnswerFile(exam, "Marking guide", relativePath);
+		}
+	}
+
 	private void importLegacyQuestionMetadata(Stage primaryStage, ApplicationConfig config) {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
@@ -623,8 +765,8 @@ public class QuestionBankApplication extends Application {
 			}
 			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
 					subject.getName(), syllabusVersion.getName());
-			answerCapturePane.refreshUnansweredQuestions();
-			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			questionCapturePane.showLegacyCaptureControls();
 			showLegacyQuestionImportResult(importedBooklets.get().intValue(), importResult);
 		} catch (IOException e) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
@@ -644,12 +786,22 @@ public class QuestionBankApplication extends Application {
 		List<LegacyBookletRequirement> missingBooklets = importer.findMissingBooklets(dialog.getSelectedFile(),
 				subject.getName(), syllabusVersion.getName());
 		if (missingBooklets.isEmpty()) {
+			List<LegacyBookletRequirement> requiredBooklets = importer.findRequiredBooklets(dialog.getSelectedFile(),
+					subject.getName(), syllabusVersion.getName());
+			if (!requiredBooklets.isEmpty()) {
+				LegacyAnswerPdfImportDialog answerDialog = new LegacyAnswerPdfImportDialog(primaryStage,
+						requiredBooklets);
+				Optional<ButtonType> answerResult = answerDialog.showAndWait();
+				if (answerResult.isEmpty() || answerResult.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
+					return Optional.empty();
+				}
+				importLegacyAnswerPdfs(config, subject, answerDialog.getSelections());
+			}
 			return Optional.of(Integer.valueOf(0));
 		}
 		LegacyBookletImportDialog bookletDialog = new LegacyBookletImportDialog(primaryStage, missingBooklets);
 		Optional<ButtonType> bookletResult = bookletDialog.showAndWait();
-		if (bookletResult.isEmpty()
-				|| bookletResult.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+		if (bookletResult.isEmpty() || bookletResult.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return Optional.empty();
 		}
 		List<LegacyBookletImportRequest> requests = bookletDialog.getRequests();
@@ -657,9 +809,40 @@ public class QuestionBankApplication extends Application {
 		List<LegacyBookletRequirement> stillMissing = importer.findMissingBooklets(dialog.getSelectedFile(),
 				subject.getName(), syllabusVersion.getName());
 		if (!stillMissing.isEmpty()) {
-			throw new IllegalStateException("Required exam booklets are still missing after booklet import.");
+			throw new IllegalStateException("Required exam booklets are still missing " + "after booklet import.");
 		}
 		return Optional.of(Integer.valueOf(requests.size()));
+	}
+
+	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			PdfFilePicker answerPdfPicker) {
+		questionRepository = new SqliteQuestionRepository(database);
+		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
+		SqliteQuestionCaptureService questionCaptureService = new SqliteQuestionCaptureService(database);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
+				new ExamMetadataOptionsRepository(), examImporter, this::allowExamImportConfirmation, this::openExamPdf,
+				pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
+		curriculumSelectorPane = createCurriculumSelectorPane();
+		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
+				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
+				this::allowAnswerCaptureTransition, () -> clearCaptureSelection(CaptureSelectionOwner.ANSWER),
+				questionExtractor, pdfWorkspace::getAnswerPdfSession,
+				(selected, completed) -> pdfWorkspace.openAnswerPdfAsync(selected.path(), completed));
+		answerCapturePane.refreshQuestions();
+		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
+				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
+				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
+				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
+				questionCaptureService, sharedContextCapturePane, questionExtractor, curriculumSelectionModel,
+				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
+				question -> activateImportedQuestion(question, config), this::confirmDiscardAcceptedQuestionRegions,
+				this::transferQuestionSelectionToSharedContext,
+				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
+		questionCapturePane.refreshImportedQuestions();
 	}
 
 	private boolean isRegionSelectionAvailable(PdfWorkspacePane.DocumentMode documentMode) {
@@ -667,9 +850,9 @@ public class QuestionBankApplication extends Application {
 			return false;
 		}
 		if (documentMode == PdfWorkspacePane.DocumentMode.ANSWER) {
-			return answerCapturePane.hasAnswerFile();
+			return answerCapturePane.hasAnswerFile() && !answerCapturePane.isSaveInProgress();
 		}
-		return examMetadataPane.getBooklet() != null;
+		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
 	}
 
 	private void openAnswerPdf(SelectedPdf selectedPdf) {
@@ -692,6 +875,9 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void requestApplicationExit(Stage primaryStage) {
+		if (blockWhileCaptureSaveInProgress(primaryStage, "closing the application")) {
+			return;
+		}
 		while (true) {
 			ShutdownResult result = shutdownCoordinator.prepareForExit();
 			if (result.status() == ShutdownStatus.READY_TO_EXIT_WITH_RETENTION_WARNING) {
@@ -720,6 +906,9 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void restoreBackup(Stage primaryStage, ApplicationConfig config) {
+		if (blockWhileCaptureSaveInProgress(primaryStage, "restoring a backup")) {
+			return;
+		}
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Restore Question-Bank Backup");
 		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Question-bank backups (*.zip)", "*.zip"));
@@ -766,6 +955,11 @@ public class QuestionBankApplication extends Application {
 				The application will now close. Restart Exam Question Bank to use the restored data.
 				""".formatted(restoreResult.safetyBackupPath()));
 		applicationExitAction.run();
+	}
+
+	private void resumeSearchAfterEdit(QuestionSearchDialog dialog, long questionId) {
+		dialog.refreshAfterEdit(questionId);
+		showQuestionSearchDialog(dialog);
 	}
 
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
@@ -836,15 +1030,21 @@ public class QuestionBankApplication extends Application {
 		return destination;
 	}
 
-	private void setFixedWidth(Region region, double width) {
-		region.setPrefWidth(width);
-		region.setMinWidth(width);
-		region.setMaxWidth(width);
-	}
-
 	private void setViewerMode(boolean viewerMode) {
-		previewScrollPane.setVisible(!viewerMode);
-		previewScrollPane.setManaged(!viewerMode);
+		if (viewerMode) {
+			if (workspaceSplitPane.getItems().contains(previewScrollPane)) {
+				if (!workspaceSplitPane.getDividers().isEmpty()) {
+					captureDividerPosition = workspaceSplitPane.getDividers().getFirst().getPosition();
+				}
+				workspaceSplitPane.getItems().remove(previewScrollPane);
+			}
+			return;
+		}
+		if (workspaceSplitPane.getItems().contains(previewScrollPane)) {
+			return;
+		}
+		workspaceSplitPane.getItems().add(0, previewScrollPane);
+		Platform.runLater(() -> workspaceSplitPane.setDividerPositions(captureDividerPosition));
 	}
 
 	private void showAbout() {
@@ -938,7 +1138,31 @@ public class QuestionBankApplication extends Application {
 				questionExtractor);
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
 				previewService);
-		dialog.showAndWait();
+		showQuestionSearchDialog(dialog);
+	}
+
+	private void showQuestionSearchDialog(QuestionSearchDialog dialog) {
+		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
+		if (result.isEmpty()) {
+			dialog.dispose();
+			questionCapturePane.clearSaveStatus();
+			return;
+		}
+		QuestionSearchDialog.EditRequest request = result.get();
+		Question question = request.question();
+		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
+			boolean editingStarted = questionCapturePane.editQuestion(question,
+					() -> resumeSearchAfterEdit(dialog, question.getId()));
+			if (!editingStarted) {
+				showQuestionSearchDialog(dialog);
+			}
+			return;
+		}
+		boolean editingStarted = answerCapturePane.editAnswer(question,
+				() -> resumeSearchAfterEdit(dialog, question.getId()));
+		if (!editingStarted) {
+			showQuestionSearchDialog(dialog);
+		}
 	}
 
 	private void showResourceCloseFailure(Stage primaryStage, Throwable failure) {
@@ -1075,39 +1299,10 @@ public class QuestionBankApplication extends Application {
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		DefaultBackupService automaticBackupService = new DefaultBackupService(config, applicationVersion());
-		shutdownCoordinator = new ShutdownCoordinator(automaticBackupService, BackupRequest.automaticDatabase(config),
-				new AutomaticBackupRetention(), pdfWorkspace);
-		questionRepository = new SqliteQuestionRepository(database);
-		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
-				new ExamMetadataOptionsRepository(), examImporter, this::allowExamImportConfirmation, this::openExamPdf,
-				pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
-		curriculumSelectorPane = createCurriculumSelectorPane();
-		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
-				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
-				this::allowAnswerCaptureTransition, () -> clearCaptureSelection(CaptureSelectionOwner.ANSWER),
-				questionExtractor, pdfWorkspace::getAnswerPdfSession);
-		answerCapturePane.refreshUnansweredQuestions();
-		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository, questionExtractor,
-				curriculumSelectionModel, curriculumSelectorPane, examMetadataPane::getBooklet,
-				pdfWorkspace::getExamPdfSession, question -> activateImportedQuestion(question, config),
-				this::confirmDiscardAcceptedQuestionRegions,
-				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION),
-				answerCapturePane::refreshUnansweredQuestions);
-		questionCapturePane.refreshImportedQuestions();
-		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
-		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
-		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
-		primaryStage.setOnCloseRequest(event -> {
-			event.consume();
-			requestApplicationExit(primaryStage);
-		});
-		showStage(primaryStage, createRootLayout(primaryStage, config));
-		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
+		configureShutdown(config);
+		initialiseCaptureWorkflow(primaryStage, config, database, answerPdfPicker);
+		configurePdfWorkspace();
+		configurePrimaryStage(primaryStage, config);
 	}
 
 	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
@@ -1136,32 +1331,10 @@ public class QuestionBankApplication extends Application {
 				});
 			}
 		};
-		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
-		progressAlert.initOwner(primaryStage);
-		progressAlert.setTitle("Export Revision HTML");
-		progressAlert.setHeaderText("Creating revision website...");
-		Label progressLabel = new Label("Starting export...");
-		progressLabel.setWrapText(true);
-		progressLabel.textProperty().bind(task.messageProperty());
-		ProgressBar progressBar = new ProgressBar();
-		progressBar.setPrefWidth(360);
-		progressBar.progressProperty().bind(task.progressProperty());
-		VBox progressContent = new VBox(10, progressLabel, progressBar);
-		progressAlert.getDialogPane().setContent(progressContent);
-		progressAlert.getDialogPane().setGraphic(null);
-		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
-		progressAlert.getButtonTypes().setAll(hideButton);
-		task.setOnSucceeded(event -> {
-			finishRevisionExport();
-			progressAlert.close();
-			showRevisionExportSuccess(task.getValue());
-		});
-		task.setOnFailed(event -> {
-			finishRevisionExport();
-			progressAlert.close();
-			showAlert(Alert.AlertType.ERROR, "Export Revision HTML", "The revision export could not be completed.",
-					failureMessage(task.getException()));
-		});
+		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision HTML",
+				"Creating revision website...", "Starting export...");
+		task.setOnSucceeded(_ -> completeRevisionExport(task, progressAlert));
+		task.setOnFailed(_ -> failRevisionExport(task, progressAlert));
 		progressAlert.show();
 		Thread thread = new Thread(task, "revision-html-export");
 		thread.setDaemon(true);
@@ -1194,36 +1367,22 @@ public class QuestionBankApplication extends Application {
 				});
 			}
 		};
-		Alert progressAlert = new Alert(Alert.AlertType.INFORMATION);
-		progressAlert.initOwner(primaryStage);
-		progressAlert.setTitle("Export Revision SCORM");
-		progressAlert.setHeaderText("Creating SCORM package...");
-		Label progressLabel = new Label("Starting SCORM export...");
-		progressLabel.setWrapText(true);
-		progressLabel.textProperty().bind(task.messageProperty());
-		ProgressBar progressBar = new ProgressBar();
-		progressBar.setPrefWidth(360);
-		progressBar.progressProperty().bind(task.progressProperty());
-		VBox progressContent = new VBox(10, progressLabel, progressBar);
-		progressAlert.getDialogPane().setContent(progressContent);
-		progressAlert.getDialogPane().setGraphic(null);
-		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
-		progressAlert.getButtonTypes().setAll(hideButton);
-		task.setOnSucceeded(event -> {
-			finishScormExport();
-			progressAlert.close();
-			showScormExportSuccess(task.getValue());
-		});
-		task.setOnFailed(event -> {
-			finishScormExport();
-			progressAlert.close();
-			showAlert(Alert.AlertType.ERROR, "Export Revision SCORM", "The SCORM export could not be completed.",
-					failureMessage(task.getException()));
-		});
+		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision SCORM",
+				"Creating SCORM package...", "Starting SCORM export...");
+		task.setOnSucceeded(_ -> completeScormExport(task, progressAlert));
+		task.setOnFailed(_ -> failScormExport(task, progressAlert));
 		progressAlert.show();
 		Thread thread = new Thread(task, "revision-scorm-export");
 		thread.setDaemon(true);
 		thread.start();
+	}
+
+	private boolean transferQuestionSelectionToSharedContext() {
+		if (!captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION)) {
+			return false;
+		}
+		captureSelectionState.claim(CaptureSelectionOwner.SHARED_CONTEXT);
+		return true;
 	}
 
 	private enum BackupFailureDecision {
