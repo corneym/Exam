@@ -52,6 +52,7 @@ public final class SqliteQuestionCaptureService {
 				}
 				sourceQuestion = resolvePreambleStatus(connection, sourceQuestion, sharedContext);
 				Question question = persistQuestion(connection, request, sourceQuestion, sharedContext);
+				deletePreviousSourceQuestionIfUnreferenced(connection, request, sourceQuestion);
 				connection.commit();
 				return question;
 			} catch (SQLException | RuntimeException e) {
@@ -65,6 +66,22 @@ public final class SqliteQuestionCaptureService {
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question capture atomically", e);
 		}
+	}
+
+	private void deletePreviousSourceQuestionIfUnreferenced(Connection connection, Request request,
+			SourceQuestion currentSourceQuestion) throws SQLException {
+		if (request.operation() != Operation.EDIT) {
+			return;
+		}
+		Question existing = request.existingQuestion();
+		if (!existing.hasSourceQuestion()) {
+			return;
+		}
+		SourceQuestion previousSourceQuestion = existing.getSourceQuestion();
+		if (currentSourceQuestion != null && currentSourceQuestion.getId() == previousSourceQuestion.getId()) {
+			return;
+		}
+		sourceQuestionRepository.deleteIfUnreferenced(connection, previousSourceQuestion);
 	}
 
 	private boolean editingSourceMatches(Question question, String questionCode) {

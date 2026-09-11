@@ -314,6 +314,17 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private boolean blockWhileCaptureSaveInProgress(Stage primaryStage, String actionDescription) {
+		boolean questionSaveInProgress = questionCapturePane != null && questionCapturePane.isSaveInProgress();
+		boolean answerSaveInProgress = answerCapturePane != null && answerCapturePane.isSaveInProgress();
+		if (!questionSaveInProgress && !answerSaveInProgress) {
+			return false;
+		}
+		showAlert(Alert.AlertType.WARNING, "Save in progress", "Save in progress",
+				"Wait for the current Question or Answer save to finish before " + actionDescription + ".");
+		return true;
+	}
+
 	private void clearCaptureSelection(CaptureSelectionOwner owner) {
 		if (captureSelectionState.clear(owner)) {
 			pdfWorkspace.clearSelection();
@@ -864,6 +875,9 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void requestApplicationExit(Stage primaryStage) {
+		if (blockWhileCaptureSaveInProgress(primaryStage, "closing the application")) {
+			return;
+		}
 		while (true) {
 			ShutdownResult result = shutdownCoordinator.prepareForExit();
 			if (result.status() == ShutdownStatus.READY_TO_EXIT_WITH_RETENTION_WARNING) {
@@ -892,6 +906,9 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void restoreBackup(Stage primaryStage, ApplicationConfig config) {
+		if (blockWhileCaptureSaveInProgress(primaryStage, "restoring a backup")) {
+			return;
+		}
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Restore Question-Bank Backup");
 		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Question-bank backups (*.zip)", "*.zip"));

@@ -289,12 +289,13 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	void refreshQuestions(List<Question> questions) {
-		Question selected = unansweredQuestionField.getValue();
+		Question editTarget = editingAnswerQuestion;
+		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;
 		List<Question> unansweredQuestions = questions.stream()
 				.filter(question -> !question.hasAnswer() && !locallyAnsweredQuestionIds.contains(question.getId()))
 				.toList();
-		Question matching = null;
-		if (selected != null) {
+		Question matching = editTarget;
+		if (matching == null && selected != null) {
 			for (Question question : unansweredQuestions) {
 				if (question.getId() == selected.getId()) {
 					matching = question;
@@ -618,6 +619,10 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void finishAnswerEdit(boolean reloadQuestions) {
+		finishAnswerEditState(reloadQuestions).run();
+	}
+
+	private Runnable finishAnswerEditState(boolean reloadQuestions) {
 		Runnable completedHandler = answerEditCompletedHandler;
 		answerEditCompletedHandler = () -> {
 		};
@@ -636,7 +641,7 @@ final class AnswerCapturePane extends VBox {
 			refreshQuestions(List.copyOf(unansweredQuestionField.getItems()));
 		}
 		applyUnansweredQuestionChange(unansweredQuestionField.getValue());
-		completedHandler.run();
+		return completedHandler;
 	}
 
 	private void finishAnswerSaveTransition(Throwable failure) {
@@ -887,10 +892,14 @@ final class AnswerCapturePane extends VBox {
 			question.setAnswer(answer);
 			locallyAnsweredQuestionIds.add(question.getId());
 			if (editing) {
+				Runnable completedHandler = null;
 				try {
-					finishAnswerEdit(false);
+					completedHandler = finishAnswerEditState(false);
 				} finally {
 					finishAnswerSaveTransition(null);
+				}
+				if (completedHandler != null) {
+					completedHandler.run();
 				}
 				return;
 			}

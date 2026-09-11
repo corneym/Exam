@@ -33,10 +33,11 @@ class SqliteQuestionCaptureServiceTest {
 	Path tempDirectory;
 
 	@Test
-	void editingMultipartQuestionToNonMultipartClearsSourceQuestionAndSharedContext() throws Exception {
-		Fixture fixture = createFixture("edit-to-non-multipart.db");
+	void editingLastMultipartPartToNonMultipartRemovesUnreferencedSourceQuestionButRetainsContext() throws Exception {
+		Fixture fixture = createFixture("edit-last-part-to-non-multipart.db");
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
 		SourceQuestion sourceQuestion = sourceRepository.save(fixture.booklet(), "24");
+		sourceQuestion = sourceRepository.updatePreambleStatus(sourceQuestion, PreambleStatus.PRESENT);
 		SqliteSharedQuestionContextRepository sharedContextRepository = new SqliteSharedQuestionContextRepository(
 				fixture.database());
 		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 preamble",
@@ -53,11 +54,47 @@ class SqliteQuestionCaptureServiceTest {
 		assertEquals("25", updated.getQuestionCode());
 		assertFalse(updated.hasSourceQuestion());
 		assertFalse(updated.hasSharedContext());
-		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(original.getId()).orElseThrow();
+		Question reloaded = questionRepository.findById(original.getId()).orElseThrow();
 		assertEquals("25", reloaded.getQuestionCode());
 		assertFalse(reloaded.hasSourceQuestion());
 		assertFalse(reloaded.hasSharedContext());
-		assertTrue(sourceRepository.findByBookletAndCode(fixture.booklet(), "24").isPresent());
+		assertTrue(sourceRepository.findByBookletAndCode(fixture.booklet(), "24").isEmpty());
+		assertEquals(1, sharedContextRepository.findByBooklet(fixture.booklet()).size());
+		assertEquals(sharedContext.getId(),
+				sharedContextRepository.findByBooklet(fixture.booklet()).getFirst().getId());
+	}
+
+	@Test
+	void editingOneMultipartPartAwayRetainsSourceQuestionUsedBySibling() throws Exception {
+		Fixture fixture = createFixture("edit-one-multipart-part.db");
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
+		SourceQuestion sourceQuestion = sourceRepository.save(fixture.booklet(), "24");
+		sourceQuestion = sourceRepository.updatePreambleStatus(sourceQuestion, PreambleStatus.PRESENT);
+		SqliteSharedQuestionContextRepository sharedContextRepository = new SqliteSharedQuestionContextRepository(
+				fixture.database());
+		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 preamble",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(fixture.database());
+		Question firstPart = questionRepository.save(fixture.booklet(), "24a", "", 2,
+				List.of(new QuestionRegion(fixture.booklet(), 2, 0.10, 0.20, 0.60, 0.15)), fixture.classification(),
+				false, sourceQuestion, sharedContext);
+		Question sibling = questionRepository.save(fixture.booklet(), "24b", "", 3,
+				List.of(new QuestionRegion(fixture.booklet(), 2, 0.10, 0.40, 0.60, 0.15)), fixture.classification(),
+				false, sourceQuestion, sharedContext);
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
+		Question updated = service.save(new SqliteQuestionCaptureService.Request(
+				SqliteQuestionCaptureService.Operation.EDIT, fixture.booklet(), firstPart, "25", firstPart.getMarks(),
+				firstPart.getRegions(), fixture.classification(), null, null));
+		assertFalse(updated.hasSourceQuestion());
+		assertFalse(updated.hasSharedContext());
+		SourceQuestion retainedSource = sourceRepository.findByBookletAndCode(fixture.booklet(), "24").orElseThrow();
+		assertEquals(sourceQuestion.getId(), retainedSource.getId());
+		assertEquals(PreambleStatus.PRESENT, retainedSource.getPreambleStatus());
+		Question reloadedSibling = questionRepository.findById(sibling.getId()).orElseThrow();
+		assertTrue(reloadedSibling.hasSourceQuestion());
+		assertTrue(reloadedSibling.hasSharedContext());
+		assertEquals(sourceQuestion.getId(), reloadedSibling.getSourceQuestion().getId());
+		assertEquals(sharedContext.getId(), reloadedSibling.getSharedContext().getId());
 	}
 
 	@Test

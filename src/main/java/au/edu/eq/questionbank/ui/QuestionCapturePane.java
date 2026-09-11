@@ -783,6 +783,10 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void finishQuestionEdit() {
+		finishQuestionEditState().run();
+	}
+
+	private Runnable finishQuestionEditState() {
 		Runnable editCompletedHandler = questionEditCompletedHandler;
 		questionEditCompletedHandler = () -> {
 		};
@@ -792,7 +796,7 @@ final class QuestionCapturePane extends VBox {
 		setLegacyCaptureControlsVisible(false);
 		showNewQuestionMode();
 		resetQuestionEntry();
-		editCompletedHandler.run();
+		return editCompletedHandler;
 	}
 
 	private void handlePreambleOptionChanged(boolean selected) {
@@ -1141,6 +1145,7 @@ final class QuestionCapturePane extends VBox {
 		saveTask.setOnSucceeded(_ -> {
 			QuestionSaveResult result = saveTask.getValue();
 			completionQuestions = result.questions();
+			Runnable editCompletedHandler = null;
 			try {
 				if (result.validationError() != null) {
 					saveStatusLabel.setText("Question not saved — check question details");
@@ -1150,7 +1155,7 @@ final class QuestionCapturePane extends VBox {
 				Question question = result.question();
 				questionsChangedHandler.accept(result.questions());
 				if (editing) {
-					finishQuestionEdit();
+					editCompletedHandler = finishQuestionEditState();
 				} else {
 					resetAfterQuestionSave(savedPreviousImportedIndex);
 				}
@@ -1174,6 +1179,9 @@ final class QuestionCapturePane extends VBox {
 				} finally {
 					completionQuestions = null;
 				}
+			}
+			if (editCompletedHandler != null) {
+				editCompletedHandler.run();
 			}
 		});
 		saveTask.setOnFailed(_ -> {

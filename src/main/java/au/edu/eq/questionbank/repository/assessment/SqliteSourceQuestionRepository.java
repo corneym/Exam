@@ -115,6 +115,29 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		}
 	}
 
+	boolean deleteIfUnreferenced(Connection connection, SourceQuestion sourceQuestion) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (sourceQuestion == null) {
+			throw new NullPointerException("sourceQuestion");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM source_questions
+				WHERE id = ?
+				  AND booklet_id = ?
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM questions
+				      WHERE source_question_id = source_questions.id
+				  )
+				""")) {
+			statement.setLong(1, sourceQuestion.getId());
+			statement.setLong(2, sourceQuestion.getBooklet().getId());
+			return statement.executeUpdate() == 1;
+		}
+	}
+
 	Optional<SourceQuestion> findByBookletAndCode(Connection connection, ExamBooklet booklet, String sourceQuestionCode)
 			throws SQLException {
 		if (connection == null) {

@@ -125,6 +125,30 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void answerEditCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "58");
+		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
+				new Class<?>[] { Question.class, String.class }, question, "A")).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		AtomicBoolean callbackRan = new AtomicBoolean();
+		AtomicBoolean saveInProgressAtCompletion = new AtomicBoolean();
+		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, () -> {
+			saveInProgressAtCompletion.set(answerCapturePane().isSaveInProgress());
+			callbackRan.set(true);
+		})));
+		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
+				new Class<?>[] { Question.class, String.class }, question, "B")).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, callbackRan::get);
+		assertFalse(saveInProgressAtCompletion.get(),
+				"Answer edit completion must run after the save-in-progress state is cleared");
+		assertFalse(answerCapturePane().isSaveInProgress());
+		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow();
+		assertEquals("B", stored.getAnswer().getAnswerText());
+	}
+
+	@Test
 	void answerRegionControlsResetAcrossSelectionAndPdfModeChanges(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q2");
@@ -651,6 +675,26 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void fileExitIsBlockedWhileQuestionSaveIsInProgress(FxRobot robot) throws Exception {
+		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+		AtomicInteger exitCount = new AtomicInteger();
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		assertEquals(0, automaticBackupCount());
+		setField(pane, "questionSaveInProgress", true);
+		try {
+			MenuItem exitItem = fileExitMenuItem();
+			Platform.runLater(exitItem::fire);
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+					() -> robot.lookup("Save in progress").tryQuery().isPresent());
+			assertEquals(0, exitCount.get());
+			assertEquals(0, automaticBackupCount());
+			robot.clickOn("OK");
+		} finally {
+			setField(pane, "questionSaveInProgress", false);
+		}
+	}
+
+	@Test
 	void hidesAnswerPdfControlsWhenAnswerPdfIsKnown(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "56");
@@ -820,6 +864,67 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void questionEditCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "57");
+		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+		AtomicBoolean callbackRan = new AtomicBoolean();
+		AtomicBoolean saveInProgressAtCompletion = new AtomicBoolean();
+		robot.interact(() -> assertTrue(pane.editQuestion(question, () -> {
+			saveInProgressAtCompletion.set(pane.isSaveInProgress());
+			callbackRan.set(true);
+		})));
+		robot.clickOn("#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, callbackRan::get);
+		assertFalse(saveInProgressAtCompletion.get(),
+				"Question edit completion must run after the save-in-progress state is cleared");
+		assertFalse(pane.isSaveInProgress());
+	}
+
+	@Test
+	void questionListRefreshPreservesActiveAnswerEdit(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "59");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-answer-region");
+		robot.clickOn("#save-answer");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(question.hasAnswer());
+		assertEquals(1, question.getAnswer().getRegions().size());
+		long answerId = question.getAnswer().getId();
+		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, () -> {
+		})));
+		assertNotNull(questions.getValue());
+		assertEquals(question.getId(), questions.getValue().getId());
+		assertTrue(questions.isDisable());
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
+		List<Question> refreshedQuestions = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll();
+		robot.interact(() -> answerCapturePane().refreshQuestions(refreshedQuestions));
+		assertNotNull(questions.getValue(),
+				"Refreshing the unanswered queue must not clear the active Answer-edit target");
+		assertEquals(question.getId(), questions.getValue().getId());
+		assertTrue(questions.isDisable(), "The Answer selector must remain locked while editing");
+		assertTrue(questions.getItems().stream().noneMatch(candidate -> candidate.getId() == question.getId()),
+				"The answered edit target must not be added to the unanswered queue");
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText(),
+				"Refreshing Questions must not discard loaded Answer regions");
+		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
+		robot.clickOn("#save-answer");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitForFxEvents();
+		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow();
+		assertTrue(stored.hasAnswer());
+		assertEquals(answerId, stored.getAnswer().getId());
+		assertEquals(1, stored.getAnswer().getRegions().size());
+	}
+
+	@Test
 	void questionRefreshDoesNotRestoreAnAnswerSavedSinceSnapshot(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "30");
@@ -939,6 +1044,24 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(units.isDisabled());
 		assertNull(syllabuses.getValue());
 		assertFalse(syllabuses.isDisabled());
+	}
+
+	@Test
+	void restoreIsBlockedWhileAnswerSaveIsInProgress(FxRobot robot) throws Exception {
+		AnswerCapturePane pane = answerCapturePane();
+		AtomicInteger exitCount = new AtomicInteger();
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		setField(pane, "answerSaveInProgress", true);
+		try {
+			MenuItem restoreItem = fileRestoreMenuItem();
+			Platform.runLater(restoreItem::fire);
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+					() -> robot.lookup("Save in progress").tryQuery().isPresent());
+			assertEquals(0, exitCount.get());
+			robot.clickOn("OK");
+		} finally {
+			setField(pane, "answerSaveInProgress", false);
+		}
 	}
 
 	@Test
@@ -1323,6 +1446,17 @@ class QuestionBankApplicationWorkflowTest {
 			}
 		}
 		throw new AssertionError("File -> Exit menu item not found");
+	}
+
+	private MenuItem fileRestoreMenuItem() {
+		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
+		MenuBar menuBar = (MenuBar) root.getTop();
+		for (MenuItem item : menuBar.getMenus().get(0).getItems()) {
+			if ("_Restore Backup...".equals(item.getText())) {
+				return item;
+			}
+		}
+		throw new AssertionError("File -> Restore Backup menu item not found");
 	}
 
 	private void openAnswerPdfForTest(Question question) throws Exception {

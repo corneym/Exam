@@ -78,7 +78,10 @@ of render DPI.
 `SharedQuestionContext` represents reusable source material. Questions may share
 context without being members of the same SourceQuestion.
 
-Do not infer either relationship silently from naming patterns or legacy flags.
+Recognised multipart question codes may conservatively derive or create
+`SourceQuestion` identity during capture or capture backfill. Shared-context
+identity or content must not be inferred from question-code patterns or
+legacy flags alone.
 
 ### 3.6 Historical provenance is preserved
 
