@@ -29,10 +29,9 @@ The canonical Sprint 07 record is:
 It now incorporates the final implementation/status information that had been
 spread across temporary working notes.
 
-The following temporary documents should be retired after consolidation:
-
-- `design/sprint-07-status-and-backlog-notes.md`;
-- `sprint07-cleanup-review.md`.
+The temporary Sprint 07 status/backlog and cleanup-review documents were retired
+after their final evidence was consolidated into the canonical Sprint 07 record,
+current status, project history and backlog.
 
 Deferred Sprint 07 follow-on work belongs in `design/backlog.md`, not in a
 parallel sprint-status file.

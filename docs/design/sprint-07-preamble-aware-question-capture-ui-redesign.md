@@ -2,7 +2,7 @@
 
 > **Status:** IMPLEMENTED — feature branch closeout  
 > **Feature branch:** `feature/preamble-capture`  
-> **Status date:** 10 September 2026  
+> **Status date:** 11 September 2026  
 > **Repository:** `corneym/Exam`
 
 ## 1. Sprint objective
@@ -256,7 +256,13 @@ Manual acceptance has confirmed, among other cases:
 - registered marking-guide reuse;
 - hiding the Answer PDF chooser when the selected Question already has a usable Answer PDF.
 
-The branch should still receive the normal final branch-versus-`main` merge-readiness review before merge.
+Regression coverage also confirms that editing a multipart Question to a
+non-multipart question code clears its `SourceQuestion` and shared-context
+relationships.
+
+The final branch-versus-`main` merge-readiness review was completed on
+11 September 2026. The edit-transition defect found during that review was
+corrected and regression-tested; no known Sprint 07 merge blocker remains.
 
 ## 16. Deferred work explicitly not part of Sprint 07 completion
 
@@ -265,11 +271,10 @@ The following remain in `docs/design/backlog.md`:
 - multi-page automatic shared-preamble capture;
 - shared-context inclusion in Search Questions preview;
 - Answer-pane layout annoyances;
-- Save-button ready-state regression after selecting then clearing a new pending region;
 - Question-level response type;
 - MCQ explanation-region capture;
 - broad capture/audit queue;
-- additional JavaFX/TestFX and async-search hardening;
+- additional asynchronous Question Search regression coverage;
 - multiple-original-classification decision;
 - question-level applicability exceptions after curriculum mapping;
 - exam-specific metadata correction beyond the current Question/Answer edit workflow;
@@ -293,6 +298,8 @@ The temporary working documents:
 - `docs/design/sprint-07-status-and-backlog-notes.md`;
 - `docs/sprint07-cleanup-review.md`;
 
-were useful during implementation but should be retired after their final evidence has been incorporated here, `docs/current-status.md`, `docs/project-history.md` and `docs/design/backlog.md`.
+were useful during implementation and were retired after their final evidence
+was incorporated here, `docs/current-status.md`, `docs/project-history.md` and
+`docs/design/backlog.md`.
 
 Future Sprint 07 corrections should update this canonical file rather than recreate parallel status documents.

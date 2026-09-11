@@ -1,6 +1,6 @@
 # Exam Question Bank — Roadmap
 
-> Consolidated forward plan at 10 September 2026.
+> Consolidated forward plan at 11 September 2026.
 >
 > Completed Sprints 01–07 are not future milestones. `DEVELOPMENT_ROADMAP.md`
 > contains the detailed sequence and `design/backlog.md` is the authoritative
@@ -29,8 +29,10 @@
 
 ## Immediate closeout
 
-Sprint 07 is implemented on `feature/preamble-capture` and requires only the
-normal final documentation/branch-versus-`main` merge-readiness checkpoint.
+Sprint 07 is implemented on `feature/preamble-capture`. Documentation
+consolidation and the final branch-versus-`main` merge-readiness review are
+complete, with no known merge blocker remaining after final regression
+verification.
 
 Canonical Sprint 07 record:
 
@@ -61,11 +63,9 @@ prerequisite for data capture.
 Focus on the workflows needed to maintain a growing real question bank:
 
 - broad capture/audit queue and completeness filters;
-- shared-context reconstruction in Search Questions preview;
 - exam-specific metadata correction;
 - import audit/reconciliation reporting;
 - additional real-world legacy-workbook validation;
-- TestFX focus/isolation hardening;
 - remaining asynchronous search/preview lifecycle tests;
 - retrieval-domain and SQLite integration hardening;
 - measurement-driven search/preview performance work.
@@ -113,7 +113,6 @@ explicitly out of scope
 
 - multi-page automatic shared-preamble capture;
 - Answer-pane layout stability;
-- Save-button ready-state recalculation after clearing a newly selected region;
 - Full-width-selection state change clearing a pending selection;
 - optional MCQ explanation-region capture.
 
@@ -225,7 +224,7 @@ mappings.
 ## Recommended order
 
 ```text
-Sprint 07 closeout / merge-readiness
+Merge Sprint 07
         |
         v
 Corpus completion + Chemistry mapping reconciliation

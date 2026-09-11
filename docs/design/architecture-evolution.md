@@ -1,6 +1,6 @@
 # Exam Question Bank — Architecture Evolution
 
-> Major architectural changes and superseded designs through 7 September 2026.
+> Major architectural changes and superseded designs through 11 September 2026.
 >
 > This file explains why the application changed shape. Use `../current-status.md` for the authoritative present-state implementation summary. A design decision may be recorded here before implementation when its status is stated explicitly.
 
@@ -274,11 +274,11 @@ Sprint 07 deliberately does not alter the unresolved **multiple original classif
 
 ### Sprint 07 capture-hierarchy decision
 
-**DECIDED / SCHEDULED — NOT YET IMPLEMENTED**
+**IMPLEMENTED / CURRENT — SPRINT 07**
 
 The built-in Question classification panel must no longer assume a fixed hierarchy shape.
 
-It will consume the selected syllabus branch:
+It consumes the selected syllabus branch:
 
 ```text
 Unit -> Topic -> Descriptor
@@ -344,7 +344,7 @@ Explicit `Answer`, `AnswerFile` and `AnswerRegion` structures allow text and/or 
 
 Blank legacy written-answer cells do not prove “no answer”, so fake empty answers were avoided.
 
-Sprint 07 will add correction/update workflow without changing the core answer aggregate.
+Sprint 07 added Answer correction/update workflow without changing the core answer aggregate.
 
 ## 17. Preamble/shared context and multipart identity
 
@@ -375,7 +375,7 @@ Possible designs included:
 
 ### Sprint 01 implementation
 
-**IMPLEMENTED / CURRENT THROUGH SCHEMA V4**
+**DECIDED / SCHEDULED — NOT YET IMPLEMENTED**
 
 Only the Boolean legacy evidence flag `preambleCaptureRequired` was persisted.
 
@@ -383,7 +383,7 @@ Import deliberately did not infer grouping or create placeholder preamble data.
 
 ### Sprint 07 design decision
 
-**DECIDED / SCHEDULED — NOT YET IMPLEMENTED**
+**IMPLEMENTED / CURRENT — SPRINT 07**
 
 Sprint 07 resolves the prior ambiguity with two separate persisted concepts:
 
@@ -424,8 +424,10 @@ A single shared context may also link otherwise independent questions without co
 
 **DECIDED**
 
-- source-question membership is explicit;
-- question-code parsing may suggest but not silently create membership;
+- source-question membership is persisted explicitly;
+- recognised multipart question codes may conservatively derive/create
+  `SourceQuestion` identity during capture or capture backfill;
+- shared-context membership is never inferred from the question code alone;
 - one shared-context link per question;
 - one shared context may contain several ordered regions;
 - one shared context may be reused by many questions;
@@ -437,24 +439,21 @@ A single shared context may also link otherwise independent questions without co
 
 ### Legacy migration/import rule
 
-**DECIDED**
+**IMPLEMENTED / CURRENT**
 
-Neither migration nor import may infer:
+Schema migration does not manufacture `SourceQuestion` or
+`SharedQuestionContext` relationships.
 
-```text
-21a -> SourceQuestion 21
-```
+Legacy import preserves historical preamble evidence and does not manufacture a
+`SharedQuestionContext` from metadata alone.
 
-or a shared-context relationship merely from:
+During later capture or capture backfill, a recognised multipart question code
+may conservatively create or reuse persisted `SourceQuestion` identity. This is
+distinct from inferring shared-context content.
 
-```text
-preamble_capture_required = 1
-```
-
-The legacy flag remains evidence.
-
-Operational unresolved state is derived when the flag is true and no shared context is explicitly linked.
-
+The legacy preamble flag remains historical evidence. Operational unresolved
+state is derived when that evidence requires shared context and no context has
+yet been explicitly linked.
 ### Output rule
 
 **DECIDED**
@@ -493,9 +492,9 @@ This permits a Question-side clear action to disturb an Answer-side selection an
 
 ### Sprint 07 decision
 
-**DECIDED / SCHEDULED**
+**IMPLEMENTED / CURRENT — SPRINT 07**
 
-Introduce explicit transient selection ownership:
+Sprint 07 introduced explicit transient selection ownership:
 
 ```text
 QUESTION
@@ -522,7 +521,8 @@ Notably:
 - assessment persistence remains grouped;
 - UI remains separated from persistence/domain logic.
 
-Sprint 07 should preserve these boundaries.
+Sprint 07 preserved these boundaries while adding transactional assessment
+capture and shared-context services.
 
 ## 20. Retrieval architecture: stored classification -> derived applicability search
 
@@ -536,8 +536,7 @@ Search scopes may be Subject/Unit/Topic/Subtopic/Descriptor even though persiste
 
 ### Sprint 07 boundary
 
-**DECIDED**
-
+**IMPLEMENTED / CURRENT**
 Multipart/shared-context grouping happens after retrieval has established the final output bucket.
 
 Do not push multipart grouping into curriculum retrieval or mapping logic.

@@ -1,6 +1,6 @@
 # Exam Question Bank Backlog
 
-> Authoritative deferred-work list at 10 September 2026.
+> Authoritative deferred-work list at 11 September 2026.
 >
 > Completed sprint documents remain historical records. Items intentionally
 > deferred from completed work belong here until scheduled into a future sprint.
@@ -75,39 +75,7 @@ Required work:
 Do not treat the standalone workbook as authoritative application state until
 reconciliation is complete.
 
-### Include shared question context in Search Questions preview
 
-Origin: Sprint 07 shared-context semantics / Search Questions usability.
-
-When an individual Question has a linked `SharedQuestionContext`, the Search
-Questions preview should reconstruct the complete material needed to understand
-that Question.
-
-Example:
-
-- SourceQuestion `21`;
-- shared preamble/context;
-- Question `21a`;
-- Question `21b`.
-
-If the user selects `21a`, the preview should show:
-
-1. the shared preamble/context for SourceQuestion `21`;
-2. the ordinary Question regions belonging specifically to `21a`.
-
-Requirements:
-
-- render linked shared-context regions before the selected Question's regions;
-- preserve region order within both the shared context and Question;
-- clearly distinguish shared context from the selected Question where useful;
-- do not duplicate shared context because of inconsistent legacy data;
-- do not automatically display sibling parts such as `21b`;
-- questions without shared context retain existing preview behaviour;
-- surface missing or inconsistent shared-context relationships rather than
-  silently producing misleading previews.
-
-This is a Search Questions presentation concern. It does not change retrieval
-or curriculum applicability semantics.
 
 ## Normal Priority
 
@@ -622,6 +590,8 @@ Do not re-add these as unimplemented work:
 - async hierarchy loading;
 - stale-result protection;
 - stored-question preview;
+- Search Questions preview reconstruction of linked shared context before the
+  selected Question's ordinary regions;
 - arbitrary-PDF viewer mode;
 - one-root managed-data configuration;
 - persisted `SourceQuestion` identity;
@@ -649,6 +619,7 @@ Do not re-add these as unimplemented work:
   required question booklets already exist.
 - Save-button state recalculation after clearing a pending Question selection.
 - JavaFX/TestFX suite isolation with separate non-UI and headless UI test execution.
+
 
 ## Backlog Rules
 

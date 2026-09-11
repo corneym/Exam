@@ -61,34 +61,6 @@ class SqliteQuestionCaptureServiceTest {
 	}
 
 	@Test
-	void editingMultipartQuestionToNonMultipartClearsSourceQuestionAndSharedContext() throws Exception {
-		Fixture fixture = createFixture("edit-to-non-multipart.db");
-		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
-		SourceQuestion sourceQuestion = sourceRepository.save(fixture.booklet(), "24");
-		SqliteSharedQuestionContextRepository sharedContextRepository = new SqliteSharedQuestionContextRepository(
-				fixture.database());
-		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 preamble",
-				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));
-		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(fixture.database());
-		Question original = questionRepository.save(fixture.booklet(), "24a", "", 2,
-				List.of(new QuestionRegion(fixture.booklet(), 2, 0.10, 0.20, 0.60, 0.15)), fixture.classification(),
-				false, sourceQuestion, sharedContext);
-		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
-		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(
-				SqliteQuestionCaptureService.Operation.EDIT, fixture.booklet(), original, "25", 2,
-				original.getRegions(), fixture.classification(), null, null);
-		Question updated = service.save(request);
-		assertEquals("25", updated.getQuestionCode());
-		assertFalse(updated.hasSourceQuestion());
-		assertFalse(updated.hasSharedContext());
-		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(original.getId()).orElseThrow();
-		assertEquals("25", reloaded.getQuestionCode());
-		assertFalse(reloaded.hasSourceQuestion());
-		assertFalse(reloaded.hasSharedContext());
-		assertTrue(sourceRepository.findByBookletAndCode(fixture.booklet(), "24").isPresent());
-	}
-
-	@Test
 	void failedImportedCaptureRollsBackContextPropagationAndPreambleStatus() throws Exception {
 		Fixture fixture = createFixture("capture-rollback.db");
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());

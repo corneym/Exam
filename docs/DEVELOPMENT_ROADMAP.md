@@ -1,7 +1,7 @@
 # Exam Question Bank — Development Roadmap
 
-> **Reference date:** 10 September 2026  
-> **Version:** 8  
+> **Reference date:** 11 September 2026  
+> **Version:** 9  
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 
 ## 1. Project goal
@@ -202,7 +202,8 @@ Complete:
 
 ### Sprint 07 — Preamble-aware Question Capture and UI Redesign
 
-Implemented on `feature/preamble-capture` and in closeout.
+Implemented on `feature/preamble-capture`; final merge-readiness closeout is
+complete.
 
 Delivered:
 
@@ -227,12 +228,13 @@ Delivered:
 - registered Answer PDF reuse and conditional chooser visibility;
 - legacy Answer-PDF registration when all required Question booklets already
   exist.
+  - Search Questions preview reconstruction including linked shared context;
 
 Canonical design/final implementation record:
 
 `docs/design/sprint-07-preamble-aware-question-capture-ui-redesign.md`
 
-The temporary Sprint 07 status/backlog and cleanup-review documents should be
+The temporary Sprint 07 status/backlog and cleanup-review documents were
 retired after consolidation.
 
 ## 5. Current data work
@@ -253,16 +255,18 @@ Parallel work includes:
 
 ## 6. Immediate development sequence after Sprint 07
 
-### 6.1 Final Sprint 07 checkpoint
+### 6.1 Final Sprint 07 checkpoint — complete
 
-Before merge:
+Completed closeout checks:
 
-- ensure the standard test suite is green;
-- ensure the headless UI suite is green;
-- ensure Javadoc/doclint is green after final API changes;
-- perform final branch-versus-`main` review;
-- ensure `current-status.md`, roadmap, backlog and Sprint 07 design record agree;
-- merge only after explicit approval.
+- standard test suite green;
+- headless UI suite green;
+- Javadoc/doclint green;
+- final branch-versus-`main` review completed;
+- multipart-to-non-multipart edit transition regression covered;
+- current status, roadmap, backlog and canonical Sprint 07 record reconciled.
+
+No known Sprint 07 merge blocker remains.
 
 ### 6.2 Corpus completion and mapping reconciliation
 
@@ -290,13 +294,6 @@ queue for:
 
 Do not rewrite imported historical metadata merely to mark work complete.
 
-### 6.4 Search Questions shared-context preview
-
-Extend Search Questions preview so a linked SharedQuestionContext is reconstructed
-before the selected Question's ordinary regions without automatically displaying
-unrelated sibling parts.
-
-This is presentation only; retrieval applicability remains unchanged.
 
 ## 7. Remaining Question-model decisions
 
@@ -343,16 +340,15 @@ Keep bounded follow-on issues in the backlog rather than reopening Sprint 07:
 
 - multi-page automatic shared-preamble capture;
 - Answer-pane spacing/control-size annoyances;
-- Save-button ready-state recalculation after clearing a new pending selection;
 - Full-width-selection state change clearing a pending selection;
 - optional MCQ explanation regions;
 - broader exam-metadata correction.
 
 ## 9. Retrieval, mapping and reliability hardening
 
-### JavaFX/TestFX
+### JavaFX / asynchronous search reliability
 
-- continue isolation of focus-sensitive tests;
+- retain the separate non-UI and headless UI test suites;
 - add remaining stale search/preview/disposal regressions;
 - keep infrastructure flakiness separate from application defects.
 
