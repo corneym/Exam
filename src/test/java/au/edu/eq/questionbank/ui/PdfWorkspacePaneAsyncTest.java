@@ -30,8 +30,10 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 
+import javafx.event.ActionEvent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.stage.Stage;
 
@@ -97,6 +99,21 @@ class PdfWorkspacePaneAsyncTest {
 	}
 
 	@Test
+	void jumpsDirectlyToEnteredPageNumber(FxRobot robot) throws Exception {
+		Path path = createTextPdf("page-jump.pdf", "Page one", "Page two", "Page three");
+		robot.interact(() -> pane.openViewerPdf(path));
+		TextField pageNumber = robot.lookup("#pdf-page-number").queryAs(TextField.class);
+		assertEquals("1", pageNumber.getText());
+		robot.interact(() -> {
+			pageNumber.setText("3");
+			pageNumber.fireEvent(new ActionEvent());
+		});
+		assertEquals(3, pane.getCurrentPageNumber());
+		assertEquals("3", pageNumber.getText());
+		assertEquals("Page three", pane.extractDisplayedPageText().trim());
+	}
+
+	@Test
 	void loadsAnswerPdfAndReusesTheDisplayedPage(FxRobot robot) throws Exception {
 		Path path = createPdf("answer.pdf");
 		CountDownLatch done = new CountDownLatch(1);
@@ -117,6 +134,25 @@ class PdfWorkspacePaneAsyncTest {
 		assertSame(session, pane.getAnswerPdfSession());
 		assertSame(image, ((ImageView) pane.lookup("#pdf-page-view")).getImage());
 		assertTrue(pane.lookup("#next-pdf-page").isDisabled(), "Remain on page two");
+	}
+
+	@Test
+	void rejectsInvalidDirectPageNumbers(FxRobot robot) throws Exception {
+		Path path = createPdf("invalid-page-jump.pdf");
+		robot.interact(() -> pane.openViewerPdf(path));
+		TextField pageNumber = robot.lookup("#pdf-page-number").queryAs(TextField.class);
+		robot.interact(() -> {
+			pageNumber.setText("99");
+			pageNumber.fireEvent(new ActionEvent());
+		});
+		assertEquals(1, pane.getCurrentPageNumber());
+		assertEquals("1", pageNumber.getText());
+		robot.interact(() -> {
+			pageNumber.setText("not-a-number");
+			pageNumber.fireEvent(new ActionEvent());
+		});
+		assertEquals(1, pane.getCurrentPageNumber());
+		assertEquals("1", pageNumber.getText());
 	}
 
 	@Test

@@ -78,6 +78,7 @@ import au.edu.eq.questionbank.service.backup.ShutdownCoordinator;
 import au.edu.eq.questionbank.service.backup.ShutdownResult;
 import au.edu.eq.questionbank.service.backup.ShutdownStatus;
 import au.edu.eq.questionbank.service.curriculum.ConfirmedDescriptorSubtopicMappingSuggester;
+import au.edu.eq.questionbank.service.curriculum.CurriculumDraft;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
@@ -437,7 +438,11 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
+		MenuItem authorItem = createMenuItem("_Author from PDF (Preview)...",
+				() -> showCurriculumAuthoring(primaryStage, config));
+		authorItem.setId("author-curriculum-pdf");
 		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
+				authorItem, new SeparatorMenuItem(),
 				createMenuItem("_Review Mappings...", () -> reviewCurriculumMappings(primaryStage, config)));
 		return curriculumMenu;
 	}
@@ -1083,6 +1088,25 @@ public class QuestionBankApplication extends Application {
 			return BackupFailureDecision.RETRY;
 		}
 		return BackupFailureDecision.EXIT_WITHOUT_BACKUP;
+	}
+
+	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
+		CurriculumDraft draft = new CurriculumDraft();
+		Stage authoringStage = new Stage();
+		authoringStage.initOwner(primaryStage);
+		authoringStage.setTitle("Curriculum Authoring Preview");
+		CurriculumAuthoringPane authoringPane = new CurriculumAuthoringPane(authoringStage, config.curriculumDataRoot(),
+				draft);
+		authoringStage.setScene(new Scene(authoringPane, 1400, 840));
+		authoringStage.setOnHidden(_ -> {
+			try {
+				authoringPane.close();
+			} catch (Exception e) {
+				showAlert(Alert.AlertType.WARNING, "Curriculum Authoring",
+						"The syllabus PDF could not be closed cleanly.", e.getMessage());
+			}
+		});
+		authoringStage.show();
 	}
 
 	private void showExamImport() {

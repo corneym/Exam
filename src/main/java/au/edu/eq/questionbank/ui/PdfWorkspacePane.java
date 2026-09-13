@@ -19,6 +19,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
@@ -48,6 +49,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private final Button nextButton = new Button("Next");
 	private final Button previousButton = new Button("Previous");
 	private final Label pageLabel = new Label("No PDF selected");
+	private final TextField pageNumberField = new TextField();
 	private final CheckBox fullWidthSelectionCheckBox = new CheckBox("Full width selection");
 	private PdfSession examPdfSession;
 	private PdfSession answerPdfSession;
@@ -443,6 +445,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 				String.format("%s %d of %d", displayedDocument.pageLabel(), currentPageNumber, session.getPageCount()));
 		previousButton.setDisable(currentPageNumber == 1);
 		nextButton.setDisable(currentPageNumber == session.getPageCount());
+		pageNumberField.setDisable(false);
+		pageNumberField.setText(Integer.toString(currentPageNumber));
 		rememberCurrentPageNumber();
 		pageChangedHandler.accept(currentPageNumber);
 	}
@@ -496,6 +500,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pageView.setImage(null);
 		clearSelection();
 		pageLabel.setText("No PDF selected");
+		pageNumberField.clear();
+		pageNumberField.setDisable(true);
 		previousButton.setDisable(true);
 		nextButton.setDisable(true);
 	}
@@ -573,6 +579,12 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		previousButton.setDisable(true);
 		nextButton.setDisable(true);
 		nextButton.setId("next-pdf-page");
+		pageNumberField.setId("pdf-page-number");
+		pageNumberField.setPrefColumnCount(4);
+		pageNumberField.setMaxWidth(70);
+		pageNumberField.setDisable(true);
+		pageNumberField.setPromptText("Page");
+		pageNumberField.setOnAction(_ -> goToEnteredPage());
 		previousButton.setOnAction(_ -> previousPage());
 		nextButton.setOnAction(_ -> nextPage());
 	}
@@ -610,8 +622,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	private HBox createPageControls() {
-		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, nextButton,
-				fullWidthSelectionCheckBox);
+		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, new Label("Go to:"),
+				pageNumberField, nextButton, fullWidthSelectionCheckBox);
 		pageControls.setAlignment(Pos.CENTER);
 		pageControls.setPadding(PAGE_CONTROLS_PADDING);
 		return pageControls;
@@ -634,6 +646,35 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 			return viewerPdfSession;
 		}
 		return examPdfSession;
+	}
+
+	private void goToEnteredPage() {
+		PdfSession displayedSession = displayedPdfSession();
+		if (displayedSession == null) {
+			pageNumberField.clear();
+			return;
+		}
+		int requestedPage;
+		try {
+			requestedPage = Integer.parseInt(pageNumberField.getText().strip());
+		} catch (NumberFormatException e) {
+			restorePageNumberField();
+			return;
+		}
+		if (requestedPage < 1 || requestedPage > displayedSession.getPageCount()) {
+			restorePageNumberField();
+			return;
+		}
+		if (requestedPage == currentPageNumber) {
+			restorePageNumberField();
+			return;
+		}
+		if (!pageNavigationAllowed.getAsBoolean()) {
+			restorePageNumberField();
+			return;
+		}
+		currentPageNumber = requestedPage;
+		showCurrentPage();
 	}
 
 	private void handleSelectionClicked(MouseEvent event) {
@@ -733,6 +774,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		} else if (displayedDocument == DocumentMode.ANSWER) {
 			answerPageNumber = currentPageNumber;
 		}
+	}
+
+	private void restorePageNumberField() {
+		pageNumberField.setText(Integer.toString(currentPageNumber));
+		pageNumberField.selectAll();
 	}
 
 	private void showCurrentPage() {
