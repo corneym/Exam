@@ -56,6 +56,7 @@ public final class CurriculumDraftValidator {
 			}
 			validateParent(node, nodesById, problems);
 		}
+		validateHierarchyShape(nodes, nodesById, problems);
 		return List.copyOf(problems);
 	}
 
@@ -70,6 +71,23 @@ public final class CurriculumDraftValidator {
 		case SUBTOPIC -> parentLevel == CurriculumLevel.TOPIC;
 		case DESCRIPTOR -> parentLevel == CurriculumLevel.TOPIC || parentLevel == CurriculumLevel.SUBTOPIC;
 		};
+	}
+
+	private void validateHierarchyShape(List<CurriculumDraftNode> nodes, Map<Long, CurriculumDraftNode> nodesById,
+			List<String> problems) {
+		boolean hasSubtopics = nodes.stream().filter(node -> node != null)
+				.anyMatch(node -> node.level() == CurriculumLevel.SUBTOPIC);
+		boolean hasDirectTopicDescriptors = nodes.stream().filter(node -> node != null)
+				.filter(node -> node.level() == CurriculumLevel.DESCRIPTOR).anyMatch(node -> {
+					if (node.parentDraftId() == null) {
+						return false;
+					}
+					CurriculumDraftNode parent = nodesById.get(node.parentDraftId());
+					return parent != null && parent.level() == CurriculumLevel.TOPIC;
+				});
+		if (hasSubtopics && hasDirectTopicDescriptors) {
+			problems.add("Curriculum draft must not mix Subtopics with Descriptors directly under Topics");
+		}
 	}
 
 	private void validateParent(CurriculumDraftNode node, Map<Long, CurriculumDraftNode> nodesById,

@@ -89,6 +89,30 @@ class CurriculumAuthoringPaneTest {
 	}
 
 	@Test
+	void consecutiveUnitsAreAlwaysRootSiblings(FxRobot robot) throws Exception {
+		String page = "Engineering fundamentals " + "Emerging technologies " + "Civil structures "
+				+ "Machines and mechanisms";
+		Path syllabus = createTextPdf("multiple-units.pdf", page);
+		robot.interact(() -> pane.openSyllabusPdf(syllabus));
+		TextArea pageText = robot.lookup("#syllabus-page-text").queryAs(TextArea.class);
+		Button addUnit = robot.lookup("#add-curriculum-unit").queryAs(Button.class);
+		String[] unitNames = { "Engineering fundamentals", "Emerging technologies", "Civil structures",
+				"Machines and mechanisms" };
+		for (String unitName : unitNames) {
+			selectText(robot, pageText, page, unitName);
+			robot.interact(addUnit::fire);
+		}
+		assertEquals(4, draft.childrenOf(null).size());
+		for (int index = 0; index < 4; index++) {
+			CurriculumDraftNode unit = draft.childrenOf(null).get(index);
+			assertEquals(CurriculumLevel.UNIT, unit.level());
+			assertEquals(Integer.toString(index + 1), unit.code());
+			assertEquals(unitNames[index], unit.name());
+			assertEquals(null, unit.parentDraftId());
+		}
+	}
+
+	@Test
 	void editsSelectedNodeTextWithoutChangingIdentityOrCode(FxRobot robot) throws Exception {
 		Path syllabus = createTextPdf("edit.pdf", "Original unit");
 		robot.interact(() -> pane.openSyllabusPdf(syllabus));

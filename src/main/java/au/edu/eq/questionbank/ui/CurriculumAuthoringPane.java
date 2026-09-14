@@ -159,7 +159,11 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			statusLabel.setText(parentInstruction(level));
 			return;
 		}
-		Long parentDraftId = selectedParent == null ? null : selectedParent.draftId();
+		/*
+		 * Units are always root nodes. Tree selection provides parent context only for
+		 * Topic, Subtopic and Descriptor capture.
+		 */
+		Long parentDraftId = level == CurriculumLevel.UNIT ? null : selectedParent.draftId();
 		try {
 			CurriculumDraftNode added = numbering.addNode(draft, level, selectedText.strip(), parentDraftId,
 					pdfWorkspace.getCurrentPageNumber());
@@ -279,9 +283,16 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		 * The PDF is reference material. Give roughly half of the left-hand workspace
 		 * to the PDF and half to extracted/selectable text.
 		 */
+		pdfWorkspace.setMinHeight(180);
+		textCaptureBox.setMinHeight(220);
 		SplitPane sourceSplit = new SplitPane(pdfWorkspace, textCaptureBox);
+		sourceSplit.setId("curriculum-source-split");
 		sourceSplit.setOrientation(Orientation.VERTICAL);
-		sourceSplit.setDividerPositions(0.48);
+		/*
+		 * Start with less space for the PDF and more for the selectable extracted text.
+		 * The divider remains draggable by the user.
+		 */
+		sourceSplit.setDividerPositions(0.40);
 		GridPane selectedDetails = new GridPane();
 		selectedDetails.setHgap(8);
 		selectedDetails.setVgap(6);
@@ -312,6 +323,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		pageTextArea.setWrapText(true);
 		pageTextArea.setPrefRowCount(18);
 		pageTextArea.setMinHeight(300);
+		pageTextArea.setStyle("-fx-font-size: 16px;");
 		pdfWorkspace.setSelectionAvailable(_ -> false);
 		pdfWorkspace.setPageChangedHandler(_ -> refreshPageText());
 	}
@@ -379,9 +391,16 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		return switch (childLevel) {
 		case UNIT -> true;
 		case TOPIC -> parent != null && parent.level() == CurriculumLevel.UNIT;
-		case SUBTOPIC -> parent != null && parent.level() == CurriculumLevel.TOPIC;
-		case DESCRIPTOR ->
-			parent != null && (parent.level() == CurriculumLevel.TOPIC || parent.level() == CurriculumLevel.SUBTOPIC);
+		case SUBTOPIC -> parent != null && parent.level() == CurriculumLevel.TOPIC && !usesDirectTopicDescriptors();
+		case DESCRIPTOR -> {
+			if (parent == null) {
+				yield false;
+			}
+			if (parent.level() == CurriculumLevel.SUBTOPIC) {
+				yield true;
+			}
+			yield parent.level() == CurriculumLevel.TOPIC && !usesSubtopics();
+		}
 		};
 	}
 
@@ -497,11 +516,25 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	}
 
 	private void updateCaptureButtonState(CurriculumDraftNode selected) {
+		boolean usesDirectTopicDescriptors = usesDirectTopicDescriptors();
+		boolean usesSubtopics = usesSubtopics();
 		addUnitButton.setDisable(false);
 		addTopicButton.setDisable(selected == null || selected.level() != CurriculumLevel.UNIT);
-		addSubtopicButton.setDisable(selected == null || selected.level() != CurriculumLevel.TOPIC);
-		addDescriptorButton.setDisable(selected == null
-				|| (selected.level() != CurriculumLevel.TOPIC && selected.level() != CurriculumLevel.SUBTOPIC));
+		addSubtopicButton.setDisable(
+				selected == null || selected.level() != CurriculumLevel.TOPIC || usesDirectTopicDescriptors);
+		if (selected == null) {
+			addDescriptorButton.setDisable(true);
+			return;
+		}
+		if (selected.level() == CurriculumLevel.SUBTOPIC) {
+			addDescriptorButton.setDisable(false);
+			return;
+		}
+		if (selected.level() == CurriculumLevel.TOPIC) {
+			addDescriptorButton.setDisable(usesSubtopics);
+			return;
+		}
+		addDescriptorButton.setDisable(true);
 	}
 
 	private void updateMoveButtonState(CurriculumDraftNode selected) {
@@ -531,5 +564,22 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		} catch (IllegalArgumentException | NullPointerException e) {
 			statusLabel.setText(e.getMessage());
 		}
+	}
+
+	private boolean usesDirectTopicDescriptors() {
+		for (CurriculumDraftNode node : draft.nodes()) {
+			if (node.level() != CurriculumLevel.DESCRIPTOR || node.parentDraftId() == null) {
+				continue;
+			}
+			CurriculumDraftNode parent = draft.findNode(node.parentDraftId()).orElse(null);
+			if (parent != null && parent.level() == CurriculumLevel.TOPIC) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean usesSubtopics() {
+		return draft.nodes().stream().anyMatch(node -> node.level() == CurriculumLevel.SUBTOPIC);
 	}
 }

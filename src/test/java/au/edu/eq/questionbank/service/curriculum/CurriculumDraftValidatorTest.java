@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.service.curriculum;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,20 @@ class CurriculumDraftValidatorTest {
 				node(2, CurriculumLevel.TOPIC, "1.1", 1L), node(3, CurriculumLevel.SUBTOPIC, "1.1.1", 2L),
 				node(4, CurriculumLevel.DESCRIPTOR, "1.1.1.a", 3L));
 		assertEquals(List.of(), validator.validate(nodes));
+	}
+
+	@Test
+	void rejectsMixingSubtopicsWithDescriptorsDirectlyUnderTopics() {
+		CurriculumDraft draft = new CurriculumDraft();
+		CurriculumDraftNode unit = draft.addNode(CurriculumLevel.UNIT, "1", "Unit", null, null);
+		CurriculumDraftNode firstTopic = draft.addNode(CurriculumLevel.TOPIC, "1.1", "First topic", unit.draftId(),
+				null);
+		CurriculumDraftNode secondTopic = draft.addNode(CurriculumLevel.TOPIC, "1.2", "Second topic", unit.draftId(),
+				null);
+		draft.addNode(CurriculumLevel.DESCRIPTOR, "1.1.1", "Direct descriptor", firstTopic.draftId(), null);
+		draft.addNode(CurriculumLevel.SUBTOPIC, "1.2.1", "Subtopic", secondTopic.draftId(), null);
+		assertTrue(draft.validationProblems()
+				.contains("Curriculum draft must not mix Subtopics with Descriptors directly under Topics"));
 	}
 
 	@Test
