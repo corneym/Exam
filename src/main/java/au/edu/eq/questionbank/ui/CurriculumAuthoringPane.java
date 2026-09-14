@@ -2,16 +2,21 @@ package au.edu.eq.questionbank.ui;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumAuthoringWriter;
+import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringSession;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraft;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraftNumberingService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraftTextExporter;
+import au.edu.eq.questionbank.service.curriculum.CurriculumLifecycleService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.control.Alert;
@@ -68,8 +73,30 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	private final TextArea validationArea = new TextArea();
 	private final Label statusLabel = new Label();
 	private Path syllabusPdfPath;
+	private final CurriculumAuthoringSession authoringSession;
+	private final CurriculumAuthoringWriter authoringWriter;
+	private final CurriculumSourcePdfService sourcePdfService;
+	private final CurriculumLifecycleService lifecycleService;
+	private final Button browseButton = new Button("Browse...");
+	private final Button saveButton = new Button("Save");
+	private final Button finaliseButton = new Button("Mark Final");
+	private final Button reopenButton = new Button("Reopen for editing");
+	private final Label lifecycleLabel = new Label();
+
+	CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot, CurriculumAuthoringSession authoringSession,
+			CurriculumAuthoringWriter authoringWriter, CurriculumSourcePdfService sourcePdfService,
+			CurriculumLifecycleService lifecycleService) {
+		this(ownerStage, curriculumDataRoot, requireDraft(authoringSession), authoringSession, authoringWriter,
+				sourcePdfService, lifecycleService);
+	}
 
 	CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot, CurriculumDraft draft) {
+		this(ownerStage, curriculumDataRoot, draft, null, null, null, null);
+	}
+
+	private CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot, CurriculumDraft draft,
+			CurriculumAuthoringSession authoringSession, CurriculumAuthoringWriter authoringWriter,
+			CurriculumSourcePdfService sourcePdfService, CurriculumLifecycleService lifecycleService) {
 		if (ownerStage == null) {
 			throw new NullPointerException("ownerStage");
 		}
@@ -79,22 +106,58 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		if (draft == null) {
 			throw new NullPointerException("draft");
 		}
+		if (authoringSession != null) {
+			if (authoringWriter == null) {
+				throw new NullPointerException("authoringWriter");
+			}
+			if (sourcePdfService == null) {
+				throw new NullPointerException("sourcePdfService");
+			}
+			if (lifecycleService == null) {
+				throw new NullPointerException("lifecycleService");
+			}
+		}
 		this.ownerStage = ownerStage;
 		this.pdfFilePicker = new PdfFilePicker(curriculumDataRoot);
 		this.draft = draft;
+		this.authoringSession = authoringSession;
+		this.authoringWriter = authoringWriter;
+		this.sourcePdfService = sourcePdfService;
+		this.lifecycleService = lifecycleService;
 		configurePdfArea();
 		configureTree();
 		configureCaptureButtons();
 		configureCorrectionControls();
+		configurePersistenceControls();
 		configureLayout();
 		rebuildTree(null);
 		refreshValidation();
-		refreshSelectedNodeDetails();
+		refreshLifecycleState();
+		openManagedPdfIfAvailable();
+	}
+
+	private static CurriculumDraft requireDraft(CurriculumAuthoringSession session) {
+		if (session == null) {
+			throw new NullPointerException("authoringSession");
+		}
+		return session.draft();
 	}
 
 	@Override
 	public void close() throws Exception {
 		pdfWorkspace.close();
+	}
+
+	Path attachSyllabusPdf(Path sourcePdf) throws IOException {
+		requirePersistentMode();
+		if (!isEditable()) {
+			throw new IllegalStateException("Final curriculum must be reopened before changing its source PDF");
+		}
+		Path managedPdf = sourcePdfService.attachPdf(authoringSession, sourcePdf);
+		openSyllabusPdf(managedPdf);
+		refreshLifecycleState();
+		statusLabel.setText("Attached managed syllabus PDF.");
+		return managedPdf;
 	}
 
 	/**
@@ -105,6 +168,13 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	 */
 	void exportDraft(Path target) throws IOException {
 		textExporter.write(draft, syllabusPdfPath, target);
+	}
+
+	void finaliseCurriculum() {
+		requirePersistentMode();
+		lifecycleService.finalise(authoringSession);
+		refreshLifecycleState();
+		statusLabel.setText("Curriculum marked Final.");
 	}
 
 	/**
@@ -122,10 +192,40 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		refreshPageText();
 	}
 
+	void reopenCurriculum() {
+		requirePersistentMode();
+		lifecycleService.reopen(authoringSession);
+		refreshLifecycleState();
+		statusLabel.setText("Curriculum reopened for editing.");
+	}
+
+	void saveCurriculum() {
+		requirePersistentMode();
+		if (!isEditable()) {
+			throw new IllegalStateException("Final curriculum must be reopened before saving");
+		}
+		authoringWriter.save(authoringSession);
+		refreshLifecycleState();
+		statusLabel.setText("Curriculum saved.");
+	}
+
 	private void browseForPdf() {
+		if (!isEditable()) {
+			statusLabel.setText("Reopen the curriculum before changing its source PDF.");
+			return;
+		}
 		Path selected = pdfFilePicker.chooseAnyPdf(ownerStage, "Select Curriculum Syllabus PDF");
-		if (selected != null) {
+		if (selected == null) {
+			return;
+		}
+		if (!isPersistentMode()) {
 			openSyllabusPdf(selected);
+			return;
+		}
+		try {
+			attachSyllabusPdf(selected);
+		} catch (IOException | RuntimeException e) {
+			statusLabel.setText("Unable to attach syllabus PDF: " + e.getMessage());
 		}
 	}
 
@@ -145,6 +245,10 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	}
 
 	private void captureSelectedText(CurriculumLevel level) {
+		if (!isEditable()) {
+			statusLabel.setText("Reopen the curriculum before editing.");
+			return;
+		}
 		if (syllabusPdfPath == null) {
 			statusLabel.setText("Select a syllabus PDF first.");
 			return;
@@ -266,7 +370,6 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	}
 
 	private void configureLayout() {
-		Button browseButton = new Button("Browse...");
 		browseButton.setId("browse-syllabus-pdf");
 		browseButton.setOnAction(_ -> browseForPdf());
 		HBox pdfHeader = new HBox(8, new Label("Syllabus PDF:"), pdfPathLabel, browseButton);
@@ -303,9 +406,10 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		selectedDetails.add(new Label("Source page:"), 0, 2);
 		selectedDetails.add(selectedPageValue, 1, 2);
 		HBox correctionButtons = new HBox(6, updateTextButton, moveUpButton, moveDownButton, deleteButton);
-		VBox treeBox = new VBox(8, new Label("Draft curriculum"), draftTree, new Label("Selected node"),
-				selectedDetails, editTextArea, correctionButtons, new Label("Validation"), validationArea, exportButton,
-				statusLabel);
+		HBox persistenceButtons = new HBox(6, saveButton, finaliseButton, reopenButton);
+		VBox treeBox = new VBox(8, lifecycleLabel, persistenceButtons, new Label("Draft curriculum"), draftTree,
+				new Label("Selected node"), selectedDetails, editTextArea, correctionButtons, new Label("Validation"),
+				validationArea, exportButton, statusLabel);
 		treeBox.setPadding(new Insets(10));
 		VBox.setVgrow(draftTree, Priority.ALWAYS);
 		/*
@@ -328,6 +432,17 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		pdfWorkspace.setPageChangedHandler(_ -> refreshPageText());
 	}
 
+	private void configurePersistenceControls() {
+		saveButton.setId("save-curriculum");
+		saveButton.setOnAction(_ -> saveFromUi());
+		finaliseButton.setId("finalise-curriculum");
+		finaliseButton.setOnAction(_ -> finaliseFromUi());
+		reopenButton.setId("reopen-curriculum");
+		reopenButton.setOnAction(_ -> reopenFromUi());
+		lifecycleLabel.setId("curriculum-lifecycle");
+		lifecycleLabel.setWrapText(true);
+	}
+
 	private void configureTree() {
 		draftTree.setId("curriculum-draft-tree");
 		draftTree.setShowRoot(false);
@@ -347,6 +462,10 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	}
 
 	private void confirmAndDeleteSelectedNode() {
+		if (!isEditable()) {
+			statusLabel.setText("Reopen the curriculum before editing.");
+			return;
+		}
 		CurriculumDraftNode selected = selectedNode();
 		if (selected == null) {
 			return;
@@ -373,6 +492,14 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		return draft.findNode(draftId).orElseThrow();
 	}
 
+	private void finaliseFromUi() {
+		try {
+			finaliseCurriculum();
+		} catch (IllegalArgumentException | IllegalStateException e) {
+			statusLabel.setText(e.getMessage());
+		}
+	}
+
 	private TreeItem<CurriculumDraftNode> findTreeItem(TreeItem<CurriculumDraftNode> item, long draftId) {
 		CurriculumDraftNode value = item.getValue();
 		if (value != null && value.draftId() == draftId) {
@@ -385,6 +512,10 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			}
 		}
 		return null;
+	}
+
+	private boolean isEditable() {
+		return !isPersistentMode() || !authoringSession.syllabusVersion().isCurriculumFinal();
 	}
 
 	private boolean isPermittedParent(CurriculumDraftNode parent, CurriculumLevel childLevel) {
@@ -404,7 +535,15 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		};
 	}
 
+	private boolean isPersistentMode() {
+		return authoringSession != null;
+	}
+
 	private void moveSelectedNode(boolean upward) {
+		if (!isEditable()) {
+			statusLabel.setText("Reopen the curriculum before editing.");
+			return;
+		}
 		CurriculumDraftNode selected = selectedNode();
 		if (selected == null) {
 			return;
@@ -417,6 +556,22 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		rebuildTree(draftId);
 		refreshValidation();
 		statusLabel.setText("Moved " + currentNode(draftId).code() + ".");
+	}
+
+	private void openManagedPdfIfAvailable() {
+		if (!isPersistentMode()) {
+			return;
+		}
+		Path managedPdf = sourcePdfService.resolvePdf(authoringSession.syllabusVersion()).orElse(null);
+		if (managedPdf == null) {
+			return;
+		}
+		if (!Files.isRegularFile(managedPdf)) {
+			pdfPathLabel.setText(managedPdf.toString());
+			statusLabel.setText("Managed syllabus PDF is unavailable.");
+			return;
+		}
+		openSyllabusPdf(managedPdf);
 	}
 
 	private String parentInstruction(CurriculumLevel level) {
@@ -459,6 +614,33 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		refreshSelectedNodeDetails();
 	}
 
+	private void refreshLifecycleState() {
+		if (!isPersistentMode()) {
+			lifecycleLabel.setText("Preview — changes are not persisted.");
+			saveButton.setDisable(true);
+			finaliseButton.setDisable(true);
+			reopenButton.setDisable(true);
+			browseButton.setDisable(false);
+			refreshSelectedNodeDetails();
+			return;
+		}
+		if (authoringSession.syllabusVersion().isCurriculumFinal()) {
+			String finalisedAt = authoringSession.syllabusVersion().getCurriculumFinalisedAt().toString();
+			lifecycleLabel.setText("FINAL — " + finalisedAt);
+			saveButton.setDisable(true);
+			finaliseButton.setDisable(true);
+			reopenButton.setDisable(false);
+			browseButton.setDisable(true);
+		} else {
+			lifecycleLabel.setText("IN_PROGRESS");
+			saveButton.setDisable(false);
+			finaliseButton.setDisable(false);
+			reopenButton.setDisable(true);
+			browseButton.setDisable(false);
+		}
+		refreshSelectedNodeDetails();
+	}
+
 	private void refreshPageText() {
 		try {
 			pageTextArea.setText(pdfWorkspace.extractDisplayedPageText());
@@ -490,12 +672,12 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		selectedLevelValue.setText(selected.level().toString());
 		selectedCodeValue.setText(selected.code());
 		selectedPageValue.setText(selected.sourcePageNumber() == null ? "-" : selected.sourcePageNumber().toString());
-		editTextArea.setDisable(false);
+		editTextArea.setDisable(!isEditable());
 		editTextArea.setText(selected.name());
 		contextLabel.setText(
 				"Current parent context: " + selected.code() + " " + selected.level() + " — " + selected.name());
-		updateTextButton.setDisable(false);
-		deleteButton.setDisable(false);
+		updateTextButton.setDisable(!isEditable());
+		deleteButton.setDisable(!isEditable());
 		updateCaptureButtonState(selected);
 		updateMoveButtonState(selected);
 	}
@@ -510,12 +692,41 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		validationArea.positionCaret(0);
 	}
 
+	private void reopenFromUi() {
+		try {
+			reopenCurriculum();
+		} catch (IllegalStateException e) {
+			statusLabel.setText(e.getMessage());
+		}
+	}
+
+	private void requirePersistentMode() {
+		if (!isPersistentMode()) {
+			throw new IllegalStateException("This curriculum authoring window is preview-only");
+		}
+	}
+
+	private void saveFromUi() {
+		try {
+			saveCurriculum();
+		} catch (IllegalArgumentException | IllegalStateException e) {
+			statusLabel.setText(e.getMessage());
+		}
+	}
+
 	private CurriculumDraftNode selectedNode() {
 		TreeItem<CurriculumDraftNode> selected = draftTree.getSelectionModel().getSelectedItem();
 		return selected == null ? null : selected.getValue();
 	}
 
 	private void updateCaptureButtonState(CurriculumDraftNode selected) {
+		if (!isEditable()) {
+			addUnitButton.setDisable(true);
+			addTopicButton.setDisable(true);
+			addSubtopicButton.setDisable(true);
+			addDescriptorButton.setDisable(true);
+			return;
+		}
 		boolean usesDirectTopicDescriptors = usesDirectTopicDescriptors();
 		boolean usesSubtopics = usesSubtopics();
 		addUnitButton.setDisable(false);
@@ -538,6 +749,11 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	}
 
 	private void updateMoveButtonState(CurriculumDraftNode selected) {
+		if (!isEditable()) {
+			moveUpButton.setDisable(true);
+			moveDownButton.setDisable(true);
+			return;
+		}
 		List<CurriculumDraftNode> siblings = draft.childrenOf(selected.parentDraftId());
 		int index = -1;
 		for (int candidate = 0; candidate < siblings.size(); candidate++) {
@@ -551,6 +767,10 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	}
 
 	private void updateSelectedText() {
+		if (!isEditable()) {
+			statusLabel.setText("Reopen the curriculum before editing.");
+			return;
+		}
 		CurriculumDraftNode selected = selectedNode();
 		if (selected == null) {
 			return;

@@ -84,6 +84,17 @@ concrete applicability or retrieval requirement demonstrates a need.
 
 ## Normal Priority
 
+### Close of sprint 08
+- Remove Export Draft button from the normal Curriculum Authoring UI once persisted authoring is fully accepted; retain CurriculumDraftTextExporter only if still useful for diagnostics/tests.
+
+### Curriculum capture
+- PDF region-based text extraction for curriculum authoring.
+- Detection/highlighting of embedded images and diagrams.
+- Manual exclusion regions for maths/figures.
+- Markdown/LaTeX maths editing and rendered preview.
+- Maths-authoring helper buttons and eventual equation-recognition assistance.
+- Further keyboard/efficiency improvements to curriculum capture.
+
 ### Answer pane layout annoyances
 
 Origin: Sprint 07 capture use.

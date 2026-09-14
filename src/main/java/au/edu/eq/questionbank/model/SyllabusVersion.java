@@ -1,12 +1,16 @@
 package au.edu.eq.questionbank.model;
 
+import java.time.Instant;
 import java.util.Objects;
 
 /**
  * A named edition of the syllabus for a {@link Subject}.
  * <p>
  * The current flag identifies the version selected by default for new question
- * classifications. Syllabus versions use persistent identifier equality.
+ * classifications. Curriculum status separately records whether the curriculum
+ * content has been checked and finalised.
+ * <p>
+ * Syllabus versions use persistent identifier equality.
  */
 public class SyllabusVersion {
 
@@ -14,19 +18,38 @@ public class SyllabusVersion {
 	private final Subject subject;
 	private final String name;
 	private final boolean current;
+	private final CurriculumStatus curriculumStatus;
+	private final Instant curriculumFinalisedAt;
+	private final String sourcePdfPath;
 
 	/**
-	 * Creates a syllabus version.
+	 * Creates an in-progress syllabus version with no managed source PDF.
 	 *
 	 * @param id      the positive persistent version identifier
 	 * @param subject the subject governed by the syllabus
 	 * @param name    the non-blank version name, commonly its commencement year
 	 * @param current whether this is the subject's current classification version
-	 * @throws IllegalArgumentException if {@code id} is not positive or
-	 *                                  {@code name} is blank
-	 * @throws NullPointerException     if {@code subject} is {@code null}
 	 */
 	public SyllabusVersion(long id, Subject subject, String name, boolean current) {
+		this(id, subject, name, current, CurriculumStatus.IN_PROGRESS, null, null);
+	}
+
+	/**
+	 * Creates a syllabus version with persisted curriculum-authoring metadata.
+	 *
+	 * @param id                    persistent version identifier
+	 * @param subject               owning subject
+	 * @param name                  syllabus version name
+	 * @param current               whether this is the current classification
+	 *                              version
+	 * @param curriculumStatus      authoring lifecycle state
+	 * @param curriculumFinalisedAt finalisation instant, or {@code null} while in
+	 *                              progress
+	 * @param sourcePdfPath         managed relative source-PDF path, or
+	 *                              {@code null}
+	 */
+	public SyllabusVersion(long id, Subject subject, String name, boolean current, CurriculumStatus curriculumStatus,
+			Instant curriculumFinalisedAt, String sourcePdfPath) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -36,11 +59,25 @@ public class SyllabusVersion {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
 		}
-
+		if (curriculumStatus == null) {
+			throw new NullPointerException("curriculumStatus");
+		}
+		if (sourcePdfPath != null && sourcePdfPath.isBlank()) {
+			throw new IllegalArgumentException("sourcePdfPath must be null or non-blank");
+		}
+		if (curriculumStatus == CurriculumStatus.FINAL && curriculumFinalisedAt == null) {
+			throw new IllegalArgumentException("FINAL curriculum requires curriculumFinalisedAt");
+		}
+		if (curriculumStatus == CurriculumStatus.IN_PROGRESS && curriculumFinalisedAt != null) {
+			throw new IllegalArgumentException("IN_PROGRESS curriculum must not have curriculumFinalisedAt");
+		}
 		this.id = id;
 		this.subject = subject;
 		this.name = name;
 		this.current = current;
+		this.curriculumStatus = curriculumStatus;
+		this.curriculumFinalisedAt = curriculumFinalisedAt;
+		this.sourcePdfPath = sourcePdfPath;
 	}
 
 	@Override
@@ -54,12 +91,24 @@ public class SyllabusVersion {
 		return id == other.id;
 	}
 
+	public Instant getCurriculumFinalisedAt() {
+		return curriculumFinalisedAt;
+	}
+
+	public CurriculumStatus getCurriculumStatus() {
+		return curriculumStatus;
+	}
+
 	public long getId() {
 		return id;
 	}
 
 	public String getName() {
 		return name;
+	}
+
+	public String getSourcePdfPath() {
+		return sourcePdfPath;
 	}
 
 	public Subject getSubject() {
@@ -73,6 +122,10 @@ public class SyllabusVersion {
 
 	public boolean isCurrent() {
 		return current;
+	}
+
+	public boolean isCurriculumFinal() {
+		return curriculumStatus == CurriculumStatus.FINAL;
 	}
 
 	@Override

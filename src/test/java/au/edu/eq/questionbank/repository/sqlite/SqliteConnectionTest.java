@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.repository.sqlite;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,7 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SqliteConnectionTest {
 
-	private static final int LATEST_SCHEMA_VERSION = 6;
+	private static final int LATEST_SCHEMA_VERSION = 7;
 	@TempDir
 	Path tempDir;
 
@@ -222,6 +223,94 @@ class SqliteConnectionTest {
 					  AND name = 'curriculum_mapping_reviews'
 					""")) {
 				assertTrue(result.next());
+			}
+		}
+	}
+
+	@Test
+	void migratesVersionSixCurriculumDataToVersionSevenWithoutLosingIdentity() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-curriculum-migration.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("""
+						INSERT INTO subjects
+						    (id, subject_name)
+						VALUES
+						    (1, 'Engineering')
+						""");
+				statement.execute("""
+						INSERT INTO syllabus_versions
+						    (id, subject_id, syllabus_name, is_current)
+						VALUES
+						    (7, 1, '2025', 1)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_nodes
+						    (id,
+						     syllabus_version_id,
+						     parent_id,
+						     curriculum_code,
+						     curriculum_name,
+						     curriculum_level,
+						     display_order)
+						VALUES
+						    (42,
+						     7,
+						     NULL,
+						     '1',
+						     'Engineering fundamentals',
+						     'UNIT',
+						     0)
+						""");
+			}
+			connection.commit();
+		}
+		assertEquals(6, database.schemaVersion());
+		database.initialiseSchema();
+		assertEquals(7, database.schemaVersion());
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("""
+					SELECT
+					    id,
+					    curriculum_status,
+					    curriculum_finalised_at,
+					    source_pdf_path
+					FROM syllabus_versions
+					WHERE id = 7
+					""")) {
+				assertTrue(result.next());
+				assertEquals(7, result.getLong("id"));
+				assertEquals("IN_PROGRESS", result.getString("curriculum_status"));
+				assertNull(result.getString("curriculum_finalised_at"));
+				assertNull(result.getString("source_pdf_path"));
+				assertFalse(result.next());
+			}
+			try (ResultSet result = statement.executeQuery("""
+					SELECT
+					    id,
+					    syllabus_version_id,
+					    curriculum_name,
+					    source_page_number
+					FROM curriculum_nodes
+					WHERE id = 42
+					""")) {
+				assertTrue(result.next());
+				/*
+				 * The imported node identity is deliberately preserved by migration.
+				 */
+				assertEquals(42, result.getLong("id"));
+				assertEquals(7, result.getLong("syllabus_version_id"));
+				assertEquals("Engineering fundamentals", result.getString("curriculum_name"));
+				result.getInt("source_page_number");
+				assertTrue(result.wasNull());
+				assertFalse(result.next());
 			}
 		}
 	}

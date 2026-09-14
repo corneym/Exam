@@ -1,23 +1,24 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
  * Reads subjects, syllabus versions, and curriculum hierarchies from SQLite.
@@ -40,14 +41,12 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 		if (database == null) {
 			throw new NullPointerException("database");
 		}
-
 		this.database = database;
 	}
 
 	@Override
 	public List<Subject> findAllSubjects() {
 		List<Subject> subjects = new ArrayList<>();
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
@@ -55,7 +54,6 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 						FROM subjects
 						ORDER BY subject_name
 						""")) {
-
 			while (result.next()) {
 				Subject subject = new Subject(result.getLong("id"), result.getString("subject_name"));
 				subjects.add(subject);
@@ -195,29 +193,34 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 		}
 	}
 
-	private Optional<SyllabusVersion> findVersionById(Connection connection, long id) throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
+	@Override
+	public List<SyllabusVersion> findVersionsForSubject(Subject subject) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		List<SyllabusVersion> versions = new ArrayList<>();
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
 						SELECT
-						    version.id AS version_id,
-						    version.syllabus_name,
-						    version.is_current,
-						    subject.id AS subject_id,
-						    subject.subject_name
-						FROM syllabus_versions version
-						JOIN subjects subject
-						    ON subject.id = version.subject_id
-						WHERE version.id = ?
+						    id AS version_id,
+						    syllabus_name,
+						    is_current,
+						    curriculum_status,
+						    curriculum_finalised_at,
+						    source_pdf_path
+						FROM syllabus_versions
+						WHERE subject_id = ?
+						ORDER BY syllabus_name
 						""")) {
-			statement.setLong(1, id);
+			statement.setLong(1, subject.getId());
 			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return Optional.empty();
+				while (result.next()) {
+					versions.add(createSyllabusVersion(result, subject));
 				}
-				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
-				SyllabusVersion version = new SyllabusVersion(result.getLong("version_id"), subject,
-						result.getString("syllabus_name"), result.getInt("is_current") == 1);
-				return Optional.of(version);
 			}
+			return versions;
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not read syllabus versions from database", e);
 		}
 	}
 
@@ -227,14 +230,59 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 	 * identities are read from the same SQLite snapshot.
 	 *
 	 * @param connection the caller-owned connection with an active read
-	 * @param id the persistent node identifier
+	 * @param id         the persistent node identifier
 	 * @return the reconstructed node, or empty if the identifier is absent
-	 * @throws SQLException if a lookup fails
+	 * @throws SQLException          if a lookup fails
 	 * @throws IllegalStateException if a parent/version is missing or the stored
 	 *                               hierarchy is inconsistent
 	 */
 	Optional<CurriculumNode> findNodeById(Connection connection, long id) throws SQLException {
 		return findNodeById(connection, id, MAX_HIERARCHY_DEPTH);
+	}
+
+	private CurriculumNode createChild(ResultSet result, CurriculumNode parent) throws SQLException {
+		long id = result.getLong("id");
+		String code = result.getString("curriculum_code");
+		String name = result.getString("curriculum_name");
+		String level = result.getString("curriculum_level");
+		int displayOrder = result.getInt("display_order");
+		SyllabusVersion syllabusVersion = parent.getSyllabusVersion();
+		switch (level) {
+		case "TOPIC":
+			if (!(parent instanceof Unit)) {
+				throw new IllegalStateException("TOPIC has invalid parent");
+			}
+			return new Topic(id, syllabusVersion, (Unit) parent, code, name, displayOrder);
+		case "SUBTOPIC":
+			if (!(parent instanceof Topic)) {
+				throw new IllegalStateException("SUBTOPIC has invalid parent");
+			}
+			return new Subtopic(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
+		case "DESCRIPTOR":
+			if (parent instanceof Topic) {
+				return new Descriptor(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
+			}
+			if (parent instanceof Subtopic) {
+				return new Descriptor(id, syllabusVersion, (Subtopic) parent, code, name, displayOrder);
+			}
+			throw new IllegalStateException("DESCRIPTOR has invalid parent");
+		default:
+			throw new IllegalStateException("Unexpected child curriculum level: " + level);
+		}
+	}
+
+	private SyllabusVersion createSyllabusVersion(ResultSet result, Subject subject) throws SQLException {
+		String statusText = result.getString("curriculum_status");
+		String finalisedText = result.getString("curriculum_finalised_at");
+		try {
+			CurriculumStatus status = CurriculumStatus.valueOf(statusText);
+			Instant finalisedAt = finalisedText == null ? null : Instant.parse(finalisedText);
+			return new SyllabusVersion(result.getLong("version_id"), subject, result.getString("syllabus_name"),
+					result.getInt("is_current") == 1, status, finalisedAt, result.getString("source_pdf_path"));
+		} catch (IllegalArgumentException e) {
+			throw new SQLException(
+					"Invalid curriculum authoring metadata for syllabus version " + result.getLong("version_id"), e);
+		}
 	}
 
 	private Optional<CurriculumNode> findNodeById(Connection connection, long id, int remainingLevels)
@@ -267,71 +315,38 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 				CurriculumNode parent = findNodeById(connection, parentId, remainingLevels - 1)
 						.orElseThrow(() -> new IllegalStateException("Missing curriculum parent " + parentId));
 				if (parent.getSyllabusVersion().getId() != versionId) {
-					throw new IllegalStateException("Curriculum node " + id + " has a parent in another syllabus version");
+					throw new IllegalStateException(
+							"Curriculum node " + id + " has a parent in another syllabus version");
 				}
 				return Optional.of(createChild(result, parent));
 			}
 		}
 	}
 
-	@Override
-	public List<SyllabusVersion> findVersionsForSubject(Subject subject) {
-		if (subject == null) {
-			throw new NullPointerException("subject");
-		}
-		List<SyllabusVersion> versions = new ArrayList<>();
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT
-						    id,
-						    syllabus_name,
-						    is_current
-						FROM syllabus_versions
-						WHERE subject_id = ?
-						ORDER BY syllabus_name
-						""")) {
-			statement.setLong(1, subject.getId());
+	private Optional<SyllabusVersion> findVersionById(Connection connection, long id) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    version.id AS version_id,
+				    version.syllabus_name,
+				    version.is_current,
+				    version.curriculum_status,
+				    version.curriculum_finalised_at,
+				    version.source_pdf_path,
+				    subject.id AS subject_id,
+				    subject.subject_name
+				FROM syllabus_versions version
+				JOIN subjects subject
+				    ON subject.id = version.subject_id
+				WHERE version.id = ?
+				""")) {
+			statement.setLong(1, id);
 			try (ResultSet result = statement.executeQuery()) {
-				while (result.next()) {
-					SyllabusVersion version = new SyllabusVersion(result.getLong("id"), subject,
-							result.getString("syllabus_name"), result.getInt("is_current") == 1);
-					versions.add(version);
+				if (!result.next()) {
+					return Optional.empty();
 				}
+				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
+				return Optional.of(createSyllabusVersion(result, subject));
 			}
-			return versions;
-		} catch (SQLException e) {
-			throw new IllegalStateException("Could not read syllabus versions from database", e);
-		}
-	}
-
-	private CurriculumNode createChild(ResultSet result, CurriculumNode parent) throws SQLException {
-		long id = result.getLong("id");
-		String code = result.getString("curriculum_code");
-		String name = result.getString("curriculum_name");
-		String level = result.getString("curriculum_level");
-		int displayOrder = result.getInt("display_order");
-		SyllabusVersion syllabusVersion = parent.getSyllabusVersion();
-		switch (level) {
-		case "TOPIC":
-			if (!(parent instanceof Unit)) {
-				throw new IllegalStateException("TOPIC has invalid parent");
-			}
-			return new Topic(id, syllabusVersion, (Unit) parent, code, name, displayOrder);
-		case "SUBTOPIC":
-			if (!(parent instanceof Topic)) {
-				throw new IllegalStateException("SUBTOPIC has invalid parent");
-			}
-			return new Subtopic(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
-		case "DESCRIPTOR":
-			if (parent instanceof Topic) {
-				return new Descriptor(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
-			}
-			if (parent instanceof Subtopic) {
-				return new Descriptor(id, syllabusVersion, (Subtopic) parent, code, name, displayOrder);
-			}
-			throw new IllegalStateException("DESCRIPTOR has invalid parent");
-		default:
-			throw new IllegalStateException("Unexpected child curriculum level: " + level);
 		}
 	}
 }

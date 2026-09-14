@@ -1,11 +1,13 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -13,12 +15,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteCurriculumRepositoryTest {
 
@@ -29,16 +33,11 @@ class SqliteCurriculumRepositoryTest {
 	void findsAllSubjects() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("questionbank.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
-
 		writer.insertSubject("Physics");
 		writer.insertSubject("Chemistry");
-
 		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
-
 		List<Subject> subjects = repository.findAllSubjects();
-
 		assertEquals(2, subjects.size());
 		assertEquals("Chemistry", subjects.get(0).getName());
 		assertEquals("Physics", subjects.get(1).getName());
@@ -72,22 +71,6 @@ class SqliteCurriculumRepositoryTest {
 		assertTrue(descriptors.get(1) instanceof Descriptor);
 		assertEquals("4.2.1.1", descriptors.get(0).getCode());
 		assertEquals("4.2.1.2", descriptors.get(1).getCode());
-	}
-
-	@Test
-	void ordersEqualDisplayPositionsByCurriculumCode() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("stable-order.db"));
-		database.initialiseSchema();
-		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
-		Subject chemistry = writer.insertSubject("Chemistry");
-		SyllabusVersion syllabus = writer.insertSyllabusVersion(chemistry, "2025", true);
-		Unit unit = writer.insertUnit(syllabus, "1", "Unit one", 1);
-		writer.insertTopic(unit, "1.2", "Later code", 1);
-		writer.insertTopic(unit, "1.1", "Earlier code", 1);
-
-		List<CurriculumNode> topics = new SqliteCurriculumRepository(database).findChildren(unit);
-
-		assertEquals(List.of("1.1", "1.2"), List.of(topics.get(0).getCode(), topics.get(1).getCode()));
 	}
 
 	@Test
@@ -149,12 +132,10 @@ class SqliteCurriculumRepositoryTest {
 	void findsSubjectById() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("questionbank.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 		Subject chemistry = writer.insertSubject("Chemistry");
 		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
 		Optional<Subject> result = repository.findSubjectById(chemistry.getId());
-
 		assertTrue(result.isPresent());
 		assertEquals(chemistry, result.get());
 	}
@@ -173,6 +154,10 @@ class SqliteCurriculumRepositoryTest {
 		assertEquals("Chemistry", result.get().getSubject().getName());
 		assertEquals("2025", result.get().getName());
 		assertTrue(result.get().isCurrent());
+		assertEquals(CurriculumStatus.IN_PROGRESS, result.get().getCurriculumStatus());
+		assertEquals(false, result.get().isCurriculumFinal());
+		assertNull(result.get().getCurriculumFinalisedAt());
+		assertNull(result.get().getSourcePdfPath());
 	}
 
 	@Test
@@ -190,6 +175,50 @@ class SqliteCurriculumRepositoryTest {
 		assertEquals("2025", versions.get(1).getName());
 		assertEquals(false, versions.get(0).isCurrent());
 		assertEquals(true, versions.get(1).isCurrent());
+	}
+
+	@Test
+	void ordersEqualDisplayPositionsByCurriculumCode() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("stable-order.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SyllabusVersion syllabus = writer.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = writer.insertUnit(syllabus, "1", "Unit one", 1);
+		writer.insertTopic(unit, "1.2", "Later code", 1);
+		writer.insertTopic(unit, "1.1", "Earlier code", 1);
+		List<CurriculumNode> topics = new SqliteCurriculumRepository(database).findChildren(unit);
+		assertEquals(List.of("1.1", "1.2"), List.of(topics.get(0).getCode(), topics.get(1).getCode()));
+	}
+
+	@Test
+	void readsFinalCurriculumAuthoringMetadata() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("final-curriculum.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject engineering = writer.insertSubject("Engineering");
+		SyllabusVersion syllabus = writer.insertSyllabusVersion(engineering, "2025", true);
+		Instant finalisedAt = Instant.parse("2026-09-14T07:30:00Z");
+		String sourcePdfPath = "Engineering/2025/sources/" + "Engineering-2025.pdf";
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE syllabus_versions
+						SET curriculum_status = 'FINAL',
+						    curriculum_finalised_at = ?,
+						    source_pdf_path = ?
+						WHERE id = ?
+						""")) {
+			statement.setString(1, finalisedAt.toString());
+			statement.setString(2, sourcePdfPath);
+			statement.setLong(3, syllabus.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
+		SyllabusVersion reloaded = repository.findVersionById(syllabus.getId()).orElseThrow();
+		assertEquals(CurriculumStatus.FINAL, reloaded.getCurriculumStatus());
+		assertTrue(reloaded.isCurriculumFinal());
+		assertEquals(finalisedAt, reloaded.getCurriculumFinalisedAt());
+		assertEquals(sourcePdfPath, reloaded.getSourcePdfPath());
 	}
 
 	@Test

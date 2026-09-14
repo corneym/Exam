@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 6;
+	private static final int LATEST_SCHEMA_VERSION = 7;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -467,6 +467,10 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v5-to-v6.sql", 6);
 			return 6;
 		}
+		if (version == 6) {
+			executeMigration(connection, "/db/migration-v6-to-v7.sql", 7);
+			return 7;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -648,6 +652,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 6) {
 			verifyVersionSixSourceQuestionSchema(connection);
+		}
+		if (version >= 7) {
+			verifyVersionSevenCurriculumAuthoringSchema(connection);
 		}
 	}
 
@@ -855,6 +862,22 @@ public final class SqliteDatabase {
 						column("y", true, 0), column("width", true, 0), column("height", true, 0)),
 				List.of(foreignKey("answer_id", "answers", "id"), foreignKey("answer_file_id", "answer_files", "id")),
 				List.of());
+	}
+
+	private void verifyVersionSevenCurriculumAuthoringSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "syllabus_versions",
+				List.of(column("id", false, 1), column("subject_id", true, 0), column("syllabus_name", true, 0),
+						column("is_current", true, 0), column("curriculum_status", true, 0),
+						column("curriculum_finalised_at", false, 0), column("source_pdf_path", false, 0)),
+				List.of(foreignKey("subject_id", "subjects", "id")), List.of(List.of("subject_id", "syllabus_name")));
+		verifyTableSchema(connection, "curriculum_nodes",
+				List.of(column("id", false, 1), column("syllabus_version_id", true, 0), column("parent_id", false, 0),
+						column("curriculum_code", true, 0), column("curriculum_name", true, 0),
+						column("curriculum_level", true, 0), column("display_order", true, 0),
+						column("source_page_number", false, 0)),
+				List.of(foreignKey("syllabus_version_id", "syllabus_versions", "id"),
+						foreignKey("parent_id", "curriculum_nodes", "id")),
+				List.of(List.of("syllabus_version_id", "curriculum_code")));
 	}
 
 	private void verifyVersionSixSourceQuestionSchema(Connection connection) throws SQLException {

@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.time.Clock;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -55,11 +56,15 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumImportResult;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingReviewRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumAuthoringRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumAuthoringWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumImporter;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumLifecycleRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumSourcePdfRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -78,8 +83,14 @@ import au.edu.eq.questionbank.service.backup.ShutdownCoordinator;
 import au.edu.eq.questionbank.service.backup.ShutdownResult;
 import au.edu.eq.questionbank.service.backup.ShutdownStatus;
 import au.edu.eq.questionbank.service.curriculum.ConfirmedDescriptorSubtopicMappingSuggester;
-import au.edu.eq.questionbank.service.curriculum.CurriculumDraft;
+import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringCreationService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringOpenService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringSession;
+import au.edu.eq.questionbank.service.curriculum.CurriculumDraftLoader;
+import au.edu.eq.questionbank.service.curriculum.CurriculumLifecycleService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
+import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -97,6 +108,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -326,6 +338,29 @@ public class QuestionBankApplication extends Application {
 		return true;
 	}
 
+	private CurriculumAuthoringSession chooseExistingCurriculum(Stage primaryStage, List<SyllabusVersion> versions,
+			CurriculumAuthoringOpenService openService) {
+		if (versions.isEmpty()) {
+			return null;
+		}
+		ChoiceDialog<SyllabusVersion> dialog = new ChoiceDialog<>(versions.get(0), versions);
+		dialog.initOwner(primaryStage);
+		dialog.setTitle("Curriculum Authoring");
+		dialog.setHeaderText("Choose an existing syllabus to edit");
+		dialog.setContentText("Syllabus:");
+		Optional<SyllabusVersion> selection = dialog.showAndWait();
+		if (selection.isEmpty()) {
+			return null;
+		}
+		try {
+			return openService.open(selection.get());
+		} catch (RuntimeException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Authoring", "The curriculum could not be opened.",
+					e.getMessage());
+			return null;
+		}
+	}
+
 	private void clearCaptureSelection(CaptureSelectionOwner owner) {
 		if (captureSelectionState.clear(owner)) {
 			pdfWorkspace.clearSelection();
@@ -438,8 +473,11 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
-		MenuItem authorItem = createMenuItem("_Author from PDF (Preview)...",
-				() -> showCurriculumAuthoring(primaryStage, config));
+		MenuItem authorItem = createMenuItem("_Author / Edit...", () -> showCurriculumAuthoring(primaryStage, config));
+		/*
+		 * Retain the existing id so any UI automation referring to this menu action
+		 * remains compatible.
+		 */
 		authorItem.setId("author-curriculum-pdf");
 		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
 				authorItem, new SeparatorMenuItem(),
@@ -556,6 +594,24 @@ public class QuestionBankApplication extends Application {
 					requirement.providerName(), requirement.year());
 			String answerRelativePath = config.pdfDataRoot().relativize(storedAnswerPath).toString();
 			answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide", answerRelativePath);
+		}
+	}
+
+	private CurriculumAuthoringSession createNewCurriculum(Stage primaryStage,
+			SqliteCurriculumRepository curriculumRepository, CurriculumAuthoringCreationService creationService) {
+		NewCurriculumDialog dialog = new NewCurriculumDialog(primaryStage, curriculumRepository.findAllSubjects());
+		Optional<ButtonType> result = dialog.showAndWait();
+		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
+			return null;
+		}
+		try {
+			return creationService.create(dialog.getSubjectName(), dialog.getVersionName(), dialog.isCurrent());
+		} catch (IllegalArgumentException e) {
+			showAlert(Alert.AlertType.ERROR, "New Curriculum", "The curriculum could not be created.", e.getMessage());
+			return null;
+		} catch (SQLException e) {
+			showAlert(Alert.AlertType.ERROR, "New Curriculum", "The curriculum could not be stored.", e.getMessage());
+			return null;
 		}
 	}
 
@@ -864,6 +920,33 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.openAnswerPdf(selectedPdf.path());
 	}
 
+	private void openCurriculumAuthoringWindow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			CurriculumAuthoringSession session) {
+		SqliteCurriculumAuthoringWriter authoringWriter = new SqliteCurriculumAuthoringWriter(database);
+		CurriculumSourcePdfService sourcePdfService = new CurriculumSourcePdfService(
+				new CurriculumSourcePdfStore(config.curriculumDataRoot()),
+				new SqliteCurriculumSourcePdfRepository(database));
+		CurriculumLifecycleService lifecycleService = new CurriculumLifecycleService(authoringWriter,
+				new SqliteCurriculumLifecycleRepository(database), Clock.systemUTC());
+		SyllabusVersion syllabusVersion = session.syllabusVersion();
+		Stage authoringStage = new Stage();
+		authoringStage.initOwner(primaryStage);
+		authoringStage.setTitle(
+				"Curriculum Authoring — " + syllabusVersion.getSubject().getName() + " " + syllabusVersion.getName());
+		CurriculumAuthoringPane authoringPane = new CurriculumAuthoringPane(authoringStage, config.curriculumDataRoot(),
+				session, authoringWriter, sourcePdfService, lifecycleService);
+		authoringStage.setScene(new Scene(authoringPane, 1400, 840));
+		authoringStage.setOnHidden(_ -> {
+			try {
+				authoringPane.close();
+			} catch (Exception e) {
+				showAlert(Alert.AlertType.WARNING, "Curriculum Authoring",
+						"The curriculum authoring workspace could not be closed cleanly.", e.getMessage());
+			}
+		});
+		authoringStage.show();
+	}
+
 	private void openExamPdf(SelectedPdf selectedPdf) {
 		pdfWorkspace.openExamPdf(selectedPdf.path());
 		questionCapturePane.clearForNewPdf();
@@ -1091,22 +1174,44 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
-		CurriculumDraft draft = new CurriculumDraft();
-		Stage authoringStage = new Stage();
-		authoringStage.initOwner(primaryStage);
-		authoringStage.setTitle("Curriculum Authoring Preview");
-		CurriculumAuthoringPane authoringPane = new CurriculumAuthoringPane(authoringStage, config.curriculumDataRoot(),
-				draft);
-		authoringStage.setScene(new Scene(authoringPane, 1400, 840));
-		authoringStage.setOnHidden(_ -> {
-			try {
-				authoringPane.close();
-			} catch (Exception e) {
-				showAlert(Alert.AlertType.WARNING, "Curriculum Authoring",
-						"The syllabus PDF could not be closed cleanly.", e.getMessage());
-			}
-		});
-		authoringStage.show();
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		CurriculumDraftLoader draftLoader = new CurriculumDraftLoader(
+				new SqliteCurriculumAuthoringRepository(database));
+		CurriculumAuthoringOpenService openService = new CurriculumAuthoringOpenService(curriculumRepository,
+				draftLoader);
+		CurriculumAuthoringCreationService creationService = new CurriculumAuthoringCreationService(
+				new SqliteCurriculumImporter(database, curriculumWriter), draftLoader);
+		List<SyllabusVersion> versions = openService.availableVersions();
+		ButtonType openExistingButton = new ButtonType("Open Existing", ButtonBar.ButtonData.OK_DONE);
+		ButtonType newCurriculumButton = new ButtonType("New Curriculum", ButtonBar.ButtonData.OTHER);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert chooser = new Alert(Alert.AlertType.CONFIRMATION);
+		chooser.initOwner(primaryStage);
+		chooser.setTitle("Curriculum Authoring");
+		chooser.setHeaderText("Open or create a curriculum");
+		if (versions.isEmpty()) {
+			chooser.setContentText("No existing curricula are available.");
+			chooser.getButtonTypes().setAll(newCurriculumButton, cancelButton);
+		} else {
+			chooser.setContentText("Choose whether to continue an existing curriculum or create a new one.");
+			chooser.getButtonTypes().setAll(openExistingButton, newCurriculumButton, cancelButton);
+		}
+		ButtonType action = chooser.showAndWait().orElse(cancelButton);
+		if (action == cancelButton) {
+			return;
+		}
+		CurriculumAuthoringSession session;
+		if (action == newCurriculumButton) {
+			session = createNewCurriculum(primaryStage, curriculumRepository, creationService);
+		} else {
+			session = chooseExistingCurriculum(primaryStage, versions, openService);
+		}
+		if (session == null) {
+			return;
+		}
+		openCurriculumAuthoringWindow(primaryStage, config, database, session);
 	}
 
 	private void showExamImport() {

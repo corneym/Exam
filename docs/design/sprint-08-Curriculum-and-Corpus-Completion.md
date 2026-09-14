@@ -124,19 +124,97 @@ The application may assist by copying selected PDF text into the proposed node. 
 
 Outcome: a subject-matter expert can construct a syllabus hierarchy from its authoritative PDF without first manufacturing an Excel workbook.
 
-### Slice 4 — Persistence and non-Chemistry acceptance syllabus
+### Slice 4 — Resumable Curriculum Persistence and Non-Chemistry Acceptance Syllabus
 
-Persist and reload a complete authored hierarchy using the normal curriculum repositories.
+Persist curriculum authoring as an editable, resumable workflow rather than a one-shot import.
 
-Use one real syllabus such as Engineering or Psychology whose structure includes:
+The persistence model must support both newly authored curricula and curricula that already exist in SQLite because they were imported from Excel.
 
-    Unit → Topic → Descriptor
+The following requirements apply:
 
-without Subtopics.
+- curriculum authoring is resumable rather than one-shot;
+- an existing Excel-imported syllabus can be opened and edited in place;
+- existing persistent curriculum-node IDs must be preserved when existing nodes are edited;
+- the authoritative source PDF becomes a managed application file;
+- source-page provenance is persisted where available;
+- curriculum text must preserve authored content exactly, including future Markdown/LaTeX markup;
+- each syllabus curriculum has an `IN_PROGRESS` or `FINAL` lifecycle state;
+- a `FINAL` curriculum is not directly editable and must be explicitly reopened for editing, returning it to `IN_PROGRESS`;
+- `Unit → Topic → Descriptor` and `Unit → Topic → Subtopic → Descriptor` are alternative syllabus structures and must not be mixed within the same syllabus version;
+- further PDF-capture refinements, including region-based extraction, formula/image detection and maths-rendering assistance, remain backlog items and are not blockers for persistence.
+
+For newly authored curricula, the workflow must support:
+
+    select authoritative syllabus PDF
+          ↓
+    author part or all of the curriculum
+          ↓
+    save
+          ↓
+    copy the PDF into managed curriculum storage
+          ↓
+    persist the hierarchy and source-page provenance
+          ↓
+    close
+          ↓
+    reopen the syllabus later
+          ↓
+    continue editing
+          ↓
+    save again
+          ↓
+    optionally mark the curriculum FINAL
+
+For an existing Excel-imported syllabus, the workflow must support:
+
+    select existing Subject / SyllabusVersion
+          ↓
+    load the existing persisted hierarchy
+          ↓
+    preserve all existing curriculum-node IDs
+          ↓
+    optionally attach the authoritative syllabus PDF
+          ↓
+    copy the PDF into managed curriculum storage
+          ↓
+    edit, add, reorder or remove curriculum nodes as permitted
+          ↓
+    save changes in place
+          ↓
+    optionally mark the curriculum FINAL
+
+Existing Excel-imported curricula must initially remain `IN_PROGRESS`. Successful import does not imply that the curriculum wording and hierarchy have been manually checked against the authoritative syllabus.
+
+The managed source PDF should be stored beneath the curriculum data root using a subject/version-specific structure such as:
+
+    data/
+    └── curriculum/
+        └── <subject>/
+            └── <syllabus-version>/
+                └── sources/
+                    └── <authoritative-syllabus>.pdf
+
+The database should store a managed relative path rather than the original external filesystem path.
+
+Existing persisted curriculum nodes must be updated in place rather than deleted and recreated. This is necessary because questions, mappings and other persisted data may already refer to their database IDs.
+
+Newly created draft nodes have no persistent curriculum-node ID until first save. The authoring session must therefore maintain a relationship between transient draft identity and persistent database identity.
+
+Deleting an existing persisted curriculum node must be guarded appropriately when that node is already referenced by questions, mappings or other application data.
+
+Marking a curriculum `FINAL` must first run structural validation. A final curriculum represents a syllabus whose hierarchy, numbering and wording have been checked and accepted as authoritative application data. Reopening a final curriculum for editing must explicitly return it to `IN_PROGRESS`.
+
+Use one real non-Chemistry syllabus, such as Engineering or Psychology, whose structure includes:
+
+    Unit
+      → Topic
+          → Descriptor
+
+with no Subtopics.
 
 This becomes the Sprint 08 subject-neutral acceptance dataset.
 
-After persistence, exercise the syllabus through the existing application rather than stopping at successful import:
+After persistence, exercise the syllabus through the existing application rather than stopping at successful storage or reload:
 
     curriculum selection/classification
     question capture
@@ -146,9 +224,10 @@ After persistence, exercise the syllabus through the existing application rather
 
 Any failure caused by an assumption that every Topic has Subtopics is a Sprint 08 defect.
 
-This is not a requirement to populate a complete Engineering or Psychology question bank. The objective is to prove that the application architecture works with the different curriculum shape.
+This slice does not require a complete Engineering or Psychology question bank. The objective is to prove that the application architecture supports a real second syllabus structure, can persist and resume curriculum authoring safely, and can edit both newly authored and previously imported curriculum data without losing persistent identity.
 
-Outcome: subject neutrality is demonstrated against a real second syllabus structure rather than inferred from unit tests alone.
+**Outcome:** curriculum persistence is resumable and editable; authoritative source provenance is retained; finalisation state is explicit; existing imported curricula can be corrected in place; and subject neutrality is demonstrated against a real non-Chemistry syllabus rather than inferred from unit tests alone.
+
 
 ### Slice 5 — Mapping coverage and deliberate mapping completion
 
