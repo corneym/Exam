@@ -47,6 +47,7 @@ import javafx.stage.Stage;
 @ExtendWith(ApplicationExtension.class)
 class PersistedCurriculumAuthoringPaneTest {
 
+	private static final String AUTHORED_TEXT = "    **Resolve forces** using \\(F = m\\,a\\) and {components}.\n\n";
 	@TempDir
 	Path tempDir;
 	private CurriculumAuthoringPane pane;
@@ -54,21 +55,26 @@ class PersistedCurriculumAuthoringPaneTest {
 	private CurriculumAuthoringSession session;
 	private long descriptorPersistentId;
 	private Path curriculumRoot;
-	private static final String AUTHORED_TEXT = "    **Resolve forces** using \\(F = m\\,a\\) and {components}.\n\n";
 
 	@Test
-	void saveIncludesUnappliedEditorText(FxRobot robot) {
-		editDescriptor(robot, "Unapplied wording");
-		robot.interact(() -> robot.lookup("#save-curriculum").queryAs(Button.class).fire());
-		assertEquals("Unapplied wording", storedDescriptorText());
-	}
-
-	@Test
-	void finaliseIncludesUnappliedEditorText(FxRobot robot) {
-		editDescriptor(robot, "Wording accepted as final");
-		robot.interact(() -> robot.lookup("#finalise-curriculum").queryAs(Button.class).fire());
-		assertEquals("Wording accepted as final", storedDescriptorText());
-		assertEquals(CurriculumStatus.FINAL, session.syllabusVersion().getCurriculumStatus());
+	void attachingPdfRetainsPendingEditorText(FxRobot robot) throws Exception {
+		Path pdf = tempDir.resolve("pending-text-source.pdf");
+		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage());
+			document.save(pdf.toFile());
+		}
+		editDescriptor(robot, AUTHORED_TEXT);
+		robot.interact(() -> {
+			try {
+				pane.attachSyllabusPdf(pdf);
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+			assertEquals(AUTHORED_TEXT, robot.lookup("#curriculum-edit-text").queryAs(TextArea.class).getText());
+			assertTrue(pane.hasUnsavedChanges());
+			pane.saveCurriculum();
+		});
+		assertEquals(AUTHORED_TEXT, storedDescriptorText());
 	}
 
 	@Test
@@ -83,20 +89,17 @@ class PersistedCurriculumAuthoringPaneTest {
 		assertEquals("Keep this wording across selection changes", storedDescriptorText());
 	}
 
-	@Test
-	void unappliedEditorTextCountsAsUnsavedWork(FxRobot robot) {
-		editDescriptor(robot, "Unapplied changes must be protected on close");
-		assertTrue(pane.hasUnsavedChanges());
+	@AfterEach
+	void close() throws Exception {
+		pane.close();
 	}
 
 	@Test
-	void updateAndSavePreserveExactAuthoredText(FxRobot robot) {
-		editDescriptor(robot, AUTHORED_TEXT);
-		robot.interact(() -> {
-			robot.lookup("#update-curriculum-text").queryAs(Button.class).fire();
-			robot.lookup("#save-curriculum").queryAs(Button.class).fire();
-		});
-		assertEquals(AUTHORED_TEXT, storedDescriptorText());
+	void finaliseIncludesUnappliedEditorText(FxRobot robot) {
+		editDescriptor(robot, "Wording accepted as final");
+		robot.interact(() -> robot.lookup("#finalise-curriculum").queryAs(Button.class).fire());
+		assertEquals("Wording accepted as final", storedDescriptorText());
+		assertEquals(CurriculumStatus.FINAL, session.syllabusVersion().getCurriculumStatus());
 	}
 
 	@Test
@@ -137,47 +140,10 @@ class PersistedCurriculumAuthoringPaneTest {
 	}
 
 	@Test
-	void attachingPdfRetainsPendingEditorText(FxRobot robot) throws Exception {
-		Path pdf = tempDir.resolve("pending-text-source.pdf");
-		try (PDDocument document = new PDDocument()) {
-			document.addPage(new PDPage());
-			document.save(pdf.toFile());
-		}
-		editDescriptor(robot, AUTHORED_TEXT);
-		robot.interact(() -> {
-			try {
-				pane.attachSyllabusPdf(pdf);
-			} catch (Exception e) {
-				throw new RuntimeException(e);
-			}
-			assertEquals(AUTHORED_TEXT, robot.lookup("#curriculum-edit-text").queryAs(TextArea.class).getText());
-			assertTrue(pane.hasUnsavedChanges());
-			pane.saveCurriculum();
-		});
-		assertEquals(AUTHORED_TEXT, storedDescriptorText());
-	}
-
-	private void editDescriptor(FxRobot robot, String wording) {
-		robot.interact(() -> {
-			var tree = curriculumTree(robot);
-			tree.getSelectionModel().select(findByCode(tree.getRoot(), "1.1.1"));
-			robot.lookup("#curriculum-edit-text").queryAs(TextArea.class).setText(wording);
-		});
-	}
-
-	@SuppressWarnings("unchecked")
-	private TreeView<au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode> curriculumTree(FxRobot robot) {
-		return robot.lookup("#curriculum-draft-tree").queryAs(TreeView.class);
-	}
-
-	private String storedDescriptorText() {
-		return new SqliteCurriculumRepository(database).findByCode(session.syllabusVersion(), "1.1.1")
-				.orElseThrow().getName();
-	}
-
-	@AfterEach
-	void close() throws Exception {
-		pane.close();
+	void saveIncludesUnappliedEditorText(FxRobot robot) {
+		editDescriptor(robot, "Unapplied wording");
+		robot.interact(() -> robot.lookup("#save-curriculum").queryAs(Button.class).fire());
+		assertEquals("Unapplied wording", storedDescriptorText());
 	}
 
 	@Test
@@ -215,7 +181,9 @@ class PersistedCurriculumAuthoringPaneTest {
 			}
 		});
 		String relativePath = session.syllabusVersion().getSourcePdfPath();
-		assertEquals("Engineering/2025/sources/Engineering-Syllabus.pdf", relativePath);
+		assertTrue(relativePath.startsWith("Engineering--subject-" + session.syllabusVersion().getSubject().getId()
+				+ "/2025--syllabus-" + session.syllabusVersion().getId() + "/sources/"));
+		assertTrue(relativePath.endsWith("--Engineering-Syllabus.pdf"));
 		Path managedPdf = curriculumRoot.resolve(relativePath);
 		assertTrue(Files.isRegularFile(managedPdf));
 		Files.delete(externalPdf);
@@ -291,6 +259,35 @@ class PersistedCurriculumAuthoringPaneTest {
 		assertEquals(CurriculumStatus.FINAL, session.syllabusVersion().getCurriculumStatus());
 	}
 
+	@Test
+	void unappliedEditorTextCountsAsUnsavedWork(FxRobot robot) {
+		editDescriptor(robot, "Unapplied changes must be protected on close");
+		assertTrue(pane.hasUnsavedChanges());
+	}
+
+	@Test
+	void updateAndSavePreserveExactAuthoredText(FxRobot robot) {
+		editDescriptor(robot, AUTHORED_TEXT);
+		robot.interact(() -> {
+			robot.lookup("#update-curriculum-text").queryAs(Button.class).fire();
+			robot.lookup("#save-curriculum").queryAs(Button.class).fire();
+		});
+		assertEquals(AUTHORED_TEXT, storedDescriptorText());
+	}
+
+	@SuppressWarnings("unchecked")
+	private TreeView<au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode> curriculumTree(FxRobot robot) {
+		return robot.lookup("#curriculum-draft-tree").queryAs(TreeView.class);
+	}
+
+	private void editDescriptor(FxRobot robot, String wording) {
+		robot.interact(() -> {
+			var tree = curriculumTree(robot);
+			tree.getSelectionModel().select(findByCode(tree.getRoot(), "1.1.1"));
+			robot.lookup("#curriculum-edit-text").queryAs(TextArea.class).setText(wording);
+		});
+	}
+
 	private TreeItem<au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode> findByCode(
 			TreeItem<au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode> item, String code) {
 		var value = item.getValue();
@@ -304,5 +301,10 @@ class PersistedCurriculumAuthoringPaneTest {
 			}
 		}
 		return null;
+	}
+
+	private String storedDescriptorText() {
+		return new SqliteCurriculumRepository(database).findByCode(session.syllabusVersion(), "1.1.1").orElseThrow()
+				.getName();
 	}
 }

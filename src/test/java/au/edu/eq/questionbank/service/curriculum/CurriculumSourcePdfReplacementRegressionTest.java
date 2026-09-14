@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.service.curriculum;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,6 +46,24 @@ class CurriculumSourcePdfReplacementRegressionTest {
 	}
 
 	@Test
+	void distinctSyllabusNamesCannotOverwriteEachOthersManagedPdf() throws Exception {
+		CurriculumAuthoringSession first = session(writer.insertSyllabusVersion(subject, "2025/26", false));
+		CurriculumAuthoringSession second = session(writer.insertSyllabusVersion(subject, "2025-26", true));
+		Path firstSource = pdf("first/syllabus.pdf", 1);
+		Path secondSource = pdf("second/syllabus.pdf", 2);
+		service.attachPdf(first, firstSource);
+		service.attachPdf(second, secondSource);
+		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
+		SyllabusVersion firstReload = repository.findVersionById(first.syllabusVersion().getId()).orElseThrow();
+		SyllabusVersion secondReload = repository.findVersionById(second.syllabusVersion().getId()).orElseThrow();
+		assertAll(() -> assertNotEquals(firstReload.getSourcePdfPath(), secondReload.getSourcePdfPath()),
+				() -> assertArrayEquals(Files.readAllBytes(firstSource),
+						Files.readAllBytes(service.resolvePdf(firstReload).orElseThrow())),
+				() -> assertArrayEquals(Files.readAllBytes(secondSource),
+						Files.readAllBytes(service.resolvePdf(secondReload).orElseThrow())));
+	}
+
+	@Test
 	void rejectedReplacementPreservesAuthoritativeBytesAndDatabaseReference() throws Exception {
 		SyllabusVersion version = writer.insertSyllabusVersion(subject, "2025", true);
 		CurriculumAuthoringSession session = session(version);
@@ -64,33 +83,10 @@ class CurriculumSourcePdfReplacementRegressionTest {
 		assertTrue(failure.getCause().getMessage().contains("PDF metadata rejected"));
 		SyllabusVersion reloaded = new SqliteCurriculumRepository(database).findVersionById(version.getId())
 				.orElseThrow();
-		assertAll(
-				() -> assertEquals(originalReference, reloaded.getSourcePdfPath()),
+		assertAll(() -> assertEquals(originalReference, reloaded.getSourcePdfPath()),
 				() -> assertEquals(originalReference, session.syllabusVersion().getSourcePdfPath()),
 				() -> assertArrayEquals(originalBytes, Files.readAllBytes(service.resolvePdf(reloaded).orElseThrow())),
 				() -> assertArrayEquals(originalBytes, Files.readAllBytes(managed)));
-	}
-
-	@Test
-	void distinctSyllabusNamesCannotOverwriteEachOthersManagedPdf() throws Exception {
-		CurriculumAuthoringSession first = session(writer.insertSyllabusVersion(subject, "2025/26", false));
-		CurriculumAuthoringSession second = session(writer.insertSyllabusVersion(subject, "2025-26", true));
-		Path firstSource = pdf("first/syllabus.pdf", 1);
-		Path secondSource = pdf("second/syllabus.pdf", 2);
-		service.attachPdf(first, firstSource);
-		service.attachPdf(second, secondSource);
-		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
-		SyllabusVersion firstReload = repository.findVersionById(first.syllabusVersion().getId()).orElseThrow();
-		SyllabusVersion secondReload = repository.findVersionById(second.syllabusVersion().getId()).orElseThrow();
-		assertAll(
-				() -> assertArrayEquals(Files.readAllBytes(firstSource),
-						Files.readAllBytes(service.resolvePdf(firstReload).orElseThrow())),
-				() -> assertArrayEquals(Files.readAllBytes(secondSource),
-						Files.readAllBytes(service.resolvePdf(secondReload).orElseThrow())));
-	}
-
-	private CurriculumAuthoringSession session(SyllabusVersion version) {
-		return new CurriculumDraftLoader(new SqliteCurriculumAuthoringRepository(database)).load(version);
 	}
 
 	private Path pdf(String relativePath, int pageCount) throws Exception {
@@ -103,5 +99,9 @@ class CurriculumSourcePdfReplacementRegressionTest {
 			document.save(path.toFile());
 		}
 		return path;
+	}
+
+	private CurriculumAuthoringSession session(SyllabusVersion version) {
+		return new CurriculumDraftLoader(new SqliteCurriculumAuthoringRepository(database)).load(version);
 	}
 }

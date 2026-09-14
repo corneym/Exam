@@ -6,6 +6,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.UUID;
 
 import au.edu.eq.questionbank.model.SyllabusVersion;
 
@@ -15,6 +16,10 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  * <p>
  * Database values use portable forward-slash relative paths. Absolute machine
  * paths are never persisted by this service.
+ * <p>
+ * Managed attachment paths include persistent curriculum identity and a unique
+ * file name so that one attachment never overwrites another before its metadata
+ * has been successfully published.
  */
 public final class CurriculumSourcePdfStore {
 
@@ -29,8 +34,22 @@ public final class CurriculumSourcePdfStore {
 	}
 
 	/**
-	 * Copies an authoritative external syllabus PDF into managed curriculum
-	 * storage.
+	 * Deletes a managed PDF that has not been published successfully.
+	 *
+	 * @param relativePath portable path relative to the curriculum data root
+	 * @throws IOException              if the file cannot be deleted
+	 * @throws IllegalArgumentException if the path is invalid or escapes the
+	 *                                  curriculum root
+	 */
+	public void deleteManagedPdf(String relativePath) throws IOException {
+		Files.deleteIfExists(resolveManagedPdf(relativePath));
+	}
+
+	/**
+	 * Copies an authoritative syllabus PDF into a new managed location.
+	 * <p>
+	 * Each call creates a distinct managed file. Existing managed PDFs are never
+	 * replaced by this method.
 	 *
 	 * @param syllabusVersion syllabus owning the source PDF
 	 * @param sourcePdf       existing external or managed PDF
@@ -54,19 +73,18 @@ public final class CurriculumSourcePdfStore {
 		if (!sourceFileName.toLowerCase().endsWith(".pdf")) {
 			throw new IllegalArgumentException("Syllabus source file must be a PDF: " + source);
 		}
-		String subjectDirectory = safeComponent(syllabusVersion.getSubject().getName(),
-				"subject-" + syllabusVersion.getSubject().getId());
-		String versionDirectory = safeComponent(syllabusVersion.getName(), "version-" + syllabusVersion.getId());
-		String managedFileName = safeComponent(sourceFileName, "syllabus.pdf");
-		if (!managedFileName.toLowerCase().endsWith(".pdf")) {
-			managedFileName += ".pdf";
+		String subjectDirectory = safeComponent(syllabusVersion.getSubject().getName(), "subject") + "--subject-"
+				+ syllabusVersion.getSubject().getId();
+		String versionDirectory = safeComponent(syllabusVersion.getName(), "version") + "--syllabus-"
+				+ syllabusVersion.getId();
+		String safeFileName = safeComponent(sourceFileName, "syllabus.pdf");
+		if (!safeFileName.toLowerCase().endsWith(".pdf")) {
+			safeFileName += ".pdf";
 		}
+		String managedFileName = UUID.randomUUID() + "--" + safeFileName;
 		Path relativePath = Path.of(subjectDirectory, versionDirectory, SOURCES_DIRECTORY, managedFileName);
 		Path target = curriculumDataRoot.resolve(relativePath).normalize();
 		requireInsideCurriculumRoot(target);
-		if (source.equals(target)) {
-			return portablePath(relativePath);
-		}
 		Path parent = target.getParent();
 		Files.createDirectories(parent);
 		Path temporary = Files.createTempFile(parent, ".curriculum-source-", ".tmp");
@@ -74,9 +92,9 @@ public final class CurriculumSourcePdfStore {
 		try {
 			Files.copy(source, temporary, StandardCopyOption.REPLACE_EXISTING);
 			try {
-				Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+				Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
 			} catch (AtomicMoveNotSupportedException e) {
-				Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+				Files.move(temporary, target);
 			}
 			moved = true;
 		} finally {

@@ -1,7 +1,6 @@
 package au.edu.eq.questionbank.service.curriculum;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -37,7 +36,8 @@ class CurriculumSourcePdfStoreTest {
 		SyllabusVersion syllabus = new SyllabusVersion(7, engineering, "2025", true);
 		CurriculumSourcePdfStore store = new CurriculumSourcePdfStore(curriculumRoot);
 		String relativePath = store.managePdf(syllabus, externalPdf);
-		assertEquals("Engineering/2025/sources/" + "Engineering-Syllabus-2025.pdf", relativePath);
+		assertTrue(relativePath.startsWith("Engineering--subject-1/" + "2025--syllabus-7/" + "sources/"));
+		assertTrue(relativePath.endsWith("Engineering-Syllabus-2025.pdf"));
 		Path managedPdf = store.resolveManagedPdf(relativePath);
 		assertTrue(Files.isRegularFile(managedPdf));
 		assertArrayEquals(originalContent, Files.readAllBytes(managedPdf));

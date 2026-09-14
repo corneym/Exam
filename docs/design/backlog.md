@@ -87,6 +87,27 @@ concrete applicability or retrieval requirement demonstrates a need.
 ### Close of sprint 08
 - Remove Export Draft button from the normal Curriculum Authoring UI once persisted authoring is fully accepted; retain CurriculumDraftTextExporter only if still useful for diagnostics/tests.
 
+### Managed document content hashing and duplicate detection
+
+Consider adding content hashing for managed documents so identical files can be recognised independently of filename or storage path.
+
+Current behaviour:
+- exam and answer PDFs use `Files.mismatch(...)` to detect byte-identical files when the destination filename already exists;
+- syllabus/curriculum PDFs are stored using unique managed filenames and are not deduplicated by content;
+- no document hash is currently persisted in SQLite.
+
+Proposed improvement:
+- compute a SHA-256 hash when a managed document is imported;
+- persist the hash alongside document metadata;
+- use the hash to detect duplicate content even when filenames differ;
+- reuse an existing managed file where appropriate instead of storing another identical copy;
+- retain existing path and ownership semantics so different logical document records may still refer to the same physical content if that is safe;
+- consider using the persisted hash for backup/integrity verification as well as deduplication.
+
+Do not use SHA-1 for new work; use SHA-256 or a stronger contemporary hash.
+
+This is a storage-integrity/deduplication improvement, not required for Sprint 08 closure.
+
 ### Curriculum capture
 - PDF region-based text extraction for curriculum authoring.
 - Detection/highlighting of embedded images and diagrams.

@@ -59,8 +59,10 @@ class CurriculumSourcePdfServiceTest {
 		assertTrue(managedPdf.startsWith(curriculumRoot.toAbsolutePath().normalize()));
 		assertTrue(Files.isRegularFile(managedPdf));
 		assertArrayEquals(content, Files.readAllBytes(managedPdf));
-		assertEquals("Engineering/2025/sources/" + "Engineering-General-Senior-Syllabus-2025.pdf",
-				session.syllabusVersion().getSourcePdfPath());
+		String managedRelativePath = session.syllabusVersion().getSourcePdfPath();
+		assertTrue(managedRelativePath.startsWith(
+				"Engineering--subject-" + engineering.getId() + "/2025--syllabus-" + syllabus.getId() + "/sources/"));
+		assertTrue(managedRelativePath.endsWith("Engineering-General-Senior-Syllabus-2025.pdf"));
 		/*
 		 * Once attached, the original external location is irrelevant.
 		 */
@@ -68,8 +70,7 @@ class CurriculumSourcePdfServiceTest {
 		assertFalse(Files.exists(externalPdf));
 		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		SyllabusVersion reloaded = curriculumRepository.findVersionById(syllabus.getId()).orElseThrow();
-		assertEquals("Engineering/2025/sources/" + "Engineering-General-Senior-Syllabus-2025.pdf",
-				reloaded.getSourcePdfPath());
+		assertEquals(managedRelativePath, reloaded.getSourcePdfPath());
 		Path reopenedPdf = service.resolvePdf(reloaded).orElseThrow();
 		assertEquals(managedPdf, reopenedPdf);
 		assertTrue(Files.isRegularFile(reopenedPdf));

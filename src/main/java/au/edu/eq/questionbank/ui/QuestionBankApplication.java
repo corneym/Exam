@@ -956,8 +956,7 @@ public class QuestionBankApplication extends Application {
 		// Windows are the registry: hiding/closing releases access automatically,
 		// while a cancelled close retains it. Include FINAL views that can reopen.
 		for (Window window : List.copyOf(Window.getWindows())) {
-			if (window instanceof Stage existing && existing.getOwner() == primaryStage
-					&& existing.getScene() != null
+			if (window instanceof Stage existing && existing.getOwner() == primaryStage && existing.getScene() != null
 					&& existing.getScene().getRoot() instanceof CurriculumAuthoringPane pane
 					&& pane.isForSyllabus(session.syllabusVersion().getId())) {
 				existing.toFront();
@@ -995,6 +994,9 @@ public class QuestionBankApplication extends Application {
 			} catch (Exception e) {
 				showAlert(Alert.AlertType.WARNING, "Curriculum Authoring",
 						"The curriculum authoring workspace could not be closed cleanly.", e.getMessage());
+			} finally {
+				curriculumSelectorPane.refreshSubjects();
+				examMetadataPane.refreshSubjects();
 			}
 		});
 		authoringStage.show();
@@ -1022,8 +1024,7 @@ public class QuestionBankApplication extends Application {
 		// Authoring windows own independent drafts. Resolve them before backup or
 		// resource shutdown, which must include any curriculum saved by this prompt.
 		for (Window window : List.copyOf(Window.getWindows())) {
-			if (window instanceof Stage stage && stage.getOwner() == primaryStage
-					&& stage.getScene() != null
+			if (window instanceof Stage stage && stage.getOwner() == primaryStage && stage.getScene() != null
 					&& stage.getScene().getRoot() instanceof CurriculumAuthoringPane pane
 					&& !confirmCurriculumAuthoringClose(stage, pane)) {
 				return;
