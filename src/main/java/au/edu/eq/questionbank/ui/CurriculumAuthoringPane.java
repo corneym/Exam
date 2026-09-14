@@ -184,13 +184,13 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		statusLabel.setText("Curriculum marked Final.");
 	}
 
+	boolean hasUnsavedChanges() {
+		return isPersistentMode() && (dirty || hasPendingEditorText());
+	}
+
 	/** Includes FINAL views, because they can be reopened for editing in place. */
 	boolean isForSyllabus(long syllabusVersionId) {
 		return isPersistentMode() && authoringSession.syllabusVersion().getId() == syllabusVersionId;
-	}
-
-	boolean hasUnsavedChanges() {
-		return isPersistentMode() && (dirty || hasPendingEditorText());
 	}
 
 	/**
@@ -226,6 +226,22 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		dirty = false;
 		refreshLifecycleState();
 		statusLabel.setText("Curriculum saved.");
+	}
+
+	/**
+	 * Applies editor wording in memory only; validation failure leaves it intact.
+	 */
+	private void applyPendingEditorText() {
+		if (!isEditable() || !hasPendingEditorText()) {
+			return;
+		}
+		CurriculumDraftNode updated = numbering.updateText(draft, editorDraftId, editTextArea.getText());
+		TreeItem<CurriculumDraftNode> item = findTreeItem(treeRoot, editorDraftId);
+		if (item != null) {
+			item.setValue(updated);
+		}
+		markDirty();
+		refreshValidation();
 	}
 
 	private void browseForPdf() {
@@ -370,6 +386,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	private void configureCorrectionControls() {
 		editTextArea.setId("curriculum-edit-text");
 		editTextArea.setWrapText(true);
+		editTextArea.setStyle("-fx-font-size: 16px;");
 		editTextArea.setPrefRowCount(4);
 		editTextArea.textProperty().addListener((_, _, _) -> refreshDirtyLabel());
 		updateTextButton.setId("update-curriculum-text");
@@ -554,6 +571,11 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		return null;
 	}
 
+	private boolean hasPendingEditorText() {
+		return editorDraftId != null
+				&& draft.findNode(editorDraftId).map(node -> !node.name().equals(editTextArea.getText())).orElse(false);
+	}
+
 	private boolean isEditable() {
 		return !isPersistentMode() || !authoringSession.syllabusVersion().isCurriculumFinal();
 	}
@@ -674,6 +696,12 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			draftTree.scrollTo(draftTree.getRow(item));
 		} else {
 			draftTree.getSelectionModel().clearSelection();
+		}
+	}
+
+	private void refreshDirtyLabel() {
+		if (isPersistentMode() && isEditable()) {
+			lifecycleLabel.setText(hasUnsavedChanges() ? "IN_PROGRESS — unsaved changes" : "IN_PROGRESS");
 		}
 	}
 
@@ -848,31 +876,6 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			statusLabel.setText("Updated " + currentNode(selected.draftId()).code() + ".");
 		} catch (IllegalArgumentException | NullPointerException e) {
 			statusLabel.setText(e.getMessage());
-		}
-	}
-
-	private boolean hasPendingEditorText() {
-		return editorDraftId != null && draft.findNode(editorDraftId)
-				.map(node -> !node.name().equals(editTextArea.getText())).orElse(false);
-	}
-
-	/** Applies editor wording in memory only; validation failure leaves it intact. */
-	private void applyPendingEditorText() {
-		if (!isEditable() || !hasPendingEditorText()) {
-			return;
-		}
-		CurriculumDraftNode updated = numbering.updateText(draft, editorDraftId, editTextArea.getText());
-		TreeItem<CurriculumDraftNode> item = findTreeItem(treeRoot, editorDraftId);
-		if (item != null) {
-			item.setValue(updated);
-		}
-		markDirty();
-		refreshValidation();
-	}
-
-	private void refreshDirtyLabel() {
-		if (isPersistentMode() && isEditable()) {
-			lifecycleLabel.setText(hasUnsavedChanges() ? "IN_PROGRESS — unsaved changes" : "IN_PROGRESS");
 		}
 	}
 

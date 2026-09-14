@@ -88,6 +88,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringOpenService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringSession;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraftLoader;
 import au.edu.eq.questionbank.service.curriculum.CurriculumLifecycleService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfStore;
@@ -1123,12 +1124,14 @@ public class QuestionBankApplication extends Application {
 			CurriculumMappingSuggester subtopicSuggester = new ConfirmedDescriptorSubtopicMappingSuggester(repository,
 					mappingRepository);
 			CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
+			CurriculumMappingCoverageService coverageService = new CurriculumMappingCoverageService(repository,
+					mappingRepository, reviewRepository);
 			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
 			SubtopicMappingEvidenceService subtopicEvidenceService = new SubtopicMappingEvidenceService(repository,
 					reviewRepository);
 			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
 					descriptorSuggester, subtopicSuggester, subtopicEvidenceService, reviewRepository,
-					mappingRepository, reviewWriter);
+					mappingRepository, coverageService, reviewWriter);
 			dialog.showAndWait();
 		} catch (IllegalStateException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",
