@@ -59,7 +59,7 @@ hard-code Chemistry or one historical hierarchy shape.
 ### 3.2 SQLite runtime
 
 Excel is import/exchange only. SQLite is the live datastore with referential
-integrity and sequential migrations. The current latest schema version is 6.
+integrity and sequential migrations. The current latest schema version is 7.
 
 ### 3.3 Managed source PDFs are authoritative
 
@@ -243,6 +243,13 @@ retired after consolidation.
 
 ## 5. Current Sprint 08 data work
 
+Curriculum authoring now has production creation/opening, resumable SQLite saves,
+stable node identities, managed syllabus-PDF attachments and explicit
+`IN_PROGRESS`/`FINAL` lifecycle transitions. The current/historical syllabus flag
+is independent of that lifecycle. See `current-status.md` for the implemented
+contracts and documentation deferred pending blocker fixes. This does not mark
+the remaining mapping/corpus work or real-syllabus acceptance complete.
+
 Sprint 08 treats application SQLite state as authoritative for curriculum
 mapping. Historical-to-current relationships are completed through the
 application's human-reviewed mapping workflow.
@@ -297,8 +304,9 @@ than redesigning it around a no-Subtopic case.
 
 ### 6.3 Broad capture/audit queue
 
-Once real corpus maintenance volume justifies it, add a filtered administrative
-queue for:
+Sprint 08 Slice 7 currently requires a filtered administrative queue for the
+following states. It is not yet implemented; any decision to defer it must be
+reflected explicitly in the sprint acceptance criteria:
 
 - Question regions missing;
 - Answer regions missing;

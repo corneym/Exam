@@ -1,6 +1,6 @@
 # Exam Question Bank — Current Status
 
-> Authoritative project status at 11 September 2026.
+> Authoritative project status at 15 September 2026.
 >
 > Current development branch: `feature/data-completion`.
 >
@@ -31,7 +31,7 @@ The application is no longer an Excel-backed generation pipeline. Excel is an
 import/exchange format. SQLite is the live datastore. Original PDFs are the
 authoritative source material; extracted/cropped images are derived content.
 
-The latest supported SQLite schema version is **6**.
+The latest supported SQLite schema version is **7**.
 
 ## Implemented and current
 
@@ -69,12 +69,14 @@ restart.
 
 ### Database schema and persistence
 
-**IMPLEMENTED / CURRENT — schema version 6**
+**IMPLEMENTED / CURRENT — schema version 7**
 
 The schema supports:
 
 - subjects and syllabus versions;
+- curriculum authoring status, finalisation timestamp and managed source-PDF path;
 - generic curriculum hierarchy nodes;
+- optional one-based syllabus source-page provenance on curriculum nodes;
 - examination providers, exams and booklets;
 - managed source documents;
 - questions and ordered question regions;
@@ -157,6 +159,75 @@ artefact only. Sprint 08 will add coverage reporting so application state can
 distinguish matched, explicit no-match and unreviewed historical nodes, together
 with current nodes having no confirmed predecessor from the selected historical
 version.
+
+### Resumable curriculum authoring — Sprint 08
+
+**IMPLEMENTED / CURRENT — closeout validation remains in progress**
+
+The Curriculum > Author / Edit action creates a new syllabus for a new or
+existing Subject, or opens an existing persisted syllabus, including an
+Excel-imported curriculum. Creation immediately stores an empty `IN_PROGRESS`
+syllabus. Choosing it as current immediately makes the previous current version
+historical; authoring completion is a separate decision.
+
+The author explicitly selects node levels and parents. Both
+`Unit -> Topic -> Descriptor` and `Unit -> Topic -> Subtopic -> Descriptor` are supported.
+Authoring validation rejects mixing these shapes anywhere within one syllabus.
+An empty syllabus can be created and reopened, but saving/finalising a draft
+requires at least one structurally valid node.
+
+Save persists the complete draft transactionally. Existing curriculum-node IDs
+are updated in place; new nodes acquire database IDs after successful commit.
+Draft IDs are session-local and are bound separately to persistent IDs. Removal
+of nodes referenced by Questions, mappings or mapping-review records is rejected.
+The persisted hierarchy and optional source-page numbers can be loaded into a
+fresh authoring session. JDBC storage preserves supplied text without interpreting
+Markdown or LaTeX.
+
+Curriculum lifecycle is independent of the current/historical syllabus flag:
+
+- `IN_PROGRESS` permits authoring; existing imported curricula migrate to this state.
+- Mark Final validates and saves the draft, then records `FINAL` and a timestamp.
+- A `FINAL` curriculum must be explicitly reopened before editing or changing its
+  source PDF; reopening clears the timestamp and returns it to `IN_PROGRESS`.
+- Saving the draft and marking it final are separate transactions. If the latter
+  fails, the saved draft can remain `IN_PROGRESS` for retry.
+
+Attaching a syllabus PDF copies it into managed curriculum storage and persists
+the attachment immediately, independently of saving draft nodes. The stored path
+is relative to `curriculumDataRoot`, uses portable separators, and is resolved
+within that root. The original external file is no longer needed after a
+successful attachment. Node source-page references are one-based.
+
+Pending node-editor text counts as unsaved work. Save and Mark Final apply it to
+the draft before persistence, and tree selection changes apply valid wording in
+memory. Invalid blank wording remains in the editor and blocks the transition.
+Edited text retains indentation, trailing line breaks and Markdown/LaTeX
+characters. Closing an authoring window or exiting the application offers
+Save/Discard/Cancel for unsaved authoring work; cancelling retains the session.
+
+Only one authoring window per syllabus version can be open in the application,
+including FINAL views that can later reopen for editing. A duplicate open explains
+that the existing window must be used or closed. Closing releases access;
+cancelling a close retains it. Different syllabus versions can be open together.
+At the persistence boundary, Save compares all stored node fields against the
+session's loaded or last successfully saved snapshot in the same transaction as
+the write. A changed snapshot rejects the save before mutation and requires the
+session to be closed and reopened. Finalisation uses this same save safeguard.
+No schema migration or persistent edit-lock record is required.
+
+**DEFERRED DOCUMENTATION — pending production fixes:** do not yet claim
+safe failed PDF replacement or automatic
+refresh of main classification selectors after authoring. Their
+final user-facing guarantees will be documented after the fixes and regression
+tests pass. Imported-code policy also needs resolution before documenting that
+guarantee.
+
+The separate Exam Import dialog refreshes its subject choices when opened.
+
+Mapping coverage, metadata-only legacy correction, the corpus audit queue and
+real non-Chemistry end-to-end acceptance are not established as complete by this
+authoring implementation. Sprint-scope decisions remain separate.
 
 ### Managed PDF workflows
 
@@ -403,9 +474,10 @@ architecture.
 - automatic registered Answer PDF reuse;
 - Answer PDF chooser controls suppressed when unnecessary.
 
-## Current branch and Sprint 07 closeout
+## Current branch and historical Sprint 07 closeout
 
-`feature/preamble-capture` is the active feature branch.
+`feature/data-completion` is the active feature branch for Sprint 08.
+Sprint 07 on `feature/preamble-capture` is complete and merged.
 
 Sprint 07 implementation, documentation consolidation and final
 branch-versus-`main` merge-readiness review are complete.
@@ -415,7 +487,7 @@ Question to a non-multipart question code could retain its old `SourceQuestion`
 and shared-context relationships. The capture service was corrected so those
 relationships are cleared, with regression coverage for the transition.
 
-Final verification includes:
+Historical Sprint 07 final verification included:
 
 - standard Maven test suite green;
 - full headless TestFX/UI suite green;
@@ -432,7 +504,7 @@ Current major deferred themes include:
 
 - additional asynchronous Question Search regression coverage;
 - broad capture/audit work queue;
-- reconciliation of the 5 September Chemistry mapping workbook;
+- application-authoritative curriculum mapping review and pair-specific coverage;
 - Answer-pane layout annoyances;
 - multi-page automatic shared-preamble capture;
 - supported editing of persisted exam-specific metadata;

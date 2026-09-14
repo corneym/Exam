@@ -20,7 +20,7 @@
 		<apache.poi.version>5.5.1</apache.poi.version>
 		<testfx.version>4.0.18</testfx.version>
 		<sqlite.jdbc.version>3.53.2.1</sqlite.jdbc.version>
-		<test.suite>**/AllTests.java</test.suite>
+		<test.suite>**/NonUITests.java</test.suite>
 		<headless.test.jvm.args></headless.test.jvm.args>
 	</properties>
 

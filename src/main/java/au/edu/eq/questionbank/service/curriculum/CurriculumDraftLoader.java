@@ -25,6 +25,20 @@ public final class CurriculumDraftLoader {
 		this.repository = repository;
 	}
 
+	/**
+	 * Loads persisted nodes into a fresh draft with session-local IDs bound to
+	 * their existing database IDs. Retains codes, wording, parent relationships,
+	 * sibling order and optional source pages without renumbering the curriculum.
+	 * Records the complete persisted node snapshot for stale-save detection.
+	 * The supplied syllabus snapshot is retained; loading a final curriculum does
+	 * not reopen it or authorise saving it.
+	 *
+	 * @param syllabusVersion syllabus snapshot whose persisted nodes are loaded
+	 * @return fresh session, possibly containing an empty draft
+	 * @throws NullPointerException if {@code syllabusVersion} is {@code null}
+	 * @throws IllegalStateException if reading fails or the stored hierarchy has
+	 *                               duplicate identities, orphans or cycles
+	 */
 	public CurriculumAuthoringSession load(SyllabusVersion syllabusVersion) {
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
@@ -50,6 +64,7 @@ public final class CurriculumDraftLoader {
 		if (loadedPersistentIds.size() != persistedNodes.size()) {
 			throw new IllegalStateException("Persisted curriculum contains an orphaned or cyclic hierarchy");
 		}
+		session.recordPersistedSnapshot(persistedNodes);
 		return session;
 	}
 

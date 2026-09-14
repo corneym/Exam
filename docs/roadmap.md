@@ -11,7 +11,7 @@
 **IMPLEMENTED / CURRENT**
 
 - Java 25 / JavaFX / Maven desktop application.
-- SQLite runtime with foreign keys and migrations through schema v6.
+- SQLite runtime with foreign keys and migrations through schema v7.
 - Managed source PDFs and portable relative paths.
 - PDF viewer and managed Exam import.
 - Multi-region Question and Answer capture.
@@ -234,7 +234,7 @@ mappings.
 Merge Sprint 07
         |
         v
-Corpus completion + Chemistry mapping reconciliation
+Corpus completion + application-authoritative Chemistry mapping review/coverage
         |
         v
 Bank-management + retrieval/testing hardening

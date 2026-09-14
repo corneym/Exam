@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
@@ -82,6 +83,9 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	private final Button finaliseButton = new Button("Mark Final");
 	private final Button reopenButton = new Button("Reopen for editing");
 	private boolean dirty;
+	// The editor remains bound to this node while tree selection is changing.
+	private Long editorDraftId;
+	private boolean changingTree;
 	private final Label lifecycleLabel = new Label();
 
 	CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot, CurriculumAuthoringSession authoringSession,
@@ -173,14 +177,20 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 
 	void finaliseCurriculum() {
 		requirePersistentMode();
+		applyPendingEditorText();
 		lifecycleService.finalise(authoringSession);
 		dirty = false;
 		refreshLifecycleState();
 		statusLabel.setText("Curriculum marked Final.");
 	}
 
+	/** Includes FINAL views, because they can be reopened for editing in place. */
+	boolean isForSyllabus(long syllabusVersionId) {
+		return isPersistentMode() && authoringSession.syllabusVersion().getId() == syllabusVersionId;
+	}
+
 	boolean hasUnsavedChanges() {
-		return isPersistentMode() && dirty;
+		return isPersistentMode() && (dirty || hasPendingEditorText());
 	}
 
 	/**
@@ -211,6 +221,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		if (!isEditable()) {
 			throw new IllegalStateException("Final curriculum must be reopened before saving");
 		}
+		applyPendingEditorText();
 		authoringWriter.save(authoringSession);
 		dirty = false;
 		refreshLifecycleState();
@@ -277,6 +288,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		 */
 		Long parentDraftId = level == CurriculumLevel.UNIT ? null : selectedParent.draftId();
 		try {
+			applyPendingEditorText();
 			CurriculumDraftNode added = numbering.addNode(draft, level, selectedText.strip(), parentDraftId,
 					pdfWorkspace.getCurrentPageNumber());
 			markDirty();
@@ -359,6 +371,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		editTextArea.setId("curriculum-edit-text");
 		editTextArea.setWrapText(true);
 		editTextArea.setPrefRowCount(4);
+		editTextArea.textProperty().addListener((_, _, _) -> refreshDirtyLabel());
 		updateTextButton.setId("update-curriculum-text");
 		updateTextButton.setOnAction(_ -> updateSelectedText());
 		deleteButton.setId("delete-curriculum-node");
@@ -467,7 +480,24 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 				setText(node.code() + "  " + node.level() + " — " + node.name());
 			}
 		});
-		draftTree.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> refreshSelectedNodeDetails());
+		draftTree.getSelectionModel().selectedItemProperty().addListener((_, previous, _) -> {
+			if (changingTree) {
+				return;
+			}
+			try {
+				applyPendingEditorText();
+				refreshSelectedNodeDetails();
+			} catch (IllegalArgumentException e) {
+				// Keep invalid wording visible and bound to its original node.
+				changingTree = true;
+				try {
+					draftTree.getSelectionModel().select(previous);
+				} finally {
+					changingTree = false;
+				}
+				statusLabel.setText(e.getMessage());
+			}
+		});
 	}
 
 	private void confirmAndDeleteSelectedNode() {
@@ -554,9 +584,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			return;
 		}
 		dirty = true;
-		if (!authoringSession.syllabusVersion().isCurriculumFinal()) {
-			lifecycleLabel.setText("IN_PROGRESS — unsaved changes");
-		}
+		refreshDirtyLabel();
 	}
 
 	private void moveSelectedNode(boolean upward) {
@@ -566,6 +594,12 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		}
 		CurriculumDraftNode selected = selectedNode();
 		if (selected == null) {
+			return;
+		}
+		try {
+			applyPendingEditorText();
+		} catch (IllegalArgumentException e) {
+			statusLabel.setText(e.getMessage());
 			return;
 		}
 		long draftId = selected.draftId();
@@ -605,6 +639,16 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	}
 
 	private void rebuildTree(Long selectedDraftId) {
+		changingTree = true;
+		try {
+			rebuildTreeItems(selectedDraftId);
+		} finally {
+			changingTree = false;
+			refreshSelectedNodeDetails();
+		}
+	}
+
+	private void rebuildTreeItems(Long selectedDraftId) {
 		Set<Long> collapsedDraftIds = collapsedDraftIds();
 		treeRoot.getChildren().clear();
 		Set<Long> visited = new HashSet<>();
@@ -622,7 +666,6 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		}
 		if (selectedDraftId == null) {
 			draftTree.getSelectionModel().clearSelection();
-			refreshSelectedNodeDetails();
 			return;
 		}
 		TreeItem<CurriculumDraftNode> item = findTreeItem(treeRoot, selectedDraftId);
@@ -632,7 +675,6 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		} else {
 			draftTree.getSelectionModel().clearSelection();
 		}
-		refreshSelectedNodeDetails();
 	}
 
 	private void refreshLifecycleState() {
@@ -653,7 +695,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			reopenButton.setDisable(false);
 			browseButton.setDisable(true);
 		} else {
-			lifecycleLabel.setText(dirty ? "IN_PROGRESS — unsaved changes" : "IN_PROGRESS");
+			refreshDirtyLabel();
 			saveButton.setDisable(false);
 			finaliseButton.setDisable(false);
 			reopenButton.setDisable(true);
@@ -680,6 +722,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			selectedLevelValue.setText("-");
 			selectedCodeValue.setText("-");
 			selectedPageValue.setText("-");
+			editorDraftId = null;
 			editTextArea.clear();
 			editTextArea.setDisable(true);
 			contextLabel.setText("No parent selected. Add Unit is available.");
@@ -694,7 +737,10 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		selectedCodeValue.setText(selected.code());
 		selectedPageValue.setText(selected.sourcePageNumber() == null ? "-" : selected.sourcePageNumber().toString());
 		editTextArea.setDisable(!isEditable());
-		editTextArea.setText(selected.name());
+		if (!Objects.equals(editorDraftId, selected.draftId())) {
+			editorDraftId = selected.draftId();
+			editTextArea.setText(selected.name());
+		}
 		contextLabel.setText(
 				"Current parent context: " + selected.code() + " " + selected.level() + " — " + selected.name());
 		updateTextButton.setDisable(!isEditable());
@@ -797,14 +843,36 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			return;
 		}
 		try {
-			CurriculumDraftNode updated = numbering.updateText(draft, selected.draftId(),
-					editTextArea.getText().strip());
-			markDirty();
-			rebuildTree(updated.draftId());
-			refreshValidation();
-			statusLabel.setText("Updated " + currentNode(updated.draftId()).code() + ".");
+			applyPendingEditorText();
+			refreshSelectedNodeDetails();
+			statusLabel.setText("Updated " + currentNode(selected.draftId()).code() + ".");
 		} catch (IllegalArgumentException | NullPointerException e) {
 			statusLabel.setText(e.getMessage());
+		}
+	}
+
+	private boolean hasPendingEditorText() {
+		return editorDraftId != null && draft.findNode(editorDraftId)
+				.map(node -> !node.name().equals(editTextArea.getText())).orElse(false);
+	}
+
+	/** Applies editor wording in memory only; validation failure leaves it intact. */
+	private void applyPendingEditorText() {
+		if (!isEditable() || !hasPendingEditorText()) {
+			return;
+		}
+		CurriculumDraftNode updated = numbering.updateText(draft, editorDraftId, editTextArea.getText());
+		TreeItem<CurriculumDraftNode> item = findTreeItem(treeRoot, editorDraftId);
+		if (item != null) {
+			item.setValue(updated);
+		}
+		markDirty();
+		refreshValidation();
+	}
+
+	private void refreshDirtyLabel() {
+		if (isPersistentMode() && isEditable()) {
+			lifecycleLabel.setText(hasUnsavedChanges() ? "IN_PROGRESS — unsaved changes" : "IN_PROGRESS");
 		}
 	}
 

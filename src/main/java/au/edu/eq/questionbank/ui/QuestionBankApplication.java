@@ -122,6 +122,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 /**
  * Composition root for the Exam Question Bank desktop application.
@@ -952,6 +953,23 @@ public class QuestionBankApplication extends Application {
 
 	private void openCurriculumAuthoringWindow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
 			CurriculumAuthoringSession session) {
+		// Windows are the registry: hiding/closing releases access automatically,
+		// while a cancelled close retains it. Include FINAL views that can reopen.
+		for (Window window : List.copyOf(Window.getWindows())) {
+			if (window instanceof Stage existing && existing.getOwner() == primaryStage
+					&& existing.getScene() != null
+					&& existing.getScene().getRoot() instanceof CurriculumAuthoringPane pane
+					&& pane.isForSyllabus(session.syllabusVersion().getId())) {
+				existing.toFront();
+				Alert alert = new Alert(Alert.AlertType.INFORMATION);
+				alert.initOwner(existing);
+				alert.setTitle("Curriculum Authoring");
+				alert.setHeaderText("This curriculum is already open for editing.");
+				alert.setContentText("Use the existing authoring window, or close it before opening another.");
+				alert.showAndWait();
+				return;
+			}
+		}
 		SqliteCurriculumAuthoringWriter authoringWriter = new SqliteCurriculumAuthoringWriter(database);
 		CurriculumSourcePdfService sourcePdfService = new CurriculumSourcePdfService(
 				new CurriculumSourcePdfStore(config.curriculumDataRoot()),
@@ -1000,6 +1018,16 @@ public class QuestionBankApplication extends Application {
 	private void requestApplicationExit(Stage primaryStage) {
 		if (blockWhileCaptureSaveInProgress(primaryStage, "closing the application")) {
 			return;
+		}
+		// Authoring windows own independent drafts. Resolve them before backup or
+		// resource shutdown, which must include any curriculum saved by this prompt.
+		for (Window window : List.copyOf(Window.getWindows())) {
+			if (window instanceof Stage stage && stage.getOwner() == primaryStage
+					&& stage.getScene() != null
+					&& stage.getScene().getRoot() instanceof CurriculumAuthoringPane pane
+					&& !confirmCurriculumAuthoringClose(stage, pane)) {
+				return;
+			}
 		}
 		while (true) {
 			ShutdownResult result = shutdownCoordinator.prepareForExit();

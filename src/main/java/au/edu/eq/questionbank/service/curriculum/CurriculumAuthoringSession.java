@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.service.curriculum;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -7,6 +8,7 @@ import java.util.OptionalLong;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.curriculum.PersistedCurriculumNode;
 
 /**
  * One resumable curriculum-authoring session.
@@ -18,6 +20,7 @@ public final class CurriculumAuthoringSession {
 
 	private SyllabusVersion syllabusVersion;
 	private final CurriculumDraft draft;
+	private Set<PersistedCurriculumNode> persistedSnapshot = Set.of();
 	private final Map<Long, Long> persistentIdByDraftId = new HashMap<>();
 
 	public CurriculumAuthoringSession(SyllabusVersion syllabusVersion, CurriculumDraft draft) {
@@ -91,6 +94,26 @@ public final class CurriculumAuthoringSession {
 			throw new IllegalArgumentException("persistentId must be positive");
 		}
 		persistentIdByDraftId.entrySet().removeIf(entry -> entry.getValue().longValue() == persistentId);
+	}
+
+	/**
+	 * Returns the immutable node snapshot observed at load or the last successful
+	 * save. A newly constructed session expects an empty persisted curriculum.
+	 *
+	 * @return baseline including identities, text, codes, hierarchy, order and pages
+	 */
+	public Set<PersistedCurriculumNode> persistedSnapshot() {
+		return persistedSnapshot;
+	}
+
+	/**
+	 * Records the baseline from a completed load or committed save. Draft edits
+	 * and failed saves must never advance this snapshot.
+	 *
+	 * @param nodes complete persisted node state observed by the loader or writer
+	 */
+	public void recordPersistedSnapshot(Collection<PersistedCurriculumNode> nodes) {
+		persistedSnapshot = Set.copyOf(nodes);
 	}
 
 	public Map<Long, Long> persistentBindings() {

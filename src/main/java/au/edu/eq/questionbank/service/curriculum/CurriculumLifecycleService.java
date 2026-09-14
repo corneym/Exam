@@ -34,6 +34,21 @@ public final class CurriculumLifecycleService {
 		this.clock = clock;
 	}
 
+	/**
+	 * Validates and saves an in-progress draft, then marks its curriculum final
+	 * using this service's clock. Replaces the session's syllabus snapshot on
+	 * success; the current/historical flag is unchanged.
+	 * <p>
+	 * Draft saving and the lifecycle update are separate transactions. Failure
+	 * of the latter does not undo a successfully saved draft.
+	 *
+	 * @param session in-progress authoring session to finalise
+	 * @return final syllabus snapshot, also installed in the session
+	 * @throws NullPointerException if {@code session} is {@code null}
+	 * @throws IllegalArgumentException if the draft is structurally invalid
+	 * @throws IllegalStateException if the curriculum is not in progress or
+	 *                               saving or the lifecycle update is rejected
+	 */
 	public SyllabusVersion finalise(CurriculumAuthoringSession session) {
 		if (session == null) {
 			throw new NullPointerException("session");
@@ -57,6 +72,17 @@ public final class CurriculumLifecycleService {
 		return updated;
 	}
 
+	/**
+	 * Explicitly returns a final curriculum to in-progress authoring and clears
+	 * its finalisation timestamp. Does not reload or save the draft, change its
+	 * persistent node identities, or change the current/historical flag.
+	 *
+	 * @param session session for the final curriculum
+	 * @return in-progress syllabus snapshot, also installed in the session
+	 * @throws NullPointerException if {@code session} is {@code null}
+	 * @throws IllegalStateException if the curriculum is not final or the
+	 *                               persisted transition is rejected
+	 */
 	public SyllabusVersion reopen(CurriculumAuthoringSession session) {
 		if (session == null) {
 			throw new NullPointerException("session");

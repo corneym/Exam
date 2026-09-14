@@ -42,8 +42,8 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 	 *
 	 * @param session authoring session to save
 	 * @throws IllegalArgumentException if the draft is structurally invalid
-	 * @throws IllegalStateException    if the syllabus is final, the persisted
-	 *                                  curriculum changed outside this session, a
+	 * @throws IllegalStateException    if the syllabus is final, persisted nodes
+	 *                                  differ from the session's snapshot, a
 	 *                                  deleted node is referenced, or persistence
 	 *                                  fails
 	 */
@@ -80,6 +80,7 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 		for (Map.Entry<Long, Long> entry : changes.newBindings().entrySet()) {
 			session.bindPersistentId(entry.getKey(), entry.getValue());
 		}
+		session.recordPersistedSnapshot(changes.persistedNodes());
 	}
 
 	private void deletePersistedNodes(Connection connection, long syllabusVersionId, Set<Long> persistentIds)
@@ -183,23 +184,17 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 	}
 
 	private void requireSessionMatchesDatabase(Connection connection, long syllabusVersionId,
-			Map<Long, Long> existingBindings) throws SQLException {
-		Set<Long> expectedIds = new HashSet<>(existingBindings.values());
+			CurriculumAuthoringSession session) throws SQLException {
+		Set<PersistedCurriculumNode> actual = Set.copyOf(
+				SqliteCurriculumAuthoringRepository.findNodes(connection, syllabusVersionId));
 		Set<Long> actualIds = new HashSet<>();
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT id
-				FROM curriculum_nodes
-				WHERE syllabus_version_id = ?
-				""")) {
-			statement.setLong(1, syllabusVersionId);
-			try (ResultSet result = statement.executeQuery()) {
-				while (result.next()) {
-					actualIds.add(result.getLong("id"));
-				}
-			}
+		for (PersistedCurriculumNode node : actual) {
+			actualIds.add(node.persistentId());
 		}
-		if (!actualIds.equals(expectedIds)) {
-			throw new IllegalStateException("Persisted curriculum changed since this authoring session was loaded");
+		if (!actual.equals(session.persistedSnapshot())
+				|| !actualIds.equals(new HashSet<>(session.persistentBindings().values()))) {
+			throw new IllegalStateException(
+					"Curriculum changed since this session was loaded. Close and reopen it before saving.");
 		}
 	}
 
@@ -227,11 +222,12 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 		Set<Long> deletedPersistentIds = session.deletedPersistentIds();
 		Map<Long, Long> existingBindings = session.persistentBindings();
 		Map<Long, Long> newBindings = new HashMap<>();
+		List<PersistedCurriculumNode> persistedNodes;
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
 				requireSyllabusEditable(connection, syllabusVersionId);
-				requireSessionMatchesDatabase(connection, syllabusVersionId, existingBindings);
+				requireSessionMatchesDatabase(connection, syllabusVersionId, session);
 				requireDeletionsUnreferenced(connection, deletedPersistentIds);
 				deletePersistedNodes(connection, syllabusVersionId, deletedPersistentIds);
 				temporarilyRecodeExistingNodes(connection, syllabusVersionId, session.draft(), existingBindings);
@@ -239,6 +235,7 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 					persistNode(connection, syllabusVersionId, session.draft(), root, null, existingBindings,
 							newBindings);
 				}
+				persistedNodes = SqliteCurriculumAuthoringRepository.findNodes(connection, syllabusVersionId);
 				connection.commit();
 			} catch (SQLException | RuntimeException e) {
 				try {
@@ -249,7 +246,7 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 				throw e;
 			}
 		}
-		return new SaveChanges(Map.copyOf(newBindings), Set.copyOf(deletedPersistentIds));
+		return new SaveChanges(Map.copyOf(newBindings), Set.copyOf(deletedPersistentIds), persistedNodes);
 	}
 
 	private void setNullableInteger(PreparedStatement statement, int parameterIndex, Integer value)
@@ -325,6 +322,7 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 		}
 	}
 
-	private record SaveChanges(Map<Long, Long> newBindings, Set<Long> deletedPersistentIds) {
+	private record SaveChanges(Map<Long, Long> newBindings, Set<Long> deletedPersistentIds,
+			List<PersistedCurriculumNode> persistedNodes) {
 	}
 }

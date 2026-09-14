@@ -28,6 +28,13 @@ public final class CurriculumAuthoringCreationService {
 	/**
 	 * Creates an empty persisted syllabus version and opens an authoring session
 	 * for it.
+	 * <p>
+	 * Names are stripped of surrounding whitespace. Creation commits immediately,
+	 * before any draft nodes are authored. The new curriculum is in progress;
+	 * if {@code current} is true, the previous current version of the same subject
+	 * becomes historical in that transaction. Closing the session does not undo
+	 * creation. A subsequent draft-loading failure likewise does not roll back
+	 * the committed syllabus.
 	 *
 	 * @param subjectName  existing or new subject name
 	 * @param syllabusName syllabus/version name
@@ -36,6 +43,7 @@ public final class CurriculumAuthoringCreationService {
 	 * @throws SQLException             if persistence fails
 	 * @throws IllegalArgumentException if either name is blank or the syllabus
 	 *                                  already exists
+	 * @throws IllegalStateException if loading the newly created draft fails
 	 */
 	public CurriculumAuthoringSession create(String subjectName, String syllabusName, boolean current)
 			throws SQLException {

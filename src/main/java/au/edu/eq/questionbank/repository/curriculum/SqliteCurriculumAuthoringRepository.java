@@ -30,9 +30,18 @@ public final class SqliteCurriculumAuthoringRepository implements CurriculumAuth
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
 		}
+		try (Connection connection = database.openConnection()) {
+			return findNodes(connection, syllabusVersion.getId());
+		} catch (SQLException e) {
+			throw new IllegalStateException(
+					"Could not read curriculum authoring data for syllabus version " + syllabusVersion.getId(), e);
+		}
+	}
+
+	/** Reads on the caller's transaction so snapshot checks and writes are atomic. */
+	static List<PersistedCurriculumNode> findNodes(Connection connection, long syllabusVersionId) throws SQLException {
 		List<PersistedCurriculumNode> nodes = new ArrayList<>();
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
+		try (PreparedStatement statement = connection.prepareStatement("""
 						SELECT
 						    id,
 						    parent_id,
@@ -45,20 +54,17 @@ public final class SqliteCurriculumAuthoringRepository implements CurriculumAuth
 						WHERE syllabus_version_id = ?
 						ORDER BY id
 						""")) {
-			statement.setLong(1, syllabusVersion.getId());
+			statement.setLong(1, syllabusVersionId);
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
 					nodes.add(createNode(result));
 				}
 			}
 			return List.copyOf(nodes);
-		} catch (SQLException e) {
-			throw new IllegalStateException(
-					"Could not read curriculum authoring data for syllabus version " + syllabusVersion.getId(), e);
 		}
 	}
 
-	private PersistedCurriculumNode createNode(ResultSet result) throws SQLException {
+	private static PersistedCurriculumNode createNode(ResultSet result) throws SQLException {
 		long parentId = result.getLong("parent_id");
 		Long parentPersistentId = result.wasNull() ? null : parentId;
 		int sourcePage = result.getInt("source_page_number");

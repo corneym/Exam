@@ -13,6 +13,14 @@ The sprint should also close several small correctness gaps exposed by sustained
 
 ## Core design principles
 
+Implementation checkpoint (15 September 2026): production authoring now includes
+creation/opening, transactional node persistence, managed syllabus-PDF attachment
+and explicit finalise/reopen transitions. The stable persistence contracts and
+documentation deferred pending blocker fixes are recorded in
+[`current-status.md`](../current-status.md#resumable-curriculum-authoring--sprint-08).
+This checkpoint does not declare the sprint acceptance criteria complete or
+rescope the remaining mapping, metadata and corpus work.
+
 Curriculum structure is expert-authored.
 
 A syllabus PDF is source material, not an authority from which the application automatically infers curriculum structure. The application may extract text and retain page references, but the subject-matter expert explicitly decides whether each node is a Unit, Topic, Subtopic or Descriptor and explicitly chooses its parent.

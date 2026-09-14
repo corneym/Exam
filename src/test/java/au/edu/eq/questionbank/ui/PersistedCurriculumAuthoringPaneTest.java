@@ -54,6 +54,126 @@ class PersistedCurriculumAuthoringPaneTest {
 	private CurriculumAuthoringSession session;
 	private long descriptorPersistentId;
 	private Path curriculumRoot;
+	private static final String AUTHORED_TEXT = "    **Resolve forces** using \\(F = m\\,a\\) and {components}.\n\n";
+
+	@Test
+	void saveIncludesUnappliedEditorText(FxRobot robot) {
+		editDescriptor(robot, "Unapplied wording");
+		robot.interact(() -> robot.lookup("#save-curriculum").queryAs(Button.class).fire());
+		assertEquals("Unapplied wording", storedDescriptorText());
+	}
+
+	@Test
+	void finaliseIncludesUnappliedEditorText(FxRobot robot) {
+		editDescriptor(robot, "Wording accepted as final");
+		robot.interact(() -> robot.lookup("#finalise-curriculum").queryAs(Button.class).fire());
+		assertEquals("Wording accepted as final", storedDescriptorText());
+		assertEquals(CurriculumStatus.FINAL, session.syllabusVersion().getCurriculumStatus());
+	}
+
+	@Test
+	void changingTreeSelectionDoesNotDiscardUnappliedWording(FxRobot robot) {
+		editDescriptor(robot, "Keep this wording across selection changes");
+		robot.interact(() -> {
+			var tree = curriculumTree(robot);
+			tree.getSelectionModel().select(findByCode(tree.getRoot(), "1.1"));
+			tree.getSelectionModel().select(findByCode(tree.getRoot(), "1.1.1"));
+			robot.lookup("#save-curriculum").queryAs(Button.class).fire();
+		});
+		assertEquals("Keep this wording across selection changes", storedDescriptorText());
+	}
+
+	@Test
+	void unappliedEditorTextCountsAsUnsavedWork(FxRobot robot) {
+		editDescriptor(robot, "Unapplied changes must be protected on close");
+		assertTrue(pane.hasUnsavedChanges());
+	}
+
+	@Test
+	void updateAndSavePreserveExactAuthoredText(FxRobot robot) {
+		editDescriptor(robot, AUTHORED_TEXT);
+		robot.interact(() -> {
+			robot.lookup("#update-curriculum-text").queryAs(Button.class).fire();
+			robot.lookup("#save-curriculum").queryAs(Button.class).fire();
+		});
+		assertEquals(AUTHORED_TEXT, storedDescriptorText());
+	}
+
+	@Test
+	void invalidPendingTextBlocksSelectionSaveAndFinaliseWithoutLosingEditorText(FxRobot robot) {
+		editDescriptor(robot, "  \n");
+		robot.interact(() -> {
+			var tree = curriculumTree(robot);
+			tree.getSelectionModel().select(findByCode(tree.getRoot(), "1.1"));
+			assertEquals("1.1.1", tree.getSelectionModel().getSelectedItem().getValue().code());
+			robot.lookup("#save-curriculum").queryAs(Button.class).fire();
+			robot.lookup("#finalise-curriculum").queryAs(Button.class).fire();
+			assertEquals("  \n", robot.lookup("#curriculum-edit-text").queryAs(TextArea.class).getText());
+		});
+		assertEquals("Resolve forces", storedDescriptorText());
+		assertEquals(CurriculumStatus.IN_PROGRESS, session.syllabusVersion().getCurriculumStatus());
+		assertTrue(pane.hasUnsavedChanges());
+	}
+
+	@Test
+	void revertingPendingTextRestoresCleanStateWithoutPersistence(FxRobot robot) {
+		editDescriptor(robot, "Temporary wording");
+		assertTrue(pane.hasUnsavedChanges());
+		assertEquals("Resolve forces", storedDescriptorText());
+		editDescriptor(robot, "Resolve forces");
+		assertFalse(pane.hasUnsavedChanges());
+	}
+
+	@Test
+	void saveAndFinalisePreserveExactPendingTextWithoutUpdateButton(FxRobot robot) {
+		editDescriptor(robot, AUTHORED_TEXT);
+		robot.interact(pane::saveCurriculum);
+		assertEquals(AUTHORED_TEXT, storedDescriptorText());
+		assertFalse(pane.hasUnsavedChanges());
+		editDescriptor(robot, AUTHORED_TEXT + "\n");
+		robot.interact(pane::finaliseCurriculum);
+		assertEquals(AUTHORED_TEXT + "\n", storedDescriptorText());
+		assertFalse(pane.hasUnsavedChanges());
+	}
+
+	@Test
+	void attachingPdfRetainsPendingEditorText(FxRobot robot) throws Exception {
+		Path pdf = tempDir.resolve("pending-text-source.pdf");
+		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage());
+			document.save(pdf.toFile());
+		}
+		editDescriptor(robot, AUTHORED_TEXT);
+		robot.interact(() -> {
+			try {
+				pane.attachSyllabusPdf(pdf);
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+			assertEquals(AUTHORED_TEXT, robot.lookup("#curriculum-edit-text").queryAs(TextArea.class).getText());
+			assertTrue(pane.hasUnsavedChanges());
+			pane.saveCurriculum();
+		});
+		assertEquals(AUTHORED_TEXT, storedDescriptorText());
+	}
+
+	private void editDescriptor(FxRobot robot, String wording) {
+		robot.interact(() -> {
+			var tree = curriculumTree(robot);
+			tree.getSelectionModel().select(findByCode(tree.getRoot(), "1.1.1"));
+			robot.lookup("#curriculum-edit-text").queryAs(TextArea.class).setText(wording);
+		});
+	}
+
+	@SuppressWarnings("unchecked")
+	private TreeView<au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode> curriculumTree(FxRobot robot) {
+		return robot.lookup("#curriculum-draft-tree").queryAs(TreeView.class);
+	}
+
+	private String storedDescriptorText() {
+		return new SqliteCurriculumRepository(database).findByCode(session.syllabusVersion(), "1.1.1")
+				.orElseThrow().getName();
+	}
 
 	@AfterEach
 	void close() throws Exception {
