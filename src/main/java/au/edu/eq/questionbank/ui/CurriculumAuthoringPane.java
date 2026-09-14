@@ -81,6 +81,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	private final Button saveButton = new Button("Save");
 	private final Button finaliseButton = new Button("Mark Final");
 	private final Button reopenButton = new Button("Reopen for editing");
+	private boolean dirty;
 	private final Label lifecycleLabel = new Label();
 
 	CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot, CurriculumAuthoringSession authoringSession,
@@ -173,8 +174,13 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	void finaliseCurriculum() {
 		requirePersistentMode();
 		lifecycleService.finalise(authoringSession);
+		dirty = false;
 		refreshLifecycleState();
 		statusLabel.setText("Curriculum marked Final.");
+	}
+
+	boolean hasUnsavedChanges() {
+		return isPersistentMode() && dirty;
 	}
 
 	/**
@@ -195,6 +201,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	void reopenCurriculum() {
 		requirePersistentMode();
 		lifecycleService.reopen(authoringSession);
+		dirty = false;
 		refreshLifecycleState();
 		statusLabel.setText("Curriculum reopened for editing.");
 	}
@@ -205,6 +212,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			throw new IllegalStateException("Final curriculum must be reopened before saving");
 		}
 		authoringWriter.save(authoringSession);
+		dirty = false;
 		refreshLifecycleState();
 		statusLabel.setText("Curriculum saved.");
 	}
@@ -271,6 +279,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		try {
 			CurriculumDraftNode added = numbering.addNode(draft, level, selectedText.strip(), parentDraftId,
 					pdfWorkspace.getCurrentPageNumber());
+			markDirty();
 			Long selectionAfterCapture;
 			if (level == CurriculumLevel.UNIT) {
 				/*
@@ -483,6 +492,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			return;
 		}
 		List<CurriculumDraftNode> removed = numbering.removeSubtree(draft, selected.draftId());
+		markDirty();
 		rebuildTree(null);
 		refreshValidation();
 		statusLabel.setText("Deleted " + removed.size() + (removed.size() == 1 ? " node." : " nodes."));
@@ -539,6 +549,16 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		return authoringSession != null;
 	}
 
+	private void markDirty() {
+		if (!isPersistentMode()) {
+			return;
+		}
+		dirty = true;
+		if (!authoringSession.syllabusVersion().isCurriculumFinal()) {
+			lifecycleLabel.setText("IN_PROGRESS — unsaved changes");
+		}
+	}
+
 	private void moveSelectedNode(boolean upward) {
 		if (!isEditable()) {
 			statusLabel.setText("Reopen the curriculum before editing.");
@@ -553,6 +573,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		if (!moved) {
 			return;
 		}
+		markDirty();
 		rebuildTree(draftId);
 		refreshValidation();
 		statusLabel.setText("Moved " + currentNode(draftId).code() + ".");
@@ -632,7 +653,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			reopenButton.setDisable(false);
 			browseButton.setDisable(true);
 		} else {
-			lifecycleLabel.setText("IN_PROGRESS");
+			lifecycleLabel.setText(dirty ? "IN_PROGRESS — unsaved changes" : "IN_PROGRESS");
 			saveButton.setDisable(false);
 			finaliseButton.setDisable(false);
 			reopenButton.setDisable(true);
@@ -778,6 +799,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		try {
 			CurriculumDraftNode updated = numbering.updateText(draft, selected.draftId(),
 					editTextArea.getText().strip());
+			markDirty();
 			rebuildTree(updated.draftId());
 			refreshValidation();
 			statusLabel.setText("Updated " + currentNode(updated.draftId()).code() + ".");

@@ -420,6 +420,36 @@ public class QuestionBankApplication extends Application {
 				new AutomaticBackupRetention(), pdfWorkspace);
 	}
 
+	private boolean confirmCurriculumAuthoringClose(Stage authoringStage, CurriculumAuthoringPane authoringPane) {
+		if (!authoringPane.hasUnsavedChanges()) {
+			return true;
+		}
+		ButtonType saveButton = new ButtonType("Save and close", ButtonBar.ButtonData.OK_DONE);
+		ButtonType discardButton = new ButtonType("Discard changes", ButtonBar.ButtonData.NO);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(authoringStage);
+		alert.setTitle("Unsaved curriculum changes");
+		alert.setHeaderText("Save changes before closing?");
+		alert.setContentText("The curriculum contains changes that have not been saved.");
+		alert.getButtonTypes().setAll(saveButton, discardButton, cancelButton);
+		ButtonType result = alert.showAndWait().orElse(cancelButton);
+		if (result == cancelButton) {
+			return false;
+		}
+		if (result == discardButton) {
+			return true;
+		}
+		try {
+			authoringPane.saveCurriculum();
+			return true;
+		} catch (RuntimeException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Authoring", "The curriculum could not be saved.",
+					e.getMessage());
+			return false;
+		}
+	}
+
 	private boolean confirmDiscardAcceptedQuestionRegions() {
 		if (questionCapturePane == null || !questionCapturePane.hasAcceptedRegions()) {
 			return true;
@@ -936,6 +966,11 @@ public class QuestionBankApplication extends Application {
 		CurriculumAuthoringPane authoringPane = new CurriculumAuthoringPane(authoringStage, config.curriculumDataRoot(),
 				session, authoringWriter, sourcePdfService, lifecycleService);
 		authoringStage.setScene(new Scene(authoringPane, 1400, 840));
+		authoringStage.setOnCloseRequest(event -> {
+			if (!confirmCurriculumAuthoringClose(authoringStage, authoringPane)) {
+				event.consume();
+			}
+		});
 		authoringStage.setOnHidden(_ -> {
 			try {
 				authoringPane.close();

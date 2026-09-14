@@ -145,6 +145,32 @@ class PersistedCurriculumAuthoringPaneTest {
 		stage.show();
 	}
 
+	@Test
+	void tracksUnsavedDraftChangesAcrossSaveAndFinalise(FxRobot robot) throws Exception {
+		@SuppressWarnings("unchecked")
+		TreeView<au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode> tree = robot
+				.lookup("#curriculum-draft-tree").queryAs(TreeView.class);
+		TextArea editText = robot.lookup("#curriculum-edit-text").queryAs(TextArea.class);
+		Button update = robot.lookup("#update-curriculum-text").queryAs(Button.class);
+		assertFalse(pane.hasUnsavedChanges());
+		robot.interact(() -> {
+			tree.getSelectionModel().select(findByCode(tree.getRoot(), "1.1.1"));
+			editText.setText("Resolve force components");
+			update.fire();
+		});
+		assertTrue(pane.hasUnsavedChanges());
+		robot.interact(pane::saveCurriculum);
+		assertFalse(pane.hasUnsavedChanges());
+		robot.interact(() -> {
+			editText.setText("Resolve force components graphically");
+			update.fire();
+		});
+		assertTrue(pane.hasUnsavedChanges());
+		robot.interact(pane::finaliseCurriculum);
+		assertFalse(pane.hasUnsavedChanges());
+		assertEquals(CurriculumStatus.FINAL, session.syllabusVersion().getCurriculumStatus());
+	}
+
 	private TreeItem<au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode> findByCode(
 			TreeItem<au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode> item, String code) {
 		var value = item.getValue();
