@@ -5,6 +5,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.ArrayList;
+import java.util.List;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -30,6 +32,7 @@ public final class LegacyQuestionMetadataService {
 
 	private final SqliteDatabase database;
 	private final SqliteQuestionRepository questionRepository;
+	private final SqliteSharedQuestionContextRepository sharedContextRepository;
 
 	/**
 	 * Creates a metadata correction service.
@@ -42,6 +45,7 @@ public final class LegacyQuestionMetadataService {
 		}
 		this.database = database;
 		this.questionRepository = new SqliteQuestionRepository(database);
+		this.sharedContextRepository = new SqliteSharedQuestionContextRepository(database);
 	}
 
 	/**
@@ -72,13 +76,31 @@ public final class LegacyQuestionMetadataService {
 				long existingSyllabusVersionId = findSyllabusVersionId(connection, stored.classificationNodeId());
 				verifyReplacementClassification(connection, classification, existingSyllabusVersionId);
 				String sourceQuestionCode = SourceQuestionCodeParser.derive(questionCode);
+				boolean removingLegacyPreambleHint = stored.preambleCaptureRequired() && !preambleCaptureRequired;
+				if (removingLegacyPreambleHint && sourceQuestionCode != null && stored.sharedContextId() != null) {
+					throw new IllegalArgumentException("Cannot remove the preamble requirement from one part "
+							+ "of a multipart question while shared context "
+							+ "is attached. Correct the shared preamble at " + "source-question level instead.");
+				}
 				Long replacementSourceQuestionId = findOrCreateSourceQuestionId(connection, stored.bookletId(),
 						sourceQuestionCode);
+				boolean convertSharedContext = !preambleCaptureRequired && sourceQuestionCode == null
+						&& stored.sharedContextId() != null;
+				if (convertSharedContext) {
+					convertSharedContextToQuestionRegions(connection, questionId, stored.bookletId(),
+							stored.sharedContextId().longValue());
+				}
+				Long replacementSharedContextId = convertSharedContext ? null : stored.sharedContextId();
 				updateQuestionMetadata(connection, questionId, stored.bookletId(), questionCode, marks,
-						classification.getId(), preambleCaptureRequired, replacementSourceQuestionId);
+						classification.getId(), preambleCaptureRequired, replacementSourceQuestionId,
+						replacementSharedContextId);
 				if (stored.sourceQuestionId() != null
 						&& !stored.sourceQuestionId().equals(replacementSourceQuestionId)) {
 					deleteSourceQuestionIfUnreferenced(connection, stored.sourceQuestionId());
+				}
+				if (convertSharedContext) {
+					sharedContextRepository.deleteIfUnreferenced(connection, stored.sharedContextId().longValue(),
+							stored.bookletId());
 				}
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
@@ -94,6 +116,31 @@ public final class LegacyQuestionMetadataService {
 		}
 		return questionRepository.findById(questionId).orElseThrow(
 				() -> new IllegalStateException("Question disappeared after metadata update: " + questionId));
+	}
+
+	private void convertSharedContextToQuestionRegions(Connection connection, long questionId, long bookletId,
+			long sharedContextId) throws SQLException {
+		verifySharedContextBooklet(connection, sharedContextId, bookletId);
+		List<StoredRegion> sharedRegions = readSharedContextRegions(connection, sharedContextId);
+		if (sharedRegions.isEmpty()) {
+			throw new IllegalStateException("Linked shared context has no regions: " + sharedContextId);
+		}
+		List<StoredRegion> existingQuestionRegions = readQuestionRegions(connection, questionId, bookletId);
+		List<StoredRegion> replacementRegions = new ArrayList<>(sharedRegions.size() + existingQuestionRegions.size());
+		replacementRegions.addAll(sharedRegions);
+		replacementRegions.addAll(existingQuestionRegions);
+		deleteQuestionRegions(connection, questionId);
+		insertQuestionRegions(connection, questionId, bookletId, replacementRegions);
+	}
+
+	private void deleteQuestionRegions(Connection connection, long questionId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM question_regions
+				WHERE question_id = ?
+				""")) {
+			statement.setLong(1, questionId);
+			statement.executeUpdate();
+		}
 	}
 
 	private void deleteSourceQuestionIfUnreferenced(Connection connection, long sourceQuestionId) throws SQLException {
@@ -151,12 +198,14 @@ public final class LegacyQuestionMetadataService {
 
 	private StoredQuestionState findStoredQuestionState(Connection connection, long questionId) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT
-				    booklet_id,
-				    classification_node_id,
-				    source_question_id
-				FROM questions
-				WHERE id = ?
+					SELECT
+				    	booklet_id,
+				    	classification_node_id,
+				    	preamble_capture_required,
+				    	source_question_id,
+				    	shared_context_id
+					FROM questions
+					WHERE id = ?
 				""")) {
 			statement.setLong(1, questionId);
 			try (ResultSet result = statement.executeQuery()) {
@@ -168,8 +217,13 @@ public final class LegacyQuestionMetadataService {
 				if (!result.wasNull()) {
 					sourceQuestionId = Long.valueOf(storedSourceQuestionId);
 				}
+				Long sharedContextId = null;
+				long storedSharedContextId = result.getLong("shared_context_id");
+				if (!result.wasNull()) {
+					sharedContextId = Long.valueOf(storedSharedContextId);
+				}
 				return new StoredQuestionState(result.getLong("booklet_id"), result.getLong("classification_node_id"),
-						sourceQuestionId);
+						result.getInt("preamble_capture_required") != 0, sourceQuestionId, sharedContextId);
 			}
 		}
 	}
@@ -191,16 +245,100 @@ public final class LegacyQuestionMetadataService {
 		}
 	}
 
-	private void updateQuestionMetadata(Connection connection, long questionId, long bookletId, String questionCode,
-			int marks, long classificationNodeId, boolean preambleCaptureRequired, Long sourceQuestionId)
+	private void insertQuestionRegions(Connection connection, long questionId, long bookletId,
+			List<StoredRegion> regions) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO question_regions
+				    (question_id,
+				     region_order,
+				     booklet_id,
+				     page_number,
+				     x,
+				     y,
+				     width,
+				     height)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				""")) {
+			for (int index = 0; index < regions.size(); index++) {
+				StoredRegion region = regions.get(index);
+				statement.setLong(1, questionId);
+				statement.setInt(2, index);
+				statement.setLong(3, bookletId);
+				statement.setInt(4, region.pageNumber());
+				statement.setDouble(5, region.x());
+				statement.setDouble(6, region.y());
+				statement.setDouble(7, region.width());
+				statement.setDouble(8, region.height());
+				statement.executeUpdate();
+			}
+		}
+	}
+
+	private List<StoredRegion> readQuestionRegions(Connection connection, long questionId, long expectedBookletId)
 			throws SQLException {
+		List<StoredRegion> regions = new ArrayList<>();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    booklet_id,
+				    page_number,
+				    x,
+				    y,
+				    width,
+				    height
+				FROM question_regions
+				WHERE question_id = ?
+				ORDER BY region_order
+				""")) {
+			statement.setLong(1, questionId);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					if (result.getLong("booklet_id") != expectedBookletId) {
+						throw new IllegalStateException("Stored question region belongs to another booklet");
+					}
+					regions.add(new StoredRegion(result.getInt("page_number"), result.getDouble("x"),
+							result.getDouble("y"), result.getDouble("width"), result.getDouble("height")));
+				}
+			}
+		}
+		return List.copyOf(regions);
+	}
+
+	private List<StoredRegion> readSharedContextRegions(Connection connection, long sharedContextId)
+			throws SQLException {
+		List<StoredRegion> regions = new ArrayList<>();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    page_number,
+				    x,
+				    y,
+				    width,
+				    height
+				FROM shared_question_context_regions
+				WHERE shared_context_id = ?
+				ORDER BY region_order
+				""")) {
+			statement.setLong(1, sharedContextId);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					regions.add(new StoredRegion(result.getInt("page_number"), result.getDouble("x"),
+							result.getDouble("y"), result.getDouble("width"), result.getDouble("height")));
+				}
+			}
+		}
+		return List.copyOf(regions);
+	}
+
+	private void updateQuestionMetadata(Connection connection, long questionId, long bookletId, String questionCode,
+			int marks, long classificationNodeId, boolean preambleCaptureRequired, Long sourceQuestionId,
+			Long sharedContextId) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE questions
 				SET question_code = ?,
 				    marks = ?,
 				    classification_node_id = ?,
 				    preamble_capture_required = ?,
-				    source_question_id = ?
+				    source_question_id = ?,
+				    shared_context_id = ?
 				WHERE id = ?
 				  AND booklet_id = ?
 				""")) {
@@ -213,8 +351,13 @@ public final class LegacyQuestionMetadataService {
 			} else {
 				statement.setLong(5, sourceQuestionId.longValue());
 			}
-			statement.setLong(6, questionId);
-			statement.setLong(7, bookletId);
+			if (sharedContextId == null) {
+				statement.setNull(6, Types.BIGINT);
+			} else {
+				statement.setLong(6, sharedContextId.longValue());
+			}
+			statement.setLong(7, questionId);
+			statement.setLong(8, bookletId);
 			if (statement.executeUpdate() != 1) {
 				throw new SQLException("Question metadata update affected an unexpected number of rows");
 			}
@@ -280,6 +423,29 @@ public final class LegacyQuestionMetadataService {
 		}
 	}
 
-	private record StoredQuestionState(long bookletId, long classificationNodeId, Long sourceQuestionId) {
+	private void verifySharedContextBooklet(Connection connection, long sharedContextId, long bookletId)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT booklet_id
+				FROM shared_question_contexts
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, sharedContextId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalStateException("Linked shared context does not exist: " + sharedContextId);
+				}
+				if (result.getLong("booklet_id") != bookletId) {
+					throw new IllegalStateException("Linked shared context belongs to another booklet");
+				}
+			}
+		}
+	}
+
+	private record StoredQuestionState(long bookletId, long classificationNodeId, boolean preambleCaptureRequired,
+			Long sourceQuestionId, Long sharedContextId) {
+	}
+
+	private record StoredRegion(int pageNumber, double x, double y, double width, double height) {
 	}
 }

@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -40,28 +42,39 @@ class LegacyQuestionMetadataServiceTest {
 	private Subtopic currentSubtopic;
 
 	@Test
+	void cannotRemoveLegacyPreambleHintFromMultipartQuestionWithSharedContext() {
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
+		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q7");
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q7 shared introduction",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question firstPart = questionRepository.save(booklet, "Q7a", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.35, 0.80, 0.20)), historicalSubtopicOne, true,
+				sourceQuestion, context);
+		Question secondPart = questionRepository.save(booklet, "Q7b", "", 3,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.60, 0.80, 0.20)), historicalSubtopicOne, true,
+				sourceQuestion, context);
+		assertThrows(IllegalArgumentException.class,
+				() -> service.updateMetadata(firstPart, "Q7a", 2, historicalSubtopicOne, false));
+		Question reloadedFirst = questionRepository.findById(firstPart.getId()).orElseThrow();
+		Question reloadedSecond = questionRepository.findById(secondPart.getId()).orElseThrow();
+		assertTrue(reloadedFirst.isPreambleCaptureRequired());
+		assertTrue(reloadedFirst.hasSharedContext());
+		assertEquals(context.getId(), reloadedFirst.getSharedContext().getId());
+		assertEquals(1, reloadedFirst.getRegions().size());
+		assertTrue(reloadedSecond.isPreambleCaptureRequired());
+		assertTrue(reloadedSecond.hasSharedContext());
+		assertEquals(context.getId(), reloadedSecond.getSharedContext().getId());
+		assertEquals(1, contextRepository.findByBooklet(booklet).size());
+	}
+
+	@Test
 	void changesLegacyPreambleHintInBothDirections() {
 		Question question = questionRepository.save(booklet, "Q2", "", 1, List.of(), historicalSubtopicOne, false);
 		Question trueVersion = service.updateMetadata(question, "Q2", 1, historicalSubtopicOne, true);
 		assertTrue(trueVersion.isPreambleCaptureRequired());
 		Question falseVersion = service.updateMetadata(trueVersion, "Q2", 1, historicalSubtopicOne, false);
 		assertFalse(falseVersion.isPreambleCaptureRequired());
-	}
-
-	@Test
-	void changingLegacyHintDoesNotRemoveRealSharedContext() {
-		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
-		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q5");
-		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
-		SharedQuestionContext context = contextRepository.save(booklet, "Q5 shared introduction",
-				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
-		Question question = questionRepository.save(booklet, "Q5a", "", 2, List.of(), historicalSubtopicOne, true,
-				sourceQuestion, context);
-		Question updated = service.updateMetadata(question, "Q5a", 2, historicalSubtopicOne, false);
-		assertFalse(updated.isPreambleCaptureRequired());
-		assertTrue(updated.hasSharedContext());
-		assertEquals(context.getId(), updated.getSharedContext().getId());
-		assertFalse(updated.isSharedContextUnresolved());
 	}
 
 	@Test
@@ -76,6 +89,68 @@ class LegacyQuestionMetadataServiceTest {
 		List<SourceQuestion> sources = sourceRepository.findByBooklet(booklet);
 		assertEquals(1, sources.size());
 		assertEquals("Q9", sources.getFirst().getSourceQuestionCode());
+	}
+
+	@Test
+	void changingSinglePartLegacyHintToFalseConvertsSharedContextToQuestionRegions() {
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q5 introductory material",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.25)));
+		QuestionRegion existingQuestionRegion = new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.45);
+		Question question = questionRepository.save(booklet, "Q5", "", 2, List.of(existingQuestionRegion),
+				historicalSubtopicOne, true, null, context);
+		assertTrue(question.isPreambleCaptureRequired());
+		assertTrue(question.hasSharedContext());
+		assertEquals(1, question.getRegions().size());
+		Question updated = service.updateMetadata(question, "Q5", 2, historicalSubtopicOne, false);
+		assertFalse(updated.isPreambleCaptureRequired());
+		assertFalse(updated.hasSharedContext());
+		/*
+		 * The former preamble becomes the first ordinary question region. Existing
+		 * question material follows it.
+		 */
+		assertEquals(2, updated.getRegions().size());
+		QuestionRegion convertedPreamble = updated.getRegions().get(0);
+		assertEquals(2, convertedPreamble.pageNumber());
+		assertEquals(0.10, convertedPreamble.x(), 0.000001);
+		assertEquals(0.10, convertedPreamble.y(), 0.000001);
+		assertEquals(0.80, convertedPreamble.width(), 0.000001);
+		assertEquals(0.25, convertedPreamble.height(), 0.000001);
+		assertEquals(booklet.getId(), convertedPreamble.booklet().getId());
+		QuestionRegion retainedQuestionRegion = updated.getRegions().get(1);
+		assertEquals(2, retainedQuestionRegion.pageNumber());
+		assertEquals(0.10, retainedQuestionRegion.x(), 0.000001);
+		assertEquals(0.40, retainedQuestionRegion.y(), 0.000001);
+		assertEquals(0.80, retainedQuestionRegion.width(), 0.000001);
+		assertEquals(0.45, retainedQuestionRegion.height(), 0.000001);
+		/*
+		 * This context belonged only to Q5, so after conversion it is orphaned and
+		 * should be removed.
+		 */
+		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
+	}
+
+	@Test
+	void changingSinglePartLegacyHintToFalseKeepsSharedContextUsedByAnotherQuestion() {
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Shared introduction",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question first = questionRepository.save(booklet, "Q5", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.35, 0.80, 0.30)), historicalSubtopicOne, true, null,
+				context);
+		Question second = questionRepository.save(booklet, "Q6", "", 1,
+				List.of(new QuestionRegion(booklet, 3, 0.10, 0.20, 0.80, 0.30)), historicalSubtopicOne, true, null,
+				context);
+		Question updated = service.updateMetadata(first, "Q5", 2, historicalSubtopicOne, false);
+		assertFalse(updated.isPreambleCaptureRequired());
+		assertFalse(updated.hasSharedContext());
+		assertEquals(2, updated.getRegions().size());
+		Question reloadedSecond = questionRepository.findById(second.getId()).orElseThrow();
+		assertTrue(reloadedSecond.hasSharedContext());
+		assertEquals(context.getId(), reloadedSecond.getSharedContext().getId());
+		List<SharedQuestionContext> contexts = contextRepository.findByBooklet(booklet);
+		assertEquals(1, contexts.size());
+		assertEquals(context.getId(), contexts.getFirst().getId());
 	}
 
 	@Test
@@ -110,6 +185,74 @@ class LegacyQuestionMetadataServiceTest {
 	}
 
 	@Test
+	void failedSharedContextCleanupRollsBackEntireMetadataConversion() throws Exception {
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q5 introductory material",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "Q5", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.40)), historicalSubtopicOne, true, null,
+				context);
+		/*
+		 * Fail deliberately during orphan shared-context cleanup.
+		 *
+		 * By this point the conversion has already replaced question regions and
+		 * updated the question row. The transaction must restore all of those earlier
+		 * changes.
+		 */
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_shared_context_region_delete
+					BEFORE DELETE ON shared_question_context_regions
+					BEGIN
+					    SELECT RAISE(
+					        ABORT,
+					        'deliberate shared-context cleanup failure');
+					END
+					""");
+		}
+		assertThrows(IllegalStateException.class,
+				() -> service.updateMetadata(question, "Q15", 7, historicalSubtopicTwo, false));
+		Question reloaded = questionRepository.findById(question.getId()).orElseThrow();
+		/*
+		 * Metadata update rolled back.
+		 */
+		assertEquals("Q5", reloaded.getQuestionCode());
+		assertEquals(2, reloaded.getMarks());
+		assertEquals(historicalSubtopicOne.getId(), reloaded.getClassification().getId());
+		assertTrue(reloaded.isPreambleCaptureRequired());
+		/*
+		 * Shared-context unlink rolled back.
+		 */
+		assertTrue(reloaded.hasSharedContext());
+		assertEquals(context.getId(), reloaded.getSharedContext().getId());
+		/*
+		 * Region conversion rolled back. Only the original ordinary question region
+		 * remains.
+		 */
+		assertEquals(1, reloaded.getRegions().size());
+		QuestionRegion originalRegion = reloaded.getRegions().getFirst();
+		assertEquals(2, originalRegion.pageNumber());
+		assertEquals(0.10, originalRegion.x(), 0.000001);
+		assertEquals(0.40, originalRegion.y(), 0.000001);
+		assertEquals(0.80, originalRegion.width(), 0.000001);
+		assertEquals(0.40, originalRegion.height(), 0.000001);
+		/*
+		 * The shared context and its source region must also still exist.
+		 */
+		List<SharedQuestionContext> contexts = contextRepository.findByBooklet(booklet);
+		assertEquals(1, contexts.size());
+		SharedQuestionContext restoredContext = contexts.getFirst();
+		assertEquals(context.getId(), restoredContext.getId());
+		assertEquals(1, restoredContext.getRegions().size());
+		SharedQuestionContextRegion restoredPreamble = restoredContext.getRegions().getFirst();
+		assertEquals(2, restoredPreamble.pageNumber());
+		assertEquals(0.10, restoredPreamble.x(), 0.000001);
+		assertEquals(0.10, restoredPreamble.y(), 0.000001);
+		assertEquals(0.80, restoredPreamble.width(), 0.000001);
+		assertEquals(0.20, restoredPreamble.height(), 0.000001);
+	}
+
+	@Test
 	void multipartQuestionBecomesOrdinaryAndRemovesUnusedSourceIdentity() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q7");
@@ -118,6 +261,57 @@ class LegacyQuestionMetadataServiceTest {
 		Question updated = service.updateMetadata(question, "Q7", 1, historicalSubtopicOne, false);
 		assertFalse(updated.hasSourceQuestion());
 		assertTrue(sourceRepository.findByBooklet(booklet).isEmpty());
+	}
+
+	@Test
+	void multipartQuestionBecomingSinglePartConvertsSharedContextToQuestionRegions() {
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
+		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q9");
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q9 introductory material",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "Q9a", "", 3,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.35)), historicalSubtopicOne, true,
+				sourceQuestion, context);
+		Question updated = service.updateMetadata(question, "Q9", 3, historicalSubtopicOne, false);
+		assertEquals("Q9", updated.getQuestionCode());
+		assertFalse(updated.isPreambleCaptureRequired());
+		assertFalse(updated.hasSourceQuestion());
+		assertFalse(updated.hasSharedContext());
+		assertEquals(2, updated.getRegions().size());
+		QuestionRegion convertedPreamble = updated.getRegions().get(0);
+		assertEquals(2, convertedPreamble.pageNumber());
+		assertEquals(0.10, convertedPreamble.y(), 0.000001);
+		QuestionRegion retainedQuestionRegion = updated.getRegions().get(1);
+		assertEquals(2, retainedQuestionRegion.pageNumber());
+		assertEquals(0.40, retainedQuestionRegion.y(), 0.000001);
+		/*
+		 * Neither relationship is needed after the question becomes ordinary.
+		 */
+		assertTrue(sourceRepository.findByBooklet(booklet).isEmpty());
+		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
+	}
+
+	@Test
+	void multipartQuestionWithFalseLegacyHintCanStillCorrectOtherMetadata() {
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
+		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q8");
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q8 shared introduction",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "Q8a", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.35, 0.80, 0.25)), historicalSubtopicOne, false,
+				sourceQuestion, context);
+		Question updated = service.updateMetadata(question, "Q8a", 4, historicalSubtopicTwo, false);
+		assertEquals("Q8a", updated.getQuestionCode());
+		assertEquals(4, updated.getMarks());
+		assertEquals(historicalSubtopicTwo.getId(), updated.getClassification().getId());
+		assertFalse(updated.isPreambleCaptureRequired());
+		assertTrue(updated.hasSharedContext());
+		assertEquals(context.getId(), updated.getSharedContext().getId());
+		assertTrue(updated.hasSourceQuestion());
+		assertEquals(sourceQuestion.getId(), updated.getSourceQuestion().getId());
+		assertEquals(1, updated.getRegions().size());
 	}
 
 	@Test
