@@ -39,6 +39,9 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
@@ -97,6 +100,11 @@ class QuestionBankApplicationWorkflowTest {
 		Method method = owner.getClass().getDeclaredMethod(methodName, parameterTypes);
 		method.setAccessible(true);
 		return method.invoke(owner, arguments);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static <T> ListView<T> listView(FxRobot robot, String selector) {
+		return robot.lookup(selector).queryAs(ListView.class);
 	}
 
 	private static <T extends Node> T lookup(FxRobot robot, String selector, Class<T> type) {
@@ -766,6 +774,178 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void metadataPreambleConversionMayKeepConvertedQuestionRegions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		CurriculumNode classification = model.getClassification();
+		assertNotNull(booklet);
+		assertNotNull(classification);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q62 introductory material",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "62", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.40, 0.80, 0.30)), classification, true, null, context);
+		assertTrue(question.isPreambleCaptureRequired());
+		assertTrue(question.hasSharedContext());
+		assertEquals(1, question.getRegions().size());
+		/*
+		 * Open Search Questions through the real application workflow.
+		 */
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
+		QuestionRetrievalResult selectedResult = results.getItems().stream()
+				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		robot.clickOn("#question-search-edit-metadata");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
+		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		assertTrue(preamble.isSelected());
+		robot.interact(() -> preamble.setSelected(false));
+		robot.clickOn("#legacy-metadata-save");
+		/*
+		 * The metadata transaction has already converted and persisted the regions
+		 * before this decision is requested.
+		 */
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("Keep converted regions").tryQuery().isPresent());
+		Question converted = questionRepository.findById(question.getId()).orElseThrow();
+		assertFalse(converted.isPreambleCaptureRequired());
+		assertFalse(converted.hasSharedContext());
+		assertEquals(2, converted.getRegions().size());
+		assertEquals(0.10, converted.getRegions().get(0).y(), 0.000001);
+		assertEquals(0.40, converted.getRegions().get(1).y(), 0.000001);
+		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
+		robot.clickOn("Keep converted regions");
+		/*
+		 * Keeping the converted regions returns to Search rather than entering question
+		 * recapture.
+		 */
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		assertFalse(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
+		Question retained = questionRepository.findById(question.getId()).orElseThrow();
+		assertEquals(2, retained.getRegions().size());
+		assertFalse(retained.hasSharedContext());
+		/*
+		 * Close Search Questions so its nested event loop unwinds.
+		 */
+		robot.clickOn("Close");
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void metadataPreambleConversionMayStartSafeCompleteQuestionRecapture(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		CurriculumNode classification = model.getClassification();
+		assertNotNull(booklet);
+		assertNotNull(classification);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q63 introductory material",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "63", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.40, 0.80, 0.30)), classification, true, null, context);
+		/*
+		 * Open Search Questions through the real application workflow.
+		 */
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
+		QuestionRetrievalResult selectedResult = results.getItems().stream()
+				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		robot.clickOn("#question-search-edit-metadata");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
+		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		assertTrue(preamble.isSelected());
+		robot.interact(() -> preamble.setSelected(false));
+		robot.clickOn("#legacy-metadata-save");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("Recapture complete question").tryQuery().isPresent());
+		/*
+		 * Conversion has already committed before recapture is offered.
+		 */
+		Question converted = questionRepository.findById(question.getId()).orElseThrow();
+		assertFalse(converted.isPreambleCaptureRequired());
+		assertFalse(converted.hasSharedContext());
+		assertEquals(2, converted.getRegions().size());
+		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
+		robot.clickOn("Recapture complete question");
+		WaitForAsyncUtils.waitForFxEvents();
+		/*
+		 * Search is no longer active. Question Capture is now editing the existing
+		 * question, but its transient replacement region list is empty.
+		 */
+		assertFalse(robot.lookup("#question-search-results").tryQuery().isPresent());
+		assertTrue(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
+		assertEquals("63", lookup(robot, "#question-code", TextField.class).getText());
+		assertEquals("2", lookup(robot, "#question-marks", TextField.class).getText());
+		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertTrue(lookup(robot, "#save-question", Button.class).isDisable());
+		/*
+		 * Starting recapture has not deleted the safely converted regions.
+		 */
+		Question duringRecapture = questionRepository.findById(question.getId()).orElseThrow();
+		assertEquals(2, duringRecapture.getRegions().size());
+		/*
+		 * Cancelling recapture must preserve that safe converted state and resume
+		 * Search Questions.
+		 */
+		robot.clickOn("#cancel-question-edit");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		Question afterCancel = questionRepository.findById(question.getId()).orElseThrow();
+		assertEquals(2, afterCancel.getRegions().size());
+		assertFalse(afterCancel.hasSharedContext());
+		assertFalse(afterCancel.isPreambleCaptureRequired());
+		robot.clickOn("Close");
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
+	@Test
 	void movingToNextAnswerPageIsBlockedForUnacceptedSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q3");
@@ -1003,6 +1183,36 @@ class QuestionBankApplicationWorkflowTest {
 				gate.countDown();
 			}
 		}
+	}
+
+	@Test
+	void recaptureQuestionStartsEmptyWithoutChangingStoredRegions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "59");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		assertEquals(1, repository.findById(question.getId()).orElseThrow().getRegions().size());
+		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+		AtomicInteger completed = new AtomicInteger();
+		robot.interact(() -> assertTrue(pane.recaptureQuestion(question, completed::incrementAndGet)));
+		WaitForAsyncUtils.waitForFxEvents();
+		/*
+		 * Recapture starts with no transient replacement regions.
+		 */
+		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertTrue(lookup(robot, "#save-question", Button.class).isDisable());
+		assertTrue(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
+		/*
+		 * Nothing has yet changed in SQLite.
+		 */
+		assertEquals(1, repository.findById(question.getId()).orElseThrow().getRegions().size());
+		assertEquals(0, completed.get());
+		/*
+		 * Cancelling recapture leaves the persisted question untouched.
+		 */
+		robot.clickOn("#cancel-question-edit");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, completed.get());
+		assertEquals(1, repository.findById(question.getId()).orElseThrow().getRegions().size());
 	}
 
 	@Test
@@ -1304,7 +1514,7 @@ class QuestionBankApplicationWorkflowTest {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = robot.lookup("#question-search-results").queryAs(ListView.class);
+		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> result.getQuestion().getId() == metadataOnlyQuestion.getId()));
 		QuestionRetrievalResult selectedResult = results.getItems().stream()

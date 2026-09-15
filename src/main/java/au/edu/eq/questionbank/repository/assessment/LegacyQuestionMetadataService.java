@@ -15,18 +15,28 @@ import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
- * Corrects editable legacy question metadata without requiring source-region
- * replacement.
+ * Corrects editable legacy question metadata without requiring ordinary
+ * source-region replacement.
  * <p>
  * This operation is deliberately separate from ordinary question editing.
  * Legacy-imported questions may exist before question regions have been
  * captured, so metadata correction must work with zero, one or many existing
  * regions.
  * <p>
- * The operation may change: question code, marks, classification and the
- * historical preamble-capture-required flag. It preserves booklet identity,
- * source-document identity, question text, question regions, answer state and
- * any real shared question context.
+ * The operation may change question code, marks, classification and the
+ * historical preamble-capture-required flag. Booklet and source-document
+ * identity remain fixed.
+ * <p>
+ * When a resulting single-part question changes from requiring a legacy
+ * preamble to not requiring one, an attached shared context is converted into
+ * leading ordinary question regions. Existing question regions follow those
+ * converted regions in their original order. The question is then unlinked from
+ * the shared context, which is deleted only when no other question still
+ * references it.
+ * <p>
+ * A captured shared context cannot be removed from only one part of a multipart
+ * question. Such a true-to-false correction is rejected while the resulting
+ * question remains multipart.
  */
 public final class LegacyQuestionMetadataService {
 
@@ -64,8 +74,15 @@ public final class LegacyQuestionMetadataService {
 	 */
 	public Question updateMetadata(Question question, String questionCode, int marks, CurriculumNode classification,
 			boolean preambleCaptureRequired) {
+		return updateMetadataWithResult(question, questionCode, marks, classification, preambleCaptureRequired)
+				.question();
+	}
+
+	public LegacyQuestionMetadataUpdateResult updateMetadataWithResult(Question question, String questionCode,
+			int marks, CurriculumNode classification, boolean preambleCaptureRequired) {
 		validateRequest(question, questionCode, marks, classification);
 		long questionId = question.getId();
+		boolean convertedSharedContext = false;
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
@@ -84,13 +101,13 @@ public final class LegacyQuestionMetadataService {
 				}
 				Long replacementSourceQuestionId = findOrCreateSourceQuestionId(connection, stored.bookletId(),
 						sourceQuestionCode);
-				boolean convertSharedContext = !preambleCaptureRequired && sourceQuestionCode == null
+				convertedSharedContext = !preambleCaptureRequired && sourceQuestionCode == null
 						&& stored.sharedContextId() != null;
-				if (convertSharedContext) {
+				if (convertedSharedContext) {
 					convertSharedContextToQuestionRegions(connection, questionId, stored.bookletId(),
 							stored.sharedContextId().longValue());
 				}
-				Long replacementSharedContextId = convertSharedContext ? null : stored.sharedContextId();
+				Long replacementSharedContextId = convertedSharedContext ? null : stored.sharedContextId();
 				updateQuestionMetadata(connection, questionId, stored.bookletId(), questionCode, marks,
 						classification.getId(), preambleCaptureRequired, replacementSourceQuestionId,
 						replacementSharedContextId);
@@ -98,7 +115,7 @@ public final class LegacyQuestionMetadataService {
 						&& !stored.sourceQuestionId().equals(replacementSourceQuestionId)) {
 					deleteSourceQuestionIfUnreferenced(connection, stored.sourceQuestionId());
 				}
-				if (convertSharedContext) {
+				if (convertedSharedContext) {
 					sharedContextRepository.deleteIfUnreferenced(connection, stored.sharedContextId().longValue(),
 							stored.bookletId());
 				}
@@ -114,8 +131,12 @@ public final class LegacyQuestionMetadataService {
 		} catch (SQLException failure) {
 			throw new IllegalStateException("Could not update legacy question metadata atomically", failure);
 		}
-		return questionRepository.findById(questionId).orElseThrow(
+		Question updated = questionRepository.findById(questionId).orElseThrow(
 				() -> new IllegalStateException("Question disappeared after metadata update: " + questionId));
+		LegacyQuestionMetadataUpdateResult.PreambleOutcome outcome = convertedSharedContext
+				? LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS
+				: LegacyQuestionMetadataUpdateResult.PreambleOutcome.NO_CAPTURE_CHANGE;
+		return new LegacyQuestionMetadataUpdateResult(updated, outcome);
 	}
 
 	private void convertSharedContextToQuestionRegions(Connection connection, long questionId, long bookletId,

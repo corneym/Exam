@@ -338,6 +338,28 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Starts a full recapture of an existing question.
+	 * <p>
+	 * Stored regions remain persisted until the replacement edit is successfully
+	 * saved. The transient edit starts with no accepted regions.
+	 *
+	 * @param question             persisted question to recapture
+	 * @param editCompletedHandler callback when recapture is saved or cancelled
+	 * @return whether recapture was started
+	 */
+	boolean recaptureQuestion(Question question, Runnable editCompletedHandler) {
+		if (!editQuestion(question, editCompletedHandler)) {
+			return false;
+		}
+		clearRegions();
+		showCaptureHint("Recapturing complete question " + question.getQuestionCode()
+				+ ". Capture the complete replacement question.");
+		saveStatusLabel.setText("Recapturing " + question.getQuestionCode()
+				+ " — stored regions remain unchanged until Update Question");
+		return true;
+	}
+
+	/**
 	 * Reloads persisted questions that still require question-region capture while
 	 * retaining the selected item when it remains available.
 	 */

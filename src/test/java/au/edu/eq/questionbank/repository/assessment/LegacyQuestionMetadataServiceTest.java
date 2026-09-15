@@ -358,6 +358,22 @@ class LegacyQuestionMetadataServiceTest {
 		assertEquals(historicalSubtopicOne.getId(), reloaded.getClassification().getId());
 	}
 
+	@Test
+	void reportsWhenSharedContextWasConvertedToQuestionRegions() {
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q13 introduction",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "Q13", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.30)), historicalSubtopicOne, true, null,
+				context);
+		LegacyQuestionMetadataUpdateResult result = service.updateMetadataWithResult(question, "Q13", 2,
+				historicalSubtopicOne, false);
+		assertEquals(LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS,
+				result.preambleOutcome());
+		assertFalse(result.question().hasSharedContext());
+		assertEquals(2, result.question().getRegions().size());
+	}
+
 	@BeforeEach
 	void setUp() throws Exception {
 		database = new SqliteDatabase(tempDirectory.resolve("questionbank.db"));

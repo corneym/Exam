@@ -266,7 +266,8 @@ Outcome: mapping completeness becomes measurable and every relevant historical n
 
 Add an Edit Metadata action to the imported/legacy Question workflow.
 
-For a legacy question, allow correction of the metadata that can legitimately have been wrong in the old workbook, including:
+For a legacy question, allow correction of the metadata that can legitimately
+have been wrong in the old workbook, including:
 
     question code
     marks
@@ -275,22 +276,86 @@ For a legacy question, allow correction of the metadata that can legitimately ha
 
 Exam/booklet/source-document identity remains fixed by this operation.
 
-The important preamble rule is bidirectional:
+The legacy `preambleCaptureRequired` value remains historical capture evidence,
+not immutable truth. It may be corrected in either direction:
 
     false → true
     true → false
 
-Changing the legacy hint from true to false means:
+Setting the legacy hint to true records that introductory/shared material still
+needs to be dealt with. It does not itself invent a multipart source-question
+identity, create a shared context or capture any source material.
 
-> Inspection of the original question shows that the legacy capture hint was a false positive.
+Changing the hint from true to false requires different handling depending on
+the corrected question identity.
 
-It must not mean “delete any real shared context which has subsequently been captured”.
+For a resulting single-part question with no captured shared context, the
+metadata flag is simply corrected.
 
-Likewise, setting the hint to true establishes that shared/introduction material still needs to be dealt with; it does not itself invent or capture that material.
+For a resulting single-part question with a captured shared context, the
+correction must preserve the captured source material rather than discard it.
+The metadata correction transaction therefore:
 
-The implementation needs a metadata-only persistence path so a metadata-only imported question can be corrected before it has question regions. It should not force such a question through the normal Question Edit operation, which currently assumes replacement regions.
+1. copies the shared-context regions into the question as leading ordinary
+   question regions, preserving their order;
+2. appends the existing ordinary question regions, preserving their order;
+3. sets `preamble_capture_required` to false;
+4. clears the question's `shared_context_id`;
+5. removes an obsolete multipart source-question relationship where required;
+6. deletes the former shared context only if no other question still references
+   it; and
+7. commits all metadata and region changes atomically.
 
-Add explicit regression coverage for an MCQ question requiring introductory/shared material. Begin by reproducing the current observed MCQ problem: the current workbook parser itself does not impose a Paper 1/Paper 2-only preamble rule, so no parser redesign should be made unless that regression demonstrates one is required.
+The converted regions are not geometrically merged or deduplicated. They are a
+safe persisted representation of the material captured by the old workflow.
+
+If another question still references the shared context, that shared context
+and its regions must remain intact. The corrected single-part question receives
+its own copied ordinary regions and is unlinked from the context.
+
+For a resulting multipart question, a captured shared context represents
+source-question/group material rather than material owned by only one part.
+Changing one part from `preambleCaptureRequired=true` to false while that shared
+context remains attached is therefore rejected. An already-false multipart
+question may still receive unrelated metadata corrections.
+
+If a multipart question is corrected to an ordinary single-part question in
+the same metadata operation, the resulting identity is single-part and the
+shared-context conversion rules apply.
+
+Metadata correction and shared-context conversion form one SQLite transaction.
+Any failure, including a late shared-context cleanup failure, must restore the
+original metadata, question regions, shared-context relationship and context
+regions.
+
+After a successful shared-context conversion, the service reports that
+conversion explicitly to the UI. The user is then offered:
+
+    Recapture complete question
+    Keep converted regions
+
+Choosing `Keep converted regions` leaves the safe converted representation in
+place.
+
+Choosing `Recapture complete question` enters the existing Question Edit
+workflow with an empty transient region list. The converted regions remain
+persisted until a replacement question capture is successfully saved.
+Cancelling recapture or failing to save therefore leaves the converted state
+intact.
+
+The implementation includes a metadata-only persistence path so an imported
+question with no question regions can be corrected without being forced
+through ordinary Question Edit.
+
+Explicit regression coverage also confirms that an MCQ question may legitimately
+have `preambleCaptureRequired=true` without inventing multipart
+source-question identity. The current workbook parser does not impose a
+Paper 1/Paper 2-only preamble rule, so no parser redesign is required.
+
+Outcome: inaccurate historical metadata can be corrected safely; obsolete
+legacy preamble captures can be migrated without loss; genuine multipart shared
+context remains protected; optional full-question recapture is safe; and MCQ
+preambles use the same semantics as other questions.
 
 Outcome: inaccurate historical capture hints can be corrected safely, and MCQ preambles are supported on the same semantic basis as other questions.
 
@@ -356,7 +421,7 @@ Mapping coverage can distinguish matched, explicit no-match and unreviewed sourc
 
 For the chosen Chemistry historical/current mapping pair, deliberate review completeness can be demonstrated from application state rather than comparison with the external workbook.
 
-Legacy question metadata can be corrected before source-region capture, including changing the legacy preamble hint in either direction.
+Legacy question metadata can be corrected before source-region capture, including changing the legacy preamble hint in either direction; obsolete captured single-part preambles are converted without source-material loss, while multipart shared context is protected from per-part removal.
 
 An MCQ with genuine introductory/shared material has explicit regression coverage and works through the intended capture workflow.
 

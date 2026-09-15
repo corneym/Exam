@@ -43,6 +43,7 @@ import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataUpdateResult;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
@@ -721,10 +722,18 @@ public class QuestionBankApplication extends Application {
 		}
 		LegacyQuestionMetadataDialog.Result replacement = result.get();
 		try {
-			Question updated = metadataService.updateMetadata(question, replacement.questionCode(), replacement.marks(),
-					replacement.classification(), replacement.preambleCaptureRequired());
+			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
+					replacement.questionCode(), replacement.marks(), replacement.classification(),
+					replacement.preambleCaptureRequired());
+			Question updated = updateResult.question();
 			questionCapturePane.refreshImportedQuestions();
 			answerCapturePane.refreshQuestions();
+			if (updateResult
+					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+				offerQuestionRecaptureAfterPreambleConversion(primaryStage, searchDialog, updated, curriculumRepository,
+						metadataService);
+				return;
+			}
 			resumeSearchAfterEdit(primaryStage, searchDialog, updated.getId(), curriculumRepository, metadataService);
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Edit Question Metadata", "The question metadata could not be saved.",
@@ -970,6 +979,35 @@ public class QuestionBankApplication extends Application {
 			return answerCapturePane.hasAnswerFile() && !answerCapturePane.isSaveInProgress();
 		}
 		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
+	}
+
+	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, QuestionSearchDialog searchDialog,
+			Question question, CurriculumRepository curriculumRepository,
+			LegacyQuestionMetadataService metadataService) {
+		ButtonType recaptureButton = new ButtonType("Recapture complete question", ButtonBar.ButtonData.OK_DONE);
+		ButtonType keepButton = new ButtonType("Keep converted regions", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Question Preamble Converted");
+		alert.setHeaderText("The captured preamble has been converted to ordinary question regions.");
+		alert.setContentText(
+				"""
+						The converted material has already been saved safely.
+
+						You can now recapture the complete question as one or more replacement regions, or keep the converted regions as they are.
+						""");
+		alert.getButtonTypes().setAll(recaptureButton, keepButton);
+		ButtonType decision = alert.showAndWait().orElse(keepButton);
+		if (decision != recaptureButton) {
+			resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository, metadataService);
+			return;
+		}
+		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question,
+				() -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository,
+						metadataService));
+		if (!recaptureStarted) {
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+		}
 	}
 
 	private void openAnswerPdf(SelectedPdf selectedPdf) {

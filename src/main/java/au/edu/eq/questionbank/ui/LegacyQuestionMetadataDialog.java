@@ -114,8 +114,14 @@ public final class LegacyQuestionMetadataDialog
 		Label syllabusValue = new Label(syllabusVersion.getName());
 		Label bookletValue = new Label(question.getBooklet().getName());
 		Label hintExplanation = new Label("""
-				This is historical capture evidence only. Changing this flag does not \
-				remove any shared context that has already been captured.
+				This is historical capture evidence and may be corrected.
+
+				For a single-part question, changing this from required to not required \
+				converts any captured preamble into ordinary question regions. You will \
+				then be offered the option to recapture the complete question.
+
+				A captured shared preamble cannot be removed from only one part of a \
+				multipart question.
 				""");
 		hintExplanation.setWrapText(true);
 		grid.add(new Label("Subject"), 0, 0);
