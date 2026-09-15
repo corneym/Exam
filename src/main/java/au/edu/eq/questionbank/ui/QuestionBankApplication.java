@@ -42,6 +42,7 @@ import au.edu.eq.questionbank.output.scorm.ScormZipWriter;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
@@ -709,6 +710,29 @@ public class QuestionBankApplication extends Application {
 				new ScormSchemaSupport(), new ScormPackageValidator(), new ScormZipWriter());
 	}
 
+	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
+			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
+		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
+				curriculumRepository);
+		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
+		if (result.isEmpty()) {
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		LegacyQuestionMetadataDialog.Result replacement = result.get();
+		try {
+			Question updated = metadataService.updateMetadata(question, replacement.questionCode(), replacement.marks(),
+					replacement.classification(), replacement.preambleCaptureRequired());
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			resumeSearchAfterEdit(primaryStage, searchDialog, updated.getId(), curriculumRepository, metadataService);
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Edit Question Metadata", "The question metadata could not be saved.",
+					exception.getMessage());
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+		}
+	}
+
 	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
 		finishRevisionExport();
 		progressAlert.close();
@@ -1110,9 +1134,10 @@ public class QuestionBankApplication extends Application {
 		applicationExitAction.run();
 	}
 
-	private void resumeSearchAfterEdit(QuestionSearchDialog dialog, long questionId) {
+	private void resumeSearchAfterEdit(Stage primaryStage, QuestionSearchDialog dialog, long questionId,
+			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		dialog.refreshAfterEdit(questionId);
-		showQuestionSearchDialog(dialog);
+		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
@@ -1332,12 +1357,14 @@ public class QuestionBankApplication extends Application {
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
 		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(config.pdfDataRoot()),
 				questionExtractor);
+		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
 				previewService);
-		showQuestionSearchDialog(dialog);
+		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
-	private void showQuestionSearchDialog(QuestionSearchDialog dialog) {
+	private void showQuestionSearchDialog(Stage primaryStage, QuestionSearchDialog dialog,
+			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
 		if (result.isEmpty()) {
 			dialog.dispose();
@@ -1346,18 +1373,23 @@ public class QuestionBankApplication extends Application {
 		}
 		QuestionSearchDialog.EditRequest request = result.get();
 		Question question = request.question();
+		if (request.target() == QuestionSearchDialog.EditTarget.METADATA) {
+			editQuestionMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
+			return;
+		}
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
 			boolean editingStarted = questionCapturePane.editQuestion(question,
-					() -> resumeSearchAfterEdit(dialog, question.getId()));
+					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
+							metadataService));
 			if (!editingStarted) {
-				showQuestionSearchDialog(dialog);
+				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 			}
 			return;
 		}
-		boolean editingStarted = answerCapturePane.editAnswer(question,
-				() -> resumeSearchAfterEdit(dialog, question.getId()));
+		boolean editingStarted = answerCapturePane.editAnswer(question, () -> resumeSearchAfterEdit(primaryStage,
+				dialog, question.getId(), curriculumRepository, metadataService));
 		if (!editingStarted) {
-			showQuestionSearchDialog(dialog);
+			showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 		}
 	}
 

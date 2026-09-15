@@ -181,6 +181,33 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void mcqQuestionMayRequirePreambleWithoutInventingMultipartIdentity() throws Exception {
+		Fixture fixture = createFixture("mcq-preamble.db", false, true);
+		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
+				"2019");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet question = statement.executeQuery("""
+						SELECT
+						    q.question_code,
+						    q.preamble_capture_required,
+						    q.source_question_id,
+						    q.shared_context_id,
+						    b.booklet_name
+						FROM questions q
+						JOIN exam_booklets b
+						  ON b.id = q.booklet_id
+						WHERE q.question_code = '1'
+						""")) {
+			assertTrue(question.next());
+			assertEquals("MCQ booklet", question.getString("booklet_name"));
+			assertEquals(1, question.getInt("preamble_capture_required"));
+			assertNull(question.getObject("source_question_id"));
+			assertNull(question.getObject("shared_context_id"));
+		}
+	}
+
+	@Test
 	void repeatedImportIsIdempotent() throws Exception {
 		Fixture fixture = createFixture("idempotent.db", false);
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
@@ -219,6 +246,11 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	private Fixture createFixture(String databaseName, boolean invalidSecondClassification) throws Exception {
+		return createFixture(databaseName, invalidSecondClassification, false);
+	}
+
+	private Fixture createFixture(String databaseName, boolean invalidSecondClassification, boolean mcqPreambleRequired)
+			throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
 		database.initialiseSchema();
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
@@ -235,11 +267,11 @@ class LegacyQuestionMetadataImporterTest {
 		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "MCQ booklet",
 				"Chemistry/2020/mcq.pdf");
 		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1", "Chemistry/2020/paper1.pdf");
-		Path workbookPath = createWorkbook(invalidSecondClassification);
+		Path workbookPath = createWorkbook(invalidSecondClassification, mcqPreambleRequired);
 		return new Fixture(database, workbookPath);
 	}
 
-	private Path createWorkbook(boolean invalidSecondClassification) throws Exception {
+	private Path createWorkbook(boolean invalidSecondClassification, boolean mcqPreambleRequired) throws Exception {
 		Path path = tempDirectory.resolve("legacy-" + System.nanoTime() + ".xlsx");
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("QCAA");
@@ -258,6 +290,9 @@ class LegacyQuestionMetadataImporterTest {
 			first.createCell(3).setCellValue(1);
 			first.createCell(4).setCellValue("1.1.1");
 			first.createCell(5).setCellValue("B");
+			if (mcqPreambleRequired) {
+				first.createCell(6).setCellValue(1);
+			}
 			Row second = sheet.createRow(2);
 			second.createCell(0).setCellValue(2020);
 			second.createCell(1).setCellValue("1");

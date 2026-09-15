@@ -1,0 +1,186 @@
+package au.edu.eq.questionbank.ui;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
+import javafx.beans.binding.Bindings;
+import javafx.geometry.Insets;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.Priority;
+import javafx.stage.Window;
+
+/**
+ * Edits the correctable metadata of an existing legacy question without
+ * changing its captured question/answer regions or document identity.
+ */
+public final class LegacyQuestionMetadataDialog
+		extends javafx.scene.control.Dialog<LegacyQuestionMetadataDialog.Result> {
+
+	private final Question question;
+	private final CurriculumRepository curriculumRepository;
+	private final TextField questionCodeField = new TextField();
+	private final TextField marksField = new TextField();
+	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
+	private final CheckBox preambleRequiredCheckBox = new CheckBox("Legacy preamble/shared-context capture required");
+	private final ButtonType saveButtonType = new ButtonType("Save Metadata", ButtonBar.ButtonData.OK_DONE);
+
+	/**
+	 * Creates the legacy metadata editor.
+	 *
+	 * @param owner                dialog owner
+	 * @param question             question being corrected
+	 * @param curriculumRepository curriculum hierarchy lookup
+	 */
+	public LegacyQuestionMetadataDialog(Window owner, Question question, CurriculumRepository curriculumRepository) {
+		if (owner == null) {
+			throw new NullPointerException("owner");
+		}
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (curriculumRepository == null) {
+			throw new NullPointerException("curriculumRepository");
+		}
+		this.question = question;
+		this.curriculumRepository = curriculumRepository;
+		initOwner(owner);
+		setTitle("Edit Question Metadata");
+		setHeaderText(question.getExam().getProvider().getName() + " " + question.getExam().getYear() + " — "
+				+ question.getBooklet().getName() + " — " + question.getQuestionCode());
+		setResizable(true);
+		configureControls();
+		getDialogPane().setContent(createContent());
+		getDialogPane().getButtonTypes().addAll(saveButtonType, ButtonType.CANCEL);
+		configureSaveButton();
+		setResultConverter(buttonType -> {
+			if (buttonType != saveButtonType) {
+				return null;
+			}
+			return new Result(questionCodeField.getText().trim(), Integer.parseInt(marksField.getText().trim()),
+					classificationBox.getValue(), preambleRequiredCheckBox.isSelected());
+		});
+		getDialogPane().setPrefWidth(650);
+	}
+
+	private void collectClassifications(CurriculumNode node, List<CurriculumNode> classifications) {
+		if (node.getLevel() == CurriculumLevel.SUBTOPIC || node.getLevel() == CurriculumLevel.DESCRIPTOR) {
+			classifications.add(node);
+		}
+		for (CurriculumNode child : curriculumRepository.findChildren(node)) {
+			collectClassifications(child, classifications);
+		}
+	}
+
+	private void configureControls() {
+		questionCodeField.setId("legacy-metadata-question-code");
+		marksField.setId("legacy-metadata-marks");
+		classificationBox.setId("legacy-metadata-classification");
+		preambleRequiredCheckBox.setId("legacy-metadata-preamble-required");
+		questionCodeField.setText(question.getQuestionCode());
+		marksField.setText(Integer.toString(question.getMarks()));
+		classificationBox.getItems()
+				.setAll(findClassificationChoices(question.getClassification().getSyllabusVersion()));
+		classificationBox.setValue(question.getClassification());
+		classificationBox.setMaxWidth(Double.MAX_VALUE);
+		preambleRequiredCheckBox.setSelected(question.isPreambleCaptureRequired());
+	}
+
+	private void configureSaveButton() {
+		Button saveButton = (Button) getDialogPane().lookupButton(saveButtonType);
+		saveButton.setId("legacy-metadata-save");
+		saveButton.disableProperty().bind(Bindings.createBooleanBinding(() -> !metadataIsValid(),
+				questionCodeField.textProperty(), marksField.textProperty(), classificationBox.valueProperty()));
+	}
+
+	private GridPane createContent() {
+		GridPane grid = new GridPane();
+		grid.setHgap(10);
+		grid.setVgap(8);
+		grid.setPadding(new Insets(10));
+		SyllabusVersion syllabusVersion = question.getClassification().getSyllabusVersion();
+		Label subjectValue = new Label(syllabusVersion.getSubject().getName());
+		Label syllabusValue = new Label(syllabusVersion.getName());
+		Label bookletValue = new Label(question.getBooklet().getName());
+		Label hintExplanation = new Label("""
+				This is historical capture evidence only. Changing this flag does not \
+				remove any shared context that has already been captured.
+				""");
+		hintExplanation.setWrapText(true);
+		grid.add(new Label("Subject"), 0, 0);
+		grid.add(subjectValue, 1, 0);
+		grid.add(new Label("Syllabus"), 0, 1);
+		grid.add(syllabusValue, 1, 1);
+		grid.add(new Label("Booklet"), 0, 2);
+		grid.add(bookletValue, 1, 2);
+		grid.add(new Label("Question code"), 0, 3);
+		grid.add(questionCodeField, 1, 3);
+		grid.add(new Label("Marks"), 0, 4);
+		grid.add(marksField, 1, 4);
+		grid.add(new Label("Classification"), 0, 5);
+		grid.add(classificationBox, 1, 5);
+		grid.add(preambleRequiredCheckBox, 1, 6);
+		grid.add(hintExplanation, 1, 7);
+		GridPane.setHgrow(questionCodeField, Priority.ALWAYS);
+		GridPane.setHgrow(marksField, Priority.ALWAYS);
+		GridPane.setHgrow(classificationBox, Priority.ALWAYS);
+		return grid;
+	}
+
+	private List<CurriculumNode> findClassificationChoices(SyllabusVersion syllabusVersion) {
+		List<CurriculumNode> classifications = new ArrayList<>();
+		for (CurriculumNode root : curriculumRepository.findRootNodes(syllabusVersion)) {
+			collectClassifications(root, classifications);
+		}
+		return List.copyOf(classifications);
+	}
+
+	private boolean metadataIsValid() {
+		if (questionCodeField.getText() == null || questionCodeField.getText().isBlank()) {
+			return false;
+		}
+		if (classificationBox.getValue() == null) {
+			return false;
+		}
+		try {
+			return Integer.parseInt(marksField.getText().trim()) > 0;
+		} catch (NumberFormatException exception) {
+			return false;
+		}
+	}
+
+	/**
+	 * User-approved replacement metadata.
+	 *
+	 * @param questionCode            corrected question code
+	 * @param marks                   corrected positive mark value
+	 * @param classification          corrected classification
+	 * @param preambleCaptureRequired corrected historical preamble hint
+	 */
+	public record Result(String questionCode, int marks, CurriculumNode classification,
+			boolean preambleCaptureRequired) {
+
+		public Result {
+			if (questionCode == null || questionCode.isBlank()) {
+				throw new IllegalArgumentException("questionCode must not be blank");
+			}
+			if (marks < 1) {
+				throw new IllegalArgumentException("marks must be positive");
+			}
+			if (classification == null) {
+				throw new NullPointerException("classification");
+			}
+		}
+	}
+}

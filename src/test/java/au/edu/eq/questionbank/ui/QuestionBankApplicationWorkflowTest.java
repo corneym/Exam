@@ -48,6 +48,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.application.Platform;
 import javafx.event.Event;
@@ -56,6 +57,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TextField;
@@ -1266,6 +1268,82 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(Files.exists(destination));
 		assertTrue(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		setField(application, "scormExportRunning", Boolean.FALSE);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void searchEditMetadataCorrectsMetadataOnlyQuestion(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		CurriculumNode classification = model.getClassification();
+		assertNotNull(booklet);
+		assertNotNull(classification);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question metadataOnlyQuestion = repository.save(booklet, "61", "", 2, List.of(), classification, true, null,
+				null);
+		assertTrue(metadataOnlyQuestion.getRegions().isEmpty());
+		/*
+		 * Open Search Questions through the real application method. showAndWait()
+		 * enters a nested JavaFX event loop, so schedule it rather than blocking the
+		 * TestFX interaction thread.
+		 */
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		ListView<QuestionRetrievalResult> results = robot.lookup("#question-search-results").queryAs(ListView.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
+				.anyMatch(result -> result.getQuestion().getId() == metadataOnlyQuestion.getId()));
+		QuestionRetrievalResult selectedResult = results.getItems().stream()
+				.filter(result -> result.getQuestion().getId() == metadataOnlyQuestion.getId()).findFirst()
+				.orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		Button editMetadata = lookup(robot, "#question-search-edit-metadata", Button.class);
+		assertFalse(editMetadata.isDisabled());
+		robot.clickOn(editMetadata);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#legacy-metadata-question-code").tryQuery().isPresent());
+		TextField questionCode = lookup(robot, "#legacy-metadata-question-code", TextField.class);
+		TextField marks = lookup(robot, "#legacy-metadata-marks", TextField.class);
+		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		assertEquals("61", questionCode.getText());
+		assertEquals("2", marks.getText());
+		assertTrue(preamble.isSelected());
+		robot.interact(() -> {
+			questionCode.setText("61a");
+			marks.setText("4");
+			preamble.setSelected(false);
+		});
+		robot.clickOn("#legacy-metadata-save");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> repository.findById(metadataOnlyQuestion.getId())
+				.map(question -> "61a".equals(question.getQuestionCode())).orElse(false));
+		Question updated = repository.findById(metadataOnlyQuestion.getId()).orElseThrow();
+		assertEquals("61a", updated.getQuestionCode());
+		assertEquals(4, updated.getMarks());
+		assertFalse(updated.isPreambleCaptureRequired());
+		assertTrue(updated.getRegions().isEmpty());
+		assertEquals(classification.getId(), updated.getClassification().getId());
+		/*
+		 * Saving metadata reopens Search Questions. Close it so the application
+		 * workflow unwinds cleanly before the test ends.
+		 */
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		robot.clickOn("Close");
+		WaitForAsyncUtils.waitForFxEvents();
 	}
 
 	@Start
