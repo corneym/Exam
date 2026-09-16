@@ -16,6 +16,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -30,6 +31,16 @@ class InMemoryQuestionRepositoryTest {
 	private Exam exam;
 	private ExamBooklet booklet;
 	private InMemoryQuestionRepository repository;
+
+	@Test
+	void preservesResponseTypeWhenQuestionIsReconstructed() {
+		Question saved = repository.save(booklet, "Q1", "Question Q1", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0)), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, saved.getResponseType());
+		Question updated = repository.updateCaptureRelationships(saved.getId(), refinedClassification, null, null);
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.getResponseType());
+	}
 
 	@Test
 	void returnsEmptyWhenNoQuestionHasTheRequestedId() {

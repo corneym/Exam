@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -29,12 +30,43 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteQuestionRepositoryTest {
-	private record ReconstructionFixture(SqliteDatabase database, Question question, ExamBooklet otherBooklet,
-			AnswerFile otherAnswerFile) {
-	}
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void attachesRegionsToImportedQuestion() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("attach-imported-regions.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
+				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question imported = repository.save(booklet, "21a", "", 3, List.of(), subtopic, true);
+		List<QuestionRegion> regions = List.of(new QuestionRegion(booklet, 4, 0.10, 0.20, 0.60, 0.15),
+				new QuestionRegion(booklet, 4, 0.10, 0.40, 0.60, 0.20));
+		Question updated = repository.attachRegions(imported.getId(), regions);
+		assertEquals(imported.getId(), updated.getId());
+		assertEquals("21a", updated.getQuestionCode());
+		assertEquals(3, updated.getMarks());
+		assertTrue(updated.isPreambleCaptureRequired());
+		assertEquals(2, updated.getRegions().size());
+		assertEquals(4, updated.getRegions().get(0).pageNumber());
+		Question reloaded = new SqliteQuestionRepository(database).findById(imported.getId()).orElseThrow();
+		assertEquals(2, reloaded.getRegions().size());
+		assertTrue(reloaded.isPreambleCaptureRequired());
+		assertThrows(IllegalArgumentException.class, () -> repository.attachRegions(imported.getId(),
+				List.of(new QuestionRegion(booklet, 5, 0.10, 0.10, 0.50, 0.20))));
+		Question afterRejectedSecondAttachment = new SqliteQuestionRepository(database).findById(imported.getId())
+				.orElseThrow();
+		assertEquals(2, afterRejectedSecondAttachment.getRegions().size());
+	}
 
 	@Test
 	void failedEditRestoresMetadataAndOldRegionsAfterALaterInsertFails() throws Exception {
@@ -52,8 +84,7 @@ class SqliteQuestionRepositoryTest {
 					""");
 		}
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
-		List<QuestionRegion> replacements = List.of(
-				new QuestionRegion(original.getBooklet(), 8, 0.2, 0.2, 0.4, 0.3),
+		List<QuestionRegion> replacements = List.of(new QuestionRegion(original.getBooklet(), 8, 0.2, 0.2, 0.4, 0.3),
 				new QuestionRegion(original.getBooklet(), 9, 0.2, 0.2, 0.4, 0.3));
 		assertThrows(IllegalStateException.class, () -> repository.updateQuestion(original.getId(), "Changed", 9,
 				replacements, original.getClassification(), null, null));
@@ -73,75 +104,10 @@ class SqliteQuestionRepositoryTest {
 		}
 	}
 
-	private ReconstructionFixture createReconstructionFixture(String databaseName) throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
-		database.initialiseSchema();
-		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
-		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
-		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
-		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
-		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment",
-				"Question booklet", "Chemistry/2025/questions.pdf");
-		ExamBooklet otherBooklet = examImporter.importExam(chemistry, "QCAA", 2024, "External Assessment",
-				"Question booklet", "Chemistry/2024/questions.pdf");
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-		Question question = repository.save(booklet, "Q1", "", 1,
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-		AnswerFile otherAnswerFile = answerWriter.findOrCreateAnswerFile(otherBooklet.getExam(), "Answers",
-				"Chemistry/2024/answers.pdf");
-		return new ReconstructionFixture(database, question, otherBooklet, otherAnswerFile);
-	}
-
-	@Test
-	void attachesRegionsToImportedQuestion() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("attach-imported-regions.db"));
-		database.initialiseSchema();
-		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
-		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
-		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
-		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
-		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
-				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-		Question imported = repository.save(booklet, "21a", "", 3, List.of(), subtopic, true);
-
-		List<QuestionRegion> regions = List.of(new QuestionRegion(booklet, 4, 0.10, 0.20, 0.60, 0.15),
-				new QuestionRegion(booklet, 4, 0.10, 0.40, 0.60, 0.20));
-
-		Question updated = repository.attachRegions(imported.getId(), regions);
-
-		assertEquals(imported.getId(), updated.getId());
-		assertEquals("21a", updated.getQuestionCode());
-		assertEquals(3, updated.getMarks());
-		assertTrue(updated.isPreambleCaptureRequired());
-		assertEquals(2, updated.getRegions().size());
-		assertEquals(4, updated.getRegions().get(0).pageNumber());
-
-		Question reloaded = new SqliteQuestionRepository(database).findById(imported.getId()).orElseThrow();
-		assertEquals(2, reloaded.getRegions().size());
-		assertTrue(reloaded.isPreambleCaptureRequired());
-
-		assertThrows(IllegalArgumentException.class,
-				() -> repository.attachRegions(imported.getId(),
-						List.of(new QuestionRegion(booklet, 5, 0.10, 0.10, 0.50, 0.20))));
-		Question afterRejectedSecondAttachment = new SqliteQuestionRepository(database).findById(imported.getId())
-				.orElseThrow();
-		assertEquals(2, afterRejectedSecondAttachment.getRegions().size());
-	}
-
 	@Test
 	void rejectsAttachingRegionsToQuestionThatAlreadyHasRegions() throws Exception {
 		ReconstructionFixture fixture = createReconstructionFixture("already-captured-question.db");
 		Question question = fixture.question();
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new SqliteQuestionRepository(fixture.database()).attachRegions(question.getId(),
 						List.of(new QuestionRegion(question.getBooklet(), 2, 0.10, 0.10, 0.50, 0.20))));
@@ -160,7 +126,6 @@ class SqliteQuestionRepositoryTest {
 					VALUES (1, 0, %d, 1, 0.10, 0.10, 0.50, 0.20)
 					""".formatted(fixture.otherAnswerFile().getId()));
 		}
-
 		assertThrows(IllegalStateException.class,
 				() -> new SqliteQuestionRepository(fixture.database()).findById(fixture.question().getId()));
 	}
@@ -177,7 +142,6 @@ class SqliteQuestionRepositoryTest {
 					VALUES (%d, 0, %d, 1, 0.10, 0.10, 0.50, 0.20)
 					""".formatted(fixture.question().getId(), fixture.otherBooklet().getId()));
 		}
-
 		assertThrows(IllegalStateException.class,
 				() -> new SqliteQuestionRepository(fixture.database()).findById(fixture.question().getId()));
 	}
@@ -296,5 +260,60 @@ class SqliteQuestionRepositoryTest {
 		assertEquals(5, loaded.getRegions().get(1).pageNumber());
 		assertEquals(subtopic.getId(), loaded.getClassification().getId());
 		assertEquals(1, secondRepository.findAll().size());
+	}
+
+	@Test
+	void savesReloadsAndPreservesExplicitResponseType() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("response-type.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Mixed booklet", "Chemistry/2025/questions.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.save(booklet, "Q1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, saved.getResponseType());
+		Question reloaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
+		Question edited = repository.updateQuestion(saved.getId(), "Q1", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.50, 0.20)), subtopic, null, null);
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, edited.getResponseType());
+		Question afterReopen = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, afterReopen.getResponseType());
+	}
+
+	private ReconstructionFixture createReconstructionFixture(String databaseName) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment",
+				"Question booklet", "Chemistry/2025/questions.pdf");
+		ExamBooklet otherBooklet = examImporter.importExam(chemistry, "QCAA", 2024, "External Assessment",
+				"Question booklet", "Chemistry/2024/questions.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question question = repository.save(booklet, "Q1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile otherAnswerFile = answerWriter.findOrCreateAnswerFile(otherBooklet.getExam(), "Answers",
+				"Chemistry/2024/answers.pdf");
+		return new ReconstructionFixture(database, question, otherBooklet, otherAnswerFile);
+	}
+
+	private record ReconstructionFixture(SqliteDatabase database, Question question, ExamBooklet otherBooklet,
+			AnswerFile otherAnswerFile) {
 	}
 }

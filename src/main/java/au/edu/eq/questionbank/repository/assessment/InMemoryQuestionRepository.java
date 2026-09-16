@@ -8,6 +8,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 
@@ -61,7 +62,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), existing.getRegions(),
 					existing.getClassification(), existing.isPreambleCaptureRequired(), existing.getSourceQuestion(),
-					sharedContext);
+					sharedContext, existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -89,7 +90,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, existing.getClassification(),
-					existing.isPreambleCaptureRequired(), existing.getSourceQuestion(), existing.getSharedContext());
+					existing.isPreambleCaptureRequired(), existing.getSourceQuestion(), existing.getSharedContext(),
+					existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -126,7 +128,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, classification,
-					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext);
+					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -155,7 +157,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, existing.getClassification(),
-					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext);
+					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -191,8 +193,16 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		return save(booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired,
+				sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
+	}
+
+	@Override
+	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 		Question question = new Question(nextId++, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext);
+				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
 		questions.add(question);
 		return question;
 	}
@@ -215,7 +225,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), existing.getRegions(), classification,
-					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext);
+					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -268,7 +278,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
 					existing.getQuestionText(), marks, regions, classification, existing.isPreambleCaptureRequired(),
-					sourceQuestion, sharedContext);
+					sourceQuestion, sharedContext, existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
