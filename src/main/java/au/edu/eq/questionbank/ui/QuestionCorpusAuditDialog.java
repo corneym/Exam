@@ -1,12 +1,15 @@
 package au.edu.eq.questionbank.ui;
 
 import java.util.List;
+import java.util.function.BiConsumer;
 
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import javafx.beans.binding.Bindings;
 import javafx.scene.Node;
+import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
@@ -36,10 +39,16 @@ final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.R
 		getDialogPane().setContent(auditPane);
 		Node resolveButton = getDialogPane().lookupButton(resolveButtonType);
 		resolveButton.setId("corpus-resolve-selected");
-		resolveButton.disableProperty().bind(Bindings.createBooleanBinding(
-				() -> resolutionTarget(auditPane.getSelectedWorkItem()) == null, auditPane.selectedWorkItemProperty()));
+		resolveButton.disableProperty()
+				.bind(Bindings.createBooleanBinding(
+						() -> auditPane.selectedWorkItems().size() != 1
+								|| resolutionTarget(auditPane.getSelectedWorkItem()) == null,
+						auditPane.selectedWorkItems()));
 		setResultConverter(buttonType -> {
 			if (buttonType != resolveButtonType) {
+				return null;
+			}
+			if (auditPane.selectedWorkItems().size() != 1) {
 				return null;
 			}
 			QuestionCorpusWorkItem item = auditPane.getSelectedWorkItem();
@@ -72,6 +81,32 @@ final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.R
 
 	void refreshQuestions(List<Question> questions, long preferredQuestionId) {
 		auditPane.refreshQuestions(questions, preferredQuestionId);
+	}
+
+	void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+		auditPane.setBulkResponseTypeHandler((questions, responseType) -> {
+			String responseTypeLabel = switch (responseType) {
+			case MULTIPLE_CHOICE -> "Multiple choice";
+			case WRITTEN_RESPONSE -> "Written response";
+			case UNKNOWN -> throw new IllegalArgumentException("UNKNOWN cannot be applied as a bulk resolution");
+			};
+			ButtonType applyButton = new ButtonType("Apply", ButtonBar.ButtonData.OK_DONE);
+			Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+			confirmation.initOwner(getOwner());
+			confirmation.setTitle("Resolve Response Types");
+			confirmation
+					.setHeaderText("Set " + questions.size() + " selected question(s) to " + responseTypeLabel + "?");
+			confirmation.setContentText("Only the response type will be changed.");
+			confirmation.getButtonTypes().setAll(applyButton, ButtonType.CANCEL);
+			ButtonType decision = confirmation.showAndWait().orElse(ButtonType.CANCEL);
+			if (decision != applyButton) {
+				return;
+			}
+			handler.accept(questions, responseType);
+		});
 	}
 
 	enum ResolutionTarget {

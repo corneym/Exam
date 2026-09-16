@@ -1,9 +1,11 @@
 package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -29,6 +31,7 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusCompletionFilter;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
@@ -68,6 +71,23 @@ class QuestionCorpusAuditPaneTest {
 		robot.interact(() -> completion.setValue(QuestionCorpusCompletionFilter.COMPLETE));
 		assertEquals(1, workItems.getItems().size());
 		assertEquals("Q1", workItems.getItems().getFirst().question().getQuestionCode());
+	}
+
+	@Test
+	void selectsVisibleUnknownQuestionsForBulkResponseTypeResolution(FxRobot robot) {
+		AtomicReference<List<Question>> selectedQuestions = new AtomicReference<>();
+		AtomicReference<QuestionResponseType> selectedResponseType = new AtomicReference<>();
+		robot.interact(() -> pane.setBulkResponseTypeHandler((questions, responseType) -> {
+			selectedQuestions.set(List.copyOf(questions));
+			selectedResponseType.set(responseType);
+		}));
+		robot.clickOn("#corpus-select-all-unknown");
+		Button writtenResponseButton = robot.lookup("#corpus-set-written-response").queryButton();
+		assertFalse(writtenResponseButton.isDisable());
+		robot.clickOn(writtenResponseButton);
+		assertEquals(1, selectedQuestions.get().size());
+		assertEquals("Q3", selectedQuestions.get().getFirst().getQuestionCode());
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, selectedResponseType.get());
 	}
 
 	@Start

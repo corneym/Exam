@@ -43,6 +43,21 @@ class LegacyQuestionMetadataServiceTest {
 	private Subtopic currentSubtopic;
 
 	@Test
+	void bulkResponseTypeResolutionRejectsKnownQuestionWithoutPartialUpdate() throws Exception {
+		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
+		Question unknown = writer.insertQuestion(booklet, "Q42", "", 2, List.of(), historicalSubtopicOne, false, null,
+				null, QuestionResponseType.UNKNOWN);
+		Question alreadyKnown = writer.insertQuestion(booklet, "Q43", "", 1, List.of(), historicalSubtopicOne, false,
+				null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		assertThrows(IllegalArgumentException.class, () -> service
+				.resolveUnknownResponseTypes(List.of(unknown, alreadyKnown), QuestionResponseType.WRITTEN_RESPONSE));
+		Question reloadedUnknown = questionRepository.findById(unknown.getId()).orElseThrow();
+		Question reloadedKnown = questionRepository.findById(alreadyKnown.getId()).orElseThrow();
+		assertEquals(QuestionResponseType.UNKNOWN, reloadedUnknown.getResponseType());
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloadedKnown.getResponseType());
+	}
+
+	@Test
 	void cannotRemoveLegacyPreambleHintFromMultipartQuestionWithSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q7");
@@ -423,6 +438,30 @@ class LegacyQuestionMetadataServiceTest {
 				result.preambleOutcome());
 		assertFalse(result.question().hasSharedContext());
 		assertEquals(2, result.question().getRegions().size());
+	}
+
+	@Test
+	void resolvesMultipleUnknownResponseTypesWithoutChangingCaptureData() throws Exception {
+		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q40 shared material",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question first = writer.insertQuestion(booklet, "Q40", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.25)), historicalSubtopicOne, false, null,
+				context, QuestionResponseType.UNKNOWN);
+		Question second = writer.insertQuestion(booklet, "Q41", "", 3,
+				List.of(new QuestionRegion(booklet, 3, 0.10, 0.20, 0.80, 0.30)), historicalSubtopicOne, false, null,
+				null, QuestionResponseType.UNKNOWN);
+		List<Question> updated = service.resolveUnknownResponseTypes(List.of(first, second),
+				QuestionResponseType.WRITTEN_RESPONSE);
+		assertEquals(2, updated.size());
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.get(0).getResponseType());
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.get(1).getResponseType());
+		assertTrue(updated.get(0).hasSharedContext());
+		assertEquals(context.getId(), updated.get(0).getSharedContext().getId());
+		assertEquals(1, updated.get(0).getRegions().size());
+		assertEquals(1, updated.get(1).getRegions().size());
+		assertEquals(1, contextRepository.findByBooklet(booklet).size());
 	}
 
 	@BeforeEach

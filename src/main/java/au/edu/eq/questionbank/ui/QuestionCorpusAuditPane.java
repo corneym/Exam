@@ -3,10 +3,12 @@ package au.edu.eq.questionbank.ui;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiConsumer;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusCompletionFilter;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusFilter;
@@ -15,6 +17,8 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusQueue;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import javafx.beans.property.ReadOnlyObjectProperty;
+import javafx.collections.ListChangeListener;
+import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -22,6 +26,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -45,6 +50,11 @@ final class QuestionCorpusAuditPane extends VBox {
 	private final Label summaryLabel = new Label();
 	private final Label resultCountLabel = new Label();
 	private final ListView<QuestionCorpusWorkItem> workItems = new ListView<>();
+	private final Button selectAllUnknownButton = new Button("Select all unknown shown");
+	private final Button setSelectedMultipleChoiceButton = new Button("Set selected: Multiple choice");
+	private final Button setSelectedWrittenResponseButton = new Button("Set selected: Written response");
+	private BiConsumer<List<Question>, QuestionResponseType> bulkResponseTypeHandler = (_, _) -> {
+	};
 
 	QuestionCorpusAuditPane(List<Question> questions) {
 		this.questions = copyQuestions(questions);
@@ -110,6 +120,25 @@ final class QuestionCorpusAuditPane extends VBox {
 		return workItems.getSelectionModel().selectedItemProperty();
 	}
 
+	ObservableList<QuestionCorpusWorkItem> selectedWorkItems() {
+		return workItems.getSelectionModel().getSelectedItems();
+	}
+
+	void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+		bulkResponseTypeHandler = handler;
+	}
+
+	private void applyBulkResponseType(QuestionResponseType responseType) {
+		List<Question> selected = selectedQuestionsForBulkUpdate();
+		if (selected.isEmpty()) {
+			return;
+		}
+		bulkResponseTypeHandler.accept(selected, responseType);
+	}
+
 	private void buildContent() {
 		Label heading = new Label("Question-bank completeness");
 		heading.setStyle("-fx-font-weight: bold;");
@@ -119,9 +148,13 @@ final class QuestionCorpusAuditPane extends VBox {
 		HBox secondFilterRow = new HBox(SPACING, new Label("Completion"), completionBox, new Label("Problem"),
 				problemBox, clearFiltersButton);
 		secondFilterRow.setAlignment(Pos.CENTER_LEFT);
+		HBox bulkResponseTypeRow = new HBox(SPACING, selectAllUnknownButton, setSelectedMultipleChoiceButton,
+				setSelectedWrittenResponseButton);
+		bulkResponseTypeRow.setAlignment(Pos.CENTER_LEFT);
 		summaryLabel.setWrapText(true);
 		VBox.setVgrow(workItems, Priority.ALWAYS);
-		getChildren().addAll(heading, firstFilterRow, secondFilterRow, summaryLabel, resultCountLabel, workItems);
+		getChildren().addAll(heading, firstFilterRow, secondFilterRow, bulkResponseTypeRow, summaryLabel,
+				resultCountLabel, workItems);
 		setSpacing(SPACING);
 		setPadding(PADDING);
 	}
@@ -144,6 +177,11 @@ final class QuestionCorpusAuditPane extends VBox {
 		completionBox.valueProperty().addListener((_, _, _) -> refresh());
 		problemBox.valueProperty().addListener((_, _, _) -> refresh());
 		clearFiltersButton.setOnAction(_ -> clearFilters());
+		selectAllUnknownButton.setOnAction(_ -> selectAllUnknownShown());
+		setSelectedMultipleChoiceButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.MULTIPLE_CHOICE));
+		setSelectedWrittenResponseButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.WRITTEN_RESPONSE));
+		workItems.getSelectionModel().getSelectedItems()
+				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> updateBulkActionState());
 	}
 
 	private void configureControls() {
@@ -236,6 +274,12 @@ final class QuestionCorpusAuditPane extends VBox {
 				setText(workItemLabel(item));
 			}
 		});
+		selectAllUnknownButton.setId("corpus-select-all-unknown");
+		setSelectedMultipleChoiceButton.setId("corpus-set-multiple-choice");
+		setSelectedWrittenResponseButton.setId("corpus-set-written-response");
+		workItems.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+		setSelectedMultipleChoiceButton.setDisable(true);
+		setSelectedWrittenResponseButton.setDisable(true);
 	}
 
 	private QuestionCorpusFilter createFilter(QuestionCorpusCompletionFilter completion,
@@ -305,6 +349,29 @@ final class QuestionCorpusAuditPane extends VBox {
 		List<QuestionCorpusWorkItem> filtered = QuestionCorpusQueue.build(questions, workFilter);
 		workItems.getItems().setAll(filtered);
 		resultCountLabel.setText(String.format("Showing %d question(s)", filtered.size()));
+		updateBulkActionState();
+	}
+
+	private void selectAllUnknownShown() {
+		workItems.getSelectionModel().clearSelection();
+		for (int index = 0; index < workItems.getItems().size(); index++) {
+			QuestionCorpusWorkItem item = workItems.getItems().get(index);
+			if (item.question().getResponseType() == QuestionResponseType.UNKNOWN) {
+				workItems.getSelectionModel().select(index);
+			}
+		}
+		updateBulkActionState();
+	}
+
+	private List<Question> selectedQuestionsForBulkUpdate() {
+		List<QuestionCorpusWorkItem> selected = List.copyOf(workItems.getSelectionModel().getSelectedItems());
+		if (selected.isEmpty()) {
+			return List.of();
+		}
+		if (selected.stream().anyMatch(item -> item.question().getResponseType() != QuestionResponseType.UNKNOWN)) {
+			return List.of();
+		}
+		return selected.stream().map(QuestionCorpusWorkItem::question).toList();
 	}
 
 	private String summaryText(QuestionCorpusSummary summary) {
@@ -315,6 +382,15 @@ final class QuestionCorpusAuditPane extends VBox {
 				summary.totalQuestions(), summary.completeQuestions(), summary.incompleteQuestions(),
 				summary.missingQuestionSource(), summary.missingAnswer(), summary.unresolvedSharedContext(),
 				summary.unknownResponseType());
+	}
+
+	private void updateBulkActionState() {
+		boolean unknownVisible = workItems.getItems().stream()
+				.anyMatch(item -> item.question().getResponseType() == QuestionResponseType.UNKNOWN);
+		selectAllUnknownButton.setDisable(!unknownVisible);
+		boolean validSelection = !selectedQuestionsForBulkUpdate().isEmpty();
+		setSelectedMultipleChoiceButton.setDisable(!validSelection);
+		setSelectedWrittenResponseButton.setDisable(!validSelection);
 	}
 
 	private String workItemLabel(QuestionCorpusWorkItem item) {

@@ -60,6 +60,73 @@ public final class LegacyQuestionMetadataService {
 	}
 
 	/**
+	 * Atomically resolves UNKNOWN response types for a selected set of questions.
+	 * No other question metadata or capture data is modified.
+	 *
+	 * @param questions    questions whose response type is currently UNKNOWN
+	 * @param responseType replacement MULTIPLE_CHOICE or WRITTEN_RESPONSE value
+	 * @return reloaded questions after successful persistence
+	 */
+	public List<Question> resolveUnknownResponseTypes(List<Question> questions, QuestionResponseType responseType) {
+		if (questions == null) {
+			throw new NullPointerException("questions");
+		}
+		if (responseType == null) {
+			throw new NullPointerException("responseType");
+		}
+		if (responseType == QuestionResponseType.UNKNOWN) {
+			throw new IllegalArgumentException("UNKNOWN cannot resolve an unknown response type");
+		}
+		if (questions.isEmpty()) {
+			throw new IllegalArgumentException("At least one question is required");
+		}
+		for (Question question : questions) {
+			if (question == null) {
+				throw new NullPointerException("questions contains null");
+			}
+			if (question.getResponseType() != QuestionResponseType.UNKNOWN) {
+				throw new IllegalArgumentException("Question response type is not UNKNOWN: " + question.getId());
+			}
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (PreparedStatement statement = connection.prepareStatement("""
+					UPDATE questions
+					SET response_type = ?
+					WHERE id = ?
+					  AND response_type = ?
+					""")) {
+				for (Question question : questions) {
+					statement.setString(1, responseType.name());
+					statement.setLong(2, question.getId());
+					statement.setString(3, QuestionResponseType.UNKNOWN.name());
+					int updated = statement.executeUpdate();
+					if (updated != 1) {
+						throw new IllegalStateException(
+								"Question is missing or response type is no longer UNKNOWN: " + question.getId());
+					}
+				}
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					failure.addSuppressed(rollbackFailure);
+				}
+				throw failure;
+			}
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not resolve question response types atomically", failure);
+		}
+		return questions
+				.stream().map(
+						question -> questionRepository.findById(question.getId())
+								.orElseThrow(() -> new IllegalStateException(
+										"Question disappeared after response-type update: " + question.getId())))
+				.toList();
+	}
+
+	/**
 	 * Atomically corrects editable legacy metadata.
 	 *
 	 * @param question                persisted question being corrected

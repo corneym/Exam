@@ -1459,6 +1459,20 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		QuestionCorpusAuditDialog dialog = new QuestionCorpusAuditDialog(primaryStage, questionRepository.findAll());
+		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(
+				new SqliteDatabase(config.databasePath()));
+		dialog.setBulkResponseTypeHandler((questions, responseType) -> {
+			try {
+				metadataService.resolveUnknownResponseTypes(questions, responseType);
+				questionCapturePane.refreshImportedQuestions();
+				answerCapturePane.refreshQuestions();
+				dialog.refreshQuestions(questionRepository.findAll(), -1L);
+			} catch (IllegalArgumentException | IllegalStateException exception) {
+				showAlert(Alert.AlertType.ERROR, "Resolve Response Types",
+						"The selected response types could not be saved.", exception.getMessage());
+				dialog.refreshQuestions(questionRepository.findAll(), questions.getFirst().getId());
+			}
+		});
 		showQuestionCorpusAuditDialog(primaryStage, config, dialog);
 	}
 
