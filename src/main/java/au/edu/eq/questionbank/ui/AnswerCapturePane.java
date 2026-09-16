@@ -8,7 +8,6 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
@@ -22,6 +21,7 @@ import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
@@ -197,6 +197,12 @@ final class AnswerCapturePane extends VBox {
 	 * @param selection the selected answer-page rectangle
 	 */
 	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
+		if (!canCaptureRegions()) {
+			currentAnswerSelection = null;
+			selectionClearHandler.run();
+			setSelectionActionsEnabled(false);
+			return;
+		}
 		currentAnswerSelection = new AnswerRegion(answerFile, selection.pageNumber(), selection.x(), selection.y(),
 				selection.width(), selection.height());
 		Question question = unansweredQuestionField.getValue();
@@ -204,6 +210,11 @@ final class AnswerCapturePane extends VBox {
 		answerRegionStatusLabel.setText("Selection pending — Page " + selection.pageNumber());
 		setSelectionActionsEnabled(true);
 		refreshSaveButtonState();
+	}
+
+	boolean canCaptureRegions() {
+		return !answerSaveInProgress && answerFile != null
+				&& isWrittenResponseQuestion(unansweredQuestionField.getValue());
 	}
 
 	/**
@@ -368,6 +379,7 @@ final class AnswerCapturePane extends VBox {
 		if (question == null) {
 			selectedAnswerQuestionLabel.setText("No question selected");
 			updateMultipleChoiceAnswerVisibility(null);
+			updateAnswerRegionControlsVisibility(null);
 			saveAnswerButton.setDisable(true);
 			chooseAnswerPdfButton.setDisable(true);
 			saveAnswerButton.setText("Save Answer");
@@ -380,26 +392,33 @@ final class AnswerCapturePane extends VBox {
 			answerFile = null;
 			selectedAnswerPdfLabel.setText("No PDF selected");
 		}
+		boolean writtenResponse = isWrittenResponseQuestion(question);
 		boolean openedAnswerPdf = false;
 		if (question.hasAnswer()) {
 			Answer answer = question.getAnswer();
 			selectMultipleChoiceAnswer(answer.getAnswerText());
+			/*
+			 * Preserve any historical regions regardless of response type. MCQ mode simply
+			 * does not display or require them.
+			 */
 			pendingAnswerRegions.addAll(answer.getRegions());
-			if (!answer.getRegions().isEmpty()) {
-				AnswerFile storedAnswerFile = answer.getRegions().getFirst().answerFile();
-				Path pdfPath = resolveRegisteredAnswerFile(storedAnswerFile);
-				if (pdfPath != null) {
-					openedAnswerPdf = openRegisteredAnswerFile(storedAnswerFile, pdfPath);
+			if (writtenResponse) {
+				if (!answer.getRegions().isEmpty()) {
+					AnswerFile storedAnswerFile = answer.getRegions().getFirst().answerFile();
+					Path pdfPath = resolveRegisteredAnswerFile(storedAnswerFile);
+					if (pdfPath != null) {
+						openedAnswerPdf = openRegisteredAnswerFile(storedAnswerFile, pdfPath);
+					}
+				} else if (answerFile == null) {
+					openedAnswerPdf = loadRegisteredAnswerFile(question);
 				}
-			} else if (answerFile == null) {
-				openedAnswerPdf = loadRegisteredAnswerFile(question);
 			}
 			refreshAnswerRegionList();
 			showAcceptedRegionStatus();
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — answer stored");
 			saveAnswerButton.setText("Update Answer");
 		} else {
-			if (loadDocument && answerFile == null) {
+			if (writtenResponse && loadDocument && answerFile == null) {
 				openedAnswerPdf = loadRegisteredAnswerFile(question);
 			}
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
@@ -408,10 +427,15 @@ final class AnswerCapturePane extends VBox {
 			answerRegionStatusLabel.setText("");
 		}
 		updateMultipleChoiceAnswerVisibility(question);
-		chooseAnswerPdfButton.setDisable(false);
+		updateAnswerRegionControlsVisibility(question);
+		chooseAnswerPdfButton.setDisable(!writtenResponse);
 		updateAnswerPdfControlsVisibility(question);
+		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
+			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — response type unresolved; "
+					+ "use Edit Metadata before capturing an answer.");
+		}
 		refreshSaveButtonState();
-		if (loadDocument && answerFile != null && !openedAnswerPdf) {
+		if (loadDocument && writtenResponse && answerFile != null && !openedAnswerPdf) {
 			answerDocumentHandler.run();
 		}
 	}
@@ -427,6 +451,9 @@ final class AnswerCapturePane extends VBox {
 		Question question = unansweredQuestionField.getValue();
 		if (question == null) {
 			showError("Select a question first.");
+			return;
+		}
+		if (!isWrittenResponseQuestion(question)) {
 			return;
 		}
 		Path sourcePath = pdfFilePicker.chooseAnyPdf(stage, "Choose answer PDF");
@@ -505,6 +532,8 @@ final class AnswerCapturePane extends VBox {
 		answerBButton.setId("answer-choice-b");
 		answerCButton.setId("answer-choice-c");
 		answerDButton.setId("answer-choice-d");
+		answerPdfControls.setId("answer-pdf-controls");
+		multipleChoiceAnswerControls.setId("multiple-choice-answer-controls");
 		answerAButton.setToggleGroup(multipleChoiceAnswerGroup);
 		answerBButton.setToggleGroup(multipleChoiceAnswerGroup);
 		answerCButton.setToggleGroup(multipleChoiceAnswerGroup);
@@ -610,7 +639,8 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private String findValidationError(Question question, String answerText) {
-		return AnswerCaptureValidator.findError(new AnswerCaptureValidator.State(question != null,
+		QuestionResponseType responseType = question == null ? null : question.getResponseType();
+		return AnswerCaptureValidator.findError(new AnswerCaptureValidator.State(question != null, responseType,
 				currentAnswerSelection != null, answerText, pendingAnswerRegions.size()));
 	}
 
@@ -672,15 +702,15 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private boolean isMultipleChoiceQuestion(Question question) {
-		if (question == null) {
-			return false;
-		}
-		String bookletName = question.getBooklet().getName().toLowerCase(Locale.ROOT).replace('-', ' ');
-		return bookletName.contains("mcq") || bookletName.contains("multiple choice");
+		return question != null && question.getResponseType() == QuestionResponseType.MULTIPLE_CHOICE;
+	}
+
+	private boolean isWrittenResponseQuestion(Question question) {
+		return question != null && question.getResponseType() == QuestionResponseType.WRITTEN_RESPONSE;
 	}
 
 	private void loadNextAnswerDocument(Question question) {
-		if (question == null) {
+		if (question == null || !isWrittenResponseQuestion(question)) {
 			finishAnswerSaveTransition(null);
 			return;
 		}
@@ -776,15 +806,16 @@ final class AnswerCapturePane extends VBox {
 
 	private void refreshAnswerRegionList() {
 		boolean hasRegions = !pendingAnswerRegions.isEmpty();
+		boolean showRegions = hasRegions && isWrittenResponseQuestion(unansweredQuestionField.getValue());
 		/*
-		 * Put the ScrollPane back into the layout before constructing its preview
-		 * content. In particular, the first accepted region must not be created while
-		 * its parent ScrollPane is unmanaged.
+		 * Stored regions remain in pendingAnswerRegions even when the current response
+		 * type does not display region capture. This is important when legacy
+		 * answer-region data exists for a Question later classified as MCQ.
 		 */
-		answerRegionsScrollPane.setManaged(hasRegions);
-		answerRegionsScrollPane.setVisible(hasRegions);
+		answerRegionsScrollPane.setManaged(showRegions);
+		answerRegionsScrollPane.setVisible(showRegions);
 		answerRegionListBox.getChildren().clear();
-		if (!hasRegions) {
+		if (!showRegions) {
 			return;
 		}
 		for (int i = 0; i < pendingAnswerRegions.size(); i++) {
@@ -975,8 +1006,9 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void setSelectionActionsEnabled(boolean enabled) {
-		addAnswerRegionButton.setDisable(!enabled);
-		clearAnswerSelectionButton.setDisable(!enabled);
+		boolean effective = enabled && isWrittenResponseQuestion(unansweredQuestionField.getValue());
+		addAnswerRegionButton.setDisable(!effective);
+		clearAnswerSelectionButton.setDisable(!effective);
 	}
 
 	private void showAcceptedRegionStatus() {
@@ -1015,7 +1047,7 @@ final class AnswerCapturePane extends VBox {
 
 	private void showSelectedAnswerDocument() {
 		Question question = unansweredQuestionField.getValue();
-		if (question == null || answerSaveInProgress) {
+		if (question == null || answerSaveInProgress || !isWrittenResponseQuestion(question)) {
 			return;
 		}
 		if (answerFile != null && answerFile.getExam().getId() == question.getExam().getId()) {
@@ -1026,10 +1058,30 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void updateAnswerPdfControlsVisibility(Question question) {
-		boolean answerPdfKnown = question != null && answerFile != null
+		boolean writtenResponse = isWrittenResponseQuestion(question);
+		boolean answerPdfKnown = writtenResponse && answerFile != null
 				&& answerFile.getExam().getId() == question.getExam().getId();
-		answerPdfControls.setVisible(!answerPdfKnown);
-		answerPdfControls.setManaged(!answerPdfKnown);
+		boolean visible = writtenResponse && !answerPdfKnown;
+		answerPdfControls.setVisible(visible);
+		answerPdfControls.setManaged(visible);
+	}
+
+	private void updateAnswerRegionControlsVisibility(Question question) {
+		boolean visible = isWrittenResponseQuestion(question);
+		addAnswerRegionButton.setVisible(visible);
+		addAnswerRegionButton.setManaged(visible);
+		clearAnswerSelectionButton.setVisible(visible);
+		clearAnswerSelectionButton.setManaged(visible);
+		answerRegionCountLabel.setVisible(visible);
+		answerRegionCountLabel.setManaged(visible);
+		answerRegionStatusLabel.setVisible(visible);
+		answerRegionStatusLabel.setManaged(visible);
+		boolean showRegions = visible && !pendingAnswerRegions.isEmpty();
+		answerRegionsScrollPane.setVisible(showRegions);
+		answerRegionsScrollPane.setManaged(showRegions);
+		if (!visible) {
+			setSelectionActionsEnabled(false);
+		}
 	}
 
 	private void updateMultipleChoiceAnswerVisibility(Question question) {

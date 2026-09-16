@@ -416,6 +416,34 @@ public final class SqliteQuestionWriter {
 		insertRegions(connection, questionId, regions);
 	}
 
+	void updateResponseType(Connection connection, long questionId, ExamBooklet booklet,
+			QuestionResponseType responseType) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (responseType == null) {
+			throw new NullPointerException("responseType");
+		}
+		verifyQuestionBooklet(connection, questionId, booklet);
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET response_type = ?
+				WHERE id = ?
+				""")) {
+			statement.setString(1, responseType.name());
+			statement.setLong(2, questionId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Question response-type update affected an unexpected number of rows");
+			}
+		}
+	}
+
 	private void attachRegionsInternal(Connection connection, long questionId, List<QuestionRegion> regions,
 			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
 			boolean updateRelationships) throws SQLException {

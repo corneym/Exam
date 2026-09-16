@@ -11,6 +11,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
@@ -133,32 +134,38 @@ public final class SqliteQuestionCaptureService {
 			SharedQuestionContext sharedContext) throws SQLException {
 		if (request.operation() == Operation.NEW) {
 			return questionWriter.insertQuestion(connection, request.booklet(), request.questionCode(), "",
-					request.marks(), request.regions(), request.classification(), false, sourceQuestion, sharedContext);
+					request.marks(), request.regions(), request.classification(), false, sourceQuestion, sharedContext,
+					request.responseType());
 		}
 		Question existing = request.existingQuestion();
 		if (request.operation() == Operation.IMPORTED) {
 			if (existing.getRegions().isEmpty()) {
 				questionWriter.attachRegions(connection, existing.getId(), request.regions(), request.classification(),
 						sourceQuestion, sharedContext);
-				return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), request.regions(),
+			} else {
+				questionWriter.updateCaptureRelationships(connection, existing.getId(), existing.getBooklet(),
 						request.classification(), sourceQuestion, sharedContext);
 			}
-			questionWriter.updateCaptureRelationships(connection, existing.getId(), existing.getBooklet(),
-					request.classification(), sourceQuestion, sharedContext);
-			return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), existing.getRegions(),
-					request.classification(), sourceQuestion, sharedContext);
+			questionWriter.updateResponseType(connection, existing.getId(), existing.getBooklet(),
+					request.responseType());
+			List<QuestionRegion> resultingRegions = existing.getRegions().isEmpty() ? request.regions()
+					: existing.getRegions();
+			return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), resultingRegions,
+					request.classification(), sourceQuestion, sharedContext, request.responseType());
 		}
 		questionWriter.updateQuestion(connection, existing.getId(), existing.getBooklet(), request.questionCode(),
 				request.marks(), request.regions(), request.classification(), sourceQuestion, sharedContext);
+		questionWriter.updateResponseType(connection, existing.getId(), existing.getBooklet(), request.responseType());
 		return rebuildQuestion(existing, request.questionCode(), request.marks(), request.regions(),
-				request.classification(), sourceQuestion, sharedContext);
+				request.classification(), sourceQuestion, sharedContext, request.responseType());
 	}
 
 	private Question rebuildQuestion(Question existing, String questionCode, int marks, List<QuestionRegion> regions,
-			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
+			QuestionResponseType responseType) {
 		Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
 				existing.getQuestionText(), marks, regions, classification, existing.isPreambleCaptureRequired(),
-				sourceQuestion, sharedContext);
+				sourceQuestion, sharedContext, responseType);
 		if (existing.hasAnswer()) {
 			updated.setAnswer(existing.getAnswer());
 		}
@@ -234,8 +241,23 @@ public final class SqliteQuestionCaptureService {
 	}
 
 	public record Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
-			int marks, List<QuestionRegion> regions, CurriculumNode classification,
+			int marks, List<QuestionRegion> regions, CurriculumNode classification, QuestionResponseType responseType,
 			SharedQuestionContext selectedSharedContext, PendingSharedContext pendingSharedContext) {
+
+		/**
+		 * Compatibility constructor used by existing capture callers while
+		 * response-type-aware UI is introduced.
+		 * <p>
+		 * Existing Questions retain their stored response type. A new Question created
+		 * through this compatibility form remains UNKNOWN.
+		 */
+		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
+				int marks, List<QuestionRegion> regions, CurriculumNode classification,
+				SharedQuestionContext selectedSharedContext, PendingSharedContext pendingSharedContext) {
+			this(operation, booklet, existingQuestion, questionCode, marks, regions, classification,
+					existingQuestion == null ? QuestionResponseType.UNKNOWN : existingQuestion.getResponseType(),
+					selectedSharedContext, pendingSharedContext);
+		}
 
 		public Request {
 			if (operation == null) {
@@ -255,6 +277,9 @@ public final class SqliteQuestionCaptureService {
 			}
 			if (classification == null) {
 				throw new NullPointerException("classification");
+			}
+			if (responseType == null) {
+				throw new NullPointerException("responseType");
 			}
 			regions = List.copyOf(regions);
 			if (operation == Operation.NEW && existingQuestion != null) {

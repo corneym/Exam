@@ -18,6 +18,7 @@ import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
@@ -168,6 +169,33 @@ class LegacyQuestionMetadataServiceTest {
 		assertTrue(updated.getRegions().isEmpty());
 		assertTrue(updated.hasSourceQuestion());
 		assertEquals("Q1", updated.getSourceQuestion().getSourceQuestionCode());
+	}
+
+	@Test
+	void correctsQuestionResponseTypeWithoutChangingCaptureData() throws Exception {
+		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
+		Question question = writer.insertQuestion(booklet, "Q30", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.30)), historicalSubtopicOne, false, null,
+				null, QuestionResponseType.UNKNOWN);
+		Question updated = service.updateMetadata(question, "Q30", 2, historicalSubtopicOne, false,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.getResponseType());
+		assertEquals(1, updated.getRegions().size());
+		QuestionRegion originalRegion = question.getRegions().getFirst();
+		QuestionRegion updatedRegion = updated.getRegions().getFirst();
+		assertEquals(originalRegion.booklet().getId(), updatedRegion.booklet().getId());
+		assertEquals(originalRegion.pageNumber(), updatedRegion.pageNumber());
+		assertEquals(originalRegion.x(), updatedRegion.x(), 0.000001);
+		assertEquals(originalRegion.y(), updatedRegion.y(), 0.000001);
+		assertEquals(originalRegion.width(), updatedRegion.width(), 0.000001);
+		assertEquals(originalRegion.height(), updatedRegion.height(), 0.000001);
+		/*
+		 * The old API must preserve the response type rather than resetting it.
+		 */
+		Question correctedAgain = service.updateMetadata(updated, "Q30", 3, historicalSubtopicOne, false);
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, correctedAgain.getResponseType());
+		assertEquals(3, correctedAgain.getMarks());
+		assertEquals(1, correctedAgain.getRegions().size());
 	}
 
 	@Test

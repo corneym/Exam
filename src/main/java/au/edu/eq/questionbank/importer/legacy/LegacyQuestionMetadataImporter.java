@@ -14,6 +14,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
@@ -310,7 +311,8 @@ public final class LegacyQuestionMetadataImporter {
 				    classification_node_id,
 				    marks,
 				    preamble_capture_required,
-				    source_question_id
+				    source_question_id,
+				    response_type
 				FROM questions
 				WHERE booklet_id = ?
 				  AND question_code = ?
@@ -326,7 +328,8 @@ public final class LegacyQuestionMetadataImporter {
 					sourceQuestionId = Long.valueOf(result.getLong("source_question_id"));
 				}
 				return new ExistingQuestion(result.getLong("id"), result.getLong("classification_node_id"),
-						result.getInt("marks"), result.getInt("preamble_capture_required") != 0, sourceQuestionId);
+						result.getInt("marks"), result.getInt("preamble_capture_required") != 0, sourceQuestionId,
+						QuestionResponseType.valueOf(result.getString("response_type")));
 			}
 		}
 	}
@@ -423,8 +426,9 @@ public final class LegacyQuestionMetadataImporter {
 				     question_text,
 				     marks,
 				     preamble_capture_required,
-				     source_question_id)
-				VALUES (?, ?, ?, '', ?, ?, ?)
+				     source_question_id,
+				     response_type)
+				VALUES (?, ?, ?, '', ?, ?, ?, ?)
 				RETURNING id
 				""")) {
 			statement.setLong(1, question.bookletId());
@@ -437,6 +441,7 @@ public final class LegacyQuestionMetadataImporter {
 			} else {
 				statement.setLong(6, question.sourceQuestionId().longValue());
 			}
+			statement.setString(7, question.responseType().name());
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Question insert did not return an id");
@@ -461,12 +466,23 @@ public final class LegacyQuestionMetadataImporter {
 							"Duplicate workbook question: " + description(sheet.providerName(), row));
 				}
 				Long sourceQuestionId = findOrCreateSourceQuestionId(connection, bookletId, row.questionCode());
+				QuestionResponseType importedResponseType = responseType(row.paperCode());
 				ExistingQuestion existing = findExistingQuestion(connection, bookletId, row.questionCode());
 				Long existingQuestionId = null;
 				boolean insertAnswer = row.answer() != null;
+				boolean updateExistingResponseType = false;
 				if (existing != null) {
 					verifyExistingQuestion(existing, classificationNodeId, sourceQuestionId, sheet.providerName(), row);
 					existingQuestionId = existing.id();
+					/*
+					 * UNKNOWN means no authoritative decision has yet been made. Explicit MCQ
+					 * workbook evidence may therefore resolve it.
+					 *
+					 * A non-UNKNOWN value is deliberately preserved because it may have been
+					 * corrected after the legacy import.
+					 */
+					updateExistingResponseType = existing.responseType() == QuestionResponseType.UNKNOWN
+							&& importedResponseType != QuestionResponseType.UNKNOWN;
 					if (row.answer() != null) {
 						ExistingAnswer existingAnswer = findExistingAnswer(connection, existing.id());
 						if (existingAnswer.exists()) {
@@ -479,11 +495,37 @@ public final class LegacyQuestionMetadataImporter {
 					}
 				}
 				resolved.add(new ResolvedQuestion(bookletId, classificationNodeId, sheet.providerName(), row.year(),
-						row.paperCode(), row.questionCode(), row.marks(), row.answer(), row.preambleCaptureRequired(),
-						sourceQuestionId, existingQuestionId, insertAnswer));
+						row.paperCode(), importedResponseType, row.questionCode(), row.marks(), row.answer(),
+						row.preambleCaptureRequired(), sourceQuestionId, existingQuestionId, insertAnswer,
+						updateExistingResponseType));
 			}
 		}
 		return resolved;
+	}
+
+	private QuestionResponseType responseType(String paperCode) {
+		return switch (paperCode) {
+		case "MCQ" -> QuestionResponseType.MULTIPLE_CHOICE;
+		case "1", "2" -> QuestionResponseType.UNKNOWN;
+		default -> throw new IllegalArgumentException("Unsupported paper code: " + paperCode);
+		};
+	}
+
+	private void updateExistingResponseType(Connection connection, long questionId, QuestionResponseType responseType)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET response_type = ?
+				WHERE id = ?
+				  AND response_type = 'UNKNOWN'
+				""")) {
+			statement.setString(1, responseType.name());
+			statement.setLong(2, questionId);
+			int updated = statement.executeUpdate();
+			if (updated > 1) {
+				throw new SQLException("Response-type update affected an unexpected number of rows");
+			}
+		}
 	}
 
 	private void updateExistingSourceQuestionLink(Connection connection, long questionId, long sourceQuestionId)
@@ -534,6 +576,9 @@ public final class LegacyQuestionMetadataImporter {
 				if (question.sourceQuestionId() != null) {
 					updateExistingSourceQuestionLink(connection, questionId, question.sourceQuestionId().longValue());
 				}
+				if (question.updateExistingResponseType()) {
+					updateExistingResponseType(connection, questionId, question.responseType());
+				}
 				existingQuestions++;
 			}
 			if (question.insertAnswer()) {
@@ -548,7 +593,7 @@ public final class LegacyQuestionMetadataImporter {
 	}
 
 	private record ExistingQuestion(long id, long classificationNodeId, int marks, boolean preambleCaptureRequired,
-			Long sourceQuestionId) {
+			Long sourceQuestionId, QuestionResponseType responseType) {
 	}
 
 	private record ImportContext(long subjectId, long syllabusVersionId) {
@@ -558,7 +603,8 @@ public final class LegacyQuestionMetadataImporter {
 	}
 
 	private record ResolvedQuestion(long bookletId, long classificationNodeId, String providerName, int year,
-			String paperCode, String questionCode, int marks, String answer, boolean preambleCaptureRequired,
-			Long sourceQuestionId, Long existingQuestionId, boolean insertAnswer) {
+			String paperCode, QuestionResponseType responseType, String questionCode, int marks, String answer,
+			boolean preambleCaptureRequired, Long sourceQuestionId, Long existingQuestionId, boolean insertAnswer,
+			boolean updateExistingResponseType) {
 	}
 }

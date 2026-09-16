@@ -6,6 +6,7 @@ import java.util.List;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import javafx.beans.binding.Bindings;
@@ -16,6 +17,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
@@ -33,6 +35,7 @@ public final class LegacyQuestionMetadataDialog
 	private final TextField questionCodeField = new TextField();
 	private final TextField marksField = new TextField();
 	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
+	private final ComboBox<QuestionResponseType> responseTypeBox = new ComboBox<>();
 	private final CheckBox preambleRequiredCheckBox = new CheckBox("Legacy preamble/shared-context capture required");
 	private final ButtonType saveButtonType = new ButtonType("Save Metadata", ButtonBar.ButtonData.OK_DONE);
 
@@ -69,7 +72,7 @@ public final class LegacyQuestionMetadataDialog
 				return null;
 			}
 			return new Result(questionCodeField.getText().trim(), Integer.parseInt(marksField.getText().trim()),
-					classificationBox.getValue(), preambleRequiredCheckBox.isSelected());
+					classificationBox.getValue(), preambleRequiredCheckBox.isSelected(), responseTypeBox.getValue());
 		});
 		getDialogPane().setPrefWidth(650);
 	}
@@ -87,6 +90,7 @@ public final class LegacyQuestionMetadataDialog
 		questionCodeField.setId("legacy-metadata-question-code");
 		marksField.setId("legacy-metadata-marks");
 		classificationBox.setId("legacy-metadata-classification");
+		responseTypeBox.setId("legacy-metadata-response-type");
 		preambleRequiredCheckBox.setId("legacy-metadata-preamble-required");
 		questionCodeField.setText(question.getQuestionCode());
 		marksField.setText(Integer.toString(question.getMarks()));
@@ -94,14 +98,20 @@ public final class LegacyQuestionMetadataDialog
 				.setAll(findClassificationChoices(question.getClassification().getSyllabusVersion()));
 		classificationBox.setValue(question.getClassification());
 		classificationBox.setMaxWidth(Double.MAX_VALUE);
+		responseTypeBox.getItems().setAll(QuestionResponseType.values());
+		responseTypeBox.setValue(question.getResponseType());
+		responseTypeBox.setMaxWidth(Double.MAX_VALUE);
+		responseTypeBox.setCellFactory(_ -> createResponseTypeCell());
+		responseTypeBox.setButtonCell(createResponseTypeCell());
 		preambleRequiredCheckBox.setSelected(question.isPreambleCaptureRequired());
 	}
 
 	private void configureSaveButton() {
 		Button saveButton = (Button) getDialogPane().lookupButton(saveButtonType);
 		saveButton.setId("legacy-metadata-save");
-		saveButton.disableProperty().bind(Bindings.createBooleanBinding(() -> !metadataIsValid(),
-				questionCodeField.textProperty(), marksField.textProperty(), classificationBox.valueProperty()));
+		saveButton.disableProperty()
+				.bind(Bindings.createBooleanBinding(() -> !metadataIsValid(), questionCodeField.textProperty(),
+						marksField.textProperty(), classificationBox.valueProperty(), responseTypeBox.valueProperty()));
 	}
 
 	private GridPane createContent() {
@@ -136,12 +146,30 @@ public final class LegacyQuestionMetadataDialog
 		grid.add(marksField, 1, 4);
 		grid.add(new Label("Classification"), 0, 5);
 		grid.add(classificationBox, 1, 5);
-		grid.add(preambleRequiredCheckBox, 1, 6);
-		grid.add(hintExplanation, 1, 7);
+		grid.add(new Label("Response type"), 0, 6);
+		grid.add(responseTypeBox, 1, 6);
+		grid.add(preambleRequiredCheckBox, 1, 7);
+		grid.add(hintExplanation, 1, 8);
 		GridPane.setHgrow(questionCodeField, Priority.ALWAYS);
 		GridPane.setHgrow(marksField, Priority.ALWAYS);
 		GridPane.setHgrow(classificationBox, Priority.ALWAYS);
+		GridPane.setHgrow(responseTypeBox, Priority.ALWAYS);
 		return grid;
+	}
+
+	private ListCell<QuestionResponseType> createResponseTypeCell() {
+		return new ListCell<>() {
+
+			@Override
+			protected void updateItem(QuestionResponseType responseType, boolean empty) {
+				super.updateItem(responseType, empty);
+				if (empty || responseType == null) {
+					setText(null);
+					return;
+				}
+				setText(responseTypeLabel(responseType));
+			}
+		};
 	}
 
 	private List<CurriculumNode> findClassificationChoices(SyllabusVersion syllabusVersion) {
@@ -159,11 +187,22 @@ public final class LegacyQuestionMetadataDialog
 		if (classificationBox.getValue() == null) {
 			return false;
 		}
+		if (responseTypeBox.getValue() == null) {
+			return false;
+		}
 		try {
 			return Integer.parseInt(marksField.getText().trim()) > 0;
 		} catch (NumberFormatException exception) {
 			return false;
 		}
+	}
+
+	private String responseTypeLabel(QuestionResponseType responseType) {
+		return switch (responseType) {
+		case MULTIPLE_CHOICE -> "Multiple choice";
+		case WRITTEN_RESPONSE -> "Written response";
+		case UNKNOWN -> "Unknown";
+		};
 	}
 
 	/**
@@ -173,9 +212,10 @@ public final class LegacyQuestionMetadataDialog
 	 * @param marks                   corrected positive mark value
 	 * @param classification          corrected classification
 	 * @param preambleCaptureRequired corrected historical preamble hint
+	 * @param responseType            corrected Question response type
 	 */
-	public record Result(String questionCode, int marks, CurriculumNode classification,
-			boolean preambleCaptureRequired) {
+	public record Result(String questionCode, int marks, CurriculumNode classification, boolean preambleCaptureRequired,
+			QuestionResponseType responseType) {
 
 		public Result {
 			if (questionCode == null || questionCode.isBlank()) {
@@ -186,6 +226,9 @@ public final class LegacyQuestionMetadataDialog
 			}
 			if (classification == null) {
 				throw new NullPointerException("classification");
+			}
+			if (responseType == null) {
+				throw new NullPointerException("responseType");
 			}
 		}
 	}

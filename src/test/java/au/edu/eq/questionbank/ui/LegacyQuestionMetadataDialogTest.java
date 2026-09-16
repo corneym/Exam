@@ -19,6 +19,7 @@ import org.testfx.framework.junit5.Start;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -86,10 +87,13 @@ class LegacyQuestionMetadataDialogTest {
 		TextField marks = robot.lookup("#legacy-metadata-marks").queryAs(TextField.class);
 		ComboBox<CurriculumNode> classification = robot.lookup("#legacy-metadata-classification")
 				.queryAs(ComboBox.class);
+		ComboBox<QuestionResponseType> responseType = robot.lookup("#legacy-metadata-response-type")
+				.queryAs(ComboBox.class);
 		CheckBox preamble = robot.lookup("#legacy-metadata-preamble-required").queryAs(CheckBox.class);
 		Button save = robot.lookup("#legacy-metadata-save").queryAs(Button.class);
 		robot.interact(() -> {
 			questionCode.setText("Q12b");
+			responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE);
 			marks.setText("4");
 			classification.setValue(secondSubtopic);
 			preamble.setSelected(false);
@@ -102,6 +106,7 @@ class LegacyQuestionMetadataDialogTest {
 		assertEquals(4, result.marks());
 		assertEquals(secondSubtopic, result.classification());
 		assertFalse(result.preambleCaptureRequired());
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, result.responseType());
 	}
 
 	@Test
@@ -118,6 +123,8 @@ class LegacyQuestionMetadataDialogTest {
 		TextField marks = robot.lookup("#legacy-metadata-marks").queryAs(TextField.class);
 		ComboBox<CurriculumNode> classification = robot.lookup("#legacy-metadata-classification")
 				.queryAs(ComboBox.class);
+		ComboBox<QuestionResponseType> responseType = robot.lookup("#legacy-metadata-response-type")
+				.queryAs(ComboBox.class);
 		CheckBox preamble = robot.lookup("#legacy-metadata-preamble-required").queryAs(CheckBox.class);
 		assertEquals("Q12a", questionCode.getText());
 		assertEquals("2", marks.getText());
@@ -126,6 +133,11 @@ class LegacyQuestionMetadataDialogTest {
 		assertTrue(classification.getItems().contains(firstSubtopic));
 		assertTrue(classification.getItems().contains(secondSubtopic));
 		assertTrue(preamble.isSelected());
+		assertEquals(QuestionResponseType.UNKNOWN, responseType.getValue());
+		assertEquals(3, responseType.getItems().size());
+		assertTrue(responseType.getItems().contains(QuestionResponseType.MULTIPLE_CHOICE));
+		assertTrue(responseType.getItems().contains(QuestionResponseType.WRITTEN_RESPONSE));
+		assertTrue(responseType.getItems().contains(QuestionResponseType.UNKNOWN));
 		robot.interact(dialogRef.get()::close);
 	}
 

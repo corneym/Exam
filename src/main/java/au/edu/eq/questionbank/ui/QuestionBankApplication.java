@@ -724,7 +724,7 @@ public class QuestionBankApplication extends Application {
 		try {
 			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
 					replacement.questionCode(), replacement.marks(), replacement.classification(),
-					replacement.preambleCaptureRequired());
+					replacement.preambleCaptureRequired(), replacement.responseType());
 			Question updated = updateResult.question();
 			questionCapturePane.refreshImportedQuestions();
 			answerCapturePane.refreshQuestions();
@@ -976,7 +976,7 @@ public class QuestionBankApplication extends Application {
 			return false;
 		}
 		if (documentMode == PdfWorkspacePane.DocumentMode.ANSWER) {
-			return answerCapturePane.hasAnswerFile() && !answerCapturePane.isSaveInProgress();
+			return answerCapturePane.canCaptureRegions();
 		}
 		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
 	}
