@@ -12,6 +12,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -157,22 +158,8 @@ public final class SqliteQuestionWriter {
 	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				Question question = insertQuestion(connection, booklet, questionCode, questionText, marks, regions,
-						classification, preambleCaptureRequired, sourceQuestion, sharedContext);
-				connection.commit();
-				return question;
-			} catch (SQLException | RuntimeException e) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					e.addSuppressed(rollbackFailure);
-				}
-				throw e;
-			}
-		}
+		return insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
+				preambleCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
 	}
 
 	/**
@@ -271,6 +258,38 @@ public final class SqliteQuestionWriter {
 	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
 			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		return insertQuestion(connection, booklet, questionCode, questionText, marks, regions, classification,
+				preambleCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
+	}
+
+	/**
+	 * Stores a classified question with its authoritative response type and all
+	 * source regions atomically.
+	 *
+	 * @param booklet                 booklet containing the question
+	 * @param questionCode            question identifier
+	 * @param questionText            supplementary text
+	 * @param marks                   positive mark value
+	 * @param regions                 ordered source regions
+	 * @param classification          original curriculum classification
+	 * @param preambleCaptureRequired historical preamble-capture evidence
+	 * @param sourceQuestion          source-question identity, or null
+	 * @param sharedContext           shared context, or null
+	 * @param responseType            authoritative response type
+	 * @return stored question
+	 * @throws SQLException if persistence fails
+	 */
+	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
+			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		return insertQuestion(connection, booklet, questionCode, questionText, marks, regions, classification,
+				preambleCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
+	}
+
+	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
+			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType)
+			throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");
 		}
@@ -289,6 +308,9 @@ public final class SqliteQuestionWriter {
 		if (classification == null) {
 			throw new NullPointerException("classification");
 		}
+		if (responseType == null) {
+			throw new NullPointerException("responseType");
+		}
 		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Source question must belong to the question's booklet");
 		}
@@ -298,10 +320,50 @@ public final class SqliteQuestionWriter {
 		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
 		verifySharedContextRelationship(connection, booklet, sharedContext);
 		long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext);
+				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
 		insertRegions(connection, questionId, regions);
 		return new Question(questionId, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext);
+				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+	}
+
+	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
+			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType)
+			throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (questionCode == null || questionCode.isBlank()) {
+			throw new IllegalArgumentException("questionCode must not be blank");
+		}
+		if (questionText == null) {
+			throw new NullPointerException("questionText");
+		}
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+		if (responseType == null) {
+			throw new NullPointerException("responseType");
+		}
+		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Source question must belong to the question's booklet");
+		}
+		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
+		}
+		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+		verifySharedContextRelationship(connection, booklet, sharedContext);
+		long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks, classification,
+				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+		insertRegions(connection, questionId, regions);
+		return new Question(questionId, booklet, questionCode, questionText, marks, regions, classification,
+				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
 	}
 
 	void updateCaptureRelationships(Connection connection, long questionId, ExamBooklet booklet,
@@ -462,7 +524,7 @@ public final class SqliteQuestionWriter {
 
 	private long insertQuestionRow(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
 			int marks, CurriculumNode classification, boolean preambleCaptureRequired, SourceQuestion sourceQuestion,
-			SharedQuestionContext sharedContext) throws SQLException {
+			SharedQuestionContext sharedContext, QuestionResponseType responseType) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO questions
 				    (booklet_id,
@@ -472,8 +534,9 @@ public final class SqliteQuestionWriter {
 				     marks,
 				     preamble_capture_required,
 				     source_question_id,
-				     shared_context_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				     shared_context_id,
+				     response_type)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 				RETURNING id
 				""")) {
 			statement.setLong(1, booklet.getId());
@@ -492,6 +555,7 @@ public final class SqliteQuestionWriter {
 			} else {
 				statement.setLong(8, sharedContext.getId());
 			}
+			statement.setString(9, responseType.name());
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Question insert did not return an id");

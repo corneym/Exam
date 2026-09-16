@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 7;
+	private static final int LATEST_SCHEMA_VERSION = 8;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -471,6 +471,10 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v6-to-v7.sql", 7);
 			return 7;
 		}
+		if (version == 7) {
+			executeMigration(connection, "/db/migration-v7-to-v8.sql", 8);
+			return 8;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -656,6 +660,9 @@ public final class SqliteDatabase {
 		if (version >= 7) {
 			verifyVersionSevenCurriculumAuthoringSchema(connection);
 		}
+		if (version >= 8) {
+			verifyVersionEightQuestionResponseTypeSchema(connection);
+		}
 	}
 
 	private void verifyTableSchema(Connection connection, String tableName, List<ColumnRequirement> columnRequirements,
@@ -712,6 +719,25 @@ public final class SqliteDatabase {
 				throw new SQLException(
 						tableName + " is missing exact unique key (" + String.join(", ", uniqueKey) + ")");
 			}
+		}
+	}
+
+	private void verifyVersionEightQuestionResponseTypeSchema(Connection connection) throws SQLException {
+		boolean hasResponseType = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				if (!"response_type".equals(result.getString("name"))) {
+					continue;
+				}
+				hasResponseType = true;
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("questions column must be NOT NULL: response_type");
+				}
+			}
+		}
+		if (!hasResponseType) {
+			throw new SQLException("questions is missing required column response_type");
 		}
 	}
 

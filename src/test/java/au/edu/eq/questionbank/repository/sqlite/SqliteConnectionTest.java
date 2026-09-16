@@ -19,7 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SqliteConnectionTest {
 
-	private static final int LATEST_SCHEMA_VERSION = 7;
+	private static final int LATEST_SCHEMA_VERSION = 8;
 	@TempDir
 	Path tempDir;
 
@@ -228,7 +228,133 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void migratesVersionSixCurriculumDataToVersionSevenWithoutLosingIdentity() throws Exception {
+	void migratesVersionSevenQuestionResponseTypesConservatively() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-seven-response-type.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("""
+						INSERT INTO subjects
+						    (id, subject_name)
+						VALUES
+						    (1, 'Chemistry')
+						""");
+				statement.execute("""
+						INSERT INTO syllabus_versions
+						    (id,
+						     subject_id,
+						     syllabus_name,
+						     is_current)
+						VALUES
+						    (1, 1, '2019', 0)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_nodes
+						    (id,
+						     syllabus_version_id,
+						     parent_id,
+						     curriculum_code,
+						     curriculum_name,
+						     curriculum_level,
+						     display_order)
+						VALUES
+						    (1, 1, NULL,
+						     '1', 'Unit 1',
+						     'UNIT', 0),
+						    (2, 1, 1,
+						     '1.1', 'Topic 1',
+						     'TOPIC', 0),
+						    (3, 1, 2,
+						     '1.1.1', 'Subtopic 1',
+						     'SUBTOPIC', 0)
+						""");
+				statement.execute("""
+						INSERT INTO exam_providers
+						    (id, provider_name)
+						VALUES
+						    (1, 'QCAA')
+						""");
+				statement.execute("""
+						INSERT INTO source_documents
+						    (id, relative_path)
+						VALUES
+						    (1, 'mcq.pdf'),
+						    (2, 'paper1.pdf'),
+						    (3, 'mixed.pdf')
+						""");
+				statement.execute("""
+						INSERT INTO exams
+						    (id,
+						     subject_id,
+						     provider_id,
+						     exam_year,
+						     exam_name)
+						VALUES
+						    (1, 1, 1, 2019,
+						     'External Assessment')
+						""");
+				statement.execute("""
+						INSERT INTO exam_booklets
+						    (id,
+						     exam_id,
+						     source_document_id,
+						     booklet_name)
+						VALUES
+						    (1, 1, 1, 'MCQ booklet'),
+						    (2, 1, 2, 'Paper 1'),
+						    (3, 1, 3, 'Mixed booklet')
+						""");
+				statement.execute("""
+						INSERT INTO questions
+						    (id,
+						     booklet_id,
+						     classification_node_id,
+						     question_code,
+						     question_text,
+						     marks,
+						     preamble_capture_required)
+						VALUES
+						    (1, 1, 3, '1', '', 1, 0),
+						    (2, 2, 3, '2', '', 2, 0),
+						    (3, 3, 3, '3', '', 2, 0)
+						""");
+			}
+			connection.commit();
+		}
+		assertEquals(7, database.schemaVersion());
+		database.initialiseSchema();
+		assertEquals(8, database.schemaVersion());
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT
+						    question_code,
+						    response_type
+						FROM questions
+						ORDER BY id
+						""")) {
+			assertTrue(result.next());
+			assertEquals("1", result.getString("question_code"));
+			assertEquals("MULTIPLE_CHOICE", result.getString("response_type"));
+			assertTrue(result.next());
+			assertEquals("2", result.getString("question_code"));
+			assertEquals("UNKNOWN", result.getString("response_type"));
+			assertTrue(result.next());
+			assertEquals("3", result.getString("question_code"));
+			assertEquals("UNKNOWN", result.getString("response_type"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
+	void migratesVersionSixCurriculumDataToLatestWithoutLosingIdentity() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-curriculum-migration.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
@@ -274,7 +400,7 @@ class SqliteConnectionTest {
 		}
 		assertEquals(6, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(7, database.schemaVersion());
+		assertEquals(LATEST_SCHEMA_VERSION, database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("""
 					SELECT
@@ -599,6 +725,96 @@ class SqliteConnectionTest {
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO exam_booklets (id, exam_id, source_document_id, booklet_name)
 					VALUES (1, 1, 999, 'Unknown document')
+					"""));
+		}
+	}
+
+	@Test
+	void rejectsInvalidQuestionResponseType() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("response-type-constraint.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO subjects
+					    (id, subject_name)
+					VALUES
+					    (1, 'Chemistry')
+					""");
+			statement.execute("""
+					INSERT INTO syllabus_versions
+					    (id,
+					     subject_id,
+					     syllabus_name,
+					     is_current)
+					VALUES
+					    (1, 1, '2025', 1)
+					""");
+			statement.execute("""
+					INSERT INTO curriculum_nodes
+					    (id,
+					     syllabus_version_id,
+					     parent_id,
+					     curriculum_code,
+					     curriculum_name,
+					     curriculum_level,
+					     display_order)
+					VALUES
+					    (1, 1, NULL,
+					     '1', 'Unit 1',
+					     'UNIT', 0),
+					    (2, 1, 1,
+					     '1.1', 'Topic 1',
+					     'TOPIC', 0),
+					    (3, 1, 2,
+					     '1.1.1', 'Subtopic 1',
+					     'SUBTOPIC', 0)
+					""");
+			statement.execute("""
+					INSERT INTO exam_providers
+					    (id, provider_name)
+					VALUES
+					    (1, 'QCAA')
+					""");
+			statement.execute("""
+					INSERT INTO source_documents
+					    (id, relative_path)
+					VALUES
+					    (1, 'questions.pdf')
+					""");
+			statement.execute("""
+					INSERT INTO exams
+					    (id,
+					     subject_id,
+					     provider_id,
+					     exam_year,
+					     exam_name)
+					VALUES
+					    (1, 1, 1, 2025,
+					     'External Assessment')
+					""");
+			statement.execute("""
+					INSERT INTO exam_booklets
+					    (id,
+					     exam_id,
+					     source_document_id,
+					     booklet_name)
+					VALUES
+					    (1, 1, 1, 'Mixed booklet')
+					""");
+			assertThrows(SQLException.class, () -> statement.execute("""
+					INSERT INTO questions
+					    (id,
+					     booklet_id,
+					     classification_node_id,
+					     question_code,
+					     question_text,
+					     marks,
+					     preamble_capture_required,
+					     response_type)
+					VALUES
+					    (1, 1, 3,
+					     'Q1', '', 1, 0,
+					     'ESSAY')
 					"""));
 		}
 	}

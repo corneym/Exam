@@ -29,6 +29,7 @@ public class Question {
 	private final SourceQuestion sourceQuestion;
 	private final SharedQuestionContext sharedContext;
 	private Answer answer;
+	private final QuestionResponseType responseType;
 
 	/**
 	 * Creates a question through the normal capture workflow.
@@ -76,6 +77,10 @@ public class Question {
 	/**
 	 * Creates a question with its optional source-question and shared-context
 	 * relationships.
+	 * <p>
+	 * This compatibility constructor represents response type as
+	 * {@link QuestionResponseType#UNKNOWN}. Callers that know the authoritative
+	 * response type should use the overload accepting {@link QuestionResponseType}.
 	 *
 	 * @param id                      the persistent question identifier
 	 * @param booklet                 the booklet containing the question
@@ -91,6 +96,29 @@ public class Question {
 	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		this(id, booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired,
+				sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
+	}
+
+	/**
+	 * Creates a question with its persisted response type and optional capture
+	 * relationships.
+	 *
+	 * @param id                      the persistent question identifier
+	 * @param booklet                 the booklet containing the question
+	 * @param questionCode            the question or part-question identifier
+	 * @param questionText            supplementary searchable or transcribed text
+	 * @param marks                   the positive mark value
+	 * @param regions                 zero or more source regions in assembly order
+	 * @param classification          the syllabus subtopic or descriptor
+	 * @param preambleCaptureRequired historical legacy preamble-capture evidence
+	 * @param sourceQuestion          common source-question identity, or null
+	 * @param sharedContext           reusable shared question context, or null
+	 * @param responseType            authoritative Question response type
+	 */
+	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -111,6 +139,9 @@ public class Question {
 		}
 		if (classification == null) {
 			throw new NullPointerException("classification");
+		}
+		if (responseType == null) {
+			throw new NullPointerException("responseType");
 		}
 		CurriculumLevel classificationLevel = classification.getLevel();
 		if (classificationLevel != CurriculumLevel.SUBTOPIC && classificationLevel != CurriculumLevel.DESCRIPTOR) {
@@ -143,6 +174,7 @@ public class Question {
 		this.preambleCaptureRequired = preambleCaptureRequired;
 		this.sourceQuestion = sourceQuestion;
 		this.sharedContext = sharedContext;
+		this.responseType = responseType;
 	}
 
 	private static ExamBooklet bookletFromRegions(Exam exam, List<QuestionRegion> regions) {
@@ -231,10 +263,21 @@ public class Question {
 	}
 
 	/**
-	 * @return an immutable list in assembly order; empty for metadata-only questions
+	 * @return an immutable list in assembly order; empty for metadata-only
+	 *         questions
 	 */
 	public List<QuestionRegion> getRegions() {
 		return regions;
+	}
+
+	/**
+	 * Returns the persisted response type that determines the required Answer
+	 * representation.
+	 *
+	 * @return the Question response type
+	 */
+	public QuestionResponseType getResponseType() {
+		return responseType;
 	}
 
 	/**
@@ -293,7 +336,8 @@ public class Question {
 	}
 
 	/**
-	 * Associates or replaces this question's in-memory answer without persisting it.
+	 * Associates or replaces this question's in-memory answer without persisting
+	 * it.
 	 *
 	 * @param answer the answer to associate with the question
 	 * @throws NullPointerException     if {@code answer} is {@code null}
