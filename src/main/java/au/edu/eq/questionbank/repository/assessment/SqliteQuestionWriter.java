@@ -163,6 +163,45 @@ public final class SqliteQuestionWriter {
 	}
 
 	/**
+	 * Stores a classified question with its authoritative response type and all
+	 * source regions atomically.
+	 *
+	 * @param booklet                 booklet containing the question
+	 * @param questionCode            question identifier
+	 * @param questionText            supplementary text
+	 * @param marks                   positive mark value
+	 * @param regions                 ordered source regions
+	 * @param classification          original curriculum classification
+	 * @param preambleCaptureRequired historical preamble-capture evidence
+	 * @param sourceQuestion          source-question identity, or null
+	 * @param sharedContext           shared context, or null
+	 * @param responseType            authoritative response type
+	 * @return stored question
+	 * @throws SQLException if persistence fails
+	 */
+	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType)
+			throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				Question question = insertQuestion(connection, booklet, questionCode, questionText, marks, regions,
+						classification, preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+				connection.commit();
+				return question;
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
+	/**
 	 * Atomically replaces capture links and classification, preserving stored
 	 * regions. The question must belong to the booklet and retain its existing
 	 * syllabus.
@@ -260,70 +299,6 @@ public final class SqliteQuestionWriter {
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
 		return insertQuestion(connection, booklet, questionCode, questionText, marks, regions, classification,
 				preambleCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
-	}
-
-	/**
-	 * Stores a classified question with its authoritative response type and all
-	 * source regions atomically.
-	 *
-	 * @param booklet                 booklet containing the question
-	 * @param questionCode            question identifier
-	 * @param questionText            supplementary text
-	 * @param marks                   positive mark value
-	 * @param regions                 ordered source regions
-	 * @param classification          original curriculum classification
-	 * @param preambleCaptureRequired historical preamble-capture evidence
-	 * @param sourceQuestion          source-question identity, or null
-	 * @param sharedContext           shared context, or null
-	 * @param responseType            authoritative response type
-	 * @return stored question
-	 * @throws SQLException if persistence fails
-	 */
-	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
-			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
-			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
-		return insertQuestion(connection, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
-	}
-
-	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
-			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
-			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType)
-			throws SQLException {
-		if (connection == null) {
-			throw new NullPointerException("connection");
-		}
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (questionCode == null || questionCode.isBlank()) {
-			throw new IllegalArgumentException("questionCode must not be blank");
-		}
-		if (questionText == null) {
-			throw new NullPointerException("questionText");
-		}
-		if (regions == null) {
-			throw new NullPointerException("regions");
-		}
-		if (classification == null) {
-			throw new NullPointerException("classification");
-		}
-		if (responseType == null) {
-			throw new NullPointerException("responseType");
-		}
-		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
-			throw new IllegalArgumentException("Source question must belong to the question's booklet");
-		}
-		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
-			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
-		}
-		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
-		verifySharedContextRelationship(connection, booklet, sharedContext);
-		long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
-		insertRegions(connection, questionId, regions);
-		return new Question(questionId, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
 	}
 
 	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
