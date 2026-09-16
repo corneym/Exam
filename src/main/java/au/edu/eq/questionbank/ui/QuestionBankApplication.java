@@ -410,6 +410,7 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
 		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
+		pdfWorkspace.setSelectionModeChangedHandler(this::handleSelectionModeChanged);
 	}
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
@@ -841,6 +842,21 @@ public class QuestionBankApplication extends Application {
 				captureSelectionState.claim(CaptureSelectionOwner.QUESTION);
 				questionCapturePane.acceptSelection(selection);
 			}
+		}
+	}
+
+	private void handleSelectionModeChanged() {
+		CaptureSelectionOwner owner = captureSelectionState.getOwner();
+		if (owner == null) {
+			return;
+		}
+		switch (owner) {
+		case QUESTION -> questionCapturePane.clearCurrentSelection();
+		case SHARED_CONTEXT -> questionCapturePane.clearSharedContextCurrentSelection();
+		case ANSWER -> {
+			answerCapturePane.clearCurrentSelectionForPageChange();
+			clearCaptureSelection(CaptureSelectionOwner.ANSWER);
+		}
 		}
 	}
 

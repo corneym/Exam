@@ -722,21 +722,6 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		updateHorizontalSelection(pageWidth, event.getX());
 	}
 
-	private void handleSelectionModeChanged() {
-		CaptureSelectionOwner owner = captureSelectionState.getOwner();
-		if (owner == null) {
-			return;
-		}
-		switch (owner) {
-		case QUESTION -> questionCapturePane.clearCurrentSelection();
-		case SHARED_CONTEXT -> questionCapturePane.clearSharedContextCurrentSelection();
-		case ANSWER -> {
-			answerCapturePane.clearCurrentSelectionForPageChange();
-			clearCaptureSelection(CaptureSelectionOwner.ANSWER);
-		}
-		}
-	}
-
 	private void handleSelectionPressed(MouseEvent event) {
 		if (event.getButton() != MouseButton.PRIMARY || !selectionAvailable.test(displayedDocument)) {
 			return;

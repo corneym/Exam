@@ -70,6 +70,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
 
@@ -450,6 +451,42 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void changingFullWidthSelectionClearsPendingAnswerSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "FW1");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.ANSWER));
+		assertNotNull(field(answerCapturePane(), "currentAnswerSelection", Object.class));
+		CheckBox fullWidth = field(pdfWorkspace(), "fullWidthSelectionCheckBox", CheckBox.class);
+		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
+		assertTrue(selectionRectangle.isVisible());
+		robot.interact(fullWidth::fire);
+		assertFalse(selectionState.hasPendingSelection());
+		assertNull(field(answerCapturePane(), "currentAnswerSelection", Object.class));
+		assertFalse(selectionRectangle.isVisible());
+	}
+
+	@Test
+	void changingFullWidthSelectionClearsPendingQuestionSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		assertNotNull(field(questionCapturePane(), "currentSelection", QuestionRegion.class));
+		CheckBox fullWidth = field(pdfWorkspace(), "fullWidthSelectionCheckBox", CheckBox.class);
+		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
+		assertTrue(selectionRectangle.isVisible());
+		robot.interact(fullWidth::fire);
+		assertFalse(selectionState.hasPendingSelection());
+		assertNull(field(questionCapturePane(), "currentSelection", QuestionRegion.class));
+		assertFalse(selectionRectangle.isVisible());
+	}
+
+	@Test
 	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		assertNotNull(examMetadataPane().getBooklet());
@@ -779,8 +816,8 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(legacyControls.isManaged());
 	}
 
+	// @SuppressWarnings("unchecked")
 	@Test
-	@SuppressWarnings("unchecked")
 	void metadataPreambleConversionMayKeepConvertedQuestionRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -861,8 +898,8 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 	}
 
+//	@SuppressWarnings("unchecked")
 	@Test
-	@SuppressWarnings("unchecked")
 	void metadataPreambleConversionMayStartSafeCompleteQuestionRecapture(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -1567,8 +1604,8 @@ class QuestionBankApplicationWorkflowTest {
 		setField(application, "scormExportRunning", Boolean.FALSE);
 	}
 
+//	@SuppressWarnings("unchecked")
 	@Test
-	@SuppressWarnings("unchecked")
 	void searchEditMetadataCorrectsMetadataOnlyQuestion(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -1948,6 +1985,14 @@ class QuestionBankApplicationWorkflowTest {
 		selectFirstFinalClassification(robot);
 		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
 		robot.interact(() -> responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE));
+	}
+
+	private QuestionCapturePane questionCapturePane() {
+		try {
+			return field(application, "questionCapturePane", QuestionCapturePane.class);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	private void selectFirst(FxRobot robot, String selector) throws Exception {
