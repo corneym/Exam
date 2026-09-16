@@ -676,7 +676,11 @@ public class QuestionBankApplication extends Application {
 				questionCapturePane::showImportedQuestionCapture);
 		captureImportedItem.setId("capture-imported-questions");
 		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
-		questionMenu.getItems().addAll(captureNewItem, captureImportedItem, new SeparatorMenuItem(), searchItem);
+		MenuItem corpusAuditItem = createMenuItem("_Corpus Audit...",
+				() -> showQuestionCorpusAudit(primaryStage, config));
+		corpusAuditItem.setId("question-corpus-audit");
+		questionMenu.getItems().addAll(captureNewItem, captureImportedItem, new SeparatorMenuItem(), searchItem,
+				corpusAuditItem);
 		return questionMenu;
 	}
 
@@ -709,6 +713,35 @@ public class QuestionBankApplication extends Application {
 	private ScormExportService createScormExportService(ApplicationConfig config) {
 		return new ScormExportService(createRevisionExportService(config), new ScormManifestWriter(),
 				new ScormSchemaSupport(), new ScormPackageValidator(), new ScormZipWriter());
+	}
+
+	private void editCorpusQuestionMetadata(Stage primaryStage, ApplicationConfig config, Question question) {
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
+		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
+				curriculumRepository);
+		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
+		if (result.isEmpty()) {
+			return;
+		}
+		LegacyQuestionMetadataDialog.Result replacement = result.get();
+		try {
+			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
+					replacement.questionCode(), replacement.marks(), replacement.classification(),
+					replacement.preambleCaptureRequired(), replacement.responseType());
+			Question updated = updateResult.question();
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			if (updateResult
+					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+				offerQuestionRecaptureAfterPreambleConversion(primaryStage, updated, () -> {
+				});
+			}
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Edit Question Metadata", "The question metadata could not be saved.",
+					exception.getMessage());
+		}
 	}
 
 	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
@@ -981,9 +1014,14 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
 	}
 
-	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, QuestionSearchDialog searchDialog,
-			Question question, CurriculumRepository curriculumRepository,
-			LegacyQuestionMetadataService metadataService) {
+	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, Question question,
+			Runnable completedHandler) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
+		}
 		ButtonType recaptureButton = new ButtonType("Recapture complete question", ButtonBar.ButtonData.OK_DONE);
 		ButtonType keepButton = new ButtonType("Keep converted regions", ButtonBar.ButtonData.CANCEL_CLOSE);
 		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
@@ -999,15 +1037,21 @@ public class QuestionBankApplication extends Application {
 		alert.getButtonTypes().setAll(recaptureButton, keepButton);
 		ButtonType decision = alert.showAndWait().orElse(keepButton);
 		if (decision != recaptureButton) {
-			resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository, metadataService);
+			completedHandler.run();
 			return;
 		}
-		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question,
-				() -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository,
-						metadataService));
+		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question, completedHandler);
 		if (!recaptureStarted) {
-			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			completedHandler.run();
 		}
+	}
+
+	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, QuestionSearchDialog searchDialog,
+			Question question, CurriculumRepository curriculumRepository,
+			LegacyQuestionMetadataService metadataService) {
+		Runnable resumeSearch = () -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(),
+				curriculumRepository, metadataService);
+		offerQuestionRecaptureAfterPreambleConversion(primaryStage, question, resumeSearch);
 	}
 
 	private void openAnswerPdf(SelectedPdf selectedPdf) {
@@ -1384,6 +1428,32 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", e.getMessage());
 		} catch (IOException e) {
 			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.", e.getMessage());
+		}
+	}
+
+	private void showQuestionCorpusAudit(Stage primaryStage, ApplicationConfig config) {
+		if (blockWhileCaptureSaveInProgress(primaryStage, "opening the corpus audit")) {
+			return;
+		}
+		List<Question> questions = questionRepository.findAll();
+		QuestionCorpusAuditDialog dialog = new QuestionCorpusAuditDialog(primaryStage, questions);
+		Optional<QuestionCorpusAuditDialog.ResolutionRequest> result = dialog.showAndWait();
+		if (result.isEmpty()) {
+			return;
+		}
+		QuestionCorpusAuditDialog.ResolutionRequest request = result.get();
+		Question question = request.question();
+		switch (request.target()) {
+		case METADATA -> editCorpusQuestionMetadata(primaryStage, config, question);
+		case QUESTION -> questionCapturePane.captureImportedQuestion(question);
+		case ANSWER -> {
+			if (question.hasAnswer()) {
+				answerCapturePane.editAnswer(question, () -> {
+				});
+			} else {
+				answerCapturePane.captureAnswer(question);
+			}
+		}
 		}
 	}
 

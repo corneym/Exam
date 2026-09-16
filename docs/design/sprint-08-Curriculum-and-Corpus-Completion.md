@@ -272,6 +272,7 @@ have been wrong in the old workbook, including:
     question code
     marks
     curriculum classification
+    response type
     legacy preamble-required flag
 
 Exam/booklet/source-document identity remains fixed by this operation.
@@ -357,43 +358,140 @@ legacy preamble captures can be migrated without loss; genuine multipart shared
 context remains protected; optional full-question recapture is safe; and MCQ
 preambles use the same semantics as other questions.
 
-Outcome: inaccurate historical capture hints can be corrected safely, and MCQ preambles are supported on the same semantic basis as other questions.
-
 ### Slice 7 — Corpus audit queue and completeness reporting
 
-Replace the narrow idea of “questions awaiting capture” with a broader question-bank work queue.
+Replace the narrow idea of “questions awaiting capture” with a broader
+question-bank completeness model and work queue.
 
-A question should be auditable for independent completion dimensions, including:
+#### Persisted response type
 
-    question source regions
-    answer source regions
-    unresolved shared-context/preamble decision
-    classification
-    source/booklet identity
+Question response type is persisted explicitly rather than inferred from booklet
+naming.
 
-The queue should support useful filters such as:
+The supported values are:
+
+    MULTIPLE_CHOICE
+    WRITTEN_RESPONSE
+    UNKNOWN
+
+Schema version 8 adds the persisted response type.
+
+Existing Questions migrate to `UNKNOWN`, except where the exact legacy
+`MCQ booklet` identity provides reliable evidence for `MULTIPLE_CHOICE`.
+
+Legacy workbook import similarly treats paper code `MCQ` as
+`MULTIPLE_CHOICE`.
+
+Paper 1/Paper 2 naming does not imply `WRITTEN_RESPONSE`, and an A/B/C/D answer
+value is not used to infer response type.
+
+New manual Question capture requires an explicit choice between multiple choice
+and written response. Existing imported/migrated Questions may remain `UNKNOWN`
+until reviewed. Response type can also be corrected through Edit Metadata.
+
+Changing response type does not delete an existing Answer, Answer text or
+Answer regions.
+
+#### Answer-completeness semantics
+
+Answer completeness depends upon the persisted Question response type.
+
+For `MULTIPLE_CHOICE`:
+
+- the authoritative Answer is one of A, B, C or D;
+- an Answer source region is not required;
+- the existing A/B/C/D controls are used;
+- ordinary Answer-PDF/region controls are hidden;
+- any historical Answer regions already present remain persisted and are not
+  silently deleted.
+
+For `WRITTEN_RESPONSE`:
+
+- at least one persisted Answer region is required;
+- legacy/imported Answer text alone is not sufficient evidence that the Answer
+  source has been captured;
+- A/B/C/D controls are hidden;
+- Answer-PDF and region capture remain available.
+
+For `UNKNOWN`:
+
+- Answer capture is disabled until response type is resolved;
+- the unresolved response type itself is the actionable corpus problem;
+- the same Question is not additionally reported as `MISSING_ANSWER`, because
+  the required Answer representation is not yet known.
+
+#### Corpus audit model
+
+A normal persisted Question is audited independently for:
+
+    question source captured
+    response type resolved
+    answer complete
+    shared context resolved
+
+Booklet/source identity and classification are already structural Question-domain
+requirements and are not represented as nullable normal corpus states. Database
+corruption or integrity auditing remains a separate concern.
+
+The implemented actionable corpus problems are:
+
+    MISSING_QUESTION_SOURCE
+    MISSING_ANSWER
+    UNRESOLVED_SHARED_CONTEXT
+    UNKNOWN_RESPONSE_TYPE
+
+A Question is complete only when no corpus problems remain.
+
+#### Work queue and reporting
+
+The corpus audit UI provides filters for:
 
     Subject
     provider
     year
     booklet
-    completion/problem state
+    completion state
+    specific problem
 
-It should distinguish, rather than collapse, cases such as:
+It reports summary totals including:
 
-    no question regions
-    no answer regions
-    neither captured
-    shared context still unresolved
-    complete
+    total Questions
+    complete Questions
+    incomplete Questions
+    missing question source
+    missing Answer
+    unresolved shared context
+    unknown response type
 
-Legacy answer text should not be mistaken for captured answer source provenance. A question can have imported answer text and still lack answer regions.
+Subject/provider/year/booklet establish the reporting scope. Completion/problem
+filters narrow the displayed work list without changing the scope-wide summary.
 
-Selecting a work item should take the user into the appropriate existing capture/edit workflow rather than creating a second capture system.
+Selecting an incomplete work item routes into the existing correction/capture
+workflows rather than creating a second capture implementation.
 
-Add summary totals so the same facility answers questions such as “How many questions are completely captured?” and “How many unresolved preambles remain?”
+Resolution priority is:
 
-Outcome: corpus completion is measurable and the application itself provides the work list required to finish it.
+    UNKNOWN_RESPONSE_TYPE
+        -> Edit Metadata
+
+    MISSING_QUESTION_SOURCE
+    or UNRESOLVED_SHARED_CONTEXT
+        -> existing Question/imported capture workflow
+
+    MISSING_ANSWER
+        -> existing Answer capture/edit workflow
+
+This ordering ensures that response identity is resolved before Answer
+requirements are interpreted, and Question/shared-context source work is resolved
+before Answer work when several problems coexist.
+
+The former imported-question queue remains available for focused source capture,
+but corpus completeness is now represented by the broader audit facility.
+
+Outcome: Question response semantics are explicit and persisted, Answer
+completeness is response-type aware, corpus completion is measurable, and the
+application provides a filtered work queue that routes outstanding work through
+the existing safe capture and correction workflows.
 
 ### Slice 8 — Regression and capture hardening
 

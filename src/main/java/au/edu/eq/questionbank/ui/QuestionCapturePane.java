@@ -201,6 +201,35 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Opens imported-question capture and selects one specific incomplete question.
+	 *
+	 * @param question persisted question requiring source/context work
+	 * @return whether the requested question became the active capture target
+	 */
+	boolean captureImportedQuestion(Question question) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		showImportedQuestionCapture();
+		if (!importedCaptureMode) {
+			return false;
+		}
+		Question matching = importedQuestionBox.getItems().stream()
+				.filter(candidate -> candidate.getId() == question.getId()).findFirst().orElse(null);
+		if (matching == null) {
+			return false;
+		}
+		refreshingImportedQuestions = true;
+		try {
+			importedQuestionBox.setValue(matching);
+		} finally {
+			refreshingImportedQuestions = false;
+		}
+		loadImportedQuestion(matching);
+		return importedQuestion != null && importedQuestion.getId() == question.getId();
+	}
+
+	/**
 	 * Discards the current unaccepted region selection.
 	 */
 	void clearCurrentSelection() {

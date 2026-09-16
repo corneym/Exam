@@ -1,0 +1,287 @@
+package au.edu.eq.questionbank.ui;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusCompletionFilter;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusFilter;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusQueue;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
+import javafx.beans.property.ReadOnlyObjectProperty;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
+import javafx.util.StringConverter;
+
+/**
+ * Displays corpus-completeness totals and a filterable Question work queue.
+ */
+final class QuestionCorpusAuditPane extends VBox {
+
+	private static final double SPACING = 8.0;
+	private static final Insets PADDING = new Insets(10);
+	private final List<Question> questions;
+	private final ComboBox<Subject> subjectBox = new ComboBox<>();
+	private final ComboBox<ExamProvider> providerBox = new ComboBox<>();
+	private final ComboBox<Integer> yearBox = new ComboBox<>();
+	private final ComboBox<ExamBooklet> bookletBox = new ComboBox<>();
+	private final ComboBox<QuestionCorpusCompletionFilter> completionBox = new ComboBox<>();
+	private final ComboBox<QuestionCorpusProblem> problemBox = new ComboBox<>();
+	private final Button clearFiltersButton = new Button("Clear filters");
+	private final Label summaryLabel = new Label();
+	private final Label resultCountLabel = new Label();
+	private final ListView<QuestionCorpusWorkItem> workItems = new ListView<>();
+
+	QuestionCorpusAuditPane(List<Question> questions) {
+		if (questions == null) {
+			throw new NullPointerException("questions");
+		}
+		for (Question question : questions) {
+			if (question == null) {
+				throw new NullPointerException("questions contains null");
+			}
+		}
+		this.questions = List.copyOf(questions);
+		configureControls();
+		populateFilterOptions();
+		configureActions();
+		buildContent();
+		refresh();
+	}
+
+	QuestionCorpusWorkItem getSelectedWorkItem() {
+		return workItems.getSelectionModel().getSelectedItem();
+	}
+
+	ReadOnlyObjectProperty<QuestionCorpusWorkItem> selectedWorkItemProperty() {
+		return workItems.getSelectionModel().selectedItemProperty();
+	}
+
+	private void buildContent() {
+		Label heading = new Label("Question-bank completeness");
+		heading.setStyle("-fx-font-weight: bold;");
+		HBox firstFilterRow = new HBox(SPACING, new Label("Subject"), subjectBox, new Label("Provider"), providerBox,
+				new Label("Year"), yearBox, new Label("Booklet"), bookletBox);
+		firstFilterRow.setAlignment(Pos.CENTER_LEFT);
+		HBox secondFilterRow = new HBox(SPACING, new Label("Completion"), completionBox, new Label("Problem"),
+				problemBox, clearFiltersButton);
+		secondFilterRow.setAlignment(Pos.CENTER_LEFT);
+		summaryLabel.setWrapText(true);
+		VBox.setVgrow(workItems, Priority.ALWAYS);
+		getChildren().addAll(heading, firstFilterRow, secondFilterRow, summaryLabel, resultCountLabel, workItems);
+		setSpacing(SPACING);
+		setPadding(PADDING);
+	}
+
+	private void clearFilters() {
+		subjectBox.setValue(null);
+		providerBox.setValue(null);
+		yearBox.setValue(null);
+		bookletBox.setValue(null);
+		completionBox.setValue(QuestionCorpusCompletionFilter.ALL);
+		problemBox.setValue(null);
+		refresh();
+	}
+
+	private void configureActions() {
+		subjectBox.valueProperty().addListener((_, _, _) -> refresh());
+		providerBox.valueProperty().addListener((_, _, _) -> refresh());
+		yearBox.valueProperty().addListener((_, _, _) -> refresh());
+		bookletBox.valueProperty().addListener((_, _, _) -> refresh());
+		completionBox.valueProperty().addListener((_, _, _) -> refresh());
+		problemBox.valueProperty().addListener((_, _, _) -> refresh());
+		clearFiltersButton.setOnAction(_ -> clearFilters());
+	}
+
+	private void configureControls() {
+		subjectBox.setId("corpus-filter-subject");
+		providerBox.setId("corpus-filter-provider");
+		yearBox.setId("corpus-filter-year");
+		bookletBox.setId("corpus-filter-booklet");
+		completionBox.setId("corpus-filter-completion");
+		problemBox.setId("corpus-filter-problem");
+		clearFiltersButton.setId("corpus-clear-filters");
+		summaryLabel.setId("corpus-summary");
+		resultCountLabel.setId("corpus-result-count");
+		workItems.setId("corpus-work-items");
+		subjectBox.setPromptText("All subjects");
+		providerBox.setPromptText("All providers");
+		yearBox.setPromptText("All years");
+		bookletBox.setPromptText("All booklets");
+		problemBox.setPromptText("All problems");
+		completionBox.getItems().setAll(QuestionCorpusCompletionFilter.values());
+		completionBox.setValue(QuestionCorpusCompletionFilter.ALL);
+		problemBox.getItems().setAll(QuestionCorpusProblem.values());
+		providerBox.setConverter(new StringConverter<ExamProvider>() {
+
+			@Override
+			public ExamProvider fromString(String text) {
+				return null;
+			}
+
+			@Override
+			public String toString(ExamProvider provider) {
+				return provider == null ? "" : provider.getName();
+			}
+		});
+		bookletBox.setConverter(new StringConverter<ExamBooklet>() {
+
+			@Override
+			public ExamBooklet fromString(String text) {
+				return null;
+			}
+
+			@Override
+			public String toString(ExamBooklet booklet) {
+				if (booklet == null) {
+					return "";
+				}
+				return String.format("%s %d — %s", booklet.getExam().getProvider().getName(),
+						booklet.getExam().getYear(), booklet.getName());
+			}
+		});
+		completionBox.setConverter(new StringConverter<QuestionCorpusCompletionFilter>() {
+
+			@Override
+			public QuestionCorpusCompletionFilter fromString(String text) {
+				return null;
+			}
+
+			@Override
+			public String toString(QuestionCorpusCompletionFilter value) {
+				if (value == null) {
+					return "";
+				}
+				return switch (value) {
+				case ALL -> "All";
+				case COMPLETE -> "Complete";
+				case INCOMPLETE -> "Incomplete";
+				};
+			}
+		});
+		problemBox.setConverter(new StringConverter<QuestionCorpusProblem>() {
+
+			@Override
+			public QuestionCorpusProblem fromString(String text) {
+				return null;
+			}
+
+			@Override
+			public String toString(QuestionCorpusProblem problem) {
+				return problem == null ? "" : problemLabel(problem);
+			}
+		});
+		workItems.setCellFactory(_ -> new ListCell<>() {
+
+			@Override
+			protected void updateItem(QuestionCorpusWorkItem item, boolean empty) {
+				super.updateItem(item, empty);
+				if (empty || item == null) {
+					setText(null);
+					return;
+				}
+				setText(workItemLabel(item));
+			}
+		});
+	}
+
+	private QuestionCorpusFilter createFilter(QuestionCorpusCompletionFilter completion,
+			QuestionCorpusProblem problem) {
+		Subject subject = subjectBox.getValue();
+		ExamProvider provider = providerBox.getValue();
+		ExamBooklet booklet = bookletBox.getValue();
+		return new QuestionCorpusFilter(subject == null ? null : subject.getId(),
+				provider == null ? null : provider.getId(), yearBox.getValue(),
+				booklet == null ? null : booklet.getId(), completion, problem);
+	}
+
+	private void populateFilterOptions() {
+		Map<Long, Subject> subjects = new LinkedHashMap<>();
+		Map<Long, ExamProvider> providers = new LinkedHashMap<>();
+		Map<Integer, Integer> years = new LinkedHashMap<>();
+		Map<Long, ExamBooklet> booklets = new LinkedHashMap<>();
+		for (Question question : questions) {
+			Subject subject = question.getExam().getSubject();
+			ExamProvider provider = question.getExam().getProvider();
+			int year = question.getExam().getYear();
+			ExamBooklet booklet = question.getBooklet();
+			subjects.putIfAbsent(subject.getId(), subject);
+			providers.putIfAbsent(provider.getId(), provider);
+			years.putIfAbsent(year, year);
+			booklets.putIfAbsent(booklet.getId(), booklet);
+		}
+		subjectBox.getItems().setAll(subjects.values());
+		providerBox.getItems().setAll(providers.values());
+		yearBox.getItems().setAll(years.values());
+		bookletBox.getItems().setAll(booklets.values());
+	}
+
+	private String problemLabel(QuestionCorpusProblem problem) {
+		return switch (problem) {
+		case MISSING_QUESTION_SOURCE -> "Missing question source";
+		case MISSING_ANSWER -> "Missing answer";
+		case UNRESOLVED_SHARED_CONTEXT -> "Unresolved shared context";
+		case UNKNOWN_RESPONSE_TYPE -> "Unknown response type";
+		};
+	}
+
+	private String problemsLabel(QuestionCorpusWorkItem item) {
+		if (item.status().isComplete()) {
+			return "Complete";
+		}
+		StringBuilder text = new StringBuilder();
+		for (QuestionCorpusProblem problem : QuestionCorpusProblem.values()) {
+			if (!item.status().hasProblem(problem)) {
+				continue;
+			}
+			if (!text.isEmpty()) {
+				text.append(", ");
+			}
+			text.append(problemLabel(problem));
+		}
+		return text.toString();
+	}
+
+	private void refresh() {
+		QuestionCorpusFilter scopeFilter = createFilter(QuestionCorpusCompletionFilter.ALL, null);
+		List<Question> scopeQuestions = QuestionCorpusQueue.build(questions, scopeFilter).stream()
+				.map(QuestionCorpusWorkItem::question).toList();
+		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(scopeQuestions);
+		summaryLabel.setText(summaryText(summary));
+		QuestionCorpusFilter workFilter = createFilter(completionBox.getValue(), problemBox.getValue());
+		List<QuestionCorpusWorkItem> filtered = QuestionCorpusQueue.build(questions, workFilter);
+		workItems.getItems().setAll(filtered);
+		resultCountLabel.setText(String.format("Showing %d question(s)", filtered.size()));
+	}
+
+	private String summaryText(QuestionCorpusSummary summary) {
+		return String.format(
+				"Total: %d    Complete: %d    Incomplete: %d    "
+						+ "Missing question source: %d    Missing answer: %d    "
+						+ "Unresolved shared context: %d    Unknown response type: %d",
+				summary.totalQuestions(), summary.completeQuestions(), summary.incompleteQuestions(),
+				summary.missingQuestionSource(), summary.missingAnswer(), summary.unresolvedSharedContext(),
+				summary.unknownResponseType());
+	}
+
+	private String workItemLabel(QuestionCorpusWorkItem item) {
+		Question question = item.question();
+		String problems = problemsLabel(item);
+		return String.format("%s %d — %s — %s — %s", question.getExam().getProvider().getName(),
+				question.getExam().getYear(), question.getBooklet().getName(), question.getQuestionCode(), problems);
+	}
+}

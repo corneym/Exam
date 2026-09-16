@@ -1,6 +1,6 @@
 # Exam Question Bank — Current Status
 
-> Authoritative project status at 15 September 2026.
+> Authoritative project status at 16 September 2026.
 >
 > Current development branch: `feature/data-completion`.
 >
@@ -31,7 +31,7 @@ The application is no longer an Excel-backed generation pipeline. Excel is an
 import/exchange format. SQLite is the live datastore. Original PDFs are the
 authoritative source material; extracted/cropped images are derived content.
 
-The latest supported SQLite schema version is **7**.
+The latest supported SQLite schema version is **8**.
 
 ## Implemented and current
 
@@ -69,7 +69,7 @@ restart.
 
 ### Database schema and persistence
 
-**IMPLEMENTED / CURRENT — schema version 7**
+**IMPLEMENTED / CURRENT — schema version 8**
 
 The schema supports:
 
@@ -80,6 +80,8 @@ The schema supports:
 - examination providers, exams and booklets;
 - managed source documents;
 - questions and ordered question regions;
+- persisted Question response type with `MULTIPLE_CHOICE`, `WRITTEN_RESPONSE`
+  and `UNKNOWN`;
 - answer files, answers and ordered answer regions;
 - historical-to-current curriculum mappings;
 - persisted `SourceQuestion` identity;
@@ -101,6 +103,7 @@ Subject
        -> ExamBooklet
             -> SourceQuestion (optional grouping identity)
             -> Question
+                 -> persisted QuestionResponseType
                  -> ordered QuestionRegion(s)
                  -> optional SharedQuestionContext
                  -> optional Answer
@@ -113,6 +116,8 @@ Current invariants include:
 - Question natural identity is `(booklet_id, question_code)`;
 - question codes are text and support values such as `21a`;
 - marks are positive whole numbers;
+- every Question has persisted response type `MULTIPLE_CHOICE`,
+  `WRITTEN_RESPONSE` or `UNKNOWN`;
 - Question classification is one original Subtopic or Descriptor;
 - legacy-imported Questions may exist with zero ordinary regions while capture
   is incomplete;
@@ -256,6 +261,9 @@ Question capture supports:
 - multiple ordered ordinary Question regions;
 - per-region removal;
 - question code and marks;
+- explicit per-Question multiple-choice/written-response selection for normal
+  capture;
+- persisted response-type correction while editing existing Questions;
 - syllabus-sensitive classification;
 - Descriptor-level controls where present in the selected syllabus branch;
 - valid Subtopic stopping points where the hierarchy permits them;
@@ -309,11 +317,20 @@ Answer capture supports:
 
 - an unanswered-question queue for ordinary capture;
 - Question marks shown during Answer capture;
-- text-only, region-only or combined Answers;
+- broad persisted Answer storage capable of retaining text and/or ordered
+  Answer regions;
+- response-type-aware Answer capture and validation;
+- `MULTIPLE_CHOICE` Questions use persisted A/B/C/D Answer choice and do not
+  require an Answer region;
+- `WRITTEN_RESPONSE` Questions require at least one Answer region; text alone
+  does not make the Answer corpus-complete;
+- `UNKNOWN` Questions cannot enter Answer capture until response type is
+  resolved;
+- Answer UI behaviour is driven by persisted Question response type rather than
+  booklet naming;
 - multiple ordered Answer regions;
 - current selection and accepted-region previews;
 - per-region removal;
-- A/B/C/D multiple-choice capture where currently inferred from booklet naming;
 - persisted Answer correction/editing reached through Question Search;
 - stable Question/Answer relationships while editing;
 - asynchronous Answer persistence;
@@ -328,6 +345,40 @@ The Answer pane is intentionally an unanswered queue for normal capture.
 Already-answered Questions are edited through Question Search rather than by
 adding a second selector mode to the Answer pane.
 
+### Corpus audit and completeness — Sprint 08
+
+**IMPLEMENTED / CURRENT**
+
+Question-bank completeness is now assessed independently for Question source
+capture, response-type resolution, Answer completeness and unresolved shared
+context.
+
+The actionable problem states are:
+
+- `MISSING_QUESTION_SOURCE`;
+- `MISSING_ANSWER`;
+- `UNRESOLVED_SHARED_CONTEXT`;
+- `UNKNOWN_RESPONSE_TYPE`.
+
+Answer completeness is response-type aware:
+
+- MCQ requires a valid A/B/C/D answer and does not require an Answer region;
+- written response requires at least one Answer region;
+- an `UNKNOWN` response type is reported as `UNKNOWN_RESPONSE_TYPE` without also
+  reporting `MISSING_ANSWER`.
+
+The Questions > Corpus Audit workflow provides Subject, provider, year, booklet,
+completion-state and problem filters together with scope-wide summary totals.
+
+Selected incomplete work is routed through the existing workflows:
+
+- unknown response type -> Edit Metadata;
+- missing Question source or unresolved shared context -> Question/imported
+  capture;
+- missing Answer -> Answer capture or Answer edit.
+
+The corpus audit does not create a parallel persistence/capture system.
+
 ### Legacy metadata import
 
 **IMPLEMENTED / CURRENT**
@@ -339,6 +390,9 @@ Legacy import supports:
 - text question codes;
 - preserved historical classification;
 - MCQ answer letters when supplied;
+- persisted response type where reliable legacy evidence exists: legacy `MCQ`
+  imports become `MULTIPLE_CHOICE`, while Paper 1/Paper 2 remain `UNKNOWN`
+  unless explicitly corrected;
 - metadata-only Questions with zero captured regions;
 - managed source-document handling;
 - idempotent/conflict-aware persistence;
@@ -503,13 +557,11 @@ The authoritative deferred-work list is `docs/design/backlog.md`.
 Current major deferred themes include:
 
 - additional asynchronous Question Search regression coverage;
-- broad capture/audit work queue;
 - application-authoritative curriculum mapping review and pair-specific coverage;
 - Answer-pane layout annoyances;
 - multi-page automatic shared-preamble capture;
 - supported editing of persisted exam-specific metadata;
 - clearing a pending selection when Full width selection changes;
-- Question-level response type rather than booklet-name MCQ inference;
 - optional MCQ explanation-region capture;
 - explicit decision on multiple original classifications;
 - question-level applicability exceptions after curriculum mapping;
@@ -541,7 +593,6 @@ Do **not** describe the following as current application capabilities:
 - multiple direct original classifications on one Question;
 - automatic multi-page shared-preamble capture;
 - general dependency graphs between Questions/shared contexts;
-- Question-level response type persisted independently of booklet naming;
 - clipboard/image-attachment Question capture;
 - current-generation LaTeX/PDF assessment assembly;
 - self-contained installer/deployment packaging;
@@ -558,3 +609,6 @@ Do **not** describe the following as current application capabilities:
 - Sprint 07: preamble-aware capture, persisted SourceQuestion/shared context,
   correction workflows, multipart revision presentation and capture UI redesign
   — implementation and merge-readiness closeout complete on the feature branch.
+- Sprint 08: in progress; curriculum authoring, mapping coverage, legacy
+  metadata correction and corpus audit/completeness implementation are complete;
+  regression/capture hardening and final sprint closeout remain.

@@ -217,6 +217,38 @@ final class AnswerCapturePane extends VBox {
 				&& isWrittenResponseQuestion(unansweredQuestionField.getValue());
 	}
 
+	boolean captureAnswer(Question question) {
+		if (answerSaveInProgress) {
+			return false;
+		}
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (question.hasAnswer()) {
+			throw new IllegalArgumentException("Question already has an answer");
+		}
+		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
+			throw new IllegalArgumentException("Question response type must be resolved before answer capture");
+		}
+		if (!answerTransitionAllowed.getAsBoolean()) {
+			return false;
+		}
+		refreshQuestions();
+		Question matching = unansweredQuestionField.getItems().stream()
+				.filter(candidate -> candidate.getId() == question.getId()).findFirst().orElse(null);
+		if (matching == null) {
+			return false;
+		}
+		restoringUnansweredQuestionSelection = true;
+		try {
+			unansweredQuestionField.setValue(matching);
+		} finally {
+			restoringUnansweredQuestionSelection = false;
+		}
+		applyUnansweredQuestionChange(matching);
+		return true;
+	}
+
 	/**
 	 * Discards an unaccepted region when the displayed page changes.
 	 */

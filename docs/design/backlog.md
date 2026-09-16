@@ -1,6 +1,6 @@
 # Exam Question Bank Backlog
 
-> Authoritative deferred-work list at 11 September 2026.
+> Authoritative deferred-work list at 16 September 2026.
 >
 > Completed sprint documents remain historical records. Items intentionally
 > deferred from completed work belong here until scheduled into a future sprint.
@@ -26,61 +26,6 @@ Add focused tests for:
 - multiple-current-syllabus failure handling;
 - zero-region legacy questions;
 - missing/corrupt source PDFs.
-
-### Build the broad capture/audit work queue
-
-Origin: Legacy Metadata Import follow-on work.
-
-Sprint 07 now provides status semantics capable of distinguishing missing
-ordinary question regions from unresolved required shared context.
-
-A broader administrative queue remains deferred.
-
-Future queue should identify/filter questions requiring:
-
-- question-region capture;
-- answer-region capture;
-- both;
-- unresolved shared context;
-- other later completion states if adopted.
-
-Filters may include:
-
-- Subject;
-- provider;
-- year;
-- booklet;
-- completion state.
-
-Completion must not rewrite imported historical metadata/classification.
-
-### Complete curriculum mapping through application review and coverage
-
-Origin: Sprint 08 — Curriculum and Corpus Completion.
-
-Application SQLite mapping/review state is authoritative. The standalone
-Chemistry 2019 -> 2025 mapping workbook may be consulted as reference material
-but is not an input requiring reconciliation with application state.
-
-Required work:
-
-- add pair-specific mapping coverage reporting for Descriptor and Subtopic
-  levels;
-- distinguish matched, explicit no-match and unreviewed historical nodes;
-- report the percentage of historical nodes that have received a deliberate
-  review decision;
-- identify current target nodes with no confirmed predecessor from the selected
-  historical syllabus version;
-- use the existing application mapping-review workflow to complete outstanding
-  historical-node decisions;
-- complete Descriptor review first, followed by Subtopic review.
-
-Absence of a mapping or review record must not silently mean no-match.
-
-Topic mapping is not required merely for hierarchy symmetry. Add it only if a
-concrete applicability or retrieval requirement demonstrates a need.
-
-
 
 ## Normal Priority
 
@@ -177,24 +122,6 @@ Origin: PDF region capture use.
 Changing the `Full width selection` state should clear any pending region
 selection so that the visible selection cannot disagree with the active
 selection mode.
-
-### Question-level response type
-
-Origin: Sprint 07 answer-capture review.
-
-Persist a Question-level response type such as:
-
-- `MULTIPLE_CHOICE`;
-- `WRITTEN_RESPONSE`;
-- `UNKNOWN`.
-
-Future behaviour:
-
-- capture/edit response type at Question level;
-- populate it during legacy import where known;
-- drive Answer UI behaviour from the Question rather than booklet-name
-  heuristics;
-- explicitly support mixed-response booklets.
 
 ### MCQ explanation capture
 

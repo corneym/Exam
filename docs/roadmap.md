@@ -1,6 +1,6 @@
 # Exam Question Bank — Roadmap
 
-> Consolidated forward plan at 11 September 2026.
+> Consolidated forward plan at 16 September 2026.
 >
 > Completed Sprints 01–07 are not future milestones. `DEVELOPMENT_ROADMAP.md`
 > contains the detailed sequence and `design/backlog.md` is the authoritative
@@ -31,8 +31,11 @@
 
 Sprint 07 is complete and merged.
 
-Sprint 08 — Curriculum and Corpus Completion is in progress on
-`feature/data-completion`.
+Sprint 08 — Curriculum and Corpus Completion is in its final implementation
+phase on `feature/data-completion`. Curriculum authoring, mapping coverage,
+legacy metadata correction, persisted Question response type and corpus
+audit/completeness tooling are implemented. Regression/capture hardening and
+final closeout remain.
 
 Canonical Sprint 08 design:
 
@@ -42,26 +45,31 @@ Canonical Sprint 08 design:
 
 **HIGH PRIORITY / CURRENT PRODUCT VALUE**
 
-Continue real-data completion while extending the application where required to
-make curriculum and corpus completeness explicit and measurable:
+The application now provides the core tooling required for curriculum and corpus
+completion:
 
-- support expert-authored curriculum from authoritative syllabus PDFs without
-  inferring hierarchy from document structure or curriculum codes;
-- preserve `Unit -> Topic -> Descriptor` as a first-class hierarchy with
-  Subtopic remaining optional;
-- complete remaining Question and Answer source-region capture;
-- resolve missing source documents and inaccurate legacy metadata;
-- measure historical-to-current mapping coverage from authoritative application
-  review state;
-- complete deliberate Descriptor and Subtopic mapping review through the
-  application;
-- add a broad corpus audit/completeness queue;
-- exercise a real non-Chemistry syllabus through classification, retrieval and
-  output workflows.
+- expert-authored curriculum from authoritative syllabus PDFs without automatic
+  hierarchy inference;
+- first-class `Unit -> Topic -> Descriptor` structures with optional Subtopic;
+- resumable/finalisable curriculum persistence and managed syllabus provenance;
+- application-authoritative Descriptor/Subtopic mapping coverage;
+- legacy metadata correction;
+- persisted per-Question response type;
+- response-type-aware Answer completeness;
+- a corpus audit queue with Subject/provider/year/booklet/completion/problem
+  filters and summary totals;
+- routing from corpus problems into the existing metadata, Question and Answer
+  workflows.
+
+Remaining Sprint 08 work is regression/capture hardening and closeout rather
+than another corpus-management architecture change.
+
+Real bank population remains an ongoing data task: the tools can identify and
+route incomplete Questions, but implementation of the queue does not imply that
+the real question corpus itself is complete.
 
 The separate Chemistry 2019 -> 2025 mapping workbook remains reference material.
-It is not authoritative application state and does not require reconciliation
-with SQLite.
+Application SQLite review state is authoritative.
 
 ## Milestone 2 — Bank-management and retrieval hardening
 
@@ -69,12 +77,11 @@ with SQLite.
 
 Focus on the workflows needed to maintain a growing real question bank:
 
-- broad capture/audit queue and completeness filters;
 - exam-specific metadata correction;
 - import and data-integrity audit reporting;
 - additional real-world legacy-workbook validation;
-- remaining asynchronous search/preview lifecycle tests;
-- retrieval-domain and SQLite integration hardening;
+- any retrieval/search hardening remaining after Sprint 08's asynchronous
+  Question Search regression pass;- retrieval-domain and SQLite integration hardening;
 - measurement-driven search/preview performance work.
 
 Do not let cosmetic UI work displace data-correctness or corpus-management work.
@@ -90,13 +97,6 @@ whether a Question may carry multiple original classifications.
 
 Any change must review schema, repositories, capture/editing, applicability,
 retrieval duplicate semantics, provenance and output placement.
-
-### Question-level response type
-
-Replace booklet-name inference with persisted Question-level response type such
-as `MULTIPLE_CHOICE`, `WRITTEN_RESPONSE` and `UNKNOWN`.
-
-Use it to drive Answer UI behaviour and support mixed-response booklets.
 
 ### Question-level applicability exceptions
 
@@ -118,9 +118,6 @@ explicitly out of scope
 
 **BACKLOG / SMALLER WORK**
 
-- multi-page automatic shared-preamble capture;
-- Answer-pane layout stability;
-- Full-width-selection state change clearing a pending selection;
 - optional MCQ explanation-region capture.
 
 These are bounded follow-on improvements, not reasons to reopen Sprint 07.

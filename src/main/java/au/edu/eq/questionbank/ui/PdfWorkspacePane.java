@@ -70,6 +70,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	};
 	private IntConsumer pageChangedHandler = _ -> {
 	};
+	private Runnable selectionModeChangedHandler = () -> {
+	};
 	private BooleanSupplier pageNavigationAllowed = () -> true;
 	private final Circle selectionAnchorMarker = new Circle(ANCHOR_MARKER_RADIUS);
 	private boolean anchoredSelectionActive;
@@ -417,6 +419,19 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Sets the callback invoked when the full-width selection mode changes.
+	 *
+	 * @param selectionModeChangedHandler callback used to clear any logical pending
+	 *                                    capture selection
+	 */
+	void setSelectionModeChangedHandler(Runnable selectionModeChangedHandler) {
+		if (selectionModeChangedHandler == null) {
+			throw new NullPointerException("selectionModeChangedHandler");
+		}
+		this.selectionModeChangedHandler = selectionModeChangedHandler;
+	}
+
+	/**
 	 * Switches between the already opened exam and answer documents.
 	 *
 	 * @param documentMode the document to display
@@ -603,6 +618,10 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pageView.setOnMouseDragged(this::handleSelectionDragged);
 		pageView.setOnMouseReleased(this::handleSelectionReleased);
 		pageView.setOnMouseClicked(this::handleSelectionClicked);
+		fullWidthSelectionCheckBox.selectedProperty().addListener((_, _, _) -> {
+			clearSelection();
+			selectionModeChangedHandler.run();
+		});
 	}
 
 	private void configureSelectionRectangle() {
@@ -701,6 +720,21 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		selectionRectangle.setY(Math.min(selectionStartY, currentY));
 		selectionRectangle.setHeight(Math.abs(currentY - selectionStartY));
 		updateHorizontalSelection(pageWidth, event.getX());
+	}
+
+	private void handleSelectionModeChanged() {
+		CaptureSelectionOwner owner = captureSelectionState.getOwner();
+		if (owner == null) {
+			return;
+		}
+		switch (owner) {
+		case QUESTION -> questionCapturePane.clearCurrentSelection();
+		case SHARED_CONTEXT -> questionCapturePane.clearSharedContextCurrentSelection();
+		case ANSWER -> {
+			answerCapturePane.clearCurrentSelectionForPageChange();
+			clearCaptureSelection(CaptureSelectionOwner.ANSWER);
+		}
+		}
 	}
 
 	private void handleSelectionPressed(MouseEvent event) {

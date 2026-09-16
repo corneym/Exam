@@ -1,7 +1,7 @@
 # Exam Question Bank — Development Roadmap
 
-> **Reference date:** 11 September 2026  
-> **Version:** 10  
+> **Reference date:** 16 September 2026
+> **Version:** 11
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 
 ## 1. Project goal
@@ -59,7 +59,11 @@ hard-code Chemistry or one historical hierarchy shape.
 ### 3.2 SQLite runtime
 
 Excel is import/exchange only. SQLite is the live datastore with referential
-integrity and sequential migrations. The current latest schema version is 7.
+integrity and sequential migrations. The current latest schema version is 8.
+
+Schema v8 persists Question response type as `MULTIPLE_CHOICE`,
+`WRITTEN_RESPONSE` or `UNKNOWN`, replacing booklet-name inference as the
+authoritative driver of Answer capture semantics.
 
 ### 3.3 Managed source PDFs are authoritative
 
@@ -243,12 +247,12 @@ retired after consolidation.
 
 ## 5. Current Sprint 08 data work
 
-Curriculum authoring now has production creation/opening, resumable SQLite saves,
-stable node identities, managed syllabus-PDF attachments and explicit
-`IN_PROGRESS`/`FINAL` lifecycle transitions. The current/historical syllabus flag
-is independent of that lifecycle. See `current-status.md` for the implemented
-contracts and documentation deferred pending blocker fixes. This does not mark
-the remaining mapping/corpus work or real-syllabus acceptance complete.
+Sprint 08 is in its final implementation phase. Curriculum authoring now has
+production creation/opening, resumable SQLite saves, stable node identities,
+managed syllabus-PDF attachments and explicit `IN_PROGRESS`/`FINAL` lifecycle
+transitions. Mapping coverage, legacy metadata correction, persisted Question
+response type and the corpus audit/completeness workflow are also implemented.
+The remaining sprint work is regression/capture hardening and final closeout.
 
 Sprint 08 treats application SQLite state as authoritative for curriculum
 mapping. Historical-to-current relationships are completed through the
@@ -257,19 +261,22 @@ application's human-reviewed mapping workflow.
 The standalone Chemistry 2019 -> 2025 mapping workbook remains useful reference
 analysis, but it is not an application input requiring reconciliation.
 
-Current data work includes:
+Implemented Sprint 08 data-management capability includes:
 
-- completing remaining Question and Answer source-region capture;
-- correcting inaccurate legacy metadata where inspection of the original paper
-  demonstrates that it is wrong;
-- adding Descriptor and Subtopic mapping-coverage reporting;
-- distinguishing matched, explicit no-match and unreviewed historical nodes;
-- identifying current nodes with no confirmed predecessor from the selected
-  historical version;
-- completing outstanding mapping decisions through the application;
-- establishing corpus completeness reporting;
-- exercising subject-neutral curriculum structures with real non-Chemistry
-  syllabus data.
+- correction of inaccurate legacy metadata against the original paper;
+- Descriptor and Subtopic mapping-coverage reporting;
+- matched, explicit no-match and unreviewed mapping states;
+- reporting of current target nodes without confirmed predecessors;
+- persisted Question response type;
+- response-type-aware Answer completeness;
+- corpus completeness reporting and filtered work queues;
+- routing of incomplete Questions into existing safe capture/correction
+  workflows;
+- subject-neutral curriculum structures including direct Topic-to-Descriptor
+  hierarchies.
+
+Completing the actual real-world Question corpus remains ongoing data-entry and
+review work and is not equivalent to implementing the corpus-audit facility.
 
 Sprint 08 Slice 1 has confirmed through regression coverage that a
 `Unit -> Topic -> Descriptor` hierarchy with no Subtopic already survives
@@ -302,19 +309,35 @@ for that behaviour.
 Subsequent work therefore builds on the existing generic curriculum model rather
 than redesigning it around a no-Subtopic case.
 
-### 6.3 Broad capture/audit queue
+### 6.3 Corpus audit/completeness queue — implemented
 
-Sprint 08 Slice 7 currently requires a filtered administrative queue for the
-following states. It is not yet implemented; any decision to defer it must be
-reflected explicitly in the sprint acceptance criteria:
+Sprint 08 Slice 7 implements a filtered corpus-audit workflow.
 
-- Question regions missing;
-- Answer regions missing;
-- unresolved shared context;
-- other adopted completion states.
+Independent completion dimensions cover:
 
-Do not rewrite imported historical metadata merely to mark work complete.
+- Question source capture;
+- persisted response-type resolution;
+- response-type-aware Answer completeness;
+- unresolved shared context.
 
+The actionable problems are:
+
+```text
+MISSING_QUESTION_SOURCE
+MISSING_ANSWER
+UNRESOLVED_SHARED_CONTEXT
+UNKNOWN_RESPONSE_TYPE
+```
+
+Filters include Subject, provider, year, booklet, completion state and specific
+problem.
+
+MULTIPLE_CHOICE requires a valid A/B/C/D Answer and does not require an Answer
+region. WRITTEN_RESPONSE requires at least one Answer region. UNKNOWN is
+reported as its own problem rather than simultaneously as a missing Answer.
+
+Selected work items enter the existing Metadata, Question/imported-capture or
+Answer workflow rather than a parallel capture system.
 
 ## 7. Remaining Question-model decisions
 
@@ -326,21 +349,7 @@ becomes many-to-many.
 If changed, review schema/repositories, capture/edit UI, applicability,
 retrieval duplicate semantics, provenance and output placement.
 
-### 7.2 Question-level response type
-
-Persist response type rather than inferring MCQ behaviour from booklet names.
-
-Candidate values:
-
-```text
-MULTIPLE_CHOICE
-WRITTEN_RESPONSE
-UNKNOWN
-```
-
-Use this to drive Answer UI behaviour and support mixed-response booklets.
-
-### 7.3 Question-level applicability exceptions
+### 7.2 Question-level applicability exceptions
 
 A curriculum mapping can be valid while a particular historical Question tests
 only content that did not carry forward. Support an explicit Question-level
@@ -350,7 +359,7 @@ classification or the curriculum mapping itself.
 Prefer node-specific applicability where one historical classification maps to
 several target nodes.
 
-### 7.4 Out-of-scope source Questions
+### 7.3 Out-of-scope source Questions
 
 Decide whether ingestion/audit needs explicit reviewed states distinguishing
 not-yet-reviewed, captured/classified and deliberately out-of-scope material.
