@@ -330,6 +330,8 @@ public final class LegacyQuestionMetadataService {
 				verifyReplacementClassification(connection, classification, existingSyllabusVersionId);
 				String sourceQuestionCode = SourceQuestionCodeParser.derive(questionCode);
 				boolean removingLegacyPreambleHint = stored.preambleCaptureRequired() && !preambleCaptureRequired;
+				boolean removingMultipartSourceIdentity = stored.sourceQuestionId() != null
+						&& sourceQuestionCode == null;
 				if (removingLegacyPreambleHint && sourceQuestionCode != null && stored.sharedContextId() != null) {
 					throw new IllegalArgumentException("Cannot remove the preamble requirement from one part "
 							+ "of a multipart question while shared context "
@@ -338,7 +340,8 @@ public final class LegacyQuestionMetadataService {
 				Long replacementSourceQuestionId = findOrCreateSourceQuestionId(connection, stored.bookletId(),
 						sourceQuestionCode);
 				convertedSharedContext = !preambleCaptureRequired && sourceQuestionCode == null
-						&& stored.sharedContextId() != null;
+						&& stored.sharedContextId() != null
+						&& (removingLegacyPreambleHint || removingMultipartSourceIdentity);
 				if (convertedSharedContext) {
 					convertSharedContextToQuestionRegions(connection, questionId, stored.bookletId(),
 							stored.sharedContextId().longValue());

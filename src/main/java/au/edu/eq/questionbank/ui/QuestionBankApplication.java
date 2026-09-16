@@ -716,7 +716,11 @@ public class QuestionBankApplication extends Application {
 				new ScormSchemaSupport(), new ScormPackageValidator(), new ScormZipWriter());
 	}
 
-	private void editCorpusQuestionMetadata(Stage primaryStage, ApplicationConfig config, Question question) {
+	private void editCorpusQuestionMetadata(Stage primaryStage, ApplicationConfig config, Question question,
+			Runnable completedHandler) {
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
+		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
@@ -724,6 +728,7 @@ public class QuestionBankApplication extends Application {
 				curriculumRepository);
 		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
 		if (result.isEmpty()) {
+			completedHandler.run();
 			return;
 		}
 		LegacyQuestionMetadataDialog.Result replacement = result.get();
@@ -736,12 +741,14 @@ public class QuestionBankApplication extends Application {
 			answerCapturePane.refreshQuestions();
 			if (updateResult
 					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
-				offerQuestionRecaptureAfterPreambleConversion(primaryStage, updated, () -> {
-				});
+				offerQuestionRecaptureAfterPreambleConversion(primaryStage, updated, completedHandler);
+				return;
 			}
+			completedHandler.run();
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Edit Question Metadata", "The question metadata could not be saved.",
 					exception.getMessage());
+			completedHandler.run();
 		}
 	}
 
@@ -1451,8 +1458,12 @@ public class QuestionBankApplication extends Application {
 		if (blockWhileCaptureSaveInProgress(primaryStage, "opening the corpus audit")) {
 			return;
 		}
-		List<Question> questions = questionRepository.findAll();
-		QuestionCorpusAuditDialog dialog = new QuestionCorpusAuditDialog(primaryStage, questions);
+		QuestionCorpusAuditDialog dialog = new QuestionCorpusAuditDialog(primaryStage, questionRepository.findAll());
+		showQuestionCorpusAuditDialog(primaryStage, config, dialog);
+	}
+
+	private void showQuestionCorpusAuditDialog(Stage primaryStage, ApplicationConfig config,
+			QuestionCorpusAuditDialog dialog) {
 		Optional<QuestionCorpusAuditDialog.ResolutionRequest> result = dialog.showAndWait();
 		if (result.isEmpty()) {
 			return;
@@ -1460,7 +1471,13 @@ public class QuestionBankApplication extends Application {
 		QuestionCorpusAuditDialog.ResolutionRequest request = result.get();
 		Question question = request.question();
 		switch (request.target()) {
-		case METADATA -> editCorpusQuestionMetadata(primaryStage, config, question);
+		case METADATA -> {
+			Runnable resumeAudit = () -> {
+				dialog.refreshQuestions(questionRepository.findAll(), question.getId());
+				Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog));
+			};
+			editCorpusQuestionMetadata(primaryStage, config, question, resumeAudit);
+		}
 		case QUESTION -> questionCapturePane.captureImportedQuestion(question);
 		case ANSWER -> {
 			if (question.hasAnswer()) {

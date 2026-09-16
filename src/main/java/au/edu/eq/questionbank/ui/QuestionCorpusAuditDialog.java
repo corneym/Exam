@@ -70,6 +70,10 @@ final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.R
 		return null;
 	}
 
+	void refreshQuestions(List<Question> questions, long preferredQuestionId) {
+		auditPane.refreshQuestions(questions, preferredQuestionId);
+	}
+
 	enum ResolutionTarget {
 		QUESTION, METADATA, ANSWER
 	}

@@ -321,6 +321,29 @@ class LegacyQuestionMetadataServiceTest {
 	}
 
 	@Test
+	void multipartQuestionWithFalseLegacyHintBecomingSinglePartConvertsSharedContextToQuestionRegions() {
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
+		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q16");
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q16 shared introduction",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "Q16a", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.30)), historicalSubtopicOne, false,
+				sourceQuestion, context);
+		LegacyQuestionMetadataUpdateResult result = service.updateMetadataWithResult(question, "Q16", 2,
+				historicalSubtopicOne, false);
+		Question updated = result.question();
+		assertEquals(LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS,
+				result.preambleOutcome());
+		assertFalse(updated.hasSourceQuestion());
+		assertFalse(updated.hasSharedContext());
+		assertFalse(updated.isPreambleCaptureRequired());
+		assertEquals(2, updated.getRegions().size());
+		assertTrue(sourceRepository.findByBooklet(booklet).isEmpty());
+		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
+	}
+
+	@Test
 	void multipartQuestionWithFalseLegacyHintCanStillCorrectOtherMetadata() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q8");
@@ -422,5 +445,29 @@ class LegacyQuestionMetadataServiceTest {
 				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
 		questionRepository = new SqliteQuestionRepository(database);
 		service = new LegacyQuestionMetadataService(database);
+	}
+
+	@Test
+	void singlePartQuestionWithFalseLegacyHintCanCorrectOtherMetadataWithoutConvertingSharedContext() {
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q14 existing shared material",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "Q14", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.30)), historicalSubtopicOne, false, null,
+				context);
+		LegacyQuestionMetadataUpdateResult result = service.updateMetadataWithResult(question, "Q14", 4,
+				historicalSubtopicTwo, false, QuestionResponseType.WRITTEN_RESPONSE);
+		Question updated = result.question();
+		assertEquals(LegacyQuestionMetadataUpdateResult.PreambleOutcome.NO_CAPTURE_CHANGE, result.preambleOutcome());
+		assertEquals(4, updated.getMarks());
+		assertEquals(historicalSubtopicTwo.getId(), updated.getClassification().getId());
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.getResponseType());
+		assertFalse(updated.isPreambleCaptureRequired());
+		assertTrue(updated.hasSharedContext());
+		assertEquals(context.getId(), updated.getSharedContext().getId());
+		assertEquals(1, updated.getRegions().size());
+		List<SharedQuestionContext> contexts = contextRepository.findByBooklet(booklet);
+		assertEquals(1, contexts.size());
+		assertEquals(context.getId(), contexts.getFirst().getId());
 	}
 }

@@ -34,7 +34,7 @@ final class QuestionCorpusAuditPane extends VBox {
 
 	private static final double SPACING = 8.0;
 	private static final Insets PADDING = new Insets(10);
-	private final List<Question> questions;
+	private List<Question> questions;
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<ExamProvider> providerBox = new ComboBox<>();
 	private final ComboBox<Integer> yearBox = new ComboBox<>();
@@ -47,6 +47,15 @@ final class QuestionCorpusAuditPane extends VBox {
 	private final ListView<QuestionCorpusWorkItem> workItems = new ListView<>();
 
 	QuestionCorpusAuditPane(List<Question> questions) {
+		this.questions = copyQuestions(questions);
+		configureControls();
+		populateFilterOptions();
+		configureActions();
+		buildContent();
+		refresh();
+	}
+
+	private static List<Question> copyQuestions(List<Question> questions) {
 		if (questions == null) {
 			throw new NullPointerException("questions");
 		}
@@ -55,16 +64,46 @@ final class QuestionCorpusAuditPane extends VBox {
 				throw new NullPointerException("questions contains null");
 			}
 		}
-		this.questions = List.copyOf(questions);
-		configureControls();
-		populateFilterOptions();
-		configureActions();
-		buildContent();
-		refresh();
+		return List.copyOf(questions);
 	}
 
 	QuestionCorpusWorkItem getSelectedWorkItem() {
 		return workItems.getSelectionModel().getSelectedItem();
+	}
+
+	void refreshQuestions(List<Question> updatedQuestions, long preferredQuestionId) {
+		Long subjectId = subjectBox.getValue() == null ? null : subjectBox.getValue().getId();
+		Long providerId = providerBox.getValue() == null ? null : providerBox.getValue().getId();
+		Integer year = yearBox.getValue();
+		Long bookletId = bookletBox.getValue() == null ? null : bookletBox.getValue().getId();
+		QuestionCorpusCompletionFilter completion = completionBox.getValue();
+		QuestionCorpusProblem problem = problemBox.getValue();
+		questions = copyQuestions(updatedQuestions);
+		populateFilterOptions();
+		subjectBox.setValue(subjectId == null ? null
+				: subjectBox.getItems().stream().filter(subject -> subject.getId() == subjectId.longValue()).findFirst()
+						.orElse(null));
+		providerBox.setValue(providerId == null ? null
+				: providerBox.getItems().stream().filter(provider -> provider.getId() == providerId.longValue())
+						.findFirst().orElse(null));
+		yearBox.setValue(year != null && yearBox.getItems().contains(year) ? year : null);
+		bookletBox.setValue(bookletId == null ? null
+				: bookletBox.getItems().stream().filter(booklet -> booklet.getId() == bookletId.longValue()).findFirst()
+						.orElse(null));
+		completionBox.setValue(completion == null ? QuestionCorpusCompletionFilter.ALL : completion);
+		problemBox.setValue(problem);
+		refresh();
+		QuestionCorpusWorkItem preferred = workItems.getItems().stream()
+				.filter(item -> item.question().getId() == preferredQuestionId).findFirst().orElse(null);
+		if (preferred != null) {
+			workItems.getSelectionModel().select(preferred);
+			workItems.scrollTo(preferred);
+			return;
+		}
+		if (!workItems.getItems().isEmpty()) {
+			workItems.getSelectionModel().selectFirst();
+			workItems.scrollTo(0);
+		}
 	}
 
 	ReadOnlyObjectProperty<QuestionCorpusWorkItem> selectedWorkItemProperty() {
