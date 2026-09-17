@@ -34,6 +34,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
@@ -102,7 +103,9 @@ final class QuestionCapturePane extends VBox {
 	// Question metadata and shared preamble controls.
 	private final TextField questionCodeField = new TextField();
 	private final TextField marksField = new TextField();
-	private final ComboBox<QuestionResponseType> responseTypeBox = new ComboBox<>();
+	private final ToggleGroup responseTypeGroup = new ToggleGroup();
+	private final RadioButton multipleChoiceResponseButton = new RadioButton("Multiple choice");
+	private final RadioButton writtenResponseButton = new RadioButton("Written response");
 	private final CheckBox firstRegionPreambleCheckBox = new CheckBox("First region is shared preamble");
 	private final Label preambleStatusLabel = new Label();
 	private final VBox preambleControlsBox = new VBox(COMPACT_SPACING);
@@ -362,7 +365,7 @@ final class QuestionCapturePane extends VBox {
 		setRegionCountLabel(pendingRegions.size());
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
-		responseTypeBox.setDisable(false);
+		setResponseTypeDisabled(false);
 		curriculumSelectorPane.setDisable(false);
 		curriculumSelectorPane.setSyllabusContextLocked(true);
 		hideImportedClassification();
@@ -652,7 +655,7 @@ final class QuestionCapturePane extends VBox {
 		saveQuestionButton.setOnAction(_ -> validateQuestionForSave());
 		questionCodeField.textProperty().addListener((_, _, newCode) -> handleQuestionCodeChanged(newCode));
 		marksField.textProperty().addListener((_, _, _) -> refreshSaveButtonState());
-		responseTypeBox.valueProperty().addListener((_, _, _) -> refreshSaveButtonState());
+		responseTypeGroup.selectedToggleProperty().addListener((_, _, _) -> refreshSaveButtonState());
 		curriculumSelectorPane.selectedClassificationProperty().addListener((_, _, _) -> refreshSaveButtonState());
 		firstRegionPreambleCheckBox.selectedProperty()
 				.addListener((_, _, selected) -> handlePreambleOptionChanged(selected.booleanValue()));
@@ -669,17 +672,23 @@ final class QuestionCapturePane extends VBox {
 		marksField.setId("question-marks");
 		marksField.setPromptText("1");
 		marksField.setPrefWidth(MARKS_FIELD_WIDTH);
-		responseTypeBox.setId("question-response-type");
-		responseTypeBox.setPromptText("Select response type");
-		responseTypeBox.getItems().setAll(QuestionResponseType.MULTIPLE_CHOICE, QuestionResponseType.WRITTEN_RESPONSE);
-		responseTypeBox.setPrefWidth(165);
-		responseTypeBox.setConverter(createResponseTypeConverter());
+		multipleChoiceResponseButton.setId("question-response-type-multiple-choice");
+		writtenResponseButton.setId("question-response-type-written");
+		multipleChoiceResponseButton.setToggleGroup(responseTypeGroup);
+		writtenResponseButton.setToggleGroup(responseTypeGroup);
+		multipleChoiceResponseButton.setUserData(QuestionResponseType.MULTIPLE_CHOICE);
+		writtenResponseButton.setUserData(QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Keep both labels fully readable at the minimum supported workspace width.
+		multipleChoiceResponseButton.setMinWidth(Region.USE_PREF_SIZE);
+		writtenResponseButton.setMinWidth(Region.USE_PREF_SIZE);
 		saveQuestionButton.setId("save-question");
 		saveQuestionButton.setDisable(true);
 		saveStatusLabel.setId("question-save-status");
 		regionCountLabel.setId("question-region-count");
 		addRegionButton.setId("add-question-region");
 		removeCurrentSelectionButton.setId("clear-question-selection");
+
 		// Keep Question-capture action labels fully readable at the minimum
 		// supported capture-workspace width.
 		addRegionButton.setMinWidth(Region.USE_PREF_SIZE);
@@ -740,6 +749,7 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private VBox createCurrentSelectionControls() {
+
 		// Keep pending-selection actions together on their own row.
 		HBox selectionControls = new HBox(CONTROL_SPACING, addRegionButton, removeCurrentSelectionButton);
 		selectionControls.setAlignment(Pos.CENTER_LEFT);
@@ -748,14 +758,12 @@ final class QuestionCapturePane extends VBox {
 		// cannot be squeezed by the selection controls.
 		Region spacer = new Region();
 		HBox.setHgrow(spacer, Priority.ALWAYS);
-
 		HBox saveControls = new HBox(CONTROL_SPACING, spacer, saveQuestionButton, cancelQuestionEditButton);
 		saveControls.setAlignment(Pos.CENTER_LEFT);
 
 		// Two short rows remain readable at the minimum supported pane width.
 		VBox controls = new VBox(COMPACT_SPACING, selectionControls, saveControls);
 		controls.setFillWidth(true);
-
 		return controls;
 	}
 
@@ -766,11 +774,13 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private StringConverter<Question> createImportedQuestionConverter() {
+
 		// Convert imported Questions to the descriptive labels shown in the ComboBox.
 		return new StringConverter<Question>() {
 
 			@Override
 			public Question fromString(String text) {
+
 				// The ComboBox is selection-only, so displayed text is never parsed.
 				return null;
 			}
@@ -780,20 +790,29 @@ final class QuestionCapturePane extends VBox {
 				if (question == null) {
 					return "";
 				}
-
 				ExamBooklet booklet = question.getBooklet();
 				Exam exam = booklet.getExam();
-
 				return String.format("%s %d — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
 						booklet.getName(), question.getQuestionCode(), question.getMarks());
 			}
 		};
 	}
 
-	private HBox createQuestionControls() {
-		HBox controls = new HBox(CONTROL_SPACING, new Label("Question number"), questionCodeField, new Label("Marks"),
-				marksField, new Label("Response type"), responseTypeBox);
-		controls.setAlignment(Pos.CENTER_LEFT);
+	private VBox createQuestionControls() {
+
+		// Keep compact numeric metadata together on the first row.
+		HBox questionDetails = new HBox(CONTROL_SPACING, new Label("Question number"), questionCodeField,
+				new Label("Marks"), marksField);
+		questionDetails.setAlignment(Pos.CENTER_LEFT);
+
+		// Response type gets a dedicated row so both choices remain explicit and
+		// readable at the minimum supported workspace width.
+		HBox responseTypeControls = new HBox(CONTROL_SPACING, new Label("Response type"), multipleChoiceResponseButton,
+				writtenResponseButton);
+		responseTypeControls.setId("question-response-type-controls");
+		responseTypeControls.setAlignment(Pos.CENTER_LEFT);
+		VBox controls = new VBox(COMPACT_SPACING, questionDetails, responseTypeControls);
+		controls.setFillWidth(true);
 		return controls;
 	}
 
@@ -813,11 +832,13 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private StringConverter<QuestionResponseType> createResponseTypeConverter() {
+
 		// Convert response types to the user-facing labels shown by the ComboBox.
 		return new StringConverter<QuestionResponseType>() {
 
 			@Override
 			public QuestionResponseType fromString(String text) {
+
 				// The ComboBox is selection-only, so text is never parsed back to a value.
 				return null;
 			}
@@ -866,7 +887,7 @@ final class QuestionCapturePane extends VBox {
 		if (validationError != null) {
 			return validationError;
 		}
-		if (responseTypeBox.getValue() == null) {
+		if (selectedResponseType() == null) {
 			return "Select whether this question is multiple choice or written response.";
 		}
 		return null;
@@ -1075,8 +1096,9 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void loadResponseType(Question question) {
-		QuestionResponseType responseType = question.getResponseType();
-		responseTypeBox.setValue(responseType == QuestionResponseType.UNKNOWN ? null : responseType);
+
+		// Restore the persisted response type into the capture control.
+		selectResponseType(question.getResponseType());
 	}
 
 	private SqliteQuestionCaptureService.PendingSharedContext pendingSharedContextForSave() {
@@ -1245,8 +1267,8 @@ final class QuestionCapturePane extends VBox {
 		questionCodeField.clear();
 		questionCodeField.setDisable(false);
 		marksField.clear();
-		responseTypeBox.setValue(null);
-		responseTypeBox.setDisable(false);
+		selectResponseType(null);
+		setResponseTypeDisabled(false);
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
 		refreshSaveButtonState();
@@ -1293,7 +1315,7 @@ final class QuestionCapturePane extends VBox {
 		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(captureOperation(),
 				bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(),
 				Integer.parseInt(marksField.getText().trim()), List.copyOf(pendingRegions),
-				curriculumSelectionModel.getClassification(), responseTypeBox.getValue(),
+				curriculumSelectionModel.getClassification(), selectedResponseType(),
 				sharedContextCapturePane.getSelectedContext(), pendingSharedContextForSave());
 		int savedPreviousImportedIndex = previousImportedIndex;
 		boolean savedHadStoredRegions = hadStoredRegions;
@@ -1390,6 +1412,29 @@ final class QuestionCapturePane extends VBox {
 		return selectedIndex < 0 ? 0 : selectedIndex;
 	}
 
+	private QuestionResponseType selectedResponseType() {
+
+		// No selected radio button represents an unresolved response type.
+		if (responseTypeGroup.getSelectedToggle() == null) {
+			return null;
+		}
+		return (QuestionResponseType) responseTypeGroup.getSelectedToggle().getUserData();
+	}
+
+	private void selectResponseType(QuestionResponseType responseType) {
+
+		// UNKNOWN is represented by having neither response-type button selected.
+		if (responseType == null || responseType == QuestionResponseType.UNKNOWN) {
+			responseTypeGroup.selectToggle(null);
+			return;
+		}
+		if (responseType == QuestionResponseType.MULTIPLE_CHOICE) {
+			responseTypeGroup.selectToggle(multipleChoiceResponseButton);
+			return;
+		}
+		responseTypeGroup.selectToggle(writtenResponseButton);
+	}
+
 	private void setLegacyCaptureControlsVisible(boolean visible) {
 		legacyCaptureBox.setVisible(visible);
 		legacyCaptureBox.setManaged(visible);
@@ -1411,6 +1456,13 @@ final class QuestionCapturePane extends VBox {
 
 	private void setRegionCountLabel(int count) {
 		regionCountLabel.setText(String.format("Regions: %d", count));
+	}
+
+	private void setResponseTypeDisabled(boolean disabled) {
+
+		// Keep enablement independent of the concrete response-type controls.
+		multipleChoiceResponseButton.setDisable(disabled);
+		writtenResponseButton.setDisable(disabled);
 	}
 
 	private String sharedContextValidationError(String sourceCode, SourceQuestion sourceQuestion,
@@ -1471,7 +1523,7 @@ final class QuestionCapturePane extends VBox {
 		questionCodeField.setDisable(true);
 		marksField.setDisable(true);
 		loadResponseType(question);
-		responseTypeBox.setDisable(false);
+		setResponseTypeDisabled(false);
 		refreshPreambleControls();
 		if (question.getRegions().isEmpty()) {
 			saveQuestionButton.setText("Save Question");
@@ -1509,7 +1561,7 @@ final class QuestionCapturePane extends VBox {
 	private void showNewQuestionMode() {
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
-		responseTypeBox.setDisable(false);
+		setResponseTypeDisabled(false);
 		curriculumSelectorPane.setDisable(false);
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		cancelQuestionEditButton.setVisible(false);

@@ -66,6 +66,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.image.ImageView;
@@ -258,10 +259,8 @@ class QuestionBankApplicationWorkflowTest {
 	void answerQuestionStatusWrapsAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q1");
-
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
-
 		Label status = lookup(robot, "#selected-answer-question", Label.class);
 
 		// Use a deliberately long status representative of the longer Answer workflow
@@ -269,11 +268,10 @@ class QuestionBankApplicationWorkflowTest {
 		String longStatus = "Answering Q1 — 1 mark — response type unresolved; "
 				+ "use Edit Metadata before capturing an answer.";
 		robot.interact(() -> status.setText(longStatus));
-
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
-
 		robot.interact(() -> {
+
 			// Force the capture workspace to its configured minimum width.
 			splitPane.setDividerPosition(0, 0.0);
 			primaryStage.getScene().getRoot().applyCss();
@@ -1350,30 +1348,44 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void newQuestionRequiresExplicitResponseTypeAndPersistsIt(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
+
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 		Button save = lookup(robot, "#save-question", Button.class);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
-		/*
-		 * The shared test setup chooses WRITTEN_RESPONSE for older tests. Clear it here
-		 * to exercise the production requirement explicitly.
-		 */
-		robot.interact(() -> responseType.setValue(null));
+
+		// The shared setup selects Written response for older workflow tests.
+		// Clear that selection to exercise the explicit-response-type requirement.
+		robot.interact(() -> writtenResponse.getToggleGroup().selectToggle(null));
+
 		robot.clickOn(questionCode).write("R1");
 		robot.clickOn(marks).write("2");
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
+
 		assertTrue(save.isDisabled(), "Question capture must require an explicit response type");
-		robot.interact(() -> responseType.setValue(QuestionResponseType.MULTIPLE_CHOICE));
+
+		robot.clickOn(multipleChoice);
+
+		assertTrue(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
 		assertFalse(save.isDisabled());
+
 		robot.clickOn("#save-question");
+
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
+
 		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
 				.filter(question -> "R1".equals(question.getQuestionCode())).findFirst().orElseThrow();
+
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, stored.getResponseType());
-		assertNull(responseType.getValue(), "A completed new Question must reset the response-type selector");
+
+		// Completing a new Question must reset both radio buttons.
+		assertFalse(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
 	}
 
 	@Test
@@ -1383,18 +1395,16 @@ class QuestionBankApplicationWorkflowTest {
 		// Create a pending Question selection so Add Region and Clear are in their
 		// normal actionable capture state.
 		dragRegionOnDisplayedPage(robot);
-
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
-
 		robot.interact(() -> {
+
 			// Force the capture workspace to its configured minimum width.
 			splitPane.setDividerPosition(0, 0.0);
 			primaryStage.getScene().getRoot().applyCss();
 			primaryStage.getScene().getRoot().layout();
 		});
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Button addRegion = lookup(robot, "#add-question-region", Button.class);
 		Button clearSelection = lookup(robot, "#clear-question-selection", Button.class);
 		Button saveQuestion = lookup(robot, "#save-question", Button.class);
@@ -2146,14 +2156,14 @@ class QuestionBankApplicationWorkflowTest {
 		robot.clickOn(questionCodeField).write(questionCode);
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(marksField).write("1");
-		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
-		/*
-		 * Most existing workflow tests pre-date explicit response type and exercise
-		 * written-response capture. Supply that test-fixture default only when the test
-		 * has not deliberately selected another response type.
-		 */
-		if (responseType.getValue() == null) {
-			robot.interact(() -> responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE));
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+
+		// Most workflow tests exercise written-response capture. Supply that fixture
+		// default only when the test has not deliberately selected either response
+		// type.
+		if (!multipleChoice.isSelected() && !writtenResponse.isSelected()) {
+			robot.interact(() -> writtenResponse.setSelected(true));
 		}
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
@@ -2313,8 +2323,8 @@ class QuestionBankApplicationWorkflowTest {
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
-		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
-		robot.interact(() -> responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE));
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+		robot.interact(() -> writtenResponse.setSelected(true));
 	}
 
 	private QuestionCapturePane questionCapturePane() {
