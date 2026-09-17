@@ -13,13 +13,13 @@ The sprint should also close several small correctness gaps exposed by sustained
 
 ## Core design principles
 
-Implementation checkpoint (15 September 2026): production authoring now includes
-creation/opening, transactional node persistence, managed syllabus-PDF attachment
-and explicit finalise/reopen transitions. The stable persistence contracts and
-documentation deferred pending blocker fixes are recorded in
-[`current-status.md`](../current-status.md#resumable-curriculum-authoring--sprint-08).
-This checkpoint does not declare the sprint acceptance criteria complete or
-rescope the remaining mapping, metadata and corpus work.
+Implementation status (17 September 2026): all planned Sprint 08 slices are
+implemented and branch-level validation is complete. Curriculum authoring,
+mapping coverage, legacy metadata correction, persisted Question response type,
+corpus audit/completeness, asynchronous Question Search hardening and Full-width
+selection-state hardening are implemented. The feature branch has passed the
+complete non-UI and headless UI suites, Javadoc with zero warnings and
+`git diff --check`. Final independent review and merge remain.
 
 Curriculum structure is expert-authored.
 
@@ -503,13 +503,23 @@ the existing safe capture and correction workflows.
 
 ### Slice 8 — Regression and capture hardening
 
-Finish the outstanding asynchronous Question Search regression coverage identified in the existing backlog, including the important stale-result/lifecycle/error cases that are not yet exercised.
+Completed.
 
-Also address the small Full-width-selection defect: invoking Full Width must clear or replace any pending selection state consistently so that the visible PDF selection and the Question/Answer capture state cannot disagree.
+The asynchronous Question Search regression set now covers the agreed
+stale-result, lifecycle, hierarchy-failure and disposal cases, including
+no-current/multiple-current syllabus states, zero-region legacy Questions and
+missing/corrupt source PDFs.
 
-These remain separate regression slices; they should not be mixed into the curriculum-authoring implementation.
+Changing Full width selection clears pending logical selection state so that the
+visible PDF selection mode and Question/SharedQuestionContext/Answer capture
+state cannot disagree.
 
-Outcome: known high-priority correctness debt is not carried into the next development phase.
+Closeout also removed the diagnostic Export Draft action from the normal
+Curriculum Authoring UI while retaining programmatic draft export for
+diagnostics/tests.
+
+Outcome: the known high-priority correctness debt identified for Sprint 08 is
+closed rather than carried into the next development phase.
 
 ## Sprint acceptance criteria
 

@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -149,15 +150,16 @@ public final class LegacyQuestionMetadataService {
 	/**
 	 * Atomically corrects legacy metadata including the response type.
 	 *
-	 * @param question persisted question being corrected
-	 * @param questionCode replacement non-blank question code
-	 * @param marks replacement positive mark value
-	 * @param classification replacement Subtopic or Descriptor from the existing syllabus
+	 * @param question                persisted question being corrected
+	 * @param questionCode            replacement non-blank question code
+	 * @param marks                   replacement positive mark value
+	 * @param classification          replacement Subtopic or Descriptor from the
+	 *                                existing syllabus
 	 * @param preambleCaptureRequired corrected historical preamble-capture hint
-	 * @param responseType replacement question response type
+	 * @param responseType            replacement question response type
 	 * @return reloaded question after successful persistence
 	 * @throws IllegalArgumentException if metadata or classification is invalid
-	 * @throws IllegalStateException if persistence fails
+	 * @throws IllegalStateException    if persistence fails
 	 */
 	public Question updateMetadata(Question question, String questionCode, int marks, CurriculumNode classification,
 			boolean preambleCaptureRequired, QuestionResponseType responseType) {
@@ -168,14 +170,15 @@ public final class LegacyQuestionMetadataService {
 	/**
 	 * Atomically corrects legacy metadata while preserving the response type.
 	 *
-	 * @param question persisted question being corrected
-	 * @param questionCode replacement non-blank question code
-	 * @param marks replacement positive mark value
-	 * @param classification replacement Subtopic or Descriptor from the existing syllabus
+	 * @param question                persisted question being corrected
+	 * @param questionCode            replacement non-blank question code
+	 * @param marks                   replacement positive mark value
+	 * @param classification          replacement Subtopic or Descriptor from the
+	 *                                existing syllabus
 	 * @param preambleCaptureRequired corrected historical preamble-capture hint
 	 * @return reloaded question and the effect on preamble capture
 	 * @throws IllegalArgumentException if metadata or classification is invalid
-	 * @throws IllegalStateException if persistence fails
+	 * @throws IllegalStateException    if persistence fails
 	 */
 	public LegacyQuestionMetadataUpdateResult updateMetadataWithResult(Question question, String questionCode,
 			int marks, CurriculumNode classification, boolean preambleCaptureRequired) {
@@ -186,15 +189,16 @@ public final class LegacyQuestionMetadataService {
 	/**
 	 * Atomically corrects legacy metadata including the response type.
 	 *
-	 * @param question persisted question being corrected
-	 * @param questionCode replacement non-blank question code
-	 * @param marks replacement positive mark value
-	 * @param classification replacement Subtopic or Descriptor from the existing syllabus
+	 * @param question                persisted question being corrected
+	 * @param questionCode            replacement non-blank question code
+	 * @param marks                   replacement positive mark value
+	 * @param classification          replacement Subtopic or Descriptor from the
+	 *                                existing syllabus
 	 * @param preambleCaptureRequired corrected historical preamble-capture hint
-	 * @param responseType replacement question response type
+	 * @param responseType            replacement question response type
 	 * @return reloaded question and the effect on preamble capture
 	 * @throws IllegalArgumentException if metadata or classification is invalid
-	 * @throws IllegalStateException if persistence fails
+	 * @throws IllegalStateException    if persistence fails
 	 */
 	public LegacyQuestionMetadataUpdateResult updateMetadataWithResult(Question question, String questionCode,
 			int marks, CurriculumNode classification, boolean preambleCaptureRequired,
@@ -452,6 +456,11 @@ public final class LegacyQuestionMetadataService {
 							stored.sharedContextId().longValue());
 				}
 				Long replacementSharedContextId = convertedSharedContext ? null : stored.sharedContextId();
+				if (replacementSourceQuestionId != null
+						&& !replacementSourceQuestionId.equals(stored.sourceQuestionId())) {
+					verifyDestinationSharedContext(connection, questionId, replacementSourceQuestionId,
+							replacementSharedContextId);
+				}
 				QuestionResponseType replacementResponseType = requestedResponseType == null ? stored.responseType()
 						: requestedResponseType;
 				updateQuestionMetadata(connection, questionId, stored.bookletId(), questionCode, marks,
@@ -546,6 +555,35 @@ public final class LegacyQuestionMetadataService {
 		if (!classification.getSyllabusVersion().equals(question.getClassification().getSyllabusVersion())) {
 			throw new IllegalArgumentException(
 					"Legacy metadata correction must remain within the question's existing syllabus version");
+		}
+	}
+
+	private void verifyDestinationSharedContext(Connection connection, long questionId, Long sourceQuestionId,
+			Long sharedContextId) throws SQLException {
+		if (sourceQuestionId == null) {
+			return;
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT shared_context_id
+				FROM questions
+				WHERE source_question_id = ?
+				  AND id <> ?
+				""")) {
+			statement.setLong(1, sourceQuestionId.longValue());
+			statement.setLong(2, questionId);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					Long siblingSharedContextId = null;
+					long storedSharedContextId = result.getLong("shared_context_id");
+					if (!result.wasNull()) {
+						siblingSharedContextId = Long.valueOf(storedSharedContextId);
+					}
+					if (!Objects.equals(sharedContextId, siblingSharedContextId)) {
+						throw new IllegalArgumentException("Cannot move a question into a multipart "
+								+ "source question whose members use " + "a different shared context.");
+					}
+				}
+			}
 		}
 	}
 

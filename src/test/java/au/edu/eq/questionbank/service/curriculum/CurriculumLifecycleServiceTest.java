@@ -13,11 +13,13 @@ import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.curriculum.CurriculumLifecycleRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumAuthoringRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumAuthoringWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumLifecycleRepository;
@@ -29,6 +31,69 @@ class CurriculumLifecycleServiceTest {
 
 	@TempDir
 	Path tempDir;
+
+	@Test
+	void failedFinalisationAfterSaveKeepsDraftInProgressAndAllowsRetry() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("failed-finalisation-after-save.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject engineering = writer.insertSubject("Engineering");
+		SyllabusVersion syllabus = writer.insertSyllabusVersion(engineering, "2025", true);
+		Unit unit = writer.insertUnit(syllabus, "1", "Engineering fundamentals", 0);
+		Topic topic = writer.insertTopic(unit, "1.1", "Forces", 0);
+		writer.insertDescriptor(topic, "1.1.1", "Resolve forces", 0);
+		CurriculumDraftLoader loader = new CurriculumDraftLoader(new SqliteCurriculumAuthoringRepository(database));
+		CurriculumAuthoringSession session = loader.load(syllabus);
+		CurriculumDraftNode draftUnit = session.draft().childrenOf(null).getFirst();
+		CurriculumDraftNode draftTopic = session.draft().childrenOf(draftUnit.draftId()).getFirst();
+		CurriculumDraftNode addedDescriptor = new CurriculumDraftNumberingService().addNode(session.draft(),
+				CurriculumLevel.DESCRIPTOR, "Calculate resultant force", draftTopic.draftId(), null);
+		SqliteCurriculumAuthoringWriter authoringWriter = new SqliteCurriculumAuthoringWriter(database);
+		CurriculumLifecycleRepository failingLifecycleRepository = new CurriculumLifecycleRepository() {
+
+			@Override
+			public SyllabusVersion finalise(SyllabusVersion syllabusVersion, Instant finalisedAt) {
+				throw new IllegalStateException("Deliberate finalisation failure");
+			}
+
+			@Override
+			public SyllabusVersion reopen(SyllabusVersion syllabusVersion) {
+				throw new UnsupportedOperationException();
+			}
+		};
+		CurriculumLifecycleService failingService = new CurriculumLifecycleService(authoringWriter,
+				failingLifecycleRepository, Clock.fixed(Instant.parse("2026-09-17T03:00:00Z"), ZoneOffset.UTC));
+		assertThrows(IllegalStateException.class, () -> failingService.finalise(session));
+		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
+		SyllabusVersion afterFailure = repository.findVersionById(syllabus.getId()).orElseThrow();
+		/*
+		 * The draft save completed before the lifecycle transition failed.
+		 */
+		assertEquals("Calculate resultant force", repository.findByCode(afterFailure, "1.1.2").orElseThrow().getName());
+		/*
+		 * Finalisation itself failed, so both persisted and session state remain
+		 * IN_PROGRESS.
+		 */
+		assertEquals(CurriculumStatus.IN_PROGRESS, afterFailure.getCurriculumStatus());
+		assertNull(afterFailure.getCurriculumFinalisedAt());
+		assertEquals(CurriculumStatus.IN_PROGRESS, session.syllabusVersion().getCurriculumStatus());
+		/*
+		 * The successful save must also leave the newly persisted draft node bound to
+		 * its permanent database identity.
+		 */
+		assertTrue(session.persistentIdForDraftId(addedDescriptor.draftId()).isPresent());
+		/*
+		 * Retrying with the real lifecycle repository must succeed without reopening or
+		 * rebuilding the authoring session.
+		 */
+		CurriculumLifecycleService retryService = new CurriculumLifecycleService(authoringWriter,
+				new SqliteCurriculumLifecycleRepository(database),
+				Clock.fixed(Instant.parse("2026-09-17T04:00:00Z"), ZoneOffset.UTC));
+		SyllabusVersion finalVersion = retryService.finalise(session);
+		assertEquals(CurriculumStatus.FINAL, finalVersion.getCurriculumStatus());
+		assertEquals(Instant.parse("2026-09-17T04:00:00Z"), finalVersion.getCurriculumFinalisedAt());
+		assertTrue(session.syllabusVersion().isCurriculumFinal());
+	}
 
 	@Test
 	void finalisesAndExplicitlyReopensCurriculum() throws Exception {

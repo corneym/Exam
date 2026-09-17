@@ -1,7 +1,7 @@
 # Exam Question Bank — Development Roadmap
 
-> **Reference date:** 16 September 2026
-> **Version:** 11
+> **Reference date:** 17 September 2026
+> **Version:** 12
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 
 ## 1. Project goal
@@ -35,7 +35,9 @@ Completed SCORM 1.2 / QLearn validation
         ↓
 Completed Sprint 07 shared-context/capture/edit/output work
         ↓
-Complete Question data + application-authoritative mapping review
+Completed Sprint 08 curriculum/corpus tooling and hardening
+        ↓
+Complete real Question data + application-authoritative mapping review
         ↓
 Harden bank management / retrieval / audit workflows
         ↓
@@ -236,7 +238,7 @@ Delivered:
 - registered Answer PDF reuse and conditional chooser visibility;
 - legacy Answer-PDF registration when all required Question booklets already
   exist.
-  - Search Questions preview reconstruction including linked shared context;
+- Search Questions preview reconstruction including linked shared context;
 
 Canonical design/final implementation record:
 
@@ -245,14 +247,19 @@ Canonical design/final implementation record:
 The temporary Sprint 07 status/backlog and cleanup-review documents were
 retired after consolidation.
 
-## 5. Current Sprint 08 data work
+## 5. Sprint 08 — Curriculum and Corpus Completion
 
-Sprint 08 is in its final implementation phase. Curriculum authoring now has
-production creation/opening, resumable SQLite saves, stable node identities,
-managed syllabus-PDF attachments and explicit `IN_PROGRESS`/`FINAL` lifecycle
-transitions. Mapping coverage, legacy metadata correction, persisted Question
-response type and the corpus audit/completeness workflow are also implemented.
-The remaining sprint work is regression/capture hardening and final closeout.
+Sprint 08 implementation and branch-level validation are complete on
+`feature/data-completion`. Curriculum authoring provides production
+creation/opening, resumable SQLite saves, stable node identities, automatic
+correction-safe hierarchical numbering, managed syllabus-PDF attachments and
+explicit `IN_PROGRESS`/`FINAL` lifecycle transitions. Mapping coverage, legacy
+metadata correction, persisted Question response type, corpus
+audit/completeness, asynchronous Question Search hardening and Full-width
+selection-state hardening are implemented.
+
+Final independent review and merge remain; no further planned Sprint 08
+implementation slice is outstanding.
 
 Sprint 08 treats application SQLite state as authoritative for curriculum
 mapping. Historical-to-current relationships are completed through the

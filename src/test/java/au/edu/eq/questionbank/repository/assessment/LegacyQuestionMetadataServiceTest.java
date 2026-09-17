@@ -58,6 +58,36 @@ class LegacyQuestionMetadataServiceTest {
 	}
 
 	@Test
+	void bulkResponseTypeResolutionRollsBackWhenLaterQuestionBecomesKnownAfterLoading() throws Exception {
+		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
+		Question first = writer.insertQuestion(booklet, "Q44", "", 2, List.of(), historicalSubtopicOne, false, null,
+				null, QuestionResponseType.UNKNOWN);
+		Question second = writer.insertQuestion(booklet, "Q45", "", 1, List.of(), historicalSubtopicOne, false, null,
+				null, QuestionResponseType.UNKNOWN);
+		/*
+		 * Simulate another operation resolving the second Question after both Question
+		 * objects were loaded but before this bulk operation begins.
+		 */
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE questions
+					SET response_type = 'MULTIPLE_CHOICE'
+					WHERE id = %d
+					""".formatted(second.getId()));
+		}
+		assertThrows(IllegalStateException.class, () -> service.resolveUnknownResponseTypes(List.of(first, second),
+				QuestionResponseType.WRITTEN_RESPONSE));
+		Question reloadedFirst = questionRepository.findById(first.getId()).orElseThrow();
+		Question reloadedSecond = questionRepository.findById(second.getId()).orElseThrow();
+		/*
+		 * The first update occurred before the stale second Question was detected, so
+		 * this assertion proves that the whole bulk operation rolled back.
+		 */
+		assertEquals(QuestionResponseType.UNKNOWN, reloadedFirst.getResponseType());
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloadedSecond.getResponseType());
+	}
+
+	@Test
 	void cannotRemoveLegacyPreambleHintFromMultipartQuestionWithSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q7");
@@ -91,6 +121,57 @@ class LegacyQuestionMetadataServiceTest {
 		assertTrue(trueVersion.isPreambleCaptureRequired());
 		Question falseVersion = service.updateMetadata(trueVersion, "Q2", 1, historicalSubtopicOne, false);
 		assertFalse(falseVersion.isPreambleCaptureRequired());
+	}
+
+	@Test
+	void changingMultipartCodeCannotJoinContextGroupWithoutSharedContext() {
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SourceQuestion sourceTwentyOne = sourceRepository.save(booklet, "Q21");
+		SourceQuestion sourceTwentyTwo = sourceRepository.save(booklet, "Q22");
+		SharedQuestionContext destinationContext = contextRepository.save(booklet, "Q22 shared material",
+				List.of(new SharedQuestionContextRegion(3, 0.10, 0.10, 0.80, 0.20)));
+		Question movingQuestion = questionRepository.save(booklet, "Q21a", "", 2, List.of(), historicalSubtopicOne,
+				false, sourceTwentyOne, null);
+		Question destinationSibling = questionRepository.save(booklet, "Q22b", "", 3, List.of(), historicalSubtopicOne,
+				false, sourceTwentyTwo, destinationContext);
+		assertThrows(IllegalArgumentException.class,
+				() -> service.updateMetadata(movingQuestion, "Q22a", 2, historicalSubtopicOne, false));
+		Question reloadedMoving = questionRepository.findById(movingQuestion.getId()).orElseThrow();
+		Question reloadedSibling = questionRepository.findById(destinationSibling.getId()).orElseThrow();
+		assertEquals("Q21a", reloadedMoving.getQuestionCode());
+		assertTrue(reloadedMoving.hasSourceQuestion());
+		assertEquals("Q21", reloadedMoving.getSourceQuestion().getSourceQuestionCode());
+		assertFalse(reloadedMoving.hasSharedContext());
+		assertTrue(reloadedSibling.hasSharedContext());
+		assertEquals(destinationContext.getId(), reloadedSibling.getSharedContext().getId());
+	}
+
+	@Test
+	void changingMultipartCodeCannotJoinGroupWithDifferentSharedContext() {
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SourceQuestion sourceTwentyOne = sourceRepository.save(booklet, "Q21");
+		SourceQuestion sourceTwentyTwo = sourceRepository.save(booklet, "Q22");
+		SharedQuestionContext contextA = contextRepository.save(booklet, "Q21 shared material",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		SharedQuestionContext contextB = contextRepository.save(booklet, "Q22 shared material",
+				List.of(new SharedQuestionContextRegion(3, 0.10, 0.10, 0.80, 0.20)));
+		Question movingQuestion = questionRepository.save(booklet, "Q21a", "", 2, List.of(), historicalSubtopicOne,
+				false, sourceTwentyOne, contextA);
+		Question destinationSibling = questionRepository.save(booklet, "Q22b", "", 3, List.of(), historicalSubtopicOne,
+				false, sourceTwentyTwo, contextB);
+		assertThrows(IllegalArgumentException.class,
+				() -> service.updateMetadata(movingQuestion, "Q22a", 2, historicalSubtopicOne, false));
+		Question reloadedMoving = questionRepository.findById(movingQuestion.getId()).orElseThrow();
+		Question reloadedSibling = questionRepository.findById(destinationSibling.getId()).orElseThrow();
+		assertEquals("Q21a", reloadedMoving.getQuestionCode());
+		assertTrue(reloadedMoving.hasSourceQuestion());
+		assertEquals("Q21", reloadedMoving.getSourceQuestion().getSourceQuestionCode());
+		assertTrue(reloadedMoving.hasSharedContext());
+		assertEquals(contextA.getId(), reloadedMoving.getSharedContext().getId());
+		assertEquals("Q22", reloadedSibling.getSourceQuestion().getSourceQuestionCode());
+		assertEquals(contextB.getId(), reloadedSibling.getSharedContext().getId());
 	}
 
 	@Test

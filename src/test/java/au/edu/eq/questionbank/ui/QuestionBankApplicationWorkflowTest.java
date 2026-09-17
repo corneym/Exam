@@ -498,6 +498,25 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void changingFullWidthSelectionClearsPendingSharedContextSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		robot.clickOn("#new-shared-context");
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		SharedContextCapturePane sharedContextPane = field(questionCapturePane(), "sharedContextCapturePane",
+				SharedContextCapturePane.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.SHARED_CONTEXT));
+		assertTrue(sharedContextPane.hasCurrentSelection());
+		CheckBox fullWidth = field(pdfWorkspace(), "fullWidthSelectionCheckBox", CheckBox.class);
+		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
+		assertTrue(selectionRectangle.isVisible());
+		robot.interact(fullWidth::fire);
+		assertFalse(selectionState.hasPendingSelection());
+		assertFalse(sharedContextPane.hasCurrentSelection());
+		assertFalse(selectionRectangle.isVisible());
+	}
+
+	@Test
 	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		assertNotNull(examMetadataPane().getBooklet());

@@ -1,8 +1,8 @@
 # Exam Question Bank — Roadmap
 
-> Consolidated forward plan at 16 September 2026.
+> Consolidated forward plan at 17 September 2026.
 >
-> Completed Sprints 01–07 are not future milestones. `DEVELOPMENT_ROADMAP.md`
+> Completed Sprints 01–08 are not future milestones.  `DEVELOPMENT_ROADMAP.md`
 > contains the detailed sequence and `design/backlog.md` is the authoritative
 > deferred-work list.
 
@@ -11,7 +11,7 @@
 **IMPLEMENTED / CURRENT**
 
 - Java 25 / JavaFX / Maven desktop application.
-- SQLite runtime with foreign keys and migrations through schema v7.
+- SQLite runtime with foreign keys and migrations through schema v8.
 - Managed source PDFs and portable relative paths.
 - PDF viewer and managed Exam import.
 - Multi-region Question and Answer capture.
@@ -26,18 +26,19 @@
 - Sprint 07 persisted SourceQuestion/shared-context semantics, preamble-aware
   capture, Question/Answer correction, syllabus-sensitive classification,
   multipart/shared-context revision output and capture responsiveness work.
+  - Sprint 08 subject-neutral curriculum authoring, application-authoritative
+  mapping coverage, legacy metadata correction, persisted Question response type,
+  corpus audit/completeness tooling and capture/search hardening.
 
-## Current sprint
+## Current development position
 
 Sprint 07 is complete and merged.
 
-Sprint 08 — Curriculum and Corpus Completion is in its final implementation
-phase on `feature/data-completion`. Curriculum authoring, mapping coverage,
-legacy metadata correction, persisted Question response type and corpus
-audit/completeness tooling are implemented. Regression/capture hardening and
-final closeout remain.
+Sprint 08 — Curriculum and Corpus Completion has completed implementation and
+branch-level validation on `feature/data-completion`. Final independent review
+and merge remain.
 
-Canonical Sprint 08 design:
+Canonical Sprint 08 design and implementation record:
 
 `docs/design/sprint-08-Curriculum-and-Corpus-Completion.md`
 
@@ -61,8 +62,9 @@ completion:
 - routing from corpus problems into the existing metadata, Question and Answer
   workflows.
 
-Remaining Sprint 08 work is regression/capture hardening and closeout rather
-than another corpus-management architecture change.
+Sprint 08 regression/capture hardening and closeout validation are complete on
+the feature branch. Real bank population remains an ongoing data task rather
+than application implementation work.
 
 Real bank population remains an ongoing data task: the tools can identify and
 route incomplete Questions, but implementation of the queue does not imply that

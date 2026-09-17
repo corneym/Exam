@@ -1,11 +1,10 @@
-# Exam Question Bank — Current Status
-
-> Authoritative project status at 16 September 2026.
+> Authoritative project status at 17 September 2026.
 >
 > Current development branch: `feature/data-completion`.
 >
 > Sprint 07 is complete and merged. Sprint 08 — Curriculum and Corpus Completion
-> is in progress.
+> has completed implementation and branch-level validation. Final independent
+> review and merge remain.
 
 ## Status summary
 
@@ -23,13 +22,12 @@ syllabus-sensitive classification, Question/Answer correction,
 capture-workflow protection, and a substantial set of UI and responsiveness
 improvements.
 
-Sprint 08 is now in progress on `feature/data-completion`. Its focus is
-curriculum and corpus completion: subject-neutral curriculum authoring,
-measurable curriculum-mapping coverage, legacy metadata correction, corpus
-audit/completeness tooling, and remaining capture/search hardening.
-The application is no longer an Excel-backed generation pipeline. Excel is an
-import/exchange format. SQLite is the live datastore. Original PDFs are the
-authoritative source material; extracted/cropped images are derived content.
+Sprint 08 implementation is complete on `feature/data-completion`. It delivered
+subject-neutral curriculum authoring, measurable curriculum-mapping coverage,
+legacy metadata correction, persisted Question response type, corpus
+audit/completeness tooling, and the agreed capture/search hardening. The branch
+has completed non-UI, headless UI, Javadoc and whitespace validation and is
+under final independent review before merge.
 
 The latest supported SQLite schema version is **8**.
 
@@ -167,7 +165,7 @@ version.
 
 ### Resumable curriculum authoring — Sprint 08
 
-**IMPLEMENTED / CURRENT — closeout validation remains in progress**
+**IMPLEMENTED / CURRENT**
 
 The Curriculum > Author / Edit action creates a new syllabus for a new or
 existing Subject, or opens an existing persisted syllabus, including an
@@ -230,10 +228,6 @@ Closing a Curriculum Authoring window refreshes the application's curriculum sel
 Curriculum numbering is automatic and correction-safe: existing codes are preserved during move/delete operations, while newly created nodes use the lowest available hierarchical child number beneath their explicit parent.
 
 The separate Exam Import dialog refreshes its subject choices when opened.
-
-Mapping coverage, metadata-only legacy correction, the corpus audit queue and
-real non-Chemistry end-to-end acceptance are not established as complete by this
-authoring implementation. Sprint-scope decisions remain separate.
 
 ### Managed PDF workflows
 
@@ -430,6 +424,10 @@ Retrieval includes:
 - SQLite repository/service retrieval;
 - asynchronous JavaFX search;
 - stale-result/lifecycle protection;
+- regression coverage for stale search and preview completion, hierarchy
+  failures, disposal while work is in flight, repeated disposal, no-current and
+  multiple-current syllabus states, zero-region Questions and unavailable source
+  PDFs;
 - Question details and reconstructed Question preview;
 - linked `SharedQuestionContext` regions rendered before the selected
   Question's ordinary regions without automatically displaying sibling parts;
@@ -551,18 +549,30 @@ Historical Sprint 07 final verification included:
 
 No known Sprint 07 merge blocker remains.
 
+### Sprint 08 regression and capture hardening
+
+**IMPLEMENTED / CURRENT**
+
+- changing Full width selection clears any pending Question,
+  SharedQuestionContext or Answer selection so visible PDF state cannot disagree
+  with logical capture state;
+- asynchronous Question Search has explicit stale-result and lifecycle regression
+  coverage across search, preview, hierarchy failure and disposal paths;
+- TestFX dialog interactions used by closeout regressions are scoped to visible
+  dialogs rather than stale hidden dialog nodes;
+- the normal Curriculum Authoring UI no longer exposes the diagnostic Export
+  Draft action; programmatic draft export remains available for diagnostics and
+  regression tests.
+
 ## Active backlog themes
 
 The authoritative deferred-work list is `docs/design/backlog.md`.
 
 Current major deferred themes include:
 
-- additional asynchronous Question Search regression coverage;
-- application-authoritative curriculum mapping review and pair-specific coverage;
 - Answer-pane layout annoyances;
 - multi-page automatic shared-preamble capture;
 - supported editing of persisted exam-specific metadata;
-- clearing a pending selection when Full width selection changes;
 - optional MCQ explanation-region capture;
 - explicit decision on multiple original classifications;
 - question-level applicability exceptions after curriculum mapping;
@@ -610,6 +620,15 @@ Do **not** describe the following as current application capabilities:
 - Sprint 07: preamble-aware capture, persisted SourceQuestion/shared context,
   correction workflows, multipart revision presentation and capture UI redesign
   — implementation and merge-readiness closeout complete on the feature branch.
-- Sprint 08: in progress; curriculum authoring, mapping coverage, legacy
-  metadata correction and corpus audit/completeness implementation are complete;
-  regression/capture hardening and final sprint closeout remain.
+- Sprint 08: implementation and branch-level validation complete on
+  `feature/data-completion`; curriculum authoring, mapping coverage, legacy
+  metadata correction, persisted Question response type, corpus
+  audit/completeness, regression/capture hardening and documentation closeout are
+  complete. Final independent review and merge remain.
+
+  Final Sprint 08 branch validation on 17 September 2026:
+
+- non-UI suite: 814 tests passed, 0 failures/errors, 3 existing disabled tests;
+- headless UI suite: 144 tests passed, 0 failures/errors/skips;
+- Javadoc: build successful with zero warnings;
+- `git diff --check`: clean.
