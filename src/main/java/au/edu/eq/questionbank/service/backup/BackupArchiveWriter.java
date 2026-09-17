@@ -57,6 +57,9 @@ final class BackupArchiveWriter {
 	}
 
 	private void writeManagedFile(ZipOutputStream output, String entryName, Path sourcePath) throws IOException {
+
+		// Compare metadata around the copy to detect observable file changes during
+		// backup.
 		BasicFileAttributes before = Files.readAttributes(sourcePath, BasicFileAttributes.class,
 				LinkOption.NOFOLLOW_LINKS);
 		if (!before.isRegularFile()) {
@@ -71,6 +74,9 @@ final class BackupArchiveWriter {
 	}
 
 	private void writeManagedTree(ZipOutputStream output, String archiveRoot, Path sourceRoot) throws IOException {
+
+		// Include the managed root even when empty so full-backup structure remains
+		// explicit.
 		writeDirectoryEntry(output, archiveRoot);
 		if (!Files.exists(sourceRoot)) {
 			return;
@@ -89,6 +95,8 @@ final class BackupArchiveWriter {
 			if (Files.isSymbolicLink(path)) {
 				throw new IOException("Managed data contains a symbolic link: " + path);
 			}
+
+			// Store portable paths relative to the managed root, using ZIP forward slashes.
 			Path relativePath = sourceRoot.relativize(path);
 			String relativeName = relativePath.toString().replace(File.separatorChar, '/');
 			String archiveName = archiveRoot + relativeName;

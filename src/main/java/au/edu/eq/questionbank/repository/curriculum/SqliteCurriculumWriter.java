@@ -196,6 +196,9 @@ public final class SqliteCurriculumWriter {
 				VALUES (?, ?, ?, ?, ?, ?)
 				RETURNING id
 				""")) {
+
+			// Children inherit the parent syllabus and retain the supplied text and display
+			// order.
 			statement.setLong(1, parent.getSyllabusVersion().getId());
 			statement.setLong(2, parent.getId());
 			statement.setString(3, code);

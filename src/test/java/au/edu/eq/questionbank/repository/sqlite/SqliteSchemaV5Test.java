@@ -187,10 +187,9 @@ class SqliteSchemaV5Test {
 					VALUES
 					    (30, 1, 'Question 24 preamble')
 					""");
-			/*
-			 * Insert these deliberately out of physical insertion order. Repository
-			 * reconstruction must continue to honour region_order after migration.
-			 */
+
+			// Insert these deliberately out of physical insertion order. Repository
+			// reconstruction must continue to honour region_order after migration.
 			statement.execute("""
 					INSERT INTO shared_question_context_regions
 					    (shared_context_id, region_order,
@@ -237,10 +236,9 @@ class SqliteSchemaV5Test {
 		assertEquals(5, database.schemaVersion());
 		database.initialiseSchema();
 		assertEquals(8, database.schemaVersion());
-		/*
-		 * Use a fresh database object after migration to simulate reopening the
-		 * application against the upgraded database.
-		 */
+
+		// Use a fresh database object after migration to simulate reopening the
+		// application against the upgraded database.
 		SqliteDatabase reopenedDatabase = new SqliteDatabase(databasePath);
 		reopenedDatabase.initialiseSchema();
 		assertEquals(8, reopenedDatabase.schemaVersion());

@@ -34,6 +34,9 @@ final class BackupArchiveValidator {
 			throw new BackupFormatException("Backup archive does not exist: " + archivePath);
 		}
 		try (ZipFile archive = new ZipFile(archivePath.toFile())) {
+
+			// Reject unsafe or duplicate names before interpreting the manifest and archive
+			// contents.
 			validateEntryNames(archive);
 			BackupManifest manifest = readManifest(archive);
 			validateRequiredEntries(archive, manifest);
@@ -75,6 +78,8 @@ final class BackupArchiveValidator {
 		if (databaseEntry == null || databaseEntry.isDirectory()) {
 			throw new BackupFormatException("Backup database is missing");
 		}
+
+		// Validate an extracted copy so database checks cannot modify the archive.
 		Path temporaryDatabase = Files.createTempFile("question-bank-backup-validation-", ".db");
 		try {
 			try (InputStream input = archive.getInputStream(databaseEntry)) {
@@ -101,6 +106,9 @@ final class BackupArchiveValidator {
 			if (entry.isDirectory()) {
 				continue;
 			}
+
+			// Read every file completely and compare its actual size and CRC with the ZIP
+			// metadata.
 			CRC32 crc = new CRC32();
 			long actualSize = 0;
 			try (InputStream input = archive.getInputStream(entry)) {
@@ -151,6 +159,9 @@ final class BackupArchiveValidator {
 		if (entryName.startsWith("/") || entryName.contains("\\")) {
 			throw new BackupFormatException("Unsafe backup archive entry: " + entryName);
 		}
+
+		// Allow a directory marker at the end, then check every path component for
+		// traversal or drive prefixes.
 		String logicalName = entryName;
 		if (logicalName.endsWith("/")) {
 			logicalName = logicalName.substring(0, logicalName.length() - 1);

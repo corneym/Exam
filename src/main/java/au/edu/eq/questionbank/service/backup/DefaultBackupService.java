@@ -75,20 +75,19 @@ public final class DefaultBackupService implements BackupService {
 				throw new IOException("Backup already exists: " + finalBackupPath);
 			}
 			Files.createDirectories(request.destinationDirectory());
+
+			// Stage beside the destination so publication can use a same-filesystem move.
 			Path workDirectory = Files.createTempDirectory(request.destinationDirectory(),
 					".question-bank-backup-work-");
 			Path temporaryArchive = Files.createTempFile(request.destinationDirectory(), ".question-bank-backup-",
 					".tmp");
 			try {
-				Path snapshotPath = workDirectory.resolve(BackupArchiveLayout.DATABASE_ENTRY);
-				SqliteDatabase sourceDatabase = new SqliteDatabase(config.databasePath());
-				sourceDatabase.createConsistentSnapshot(snapshotPath);
-				SqliteDatabase snapshotDatabase = new SqliteDatabase(snapshotPath);
-				BackupManifest manifest = BackupManifest.current(request.kind(), createdAt,
-						snapshotDatabase.schemaVersion(), applicationVersion);
-				archiveWriter.write(temporaryArchive, manifest, snapshotPath, config);
-				BackupManifest validatedManifest = archiveValidator.validate(temporaryArchive);
+				BackupManifest validatedManifest = createValidatedArchive(request, createdAt, workDirectory,
+						temporaryArchive);
 				deleteTree(workDirectory);
+
+				// Expose the final archive name only after validation and snapshot cleanup
+				// succeed.
 				publish(temporaryArchive, finalBackupPath);
 				return new BackupResult(finalBackupPath, validatedManifest);
 			} catch (IOException | SQLException | BackupFormatException | RuntimeException e) {
@@ -98,6 +97,21 @@ public final class DefaultBackupService implements BackupService {
 		} catch (IOException | SQLException | BackupFormatException e) {
 			throw new BackupException("Unable to create " + request.kind() + " backup", e);
 		}
+	}
+
+	private BackupManifest createValidatedArchive(BackupRequest request, Instant createdAt, Path workDirectory,
+			Path temporaryArchive) throws IOException, SQLException, BackupFormatException {
+
+		// Archive a consistent SQLite snapshot, then reopen the ZIP to validate
+		// everything written.
+		Path snapshotPath = workDirectory.resolve(BackupArchiveLayout.DATABASE_ENTRY);
+		SqliteDatabase sourceDatabase = new SqliteDatabase(config.databasePath());
+		sourceDatabase.createConsistentSnapshot(snapshotPath);
+		SqliteDatabase snapshotDatabase = new SqliteDatabase(snapshotPath);
+		BackupManifest manifest = BackupManifest.current(request.kind(), createdAt, snapshotDatabase.schemaVersion(),
+				applicationVersion);
+		archiveWriter.write(temporaryArchive, manifest, snapshotPath, config);
+		return archiveValidator.validate(temporaryArchive);
 	}
 
 	private void cleanupAfterFailure(Path workDirectory, Path temporaryArchive, Throwable failure) {

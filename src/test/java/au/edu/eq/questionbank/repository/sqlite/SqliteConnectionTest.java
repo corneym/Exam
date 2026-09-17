@@ -428,9 +428,8 @@ class SqliteConnectionTest {
 					WHERE id = 42
 					""")) {
 				assertTrue(result.next());
-				/*
-				 * The imported node identity is deliberately preserved by migration.
-				 */
+
+				// The imported node identity is deliberately preserved by migration.
 				assertEquals(42, result.getLong("id"));
 				assertEquals(7, result.getLong("syllabus_version_id"));
 				assertEquals("Engineering fundamentals", result.getString("curriculum_name"));

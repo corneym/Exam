@@ -526,6 +526,53 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void captureEntryPointsUseTaskBasedLabels(FxRobot robot) throws Exception {
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+
+		// Question capture modes now belong only to the visible Question pane.
+		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.anyMatch(item -> "capture-new-questions".equals(item.getId())));
+		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.anyMatch(item -> "capture-imported-questions".equals(item.getId())));
+		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
+		ToggleButton importedMode = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
+		assertEquals("Capture New Questions", newMode.getText());
+		assertEquals("Capture Imported Questions", importedMode.getText());
+
+		// New-question capture remains the initial Question-pane mode.
+		assertTrue(newMode.isSelected());
+		assertFalse(importedMode.isSelected());
+		assertFalse(legacyControls.isVisible());
+		assertFalse(legacyControls.isManaged());
+
+		// Imported-question capture remains available directly from its pane button.
+		robot.clickOn(importedMode);
+		assertFalse(newMode.isSelected());
+		assertTrue(importedMode.isSelected());
+		assertTrue(legacyControls.isVisible());
+		assertTrue(legacyControls.isManaged());
+
+		// Returning to new capture uses the other pane button rather than a menu
+		// action.
+		robot.clickOn(newMode);
+		assertTrue(newMode.isSelected());
+		assertFalse(importedMode.isSelected());
+		assertFalse(legacyControls.isVisible());
+		assertFalse(legacyControls.isManaged());
+		MenuItem openExamItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
+		assertEquals("_Open Exam for Capture...", openExamItem.getText());
+
+		// The dialog uses the same task-oriented wording as its menu entry.
+		ExamImportDialog dialog = field(application, "examImportDialog", ExamImportDialog.class);
+		assertEquals("Open Exam for Capture", dialog.getTitle());
+		Button confirmButton = (Button) dialog.getDialogPane()
+				.lookupButton(dialog.getDialogPane().getButtonTypes().getFirst());
+		assertEquals("Open for Capture", confirmButton.getText());
+	}
+
+	@Test
 	void capturesMultipartQuestionWithSharedPreamble(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
@@ -801,7 +848,6 @@ class QuestionBankApplicationWorkflowTest {
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
-
 		robot.clickOn(questionCodeField).write("Q7");
 		robot.clickOn(marksField).write("1");
 
@@ -1354,7 +1400,6 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void newQuestionRequiresExplicitResponseTypeAndPersistsIt(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 		Button save = lookup(robot, "#save-question", Button.class);
@@ -1364,29 +1409,21 @@ class QuestionBankApplicationWorkflowTest {
 		// The shared setup selects Written response for older workflow tests.
 		// Clear that selection to exercise the explicit-response-type requirement.
 		robot.interact(() -> writtenResponse.getToggleGroup().selectToggle(null));
-
 		robot.clickOn(questionCode).write("R1");
 		robot.clickOn(marks).write("2");
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
-
 		assertTrue(save.isDisabled(), "Question capture must require an explicit response type");
-
 		robot.clickOn(multipleChoice);
-
 		assertTrue(multipleChoice.isSelected());
 		assertFalse(writtenResponse.isSelected());
 		assertFalse(save.isDisabled());
-
 		robot.clickOn("#save-question");
-
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
 				.filter(question -> "R1".equals(question.getQuestionCode())).findFirst().orElseThrow();
-
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, stored.getResponseType());
 
 		// Completing a new Question must reset both radio buttons.
@@ -1431,44 +1468,6 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
-	void questionCaptureModesCanBeSelectedFromPaneAndMenu(FxRobot robot) {
-		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
-		MenuItem captureNewItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.filter(item -> "capture-new-questions".equals(item.getId())).findFirst().orElseThrow();
-		MenuItem captureImportedItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.filter(item -> "capture-imported-questions".equals(item.getId())).findFirst().orElseThrow();
-		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
-		ToggleButton importedMode = lookup(robot, "#capture-mode-imported", ToggleButton.class);
-		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
-		assertEquals("Capture _New Questions", captureNewItem.getText());
-		assertEquals("Capture _Imported Questions", captureImportedItem.getText());
-		assertTrue(newMode.isSelected());
-		assertFalse(importedMode.isSelected());
-		assertFalse(legacyControls.isVisible());
-		assertFalse(legacyControls.isManaged());
-		robot.interact(captureImportedItem::fire);
-		assertFalse(newMode.isSelected());
-		assertTrue(importedMode.isSelected());
-		assertTrue(legacyControls.isVisible());
-		assertTrue(legacyControls.isManaged());
-		robot.interact(captureNewItem::fire);
-		assertTrue(newMode.isSelected());
-		assertFalse(importedMode.isSelected());
-		assertFalse(legacyControls.isVisible());
-		assertFalse(legacyControls.isManaged());
-		robot.clickOn(importedMode);
-		assertFalse(newMode.isSelected());
-		assertTrue(importedMode.isSelected());
-		assertTrue(legacyControls.isVisible());
-		assertTrue(legacyControls.isManaged());
-		robot.clickOn(newMode);
-		assertTrue(newMode.isSelected());
-		assertFalse(importedMode.isSelected());
-		assertFalse(legacyControls.isVisible());
-		assertFalse(legacyControls.isManaged());
-	}
-
-	@Test
 	void questionEditCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "57");
@@ -1490,14 +1489,10 @@ class QuestionBankApplicationWorkflowTest {
 	void questionEditLoadsAndUpdatesResponseType(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "R2");
-
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, question.getResponseType());
-
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
-
 		robot.interact(() -> assertTrue(pane.editQuestion(question, () -> {
 		})));
-
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 
@@ -1507,18 +1502,13 @@ class QuestionBankApplicationWorkflowTest {
 
 		// Change the persisted response type through the production UI.
 		robot.clickOn(multipleChoice);
-
 		assertTrue(multipleChoice.isSelected());
 		assertFalse(writtenResponse.isSelected());
-
 		robot.clickOn("#save-question");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
 				.orElseThrow();
-
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, stored.getResponseType());
 		assertEquals(1, stored.getRegions().size());
 	}
@@ -1569,18 +1559,16 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void questionMetadataRemainsReadableAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
-
 		robot.interact(() -> {
+
 			// Exercise Question metadata at the minimum supported workspace width.
 			splitPane.setDividerPosition(0, 0.0);
 			primaryStage.getScene().getRoot().applyCss();
 			primaryStage.getScene().getRoot().layout();
 		});
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Label questionLabel = lookup(robot, "#question-code-label", Label.class);
 		Label marksLabel = lookup(robot, "#question-marks-label", Label.class);
 		Label responseTypeLabel = lookup(robot, "#question-response-type-label", Label.class);
@@ -1711,7 +1699,6 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void questionStatusWrapsAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		Label status = lookup(robot, "#question-save-status", Label.class);
 
 		// Use a deliberately long message representative of Question capture,
@@ -1719,11 +1706,10 @@ class QuestionBankApplicationWorkflowTest {
 		String longStatus = "Shared preamble captured — select the remaining question "
 				+ "region or regions before saving this question.";
 		robot.interact(() -> status.setText(longStatus));
-
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
-
 		robot.interact(() -> {
+
 			// Exercise the status label at the minimum supported workspace width.
 			splitPane.setDividerPosition(0, 0.0);
 			primaryStage.getScene().getRoot().applyCss();

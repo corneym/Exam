@@ -25,11 +25,17 @@ final class SqlScriptExecutor {
 		if (sql == null) {
 			throw new NullPointerException("sql");
 		}
+
+		// Scripts must use semicolons only as statement separators; this is not a SQL
+		// parser.
 		for (String statementText : sql.split(";")) {
 			String trimmed = statementText.trim();
 			if (trimmed.isEmpty()) {
 				continue;
 			}
+
+			// Execute in order on the caller transaction so migration failures can roll
+			// back earlier statements.
 			try (Statement statement = connection.createStatement()) {
 				statement.execute(trimmed);
 			}

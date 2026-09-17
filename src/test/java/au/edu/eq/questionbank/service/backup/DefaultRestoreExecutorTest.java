@@ -47,10 +47,9 @@ class DefaultRestoreExecutorTest {
 		ApplicationConfig targetConfig = createDataSet("target", "Old Chemistry", "old-pdf", "old-curriculum");
 		DefaultRestoreService restoreService = new DefaultRestoreService(targetConfig);
 		try (RestorePreparation preparation = restoreService.prepareRestore(sourceBackup.backupPath())) {
-			/*
-			 * Simulate failure after successful preparation. Managed roots will already
-			 * have been published before database validation detects this corruption.
-			 */
+
+			// Simulate failure after successful preparation. Managed roots will already
+			// have been published before database validation detects this corruption.
 			Files.writeString(preparation.databasePath(), "deliberately corrupt");
 			RestoreException exception = assertThrows(RestoreException.class,
 					() -> new DefaultRestoreExecutor(targetConfig, "Test").applyRestore(preparation,

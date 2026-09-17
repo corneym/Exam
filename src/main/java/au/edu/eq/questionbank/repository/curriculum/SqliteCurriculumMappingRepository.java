@@ -92,6 +92,9 @@ public final class SqliteCurriculumMappingRepository implements CurriculumMappin
 	private CurriculumMapping createMapping(Connection connection, ResultSet result) throws SQLException {
 		long mappingId = result.getLong("id");
 		try {
+
+			// Rebuild both endpoints from stored nodes so invalid relationships cannot
+			// masquerade as mappings.
 			CurriculumNode source = findNode(connection, result.getLong("source_node_id"));
 			CurriculumNode target = findNode(connection, result.getLong("target_node_id"));
 			String storedStatus = result.getString("mapping_status");

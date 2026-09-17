@@ -68,10 +68,9 @@ class SqliteCurriculumAuthoringWriterTest {
 		SqliteCurriculumAuthoringWriter writer = new SqliteCurriculumAuthoringWriter(database);
 		IllegalStateException exception = assertThrows(IllegalStateException.class, () -> writer.save(session));
 		assertTrue(exception.getMessage().contains("referenced by a curriculum mapping"));
-		/*
-		 * A failed save must not alter the persistence bindings. The deletion remains
-		 * pending in the editing session.
-		 */
+
+		// A failed save must not alter the persistence bindings. The deletion remains
+		// pending in the editing session.
 		assertTrue(session.deletedPersistentIds().contains(protectedDescriptor.getId()));
 		assertEquals(otherDescriptor.getId(), session.persistentIdForDraftId(draftOther.draftId()).orElseThrow());
 		try (Connection connection = database.openConnection()) {
@@ -90,10 +89,9 @@ class SqliteCurriculumAuthoringWriterTest {
 				statement.setLong(1, otherDescriptor.getId());
 				try (ResultSet result = statement.executeQuery()) {
 					assertTrue(result.next());
-					/*
-					 * The edit exists only in the draft because the complete save operation was
-					 * rejected.
-					 */
+
+					// The edit exists only in the draft because the complete save operation was
+					// rejected.
 					assertEquals("Other descriptor", result.getString("curriculum_name"));
 					assertEquals("1.1.2", result.getString("curriculum_code"));
 				}
@@ -164,10 +162,9 @@ class SqliteCurriculumAuthoringWriterTest {
 				statement.setLong(1, firstDescriptor.getId());
 				try (ResultSet result = statement.executeQuery()) {
 					assertTrue(result.next());
-					/*
-					 * Moving the first descriptor down changes display order only. Its curriculum
-					 * code and permanent database identity remain unchanged.
-					 */
+
+					// Moving the first descriptor down changes display order only. Its curriculum
+					// code and permanent database identity remain unchanged.
 					assertEquals("1.1.1", result.getString("curriculum_code"));
 					assertEquals(editedText, result.getString("curriculum_name"));
 				}

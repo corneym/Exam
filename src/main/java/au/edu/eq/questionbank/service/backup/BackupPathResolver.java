@@ -45,6 +45,9 @@ public final class BackupPathResolver {
 		if (Files.exists(destinationDirectory) && !Files.isDirectory(destinationDirectory)) {
 			throw new IllegalArgumentException("Backup destination is not a directory: " + destinationDirectory);
 		}
+
+		// Use the backup kind and UTC timestamp to match the retention naming
+		// convention.
 		String fileName = "question-bank-" + request.kind().fileNameToken() + "-"
 				+ TIMESTAMP_FORMATTER.format(createdAt) + ".zip";
 		Path backupPath = destinationDirectory.resolve(fileName).normalize();

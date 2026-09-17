@@ -33,6 +33,8 @@ public record QuestionCorpusSummary(int totalQuestions, int completeQuestions, i
 				|| missingAnswer < 0 || unresolvedSharedContext < 0 || unknownResponseType < 0) {
 			throw new IllegalArgumentException("Corpus summary counts must not be negative");
 		}
+
+		// Only completion counts partition the corpus; problem counts may overlap.
 		if (completeQuestions + incompleteQuestions != totalQuestions) {
 			throw new IllegalArgumentException("Complete and incomplete counts must equal totalQuestions");
 		}

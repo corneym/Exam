@@ -84,6 +84,8 @@ public class ExamMetadataOptionsRepository {
 		if (stored.isBlank()) {
 			return List.of();
 		}
+
+		// Decode the pipe-separated preference value and sort labels for display.
 		String[] values = stored.split("\\|");
 		Arrays.sort(values, String.CASE_INSENSITIVE_ORDER);
 		return List.copyOf(Arrays.asList(values));
@@ -95,6 +97,9 @@ public class ExamMetadataOptionsRepository {
 			return;
 		}
 		List<String> values = getValues(key);
+
+		// Treat casing variants as the same label while retaining the first saved
+		// spelling.
 		boolean alreadyExists = false;
 		for (String existing : values) {
 			if (existing.equalsIgnoreCase(trimmed)) {
@@ -105,6 +110,8 @@ public class ExamMetadataOptionsRepository {
 		if (alreadyExists) {
 			return;
 		}
+
+		// Write back the complete label list under its existing preference key.
 		String updated = values.isEmpty() ? trimmed : String.join("|", values) + "|" + trimmed;
 		preferences.put(key, updated);
 	}

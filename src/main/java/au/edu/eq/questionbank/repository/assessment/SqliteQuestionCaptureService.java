@@ -60,6 +60,9 @@ public final class SqliteQuestionCaptureService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Resolve identities, propagate the preamble and save capture data in one
+				// transaction.
 				SourceQuestion sourceQuestion = resolveSourceQuestion(connection, request);
 				SharedQuestionContext sharedContext = resolveSharedContext(connection, request, sourceQuestion);
 				if (sourceQuestion != null && sharedContext != null) {
@@ -152,6 +155,9 @@ public final class SqliteQuestionCaptureService {
 					request.responseType());
 		}
 		Question existing = request.existingQuestion();
+
+		// Imported questions keep previously captured regions; only empty captures
+		// receive new ones.
 		if (request.operation() == Operation.IMPORTED) {
 			if (existing.getRegions().isEmpty()) {
 				questionWriter.attachRegions(connection, existing.getId(), request.regions(), request.classification(),
@@ -177,6 +183,9 @@ public final class SqliteQuestionCaptureService {
 	private Question rebuildQuestion(Question existing, String questionCode, int marks, List<QuestionRegion> regions,
 			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
 			QuestionResponseType responseType) {
+
+		// Rebuild editable fields while retaining identity, legacy evidence and the
+		// answer.
 		Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
 				existing.getQuestionText(), marks, regions, classification, existing.isPreambleCaptureRequired(),
 				sourceQuestion, sharedContext, responseType);
@@ -188,6 +197,9 @@ public final class SqliteQuestionCaptureService {
 
 	private SourceQuestion resolvePreambleStatus(Connection connection, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
+
+		// Capture resolves unknown preamble status without replacing an explicit
+		// decision.
 		if (sourceQuestion == null || sourceQuestion.getPreambleStatus() != PreambleStatus.UNKNOWN) {
 			return sourceQuestion;
 		}
@@ -214,6 +226,9 @@ public final class SqliteQuestionCaptureService {
 				return existingContext;
 			}
 		}
+
+		// Create a context only when no retained, selected or sibling context can be
+		// reused.
 		PendingSharedContext pending = request.pendingSharedContext();
 		if (pending == null) {
 			return null;

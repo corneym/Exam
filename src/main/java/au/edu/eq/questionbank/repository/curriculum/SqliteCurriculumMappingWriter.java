@@ -111,6 +111,8 @@ public final class SqliteCurriculumMappingWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentMapping(connection, mapping.getSource(), mapping.getTarget());
+
+				// A status edit must still refer to the same stored source-target pair.
 				validatePersistentMappingIdentity(connection, mapping);
 				try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE curriculum_mappings
@@ -175,6 +177,9 @@ public final class SqliteCurriculumMappingWriter {
 
 	private void validatePersistentMapping(Connection connection, CurriculumNode source, CurriculumNode target)
 			throws SQLException {
+
+		// Validate persisted endpoints and direction, not just the supplied node
+		// objects.
 		PersistentMappingEndpoints endpoints = readPersistentMappingEndpoints(connection, source, target);
 		validatePersistentEndpoint(source, endpoints.sourceVersionId(), endpoints.sourceSubjectId(),
 				endpoints.sourceLevel(), endpoints.sourceCurrent(), "source");

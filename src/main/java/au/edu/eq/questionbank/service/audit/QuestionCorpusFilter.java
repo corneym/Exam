@@ -51,6 +51,9 @@ public record QuestionCorpusFilter(Long subjectId, Long providerId, Integer year
 		if (item == null) {
 			throw new NullPointerException("item");
 		}
+
+		// Every selected restriction must match; null metadata fields leave that
+		// dimension unrestricted.
 		var question = item.question();
 		var exam = question.getExam();
 		if (subjectId != null && exam.getSubject().getId() != subjectId.longValue()) {
@@ -71,6 +74,9 @@ public record QuestionCorpusFilter(Long subjectId, Long providerId, Integer year
 		if (completion == QuestionCorpusCompletionFilter.INCOMPLETE && item.status().isComplete()) {
 			return false;
 		}
+
+		// Apply the problem restriction together with completion, so COMPLETE plus a
+		// problem matches nothing.
 		if (problem != null && !item.status().hasProblem(problem)) {
 			return false;
 		}

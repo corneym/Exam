@@ -72,6 +72,9 @@ public final class SqliteCurriculumAuthoringRepository implements CurriculumAuth
 	}
 
 	private static PersistedCurriculumNode createNode(ResultSet result) throws SQLException {
+
+		// Preserve SQL nulls: a root has no parent and provenance may have no page
+		// number.
 		long parentId = result.getLong("parent_id");
 		Long parentPersistentId = result.wasNull() ? null : parentId;
 		int sourcePage = result.getInt("source_page_number");

@@ -102,6 +102,8 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		}
 	}
 
+	// Within the caller transaction, retain referenced contexts or remove their
+	// regions and row together.
 	boolean deleteIfUnreferenced(Connection connection, long contextId, long bookletId) throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");

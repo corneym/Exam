@@ -72,10 +72,9 @@ class LegacyQuestionMetadataServiceTest {
 				null, QuestionResponseType.UNKNOWN);
 		Question second = writer.insertQuestion(booklet, "Q45", "", 1, List.of(), historicalSubtopicOne, false, null,
 				null, QuestionResponseType.UNKNOWN);
-		/*
-		 * Simulate another operation resolving the second Question after both Question
-		 * objects were loaded but before this bulk operation begins.
-		 */
+
+		// Simulate another operation resolving the second Question after both Question
+		// objects were loaded but before this bulk operation begins.
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.executeUpdate("""
 					UPDATE questions
@@ -87,10 +86,9 @@ class LegacyQuestionMetadataServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE));
 		Question reloadedFirst = questionRepository.findById(first.getId()).orElseThrow();
 		Question reloadedSecond = questionRepository.findById(second.getId()).orElseThrow();
-		/*
-		 * The first update occurred before the stale second Question was detected, so
-		 * this assertion proves that the whole bulk operation rolled back.
-		 */
+
+		// The first update occurred before the stale second Question was detected, so
+		// this assertion proves that the whole bulk operation rolled back.
 		assertEquals(QuestionResponseType.UNKNOWN, reloadedFirst.getResponseType());
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloadedSecond.getResponseType());
 	}
@@ -146,10 +144,9 @@ class LegacyQuestionMetadataServiceTest {
 				List.of(new QuestionRegion(booklet, 3, 0.10, 0.30, 0.80, 0.25)), historicalSubtopicOne, false,
 				sourceTwentyTwo, sharedContext);
 		service.updateMetadata(movingQuestion, "Q22a", 2, historicalSubtopicOne, false);
-		/*
-		 * Reload both questions so the presentation check uses persisted state, not
-		 * objects returned or retained from the correction operation.
-		 */
+
+		// Reload both questions so the presentation check uses persisted state, not
+		// objects returned or retained from the correction operation.
 		Question reloadedMoving = questionRepository.findById(movingQuestion.getId()).orElseThrow();
 		Question reloadedSibling = questionRepository.findById(destinationSibling.getId()).orElseThrow();
 		assertEquals("Q22a", reloadedMoving.getQuestionCode());
@@ -161,11 +158,10 @@ class LegacyQuestionMetadataServiceTest {
 		assertTrue(reloadedSibling.hasSharedContext());
 		assertEquals(sharedContext.getId(), reloadedMoving.getSharedContext().getId());
 		assertEquals(sharedContext.getId(), reloadedSibling.getSharedContext().getId());
-		/*
-		 * Build a real revision corpus around the reloaded questions. The retrieval
-		 * boundary is deliberately small here because this regression is concerned with
-		 * persistence and presentation consistency, not mapping behaviour.
-		 */
+
+		// Build a real revision corpus around the reloaded questions. The retrieval
+		// boundary is deliberately small here because this regression is concerned with
+		// persistence and presentation consistency, not mapping behaviour.
 		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(currentNodes -> {
 			assertTrue(currentNodes.stream().anyMatch(node -> node.getId() == currentSubtopic.getId()));
@@ -263,10 +259,9 @@ class LegacyQuestionMetadataServiceTest {
 		Question updated = service.updateMetadata(question, "Q5", 2, historicalSubtopicOne, false);
 		assertFalse(updated.isPreambleCaptureRequired());
 		assertFalse(updated.hasSharedContext());
-		/*
-		 * The former preamble becomes the first ordinary question region. Existing
-		 * question material follows it.
-		 */
+
+		// The former preamble becomes the first ordinary question region. Existing
+		// question material follows it.
 		assertEquals(2, updated.getRegions().size());
 		QuestionRegion convertedPreamble = updated.getRegions().get(0);
 		assertEquals(2, convertedPreamble.pageNumber());
@@ -281,10 +276,9 @@ class LegacyQuestionMetadataServiceTest {
 		assertEquals(0.40, retainedQuestionRegion.y(), 0.000001);
 		assertEquals(0.80, retainedQuestionRegion.width(), 0.000001);
 		assertEquals(0.45, retainedQuestionRegion.height(), 0.000001);
-		/*
-		 * This context belonged only to Q5, so after conversion it is orphaned and
-		 * should be removed.
-		 */
+
+		// This context belonged only to Q5, so after conversion it is orphaned and
+		// should be removed.
 		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
 	}
 
@@ -346,9 +340,8 @@ class LegacyQuestionMetadataServiceTest {
 		assertEquals(originalRegion.y(), updatedRegion.y(), 0.000001);
 		assertEquals(originalRegion.width(), updatedRegion.width(), 0.000001);
 		assertEquals(originalRegion.height(), updatedRegion.height(), 0.000001);
-		/*
-		 * The old API must preserve the response type rather than resetting it.
-		 */
+
+		// The old API must preserve the response type rather than resetting it.
 		Question correctedAgain = service.updateMetadata(updated, "Q30", 3, historicalSubtopicOne, false);
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, correctedAgain.getResponseType());
 		assertEquals(3, correctedAgain.getMarks());
@@ -377,13 +370,11 @@ class LegacyQuestionMetadataServiceTest {
 		Question question = questionRepository.save(booklet, "Q5", "", 2,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.40)), historicalSubtopicOne, true, null,
 				context);
-		/*
-		 * Fail deliberately during orphan shared-context cleanup.
-		 *
-		 * By this point the conversion has already replaced question regions and
-		 * updated the question row. The transaction must restore all of those earlier
-		 * changes.
-		 */
+
+		// Fail deliberately during orphan shared-context cleanup.
+		// By this point the conversion has already replaced question regions and
+		// updated the question row. The transaction must restore all of those earlier
+		// changes.
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
 					CREATE TRIGGER reject_shared_context_region_delete
@@ -398,22 +389,19 @@ class LegacyQuestionMetadataServiceTest {
 		assertThrows(IllegalStateException.class,
 				() -> service.updateMetadata(question, "Q15", 7, historicalSubtopicTwo, false));
 		Question reloaded = questionRepository.findById(question.getId()).orElseThrow();
-		/*
-		 * Metadata update rolled back.
-		 */
+
+		// Metadata update rolled back.
 		assertEquals("Q5", reloaded.getQuestionCode());
 		assertEquals(2, reloaded.getMarks());
 		assertEquals(historicalSubtopicOne.getId(), reloaded.getClassification().getId());
 		assertTrue(reloaded.isPreambleCaptureRequired());
-		/*
-		 * Shared-context unlink rolled back.
-		 */
+
+		// Shared-context unlink rolled back.
 		assertTrue(reloaded.hasSharedContext());
 		assertEquals(context.getId(), reloaded.getSharedContext().getId());
-		/*
-		 * Region conversion rolled back. Only the original ordinary question region
-		 * remains.
-		 */
+
+		// Region conversion rolled back. Only the original ordinary question region
+		// remains.
 		assertEquals(1, reloaded.getRegions().size());
 		QuestionRegion originalRegion = reloaded.getRegions().getFirst();
 		assertEquals(2, originalRegion.pageNumber());
@@ -421,9 +409,8 @@ class LegacyQuestionMetadataServiceTest {
 		assertEquals(0.40, originalRegion.y(), 0.000001);
 		assertEquals(0.80, originalRegion.width(), 0.000001);
 		assertEquals(0.40, originalRegion.height(), 0.000001);
-		/*
-		 * The shared context and its source region must also still exist.
-		 */
+
+		// The shared context and its source region must also still exist.
 		List<SharedQuestionContext> contexts = contextRepository.findByBooklet(booklet);
 		assertEquals(1, contexts.size());
 		SharedQuestionContext restoredContext = contexts.getFirst();
@@ -470,9 +457,8 @@ class LegacyQuestionMetadataServiceTest {
 		QuestionRegion retainedQuestionRegion = updated.getRegions().get(1);
 		assertEquals(2, retainedQuestionRegion.pageNumber());
 		assertEquals(0.40, retainedQuestionRegion.y(), 0.000001);
-		/*
-		 * Neither relationship is needed after the question becomes ordinary.
-		 */
+
+		// Neither relationship is needed after the question becomes ordinary.
 		assertTrue(sourceRepository.findByBooklet(booklet).isEmpty());
 		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
 	}

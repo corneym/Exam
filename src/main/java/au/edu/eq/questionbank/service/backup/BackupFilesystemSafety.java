@@ -12,6 +12,9 @@ import au.edu.eq.questionbank.ApplicationConfig;
 final class BackupFilesystemSafety {
 
 	void validateApplicationLayout(ApplicationConfig config) throws IOException {
+
+		// Compare physical locations so path aliases cannot conceal overlapping managed
+		// roots.
 		Path pdfRoot = resolvePhysicalPath(config.pdfDataRoot());
 		Path curriculumRoot = resolvePhysicalPath(config.curriculumDataRoot());
 		Path databasePath = resolvePhysicalPath(config.databasePath());
@@ -71,6 +74,9 @@ final class BackupFilesystemSafety {
 		if (existing == null) {
 			return normalised;
 		}
+
+		// Resolve the nearest existing ancestor, then reattach components that have not
+		// been created yet.
 		Path resolved = existing.toRealPath();
 		for (Path missingPart : missingParts) {
 			resolved = resolved.resolve(missingPart);

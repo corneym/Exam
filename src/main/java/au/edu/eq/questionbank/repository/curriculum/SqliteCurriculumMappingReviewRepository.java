@@ -65,6 +65,9 @@ public final class SqliteCurriculumMappingReviewRepository implements Curriculum
 	@Override
 	public Set<Long> findReviewedSourceIds(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
 		validateVersions(sourceVersion, targetVersion);
+
+		// Review completion is scoped to the selected target version, regardless of its
+		// recorded outcome.
 		Set<Long> sourceIds = new HashSet<>();
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""

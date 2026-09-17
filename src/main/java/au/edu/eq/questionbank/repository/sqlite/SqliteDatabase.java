@@ -91,11 +91,16 @@ public final class SqliteDatabase {
 					+ "; latest supported version is " + LATEST_SCHEMA_VERSION);
 		}
 		try {
+
+			// Let SQLite create a consistent snapshot even when the live database has
+			// journaled writes.
 			try (Connection connection = openConnection();
 					PreparedStatement statement = connection.prepareStatement("VACUUM INTO ?")) {
 				statement.setString(1, normalisedSnapshotPath.toString());
 				statement.execute();
 			}
+
+			// Validate the copied database independently before accepting it as a backup.
 			SqliteDatabase snapshotDatabase = new SqliteDatabase(normalisedSnapshotPath);
 			int snapshotSchemaVersion = snapshotDatabase.schemaVersion();
 			if (snapshotSchemaVersion != sourceSchemaVersion) {
@@ -134,6 +139,9 @@ public final class SqliteDatabase {
 			connection.setAutoCommit(false);
 			try {
 				int version = readSchemaVersion(connection);
+
+				// Only a database without user schema objects may be bootstrapped without
+				// version metadata.
 				if (version == 0) {
 					if (hasUserSchemaObjects(connection)) {
 						throw new SQLException("Existing database has no schema_version table");
@@ -145,6 +153,9 @@ public final class SqliteDatabase {
 					throw new SQLException("Unsupported database schema version " + version
 							+ "; latest supported version is " + LATEST_SCHEMA_VERSION);
 				}
+
+				// Validate the starting structure, then apply and verify each migration within
+				// this transaction.
 				verifySchema(connection, version);
 				while (version < LATEST_SCHEMA_VERSION) {
 					version = migrate(connection, version);
@@ -172,6 +183,8 @@ public final class SqliteDatabase {
 		Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
 		try {
 			try (Statement statement = connection.createStatement()) {
+
+				// Foreign-key enforcement is connection-local, so enable it for every caller.
 				statement.execute("PRAGMA foreign_keys = ON");
 			}
 			return connection;
@@ -257,6 +270,9 @@ public final class SqliteDatabase {
 		if (version == LATEST_SCHEMA_VERSION) {
 			return;
 		}
+
+		// Run the real migration path on a disposable snapshot, leaving the original
+		// unchanged.
 		Path probeDirectory = Files.createTempDirectory("question-bank-migration-check-");
 		Path probeDatabasePath = probeDirectory.resolve("questionbank.db");
 		try {
@@ -327,6 +343,9 @@ public final class SqliteDatabase {
 		}
 		List<Path> paths;
 		try (Stream<Path> stream = Files.walk(root)) {
+
+			// Close the walk before deleting, with children ordered before their parent
+			// directories.
 			paths = stream.sorted(Comparator.reverseOrder()).toList();
 		}
 		for (Path path : paths) {
@@ -400,6 +419,9 @@ public final class SqliteDatabase {
 						|| !targetColumn.equals(result.getString("to"))) {
 					continue;
 				}
+
+				// A matching first column of a composite key is not the required single-column
+				// relationship.
 				int foreignKeyId = result.getInt("id");
 				if (foreignKeyColumnCount(connection, tableName, foreignKeyId) == 1) {
 					return true;
@@ -417,6 +439,8 @@ public final class SqliteDatabase {
 				if (indexes.getInt("unique") == 0) {
 					continue;
 				}
+
+				// Escape the stored index name before using it as a PRAGMA string argument.
 				String indexName = indexes.getString("name").replace("'", "''");
 				List<String> actualColumns = new ArrayList<>();
 				try (Statement indexStatement = connection.createStatement();
@@ -425,6 +449,8 @@ public final class SqliteDatabase {
 						actualColumns.add(columns.getString("name"));
 					}
 				}
+
+				// Match the complete ordered column list, not a prefix of a larger unique key.
 				if (actualColumns.equals(expectedColumns)) {
 					return true;
 				}
@@ -454,6 +480,9 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v2-to-v3.sql", 3);
 			return 3;
 		}
+
+		// The v4 question redesign has no lossless migration for populated development
+		// databases.
 		if (version == 3) {
 			verifyVersionThreeCanBeMigrated(connection);
 			executeMigration(connection, "/db/migration-v3-to-v4.sql", 4);
@@ -489,6 +518,9 @@ public final class SqliteDatabase {
 			if (!result.next()) {
 				throw new SQLException("schema_version table is empty");
 			}
+
+			// Require one positive integer version; SQLite coercion must not hide malformed
+			// metadata.
 			String versionType = result.getString("version_type");
 			long storedVersion = result.getLong("version");
 			if (!"integer".equals(versionType) || storedVersion < 1 || storedVersion > Integer.MAX_VALUE) {
@@ -633,6 +665,9 @@ public final class SqliteDatabase {
 						"Database schema version " + version + " is missing required table " + tableName);
 			}
 		}
+
+		// Apply the checks introduced by each version, retaining earlier structural
+		// requirements.
 		verifyVersionOneRelationalSchema(connection, version);
 		if (version >= 2) {
 			if (!tableExists(connection, "curriculum_mappings")) {
@@ -665,12 +700,15 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyTableSchema(Connection connection, String tableName, List<ColumnRequirement> columnRequirements,
-			List<ForeignKeyRequirement> foreignKeyRequirements, List<List<String>> uniqueKeys) throws SQLException {
+	private void verifyTableColumns(Connection connection, String tableName, List<ColumnRequirement> columnRequirements)
+			throws SQLException {
 		Set<String> missingColumns = new HashSet<>();
 		for (ColumnRequirement requirement : columnRequirements) {
 			missingColumns.add(requirement.name());
 		}
+
+		// Count all primary-key columns, including unexpected ones, to reject larger
+		// composite keys.
 		int actualPrimaryKeyColumnCount = 0;
 		try (Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("PRAGMA table_info(" + tableName + ")")) {
@@ -707,6 +745,11 @@ public final class SqliteDatabase {
 			throw new SQLException(tableName + " has an invalid primary key; expected exactly "
 					+ expectedPrimaryKeyDescription(columnRequirements));
 		}
+	}
+
+	private void verifyTableSchema(Connection connection, String tableName, List<ColumnRequirement> columnRequirements,
+			List<ForeignKeyRequirement> foreignKeyRequirements, List<List<String>> uniqueKeys) throws SQLException {
+		verifyTableColumns(connection, tableName, columnRequirements);
 		for (ForeignKeyRequirement requirement : foreignKeyRequirements) {
 			if (!hasExactSingleColumnForeignKey(connection, tableName, requirement.fromColumn(),
 					requirement.targetTable(), requirement.targetColumn())) {
@@ -867,6 +910,9 @@ public final class SqliteDatabase {
 		if (version < 4) {
 			verifyLegacyQuestionSchema(connection);
 		}
+
+		// Region order is part of the composite identity; page numbers and coordinates
+		// remain separate.
 		verifyTableSchema(connection, "question_regions",
 				List.of(column("question_id", true, 1), column("region_order", true, 2), column("booklet_id", true, 0),
 						column("page_number", true, 0), column("x", true, 0), column("y", true, 0),

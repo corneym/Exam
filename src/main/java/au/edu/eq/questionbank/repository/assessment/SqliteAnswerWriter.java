@@ -206,8 +206,14 @@ public final class SqliteAnswerWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Check ownership before replacing text and regions under the existing answer
+				// ID.
 				verifyAnswerBelongsToQuestion(connection, answerId, question);
 				updateAnswerRow(connection, answerId, answerText);
+
+				// Keep deletion and replacement atomic so a failed insert restores the old
+				// answer.
 				deleteAnswerRegions(connection, answerId);
 				insertAnswerRegions(connection, answerId, regions);
 				Answer answer = new Answer(answerId, answerText, regions);

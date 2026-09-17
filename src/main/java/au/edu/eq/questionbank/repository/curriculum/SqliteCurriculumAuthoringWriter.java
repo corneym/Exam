@@ -71,14 +71,11 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save curriculum authoring session", e);
 		}
-		/*
-		 * Only mutate the session's persistence bindings after the database transaction
-		 * has committed successfully.
-		 */
-		/*
-		 * Forget successfully deleted rows before binding newly inserted rows. SQLite
-		 * may legitimately reuse an INTEGER PRIMARY KEY value from a deleted row.
-		 */
+
+		// Only mutate the session's persistence bindings after the database transaction
+		// has committed successfully.
+		// Forget successfully deleted rows before binding newly inserted rows. SQLite
+		// may legitimately reuse an INTEGER PRIMARY KEY value from a deleted row.
 		for (long persistentId : changes.deletedPersistentIds()) {
 			session.forgetPersistentId(persistentId);
 		}
@@ -157,6 +154,8 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 	private void persistNode(Connection connection, long syllabusVersionId, CurriculumDraft draft,
 			CurriculumDraftNode node, Long parentPersistentId, Map<Long, Long> existingBindings,
 			Map<Long, Long> newBindings) throws SQLException {
+
+		// Persist each parent before its children, reusing the IDs of existing nodes.
 		Long persistentId = existingBindings.get(node.draftId());
 		if (persistentId == null) {
 			persistentId = insertNode(connection, syllabusVersionId, parentPersistentId, node);
@@ -196,6 +195,9 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 		for (PersistedCurriculumNode node : actual) {
 			actualIds.add(node.persistentId());
 		}
+
+		// Compare the full saved content as well as IDs to reject stale text, code and
+		// order edits.
 		if (!actual.equals(session.persistedSnapshot())
 				|| !actualIds.equals(new HashSet<>(session.persistentBindings().values()))) {
 			throw new IllegalStateException(
@@ -231,6 +233,8 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Check lifecycle, snapshot and deletion references before the first mutation.
 				requireSyllabusEditable(connection, syllabusVersionId);
 				requireSessionMatchesDatabase(connection, syllabusVersionId, session);
 				requireDeletionsUnreferenced(connection, deletedPersistentIds);
@@ -273,6 +277,9 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 
 	private void temporarilyRecodeExistingNodes(Connection connection, long syllabusVersionId, CurriculumDraft draft,
 			Map<Long, Long> existingBindings) throws SQLException {
+
+		// Free existing codes temporarily so code swaps cannot collide with the unique
+		// key.
 		String saveToken = UUID.randomUUID().toString();
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE curriculum_nodes
@@ -311,10 +318,9 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 				""")) {
 			setNullableLong(statement, 1, parentPersistentId);
 			statement.setString(2, node.code());
-			/*
-			 * setString preserves Markdown/LaTeX text, backslashes and line breaks without
-			 * interpretation.
-			 */
+
+			// setString preserves Markdown/LaTeX text, backslashes and line breaks without
+			// interpretation.
 			statement.setString(3, node.name());
 			statement.setString(4, node.level().name());
 			statement.setInt(5, node.displayOrder());

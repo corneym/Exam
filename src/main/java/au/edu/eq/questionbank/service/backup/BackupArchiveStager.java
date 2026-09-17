@@ -34,6 +34,9 @@ final class BackupArchiveStager {
 
 	private Path resolveDestination(Path stagingRoot, String entryName) throws BackupFormatException {
 		Path normalisedRoot = stagingRoot.toAbsolutePath().normalize();
+
+		// Recheck containment at extraction even though the archive has already been
+		// validated.
 		Path destination = normalisedRoot.resolve(entryName).normalize();
 		if (!destination.startsWith(normalisedRoot)) {
 			throw new BackupFormatException("Unsafe backup archive entry: " + entryName);

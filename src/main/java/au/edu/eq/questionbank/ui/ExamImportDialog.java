@@ -20,10 +20,13 @@ final class ExamImportDialog extends Dialog<Void> {
 			throw new NullPointerException("examMetadataPane");
 		}
 		initOwner(owner);
-		setTitle("Import Exam");
+
+		// Present this workflow as opening an exam for capture; persistence details
+		// remain an implementation concern of the existing metadata workflow.
+		setTitle("Open Exam for Capture");
 		setHeaderText("Exam Details");
 		getDialogPane().setContent(examMetadataPane);
-		ButtonType confirmButtonType = new ButtonType("Confirm Details", ButtonBar.ButtonData.OK_DONE);
+		ButtonType confirmButtonType = new ButtonType("Open for Capture", ButtonBar.ButtonData.OK_DONE);
 		ButtonType cancelButtonType = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
 		getDialogPane().getButtonTypes().setAll(confirmButtonType, cancelButtonType);
 		Button confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);

@@ -97,6 +97,9 @@ public final class LegacyQuestionMetadataService {
 					WHERE id = ?
 					  AND response_type = ?
 					""")) {
+
+				// Recheck persisted UNKNOWN state so a stale selection rolls back the whole
+				// batch.
 				for (Question question : questions) {
 					statement.setString(1, responseType.name());
 					statement.setLong(2, question.getId());
@@ -219,6 +222,8 @@ public final class LegacyQuestionMetadataService {
 		}
 		List<StoredRegion> existingQuestionRegions = readQuestionRegions(connection, questionId, bookletId);
 		List<StoredRegion> replacementRegions = new ArrayList<>(sharedRegions.size() + existingQuestionRegions.size());
+
+		// Place the preamble first, preserving the captured order within both groups.
 		replacementRegions.addAll(sharedRegions);
 		replacementRegions.addAll(existingQuestionRegions);
 		deleteQuestionRegions(connection, questionId);
@@ -431,6 +436,9 @@ public final class LegacyQuestionMetadataService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Base transition decisions on persisted state rather than the supplied
+				// snapshot.
 				StoredQuestionState stored = findStoredQuestionState(connection, questionId);
 				if (stored.bookletId() != question.getBooklet().getId()) {
 					throw new IllegalArgumentException("Stored question does not belong to the supplied booklet");
@@ -448,6 +456,9 @@ public final class LegacyQuestionMetadataService {
 				}
 				Long replacementSourceQuestionId = findOrCreateSourceQuestionId(connection, stored.bookletId(),
 						sourceQuestionCode);
+
+				// Convert only on a relevant transition; unrelated metadata edits retain the
+				// context.
 				convertedSharedContext = !preambleCaptureRequired && sourceQuestionCode == null
 						&& stored.sharedContextId() != null
 						&& (removingLegacyPreambleHint || removingMultipartSourceIdentity);
@@ -466,6 +477,9 @@ public final class LegacyQuestionMetadataService {
 				updateQuestionMetadata(connection, questionId, stored.bookletId(), questionCode, marks,
 						classification.getId(), preambleCaptureRequired, replacementSourceQuestionId,
 						replacementSharedContextId, replacementResponseType);
+
+				// Remove superseded identities only after relinking, and only if no siblings
+				// use them.
 				if (stored.sourceQuestionId() != null
 						&& !stored.sourceQuestionId().equals(replacementSourceQuestionId)) {
 					deleteSourceQuestionIfUnreferenced(connection, stored.sourceQuestionId());
@@ -486,6 +500,8 @@ public final class LegacyQuestionMetadataService {
 		} catch (SQLException failure) {
 			throw new IllegalStateException("Could not update legacy question metadata atomically", failure);
 		}
+
+		// Reload after commit so the result includes any converted source regions.
 		Question updated = questionRepository.findById(questionId).orElseThrow(
 				() -> new IllegalStateException("Question disappeared after metadata update: " + questionId));
 		LegacyQuestionMetadataUpdateResult.PreambleOutcome outcome = convertedSharedContext

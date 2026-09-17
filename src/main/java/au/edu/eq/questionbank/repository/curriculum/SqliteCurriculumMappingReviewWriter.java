@@ -90,6 +90,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 					validatePersistentTarget(connection, source, targetVersion, target);
 					confirmMapping(connection, source, target);
 				}
+
+				// Commit the confirmed links and the human review decision together.
 				insertReview(connection, source, targetVersion, CurriculumMappingReviewOutcome.MATCHED);
 				connection.commit();
 			} catch (SQLException | RuntimeException e) {
@@ -124,6 +126,9 @@ public final class SqliteCurriculumMappingReviewWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
+
+				// A first NO_MATCH review cannot coexist with confirmed links to this target
+				// syllabus.
 				if (hasConfirmedMappings(connection, source, targetVersion)) {
 					throw new IllegalStateException(
 							"source curriculum node already has confirmed mappings for the target syllabus");
@@ -139,6 +144,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 
 	private void deleteMappings(Connection connection, CurriculumNode source, SyllabusVersion targetVersion)
 			throws SQLException {
+
+		// Keep mappings to other target versions untouched.
 		try (PreparedStatement statement = connection.prepareStatement("""
 				DELETE FROM curriculum_mappings
 				WHERE source_node_id = ?
@@ -222,6 +229,9 @@ public final class SqliteCurriculumMappingReviewWriter {
 			try {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
 				requireExistingReview(connection, source, targetVersion);
+
+				// Replace links only for this target version; a later failure restores the
+				// previous review.
 				deleteMappings(connection, source, targetVersion);
 				for (CurriculumNode target : targets) {
 					validatePersistentTarget(connection, source, targetVersion, target);
@@ -314,6 +324,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 		}
 	}
 
+	// Recheck stored ownership and current flags because the supplied objects may
+	// be stale.
 	private void validatePersistentSourceAndTargetVersion(Connection connection, CurriculumNode source,
 			SyllabusVersion targetVersion) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""

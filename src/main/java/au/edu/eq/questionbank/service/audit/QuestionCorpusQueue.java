@@ -35,15 +35,16 @@ public final class QuestionCorpusQueue {
 			if (question == null) {
 				throw new NullPointerException("questions contains null");
 			}
+
+			// Assess once so filtering and the returned work item use the same status.
 			QuestionCorpusWorkItem item = new QuestionCorpusWorkItem(question, QuestionCorpusAudit.assess(question));
 			if (filter.matches(item)) {
 				result.add(item);
 			}
 		}
-		/*
-		 * Corpus work queues are presented in deterministic source order regardless of
-		 * repository or caller iteration order.
-		 */
+
+		// Corpus work queues are presented in deterministic source order regardless of
+		// repository or caller iteration order.
 		result.sort(Comparator.comparing(QuestionCorpusWorkItem::question, QuestionSourceOrder.comparator()));
 		return List.copyOf(result);
 	}
@@ -75,6 +76,9 @@ public final class QuestionCorpusQueue {
 			} else {
 				incomplete++;
 			}
+
+			// Count problems independently: one incomplete question can contribute to
+			// several totals.
 			if (status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_SOURCE)) {
 				missingQuestionSource++;
 			}

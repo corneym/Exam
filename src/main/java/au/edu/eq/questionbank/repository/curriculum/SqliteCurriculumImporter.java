@@ -174,6 +174,9 @@ public final class SqliteCurriculumImporter {
 					+ existingVersion.getName() + " is already imported as " + storedStatus
 					+ " and cannot be re-imported as " + requestedStatus + ".");
 		}
+
+		// Compare content and parent codes, independent of temporary or persisted node
+		// IDs.
 		Map<String, CurriculumNodeDefinition> stored = readStoredDefinitions(connection, existingVersion);
 		Map<String, CurriculumNodeDefinition> incoming = definitions(incomingNodes);
 		for (String code : new TreeSet<>(incoming.keySet())) {
@@ -210,6 +213,8 @@ public final class SqliteCurriculumImporter {
 		} else {
 			subject = writer.insertSubject(connection, subjectName);
 		}
+
+		// Switch the current version in the same transaction as the new hierarchy.
 		if (current) {
 			clearCurrentVersion(connection, subject);
 		}
@@ -221,41 +226,49 @@ public final class SqliteCurriculumImporter {
 
 	private void insertNodes(Connection connection, SyllabusVersion syllabusVersion, List<CurriculumNode> nodes)
 			throws SQLException {
+
+		// The builder supplies parents first; replace temporary identities with
+		// inserted parent rows.
 		Map<String, CurriculumNode> storedNodes = new HashMap<>();
 		for (CurriculumNode node : nodes) {
-			CurriculumNode storedNode;
-			switch (node.getLevel()) {
-			case UNIT:
-				storedNode = writer.insertUnit(connection, syllabusVersion, node.getCode(), node.getName(),
-						node.getDisplayOrder());
-				break;
-			case TOPIC:
-				Unit unit = (Unit) storedNodes.get(node.getParent().getCode());
-				storedNode = writer.insertTopic(connection, unit, node.getCode(), node.getName(),
-						node.getDisplayOrder());
-				break;
-			case SUBTOPIC:
-				Topic topic = (Topic) storedNodes.get(node.getParent().getCode());
-				storedNode = writer.insertSubtopic(connection, topic, node.getCode(), node.getName(),
-						node.getDisplayOrder());
-				break;
-			case DESCRIPTOR:
-				CurriculumNode parent = storedNodes.get(node.getParent().getCode());
-				if (parent instanceof Topic topicParent) {
-					storedNode = writer.insertDescriptor(connection, topicParent, node.getCode(), node.getName(),
-							node.getDisplayOrder());
-				} else if (parent instanceof Subtopic subtopicParent) {
-					storedNode = writer.insertDescriptor(connection, subtopicParent, node.getCode(), node.getName(),
-							node.getDisplayOrder());
-				} else {
-					throw new IllegalStateException("Descriptor has invalid stored parent");
-				}
-				break;
-			default:
-				throw new IllegalStateException("Unsupported curriculum level: " + node.getLevel());
-			}
+			CurriculumNode storedNode = insertNode(connection, syllabusVersion, node, storedNodes);
 			storedNodes.put(storedNode.getCode(), storedNode);
 		}
+	}
+
+	private CurriculumNode insertNode(Connection connection, SyllabusVersion syllabusVersion, CurriculumNode node,
+			Map<String, CurriculumNode> storedNodes) throws SQLException {
+		CurriculumNode storedNode;
+		switch (node.getLevel()) {
+		case UNIT:
+			storedNode = writer.insertUnit(connection, syllabusVersion, node.getCode(), node.getName(),
+					node.getDisplayOrder());
+			break;
+		case TOPIC:
+			Unit unit = (Unit) storedNodes.get(node.getParent().getCode());
+			storedNode = writer.insertTopic(connection, unit, node.getCode(), node.getName(), node.getDisplayOrder());
+			break;
+		case SUBTOPIC:
+			Topic topic = (Topic) storedNodes.get(node.getParent().getCode());
+			storedNode = writer.insertSubtopic(connection, topic, node.getCode(), node.getName(),
+					node.getDisplayOrder());
+			break;
+		case DESCRIPTOR:
+			CurriculumNode parent = storedNodes.get(node.getParent().getCode());
+			if (parent instanceof Topic topicParent) {
+				storedNode = writer.insertDescriptor(connection, topicParent, node.getCode(), node.getName(),
+						node.getDisplayOrder());
+			} else if (parent instanceof Subtopic subtopicParent) {
+				storedNode = writer.insertDescriptor(connection, subtopicParent, node.getCode(), node.getName(),
+						node.getDisplayOrder());
+			} else {
+				throw new IllegalStateException("Descriptor has invalid stored parent");
+			}
+			break;
+		default:
+			throw new IllegalStateException("Unsupported curriculum level: " + node.getLevel());
+		}
+		return storedNode;
 	}
 
 	private CurriculumImportResult transactImport(String subjectName, String syllabusName, boolean current,

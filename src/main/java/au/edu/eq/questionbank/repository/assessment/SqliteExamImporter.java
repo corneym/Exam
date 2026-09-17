@@ -60,6 +60,9 @@ public final class SqliteExamImporter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Reuse or create the metadata chain on one connection, then commit the
+				// complete booklet.
 				ExamProvider provider = writer.findExamProviderByName(connection, providerName);
 				if (provider == null) {
 					provider = writer.insertExamProvider(connection, providerName);

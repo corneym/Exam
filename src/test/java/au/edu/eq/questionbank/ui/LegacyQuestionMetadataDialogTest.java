@@ -77,7 +77,6 @@ class LegacyQuestionMetadataDialogTest {
 	@Test
 	void fieldLabelsRetainReadableWidth(FxRobot robot) {
 		AtomicReference<LegacyQuestionMetadataDialog> dialogRef = new AtomicReference<>();
-
 		robot.interact(() -> {
 			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question,
 					curriculumRepository);
@@ -88,12 +87,10 @@ class LegacyQuestionMetadataDialogTest {
 			dialog.getDialogPane().applyCss();
 			dialog.getDialogPane().layout();
 		});
-
 		String[] selectors = { "#legacy-metadata-subject-label", "#legacy-metadata-syllabus-label",
 				"#legacy-metadata-booklet-label", "#legacy-metadata-question-code-label",
 				"#legacy-metadata-marks-label", "#legacy-metadata-classification-label",
 				"#legacy-metadata-response-type-label" };
-
 		for (String selector : selectors) {
 			Label label = robot.lookup(selector).queryAs(Label.class);
 
@@ -102,7 +99,6 @@ class LegacyQuestionMetadataDialogTest {
 			assertTrue(label.getWidth() + 0.5 >= label.minWidth(label.getHeight()),
 					"Metadata label must remain fully readable: " + label.getText());
 		}
-
 		robot.interact(dialogRef.get()::close);
 	}
 

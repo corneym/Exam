@@ -92,8 +92,8 @@ final class QuestionCapturePane extends VBox {
 	private final SqliteQuestionCaptureService questionCaptureService;
 
 	// Capture mode and imported-question selection.
-	private final ToggleButton newQuestionsModeButton = new ToggleButton("New Questions");
-	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Imported Questions");
+	private final ToggleButton newQuestionsModeButton = new ToggleButton("Capture New Questions");
+	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Capture Imported Questions");
 	private final ToggleGroup captureModeGroup = new ToggleGroup();
 	private final ComboBox<Question> importedQuestionBox = new ComboBox<>();
 	private final Label importedClassificationLabel = new Label();
@@ -444,9 +444,20 @@ final class QuestionCapturePane extends VBox {
 			restoreCaptureModeToggle();
 			return;
 		}
+		long totalStart = System.nanoTime();
 		try {
+			long backfillStart = System.nanoTime();
+
+			// Measure legacy/source-identity maintenance separately because it scans
+			// persisted Questions before the imported queue can be displayed.
 			backfillDerivedSourceQuestions();
+			long backfillEnd = System.nanoTime();
+
+			// Measure shared-context reconciliation independently from the backfill.
 			reconcileKnownSharedContexts();
+			long reconciliationEnd = System.nanoTime();
+			System.out.printf("Imported capture timing: backfill=%.1f ms, reconciliation=%.1f ms%n",
+					(backfillEnd - backfillStart) / 1_000_000.0, (reconciliationEnd - backfillEnd) / 1_000_000.0);
 		} catch (IllegalStateException e) {
 			showAlert(Alert.AlertType.ERROR, "Shared preamble links are inconsistent.", e.getMessage());
 			restoreCaptureModeToggle();
@@ -460,11 +471,18 @@ final class QuestionCapturePane extends VBox {
 			importedCaptureMode = true;
 		}
 		selectCaptureModeToggle(true);
+		long refreshStart = System.nanoTime();
+
+		// Measure queue reconstruction separately from relationship maintenance.
 		refreshImportedQuestions();
+		long refreshEnd = System.nanoTime();
 		setLegacyCaptureControlsVisible(true);
 		if (importedQuestion == null) {
 			showImportedQueueMode();
 		}
+		long totalEnd = System.nanoTime();
+		System.out.printf("Imported capture timing: refresh=%.1f ms, total=%.1f ms%n",
+				(refreshEnd - refreshStart) / 1_000_000.0, (totalEnd - totalStart) / 1_000_000.0);
 	}
 
 	/**
@@ -719,6 +737,11 @@ final class QuestionCapturePane extends VBox {
 		importedClassificationLabel.setManaged(false);
 		newQuestionsModeButton.setId("capture-mode-new");
 		importedQuestionsModeButton.setId("capture-mode-imported");
+
+		// Capture-mode actions must keep their complete labels at supported pane
+		// widths.
+		newQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
+		importedQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
 		newQuestionsModeButton.setToggleGroup(captureModeGroup);
 		importedQuestionsModeButton.setToggleGroup(captureModeGroup);
 		newQuestionsModeButton.setSelected(true);
@@ -807,7 +830,6 @@ final class QuestionCapturePane extends VBox {
 		Label questionLabel = new Label("Question");
 		questionLabel.setId("question-code-label");
 		questionLabel.setMinWidth(Region.USE_PREF_SIZE);
-
 		Label marksLabel = new Label("Marks");
 		marksLabel.setId("question-marks-label");
 		marksLabel.setMinWidth(Region.USE_PREF_SIZE);
@@ -816,7 +838,6 @@ final class QuestionCapturePane extends VBox {
 		// compact row that remains readable at narrow workspace widths.
 		HBox questionDetails = new HBox(CONTROL_SPACING, questionLabel, questionCodeField, marksLabel, marksField);
 		questionDetails.setAlignment(Pos.CENTER_LEFT);
-
 		Label responseTypeLabel = new Label("Response type");
 		responseTypeLabel.setId("question-response-type-label");
 		responseTypeLabel.setMinWidth(Region.USE_PREF_SIZE);
@@ -826,10 +847,8 @@ final class QuestionCapturePane extends VBox {
 				writtenResponseButton);
 		responseTypeControls.setId("question-response-type-controls");
 		responseTypeControls.setAlignment(Pos.CENTER_LEFT);
-
 		VBox controls = new VBox(COMPACT_SPACING, questionDetails, responseTypeControls);
 		controls.setFillWidth(true);
-
 		return controls;
 	}
 
@@ -1565,14 +1584,12 @@ final class QuestionCapturePane extends VBox {
 		// selected.
 		selectResponseType(null);
 		setResponseTypeDisabled(true);
-
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		curriculumSelectorPane.setDisable(true);
 		hideImportedClassification();
 		hidePreambleControls();
 		saveQuestionButton.setText("Save Resolution");
 		saveQuestionButton.setDisable(true);
-
 		if (importedQuestionBox.getItems().isEmpty()) {
 			showCaptureHint("No imported questions are awaiting capture or resolution.");
 		} else {

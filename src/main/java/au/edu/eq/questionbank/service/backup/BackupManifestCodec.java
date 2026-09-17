@@ -50,6 +50,8 @@ public final class BackupManifestCodec {
 			throw new NullPointerException("input");
 		}
 		Properties properties = new Properties();
+
+		// Use UTF-8 while leaving stream ownership with the caller.
 		Reader reader = new InputStreamReader(input, StandardCharsets.UTF_8);
 		properties.load(reader);
 		int formatVersion = readPositiveInteger(properties, FORMAT_VERSION_PROPERTY);
@@ -86,6 +88,9 @@ public final class BackupManifestCodec {
 			throw new IllegalArgumentException(
 					"Cannot write unsupported backup format version " + manifest.formatVersion());
 		}
+
+		// Write properties in a fixed order without an automatically generated comment
+		// timestamp.
 		StringBuilder content = new StringBuilder();
 		appendProperty(content, FORMAT_VERSION_PROPERTY, Integer.toString(manifest.formatVersion()));
 		appendProperty(content, BACKUP_KIND_PROPERTY, manifest.kind().name());
@@ -101,6 +106,9 @@ public final class BackupManifestCodec {
 	}
 
 	private String escapePropertyValue(String value) {
+
+		// Escape backslashes and control characters so Properties.load reconstructs the
+		// value.
 		StringBuilder escaped = new StringBuilder();
 		for (int index = 0; index < value.length(); index++) {
 			char character = value.charAt(index);
@@ -168,6 +176,8 @@ public final class BackupManifestCodec {
 			}
 			actualEntries.add(part.trim());
 		}
+
+		// Require the declared layout to match the backup kind, including entry order.
 		if (!actualEntries.equals(kind.requiredArchiveEntries())) {
 			throw new BackupFormatException("Backup manifest archive entries do not match backup kind " + kind);
 		}

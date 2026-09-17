@@ -290,8 +290,10 @@ public class QuestionBankApplication extends Application {
 
 	private boolean allowExamImportConfirmation() {
 		if (captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION)) {
-			showAlert(Alert.AlertType.WARNING, "Import Exam", "Question selection pending",
-					"Add or clear the current question selection before importing another exam.");
+
+			// Do not allow the active exam to change while a Question selection is pending.
+			showAlert(Alert.AlertType.WARNING, "Open Exam for Capture", "Question selection pending",
+					"Add or clear the current question selection before opening another exam for capture.");
 			return false;
 		}
 		return confirmDiscardAcceptedQuestionRegions();
@@ -557,8 +559,12 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createExamMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu examMenu = createMenu("_Exam");
-		examMenu.getItems().addAll(createMenuItem("_Import...", this::showExamImport), createMenuItem(
-				"Import _Legacy Question Metadata...", () -> importLegacyQuestionMetadata(primaryStage, config)));
+
+		// Describe the user's task rather than the current persistence implementation.
+		MenuItem openForCaptureItem = createMenuItem("_Open Exam for Capture...", this::showExamImport);
+		openForCaptureItem.setId("open-exam-for-capture");
+		examMenu.getItems().addAll(openForCaptureItem, createMenuItem("Import _Legacy Question Metadata...",
+				() -> importLegacyQuestionMetadata(primaryStage, config)));
 		return examMenu;
 	}
 
@@ -700,17 +706,14 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu questionMenu = createMenu("_Questions");
-		MenuItem captureNewItem = createMenuItem("Capture _New Questions", questionCapturePane::showNewQuestionCapture);
-		captureNewItem.setId("capture-new-questions");
-		MenuItem captureImportedItem = createMenuItem("Capture _Imported Questions",
-				questionCapturePane::showImportedQuestionCapture);
-		captureImportedItem.setId("capture-imported-questions");
+
+		// Capture modes are selected directly in the visible Question pane.
+		// Keep this menu for operations that open separate question workflows.
 		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
 		MenuItem corpusAuditItem = createMenuItem("_Corpus Audit...",
 				() -> showQuestionCorpusAudit(primaryStage, config));
 		corpusAuditItem.setId("question-corpus-audit");
-		questionMenu.getItems().addAll(captureNewItem, captureImportedItem, new SeparatorMenuItem(), searchItem,
-				corpusAuditItem);
+		questionMenu.getItems().addAll(searchItem, corpusAuditItem);
 		return questionMenu;
 	}
 

@@ -82,6 +82,8 @@ public final class SqliteExamWriter {
 				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
 						result.getString("provider_name"));
 				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, year, result.getString("exam_name"));
+
+				// A year alone cannot select safely when the provider has multiple exams.
 				if (result.next()) {
 					throw new IllegalArgumentException(
 							"More than one exam matches " + providerName + " " + year + " for " + subject.getName());
@@ -218,6 +220,8 @@ public final class SqliteExamWriter {
 				if (!result.next()) {
 					return null;
 				}
+
+				// Reusing a booklet name must not silently redirect its existing PDF reference.
 				long storedSourceDocumentId = result.getLong("source_document_id");
 				if (storedSourceDocumentId != sourceDocument.getId()) {
 					throw new SQLException("Existing exam booklet refers to a different source document");

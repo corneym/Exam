@@ -72,6 +72,9 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 		if (code == null || code.isBlank()) {
 			return Optional.empty();
 		}
+
+		// Walk cumulative code prefixes through actual children rather than assuming
+		// four levels.
 		String[] codeParts = code.split("\\.");
 		List<CurriculumNode> candidates = findRootNodes(syllabusVersion);
 		CurriculumNode foundNode = null;
@@ -258,6 +261,8 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 				throw new IllegalStateException("SUBTOPIC has invalid parent");
 			}
 			return new Subtopic(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
+
+		// Descriptors may sit directly under a Topic or under an optional Subtopic.
 		case "DESCRIPTOR":
 			if (parent instanceof Topic) {
 				return new Descriptor(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
@@ -287,6 +292,8 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 
 	private Optional<CurriculumNode> findNodeById(Connection connection, long id, int remainingLevels)
 			throws SQLException {
+
+		// Bound parent traversal so corrupt cycles cannot recurse indefinitely.
 		if (remainingLevels == 0) {
 			throw new IllegalStateException("Curriculum hierarchy is cyclic or exceeds four levels at node " + id);
 		}
@@ -312,6 +319,9 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 					return Optional.of(new Unit(id, version, result.getString("curriculum_code"),
 							result.getString("curriculum_name"), result.getInt("display_order")));
 				}
+
+				// Build the ancestor chain on the same connection before constructing the
+				// requested child.
 				CurriculumNode parent = findNodeById(connection, parentId, remainingLevels - 1)
 						.orElseThrow(() -> new IllegalStateException("Missing curriculum parent " + parentId));
 				if (parent.getSyllabusVersion().getId() != versionId) {
