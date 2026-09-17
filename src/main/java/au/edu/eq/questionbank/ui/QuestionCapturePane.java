@@ -59,7 +59,7 @@ final class QuestionCapturePane extends VBox {
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double MARKS_FIELD_WIDTH = 60.0;
-	private static final double QUESTION_CODE_FIELD_WIDTH = 100.0;
+	private static final double QUESTION_CODE_FIELD_WIDTH = 80.0;
 	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
 	private static final double REGION_PREVIEW_HORIZONTAL_INSET = 24.0;
 	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
@@ -685,6 +685,11 @@ final class QuestionCapturePane extends VBox {
 		saveQuestionButton.setId("save-question");
 		saveQuestionButton.setDisable(true);
 		saveStatusLabel.setId("question-save-status");
+
+		// Capture, edit and preamble status messages can be longer than the narrow
+		// workspace width, so keep the complete message visible by wrapping it.
+		saveStatusLabel.setWrapText(true);
+		saveStatusLabel.setMaxWidth(Double.MAX_VALUE);
 		regionCountLabel.setId("question-region-count");
 		addRegionButton.setId("add-question-region");
 		removeCurrentSelectionButton.setId("clear-question-selection");
@@ -799,20 +804,32 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private VBox createQuestionControls() {
+		Label questionLabel = new Label("Question");
+		questionLabel.setId("question-code-label");
+		questionLabel.setMinWidth(Region.USE_PREF_SIZE);
 
-		// Keep compact numeric metadata together on the first row.
-		HBox questionDetails = new HBox(CONTROL_SPACING, new Label("Question number"), questionCodeField,
-				new Label("Marks"), marksField);
+		Label marksLabel = new Label("Marks");
+		marksLabel.setId("question-marks-label");
+		marksLabel.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Keep the frequently edited Question number and marks on a short,
+		// compact row that remains readable at narrow workspace widths.
+		HBox questionDetails = new HBox(CONTROL_SPACING, questionLabel, questionCodeField, marksLabel, marksField);
 		questionDetails.setAlignment(Pos.CENTER_LEFT);
 
-		// Response type gets a dedicated row so both choices remain explicit and
-		// readable at the minimum supported workspace width.
-		HBox responseTypeControls = new HBox(CONTROL_SPACING, new Label("Response type"), multipleChoiceResponseButton,
+		Label responseTypeLabel = new Label("Response type");
+		responseTypeLabel.setId("question-response-type-label");
+		responseTypeLabel.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Response type remains on its own row so both explicit choices are visible.
+		HBox responseTypeControls = new HBox(CONTROL_SPACING, responseTypeLabel, multipleChoiceResponseButton,
 				writtenResponseButton);
 		responseTypeControls.setId("question-response-type-controls");
 		responseTypeControls.setAlignment(Pos.CENTER_LEFT);
+
 		VBox controls = new VBox(COMPACT_SPACING, questionDetails, responseTypeControls);
 		controls.setFillWidth(true);
+
 		return controls;
 	}
 
@@ -1543,14 +1560,19 @@ final class QuestionCapturePane extends VBox {
 	private void showImportedQueueMode() {
 		questionCodeField.setDisable(true);
 		marksField.setDisable(true);
-		responseTypeBox.setValue(null);
-		responseTypeBox.setDisable(true);
+
+		// Imported queue mode has no editable response type until a question is
+		// selected.
+		selectResponseType(null);
+		setResponseTypeDisabled(true);
+
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		curriculumSelectorPane.setDisable(true);
 		hideImportedClassification();
 		hidePreambleControls();
 		saveQuestionButton.setText("Save Resolution");
 		saveQuestionButton.setDisable(true);
+
 		if (importedQuestionBox.getItems().isEmpty()) {
 			showCaptureHint("No imported questions are awaiting capture or resolution.");
 		} else {

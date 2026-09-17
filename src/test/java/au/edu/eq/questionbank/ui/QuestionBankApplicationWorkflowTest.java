@@ -800,10 +800,14 @@ class QuestionBankApplicationWorkflowTest {
 		selectFirstFinalClassification(robot);
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
-		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+
 		robot.clickOn(questionCodeField).write("Q7");
 		robot.clickOn(marksField).write("1");
-		robot.interact(() -> responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE));
+
+		// Saving the first Q7 resets the response type, so explicitly select Written
+		// response again for the duplicate capture attempt.
+		robot.clickOn(writtenResponse);
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
 		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
@@ -1316,8 +1320,10 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void multipleChoiceUsesChoicesWithoutPdfOrAnswerRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
-		robot.interact(() -> responseType.setValue(QuestionResponseType.MULTIPLE_CHOICE));
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+
+		// Override the Written-response fixture default for this MCQ workflow.
+		robot.clickOn(multipleChoice);
 		Question question = captureQuestion(robot, "MC1");
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, question.getResponseType());
 		ComboBox<Question> questions = unansweredQuestions(robot);
@@ -1484,18 +1490,35 @@ class QuestionBankApplicationWorkflowTest {
 	void questionEditLoadsAndUpdatesResponseType(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "R2");
+
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, question.getResponseType());
+
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+
 		robot.interact(() -> assertTrue(pane.editQuestion(question, () -> {
 		})));
-		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
-		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, responseType.getValue());
-		robot.interact(() -> responseType.setValue(QuestionResponseType.MULTIPLE_CHOICE));
+
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+
+		// Editing must restore the persisted response type into the radio-button group.
+		assertTrue(writtenResponse.isSelected());
+		assertFalse(multipleChoice.isSelected());
+
+		// Change the persisted response type through the production UI.
+		robot.clickOn(multipleChoice);
+
+		assertTrue(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+
 		robot.clickOn("#save-question");
+
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
+
 		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
 				.orElseThrow();
+
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, stored.getResponseType());
 		assertEquals(1, stored.getRegions().size());
 	}
@@ -1541,6 +1564,42 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(stored.hasAnswer());
 		assertEquals(answerId, stored.getAnswer().getId());
 		assertEquals(1, stored.getAnswer().getRegions().size());
+	}
+
+	@Test
+	void questionMetadataRemainsReadableAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+
+		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
+				javafx.scene.control.SplitPane.class);
+
+		robot.interact(() -> {
+			// Exercise Question metadata at the minimum supported workspace width.
+			splitPane.setDividerPosition(0, 0.0);
+			primaryStage.getScene().getRoot().applyCss();
+			primaryStage.getScene().getRoot().layout();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		Label questionLabel = lookup(robot, "#question-code-label", Label.class);
+		Label marksLabel = lookup(robot, "#question-marks-label", Label.class);
+		Label responseTypeLabel = lookup(robot, "#question-response-type-label", Label.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+
+		// The shorter Question label and compact field leave sufficient room for
+		// all first-row metadata without compressing its labels.
+		assertEquals("Question", questionLabel.getText());
+		assertTrue(questionCode.getPrefWidth() <= 80.0);
+		assertTrue(questionLabel.getWidth() + 0.5 >= questionLabel.minWidth(questionLabel.getHeight()));
+		assertTrue(marksLabel.getWidth() + 0.5 >= marksLabel.minWidth(marksLabel.getHeight()));
+
+		// Response type has its own row and all three labels remain fully readable.
+		assertEquals(multipleChoice.getParent(), writtenResponse.getParent());
+		assertEquals(multipleChoice.getParent(), responseTypeLabel.getParent());
+		assertTrue(multipleChoice.getWidth() + 0.5 >= multipleChoice.minWidth(multipleChoice.getHeight()));
+		assertTrue(writtenResponse.getWidth() + 0.5 >= writtenResponse.minWidth(writtenResponse.getHeight()));
 	}
 
 	@Test
@@ -1647,6 +1706,39 @@ class QuestionBankApplicationWorkflowTest {
 				gate.countDown();
 			}
 		}
+	}
+
+	@Test
+	void questionStatusWrapsAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+
+		Label status = lookup(robot, "#question-save-status", Label.class);
+
+		// Use a deliberately long message representative of Question capture,
+		// edit and shared-preamble workflow status text.
+		String longStatus = "Shared preamble captured — select the remaining question "
+				+ "region or regions before saving this question.";
+		robot.interact(() -> status.setText(longStatus));
+
+		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
+				javafx.scene.control.SplitPane.class);
+
+		robot.interact(() -> {
+			// Exercise the status label at the minimum supported workspace width.
+			splitPane.setDividerPosition(0, 0.0);
+			primaryStage.getScene().getRoot().applyCss();
+			primaryStage.getScene().getRoot().layout();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The complete logical status message must remain present and wrapping enabled.
+		assertEquals(longStatus, status.getText());
+		assertTrue(status.isWrapText());
+
+		// The status must remain within the Question pane rather than forcing the
+		// narrow workspace wider.
+		assertTrue(status.getWidth() <= questionCapturePane().getWidth() + 0.5,
+				"Question status must remain within the Question pane width");
 	}
 
 	@Test

@@ -35,6 +35,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
@@ -70,6 +71,38 @@ class LegacyQuestionMetadataDialogTest {
 		assertTrue(save.isDisabled());
 		robot.interact(() -> marks.setText("not a number"));
 		assertTrue(save.isDisabled());
+		robot.interact(dialogRef.get()::close);
+	}
+
+	@Test
+	void fieldLabelsRetainReadableWidth(FxRobot robot) {
+		AtomicReference<LegacyQuestionMetadataDialog> dialogRef = new AtomicReference<>();
+
+		robot.interact(() -> {
+			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question,
+					curriculumRepository);
+			dialogRef.set(dialog);
+			dialog.show();
+
+			// Complete CSS and layout before comparing allocated and minimum widths.
+			dialog.getDialogPane().applyCss();
+			dialog.getDialogPane().layout();
+		});
+
+		String[] selectors = { "#legacy-metadata-subject-label", "#legacy-metadata-syllabus-label",
+				"#legacy-metadata-booklet-label", "#legacy-metadata-question-code-label",
+				"#legacy-metadata-marks-label", "#legacy-metadata-classification-label",
+				"#legacy-metadata-response-type-label" };
+
+		for (String selector : selectors) {
+			Label label = robot.lookup(selector).queryAs(Label.class);
+
+			// Every metadata label keeps at least its preferred readable width,
+			// preventing JavaFX from replacing its meaning with an ellipsis.
+			assertTrue(label.getWidth() + 0.5 >= label.minWidth(label.getHeight()),
+					"Metadata label must remain fully readable: " + label.getText());
+		}
+
 		robot.interact(dialogRef.get()::close);
 	}
 

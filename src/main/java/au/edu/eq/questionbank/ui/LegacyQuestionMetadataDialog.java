@@ -21,6 +21,7 @@ import javafx.scene.control.ListCell;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.stage.Window;
 
 /**
@@ -134,19 +135,25 @@ public final class LegacyQuestionMetadataDialog
 				multipart question.
 				""");
 		hintExplanation.setWrapText(true);
-		grid.add(new Label("Subject"), 0, 0);
+		grid.add(createFieldLabel("Subject", "legacy-metadata-subject-label"), 0, 0);
 		grid.add(subjectValue, 1, 0);
-		grid.add(new Label("Syllabus"), 0, 1);
+
+		grid.add(createFieldLabel("Syllabus", "legacy-metadata-syllabus-label"), 0, 1);
 		grid.add(syllabusValue, 1, 1);
-		grid.add(new Label("Booklet"), 0, 2);
+
+		grid.add(createFieldLabel("Booklet", "legacy-metadata-booklet-label"), 0, 2);
 		grid.add(bookletValue, 1, 2);
-		grid.add(new Label("Question code"), 0, 3);
+
+		grid.add(createFieldLabel("Question code", "legacy-metadata-question-code-label"), 0, 3);
 		grid.add(questionCodeField, 1, 3);
-		grid.add(new Label("Marks"), 0, 4);
+
+		grid.add(createFieldLabel("Marks", "legacy-metadata-marks-label"), 0, 4);
 		grid.add(marksField, 1, 4);
-		grid.add(new Label("Classification"), 0, 5);
+
+		grid.add(createFieldLabel("Classification", "legacy-metadata-classification-label"), 0, 5);
 		grid.add(classificationBox, 1, 5);
-		grid.add(new Label("Response type"), 0, 6);
+
+		grid.add(createFieldLabel("Response type", "legacy-metadata-response-type-label"), 0, 6);
 		grid.add(responseTypeBox, 1, 6);
 		grid.add(preambleRequiredCheckBox, 1, 7);
 		grid.add(hintExplanation, 1, 8);
@@ -155,6 +162,16 @@ public final class LegacyQuestionMetadataDialog
 		GridPane.setHgrow(classificationBox, Priority.ALWAYS);
 		GridPane.setHgrow(responseTypeBox, Priority.ALWAYS);
 		return grid;
+	}
+
+	private Label createFieldLabel(String text, String id) {
+		Label label = new Label(text);
+		label.setId(id);
+
+		// Metadata labels must retain their complete text when the dialog narrows.
+		label.setMinWidth(Region.USE_PREF_SIZE);
+
+		return label;
 	}
 
 	private ListCell<QuestionResponseType> createResponseTypeCell() {
