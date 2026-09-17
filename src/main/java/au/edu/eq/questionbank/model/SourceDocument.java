@@ -29,6 +29,7 @@ public class SourceDocument {
 			throw new IllegalArgumentException("relativePath must not be blank");
 		}
 		this.id = id;
+		// Retain the stored reference; filesystem resolution and containment checks belong to the PDF store.
 		this.relativePath = relativePath;
 	}
 

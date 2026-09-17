@@ -32,6 +32,7 @@ public record AnswerRegion(AnswerFile answerFile, int pageNumber, double x, doub
 		if (pageNumber < 1) {
 			throw new IllegalArgumentException("pageNumber must be at least 1: " + pageNumber);
 		}
+		// Reject non-finite values before bounds comparisons, which alone would not reject NaN.
 		if (!Double.isFinite(x)) {
 			throw new IllegalArgumentException("x must be finite: " + x);
 		}
@@ -44,6 +45,7 @@ public record AnswerRegion(AnswerFile answerFile, int pageNumber, double x, doub
 		if (!Double.isFinite(height)) {
 			throw new IllegalArgumentException("height must be finite: " + height);
 		}
+		// Require an origin inside the normalized page and strictly positive dimensions.
 		if (x < 0.0 || x >= 1.0) {
 			throw new IllegalArgumentException("x must be in the range [0.0, 1.0): " + x);
 		}
@@ -56,6 +58,7 @@ public record AnswerRegion(AnswerFile answerFile, int pageNumber, double x, doub
 		if (height <= 0.0 || height > 1.0) {
 			throw new IllegalArgumentException("height must be in the range (0.0, 1.0]: " + height);
 		}
+		// Compare each extent with the remaining page space so the far edges stay within the page.
 		if (width > 1.0 - x) {
 			throw new IllegalArgumentException("x + width must not exceed 1.0: " + (x + width));
 		}

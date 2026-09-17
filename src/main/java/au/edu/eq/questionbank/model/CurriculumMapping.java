@@ -44,6 +44,7 @@ public class CurriculumMapping {
 			throw new NullPointerException("status");
 		}
 
+		// Translate between equivalent hierarchy levels across versions of the same subject.
 		if (!source.getSyllabusVersion().getSubject().equals(target.getSyllabusVersion().getSubject())) {
 
 			throw new IllegalArgumentException("source and target must belong to the same subject");
@@ -58,6 +59,7 @@ public class CurriculumMapping {
 		}
 
 		this.id = id;
+		// Retain the caller's direction; creating this relationship does not create its reverse.
 		this.source = source;
 		this.target = target;
 		this.status = status;

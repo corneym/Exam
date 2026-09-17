@@ -663,6 +663,12 @@ final class QuestionCapturePane extends VBox {
 		removeCurrentSelectionButton.setId("clear-question-selection");
 		addRegionButton.setPadding(COMPACT_BUTTON_PADDING);
 		removeCurrentSelectionButton.setPadding(COMPACT_BUTTON_PADDING);
+		/*
+		 * Region actions are meaningful only while an unaccepted compatible PDF
+		 * selection is pending. Selection acceptance will enable them as required.
+		 */
+		addRegionButton.setDisable(true);
+		removeCurrentSelectionButton.setDisable(true);
 		saveStatusLabel.setStyle(SUCCESS_STATUS_STYLE);
 		importedQuestionBox.setId("imported-question");
 		importedQuestionBox.setPromptText("Select imported question");
@@ -1105,6 +1111,21 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshSaveButtonState() {
+		/*
+		 * A selection is compatible with these controls only when it belongs to the
+		 * currently active Question or automatic shared-preamble capture workflow.
+		 */
+		boolean compatibleSelectionPending = sharedContextCapturePane.isCaptureMode()
+				? sharedContextCapturePane.hasCurrentSelection()
+				: currentSelection != null;
+		/*
+		 * Add and Clear must never appear actionable without a compatible pending
+		 * rectangle, and no capture action may run while Question persistence is
+		 * active.
+		 */
+		boolean selectionActionsEnabled = !questionSaveInProgress && compatibleSelectionPending;
+		addRegionButton.setDisable(!selectionActionsEnabled);
+		removeCurrentSelectionButton.setDisable(!selectionActionsEnabled);
 		if (questionSaveInProgress) {
 			saveQuestionButton.setDisable(true);
 			return;

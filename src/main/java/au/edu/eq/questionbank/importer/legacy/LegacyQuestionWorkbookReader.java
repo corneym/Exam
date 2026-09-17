@@ -56,6 +56,7 @@ public class LegacyQuestionWorkbookReader {
 		try (InputStream input = Files.newInputStream(path); Workbook workbook = WorkbookFactory.create(input)) {
 			FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
 			List<LegacyQuestionSheet> sheets = new ArrayList<>();
+			// Every worksheet is treated as provider data, including hidden worksheets.
 			for (Sheet sheet : workbook) {
 				sheets.add(readSheet(sheet, evaluator));
 			}
@@ -68,6 +69,7 @@ public class LegacyQuestionWorkbookReader {
 	}
 
 	private Map<String, Integer> findColumns(Sheet sheet, Row header, FormulaEvaluator evaluator) {
+		// Locate fields by their headings so column order can vary without changing the row mapping.
 		Map<String, Integer> columns = new HashMap<>();
 		for (int columnIndex = header.getFirstCellNum(); columnIndex < header.getLastCellNum(); columnIndex++) {
 			String heading = text(header, columnIndex, evaluator);
@@ -89,6 +91,7 @@ public class LegacyQuestionWorkbookReader {
 	}
 
 	private boolean isBlank(Row row, Map<String, Integer> columns, FormulaEvaluator evaluator) {
+		// Consider all named columns, including extras, when deciding whether a row is only a spacer.
 		for (int columnIndex : columns.values()) {
 			if (!text(row, columnIndex, evaluator).isBlank()) {
 				return false;
@@ -120,6 +123,7 @@ public class LegacyQuestionWorkbookReader {
 	}
 
 	private boolean preamble(Sheet sheet, Row row, int columnIndex, FormulaEvaluator evaluator) {
+		// The legacy format uses blank and 1 only; other values must not silently become false.
 		String value = text(row, columnIndex, evaluator);
 		if (value.isBlank()) {
 			return false;
@@ -144,6 +148,7 @@ public class LegacyQuestionWorkbookReader {
 			return new LegacyQuestionRow(year, paperCode, questionCode, marks, classificationCode, answer,
 					preambleCaptureRequired);
 		} catch (IllegalArgumentException e) {
+			// Report the worksheet and one-based Excel row for both parsing and record-validation failures.
 			throw error(sheet, excelRow, e.getMessage());
 		}
 	}
@@ -184,6 +189,7 @@ public class LegacyQuestionWorkbookReader {
 		if (row == null || row.getCell(columnIndex) == null) {
 			return "";
 		}
+		// Use displayed values and formula results so identifiers remain text rather than numeric conversions.
 		return formatter.formatCellValue(row.getCell(columnIndex), evaluator).trim();
 	}
 }

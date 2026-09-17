@@ -27,9 +27,11 @@ public final class CurriculumMappingSuggestion {
 		if (target == null) {
 			throw new NullPointerException("target");
 		}
+		// Reject NaN and infinity as well as out-of-range scores before candidates are ranked.
 		if (!Double.isFinite(score) || score < 0.0 || score > 1.0) {
 			throw new IllegalArgumentException("score must be between 0.0 and 1.0");
 		}
+		// A candidate must satisfy the same endpoint rules as a persisted mapping.
 		if (!source.getSyllabusVersion().getSubject().equals(target.getSyllabusVersion().getSubject())) {
 			throw new IllegalArgumentException("source and target must belong to the same subject");
 		}

@@ -60,10 +60,12 @@ public class CurriculumExcelImporter {
 
 			List<CurriculumImportRow> importRows = new ArrayList<>();
 
+			// Share the code index across sheets so duplicates cannot cross sheet boundaries.
 			Set<String> codes = new HashSet<>();
 
 			for (int sheetIndex = 0; sheetIndex < workbook.getNumberOfSheets(); sheetIndex++) {
 
+				// Hidden worksheets may contain supporting data rather than curriculum rows.
 				if (workbook.isSheetHidden(sheetIndex) || workbook.isSheetVeryHidden(sheetIndex)) {
 					continue;
 				}
@@ -89,15 +91,18 @@ public class CurriculumExcelImporter {
 			return "";
 		}
 
+		// Read the displayed value, including formula results, and remove surrounding whitespace.
 		return formatter.formatCellValue(cell, evaluator).strip();
 	}
 
 	private void readSheet(Sheet sheet, FormulaEvaluator evaluator, List<CurriculumImportRow> importRows,
 			Set<String> codes) {
+		// Only opt in sheets whose first defined row identifies the two-column format.
 		Row header = sheet.getRow(sheet.getFirstRowNum());
 		if (!hasExpectedHeaders(header, evaluator)) {
 			return;
 		}
+		// Keep workbook row order; the builder uses it to assign sibling display order.
 		for (int rowIndex = sheet.getFirstRowNum() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
 			Row row = sheet.getRow(rowIndex);
 			CurriculumImportRow importRow = readRow(sheet, row, rowIndex, evaluator);
@@ -127,6 +132,7 @@ public class CurriculumExcelImporter {
 		}
 		String code = getText(row, 0, evaluator);
 		String content = getText(row, 1, evaluator);
+		// Allow spacer rows, but reject partially populated curriculum entries.
 		if (code.isBlank() && content.isBlank()) {
 			return null;
 		}
@@ -143,6 +149,7 @@ public class CurriculumExcelImporter {
 
 	private void validateCode(String code) {
 
+		// Accept one to four numeric components; parent relationships are checked by the builder.
 		if (!code.matches("\\d+(\\.\\d+){0,3}")) {
 
 			throw new IllegalArgumentException("Invalid curriculum code: " + code);

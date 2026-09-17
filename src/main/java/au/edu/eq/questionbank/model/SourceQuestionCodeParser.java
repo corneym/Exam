@@ -32,6 +32,7 @@ public final class SourceQuestionCodeParser {
 		if (code.length() < 2) {
 			return null;
 		}
+		// Remove at most one trailing letter; multi-letter suffixes are not inferred as multipart codes.
 		char part = code.charAt(code.length() - 1);
 		if (!Character.isLetter(part)) {
 			return null;
@@ -40,6 +41,7 @@ public final class SourceQuestionCodeParser {
 		if (sourceCode.isBlank()) {
 			return null;
 		}
+		// Require a digit immediately before the part, preserving any earlier prefix such as Q24.
 		char sourceLastCharacter = sourceCode.charAt(sourceCode.length() - 1);
 		if (!Character.isDigit(sourceLastCharacter)) {
 			return null;

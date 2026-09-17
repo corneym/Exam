@@ -42,6 +42,7 @@ public final class SharedQuestionContext {
 		if (regions == null) {
 			throw new NullPointerException("regions");
 		}
+		// A shared context represents captured material, so an empty placeholder is not valid.
 		if (regions.isEmpty()) {
 			throw new IllegalArgumentException("Shared question context must contain at least one region");
 		}
@@ -53,6 +54,7 @@ public final class SharedQuestionContext {
 		this.id = id;
 		this.booklet = booklet;
 		this.label = label;
+		// All questions sharing this context see the same immutable region order.
 		this.regions = List.copyOf(regions);
 	}
 

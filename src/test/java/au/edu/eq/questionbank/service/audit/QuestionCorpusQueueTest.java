@@ -28,11 +28,10 @@ class QuestionCorpusQueueTest {
 	private final Fixture fixture = new Fixture();
 
 	@Test
-	void allFilterPreservesQuestionOrder() {
+	void allFilterUsesSourceOrder() {
 		List<QuestionCorpusWorkItem> items = QuestionCorpusQueue.build(fixture.questions(), QuestionCorpusFilter.all());
-		assertEquals(4, items.size());
-		assertEquals("Q1", items.get(0).question().getQuestionCode());
-		assertEquals("Q4", items.get(3).question().getQuestionCode());
+		assertEquals(List.of("Q3", "Q1", "Q2", "Q4"),
+				items.stream().map(item -> item.question().getQuestionCode()).toList());
 	}
 
 	@Test

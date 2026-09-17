@@ -52,10 +52,12 @@ public class CurriculumRepositoryLoader {
 			throw new IllegalArgumentException("sources must not be empty");
 		}
 
+		// Retain first-seen subject order when several syllabus sources share a subject.
 		Set<Subject> subjects = new LinkedHashSet<>();
 		List<SyllabusVersion> versions = new ArrayList<>();
 		List<CurriculumNode> nodes = new ArrayList<>();
 
+		// Allocate identifiers across this entire load, rather than restarting for each version.
 		AtomicLong ids = new AtomicLong(1);
 
 		for (CurriculumSource source : sources) {
@@ -64,6 +66,7 @@ public class CurriculumRepositoryLoader {
 			subjects.add(version.getSubject());
 			versions.add(version);
 
+			// Combine a version's workbooks to resolve parents and detect duplicates across files.
 			List<CurriculumImportRow> rows = new ArrayList<>();
 
 			for (Path workbook : source.workbooks()) {
@@ -73,6 +76,7 @@ public class CurriculumRepositoryLoader {
 			nodes.addAll(nodeBuilder.build(version, rows, ids::getAndIncrement));
 		}
 
+		// Publish the in-memory repository only after every source has been read and built.
 		return new InMemoryCurriculumRepository(List.copyOf(subjects), List.copyOf(versions), List.copyOf(nodes));
 	}
 }

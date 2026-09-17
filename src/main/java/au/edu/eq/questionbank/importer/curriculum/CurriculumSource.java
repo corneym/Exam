@@ -29,6 +29,7 @@ public record CurriculumSource(SyllabusVersion syllabusVersion, List<Path> workb
 			throw new IllegalArgumentException("workbooks must not be empty");
 		}
 
+		// Freeze both membership and import order against later changes to the caller's list.
 		workbooks = List.copyOf(workbooks);
 	}
 }

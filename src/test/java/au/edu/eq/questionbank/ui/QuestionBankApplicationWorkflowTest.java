@@ -937,7 +937,7 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 	}
 
-//	@SuppressWarnings("unchecked")
+	// @SuppressWarnings("unchecked")
 	@Test
 	void metadataPreambleConversionMayStartSafeCompleteQuestionRecapture(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
@@ -1286,6 +1286,33 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		robot.interact(() -> answers.refreshQuestions(oldSnapshot));
 		assertTrue(unansweredQuestions(robot).getItems().isEmpty());
+	}
+
+	@Test
+	void questionRegionControlsRequirePendingSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Button addRegion = lookup(robot, "#add-question-region", Button.class);
+		Button clearSelection = lookup(robot, "#clear-question-selection", Button.class);
+		/*
+		 * With no pending PDF rectangle, neither action has anything compatible to
+		 * operate on and both controls must remain disabled.
+		 */
+		assertTrue(addRegion.isDisabled());
+		assertTrue(clearSelection.isDisabled());
+		/*
+		 * Completing a Question selection creates the one pending rectangle owned by
+		 * Question capture, so both actions become available.
+		 */
+		dragRegionOnDisplayedPage(robot);
+		assertFalse(addRegion.isDisabled());
+		assertFalse(clearSelection.isDisabled());
+		/*
+		 * Clearing that pending rectangle removes the actionable selection and must
+		 * immediately disable both controls again.
+		 */
+		robot.clickOn(clearSelection);
+		assertTrue(addRegion.isDisabled());
+		assertTrue(clearSelection.isDisabled());
 	}
 
 	@Test

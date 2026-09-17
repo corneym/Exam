@@ -39,6 +39,7 @@ public class Answer {
 			}
 		}
 
+		// Require some answer content here; response-type-specific completeness is assessed separately.
 		boolean hasText = answerText != null && !answerText.isBlank();
 
 		if (!hasText && regions.isEmpty()) {
@@ -47,6 +48,7 @@ public class Answer {
 
 		this.id = id;
 		this.answerText = answerText;
+		// Freeze presentation order without sorting regions by page or position.
 		this.regions = List.copyOf(regions);
 	}
 

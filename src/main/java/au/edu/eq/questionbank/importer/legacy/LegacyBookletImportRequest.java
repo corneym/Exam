@@ -42,6 +42,7 @@ public record LegacyBookletImportRequest(LegacyBookletRequirement requirement, S
 		if (pdfPath == null) {
 			throw new NullPointerException("pdfPath");
 		}
+		// These are local input files; conversion to managed relative paths happens during exam import.
 		assessmentName = assessmentName.trim();
 		pdfPath = pdfPath.toAbsolutePath().normalize();
 		if (answerPdfPath != null) {

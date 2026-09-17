@@ -22,6 +22,8 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+//Reuse the shared provider/year/booklet/natural Question ordering policy.
+import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
@@ -183,6 +185,28 @@ final class AnswerCapturePane extends VBox {
 		setStyle(BORDER_STYLE);
 	}
 
+	/**
+	 * Returns Questions still awaiting Answers in deterministic source order.
+	 *
+	 * @param questions                  current Question snapshot
+	 * @param locallyAnsweredQuestionIds Questions answered after an older snapshot
+	 *                                   was loaded
+	 * @return unanswered Questions in provider/year/booklet/natural-code order
+	 */
+	static List<Question> unansweredQuestionsInSourceOrder(List<Question> questions,
+			Set<Long> locallyAnsweredQuestionIds) {
+		Objects.requireNonNull(questions, "questions");
+		Objects.requireNonNull(locallyAnsweredQuestionIds, "locallyAnsweredQuestionIds");
+		/*
+		 * Exclude both persisted Answers and Questions known to have been answered
+		 * locally since the supplied snapshot was obtained, then apply the common
+		 * source-order policy used by other corpus work queues.
+		 */
+		return questions.stream()
+				.filter(question -> !question.hasAnswer() && !locallyAnsweredQuestionIds.contains(question.getId()))
+				.sorted(QuestionSourceOrder.comparator()).toList();
+	}
+
 	private static String answerStatusPrefix(Question question) {
 		return "Answering " + question.getQuestionCode() + " — " + marksLabel(question.getMarks());
 	}
@@ -334,18 +358,28 @@ final class AnswerCapturePane extends VBox {
 	void refreshQuestions(List<Question> questions) {
 		Question editTarget = editingAnswerQuestion;
 		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;
-		List<Question> unansweredQuestions = questions.stream()
-				.filter(question -> !question.hasAnswer() && !locallyAnsweredQuestionIds.contains(question.getId()))
-				.toList();
+		/*
+		 * Build the Answer work queue independently of repository insertion order so
+		 * that sustained Answer capture follows the examination's natural source order.
+		 */
+		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds);
 		Question matching = editTarget;
 		if (matching == null && selected != null) {
 			for (Question question : unansweredQuestions) {
+				/*
+				 * Preserve the currently selected Question across queue refreshes by persistent
+				 * identity rather than object instance.
+				 */
 				if (question.getId() == selected.getId()) {
 					matching = question;
 					break;
 				}
 			}
 		}
+		/*
+		 * Suppress the normal selection listener while replacing the queue and
+		 * restoring the previous selection.
+		 */
 		restoringUnansweredQuestionSelection = true;
 		try {
 			unansweredQuestionField.getItems().setAll(unansweredQuestions);

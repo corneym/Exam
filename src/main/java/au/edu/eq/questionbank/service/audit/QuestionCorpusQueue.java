@@ -1,9 +1,11 @@
 package au.edu.eq.questionbank.service.audit;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionSourceOrder;
 
 /**
  * Builds filtered corpus work queues and aggregate completeness summaries.
@@ -14,10 +16,11 @@ public final class QuestionCorpusQueue {
 	}
 
 	/**
-	 * Assesses questions and returns those matching the queue filter in input order.
+	 * Assesses questions and returns those matching the queue filter in source
+	 * order.
 	 *
 	 * @param questions ordered corpus questions
-	 * @param filter completion, problem and examination restrictions
+	 * @param filter    completion, problem and examination restrictions
 	 * @return immutable matching work items
 	 */
 	public static List<QuestionCorpusWorkItem> build(List<Question> questions, QuestionCorpusFilter filter) {
@@ -37,6 +40,11 @@ public final class QuestionCorpusQueue {
 				result.add(item);
 			}
 		}
+		/*
+		 * Corpus work queues are presented in deterministic source order regardless of
+		 * repository or caller iteration order.
+		 */
+		result.sort(Comparator.comparing(QuestionCorpusWorkItem::question, QuestionSourceOrder.comparator()));
 		return List.copyOf(result);
 	}
 
@@ -44,7 +52,8 @@ public final class QuestionCorpusQueue {
 	 * Counts complete questions and each independent corpus problem.
 	 *
 	 * @param questions questions to assess
-	 * @return aggregate counts; one question may contribute to several problem counts
+	 * @return aggregate counts; one question may contribute to several problem
+	 *         counts
 	 */
 	public static QuestionCorpusSummary summarise(List<Question> questions) {
 		if (questions == null) {

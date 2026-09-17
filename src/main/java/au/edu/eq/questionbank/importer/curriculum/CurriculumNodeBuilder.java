@@ -44,6 +44,7 @@ public class CurriculumNodeBuilder {
 	public List<CurriculumNode> build(SyllabusVersion syllabusVersion, List<CurriculumImportRow> rows,
 			LongSupplier idSupplier) {
 		validateArguments(syllabusVersion, rows, idSupplier);
+		// Validate row codes and parent chains before consuming identifiers or constructing nodes.
 		Map<String, CurriculumImportRow> rowsByCode = indexRows(rows);
 		validateParents(rowsByCode);
 
@@ -55,6 +56,7 @@ public class CurriculumNodeBuilder {
 		Map<String, Integer> nextSubtopicOrder = new HashMap<>();
 		Map<String, Integer> nextDescriptorOrder = new HashMap<>();
 
+		// Build parents first even when a workbook lists their children before them.
 		addUnits(syllabusVersion, idSupplier, rowsByCode, units, nodes);
 		addTopics(syllabusVersion, idSupplier, rowsByCode, units, topics, nextTopicOrder, nodes);
 		addThreePartNodes(syllabusVersion, idSupplier, rowsByCode, topics, subtopics, nextSubtopicOrder,
@@ -80,6 +82,7 @@ public class CurriculumNodeBuilder {
 	}
 
 	private Map<String, CurriculumImportRow> indexRows(List<CurriculumImportRow> rows) {
+		// Preserve source order rather than sorting by the numeric-looking codes.
 		Map<String, CurriculumImportRow> rowsByCode = new LinkedHashMap<>();
 		for (CurriculumImportRow row : rows) {
 			if (row == null) {
@@ -142,6 +145,7 @@ public class CurriculumNodeBuilder {
 				subtopics.put(row.code(), subtopic);
 				nodes.add(subtopic);
 			} else {
+				// A leaf at this depth attaches directly to the topic, without a synthetic subtopic.
 				int order = nextOrder(nextDescriptorOrder, topicCode);
 				Descriptor descriptor = new Descriptor(idSupplier.getAsLong(), syllabusVersion, topic, row.code(),
 						row.content(), order);
@@ -172,6 +176,7 @@ public class CurriculumNodeBuilder {
 
 	private boolean hasChild(String code, Map<String, CurriculumImportRow> rowsByCode) {
 
+		// Match a complete code component so, for example, 1.2.3 does not match 1.2.30.
 		String childPrefix = code + ".";
 
 		for (String possibleChild : rowsByCode.keySet()) {
@@ -187,6 +192,7 @@ public class CurriculumNodeBuilder {
 
 	private int nextOrder(Map<String, Integer> nextOrders, String parentCode) {
 
+		// Each parent has its own one-based sequence, independent of gaps in imported codes.
 		Integer next = nextOrders.get(parentCode);
 
 		if (next == null) {
@@ -217,6 +223,7 @@ public class CurriculumNodeBuilder {
 
 	private void validateParents(Map<String, CurriculumImportRow> rowsByCode) {
 
+		// Requiring every immediate parent also ensures the whole chain back to a unit exists.
 		for (CurriculumImportRow row : rowsByCode.values()) {
 			int depth = depth(row.code());
 

@@ -23,6 +23,7 @@ public record LegacyQuestionSheet(String providerName, List<LegacyQuestionRow> q
 		if (questions == null) {
 			throw new NullPointerException("questions");
 		}
+		// Preserve worksheet order and prevent later caller changes to the validated row collection.
 		questions = List.copyOf(questions);
 	}
 }
