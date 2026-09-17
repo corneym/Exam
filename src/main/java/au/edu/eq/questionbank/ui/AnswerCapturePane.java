@@ -22,7 +22,6 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
-
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -108,14 +107,20 @@ final class AnswerCapturePane extends VBox {
 	private final RadioButton answerBButton = new RadioButton("B");
 	private final RadioButton answerCButton = new RadioButton("C");
 	private final RadioButton answerDButton = new RadioButton("D");
-	private final HBox multipleChoiceAnswerControls = new HBox();
+
+	// Multiple-choice controls use two rows so their full labels remain readable
+	// at the minimum supported capture-workspace width.
+	private final VBox multipleChoiceAnswerControls = new VBox(COMPACT_SPACING);
 	private final Button clearMultipleChoiceAnswerButton = new Button("Clear choice");
 	private final Button addAnswerRegionButton = new Button("Add Region");
 	private final Button clearAnswerSelectionButton = new Button("Clear");
 	private final Label answerRegionCountLabel = new Label("Regions: 0");
 	private final Label answerRegionStatusLabel = new Label();
 	private final VBox answerRegionListBox = new VBox(COMPACT_SPACING);
-	private final HBox answerPdfControls = new HBox();
+
+	// Keep the PDF action and potentially long filename on separate rows so the
+	// action label remains readable at the minimum capture-workspace width.
+	private final VBox answerPdfControls = new VBox(COMPACT_SPACING);
 	private final ScrollPane answerRegionsScrollPane = new ScrollPane(answerRegionListBox);
 
 	// Save and edit controls.
@@ -623,6 +628,13 @@ final class AnswerCapturePane extends VBox {
 		answerCButton.setId("answer-choice-c");
 		answerDButton.setId("answer-choice-d");
 		answerPdfControls.setId("answer-pdf-controls");
+
+		// The PDF action retains its full label, while the selected filename may wrap
+		// across the available pane width instead of competing horizontally with it.
+		chooseAnswerPdfButton.setMinWidth(Region.USE_PREF_SIZE);
+		selectedAnswerPdfLabel.setId("selected-answer-pdf");
+		selectedAnswerPdfLabel.setWrapText(true);
+		selectedAnswerPdfLabel.setMaxWidth(Double.MAX_VALUE);
 		multipleChoiceAnswerControls.setId("multiple-choice-answer-controls");
 		answerAButton.setToggleGroup(multipleChoiceAnswerGroup);
 		answerBButton.setToggleGroup(multipleChoiceAnswerGroup);
@@ -650,7 +662,25 @@ final class AnswerCapturePane extends VBox {
 		answerRegionCountLabel.setId("answer-region-count");
 		answerRegionStatusLabel.setId("answer-region-status");
 		answerRegionStatusLabel.setText("");
+
+		// Preserve the full visible text of Answer-capture actions when the capture
+		// workspace is at its supported minimum width.
+		addAnswerRegionButton.setMinWidth(Region.USE_PREF_SIZE);
+		clearAnswerSelectionButton.setMinWidth(Region.USE_PREF_SIZE);
+		answerRegionCountLabel.setMinWidth(Region.USE_PREF_SIZE);
+		saveAnswerButton.setMinWidth(Region.USE_PREF_SIZE);
+		cancelAnswerEditButton.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Status messages vary in length, so they wrap instead of competing with action
+		// buttons for horizontal space.
+		answerRegionStatusLabel.setWrapText(true);
+		answerRegionStatusLabel.setMaxWidth(Double.MAX_VALUE);
 		selectedAnswerQuestionLabel.setId("selected-answer-question");
+
+		// Answer status can include marks, stored-answer state, and workflow warnings.
+		// Allow it to use multiple lines instead of truncating at narrow widths.
+		selectedAnswerQuestionLabel.setWrapText(true);
+		selectedAnswerQuestionLabel.setMaxWidth(Double.MAX_VALUE);
 		cancelAnswerEditButton.setId("cancel-answer-edit");
 		cancelAnswerEditButton.setVisible(false);
 		cancelAnswerEditButton.setManaged(false);
@@ -688,28 +718,58 @@ final class AnswerCapturePane extends VBox {
 		}
 	}
 
-	private HBox createAnswerPdfControls() {
+	private VBox createAnswerPdfControls() {
+		/*
+		 * A filename can be much wider than the capture workspace. Give it a dedicated
+		 * wrapping row so it can never force the Choose PDF action below its readable
+		 * width.
+		 */
 		answerPdfControls.getChildren().setAll(chooseAnswerPdfButton, selectedAnswerPdfLabel);
-		answerPdfControls.setSpacing(CONTROL_SPACING);
-		answerPdfControls.setAlignment(Pos.CENTER_LEFT);
+		answerPdfControls.setFillWidth(true);
 		return answerPdfControls;
 	}
 
-	private HBox createAnswerRegionControls() {
+	private VBox createAnswerRegionControls() {
+
+		// Keep pending-selection actions together without placing variable-length
+		// status text on the same horizontal row.
+		HBox selectionControls = new HBox(CONTROL_SPACING, addAnswerRegionButton, clearAnswerSelectionButton,
+				answerRegionCountLabel);
+		selectionControls.setAlignment(Pos.CENTER_LEFT);
+
+		// Save and Cancel occupy their own row so their labels retain their preferred
+		// widths independently of capture status text.
 		Region spacer = new Region();
 		HBox.setHgrow(spacer, Priority.ALWAYS);
-		HBox controls = new HBox(CONTROL_SPACING, addAnswerRegionButton, clearAnswerSelectionButton,
-				answerRegionCountLabel, answerRegionStatusLabel, spacer, saveAnswerButton, cancelAnswerEditButton);
-		controls.setAlignment(Pos.CENTER_LEFT);
+		HBox saveControls = new HBox(CONTROL_SPACING, spacer, saveAnswerButton, cancelAnswerEditButton);
+		saveControls.setAlignment(Pos.CENTER_LEFT);
+
+		// The status label occupies a dedicated wrapping row between selection and
+		// persistence actions.
+		VBox controls = new VBox(COMPACT_SPACING, selectionControls, answerRegionStatusLabel, saveControls);
+		controls.setFillWidth(true);
 		return controls;
 	}
 
-	private HBox createMultipleChoiceAnswerControls() {
+	private VBox createMultipleChoiceAnswerControls() {
 		Label label = new Label("Multiple choice answer:");
-		multipleChoiceAnswerControls.getChildren().setAll(label, answerAButton, answerBButton, answerCButton,
-				answerDButton, clearMultipleChoiceAnswerButton);
-		multipleChoiceAnswerControls.setSpacing(CONTROL_SPACING);
-		multipleChoiceAnswerControls.setAlignment(Pos.CENTER_LEFT);
+		label.setId("multiple-choice-answer-label");
+
+		// Keep each choice and the Clear choice action at its preferred width so JavaFX
+		// cannot shorten their visible text when the capture workspace is narrow.
+		answerAButton.setMinWidth(Region.USE_PREF_SIZE);
+		answerBButton.setMinWidth(Region.USE_PREF_SIZE);
+		answerCButton.setMinWidth(Region.USE_PREF_SIZE);
+		answerDButton.setMinWidth(Region.USE_PREF_SIZE);
+		clearMultipleChoiceAnswerButton.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Put the prompt on its own row. The second row then contains only the compact
+		// answer choices and Clear choice action, which fit comfortably at 400 px.
+		HBox choiceControls = new HBox(CONTROL_SPACING, answerAButton, answerBButton, answerCButton, answerDButton,
+				clearMultipleChoiceAnswerButton);
+		choiceControls.setAlignment(Pos.CENTER_LEFT);
+		multipleChoiceAnswerControls.getChildren().setAll(label, choiceControls);
+		multipleChoiceAnswerControls.setFillWidth(true);
 		multipleChoiceAnswerControls.setVisible(false);
 		multipleChoiceAnswerControls.setManaged(false);
 		return multipleChoiceAnswerControls;

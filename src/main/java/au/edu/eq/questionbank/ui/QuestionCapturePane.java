@@ -673,57 +673,31 @@ final class QuestionCapturePane extends VBox {
 		responseTypeBox.setPromptText("Select response type");
 		responseTypeBox.getItems().setAll(QuestionResponseType.MULTIPLE_CHOICE, QuestionResponseType.WRITTEN_RESPONSE);
 		responseTypeBox.setPrefWidth(165);
-		responseTypeBox.setConverter(new StringConverter<QuestionResponseType>() {
-
-			@Override
-			public QuestionResponseType fromString(String text) {
-				return null;
-			}
-
-			@Override
-			public String toString(QuestionResponseType responseType) {
-				if (responseType == null) {
-					return "";
-				}
-				return responseTypeLabel(responseType);
-			}
-		});
+		responseTypeBox.setConverter(createResponseTypeConverter());
 		saveQuestionButton.setId("save-question");
 		saveQuestionButton.setDisable(true);
 		saveStatusLabel.setId("question-save-status");
 		regionCountLabel.setId("question-region-count");
 		addRegionButton.setId("add-question-region");
 		removeCurrentSelectionButton.setId("clear-question-selection");
+		// Keep Question-capture action labels fully readable at the minimum
+		// supported capture-workspace width.
+		addRegionButton.setMinWidth(Region.USE_PREF_SIZE);
+		removeCurrentSelectionButton.setMinWidth(Region.USE_PREF_SIZE);
+		saveQuestionButton.setMinWidth(Region.USE_PREF_SIZE);
+		cancelQuestionEditButton.setMinWidth(Region.USE_PREF_SIZE);
 		addRegionButton.setPadding(COMPACT_BUTTON_PADDING);
 		removeCurrentSelectionButton.setPadding(COMPACT_BUTTON_PADDING);
-		/*
-		 * Region actions are meaningful only while an unaccepted compatible PDF
-		 * selection is pending. Selection acceptance will enable them as required.
-		 */
+
+		// Region actions are meaningful only while an unaccepted compatible PDF
+		// selection is pending. Selection acceptance will enable them as required.
 		addRegionButton.setDisable(true);
 		removeCurrentSelectionButton.setDisable(true);
 		saveStatusLabel.setStyle(SUCCESS_STATUS_STYLE);
 		importedQuestionBox.setId("imported-question");
 		importedQuestionBox.setPromptText("Select imported question");
 		importedQuestionBox.setMaxWidth(Double.MAX_VALUE);
-		importedQuestionBox.setConverter(new StringConverter<Question>() {
-
-			@Override
-			public Question fromString(String text) {
-				return null;
-			}
-
-			@Override
-			public String toString(Question question) {
-				if (question == null) {
-					return "";
-				}
-				ExamBooklet booklet = question.getBooklet();
-				Exam exam = booklet.getExam();
-				return String.format("%s %d — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
-						booklet.getName(), question.getQuestionCode(), question.getMarks());
-			}
-		});
+		importedQuestionBox.setConverter(createImportedQuestionConverter());
 		importedQuestionBox.setOnShowing(_ -> showSelectedImportedQuestionDocument());
 		importedClassificationLabel.setId("imported-classification");
 		importedClassificationLabel.setWrapText(true);
@@ -765,12 +739,23 @@ final class QuestionCapturePane extends VBox {
 		return controls;
 	}
 
-	private HBox createCurrentSelectionControls() {
+	private VBox createCurrentSelectionControls() {
+		// Keep pending-selection actions together on their own row.
+		HBox selectionControls = new HBox(CONTROL_SPACING, addRegionButton, removeCurrentSelectionButton);
+		selectionControls.setAlignment(Pos.CENTER_LEFT);
+
+		// Keep persistence actions on a separate row so Save/Update and Cancel
+		// cannot be squeezed by the selection controls.
 		Region spacer = new Region();
 		HBox.setHgrow(spacer, Priority.ALWAYS);
-		HBox controls = new HBox(CONTROL_SPACING, addRegionButton, removeCurrentSelectionButton, spacer,
-				saveQuestionButton, cancelQuestionEditButton);
-		controls.setAlignment(Pos.CENTER_LEFT);
+
+		HBox saveControls = new HBox(CONTROL_SPACING, spacer, saveQuestionButton, cancelQuestionEditButton);
+		saveControls.setAlignment(Pos.CENTER_LEFT);
+
+		// Two short rows remain readable at the minimum supported pane width.
+		VBox controls = new VBox(COMPACT_SPACING, selectionControls, saveControls);
+		controls.setFillWidth(true);
+
 		return controls;
 	}
 
@@ -778,6 +763,31 @@ final class QuestionCapturePane extends VBox {
 		HBox controls = new HBox(CONTROL_SPACING, importedQuestionBox);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
+	}
+
+	private StringConverter<Question> createImportedQuestionConverter() {
+		// Convert imported Questions to the descriptive labels shown in the ComboBox.
+		return new StringConverter<Question>() {
+
+			@Override
+			public Question fromString(String text) {
+				// The ComboBox is selection-only, so displayed text is never parsed.
+				return null;
+			}
+
+			@Override
+			public String toString(Question question) {
+				if (question == null) {
+					return "";
+				}
+
+				ExamBooklet booklet = question.getBooklet();
+				Exam exam = booklet.getExam();
+
+				return String.format("%s %d — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
+						booklet.getName(), question.getQuestionCode(), question.getMarks());
+			}
+		};
 	}
 
 	private HBox createQuestionControls() {
@@ -800,6 +810,26 @@ final class QuestionCapturePane extends VBox {
 		regionsScrollPane.setVisible(false);
 		regionsScrollPane.setManaged(false);
 		return regionsScrollPane;
+	}
+
+	private StringConverter<QuestionResponseType> createResponseTypeConverter() {
+		// Convert response types to the user-facing labels shown by the ComboBox.
+		return new StringConverter<QuestionResponseType>() {
+
+			@Override
+			public QuestionResponseType fromString(String text) {
+				// The ComboBox is selection-only, so text is never parsed back to a value.
+				return null;
+			}
+
+			@Override
+			public String toString(QuestionResponseType responseType) {
+				if (responseType == null) {
+					return "";
+				}
+				return responseTypeLabel(responseType);
+			}
+		};
 	}
 
 	private Label createSectionLabel(String text) {
