@@ -181,6 +181,8 @@ Authoring validation rejects mixing these shapes anywhere within one syllabus.
 An empty syllabus can be created and reopened, but saving/finalising a draft
 requires at least one structurally valid node.
 
+Curriculum codes are generated automatically using hierarchical numeric numbering such as `1`, `1.1`, `1.1.1` and `1.1.1.1`. Node type and parent relationships remain explicit rather than being inferred from code depth. Existing codes remain stable when nodes are moved or deleted. A deletion may leave a numbering gap; the next node created beneath that parent uses the lowest available child number, allowing an accidentally deleted branch to be recreated with its original numbering.
+
 Save persists the complete draft transactionally. Existing curriculum-node IDs
 are updated in place; new nodes acquire database IDs after successful commit.
 Draft IDs are session-local and are bound separately to persistent IDs. Removal
@@ -221,12 +223,11 @@ the write. A changed snapshot rejects the save before mutation and requires the
 session to be closed and reopened. Finalisation uses this same save safeguard.
 No schema migration or persistent edit-lock record is required.
 
-**DEFERRED DOCUMENTATION — pending production fixes:** do not yet claim
-safe failed PDF replacement or automatic
-refresh of main classification selectors after authoring. Their
-final user-facing guarantees will be documented after the fixes and regression
-tests pass. Imported-code policy also needs resolution before documenting that
-guarantee.
+Replacing an attached syllabus PDF is failure-safe. A replacement is copied to a new managed file before its database path is published. If the metadata update fails, the new unpublished copy is removed and the existing managed PDF, persisted path and authoring-session state remain unchanged.
+
+Closing a Curriculum Authoring window refreshes the application's curriculum selectors. Newly authored Subjects and saved hierarchy changes therefore become available to the main classification workflow without restarting the application.
+
+Curriculum numbering is automatic and correction-safe: existing codes are preserved during move/delete operations, while newly created nodes use the lowest available hierarchical child number beneath their explicit parent.
 
 The separate Exam Import dialog refreshes its subject choices when opened.
 

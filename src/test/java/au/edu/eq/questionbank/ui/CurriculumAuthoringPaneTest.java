@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -178,6 +179,11 @@ class CurriculumAuthoringPaneTest {
 		assertEquals("1.1.2", draft.childrenOf(topic.draftId()).get(1).code());
 		assertEquals("First descriptor", draft.childrenOf(topic.draftId()).get(0).name());
 		assertEquals("Second descriptor", draft.childrenOf(topic.draftId()).get(1).name());
+	}
+
+	@Test
+	void normalAuthoringUiDoesNotExposeDraftExportButton() {
+		assertNull(pane.lookup("#export-curriculum-draft"));
 	}
 
 	@Test

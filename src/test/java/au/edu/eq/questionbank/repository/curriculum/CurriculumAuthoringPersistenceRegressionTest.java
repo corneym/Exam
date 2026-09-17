@@ -53,29 +53,18 @@ class CurriculumAuthoringPersistenceRegressionTest {
 	}
 
 	@Test
-	void rejectsStaleSaveAfterAnotherSessionChangesWording() {
-		CurriculumAuthoringSession first = loader.load(syllabus);
-		CurriculumAuthoringSession stale = loader.load(syllabus);
-		numbering.updateText(first.draft(), node(first, "1.1.1").draftId(), "Reviewed wording");
-		writer.save(first);
-		List<PersistedCurriculumNode> committed = repository.findNodesForVersion(syllabus);
-		assertAll(
-				() -> assertThrows(IllegalStateException.class, () -> writer.save(stale)),
-				() -> assertEquals(committed, repository.findNodesForVersion(syllabus),
-						"A stale save must not replace committed wording"));
-	}
-
-	@Test
-	void rejectsStaleSaveAfterAnotherSessionReordersNodes() {
-		CurriculumAuthoringSession first = loader.load(syllabus);
-		CurriculumAuthoringSession stale = loader.load(syllabus);
-		assertTrue(numbering.moveDown(first.draft(), node(first, "1.1.1").draftId()));
-		writer.save(first);
-		List<PersistedCurriculumNode> committed = repository.findNodesForVersion(syllabus);
-		assertAll(
-				() -> assertThrows(IllegalStateException.class, () -> writer.save(stale)),
-				() -> assertEquals(committed, repository.findNodesForVersion(syllabus),
-						"A stale save must not reverse committed ordering or codes"));
+	void deletingPersistedSiblingPreservesSurvivingCodeAndIdentityAfterReload() {
+		CurriculumAuthoringSession session = loader.load(syllabus);
+		CurriculumDraftNode removed = node(session, "1.1.1");
+		CurriculumDraftNode surviving = node(session, "1.1.2");
+		long survivingPersistentId = session.persistentIdForDraftId(surviving.draftId()).orElseThrow();
+		numbering.removeSubtree(session.draft(), removed.draftId());
+		writer.save(session);
+		CurriculumAuthoringSession reloaded = loader.load(syllabus);
+		CurriculumDraftNode reloadedSurvivor = node(reloaded, "1.1.2");
+		assertAll(() -> assertEquals("1.1.2", reloadedSurvivor.code()),
+				() -> assertEquals(0, reloadedSurvivor.displayOrder()), () -> assertEquals(survivingPersistentId,
+						reloaded.persistentIdForDraftId(reloadedSurvivor.draftId()).orElseThrow()));
 	}
 
 	@Test
@@ -87,22 +76,56 @@ class CurriculumAuthoringPersistenceRegressionTest {
 		List<PersistedCurriculumNode> committed = repository.findNodesForVersion(syllabus);
 		CurriculumLifecycleService lifecycle = new CurriculumLifecycleService(writer,
 				new SqliteCurriculumLifecycleRepository(database), Clock.systemUTC());
-		assertAll(
-				() -> assertThrows(IllegalStateException.class, () -> lifecycle.finalise(stale)),
+		assertAll(() -> assertThrows(IllegalStateException.class, () -> lifecycle.finalise(stale)),
 				() -> assertEquals(committed, repository.findNodesForVersion(syllabus)),
-				() -> assertEquals(CurriculumStatus.IN_PROGRESS,
-						new SqliteCurriculumRepository(database).findVersionById(syllabus.getId()).orElseThrow()
-								.getCurriculumStatus()));
+				() -> assertEquals(CurriculumStatus.IN_PROGRESS, new SqliteCurriculumRepository(database)
+						.findVersionById(syllabus.getId()).orElseThrow().getCurriculumStatus()));
 	}
 
 	@Test
-	void successfulSaveAdvancesSnapshotForFurtherEditsInTheSameSession() {
+	void rejectsStaleSaveAfterAnotherSessionChangesWording() {
+		CurriculumAuthoringSession first = loader.load(syllabus);
+		CurriculumAuthoringSession stale = loader.load(syllabus);
+		numbering.updateText(first.draft(), node(first, "1.1.1").draftId(), "Reviewed wording");
+		writer.save(first);
+		List<PersistedCurriculumNode> committed = repository.findNodesForVersion(syllabus);
+		assertAll(() -> assertThrows(IllegalStateException.class, () -> writer.save(stale)),
+				() -> assertEquals(committed, repository.findNodesForVersion(syllabus),
+						"A stale save must not replace committed wording"));
+	}
+
+	@Test
+	void rejectsStaleSaveAfterAnotherSessionReordersNodes() {
+		CurriculumAuthoringSession first = loader.load(syllabus);
+		CurriculumAuthoringSession stale = loader.load(syllabus);
+		assertTrue(numbering.moveDown(first.draft(), node(first, "1.1.1").draftId()));
+		writer.save(first);
+		List<PersistedCurriculumNode> committed = repository.findNodesForVersion(syllabus);
+		assertAll(() -> assertThrows(IllegalStateException.class, () -> writer.save(stale)),
+				() -> assertEquals(committed, repository.findNodesForVersion(syllabus),
+						"A stale save must not reverse committed ordering or codes"));
+	}
+
+	@Test
+	void reorderingPersistedSiblingsPreservesCodesAndIdentitiesAfterReload() {
 		CurriculumAuthoringSession session = loader.load(syllabus);
-		numbering.updateText(session.draft(), node(session, "1.1.1").draftId(), "First save");
+		CurriculumDraftNode first = node(session, "1.1.1");
+		CurriculumDraftNode second = node(session, "1.1.2");
+		long firstPersistentId = session.persistentIdForDraftId(first.draftId()).orElseThrow();
+		long secondPersistentId = session.persistentIdForDraftId(second.draftId()).orElseThrow();
+		assertTrue(numbering.moveDown(session.draft(), first.draftId()));
 		writer.save(session);
-		numbering.updateText(session.draft(), node(session, "1.1.1").draftId(), "Second save");
-		writer.save(session);
-		assertEquals("Second save", node(loader.load(syllabus), "1.1.1").name());
+		CurriculumAuthoringSession reloaded = loader.load(syllabus);
+		CurriculumDraftNode reloadedFirst = node(reloaded, "1.1.1");
+		CurriculumDraftNode reloadedSecond = node(reloaded, "1.1.2");
+		CurriculumDraftNode topic = node(reloaded, "1.1");
+		List<CurriculumDraftNode> descriptors = reloaded.draft().childrenOf(topic.draftId());
+		assertAll(() -> assertEquals("1.1.2", descriptors.getFirst().code()),
+				() -> assertEquals("1.1.1", descriptors.get(1).code()),
+				() -> assertEquals(firstPersistentId,
+						reloaded.persistentIdForDraftId(reloadedFirst.draftId()).orElseThrow()),
+				() -> assertEquals(secondPersistentId,
+						reloaded.persistentIdForDraftId(reloadedSecond.draftId()).orElseThrow()));
 	}
 
 	@Test
@@ -133,8 +156,7 @@ class CurriculumAuthoringPersistenceRegressionTest {
 		}
 		IllegalStateException failure = assertThrows(IllegalStateException.class, () -> writer.save(session));
 		assertTrue(failure.getCause().getMessage().contains("late authoring failure"));
-		assertAll(
-				() -> assertEquals(before, repository.findNodesForVersion(syllabus)),
+		assertAll(() -> assertEquals(before, repository.findNodesForVersion(syllabus)),
 				() -> assertEquals(snapshotBefore, session.persistedSnapshot()),
 				() -> assertEquals(bindingsBefore, session.persistentBindings()),
 				() -> assertEquals(deletionsBefore, session.deletedPersistentIds()),
@@ -147,6 +169,16 @@ class CurriculumAuthoringPersistenceRegressionTest {
 		assertTrue(session.deletedPersistentIds().isEmpty());
 		assertTrue(session.persistentIdForDraftId(inserted.draftId()).isPresent());
 		assertEquals("Changed before failure", node(loader.load(syllabus), "1.1.1").name());
+	}
+
+	@Test
+	void successfulSaveAdvancesSnapshotForFurtherEditsInTheSameSession() {
+		CurriculumAuthoringSession session = loader.load(syllabus);
+		numbering.updateText(session.draft(), node(session, "1.1.1").draftId(), "First save");
+		writer.save(session);
+		numbering.updateText(session.draft(), node(session, "1.1.1").draftId(), "Second save");
+		writer.save(session);
+		assertEquals("Second save", node(loader.load(syllabus), "1.1.1").name());
 	}
 
 	private CurriculumDraftNode node(CurriculumAuthoringSession session, String code) {

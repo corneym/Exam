@@ -12,7 +12,21 @@ class CurriculumDraftNumberingServiceTest {
 	private final CurriculumDraftNumberingService numbering = new CurriculumDraftNumberingService();
 
 	@Test
-	void deletionCompactsNumericCodes() {
+	void addingNodeReusesLowestAvailableCodeWithoutRenumberingExistingNodes() {
+		CurriculumDraft draft = new CurriculumDraft();
+		CurriculumDraftNode unit = draft.addNode(CurriculumLevel.UNIT, "3", "Unit", null, 1);
+		CurriculumDraftNode firstTopic = draft.addNode(CurriculumLevel.TOPIC, "3.1", "First topic", unit.draftId(), 2);
+		CurriculumDraftNode thirdTopic = draft.addNode(CurriculumLevel.TOPIC, "3.3", "Third topic", unit.draftId(), 3);
+		CurriculumDraftNode added = numbering.addNode(draft, CurriculumLevel.TOPIC, "Replacement topic", unit.draftId(),
+				4);
+		assertEquals("3", current(draft, unit).code());
+		assertEquals("3.1", current(draft, firstTopic).code());
+		assertEquals("3.3", current(draft, thirdTopic).code());
+		assertEquals("3.2", current(draft, added).code());
+	}
+
+	@Test
+	void deletionPreservesRemainingCodesWhileCompactingDisplayOrder() {
 		CurriculumDraft draft = new CurriculumDraft();
 		CurriculumDraftNode unit = numbering.addNode(draft, CurriculumLevel.UNIT, "Unit", null, 1);
 		CurriculumDraftNode first = numbering.addNode(draft, CurriculumLevel.TOPIC, "First", unit.draftId(), 2);
@@ -20,7 +34,9 @@ class CurriculumDraftNumberingServiceTest {
 		CurriculumDraftNode third = numbering.addNode(draft, CurriculumLevel.TOPIC, "Third", unit.draftId(), 4);
 		numbering.removeSubtree(draft, second.draftId());
 		assertEquals("1.1", current(draft, first).code());
-		assertEquals("1.2", current(draft, third).code());
+		assertEquals("1.3", current(draft, third).code());
+		assertEquals(0, current(draft, first).displayOrder());
+		assertEquals(1, current(draft, third).displayOrder());
 	}
 
 	@Test
@@ -42,7 +58,7 @@ class CurriculumDraftNumberingServiceTest {
 	}
 
 	@Test
-	void reorderingRenumbersNodeAndDescendantsWithoutChangingIdentity() {
+	void reorderingChangesDisplayOrderWithoutChangingCodesOrIdentity() {
 		CurriculumDraft draft = new CurriculumDraft();
 		CurriculumDraftNode unit = numbering.addNode(draft, CurriculumLevel.UNIT, "Unit", null, 1);
 		CurriculumDraftNode firstTopic = numbering.addNode(draft, CurriculumLevel.TOPIC, "First", unit.draftId(), 2);
@@ -50,9 +66,11 @@ class CurriculumDraftNumberingServiceTest {
 		CurriculumDraftNode descriptor = numbering.addNode(draft, CurriculumLevel.DESCRIPTOR, "Descriptor",
 				secondTopic.draftId(), 4);
 		assertTrue(numbering.moveUp(draft, secondTopic.draftId()));
-		assertEquals("1.1", current(draft, secondTopic).code());
-		assertEquals("1.1.1", current(draft, descriptor).code());
-		assertEquals("1.2", current(draft, firstTopic).code());
+		assertEquals("1.1", current(draft, firstTopic).code());
+		assertEquals("1.2", current(draft, secondTopic).code());
+		assertEquals("1.2.1", current(draft, descriptor).code());
+		assertEquals(secondTopic.draftId(), draft.childrenOf(unit.draftId()).getFirst().draftId());
+		assertEquals(firstTopic.draftId(), draft.childrenOf(unit.draftId()).get(1).draftId());
 		assertEquals(secondTopic.draftId(), current(draft, secondTopic).draftId());
 		assertEquals(descriptor.draftId(), current(draft, descriptor).draftId());
 	}

@@ -7,16 +7,23 @@ import java.util.Set;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 
 /**
- * Applies hierarchy-derived numeric codes to a transient curriculum draft.
+ * Applies automatic hierarchical numeric codes to newly created curriculum
+ * draft nodes.
  * <p>
- * Draft identifiers and explicit parent relationships remain authoritative.
- * Numeric codes are derived from sibling position and may therefore change when
- * nodes are reordered or deleted.
+ * Existing node codes remain stable during ordinary editing. Moving or deleting
+ * nodes changes draft ordering or membership without renumbering surviving
+ * nodes. When a new node is created, the lowest available positive child number
+ * beneath its parent is assigned.
+ * <p>
+ * Node level and parent relationships remain explicit curriculum-authoring
+ * decisions. A curriculum code does not determine whether a node is a Unit,
+ * Topic, Subtopic or Descriptor.
  */
 public final class CurriculumDraftNumberingService {
 
 	/**
-	 * Adds a node and assigns hierarchy-derived numeric codes to the draft.
+	 * Adds a node and assigns the lowest available hierarchical code beneath its
+	 * explicit parent.
 	 *
 	 * @param draft            draft to modify
 	 * @param level            explicitly selected curriculum level
@@ -28,13 +35,12 @@ public final class CurriculumDraftNumberingService {
 	public CurriculumDraftNode addNode(CurriculumDraft draft, CurriculumLevel level, String name, Long parentDraftId,
 			Integer sourcePageNumber) {
 		requireDraft(draft);
-		CurriculumDraftNode added = draft.addNode(level, "pending", name, parentDraftId, sourcePageNumber);
-		renumber(draft);
-		return draft.findNode(added.draftId()).orElseThrow();
+		String code = nextAvailableCode(draft, parentDraftId);
+		return draft.addNode(level, code, name, parentDraftId, sourcePageNumber);
 	}
 
 	/**
-	 * Moves a node later among its siblings and renumbers the complete draft.
+	 * Moves a node later among its siblings without changing curriculum codes.
 	 *
 	 * @param draft   draft to modify
 	 * @param draftId node to move
@@ -42,15 +48,11 @@ public final class CurriculumDraftNumberingService {
 	 */
 	public boolean moveDown(CurriculumDraft draft, long draftId) {
 		requireDraft(draft);
-		boolean moved = draft.moveDown(draftId);
-		if (moved) {
-			renumber(draft);
-		}
-		return moved;
+		return draft.moveDown(draftId);
 	}
 
 	/**
-	 * Moves a node earlier among its siblings and renumbers the complete draft.
+	 * Moves a node earlier among its siblings without changing curriculum codes.
 	 *
 	 * @param draft   draft to modify
 	 * @param draftId node to move
@@ -58,15 +60,11 @@ public final class CurriculumDraftNumberingService {
 	 */
 	public boolean moveUp(CurriculumDraft draft, long draftId) {
 		requireDraft(draft);
-		boolean moved = draft.moveUp(draftId);
-		if (moved) {
-			renumber(draft);
-		}
-		return moved;
+		return draft.moveUp(draftId);
 	}
 
 	/**
-	 * Removes a complete subtree and renumbers the remaining draft.
+	 * Removes a node and its descendants without renumbering surviving nodes.
 	 *
 	 * @param draft   draft to modify
 	 * @param draftId root of subtree to remove
@@ -74,23 +72,7 @@ public final class CurriculumDraftNumberingService {
 	 */
 	public List<CurriculumDraftNode> removeSubtree(CurriculumDraft draft, long draftId) {
 		requireDraft(draft);
-		List<CurriculumDraftNode> removed = draft.removeSubtree(draftId);
-		renumber(draft);
-		return removed;
-	}
-
-	/**
-	 * Recalculates all hierarchy-derived numeric codes.
-	 *
-	 * @param draft draft to renumber
-	 */
-	public void renumber(CurriculumDraft draft) {
-		requireDraft(draft);
-		Set<Long> visited = new HashSet<>();
-		List<CurriculumDraftNode> roots = draft.childrenOf(null);
-		for (int index = 0; index < roots.size(); index++) {
-			renumberNode(draft, roots.get(index), Integer.toString(index + 1), visited);
-		}
+		return draft.removeSubtree(draftId);
 	}
 
 	/**
@@ -110,19 +92,26 @@ public final class CurriculumDraftNumberingService {
 				existing.sourcePageNumber());
 	}
 
-	private void renumberNode(CurriculumDraft draft, CurriculumDraftNode node, String code, Set<Long> visited) {
-		if (!visited.add(node.draftId())) {
-			return;
+	private String nextAvailableCode(CurriculumDraft draft, Long parentDraftId) {
+		String prefix;
+		if (parentDraftId == null) {
+			prefix = "";
+		} else {
+			CurriculumDraftNode parent = draft.findNode(parentDraftId)
+					.orElseThrow(() -> new IllegalArgumentException("Unknown parent draft id: " + parentDraftId));
+			prefix = parent.code() + ".";
 		}
-		CurriculumDraftNode current = draft.findNode(node.draftId()).orElseThrow();
-		if (!current.code().equals(code)) {
-			current = draft.updateNode(current.draftId(), current.level(), code, current.name(),
-					current.parentDraftId(), current.sourcePageNumber());
+		Set<String> existingCodes = new HashSet<>();
+		for (CurriculumDraftNode node : draft.nodes()) {
+			existingCodes.add(node.code());
 		}
-		List<CurriculumDraftNode> children = draft.childrenOf(current.draftId());
-		for (int index = 0; index < children.size(); index++) {
-			renumberNode(draft, children.get(index), code + "." + (index + 1), visited);
+		int candidateNumber = 1;
+		String candidate = prefix + candidateNumber;
+		while (existingCodes.contains(candidate)) {
+			candidateNumber++;
+			candidate = prefix + candidateNumber;
 		}
+		return candidate;
 	}
 
 	private void requireDraft(CurriculumDraft draft) {

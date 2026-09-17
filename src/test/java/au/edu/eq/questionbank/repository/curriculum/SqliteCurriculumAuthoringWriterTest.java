@@ -115,7 +115,7 @@ class SqliteCurriculumAuthoringWriterTest {
 	}
 
 	@Test
-	void savesUpdatesInsertionsDeletionsAndRenumberingWithoutChangingExistingIds() throws Exception {
+	void savesUpdatesInsertionsDeletionsAndReorderingWithoutChangingExistingIds() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("authoring-save.db"));
 		database.initialiseSchema();
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
@@ -165,16 +165,16 @@ class SqliteCurriculumAuthoringWriterTest {
 				try (ResultSet result = statement.executeQuery()) {
 					assertTrue(result.next());
 					/*
-					 * Moving the first descriptor down renumbers it, but its permanent database
-					 * identity does not change.
+					 * Moving the first descriptor down changes display order only. Its curriculum
+					 * code and permanent database identity remain unchanged.
 					 */
-					assertEquals("1.1.2", result.getString("curriculum_code"));
+					assertEquals("1.1.1", result.getString("curriculum_code"));
 					assertEquals(editedText, result.getString("curriculum_name"));
 				}
 				statement.setLong(1, secondDescriptor.getId());
 				try (ResultSet result = statement.executeQuery()) {
 					assertTrue(result.next());
-					assertEquals("1.1.1", result.getString("curriculum_code"));
+					assertEquals("1.1.2", result.getString("curriculum_code"));
 				}
 			}
 			try (PreparedStatement statement = connection.prepareStatement("""

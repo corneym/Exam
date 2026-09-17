@@ -9,28 +9,7 @@
 > `sprint-08-Curriculum-and-Corpus-Completion.md`; implemented Sprint 08 work
 > should be removed from this backlog as it is completed.
 
-## High Priority
-
-### Complete asynchronous question-search regression coverage
-
-Origin: Question Retrieval Sprint v3 / final review.
-
-Add focused tests for:
-
-- stale question-search completion;
-- stale preview completion;
-- hierarchy failure clearing prior results/details/preview;
-- disposal while hierarchy/search/preview operations are in flight;
-- repeated/idempotent disposal;
-- no-current-syllabus Subject navigation;
-- multiple-current-syllabus failure handling;
-- zero-region legacy questions;
-- missing/corrupt source PDFs.
-
 ## Normal Priority
-
-### Close of sprint 08
-- Remove Export Draft button from the normal Curriculum Authoring UI once persisted authoring is fully accepted; retain CurriculumDraftTextExporter only if still useful for diagnostics/tests.
 
 ### Managed document content hashing and duplicate detection
 
@@ -114,14 +93,6 @@ Initial known requirement:
 
 - an incorrect exam name must be editable without re-importing or corrupting
   linked booklets/questions.
-
-### Changing state of Full width selection
-
-Origin: PDF region capture use.
-
-Changing the `Full width selection` state should clear any pending region
-selection so that the visible selection cannot disagree with the active
-selection mode.
 
 ### MCQ explanation capture
 

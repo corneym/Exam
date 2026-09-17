@@ -80,8 +80,8 @@ Focus on the workflows needed to maintain a growing real question bank:
 - exam-specific metadata correction;
 - import and data-integrity audit reporting;
 - additional real-world legacy-workbook validation;
-- any retrieval/search hardening remaining after Sprint 08's asynchronous
-  Question Search regression pass;- retrieval-domain and SQLite integration hardening;
+- retrieval-domain and SQLite integration hardening beyond the completed
+  Sprint 08 asynchronous Question Search regression pass;
 - measurement-driven search/preview performance work.
 
 Do not let cosmetic UI work displace data-correctness or corpus-management work.

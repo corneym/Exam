@@ -1,6 +1,5 @@
 package au.edu.eq.questionbank.ui;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,7 +34,6 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 /**
@@ -70,7 +68,6 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	private final Button deleteButton = new Button("Delete subtree");
 	private final Button moveUpButton = new Button("Move up");
 	private final Button moveDownButton = new Button("Move down");
-	private final Button exportButton = new Button("Export draft...");
 	private final TextArea validationArea = new TextArea();
 	private final Label statusLabel = new Label();
 	private Path syllabusPdfPath;
@@ -330,28 +327,6 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		}
 	}
 
-	private void chooseAndExportDraft() {
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Export Curriculum Draft");
-		chooser.setInitialFileName("curriculum-draft.txt");
-		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Text files", "*.txt"));
-		File initialDirectory = pdfFilePicker.dataRoot().toFile();
-		if (initialDirectory.isDirectory()) {
-			chooser.setInitialDirectory(initialDirectory);
-		}
-		File selectedFile = chooser.showSaveDialog(ownerStage);
-		if (selectedFile == null) {
-			return;
-		}
-		Path target = selectedFile.toPath().toAbsolutePath().normalize();
-		try {
-			exportDraft(target);
-			statusLabel.setText("Draft exported to " + target + ".");
-		} catch (IOException e) {
-			statusLabel.setText("Unable to export draft: " + e.getMessage());
-		}
-	}
-
 	private Set<Long> collapsedDraftIds() {
 		Set<Long> collapsedDraftIds = new HashSet<>();
 		for (TreeItem<CurriculumDraftNode> child : treeRoot.getChildren()) {
@@ -397,8 +372,6 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		moveUpButton.setOnAction(_ -> moveSelectedNode(true));
 		moveDownButton.setId("move-curriculum-node-down");
 		moveDownButton.setOnAction(_ -> moveSelectedNode(false));
-		exportButton.setId("export-curriculum-draft");
-		exportButton.setOnAction(_ -> chooseAndExportDraft());
 		validationArea.setId("curriculum-validation");
 		validationArea.setEditable(false);
 		validationArea.setWrapText(true);
@@ -448,7 +421,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		HBox persistenceButtons = new HBox(6, saveButton, finaliseButton, reopenButton);
 		VBox treeBox = new VBox(8, lifecycleLabel, persistenceButtons, new Label("Draft curriculum"), draftTree,
 				new Label("Selected node"), selectedDetails, editTextArea, correctionButtons, new Label("Validation"),
-				validationArea, exportButton, statusLabel);
+				validationArea, statusLabel);
 		treeBox.setPadding(new Insets(10));
 		VBox.setVgrow(draftTree, Priority.ALWAYS);
 		/*

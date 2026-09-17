@@ -370,7 +370,6 @@ Keep bounded follow-on issues in the backlog rather than reopening Sprint 07:
 
 - multi-page automatic shared-preamble capture;
 - Answer-pane spacing/control-size annoyances;
-- Full-width-selection state change clearing a pending selection;
 - optional MCQ explanation regions;
 - broader exam-metadata correction.
 
@@ -379,7 +378,7 @@ Keep bounded follow-on issues in the backlog rather than reopening Sprint 07:
 ### JavaFX / asynchronous search reliability
 
 - retain the separate non-UI and headless UI test suites;
-- add remaining stale search/preview/disposal regressions;
+- retain the completed stale search/preview/hierarchy/disposal regression coverage;
 - keep infrastructure flakiness separate from application defects.
 
 ### Retrieval/domain

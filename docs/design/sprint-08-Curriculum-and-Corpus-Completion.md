@@ -40,7 +40,11 @@ and:
       → Topic
           → Descriptor
 
-The new authoring workflow must not infer node type from the number of components in a dotted code. Codes identify curriculum nodes; they do not define the hierarchy.
+Curriculum codes use the hierarchical numeric form used by the supported syllabuses, for example `1`, `1.1`, `1.1.1` and `1.1.1.1`.
+
+The authoring workflow generates codes automatically from the explicitly authored parent relationship. A newly created node receives the lowest available positive child number beneath its parent. Existing node codes remain stable during ordinary editing: moving or deleting a node does not renumber surviving nodes. Deletion may therefore leave a temporary numbering gap, and a later node created beneath the same parent may reuse that available number.
+
+Node type and parent relationships remain explicit authoring decisions. The application must not decide whether a node is a Unit, Topic, Subtopic or Descriptor merely from the number of components in its dotted code.
 
 SQLite remains authoritative application state.
 
@@ -81,12 +85,12 @@ Introduce a transient authoring representation that describes curriculum structu
 Each draft node needs, conceptually:
 
     node type
-    code
+    automatically generated hierarchical code
     text/name
     explicit parent
     sibling/display order
     source page/reference where available
-
+    
 Validation must enforce legal domain relationships:
 
     Unit → Topic
@@ -96,9 +100,11 @@ Validation must enforce legal domain relationships:
 
 It must reject orphaned nodes, illegal parent types, duplicate codes within a syllabus and other structures that cannot become valid persisted curriculum nodes.
 
-No hierarchy decision may depend upon counting dots in the curriculum code.
+The explicit parent relationship determines curriculum structure. Code generation follows that authored structure, but code depth must not be used to infer node type.
 
-Outcome: curriculum hierarchy can be constructed independently of the source document's numbering convention.
+Existing codes are not compacted or renumbered merely because another node is moved or deleted. When a new node is added, the lowest available child number beneath its parent is used.
+
+Outcome: curriculum hierarchy is explicitly authored while conventional hierarchical curriculum numbering is generated automatically and remains stable during correction.
 
 ### Slice 3 — PDF-assisted curriculum authoring
 
@@ -114,7 +120,7 @@ The workflow is:
           ↓
     Choose its parent
           ↓
-    Edit wording/code as required
+    Edit wording as required
           ↓
     Reorder nodes
           ↓
@@ -123,6 +129,8 @@ The workflow is:
     Validate
           ↓
     Save
+
+Curriculum codes are assigned automatically. The user does not need to enter or maintain hierarchical numbering manually. If an incorrectly authored node or branch is deleted, surviving codes remain unchanged and a subsequently created replacement may reuse the lowest available number beneath that parent.
 
 The user must be able to create either a new Subject or, importantly, a new SyllabusVersion belonging to an existing Subject.
 

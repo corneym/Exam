@@ -58,8 +58,10 @@ import javafx.application.Platform;
 import javafx.event.Event;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
@@ -218,9 +220,18 @@ class QuestionBankApplicationWorkflowTest {
 				.orElseThrow();
 		assertTrue(stored.hasAnswer(), "PDF loading follows the committed transaction");
 		Platform.runLater(() -> completeLoad.get().accept(new IOException("Simulated next-PDF failure")));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot
-				.lookup("Answer saved, but the next question's PDF could not be loaded.").tryQuery().isPresent());
-		robot.clickOn("OK");
+		AtomicReference<DialogPane> failureDialog = new AtomicReference<>();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			DialogPane dialog = robot.lookup(".dialog-pane").queryAll().stream().filter(DialogPane.class::isInstance)
+					.map(DialogPane.class::cast).filter(DialogPane::isVisible)
+					.filter(candidate -> "Answer saved, but the next question's PDF could not be loaded."
+							.equals(candidate.getHeaderText()))
+					.findFirst().orElse(null);
+			failureDialog.set(dialog);
+			return dialog != null;
+		});
+		robot.interact(() -> ((Button) failureDialog.get().lookupButton(ButtonType.OK)).fire());
+		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(answerCapturePane().isSaveInProgress());
 		assertTrue(questions.getItems().stream().noneMatch(question -> question.getId() == first.getId()));
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
