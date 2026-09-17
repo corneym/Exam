@@ -44,18 +44,38 @@ public class AnswerFile {
 		this.sourceDocument = sourceDocument;
 	}
 
+	/**
+	 * Returns the exam whose answers this file contains.
+	 *
+	 * @return owning examination
+	 */
 	public Exam getExam() {
 		return exam;
 	}
 
+	/**
+	 * Returns the persistent identity of this answer file.
+	 *
+	 * @return positive answer-file identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns the label used to distinguish this exam's answer files.
+	 *
+	 * @return non-blank answer-file name
+	 */
 	public String getName() {
 		return name;
 	}
 
+	/**
+	 * Returns the original document containing the answer material.
+	 *
+	 * @return managed source-document reference
+	 */
 	public SourceDocument getSourceDocument() {
 		return sourceDocument;
 	}

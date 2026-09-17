@@ -13,11 +13,15 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  */
 public interface CurriculumRepository {
 	/**
+	 * Lists subjects available in the curriculum repository.
+	 *
 	 * @return all available subjects
 	 */
 	List<Subject> findAllSubjects();
 
 	/**
+	 * Looks up a subject by its persistent identity.
+	 *
 	 * @param id the persistent subject identifier
 	 * @return the matching subject, or an empty optional
 	 */
@@ -32,6 +36,8 @@ public interface CurriculumRepository {
 	List<SyllabusVersion> findVersionsForSubject(Subject subject);
 
 	/**
+	 * Looks up a syllabus version by its persistent identity.
+	 *
 	 * @param id the persistent syllabus-version identifier
 	 * @return the matching version, or an empty optional
 	 */

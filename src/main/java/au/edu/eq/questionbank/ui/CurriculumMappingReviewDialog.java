@@ -20,6 +20,10 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingReviewRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageStatus;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidence;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
@@ -82,6 +86,8 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private final ListView<CurriculumMappingSuggestion> suggestionsList = new ListView<>();
 	private final Set<Long> supplementalTargetIds = new HashSet<>();
 	private final ComboBox<SyllabusVersion> targetVersionBox = new ComboBox<>();
+	private final CurriculumMappingCoverageService coverageService;
+	private final Label coverageLabel = new Label();
 
 	/**
 	 * Creates the mapping-review workflow. Suggestions remain unselected until the
@@ -96,6 +102,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	 *                                reviews
 	 * @param reviewRepository        completed-review lookup
 	 * @param mappingRepository       directional mapping lookup
+	 * @param coverageService         mapping-review coverage reporting service
 	 * @param reviewWriter            atomic review persistence boundary
 	 * @throws NullPointerException if a repository, service or writer is
 	 *                              {@code null}
@@ -103,7 +110,8 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	public CurriculumMappingReviewDialog(Window owner, CurriculumRepository repository,
 			CurriculumMappingSuggester descriptorSuggester, CurriculumMappingSuggester subtopicSuggester,
 			SubtopicMappingEvidenceService subtopicEvidenceService, CurriculumMappingReviewRepository reviewRepository,
-			CurriculumMappingRepository mappingRepository, SqliteCurriculumMappingReviewWriter reviewWriter) {
+			CurriculumMappingRepository mappingRepository, CurriculumMappingCoverageService coverageService,
+			SqliteCurriculumMappingReviewWriter reviewWriter) {
 		if (repository == null) {
 			throw new NullPointerException("repository");
 		}
@@ -125,6 +133,9 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		if (reviewWriter == null) {
 			throw new NullPointerException("reviewWriter");
 		}
+		if (coverageService == null) {
+			throw new NullPointerException("coverageService");
+		}
 		this.repository = repository;
 		this.descriptorSuggester = descriptorSuggester;
 		this.subtopicSuggester = subtopicSuggester;
@@ -132,6 +143,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		this.reviewRepository = reviewRepository;
 		this.mappingRepository = mappingRepository;
 		this.reviewWriter = reviewWriter;
+		this.coverageService = coverageService;
 		ButtonType confirmButtonType = configureDialog(owner);
 		configureSelectors();
 		configureSourceNodeControls();
@@ -206,14 +218,16 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		grid.add(targetVersionBox, 1, 2);
 		grid.add(new Label("Mapping level:"), 0, 3);
 		grid.add(reviewLevelBox, 1, 3);
-		grid.add(sourceNodeHeading, 0, 4);
-		grid.add(sourceDescriptorRow, 1, 4);
-		grid.add(reviewOptions, 1, 5);
-		grid.add(new Label("Suggested targets:"), 0, 6);
-		grid.add(targetListPane, 1, 6);
-		grid.add(noMatchCheckBox, 1, 7);
-		grid.add(statusLabel, 1, 8);
-		grid.add(subtopicEvidenceLabel, 1, 9);
+		grid.add(new Label("Coverage:"), 0, 4);
+		grid.add(coverageLabel, 1, 4);
+		grid.add(sourceNodeHeading, 0, 5);
+		grid.add(sourceDescriptorRow, 1, 5);
+		grid.add(reviewOptions, 1, 6);
+		grid.add(new Label("Suggested targets:"), 0, 7);
+		grid.add(targetListPane, 1, 7);
+		grid.add(noMatchCheckBox, 1, 8);
+		grid.add(statusLabel, 1, 9);
+		grid.add(subtopicEvidenceLabel, 1, 10);
 		getDialogPane().setContent(grid);
 	}
 
@@ -260,6 +274,9 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		subtopicEvidenceLabel.setId("curriculum-mapping-subtopic-evidence");
 		subtopicEvidenceLabel.setWrapText(true);
 		subtopicEvidenceLabel.setMaxWidth(CONTENT_WIDTH);
+		coverageLabel.setId("curriculum-mapping-coverage");
+		coverageLabel.setWrapText(true);
+		coverageLabel.setMaxWidth(CONTENT_WIDTH);
 	}
 
 	private void configureReviewedMappingsList() {
@@ -483,6 +500,17 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		return nodes;
 	}
 
+	private String formatCoverageLevel(String name, CurriculumMappingLevelCoverage coverage) {
+		if (coverage.status() == CurriculumMappingCoverageStatus.NOT_APPLICABLE) {
+			return name + ": N/A" + " — " + coverage.uncoveredTargetCount()
+					+ " target nodes without confirmed predecessor";
+		}
+		String percentage = String.format(Locale.ROOT, "%.1f", coverage.reviewedPercentage());
+		return name + ": " + coverage.deliberatelyReviewed() + "/" + coverage.total() + " resolved (" + percentage
+				+ "%)" + " — " + coverage.unreviewed() + " unreviewed, " + coverage.inconsistent() + " inconsistent"
+				+ " — " + coverage.uncoveredTargetCount() + " target nodes without confirmed predecessor";
+	}
+
 	private void handleConfirmReview(ActionEvent event) {
 		event.consume();
 		confirmReview();
@@ -550,6 +578,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		resetSourceDescriptorState();
 		SyllabusVersion sourceVersion = sourceVersionBox.getValue();
 		SyllabusVersion targetVersion = targetVersionBox.getValue();
+		updateCoverageSummary();
 		if (sourceVersion == null || targetVersion == null) {
 			statusLabel.setText("");
 			return;
@@ -575,6 +604,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		sourceDescriptorText.setText("");
 		suggestionsList.getItems().clear();
 		reviewedMappingsList.getItems().clear();
+		coverageLabel.setText("");
 		subtopicEvidenceLabel.setText("");
 		reviewedSourceIds.clear();
 		clearReviewSelection();
@@ -732,6 +762,18 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		boolean validVersions = source != null && targetVersion != null
 				&& !source.getSyllabusVersion().equals(targetVersion);
 		confirmButton.setDisable(!validVersions || !reviewSelected);
+	}
+
+	private void updateCoverageSummary() {
+		SyllabusVersion sourceVersion = sourceVersionBox.getValue();
+		SyllabusVersion targetVersion = targetVersionBox.getValue();
+		if (sourceVersion == null || targetVersion == null || sourceVersion.equals(targetVersion)) {
+			coverageLabel.setText("");
+			return;
+		}
+		CurriculumMappingCoverage coverage = coverageService.calculateCoverage(sourceVersion, targetVersion);
+		coverageLabel.setText(formatCoverageLevel("Descriptors", coverage.descriptorCoverage()) + "    "
+				+ formatCoverageLevel("Subtopics", coverage.subtopicCoverage()) + "    Overall: " + coverage.status());
 	}
 
 	private void updateLevelLabels() {

@@ -36,18 +36,38 @@ public final class RevisionPresentationPlan {
 		this.rootNodes = List.copyOf(rootNodes);
 	}
 
+	/**
+	 * Returns the unit roots organising the student-facing presentation.
+	 *
+	 * @return immutable ordered presentation roots
+	 */
 	public List<RevisionPresentationNode> getRootNodes() {
 		return rootNodes;
 	}
 
+	/**
+	 * Returns the original corpus statistics before multipart grouping.
+	 *
+	 * @return source corpus completeness counts
+	 */
 	public RevisionCorpusStatistics getStatistics() {
 		return sourceCorpus.getStatistics();
 	}
 
+	/**
+	 * Returns the subject represented by the source corpus.
+	 *
+	 * @return revision subject
+	 */
 	public Subject getSubject() {
 		return sourceCorpus.getSubject();
 	}
 
+	/**
+	 * Returns the current syllabus organising this presentation plan.
+	 *
+	 * @return source corpus syllabus version
+	 */
 	public SyllabusVersion getSyllabusVersion() {
 		return sourceCorpus.getSyllabusVersion();
 	}

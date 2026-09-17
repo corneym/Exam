@@ -65,6 +65,8 @@ public final class SourceQuestion {
 	}
 
 	/**
+	 * Returns the booklet containing this source-question group.
+	 *
 	 * @return the booklet that owns this source-question identity
 	 */
 	public ExamBooklet getBooklet() {
@@ -72,6 +74,8 @@ public final class SourceQuestion {
 	}
 
 	/**
+	 * Returns the persistent identity shared by captured parts of this source question.
+	 *
 	 * @return the positive persistent identifier
 	 */
 	public long getId() {
@@ -79,6 +83,8 @@ public final class SourceQuestion {
 	}
 
 	/**
+	 * Returns the recorded presence or absence of a shared preamble.
+	 *
 	 * @return the persisted shared-preamble state
 	 */
 	public PreambleStatus getPreambleStatus() {
@@ -86,6 +92,8 @@ public final class SourceQuestion {
 	}
 
 	/**
+	 * Returns the original question code common to the captured parts.
+	 *
 	 * @return the common question code within the owning booklet
 	 */
 	public String getSourceQuestionCode() {

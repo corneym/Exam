@@ -22,6 +22,12 @@ import java.util.zip.ZipOutputStream;
  */
 public final class ScormZipWriter {
 
+	/**
+	 * Creates a ZIP writer for validated SCORM package directories.
+	 */
+	public ScormZipWriter() {
+	}
+
 	private List<Path> collectPackageFiles(Path root) throws IOException {
 		List<Path> discoveredPaths;
 

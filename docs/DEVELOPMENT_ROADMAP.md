@@ -1,7 +1,7 @@
 # Exam Question Bank — Development Roadmap
 
-> **Reference date:** 11 September 2026  
-> **Version:** 9  
+> **Reference date:** 17 September 2026
+> **Version:** 12
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 
 ## 1. Project goal
@@ -35,7 +35,9 @@ Completed SCORM 1.2 / QLearn validation
         ↓
 Completed Sprint 07 shared-context/capture/edit/output work
         ↓
-Complete and reconcile Question + mapping data
+Completed Sprint 08 curriculum/corpus tooling and hardening
+        ↓
+Complete real Question data + application-authoritative mapping review
         ↓
 Harden bank management / retrieval / audit workflows
         ↓
@@ -44,9 +46,10 @@ Resolve remaining Question semantics
 Exam Builder / printable output
 ```
 
-Curriculum mapping reconciliation and corpus completion remain compatible with
-the implemented Sprint 07 model and can proceed without reopening its core
-architecture.
+Curriculum mapping completion and corpus completion remain compatible with the
+implemented Sprint 07 model and can proceed without reopening its core
+architecture. Application SQLite review state is authoritative for mapping;
+external mapping workbooks remain reference artefacts only.
 
 ## 3. Current architecture constraints
 
@@ -58,7 +61,11 @@ hard-code Chemistry or one historical hierarchy shape.
 ### 3.2 SQLite runtime
 
 Excel is import/exchange only. SQLite is the live datastore with referential
-integrity and sequential migrations. The current latest schema version is 6.
+integrity and sequential migrations. The current latest schema version is 8.
+
+Schema v8 persists Question response type as `MULTIPLE_CHOICE`,
+`WRITTEN_RESPONSE` or `UNKNOWN`, replacing booklet-name inference as the
+authoritative driver of Answer capture semantics.
 
 ### 3.3 Managed source PDFs are authoritative
 
@@ -231,7 +238,7 @@ Delivered:
 - registered Answer PDF reuse and conditional chooser visibility;
 - legacy Answer-PDF registration when all required Question booklets already
   exist.
-  - Search Questions preview reconstruction including linked shared context;
+- Search Questions preview reconstruction including linked shared context;
 
 Canonical design/final implementation record:
 
@@ -240,63 +247,104 @@ Canonical design/final implementation record:
 The temporary Sprint 07 status/backlog and cleanup-review documents were
 retired after consolidation.
 
-## 5. Current data work
+## 5. Sprint 08 — Curriculum and Corpus Completion
 
-The standalone 5 September
-`Chemistry_2019_to_2025_Descriptor_Mapping.xlsx` remains useful reviewed-analysis
-data but is not established as reconciled/imported into SQLite.
+Sprint 08 implementation and branch-level validation are complete on
+`feature/data-completion`. Curriculum authoring provides production
+creation/opening, resumable SQLite saves, stable node identities, automatic
+correction-safe hierarchical numbering, managed syllabus-PDF attachments and
+explicit `IN_PROGRESS`/`FINAL` lifecycle transitions. Mapping coverage, legacy
+metadata correction, persisted Question response type, corpus
+audit/completeness, asynchronous Question Search hardening and Full-width
+selection-state hardening are implemented.
 
-Parallel work includes:
+Final independent review and merge remain; no further planned Sprint 08
+implementation slice is outstanding.
 
-- manual review of Low/no-match rows;
-- review of Medium/check rows;
-- confirmation of genuinely new/removed content;
-- reconciliation with SQLite mappings;
-- coverage reporting after reconciliation;
-- completion of Question and Answer region capture;
-- larger real-data retrieval/export checks.
+Sprint 08 treats application SQLite state as authoritative for curriculum
+mapping. Historical-to-current relationships are completed through the
+application's human-reviewed mapping workflow.
+
+The standalone Chemistry 2019 -> 2025 mapping workbook remains useful reference
+analysis, but it is not an application input requiring reconciliation.
+
+Implemented Sprint 08 data-management capability includes:
+
+- correction of inaccurate legacy metadata against the original paper;
+- Descriptor and Subtopic mapping-coverage reporting;
+- matched, explicit no-match and unreviewed mapping states;
+- reporting of current target nodes without confirmed predecessors;
+- persisted Question response type;
+- response-type-aware Answer completeness;
+- corpus completeness reporting and filtered work queues;
+- routing of incomplete Questions into existing safe capture/correction
+  workflows;
+- subject-neutral curriculum structures including direct Topic-to-Descriptor
+  hierarchies.
+
+Completing the actual real-world Question corpus remains ongoing data-entry and
+review work and is not equivalent to implementing the corpus-audit facility.
+
+Sprint 08 Slice 1 has confirmed through regression coverage that a
+`Unit -> Topic -> Descriptor` hierarchy with no Subtopic already survives
+curriculum import, SQLite persistence/reload, Question classification and
+current-curriculum retrieval.
 
 ## 6. Immediate development sequence after Sprint 07
 
-### 6.1 Final Sprint 07 checkpoint — complete
+### 6.1 Sprint 07 — complete
 
-Completed closeout checks:
+Sprint 07 is complete, merged and no longer active development work.
 
-- standard test suite green;
-- headless UI suite green;
-- Javadoc/doclint green;
-- final branch-versus-`main` review completed;
-- multipart-to-non-multipart edit transition regression covered;
-- current status, roadmap, backlog and canonical Sprint 07 record reconciled.
+Its final implementation is recorded in:
 
-No known Sprint 07 merge blocker remains.
+`docs/design/sprint-07-preamble-aware-question-capture-ui-redesign.md`
 
-### 6.2 Corpus completion and mapping reconciliation
+### 6.2 Sprint 08 — Curriculum and Corpus Completion
 
-Use the implemented capture/edit workflows to complete real data rather than
-adding new architecture first.
+Sprint 08 is the current development sprint.
 
-Priorities:
+Its ordered work is defined by:
 
-- remaining Question regions;
-- remaining Answer regions;
-- missing source documents;
-- historical classification verification;
-- Chemistry 2019 -> 2025 mapping reconciliation;
-- coverage reporting.
+`docs/design/sprint-08-Curriculum-and-Corpus-Completion.md`
 
-### 6.3 Broad capture/audit queue
+The initial hierarchy baseline has confirmed that direct Topic-to-Descriptor
+curriculum already works through the existing import, persistence,
+classification and retrieval path. No production hierarchy change was required
+for that behaviour.
 
-Once real corpus maintenance volume justifies it, add a filtered administrative
-queue for:
+Subsequent work therefore builds on the existing generic curriculum model rather
+than redesigning it around a no-Subtopic case.
 
-- Question regions missing;
-- Answer regions missing;
-- unresolved shared context;
-- other adopted completion states.
+### 6.3 Corpus audit/completeness queue — implemented
 
-Do not rewrite imported historical metadata merely to mark work complete.
+Sprint 08 Slice 7 implements a filtered corpus-audit workflow.
 
+Independent completion dimensions cover:
+
+- Question source capture;
+- persisted response-type resolution;
+- response-type-aware Answer completeness;
+- unresolved shared context.
+
+The actionable problems are:
+
+```text
+MISSING_QUESTION_SOURCE
+MISSING_ANSWER
+UNRESOLVED_SHARED_CONTEXT
+UNKNOWN_RESPONSE_TYPE
+```
+
+Filters include Subject, provider, year, booklet, completion state and specific
+problem.
+
+MULTIPLE_CHOICE requires a valid A/B/C/D Answer and does not require an Answer
+region. WRITTEN_RESPONSE requires at least one Answer region. UNKNOWN is
+reported as its own problem rather than simultaneously as a missing Answer.
+
+Selected work items enter the existing Metadata, Question/imported-capture or
+Answer workflow rather than a parallel capture system.
 
 ## 7. Remaining Question-model decisions
 
@@ -308,21 +356,7 @@ becomes many-to-many.
 If changed, review schema/repositories, capture/edit UI, applicability,
 retrieval duplicate semantics, provenance and output placement.
 
-### 7.2 Question-level response type
-
-Persist response type rather than inferring MCQ behaviour from booklet names.
-
-Candidate values:
-
-```text
-MULTIPLE_CHOICE
-WRITTEN_RESPONSE
-UNKNOWN
-```
-
-Use this to drive Answer UI behaviour and support mixed-response booklets.
-
-### 7.3 Question-level applicability exceptions
+### 7.2 Question-level applicability exceptions
 
 A curriculum mapping can be valid while a particular historical Question tests
 only content that did not carry forward. Support an explicit Question-level
@@ -332,7 +366,7 @@ classification or the curriculum mapping itself.
 Prefer node-specific applicability where one historical classification maps to
 several target nodes.
 
-### 7.4 Out-of-scope source Questions
+### 7.3 Out-of-scope source Questions
 
 Decide whether ingestion/audit needs explicit reviewed states distinguishing
 not-yet-reviewed, captured/classified and deliberately out-of-scope material.
@@ -343,7 +377,6 @@ Keep bounded follow-on issues in the backlog rather than reopening Sprint 07:
 
 - multi-page automatic shared-preamble capture;
 - Answer-pane spacing/control-size annoyances;
-- Full-width-selection state change clearing a pending selection;
 - optional MCQ explanation regions;
 - broader exam-metadata correction.
 
@@ -352,7 +385,7 @@ Keep bounded follow-on issues in the backlog rather than reopening Sprint 07:
 ### JavaFX / asynchronous search reliability
 
 - retain the separate non-UI and headless UI test suites;
-- add remaining stale search/preview/disposal regressions;
+- retain the completed stale search/preview/hierarchy/disposal regression coverage;
 - keep infrastructure flakiness separate from application defects.
 
 ### Retrieval/domain

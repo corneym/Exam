@@ -1,83 +1,44 @@
 # Exam Question Bank Backlog
 
-> Authoritative deferred-work list at 11 September 2026.
+> Authoritative deferred-work list at 16 September 2026.
 >
 > Completed sprint documents remain historical records. Items intentionally
 > deferred from completed work belong here until scheduled into a future sprint.
 >
-> Sprint 07 implementation is complete on `feature/preamble-capture` and is in
-> closeout. Implemented Sprint 07 work is not active backlog work.
-
-## High Priority
-
-### Complete asynchronous question-search regression coverage
-
-Origin: Question Retrieval Sprint v3 / final review.
-
-Add focused tests for:
-
-- stale question-search completion;
-- stale preview completion;
-- hierarchy failure clearing prior results/details/preview;
-- disposal while hierarchy/search/preview operations are in flight;
-- repeated/idempotent disposal;
-- no-current-syllabus Subject navigation;
-- multiple-current-syllabus failure handling;
-- zero-region legacy questions;
-- missing/corrupt source PDFs.
-
-### Build the broad capture/audit work queue
-
-Origin: Legacy Metadata Import follow-on work.
-
-Sprint 07 now provides status semantics capable of distinguishing missing
-ordinary question regions from unresolved required shared context.
-
-A broader administrative queue remains deferred.
-
-Future queue should identify/filter questions requiring:
-
-- question-region capture;
-- answer-region capture;
-- both;
-- unresolved shared context;
-- other later completion states if adopted.
-
-Filters may include:
-
-- Subject;
-- provider;
-- year;
-- booklet;
-- completion state.
-
-Completion must not rewrite imported historical metadata/classification.
-
-### Reconcile the 5 September Chemistry 2019 -> 2025 mapping workbook
-
-Origin: Curriculum Descriptor Mapping chat, 5 September 2026.
-
-A standalone normalised mapping workbook exists, but its integration with
-current SQLite mapping records is not established.
-
-Required work:
-
-- manually review all `YES` Low/no-match rows;
-- check all `CHECK` Medium rows;
-- confirm 2019 removed/no-direct-equivalent content;
-- confirm 2025 new/no-direct-predecessor content;
-- compare confirmed pairwise relationships with current mapping records;
-- import/reconcile confirmed mappings without overwriting historical question
-  classifications;
-- produce coverage statistics after reconciliation;
-- retain audit notes/confidence where useful.
-
-Do not treat the standalone workbook as authoritative application state until
-reconciliation is complete.
-
-
+> Sprint 07 is complete and merged. Work scheduled into Sprint 08 is governed by
+> `sprint-08-Curriculum-and-Corpus-Completion.md`; implemented Sprint 08 work
+> should be removed from this backlog as it is completed.
 
 ## Normal Priority
+
+### Managed document content hashing and duplicate detection
+
+Consider adding content hashing for managed documents so identical files can be recognised independently of filename or storage path.
+
+Current behaviour:
+- exam and answer PDFs use `Files.mismatch(...)` to detect byte-identical files when the destination filename already exists;
+- syllabus/curriculum PDFs are stored using unique managed filenames and are not deduplicated by content;
+- no document hash is currently persisted in SQLite.
+
+Proposed improvement:
+- compute a SHA-256 hash when a managed document is imported;
+- persist the hash alongside document metadata;
+- use the hash to detect duplicate content even when filenames differ;
+- reuse an existing managed file where appropriate instead of storing another identical copy;
+- retain existing path and ownership semantics so different logical document records may still refer to the same physical content if that is safe;
+- consider using the persisted hash for backup/integrity verification as well as deduplication.
+
+Do not use SHA-1 for new work; use SHA-256 or a stronger contemporary hash.
+
+This is a storage-integrity/deduplication improvement, not required for Sprint 08 closure.
+
+### Curriculum capture
+- PDF region-based text extraction for curriculum authoring.
+- Detection/highlighting of embedded images and diagrams.
+- Manual exclusion regions for maths/figures.
+- Markdown/LaTeX maths editing and rendered preview.
+- Maths-authoring helper buttons and eventual equation-recognition assistance.
+- Further keyboard/efficiency improvements to curriculum capture.
 
 ### Answer pane layout annoyances
 
@@ -132,32 +93,6 @@ Initial known requirement:
 
 - an incorrect exam name must be editable without re-importing or corrupting
   linked booklets/questions.
-
-### Changing state of Full width selection
-
-Origin: PDF region capture use.
-
-Changing the `Full width selection` state should clear any pending region
-selection so that the visible selection cannot disagree with the active
-selection mode.
-
-### Question-level response type
-
-Origin: Sprint 07 answer-capture review.
-
-Persist a Question-level response type such as:
-
-- `MULTIPLE_CHOICE`;
-- `WRITTEN_RESPONSE`;
-- `UNKNOWN`.
-
-Future behaviour:
-
-- capture/edit response type at Question level;
-- populate it during legacy import where known;
-- drive Answer UI behaviour from the Question rather than booklet-name
-  heuristics;
-- explicitly support mixed-response booklets.
 
 ### MCQ explanation capture
 

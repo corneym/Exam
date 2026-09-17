@@ -11,6 +11,15 @@ package au.edu.eq.questionbank.model;
  */
 public record SharedQuestionContextRegion(int pageNumber, double x, double y, double width, double height) {
 
+	/**
+	 * Validates a one-based page and proportional bounds for a shared-context region.
+	 *
+	 * @param pageNumber one-based page number within the owning context's booklet
+	 * @param x          normalized left edge
+	 * @param y          normalized top edge
+	 * @param width      normalized width
+	 * @param height     normalized height
+	 */
 	public SharedQuestionContextRegion {
 		if (pageNumber < 1) {
 			throw new IllegalArgumentException("pageNumber must be at least 1: " + pageNumber);

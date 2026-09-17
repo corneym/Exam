@@ -14,6 +14,9 @@ import java.util.stream.Stream;
  */
 public final class AutomaticBackupRetention {
 
+	/**
+	 * Maximum number of automatic database backups retained by default.
+	 */
 	public static final int DEFAULT_RETENTION_LIMIT = 10;
 	private static final Pattern AUTOMATIC_BACKUP_FILE_NAME = Pattern
 			.compile("^question-bank-auto-" + "\\d{4}-\\d{2}-\\d{2}" + "T\\d{9}Z" + "\\.zip$");

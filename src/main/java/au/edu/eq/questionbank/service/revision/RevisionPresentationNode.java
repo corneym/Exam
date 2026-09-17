@@ -50,14 +50,29 @@ public final class RevisionPresentationNode {
 		this.presentations = List.copyOf(presentations);
 	}
 
+	/**
+	 * Returns the next curriculum level in this presentation branch.
+	 *
+	 * @return immutable ordered child nodes
+	 */
 	public List<RevisionPresentationNode> getChildren() {
 		return children;
 	}
 
+	/**
+	 * Returns the current syllabus node represented by this presentation branch.
+	 *
+	 * @return underlying curriculum node
+	 */
 	public CurriculumNode getCurriculumNode() {
 		return curriculumNode;
 	}
 
+	/**
+	 * Returns student-facing questions assigned directly to this node.
+	 *
+	 * @return immutable ordered presentations, excluding descendants
+	 */
 	public List<RevisionQuestionPresentation> getPresentations() {
 		return presentations;
 	}

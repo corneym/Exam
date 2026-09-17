@@ -23,6 +23,12 @@ import javax.xml.stream.XMLStreamWriter;
  */
 public final class ScormManifestWriter {
 
+	/**
+	 * Creates a writer for SCORM 1.2 package manifests.
+	 */
+	public ScormManifestWriter() {
+	}
+
 	/** Name of the manifest required at the SCORM package root. */
 	public static final String MANIFEST_FILE_NAME = "imsmanifest.xml";
 	static final String ADL_CONTENT_PACKAGING_NAMESPACE = "http://www.adlnet.org/xsd/adlcp_rootv1p2";

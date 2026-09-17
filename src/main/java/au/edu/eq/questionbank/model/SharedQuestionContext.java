@@ -57,6 +57,8 @@ public final class SharedQuestionContext {
 	}
 
 	/**
+	 * Returns the booklet containing this reusable preamble.
+	 *
 	 * @return the booklet that owns this shared context
 	 */
 	public ExamBooklet getBooklet() {
@@ -64,6 +66,8 @@ public final class SharedQuestionContext {
 	}
 
 	/**
+	 * Returns the persistent identity of this shared context.
+	 *
 	 * @return the positive persistent identifier
 	 */
 	public long getId() {
@@ -71,6 +75,8 @@ public final class SharedQuestionContext {
 	}
 
 	/**
+	 * Returns the label used to identify this preamble during capture.
+	 *
 	 * @return the display label
 	 */
 	public String getLabel() {

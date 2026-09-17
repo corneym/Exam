@@ -59,11 +59,24 @@ class QuestionTest {
 	}
 
 	@Test
+	void compatibilityConstructorDefaultsResponseTypeToUnknown() {
+		Question question = new Question(33, booklet, "Q1", "", 1, List.of(), createClassification(), false);
+		assertEquals(QuestionResponseType.UNKNOWN, question.getResponseType());
+	}
+
+	@Test
 	void explicitBookletRejectsRegionFromAnotherBooklet() {
 		ExamBooklet secondBooklet = new ExamBooklet(99, exam, "Second booklet", new SourceDocument(99, "second.pdf"));
 		QuestionRegion region = new QuestionRegion(secondBooklet, 1, 0.0, 0.0, 1.0, 0.5);
 		assertThrows(IllegalArgumentException.class,
 				() -> new Question(1, booklet, "Q1", "Question", 1, List.of(region), createClassification(), false));
+	}
+
+	@Test
+	void explicitResponseTypeIsRetained() {
+		Question question = new Question(33, booklet, "Q1", "", 1, List.of(), createClassification(), false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, question.getResponseType());
 	}
 
 	@Test
@@ -171,6 +184,12 @@ class QuestionTest {
 		Question question = new Question(1, exam, "Q1", "Question", 1,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 0.5)), createClassification());
 		assertThrows(NullPointerException.class, () -> question.setAnswer(null));
+	}
+
+	@Test
+	void rejectsNullResponseType() {
+		assertThrows(NullPointerException.class, () -> new Question(33, booklet, "Q1", "", 1, List.of(),
+				createClassification(), false, null, null, null));
 	}
 
 	@Test

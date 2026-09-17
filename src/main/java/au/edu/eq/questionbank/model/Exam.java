@@ -51,22 +51,47 @@ public class Exam {
 		this.name = name;
 	}
 
+	/**
+	 * Returns the persistent identity of this examination.
+	 *
+	 * @return positive exam identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns the assessment name used to distinguish examinations.
+	 *
+	 * @return non-blank assessment name
+	 */
 	public String getName() {
 		return name;
 	}
 
+	/**
+	 * Returns the organisation responsible for this examination.
+	 *
+	 * @return examination provider
+	 */
 	public ExamProvider getProvider() {
 		return provider;
 	}
 
+	/**
+	 * Returns the subject assessed by this examination.
+	 *
+	 * @return assessed subject
+	 */
 	public Subject getSubject() {
 		return subject;
 	}
 
+	/**
+	 * Returns the year in which this examination was held.
+	 *
+	 * @return positive examination year
+	 */
 	public int getYear() {
 		return year;
 	}

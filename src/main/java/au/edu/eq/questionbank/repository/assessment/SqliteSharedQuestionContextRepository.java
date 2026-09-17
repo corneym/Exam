@@ -102,6 +102,41 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		}
 	}
 
+	boolean deleteIfUnreferenced(Connection connection, long contextId, long bookletId) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT 1
+				FROM questions
+				WHERE shared_context_id = ?
+				LIMIT 1
+				""")) {
+			statement.setLong(1, contextId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (result.next()) {
+					return false;
+				}
+			}
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM shared_question_context_regions
+				WHERE shared_context_id = ?
+				""")) {
+			statement.setLong(1, contextId);
+			statement.executeUpdate();
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM shared_question_contexts
+				WHERE id = ?
+				  AND booklet_id = ?
+				""")) {
+			statement.setLong(1, contextId);
+			statement.setLong(2, bookletId);
+			return statement.executeUpdate() == 1;
+		}
+	}
+
 	Optional<SharedQuestionContext> findById(Connection connection, ExamBooklet booklet, long contextId)
 			throws SQLException {
 		if (connection == null) {

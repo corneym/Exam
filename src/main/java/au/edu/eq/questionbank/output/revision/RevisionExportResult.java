@@ -24,6 +24,8 @@ public final class RevisionExportResult {
 	}
 
 	/**
+	 * Returns the completed revision site directory.
+	 *
 	 * @return the published export directory
 	 */
 	public Path getDestination() {
@@ -31,6 +33,8 @@ public final class RevisionExportResult {
 	}
 
 	/**
+	 * Returns the corpus statistics reported for this export.
+	 *
 	 * @return corpus counts for the completed export
 	 */
 	public RevisionCorpusStatistics getStatistics() {

@@ -43,14 +43,30 @@ public final class RevisionQuestionPlacement {
 		this.revisionNumber = revisionNumber;
 	}
 
+	/**
+	 * Returns the current classification bucket containing this placement.
+	 *
+	 * @return current Subtopic or Descriptor
+	 */
 	public CurriculumNode getCurrentNode() {
 		return currentNode;
 	}
 
+	/**
+	 * Returns the stored question assigned to this revision bucket.
+	 *
+	 * @return question with its original source provenance
+	 */
 	public Question getQuestion() {
 		return question;
 	}
 
+	/**
+	 * Returns the generated revision number for a renderable placement.
+	 *
+	 * @return positive revision number
+	 * @throws IllegalStateException if the placement is not renderable
+	 */
 	public int getRevisionNumber() {
 		if (!hasRevisionNumber()) {
 			throw new IllegalStateException("Non-renderable placement has no revision number");
@@ -58,10 +74,20 @@ public final class RevisionQuestionPlacement {
 		return revisionNumber;
 	}
 
+	/**
+	 * Indicates whether the placed question has an associated answer.
+	 *
+	 * @return true when answer text or regions are attached
+	 */
 	public boolean hasAnswer() {
 		return question.hasAnswer();
 	}
 
+	/**
+	 * Indicates whether this placement has a student-facing revision number.
+	 *
+	 * @return true for a numbered, renderable placement
+	 */
 	public boolean hasRevisionNumber() {
 		return revisionNumber > 0;
 	}

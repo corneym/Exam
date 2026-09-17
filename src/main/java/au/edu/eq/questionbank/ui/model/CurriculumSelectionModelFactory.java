@@ -14,6 +14,12 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 public final class CurriculumSelectionModelFactory {
 
 	/**
+	 * Creates a factory for database-backed curriculum selection models.
+	 */
+	public CurriculumSelectionModelFactory() {
+	}
+
+	/**
 	 * Initialises the configured database and creates its selection model.
 	 *
 	 * @param config application paths

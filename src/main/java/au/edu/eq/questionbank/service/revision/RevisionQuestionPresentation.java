@@ -65,42 +65,92 @@ public final class RevisionQuestionPresentation {
 		this.renderSharedContext = renderSharedContext;
 	}
 
+	/**
+	 * Returns the current curriculum bucket containing this presentation.
+	 *
+	 * @return current Subtopic or Descriptor
+	 */
 	public CurriculumNode getCurrentNode() {
 		return currentNode;
 	}
 
+	/**
+	 * Returns the captured questions presented together as one revision question.
+	 *
+	 * @return immutable members in presentation order
+	 */
 	public List<Question> getMembers() {
 		return members;
 	}
 
+	/**
+	 * Returns the student-facing number assigned by the presentation planner.
+	 *
+	 * @return positive revision question number
+	 */
 	public int getRevisionNumber() {
 		return revisionNumber;
 	}
 
+	/**
+	 * Returns the reusable preamble shared by the presentation members.
+	 *
+	 * @return shared context, or null if none is linked
+	 */
 	public SharedQuestionContext getSharedContext() {
 		return sharedContext;
 	}
 
+	/**
+	 * Returns the common source-question identity of this presentation.
+	 *
+	 * @return source identity, or null for an ungrouped question
+	 */
 	public SourceQuestion getSourceQuestion() {
 		return sourceQuestion;
 	}
 
+	/**
+	 * Returns the sum of marks for all presented members.
+	 *
+	 * @return total presentation mark value
+	 */
 	public int getTotalMarks() {
 		return totalMarks;
 	}
 
+	/**
+	 * Indicates whether this presentation has linked reusable preamble material.
+	 *
+	 * @return true when shared context is available
+	 */
 	public boolean hasSharedContext() {
 		return sharedContext != null;
 	}
 
+	/**
+	 * Indicates whether the members have a common persisted source identity.
+	 *
+	 * @return true when a source question is linked
+	 */
 	public boolean hasSourceQuestion() {
 		return sourceQuestion != null;
 	}
 
+	/**
+	 * Indicates whether several captured parts are presented together.
+	 *
+	 * @return true when the presentation has more than one member
+	 */
 	public boolean isMultipart() {
 		return members.size() > 1;
 	}
 
+	/**
+	 * Indicates whether the planner requests preamble output for this presentation.
+	 *
+	 * @return true when the shared context should be rendered here
+	 */
 	public boolean shouldRenderSharedContext() {
 		return renderSharedContext;
 	}

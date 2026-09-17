@@ -51,8 +51,18 @@ Do not promote a chat prototype, standalone workbook or proposal into current
 application functionality without repository/persistence/test evidence.
 
 For example, the standalone 5 September Chemistry 2019 -> 2025 mapping workbook
-is a useful project data artefact, but its reconciliation with SQLite mapping
-records remains pending until that work is explicitly completed.
+is reference material, not authoritative application state. There is no workbook
+reconciliation pass: mapping decisions come from the application's human-reviewed
+historical-to-current workflow. Pair-specific coverage reporting remains Sprint
+08 work; absent review must not be interpreted as an explicit no-match decision.
+
+## Automated tests
+
+Run `.\mvnw.cmd test` (or `.\mvnw.cmd clean test`) for `NonUITests`, which excludes
+the `ui` tag. Run `.\mvnw.cmd -Pheadless-ui-tests test` for `UITests` using
+headless JavaFX, or `.\mvnw.cmd -Pui-tests test` with a display. Both suites are
+needed for complete automated regression verification. Tests must be named
+`*Test.java` under `au.edu.eq.questionbank`; JavaFX tests use `@Tag("ui")`.
 
 ## Maintenance rules
 

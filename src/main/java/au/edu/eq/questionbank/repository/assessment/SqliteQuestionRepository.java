@@ -22,6 +22,7 @@ import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -223,6 +224,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 							q.question_text,
 							q.marks,
 							q.preamble_capture_required,
+							q.response_type,
 							q.source_question_id,
 							q.shared_context_id,
 							q.classification_node_id,
@@ -284,6 +286,18 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		try {
 			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
 					preambleCaptureRequired, sourceQuestion, sharedContext);
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not save question", e);
+		}
+	}
+
+	@Override
+	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
+		try {
+			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
+					preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
 		}
@@ -518,9 +532,10 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		long sharedContextId = result.getLong("shared_context_id");
 		SharedQuestionContext sharedContext = result.wasNull() ? null
 				: findSharedQuestionContext(connection, sharedContextId, booklet);
+		QuestionResponseType responseType = QuestionResponseType.valueOf(result.getString("response_type"));
 		Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
 				result.getString("question_text"), result.getInt("marks"), regions, classification,
-				result.getInt("preamble_capture_required") != 0, sourceQuestion, sharedContext);
+				result.getInt("preamble_capture_required") != 0, sourceQuestion, sharedContext, responseType);
 		Answer answer = findAnswer(connection, questionId, exam);
 		if (answer != null) {
 			question.setAnswer(answer);

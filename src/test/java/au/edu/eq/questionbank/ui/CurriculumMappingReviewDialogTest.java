@@ -35,6 +35,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRevie
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import javafx.scene.Scene;
@@ -81,6 +82,21 @@ class CurriculumMappingReviewDialogTest {
 				reviewRepository.findOutcome(secondSourceDescriptor, targetVersion).orElseThrow());
 	}
 
+	@Test
+	@SuppressWarnings("unchecked")
+	void displaysPairWideMappingCoverage(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjectBox = field("subjectBox", ComboBox.class);
+		ComboBox<SyllabusVersion> sourceVersionBox = field("sourceVersionBox", ComboBox.class);
+		Label coverageLabel = field("coverageLabel", Label.class);
+		robot.interact(() -> {
+			subjectBox.setValue(subject);
+			sourceVersionBox.setValue(sourceVersion);
+		});
+		assertTrue(coverageLabel.getText().contains("Descriptors:"));
+		assertTrue(coverageLabel.getText().contains("Subtopics:"));
+		assertTrue(coverageLabel.getText().contains("Overall: INCOMPLETE"));
+	}
+
 	@Start
 	void start(Stage stage) throws Exception {
 		stage.setScene(new Scene(new StackPane()));
@@ -116,8 +132,10 @@ class CurriculumMappingReviewDialogTest {
 		CurriculumMappingSuggester emptySubtopicSuggester = (_, _) -> List.of();
 		SubtopicMappingEvidenceService evidenceService = new SubtopicMappingEvidenceService(repository,
 				reviewRepository);
+		CurriculumMappingCoverageService coverageService = new CurriculumMappingCoverageService(repository,
+				mappingRepository, reviewRepository);
 		dialog = new CurriculumMappingReviewDialog(stage, repository, descriptorSuggester, emptySubtopicSuggester,
-				evidenceService, reviewRepository, mappingRepository, reviewWriter);
+				evidenceService, reviewRepository, mappingRepository, coverageService, reviewWriter);
 	}
 
 	@Test

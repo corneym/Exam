@@ -7,6 +7,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 
@@ -133,6 +134,26 @@ public interface QuestionRepository {
 	Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext);
+
+	/**
+	 * Saves a question with its authoritative response type and optional capture
+	 * relationships.
+	 *
+	 * @param booklet                 source booklet
+	 * @param questionCode            question identifier
+	 * @param questionText            supplementary text
+	 * @param marks                   positive mark value
+	 * @param regions                 ordered question regions
+	 * @param classification          original curriculum classification
+	 * @param preambleCaptureRequired historical preamble-capture evidence
+	 * @param sourceQuestion          source-question identity, or null
+	 * @param sharedContext           shared context, or null
+	 * @param responseType            authoritative response type
+	 * @return persisted question
+	 */
+	Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType);
 
 	/**
 	 * Updates an imported question's classification and capture relationships

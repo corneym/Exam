@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -18,8 +19,9 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
-import javafx.scene.image.ImageView;
+import javafx.scene.control.TextField;
 import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.HBox;
@@ -47,6 +49,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private final Button nextButton = new Button("Next");
 	private final Button previousButton = new Button("Previous");
 	private final Label pageLabel = new Label("No PDF selected");
+	private final TextField pageNumberField = new TextField();
 	private final CheckBox fullWidthSelectionCheckBox = new CheckBox("Full width selection");
 	private PdfSession examPdfSession;
 	private PdfSession answerPdfSession;
@@ -64,6 +67,10 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private double selectionStartY;
 	private Predicate<DocumentMode> selectionAvailable = _ -> false;
 	private Consumer<RegionSelection> selectionHandler = _ -> {
+	};
+	private IntConsumer pageChangedHandler = _ -> {
+	};
+	private Runnable selectionModeChangedHandler = () -> {
 	};
 	private BooleanSupplier pageNavigationAllowed = () -> true;
 	private final Circle selectionAnchorMarker = new Circle(ANCHOR_MARKER_RADIUS);
@@ -137,6 +144,21 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 			return;
 		}
 		showCurrentPage();
+	}
+
+	/**
+	 * Extracts text from the PDF page currently displayed by this workspace.
+	 *
+	 * @return text extracted from the current one-based page
+	 * @throws IOException           if PDFBox cannot extract the page text
+	 * @throws IllegalStateException if no PDF is currently displayed
+	 */
+	String extractDisplayedPageText() throws IOException {
+		PdfSession displayedSession = displayedPdfSession();
+		if (displayedSession == null) {
+			throw new IllegalStateException("No PDF is currently displayed");
+		}
+		return displayedSession.extractPageText(currentPageNumber);
 	}
 
 	/**
@@ -220,6 +242,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 		int requestedPage = sameDocument ? answerPageNumber : 1;
 		Task<LoadedAnswerPage> task = new Task<>() {
+
 			@Override
 			protected LoadedAnswerPage call() throws Exception {
 				PdfSession session = PdfSession.open(normalizedPath);
@@ -274,9 +297,6 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		task.setOnFailed(_ -> completed.accept(request == documentRequest ? task.getException()
 				: new CancellationException("PDF view changed during loading")));
 		Thread.ofVirtual().name("answer-pdf-load").start(task);
-	}
-
-	private record LoadedAnswerPage(PdfSession session, Image image, int pageNumber) {
 	}
 
 	/**
@@ -341,6 +361,18 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Sets the consumer notified after a PDF page has been displayed.
+	 *
+	 * @param pageChangedHandler receives the current one-based page number
+	 */
+	void setPageChangedHandler(IntConsumer pageChangedHandler) {
+		if (pageChangedHandler == null) {
+			throw new NullPointerException("pageChangedHandler");
+		}
+		this.pageChangedHandler = pageChangedHandler;
+	}
+
+	/**
 	 * Sets the guard consulted before Previous or Next changes the displayed PDF
 	 * page.
 	 *
@@ -387,6 +419,19 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Sets the callback invoked when the full-width selection mode changes.
+	 *
+	 * @param selectionModeChangedHandler callback used to clear any logical pending
+	 *                                    capture selection
+	 */
+	void setSelectionModeChangedHandler(Runnable selectionModeChangedHandler) {
+		if (selectionModeChangedHandler == null) {
+			throw new NullPointerException("selectionModeChangedHandler");
+		}
+		this.selectionModeChangedHandler = selectionModeChangedHandler;
+	}
+
+	/**
 	 * Switches between the already opened exam and answer documents.
 	 *
 	 * @param documentMode the document to display
@@ -404,6 +449,21 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 			currentPageNumber = answerPageNumber;
 		}
 		showCurrentPage();
+	}
+
+	private void applyPageImage(Image image, PdfSession session) {
+		pageView.setImage(image);
+		double aspectRatio = image.getHeight() / image.getWidth();
+		pagePane.prefHeightProperty().unbind();
+		pagePane.prefHeightProperty().bind(pagePane.widthProperty().multiply(aspectRatio));
+		pageLabel.setText(
+				String.format("%s %d of %d", displayedDocument.pageLabel(), currentPageNumber, session.getPageCount()));
+		previousButton.setDisable(currentPageNumber == 1);
+		nextButton.setDisable(currentPageNumber == session.getPageCount());
+		pageNumberField.setDisable(false);
+		pageNumberField.setText(Integer.toString(currentPageNumber));
+		rememberCurrentPageNumber();
+		pageChangedHandler.accept(currentPageNumber);
 	}
 
 	private void beginAnchoredSelection(MouseEvent event) {
@@ -455,6 +515,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pageView.setImage(null);
 		clearSelection();
 		pageLabel.setText("No PDF selected");
+		pageNumberField.clear();
+		pageNumberField.setDisable(true);
 		previousButton.setDisable(true);
 		nextButton.setDisable(true);
 	}
@@ -532,6 +594,12 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		previousButton.setDisable(true);
 		nextButton.setDisable(true);
 		nextButton.setId("next-pdf-page");
+		pageNumberField.setId("pdf-page-number");
+		pageNumberField.setPrefColumnCount(4);
+		pageNumberField.setMaxWidth(70);
+		pageNumberField.setDisable(true);
+		pageNumberField.setPromptText("Page");
+		pageNumberField.setOnAction(_ -> goToEnteredPage());
 		previousButton.setOnAction(_ -> previousPage());
 		nextButton.setOnAction(_ -> nextPage());
 	}
@@ -550,6 +618,10 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pageView.setOnMouseDragged(this::handleSelectionDragged);
 		pageView.setOnMouseReleased(this::handleSelectionReleased);
 		pageView.setOnMouseClicked(this::handleSelectionClicked);
+		fullWidthSelectionCheckBox.selectedProperty().addListener((_, _, _) -> {
+			clearSelection();
+			selectionModeChangedHandler.run();
+		});
 	}
 
 	private void configureSelectionRectangle() {
@@ -569,8 +641,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	private HBox createPageControls() {
-		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, nextButton,
-				fullWidthSelectionCheckBox);
+		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, new Label("Go to:"),
+				pageNumberField, nextButton, fullWidthSelectionCheckBox);
 		pageControls.setAlignment(Pos.CENTER);
 		pageControls.setPadding(PAGE_CONTROLS_PADDING);
 		return pageControls;
@@ -593,6 +665,35 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 			return viewerPdfSession;
 		}
 		return examPdfSession;
+	}
+
+	private void goToEnteredPage() {
+		PdfSession displayedSession = displayedPdfSession();
+		if (displayedSession == null) {
+			pageNumberField.clear();
+			return;
+		}
+		int requestedPage;
+		try {
+			requestedPage = Integer.parseInt(pageNumberField.getText().strip());
+		} catch (NumberFormatException e) {
+			restorePageNumberField();
+			return;
+		}
+		if (requestedPage < 1 || requestedPage > displayedSession.getPageCount()) {
+			restorePageNumberField();
+			return;
+		}
+		if (requestedPage == currentPageNumber) {
+			restorePageNumberField();
+			return;
+		}
+		if (!pageNavigationAllowed.getAsBoolean()) {
+			restorePageNumberField();
+			return;
+		}
+		currentPageNumber = requestedPage;
+		showCurrentPage();
 	}
 
 	private void handleSelectionClicked(MouseEvent event) {
@@ -694,6 +795,11 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
+	private void restorePageNumberField() {
+		pageNumberField.setText(Integer.toString(currentPageNumber));
+		pageNumberField.selectAll();
+	}
+
 	private void showCurrentPage() {
 		PdfSession displayedSession = displayedPdfSession();
 		if (displayedSession == null) {
@@ -710,18 +816,6 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to render PDF page", e);
 		}
-	}
-
-	private void applyPageImage(Image image, PdfSession session) {
-		pageView.setImage(image);
-		double aspectRatio = image.getHeight() / image.getWidth();
-		pagePane.prefHeightProperty().unbind();
-		pagePane.prefHeightProperty().bind(pagePane.widthProperty().multiply(aspectRatio));
-		pageLabel.setText(String.format("%s %d of %d", displayedDocument.pageLabel(), currentPageNumber,
-				session.getPageCount()));
-		previousButton.setDisable(currentPageNumber == 1);
-		nextButton.setDisable(currentPageNumber == session.getPageCount());
-		rememberCurrentPageNumber();
 	}
 
 	private void updateHorizontalSelection(double pageWidth, double eventX) {
@@ -763,5 +857,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @param height       the proportional height
 	 */
 	record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width, double height) {
+	}
+
+	private record LoadedAnswerPage(PdfSession session, Image image, int pageNumber) {
 	}
 }

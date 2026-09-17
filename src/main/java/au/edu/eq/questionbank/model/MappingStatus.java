@@ -5,5 +5,8 @@ package au.edu.eq.questionbank.model;
  * versions.
  */
 public enum MappingStatus {
-	SUGGESTED, CONFIRMED
+	/** Candidate mapping awaiting human confirmation. */
+	SUGGESTED,
+	/** Reviewed mapping used when deriving current applicability. */
+	CONFIRMED
 }

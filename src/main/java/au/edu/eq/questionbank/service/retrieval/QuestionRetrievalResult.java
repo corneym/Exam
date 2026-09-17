@@ -69,6 +69,11 @@ public final class QuestionRetrievalResult {
 		return question.getClassification();
 	}
 
+	/**
+	 * Returns the stored question represented by this search result.
+	 *
+	 * @return question with its original classification and capture state
+	 */
 	public Question getQuestion() {
 		return question;
 	}

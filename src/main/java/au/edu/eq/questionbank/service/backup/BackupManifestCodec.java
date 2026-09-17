@@ -21,6 +21,12 @@ import java.util.Properties;
  */
 public final class BackupManifestCodec {
 
+	/**
+	 * Creates a codec for the backup manifest properties format.
+	 */
+	public BackupManifestCodec() {
+	}
+
 	private static final String APPLICATION_VERSION_PROPERTY = "application.version";
 	private static final String ARCHIVE_ENTRIES_PROPERTY = "archive.entries";
 	private static final String BACKUP_KIND_PROPERTY = "backup.kind";

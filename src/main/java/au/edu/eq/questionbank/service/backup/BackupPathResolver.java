@@ -11,6 +11,12 @@ import java.time.format.DateTimeFormatter;
  */
 public final class BackupPathResolver {
 
+	/**
+	 * Creates a resolver for timestamped backup archive destinations.
+	 */
+	public BackupPathResolver() {
+	}
+
 	private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter
 			.ofPattern("uuuu-MM-dd'T'HHmmssSSS'Z'").withZone(ZoneOffset.UTC);
 

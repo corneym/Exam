@@ -74,18 +74,38 @@ public class CurriculumMapping {
 		return id == other.id;
 	}
 
+	/**
+	 * Returns the persistent identity of this directional mapping.
+	 *
+	 * @return positive mapping-row identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns the node from which curriculum applicability is mapped.
+	 *
+	 * @return source curriculum node
+	 */
 	public CurriculumNode getSource() {
 		return source;
 	}
 
+	/**
+	 * Returns whether this mapping is suggested or confirmed.
+	 *
+	 * @return mapping review status
+	 */
 	public MappingStatus getStatus() {
 		return status;
 	}
 
+	/**
+	 * Returns the node to which curriculum applicability is mapped.
+	 *
+	 * @return target curriculum node
+	 */
 	public CurriculumNode getTarget() {
 		return target;
 	}

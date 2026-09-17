@@ -177,6 +177,8 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
+	 * Lists topics beneath the currently selected unit.
+	 *
 	 * @return children of the selected unit, or an empty list when no unit is
 	 *         selected
 	 */
@@ -197,6 +199,8 @@ public class CurriculumSelectionModel {
 	}
 
 	/**
+	 * Lists units belonging to the currently selected syllabus.
+	 *
 	 * @return units for the selected syllabus, or an empty list when no syllabus is
 	 *         selected
 	 */

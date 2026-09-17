@@ -30,10 +30,20 @@ public final class RevisionSharedContextAsset {
 		this.relativePath = normalizedPath;
 	}
 
+	/**
+	 * Returns the shared-context image location within the generated site.
+	 *
+	 * @return normalised image path relative to the export root
+	 */
 	public Path getRelativePath() {
 		return relativePath;
 	}
 
+	/**
+	 * Returns the authoritative context represented by this image.
+	 *
+	 * @return source shared context
+	 */
 	public SharedQuestionContext getSharedContext() {
 		return sharedContext;
 	}

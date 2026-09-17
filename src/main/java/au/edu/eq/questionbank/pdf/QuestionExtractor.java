@@ -30,6 +30,12 @@ import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
  */
 public class QuestionExtractor {
 
+	/**
+	 * Creates an extractor for ordered question, answer and shared-context regions.
+	 */
+	public QuestionExtractor() {
+	}
+
 	private static final float RENDER_DPI = 150;
 
 	/**

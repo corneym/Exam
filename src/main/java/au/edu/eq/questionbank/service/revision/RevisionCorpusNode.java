@@ -50,14 +50,29 @@ public final class RevisionCorpusNode {
 		this.questionPlacements = List.copyOf(questionPlacements);
 	}
 
+	/**
+	 * Returns the next curriculum level in this revision branch.
+	 *
+	 * @return immutable ordered child nodes
+	 */
 	public List<RevisionCorpusNode> getChildren() {
 		return children;
 	}
 
+	/**
+	 * Returns the current syllabus node represented by this branch.
+	 *
+	 * @return underlying curriculum node
+	 */
 	public CurriculumNode getCurriculumNode() {
 		return curriculumNode;
 	}
 
+	/**
+	 * Returns questions assigned directly to this curriculum node.
+	 *
+	 * @return immutable ordered placements, excluding descendant nodes
+	 */
 	public List<RevisionQuestionPlacement> getQuestionPlacements() {
 		return questionPlacements;
 	}

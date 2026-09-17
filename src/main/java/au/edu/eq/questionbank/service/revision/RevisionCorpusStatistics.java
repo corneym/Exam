@@ -40,10 +40,20 @@ public final class RevisionCorpusStatistics {
 		this.preambleReviewQuestions = preambleReviewQuestions;
 	}
 
+	/**
+	 * Counts question assignments across current curriculum nodes.
+	 *
+	 * @return placement count, including repeated questions in distinct buckets
+	 */
 	public int getApplicablePlacements() {
 		return applicablePlacements;
 	}
 
+	/**
+	 * Counts unique applicable questions with no captured source regions.
+	 *
+	 * @return non-renderable question count
+	 */
 	public int getMissingQuestionRegionQuestions() {
 		return missingQuestionRegionQuestions;
 	}
@@ -58,18 +68,38 @@ public final class RevisionCorpusStatistics {
 		return preambleReviewQuestions;
 	}
 
+	/**
+	 * Counts unique applicable questions with an associated answer.
+	 *
+	 * @return question count with text or region answers
+	 */
 	public int getQuestionsWithAnswers() {
 		return questionsWithAnswers;
 	}
 
+	/**
+	 * Counts unique applicable questions without an associated answer.
+	 *
+	 * @return question count lacking answers
+	 */
 	public int getQuestionsWithoutAnswers() {
 		return questionsWithoutAnswers;
 	}
 
+	/**
+	 * Counts unique applicable questions with captured source regions.
+	 *
+	 * @return renderable question count
+	 */
 	public int getRenderableQuestions() {
 		return renderableQuestions;
 	}
 
+	/**
+	 * Counts distinct stored questions across all corpus placements.
+	 *
+	 * @return unique applicable question count
+	 */
 	public int getUniqueApplicableQuestions() {
 		return uniqueApplicableQuestions;
 	}

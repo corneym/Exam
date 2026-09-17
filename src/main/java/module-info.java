@@ -33,6 +33,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.repository.assessment;
 	opens au.edu.eq.questionbank.repository.curriculum;
 	opens au.edu.eq.questionbank.repository.sqlite;
+	opens au.edu.eq.questionbank.service.audit;
 	opens au.edu.eq.questionbank.service.backup;
 	opens au.edu.eq.questionbank.service.curriculum;
 	opens au.edu.eq.questionbank.service.retrieval;

@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.time.Clock;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -41,6 +42,8 @@ import au.edu.eq.questionbank.output.scorm.ScormZipWriter;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataUpdateResult;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
@@ -55,11 +58,15 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumImportResult;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumMappingReviewRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumAuthoringRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumAuthoringWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumImporter;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumLifecycleRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumSourcePdfRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -78,7 +85,15 @@ import au.edu.eq.questionbank.service.backup.ShutdownCoordinator;
 import au.edu.eq.questionbank.service.backup.ShutdownResult;
 import au.edu.eq.questionbank.service.backup.ShutdownStatus;
 import au.edu.eq.questionbank.service.curriculum.ConfirmedDescriptorSubtopicMappingSuggester;
+import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringCreationService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringOpenService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringSession;
+import au.edu.eq.questionbank.service.curriculum.CurriculumDraftLoader;
+import au.edu.eq.questionbank.service.curriculum.CurriculumLifecycleService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
+import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -96,6 +111,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -109,6 +125,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 /**
  * Composition root for the Exam Question Bank desktop application.
@@ -325,6 +342,29 @@ public class QuestionBankApplication extends Application {
 		return true;
 	}
 
+	private CurriculumAuthoringSession chooseExistingCurriculum(Stage primaryStage, List<SyllabusVersion> versions,
+			CurriculumAuthoringOpenService openService) {
+		if (versions.isEmpty()) {
+			return null;
+		}
+		ChoiceDialog<SyllabusVersion> dialog = new ChoiceDialog<>(versions.get(0), versions);
+		dialog.initOwner(primaryStage);
+		dialog.setTitle("Curriculum Authoring");
+		dialog.setHeaderText("Choose an existing syllabus to edit");
+		dialog.setContentText("Syllabus:");
+		Optional<SyllabusVersion> selection = dialog.showAndWait();
+		if (selection.isEmpty()) {
+			return null;
+		}
+		try {
+			return openService.open(selection.get());
+		} catch (RuntimeException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Authoring", "The curriculum could not be opened.",
+					e.getMessage());
+			return null;
+		}
+	}
+
 	private void clearCaptureSelection(CaptureSelectionOwner owner) {
 		if (captureSelectionState.clear(owner)) {
 			pdfWorkspace.clearSelection();
@@ -370,6 +410,7 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
 		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
+		pdfWorkspace.setSelectionModeChangedHandler(this::handleSelectionModeChanged);
 	}
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
@@ -382,6 +423,36 @@ public class QuestionBankApplication extends Application {
 		DefaultBackupService automaticBackupService = new DefaultBackupService(config, applicationVersion());
 		shutdownCoordinator = new ShutdownCoordinator(automaticBackupService, BackupRequest.automaticDatabase(config),
 				new AutomaticBackupRetention(), pdfWorkspace);
+	}
+
+	private boolean confirmCurriculumAuthoringClose(Stage authoringStage, CurriculumAuthoringPane authoringPane) {
+		if (!authoringPane.hasUnsavedChanges()) {
+			return true;
+		}
+		ButtonType saveButton = new ButtonType("Save and close", ButtonBar.ButtonData.OK_DONE);
+		ButtonType discardButton = new ButtonType("Discard changes", ButtonBar.ButtonData.NO);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(authoringStage);
+		alert.setTitle("Unsaved curriculum changes");
+		alert.setHeaderText("Save changes before closing?");
+		alert.setContentText("The curriculum contains changes that have not been saved.");
+		alert.getButtonTypes().setAll(saveButton, discardButton, cancelButton);
+		ButtonType result = alert.showAndWait().orElse(cancelButton);
+		if (result == cancelButton) {
+			return false;
+		}
+		if (result == discardButton) {
+			return true;
+		}
+		try {
+			authoringPane.saveCurriculum();
+			return true;
+		} catch (RuntimeException e) {
+			showAlert(Alert.AlertType.ERROR, "Curriculum Authoring", "The curriculum could not be saved.",
+					e.getMessage());
+			return false;
+		}
 	}
 
 	private boolean confirmDiscardAcceptedQuestionRegions() {
@@ -437,7 +508,14 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
+		MenuItem authorItem = createMenuItem("_Author / Edit...", () -> showCurriculumAuthoring(primaryStage, config));
+		/*
+		 * Retain the existing id so any UI automation referring to this menu action
+		 * remains compatible.
+		 */
+		authorItem.setId("author-curriculum-pdf");
 		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
+				authorItem, new SeparatorMenuItem(),
 				createMenuItem("_Review Mappings...", () -> reviewCurriculumMappings(primaryStage, config)));
 		return curriculumMenu;
 	}
@@ -554,6 +632,24 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private CurriculumAuthoringSession createNewCurriculum(Stage primaryStage,
+			SqliteCurriculumRepository curriculumRepository, CurriculumAuthoringCreationService creationService) {
+		NewCurriculumDialog dialog = new NewCurriculumDialog(primaryStage, curriculumRepository.findAllSubjects());
+		Optional<ButtonType> result = dialog.showAndWait();
+		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
+			return null;
+		}
+		try {
+			return creationService.create(dialog.getSubjectName(), dialog.getVersionName(), dialog.isCurrent());
+		} catch (IllegalArgumentException e) {
+			showAlert(Alert.AlertType.ERROR, "New Curriculum", "The curriculum could not be created.", e.getMessage());
+			return null;
+		} catch (SQLException e) {
+			showAlert(Alert.AlertType.ERROR, "New Curriculum", "The curriculum could not be stored.", e.getMessage());
+			return null;
+		}
+	}
+
 	private VBox createPreviewPane() {
 		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, questionCapturePane, answerCapturePane);
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
@@ -581,7 +677,11 @@ public class QuestionBankApplication extends Application {
 				questionCapturePane::showImportedQuestionCapture);
 		captureImportedItem.setId("capture-imported-questions");
 		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
-		questionMenu.getItems().addAll(captureNewItem, captureImportedItem, new SeparatorMenuItem(), searchItem);
+		MenuItem corpusAuditItem = createMenuItem("_Corpus Audit...",
+				() -> showQuestionCorpusAudit(primaryStage, config));
+		corpusAuditItem.setId("question-corpus-audit");
+		questionMenu.getItems().addAll(captureNewItem, captureImportedItem, new SeparatorMenuItem(), searchItem,
+				corpusAuditItem);
 		return questionMenu;
 	}
 
@@ -614,6 +714,73 @@ public class QuestionBankApplication extends Application {
 	private ScormExportService createScormExportService(ApplicationConfig config) {
 		return new ScormExportService(createRevisionExportService(config), new ScormManifestWriter(),
 				new ScormSchemaSupport(), new ScormPackageValidator(), new ScormZipWriter());
+	}
+
+	private void editCorpusQuestionMetadata(Stage primaryStage, ApplicationConfig config, Question question,
+			Runnable completedHandler) {
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
+		}
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
+		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
+				curriculumRepository);
+		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
+		if (result.isEmpty()) {
+			completedHandler.run();
+			return;
+		}
+		LegacyQuestionMetadataDialog.Result replacement = result.get();
+		try {
+			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
+					replacement.questionCode(), replacement.marks(), replacement.classification(),
+					replacement.preambleCaptureRequired(), replacement.responseType());
+			Question updated = updateResult.question();
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			if (updateResult
+					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+				offerQuestionRecaptureAfterPreambleConversion(primaryStage, updated, completedHandler);
+				return;
+			}
+			completedHandler.run();
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Edit Question Metadata", "The question metadata could not be saved.",
+					exception.getMessage());
+			completedHandler.run();
+		}
+	}
+
+	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
+			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
+		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
+				curriculumRepository);
+		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
+		if (result.isEmpty()) {
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		LegacyQuestionMetadataDialog.Result replacement = result.get();
+		try {
+			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
+					replacement.questionCode(), replacement.marks(), replacement.classification(),
+					replacement.preambleCaptureRequired(), replacement.responseType());
+			Question updated = updateResult.question();
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			if (updateResult
+					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+				offerQuestionRecaptureAfterPreambleConversion(primaryStage, searchDialog, updated, curriculumRepository,
+						metadataService);
+				return;
+			}
+			resumeSearchAfterEdit(primaryStage, searchDialog, updated.getId(), curriculumRepository, metadataService);
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Edit Question Metadata", "The question metadata could not be saved.",
+					exception.getMessage());
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+		}
 	}
 
 	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
@@ -682,6 +849,21 @@ public class QuestionBankApplication extends Application {
 				captureSelectionState.claim(CaptureSelectionOwner.QUESTION);
 				questionCapturePane.acceptSelection(selection);
 			}
+		}
+	}
+
+	private void handleSelectionModeChanged() {
+		CaptureSelectionOwner owner = captureSelectionState.getOwner();
+		if (owner == null) {
+			return;
+		}
+		switch (owner) {
+		case QUESTION -> questionCapturePane.clearCurrentSelection();
+		case SHARED_CONTEXT -> questionCapturePane.clearSharedContextCurrentSelection();
+		case ANSWER -> {
+			answerCapturePane.clearCurrentSelectionForPageChange();
+			clearCaptureSelection(CaptureSelectionOwner.ANSWER);
+		}
 		}
 	}
 
@@ -850,13 +1032,104 @@ public class QuestionBankApplication extends Application {
 			return false;
 		}
 		if (documentMode == PdfWorkspacePane.DocumentMode.ANSWER) {
-			return answerCapturePane.hasAnswerFile() && !answerCapturePane.isSaveInProgress();
+			return answerCapturePane.canCaptureRegions();
 		}
 		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
 	}
 
+	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, Question question,
+			Runnable completedHandler) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
+		}
+		ButtonType recaptureButton = new ButtonType("Recapture complete question", ButtonBar.ButtonData.OK_DONE);
+		ButtonType keepButton = new ButtonType("Keep converted regions", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Question Preamble Converted");
+		alert.setHeaderText("The captured preamble has been converted to ordinary question regions.");
+		alert.setContentText(
+				"""
+						The converted material has already been saved safely.
+
+						You can now recapture the complete question as one or more replacement regions, or keep the converted regions as they are.
+						""");
+		alert.getButtonTypes().setAll(recaptureButton, keepButton);
+		ButtonType decision = alert.showAndWait().orElse(keepButton);
+		if (decision != recaptureButton) {
+			completedHandler.run();
+			return;
+		}
+		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question, completedHandler);
+		if (!recaptureStarted) {
+			completedHandler.run();
+		}
+	}
+
+	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, QuestionSearchDialog searchDialog,
+			Question question, CurriculumRepository curriculumRepository,
+			LegacyQuestionMetadataService metadataService) {
+		Runnable resumeSearch = () -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(),
+				curriculumRepository, metadataService);
+		offerQuestionRecaptureAfterPreambleConversion(primaryStage, question, resumeSearch);
+	}
+
 	private void openAnswerPdf(SelectedPdf selectedPdf) {
 		pdfWorkspace.openAnswerPdf(selectedPdf.path());
+	}
+
+	private void openCurriculumAuthoringWindow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			CurriculumAuthoringSession session) {
+		// Windows are the registry: hiding/closing releases access automatically,
+		// while a cancelled close retains it. Include FINAL views that can reopen.
+		for (Window window : List.copyOf(Window.getWindows())) {
+			if (window instanceof Stage existing && existing.getOwner() == primaryStage && existing.getScene() != null
+					&& existing.getScene().getRoot() instanceof CurriculumAuthoringPane pane
+					&& pane.isForSyllabus(session.syllabusVersion().getId())) {
+				existing.toFront();
+				Alert alert = new Alert(Alert.AlertType.INFORMATION);
+				alert.initOwner(existing);
+				alert.setTitle("Curriculum Authoring");
+				alert.setHeaderText("This curriculum is already open for editing.");
+				alert.setContentText("Use the existing authoring window, or close it before opening another.");
+				alert.showAndWait();
+				return;
+			}
+		}
+		SqliteCurriculumAuthoringWriter authoringWriter = new SqliteCurriculumAuthoringWriter(database);
+		CurriculumSourcePdfService sourcePdfService = new CurriculumSourcePdfService(
+				new CurriculumSourcePdfStore(config.curriculumDataRoot()),
+				new SqliteCurriculumSourcePdfRepository(database));
+		CurriculumLifecycleService lifecycleService = new CurriculumLifecycleService(authoringWriter,
+				new SqliteCurriculumLifecycleRepository(database), Clock.systemUTC());
+		SyllabusVersion syllabusVersion = session.syllabusVersion();
+		Stage authoringStage = new Stage();
+		authoringStage.initOwner(primaryStage);
+		authoringStage.setTitle(
+				"Curriculum Authoring — " + syllabusVersion.getSubject().getName() + " " + syllabusVersion.getName());
+		CurriculumAuthoringPane authoringPane = new CurriculumAuthoringPane(authoringStage, config.curriculumDataRoot(),
+				session, authoringWriter, sourcePdfService, lifecycleService);
+		authoringStage.setScene(new Scene(authoringPane, 1400, 840));
+		authoringStage.setOnCloseRequest(event -> {
+			if (!confirmCurriculumAuthoringClose(authoringStage, authoringPane)) {
+				event.consume();
+			}
+		});
+		authoringStage.setOnHidden(_ -> {
+			try {
+				authoringPane.close();
+			} catch (Exception e) {
+				showAlert(Alert.AlertType.WARNING, "Curriculum Authoring",
+						"The curriculum authoring workspace could not be closed cleanly.", e.getMessage());
+			} finally {
+				curriculumSelectorPane.refreshSubjects();
+				examMetadataPane.refreshSubjects();
+			}
+		});
+		authoringStage.show();
 	}
 
 	private void openExamPdf(SelectedPdf selectedPdf) {
@@ -877,6 +1150,15 @@ public class QuestionBankApplication extends Application {
 	private void requestApplicationExit(Stage primaryStage) {
 		if (blockWhileCaptureSaveInProgress(primaryStage, "closing the application")) {
 			return;
+		}
+		// Authoring windows own independent drafts. Resolve them before backup or
+		// resource shutdown, which must include any curriculum saved by this prompt.
+		for (Window window : List.copyOf(Window.getWindows())) {
+			if (window instanceof Stage stage && stage.getOwner() == primaryStage && stage.getScene() != null
+					&& stage.getScene().getRoot() instanceof CurriculumAuthoringPane pane
+					&& !confirmCurriculumAuthoringClose(stage, pane)) {
+				return;
+			}
 		}
 		while (true) {
 			ShutdownResult result = shutdownCoordinator.prepareForExit();
@@ -957,9 +1239,10 @@ public class QuestionBankApplication extends Application {
 		applicationExitAction.run();
 	}
 
-	private void resumeSearchAfterEdit(QuestionSearchDialog dialog, long questionId) {
+	private void resumeSearchAfterEdit(Stage primaryStage, QuestionSearchDialog dialog, long questionId,
+			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		dialog.refreshAfterEdit(questionId);
-		showQuestionSearchDialog(dialog);
+		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
@@ -971,12 +1254,14 @@ public class QuestionBankApplication extends Application {
 			CurriculumMappingSuggester subtopicSuggester = new ConfirmedDescriptorSubtopicMappingSuggester(repository,
 					mappingRepository);
 			CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
+			CurriculumMappingCoverageService coverageService = new CurriculumMappingCoverageService(repository,
+					mappingRepository, reviewRepository);
 			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
 			SubtopicMappingEvidenceService subtopicEvidenceService = new SubtopicMappingEvidenceService(repository,
 					reviewRepository);
 			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
 					descriptorSuggester, subtopicSuggester, subtopicEvidenceService, reviewRepository,
-					mappingRepository, reviewWriter);
+					mappingRepository, coverageService, reviewWriter);
 			dialog.showAndWait();
 		} catch (IllegalStateException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",
@@ -1085,6 +1370,47 @@ public class QuestionBankApplication extends Application {
 		return BackupFailureDecision.EXIT_WITHOUT_BACKUP;
 	}
 
+	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		CurriculumDraftLoader draftLoader = new CurriculumDraftLoader(
+				new SqliteCurriculumAuthoringRepository(database));
+		CurriculumAuthoringOpenService openService = new CurriculumAuthoringOpenService(curriculumRepository,
+				draftLoader);
+		CurriculumAuthoringCreationService creationService = new CurriculumAuthoringCreationService(
+				new SqliteCurriculumImporter(database, curriculumWriter), draftLoader);
+		List<SyllabusVersion> versions = openService.availableVersions();
+		ButtonType openExistingButton = new ButtonType("Open Existing", ButtonBar.ButtonData.OK_DONE);
+		ButtonType newCurriculumButton = new ButtonType("New Curriculum", ButtonBar.ButtonData.OTHER);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert chooser = new Alert(Alert.AlertType.CONFIRMATION);
+		chooser.initOwner(primaryStage);
+		chooser.setTitle("Curriculum Authoring");
+		chooser.setHeaderText("Open or create a curriculum");
+		if (versions.isEmpty()) {
+			chooser.setContentText("No existing curricula are available.");
+			chooser.getButtonTypes().setAll(newCurriculumButton, cancelButton);
+		} else {
+			chooser.setContentText("Choose whether to continue an existing curriculum or create a new one.");
+			chooser.getButtonTypes().setAll(openExistingButton, newCurriculumButton, cancelButton);
+		}
+		ButtonType action = chooser.showAndWait().orElse(cancelButton);
+		if (action == cancelButton) {
+			return;
+		}
+		CurriculumAuthoringSession session;
+		if (action == newCurriculumButton) {
+			session = createNewCurriculum(primaryStage, curriculumRepository, creationService);
+		} else {
+			session = chooseExistingCurriculum(primaryStage, versions, openService);
+		}
+		if (session == null) {
+			return;
+		}
+		openCurriculumAuthoringWindow(primaryStage, config, database, session);
+	}
+
 	private void showExamImport() {
 		if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
 			showAlert(Alert.AlertType.WARNING, "Import Exam", "Close the viewer PDF first.",
@@ -1128,6 +1454,56 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void showQuestionCorpusAudit(Stage primaryStage, ApplicationConfig config) {
+		if (blockWhileCaptureSaveInProgress(primaryStage, "opening the corpus audit")) {
+			return;
+		}
+		QuestionCorpusAuditDialog dialog = new QuestionCorpusAuditDialog(primaryStage, questionRepository.findAll());
+		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(
+				new SqliteDatabase(config.databasePath()));
+		dialog.setBulkResponseTypeHandler((questions, responseType) -> {
+			try {
+				metadataService.resolveUnknownResponseTypes(questions, responseType);
+				questionCapturePane.refreshImportedQuestions();
+				answerCapturePane.refreshQuestions();
+				dialog.refreshQuestions(questionRepository.findAll(), -1L);
+			} catch (IllegalArgumentException | IllegalStateException exception) {
+				showAlert(Alert.AlertType.ERROR, "Resolve Response Types",
+						"The selected response types could not be saved.", exception.getMessage());
+				dialog.refreshQuestions(questionRepository.findAll(), questions.getFirst().getId());
+			}
+		});
+		showQuestionCorpusAuditDialog(primaryStage, config, dialog);
+	}
+
+	private void showQuestionCorpusAuditDialog(Stage primaryStage, ApplicationConfig config,
+			QuestionCorpusAuditDialog dialog) {
+		Optional<QuestionCorpusAuditDialog.ResolutionRequest> result = dialog.showAndWait();
+		if (result.isEmpty()) {
+			return;
+		}
+		QuestionCorpusAuditDialog.ResolutionRequest request = result.get();
+		Question question = request.question();
+		switch (request.target()) {
+		case METADATA -> {
+			Runnable resumeAudit = () -> {
+				dialog.refreshQuestions(questionRepository.findAll(), question.getId());
+				Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog));
+			};
+			editCorpusQuestionMetadata(primaryStage, config, question, resumeAudit);
+		}
+		case QUESTION -> questionCapturePane.captureImportedQuestion(question);
+		case ANSWER -> {
+			if (question.hasAnswer()) {
+				answerCapturePane.editAnswer(question, () -> {
+				});
+			} else {
+				answerCapturePane.captureAnswer(question);
+			}
+		}
+		}
+	}
+
 	private void showQuestionSearch(Stage primaryStage, ApplicationConfig config) {
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
@@ -1136,12 +1512,14 @@ public class QuestionBankApplication extends Application {
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
 		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(config.pdfDataRoot()),
 				questionExtractor);
+		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
 				previewService);
-		showQuestionSearchDialog(dialog);
+		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
-	private void showQuestionSearchDialog(QuestionSearchDialog dialog) {
+	private void showQuestionSearchDialog(Stage primaryStage, QuestionSearchDialog dialog,
+			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
 		if (result.isEmpty()) {
 			dialog.dispose();
@@ -1150,18 +1528,23 @@ public class QuestionBankApplication extends Application {
 		}
 		QuestionSearchDialog.EditRequest request = result.get();
 		Question question = request.question();
+		if (request.target() == QuestionSearchDialog.EditTarget.METADATA) {
+			editQuestionMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
+			return;
+		}
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
 			boolean editingStarted = questionCapturePane.editQuestion(question,
-					() -> resumeSearchAfterEdit(dialog, question.getId()));
+					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
+							metadataService));
 			if (!editingStarted) {
-				showQuestionSearchDialog(dialog);
+				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 			}
 			return;
 		}
-		boolean editingStarted = answerCapturePane.editAnswer(question,
-				() -> resumeSearchAfterEdit(dialog, question.getId()));
+		boolean editingStarted = answerCapturePane.editAnswer(question, () -> resumeSearchAfterEdit(primaryStage,
+				dialog, question.getId(), curriculumRepository, metadataService));
 		if (!editingStarted) {
-			showQuestionSearchDialog(dialog);
+			showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 		}
 	}
 

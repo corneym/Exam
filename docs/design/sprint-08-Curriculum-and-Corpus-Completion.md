@@ -13,6 +13,14 @@ The sprint should also close several small correctness gaps exposed by sustained
 
 ## Core design principles
 
+Implementation status (17 September 2026): all planned Sprint 08 slices are
+implemented and branch-level validation is complete. Curriculum authoring,
+mapping coverage, legacy metadata correction, persisted Question response type,
+corpus audit/completeness, asynchronous Question Search hardening and Full-width
+selection-state hardening are implemented. The feature branch has passed the
+complete non-UI and headless UI suites, Javadoc with zero warnings and
+`git diff --check`. Final independent review and merge remain.
+
 Curriculum structure is expert-authored.
 
 A syllabus PDF is source material, not an authority from which the application automatically infers curriculum structure. The application may extract text and retain page references, but the subject-matter expert explicitly decides whether each node is a Unit, Topic, Subtopic or Descriptor and explicitly chooses its parent.
@@ -32,7 +40,11 @@ and:
       → Topic
           → Descriptor
 
-The new authoring workflow must not infer node type from the number of components in a dotted code. Codes identify curriculum nodes; they do not define the hierarchy.
+Curriculum codes use the hierarchical numeric form used by the supported syllabuses, for example `1`, `1.1`, `1.1.1` and `1.1.1.1`.
+
+The authoring workflow generates codes automatically from the explicitly authored parent relationship. A newly created node receives the lowest available positive child number beneath its parent. Existing node codes remain stable during ordinary editing: moving or deleting a node does not renumber surviving nodes. Deletion may therefore leave a temporary numbering gap, and a later node created beneath the same parent may reuse that available number.
+
+Node type and parent relationships remain explicit authoring decisions. The application must not decide whether a node is a Unit, Topic, Subtopic or Descriptor merely from the number of components in its dotted code.
 
 SQLite remains authoritative application state.
 
@@ -73,12 +85,12 @@ Introduce a transient authoring representation that describes curriculum structu
 Each draft node needs, conceptually:
 
     node type
-    code
+    automatically generated hierarchical code
     text/name
     explicit parent
     sibling/display order
     source page/reference where available
-
+    
 Validation must enforce legal domain relationships:
 
     Unit → Topic
@@ -88,9 +100,11 @@ Validation must enforce legal domain relationships:
 
 It must reject orphaned nodes, illegal parent types, duplicate codes within a syllabus and other structures that cannot become valid persisted curriculum nodes.
 
-No hierarchy decision may depend upon counting dots in the curriculum code.
+The explicit parent relationship determines curriculum structure. Code generation follows that authored structure, but code depth must not be used to infer node type.
 
-Outcome: curriculum hierarchy can be constructed independently of the source document's numbering convention.
+Existing codes are not compacted or renumbered merely because another node is moved or deleted. When a new node is added, the lowest available child number beneath its parent is used.
+
+Outcome: curriculum hierarchy is explicitly authored while conventional hierarchical curriculum numbering is generated automatically and remains stable during correction.
 
 ### Slice 3 — PDF-assisted curriculum authoring
 
@@ -106,7 +120,7 @@ The workflow is:
           ↓
     Choose its parent
           ↓
-    Edit wording/code as required
+    Edit wording as required
           ↓
     Reorder nodes
           ↓
@@ -116,6 +130,8 @@ The workflow is:
           ↓
     Save
 
+Curriculum codes are assigned automatically. The user does not need to enter or maintain hierarchical numbering manually. If an incorrectly authored node or branch is deleted, surviving codes remain unchanged and a subsequently created replacement may reuse the lowest available number beneath that parent.
+
 The user must be able to create either a new Subject or, importantly, a new SyllabusVersion belonging to an existing Subject.
 
 The PDF should be retained as syllabus provenance, and selected/extracted material should retain enough page information to locate its source again.
@@ -124,19 +140,97 @@ The application may assist by copying selected PDF text into the proposed node. 
 
 Outcome: a subject-matter expert can construct a syllabus hierarchy from its authoritative PDF without first manufacturing an Excel workbook.
 
-### Slice 4 — Persistence and non-Chemistry acceptance syllabus
+### Slice 4 — Resumable Curriculum Persistence and Non-Chemistry Acceptance Syllabus
 
-Persist and reload a complete authored hierarchy using the normal curriculum repositories.
+Persist curriculum authoring as an editable, resumable workflow rather than a one-shot import.
 
-Use one real syllabus such as Engineering or Psychology whose structure includes:
+The persistence model must support both newly authored curricula and curricula that already exist in SQLite because they were imported from Excel.
 
-    Unit → Topic → Descriptor
+The following requirements apply:
 
-without Subtopics.
+- curriculum authoring is resumable rather than one-shot;
+- an existing Excel-imported syllabus can be opened and edited in place;
+- existing persistent curriculum-node IDs must be preserved when existing nodes are edited;
+- the authoritative source PDF becomes a managed application file;
+- source-page provenance is persisted where available;
+- curriculum text must preserve authored content exactly, including future Markdown/LaTeX markup;
+- each syllabus curriculum has an `IN_PROGRESS` or `FINAL` lifecycle state;
+- a `FINAL` curriculum is not directly editable and must be explicitly reopened for editing, returning it to `IN_PROGRESS`;
+- `Unit → Topic → Descriptor` and `Unit → Topic → Subtopic → Descriptor` are alternative syllabus structures and must not be mixed within the same syllabus version;
+- further PDF-capture refinements, including region-based extraction, formula/image detection and maths-rendering assistance, remain backlog items and are not blockers for persistence.
+
+For newly authored curricula, the workflow must support:
+
+    select authoritative syllabus PDF
+          ↓
+    author part or all of the curriculum
+          ↓
+    save
+          ↓
+    copy the PDF into managed curriculum storage
+          ↓
+    persist the hierarchy and source-page provenance
+          ↓
+    close
+          ↓
+    reopen the syllabus later
+          ↓
+    continue editing
+          ↓
+    save again
+          ↓
+    optionally mark the curriculum FINAL
+
+For an existing Excel-imported syllabus, the workflow must support:
+
+    select existing Subject / SyllabusVersion
+          ↓
+    load the existing persisted hierarchy
+          ↓
+    preserve all existing curriculum-node IDs
+          ↓
+    optionally attach the authoritative syllabus PDF
+          ↓
+    copy the PDF into managed curriculum storage
+          ↓
+    edit, add, reorder or remove curriculum nodes as permitted
+          ↓
+    save changes in place
+          ↓
+    optionally mark the curriculum FINAL
+
+Existing Excel-imported curricula must initially remain `IN_PROGRESS`. Successful import does not imply that the curriculum wording and hierarchy have been manually checked against the authoritative syllabus.
+
+The managed source PDF should be stored beneath the curriculum data root using a subject/version-specific structure such as:
+
+    data/
+    └── curriculum/
+        └── <subject>/
+            └── <syllabus-version>/
+                └── sources/
+                    └── <authoritative-syllabus>.pdf
+
+The database should store a managed relative path rather than the original external filesystem path.
+
+Existing persisted curriculum nodes must be updated in place rather than deleted and recreated. This is necessary because questions, mappings and other persisted data may already refer to their database IDs.
+
+Newly created draft nodes have no persistent curriculum-node ID until first save. The authoring session must therefore maintain a relationship between transient draft identity and persistent database identity.
+
+Deleting an existing persisted curriculum node must be guarded appropriately when that node is already referenced by questions, mappings or other application data.
+
+Marking a curriculum `FINAL` must first run structural validation. A final curriculum represents a syllabus whose hierarchy, numbering and wording have been checked and accepted as authoritative application data. Reopening a final curriculum for editing must explicitly return it to `IN_PROGRESS`.
+
+Use one real non-Chemistry syllabus, such as Engineering or Psychology, whose structure includes:
+
+    Unit
+      → Topic
+          → Descriptor
+
+with no Subtopics.
 
 This becomes the Sprint 08 subject-neutral acceptance dataset.
 
-After persistence, exercise the syllabus through the existing application rather than stopping at successful import:
+After persistence, exercise the syllabus through the existing application rather than stopping at successful storage or reload:
 
     curriculum selection/classification
     question capture
@@ -146,9 +240,10 @@ After persistence, exercise the syllabus through the existing application rather
 
 Any failure caused by an assumption that every Topic has Subtopics is a Sprint 08 defect.
 
-This is not a requirement to populate a complete Engineering or Psychology question bank. The objective is to prove that the application architecture works with the different curriculum shape.
+This slice does not require a complete Engineering or Psychology question bank. The objective is to prove that the application architecture supports a real second syllabus structure, can persist and resume curriculum authoring safely, and can edit both newly authored and previously imported curriculum data without losing persistent identity.
 
-Outcome: subject neutrality is demonstrated against a real second syllabus structure rather than inferred from unit tests alone.
+**Outcome:** curriculum persistence is resumable and editable; authoritative source provenance is retained; finalisation state is explicit; existing imported curricula can be corrected in place; and subject neutrality is demonstrated against a real non-Chemistry syllabus rather than inferred from unit tests alone.
+
 
 ### Slice 5 — Mapping coverage and deliberate mapping completion
 
@@ -179,79 +274,252 @@ Outcome: mapping completeness becomes measurable and every relevant historical n
 
 Add an Edit Metadata action to the imported/legacy Question workflow.
 
-For a legacy question, allow correction of the metadata that can legitimately have been wrong in the old workbook, including:
+For a legacy question, allow correction of the metadata that can legitimately
+have been wrong in the old workbook, including:
 
     question code
     marks
     curriculum classification
+    response type
     legacy preamble-required flag
 
 Exam/booklet/source-document identity remains fixed by this operation.
 
-The important preamble rule is bidirectional:
+The legacy `preambleCaptureRequired` value remains historical capture evidence,
+not immutable truth. It may be corrected in either direction:
 
     false → true
     true → false
 
-Changing the legacy hint from true to false means:
+Setting the legacy hint to true records that introductory/shared material still
+needs to be dealt with. It does not itself invent a multipart source-question
+identity, create a shared context or capture any source material.
 
-> Inspection of the original question shows that the legacy capture hint was a false positive.
+Changing the hint from true to false requires different handling depending on
+the corrected question identity.
 
-It must not mean “delete any real shared context which has subsequently been captured”.
+For a resulting single-part question with no captured shared context, the
+metadata flag is simply corrected.
 
-Likewise, setting the hint to true establishes that shared/introduction material still needs to be dealt with; it does not itself invent or capture that material.
+For a resulting single-part question with a captured shared context, the
+correction must preserve the captured source material rather than discard it.
+The metadata correction transaction therefore:
 
-The implementation needs a metadata-only persistence path so a metadata-only imported question can be corrected before it has question regions. It should not force such a question through the normal Question Edit operation, which currently assumes replacement regions.
+1. copies the shared-context regions into the question as leading ordinary
+   question regions, preserving their order;
+2. appends the existing ordinary question regions, preserving their order;
+3. sets `preamble_capture_required` to false;
+4. clears the question's `shared_context_id`;
+5. removes an obsolete multipart source-question relationship where required;
+6. deletes the former shared context only if no other question still references
+   it; and
+7. commits all metadata and region changes atomically.
 
-Add explicit regression coverage for an MCQ question requiring introductory/shared material. Begin by reproducing the current observed MCQ problem: the current workbook parser itself does not impose a Paper 1/Paper 2-only preamble rule, so no parser redesign should be made unless that regression demonstrates one is required.
+The converted regions are not geometrically merged or deduplicated. They are a
+safe persisted representation of the material captured by the old workflow.
 
-Outcome: inaccurate historical capture hints can be corrected safely, and MCQ preambles are supported on the same semantic basis as other questions.
+If another question still references the shared context, that shared context
+and its regions must remain intact. The corrected single-part question receives
+its own copied ordinary regions and is unlinked from the context.
+
+For a resulting multipart question, a captured shared context represents
+source-question/group material rather than material owned by only one part.
+Changing one part from `preambleCaptureRequired=true` to false while that shared
+context remains attached is therefore rejected. An already-false multipart
+question may still receive unrelated metadata corrections.
+
+If a multipart question is corrected to an ordinary single-part question in
+the same metadata operation, the resulting identity is single-part and the
+shared-context conversion rules apply.
+
+Metadata correction and shared-context conversion form one SQLite transaction.
+Any failure, including a late shared-context cleanup failure, must restore the
+original metadata, question regions, shared-context relationship and context
+regions.
+
+After a successful shared-context conversion, the service reports that
+conversion explicitly to the UI. The user is then offered:
+
+    Recapture complete question
+    Keep converted regions
+
+Choosing `Keep converted regions` leaves the safe converted representation in
+place.
+
+Choosing `Recapture complete question` enters the existing Question Edit
+workflow with an empty transient region list. The converted regions remain
+persisted until a replacement question capture is successfully saved.
+Cancelling recapture or failing to save therefore leaves the converted state
+intact.
+
+The implementation includes a metadata-only persistence path so an imported
+question with no question regions can be corrected without being forced
+through ordinary Question Edit.
+
+Explicit regression coverage also confirms that an MCQ question may legitimately
+have `preambleCaptureRequired=true` without inventing multipart
+source-question identity. The current workbook parser does not impose a
+Paper 1/Paper 2-only preamble rule, so no parser redesign is required.
+
+Outcome: inaccurate historical metadata can be corrected safely; obsolete
+legacy preamble captures can be migrated without loss; genuine multipart shared
+context remains protected; optional full-question recapture is safe; and MCQ
+preambles use the same semantics as other questions.
 
 ### Slice 7 — Corpus audit queue and completeness reporting
 
-Replace the narrow idea of “questions awaiting capture” with a broader question-bank work queue.
+Replace the narrow idea of “questions awaiting capture” with a broader
+question-bank completeness model and work queue.
 
-A question should be auditable for independent completion dimensions, including:
+#### Persisted response type
 
-    question source regions
-    answer source regions
-    unresolved shared-context/preamble decision
-    classification
-    source/booklet identity
+Question response type is persisted explicitly rather than inferred from booklet
+naming.
 
-The queue should support useful filters such as:
+The supported values are:
+
+    MULTIPLE_CHOICE
+    WRITTEN_RESPONSE
+    UNKNOWN
+
+Schema version 8 adds the persisted response type.
+
+Existing Questions migrate to `UNKNOWN`, except where the exact legacy
+`MCQ booklet` identity provides reliable evidence for `MULTIPLE_CHOICE`.
+
+Legacy workbook import similarly treats paper code `MCQ` as
+`MULTIPLE_CHOICE`.
+
+Paper 1/Paper 2 naming does not imply `WRITTEN_RESPONSE`, and an A/B/C/D answer
+value is not used to infer response type.
+
+New manual Question capture requires an explicit choice between multiple choice
+and written response. Existing imported/migrated Questions may remain `UNKNOWN`
+until reviewed. Response type can also be corrected through Edit Metadata.
+
+Changing response type does not delete an existing Answer, Answer text or
+Answer regions.
+
+#### Answer-completeness semantics
+
+Answer completeness depends upon the persisted Question response type.
+
+For `MULTIPLE_CHOICE`:
+
+- the authoritative Answer is one of A, B, C or D;
+- an Answer source region is not required;
+- the existing A/B/C/D controls are used;
+- ordinary Answer-PDF/region controls are hidden;
+- any historical Answer regions already present remain persisted and are not
+  silently deleted.
+
+For `WRITTEN_RESPONSE`:
+
+- at least one persisted Answer region is required;
+- legacy/imported Answer text alone is not sufficient evidence that the Answer
+  source has been captured;
+- A/B/C/D controls are hidden;
+- Answer-PDF and region capture remain available.
+
+For `UNKNOWN`:
+
+- Answer capture is disabled until response type is resolved;
+- the unresolved response type itself is the actionable corpus problem;
+- the same Question is not additionally reported as `MISSING_ANSWER`, because
+  the required Answer representation is not yet known.
+
+#### Corpus audit model
+
+A normal persisted Question is audited independently for:
+
+    question source captured
+    response type resolved
+    answer complete
+    shared context resolved
+
+Booklet/source identity and classification are already structural Question-domain
+requirements and are not represented as nullable normal corpus states. Database
+corruption or integrity auditing remains a separate concern.
+
+The implemented actionable corpus problems are:
+
+    MISSING_QUESTION_SOURCE
+    MISSING_ANSWER
+    UNRESOLVED_SHARED_CONTEXT
+    UNKNOWN_RESPONSE_TYPE
+
+A Question is complete only when no corpus problems remain.
+
+#### Work queue and reporting
+
+The corpus audit UI provides filters for:
 
     Subject
     provider
     year
     booklet
-    completion/problem state
+    completion state
+    specific problem
 
-It should distinguish, rather than collapse, cases such as:
+It reports summary totals including:
 
-    no question regions
-    no answer regions
-    neither captured
-    shared context still unresolved
-    complete
+    total Questions
+    complete Questions
+    incomplete Questions
+    missing question source
+    missing Answer
+    unresolved shared context
+    unknown response type
 
-Legacy answer text should not be mistaken for captured answer source provenance. A question can have imported answer text and still lack answer regions.
+Subject/provider/year/booklet establish the reporting scope. Completion/problem
+filters narrow the displayed work list without changing the scope-wide summary.
 
-Selecting a work item should take the user into the appropriate existing capture/edit workflow rather than creating a second capture system.
+Selecting an incomplete work item routes into the existing correction/capture
+workflows rather than creating a second capture implementation.
 
-Add summary totals so the same facility answers questions such as “How many questions are completely captured?” and “How many unresolved preambles remain?”
+Resolution priority is:
 
-Outcome: corpus completion is measurable and the application itself provides the work list required to finish it.
+    UNKNOWN_RESPONSE_TYPE
+        -> Edit Metadata
+
+    MISSING_QUESTION_SOURCE
+    or UNRESOLVED_SHARED_CONTEXT
+        -> existing Question/imported capture workflow
+
+    MISSING_ANSWER
+        -> existing Answer capture/edit workflow
+
+This ordering ensures that response identity is resolved before Answer
+requirements are interpreted, and Question/shared-context source work is resolved
+before Answer work when several problems coexist.
+
+The former imported-question queue remains available for focused source capture,
+but corpus completeness is now represented by the broader audit facility.
+
+Outcome: Question response semantics are explicit and persisted, Answer
+completeness is response-type aware, corpus completion is measurable, and the
+application provides a filtered work queue that routes outstanding work through
+the existing safe capture and correction workflows.
 
 ### Slice 8 — Regression and capture hardening
 
-Finish the outstanding asynchronous Question Search regression coverage identified in the existing backlog, including the important stale-result/lifecycle/error cases that are not yet exercised.
+Completed.
 
-Also address the small Full-width-selection defect: invoking Full Width must clear or replace any pending selection state consistently so that the visible PDF selection and the Question/Answer capture state cannot disagree.
+The asynchronous Question Search regression set now covers the agreed
+stale-result, lifecycle, hierarchy-failure and disposal cases, including
+no-current/multiple-current syllabus states, zero-region legacy Questions and
+missing/corrupt source PDFs.
 
-These remain separate regression slices; they should not be mixed into the curriculum-authoring implementation.
+Changing Full width selection clears pending logical selection state so that the
+visible PDF selection mode and Question/SharedQuestionContext/Answer capture
+state cannot disagree.
 
-Outcome: known high-priority correctness debt is not carried into the next development phase.
+Closeout also removed the diagnostic Export Draft action from the normal
+Curriculum Authoring UI while retaining programmatic draft export for
+diagnostics/tests.
+
+Outcome: the known high-priority correctness debt identified for Sprint 08 is
+closed rather than carried into the next development phase.
 
 ## Sprint acceptance criteria
 
@@ -269,7 +537,7 @@ Mapping coverage can distinguish matched, explicit no-match and unreviewed sourc
 
 For the chosen Chemistry historical/current mapping pair, deliberate review completeness can be demonstrated from application state rather than comparison with the external workbook.
 
-Legacy question metadata can be corrected before source-region capture, including changing the legacy preamble hint in either direction.
+Legacy question metadata can be corrected before source-region capture, including changing the legacy preamble hint in either direction; obsolete captured single-part preambles are converted without source-material loss, while multipart shared context is protected from per-part removal.
 
 An MCQ with genuine introductory/shared material has explicit regression coverage and works through the intended capture workflow.
 

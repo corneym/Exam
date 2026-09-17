@@ -1,0 +1,78 @@
+CURRICULUM DRAFT
+================
+
+Source PDF: C:\Users\mcorn\Downloads\snr_engineering_25_syll.pdf
+Node count: 8
+
+VALIDATION: 4 problems
+  - Duplicate curriculum code: 1
+  - Duplicate curriculum code: 2
+  - Duplicate curriculum code: 1
+  - Duplicate curriculum code: 2
+
+NODES
+-----
+
+UNIT [draftId=1]
+  code: 1
+  parentDraftId: <none>
+  displayOrder: 0
+  sourcePage: 16
+  text:
+    Engineering fundamentals
+
+  TOPIC [draftId=5]
+    code: 1
+    parentDraftId: 1
+    displayOrder: 0
+    sourcePage: 17
+    text:
+      Engineering in society
+
+    DESCRIPTOR [draftId=8]
+      code: 1
+      parentDraftId: 5
+      displayOrder: 0
+      sourcePage: 17
+      text:
+        Comprehend how the problem-solving process in Engineering can be applied to solve a structural problem in relation to engineering fundamentals.
+
+    DESCRIPTOR [draftId=9]
+      code: 2
+      parentDraftId: 5
+      displayOrder: 1
+      sourcePage: 17
+      text:
+        Recognise engineering career pathways in civil, mechanical and electrical engineering
+
+  TOPIC [draftId=6]
+    code: 2
+    parentDraftId: 1
+    displayOrder: 1
+    sourcePage: 17
+    text:
+      Engineering communication
+
+UNIT [draftId=2]
+  code: 2
+  parentDraftId: <none>
+  displayOrder: 1
+  sourcePage: 3
+  text:
+    Emerging technologies
+
+UNIT [draftId=3]
+  code: 3
+  parentDraftId: <none>
+  displayOrder: 2
+  sourcePage: 3
+  text:
+    Civil structures
+
+UNIT [draftId=4]
+  code: 4
+  parentDraftId: <none>
+  displayOrder: 3
+  sourcePage: 3
+  text:
+    Machines and mechanisms

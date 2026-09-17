@@ -21,6 +21,8 @@ public final class SqliteCurriculumMappingWriter {
 	private final SqliteDatabase database;
 
 	/**
+	 * Creates a writer for directional curriculum mappings.
+	 *
 	 * @param database the initialised question-bank database
 	 * @throws NullPointerException if {@code database} is {@code null}
 	 */

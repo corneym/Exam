@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
@@ -97,6 +98,7 @@ final class QuestionCapturePane extends VBox {
 	// Question metadata and shared preamble controls.
 	private final TextField questionCodeField = new TextField();
 	private final TextField marksField = new TextField();
+	private final ComboBox<QuestionResponseType> responseTypeBox = new ComboBox<>();
 	private final CheckBox firstRegionPreambleCheckBox = new CheckBox("First region is shared preamble");
 	private final Label preambleStatusLabel = new Label();
 	private final VBox preambleControlsBox = new VBox(COMPACT_SPACING);
@@ -199,6 +201,35 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Opens imported-question capture and selects one specific incomplete question.
+	 *
+	 * @param question persisted question requiring source/context work
+	 * @return whether the requested question became the active capture target
+	 */
+	boolean captureImportedQuestion(Question question) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		showImportedQuestionCapture();
+		if (!importedCaptureMode) {
+			return false;
+		}
+		Question matching = importedQuestionBox.getItems().stream()
+				.filter(candidate -> candidate.getId() == question.getId()).findFirst().orElse(null);
+		if (matching == null) {
+			return false;
+		}
+		refreshingImportedQuestions = true;
+		try {
+			importedQuestionBox.setValue(matching);
+		} finally {
+			refreshingImportedQuestions = false;
+		}
+		loadImportedQuestion(matching);
+		return importedQuestion != null && importedQuestion.getId() == question.getId();
+	}
+
+	/**
 	 * Discards the current unaccepted region selection.
 	 */
 	void clearCurrentSelection() {
@@ -298,6 +329,7 @@ final class QuestionCapturePane extends VBox {
 		setRegionCountLabel(pendingRegions.size());
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
+		responseTypeBox.setDisable(false);
 		curriculumSelectorPane.setDisable(false);
 		curriculumSelectorPane.setSyllabusContextLocked(true);
 		hideImportedClassification();
@@ -335,6 +367,28 @@ final class QuestionCapturePane extends VBox {
 	 */
 	boolean isSaveInProgress() {
 		return questionSaveInProgress;
+	}
+
+	/**
+	 * Starts a full recapture of an existing question.
+	 * <p>
+	 * Stored regions remain persisted until the replacement edit is successfully
+	 * saved. The transient edit starts with no accepted regions.
+	 *
+	 * @param question             persisted question to recapture
+	 * @param editCompletedHandler callback when recapture is saved or cancelled
+	 * @return whether recapture was started
+	 */
+	boolean recaptureQuestion(Question question, Runnable editCompletedHandler) {
+		if (!editQuestion(question, editCompletedHandler)) {
+			return false;
+		}
+		clearRegions();
+		showCaptureHint("Recapturing complete question " + question.getQuestionCode()
+				+ ". Capture the complete replacement question.");
+		saveStatusLabel.setText("Recapturing " + question.getQuestionCode()
+				+ " — stored regions remain unchanged until Update Question");
+		return true;
 	}
 
 	/**
@@ -565,6 +619,7 @@ final class QuestionCapturePane extends VBox {
 		saveQuestionButton.setOnAction(_ -> validateQuestionForSave());
 		questionCodeField.textProperty().addListener((_, _, newCode) -> handleQuestionCodeChanged(newCode));
 		marksField.textProperty().addListener((_, _, _) -> refreshSaveButtonState());
+		responseTypeBox.valueProperty().addListener((_, _, _) -> refreshSaveButtonState());
 		curriculumSelectorPane.selectedClassificationProperty().addListener((_, _, _) -> refreshSaveButtonState());
 		firstRegionPreambleCheckBox.selectedProperty()
 				.addListener((_, _, selected) -> handlePreambleOptionChanged(selected.booleanValue()));
@@ -581,6 +636,25 @@ final class QuestionCapturePane extends VBox {
 		marksField.setId("question-marks");
 		marksField.setPromptText("1");
 		marksField.setPrefWidth(MARKS_FIELD_WIDTH);
+		responseTypeBox.setId("question-response-type");
+		responseTypeBox.setPromptText("Select response type");
+		responseTypeBox.getItems().setAll(QuestionResponseType.MULTIPLE_CHOICE, QuestionResponseType.WRITTEN_RESPONSE);
+		responseTypeBox.setPrefWidth(165);
+		responseTypeBox.setConverter(new StringConverter<QuestionResponseType>() {
+
+			@Override
+			public QuestionResponseType fromString(String text) {
+				return null;
+			}
+
+			@Override
+			public String toString(QuestionResponseType responseType) {
+				if (responseType == null) {
+					return "";
+				}
+				return responseTypeLabel(responseType);
+			}
+		});
 		saveQuestionButton.setId("save-question");
 		saveQuestionButton.setDisable(true);
 		saveStatusLabel.setId("question-save-status");
@@ -669,7 +743,7 @@ final class QuestionCapturePane extends VBox {
 
 	private HBox createQuestionControls() {
 		HBox controls = new HBox(CONTROL_SPACING, new Label("Question number"), questionCodeField, new Label("Marks"),
-				marksField);
+				marksField, new Label("Response type"), responseTypeBox);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
 	}
@@ -720,7 +794,13 @@ final class QuestionCapturePane extends VBox {
 				curriculumSelectionModel.getSubject() != null, curriculumSelectionModel.getUnit() != null,
 				curriculumSelectionModel.getTopic() != null, curriculumSelectionModel.getClassification() != null,
 				currentSelection != null, effectiveRegionCount));
-		return validationError;
+		if (validationError != null) {
+			return validationError;
+		}
+		if (responseTypeBox.getValue() == null) {
+			return "Select whether this question is multiple choice or written response.";
+		}
+		return null;
 	}
 
 	private SharedQuestionContext findSharedContextForSourceQuestion(SourceQuestion sourceQuestion) {
@@ -914,6 +994,7 @@ final class QuestionCapturePane extends VBox {
 		loadingQuestionEdit = true;
 		try {
 			questionCodeField.setText(question.getQuestionCode());
+			loadResponseType(question);
 			marksField.setText(Integer.toString(question.getMarks()));
 			curriculumSelectorPane.selectClassificationPath(question.getClassification());
 			if (question.hasSharedContext()) {
@@ -922,6 +1003,11 @@ final class QuestionCapturePane extends VBox {
 		} finally {
 			loadingQuestionEdit = false;
 		}
+	}
+
+	private void loadResponseType(Question question) {
+		QuestionResponseType responseType = question.getResponseType();
+		responseTypeBox.setValue(responseType == QuestionResponseType.UNKNOWN ? null : responseType);
 	}
 
 	private SqliteQuestionCaptureService.PendingSharedContext pendingSharedContextForSave() {
@@ -1075,9 +1161,19 @@ final class QuestionCapturePane extends VBox {
 		questionCodeField.clear();
 		questionCodeField.setDisable(false);
 		marksField.clear();
+		responseTypeBox.setValue(null);
+		responseTypeBox.setDisable(false);
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
 		refreshSaveButtonState();
+	}
+
+	private String responseTypeLabel(QuestionResponseType responseType) {
+		return switch (responseType) {
+		case MULTIPLE_CHOICE -> "Multiple choice";
+		case WRITTEN_RESPONSE -> "Written response";
+		case UNKNOWN -> "Unknown";
+		};
 	}
 
 	private void restoreCaptureModeToggle() {
@@ -1113,8 +1209,8 @@ final class QuestionCapturePane extends VBox {
 		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(captureOperation(),
 				bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(),
 				Integer.parseInt(marksField.getText().trim()), List.copyOf(pendingRegions),
-				curriculumSelectionModel.getClassification(), sharedContextCapturePane.getSelectedContext(),
-				pendingSharedContextForSave());
+				curriculumSelectionModel.getClassification(), responseTypeBox.getValue(),
+				sharedContextCapturePane.getSelectedContext(), pendingSharedContextForSave());
 		int savedPreviousImportedIndex = previousImportedIndex;
 		boolean savedHadStoredRegions = hadStoredRegions;
 		questionSaveInProgress = true;
@@ -1289,6 +1385,8 @@ final class QuestionCapturePane extends VBox {
 		showImportedClassification(question);
 		questionCodeField.setDisable(true);
 		marksField.setDisable(true);
+		loadResponseType(question);
+		responseTypeBox.setDisable(false);
 		refreshPreambleControls();
 		if (question.getRegions().isEmpty()) {
 			saveQuestionButton.setText("Save Question");
@@ -1308,6 +1406,8 @@ final class QuestionCapturePane extends VBox {
 	private void showImportedQueueMode() {
 		questionCodeField.setDisable(true);
 		marksField.setDisable(true);
+		responseTypeBox.setValue(null);
+		responseTypeBox.setDisable(true);
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		curriculumSelectorPane.setDisable(true);
 		hideImportedClassification();
@@ -1324,6 +1424,7 @@ final class QuestionCapturePane extends VBox {
 	private void showNewQuestionMode() {
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
+		responseTypeBox.setDisable(false);
 		curriculumSelectorPane.setDisable(false);
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		cancelQuestionEditButton.setVisible(false);

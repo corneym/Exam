@@ -29,6 +29,13 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	private Path destinationParent;
 	private final Button exportButton;
 
+	/**
+	 * Creates the subject and destination chooser for a revision HTML export.
+	 *
+	 * @param owner window owning the dialog
+	 * @param subjects available export subjects
+	 * @param defaultSubject initial subject selection, or null
+	 */
 	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
 		if (subjects == null) {
 			throw new NullPointerException("subjects");
@@ -74,10 +81,20 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		updateExportButton(exportButton);
 	}
 
+	/**
+	 * Returns the parent directory chosen for the revision export.
+	 *
+	 * @return selected directory, or null before one is chosen
+	 */
 	public Path getDestinationParent() {
 		return destinationParent;
 	}
 
+	/**
+	 * Returns the subject selected for revision export.
+	 *
+	 * @return selected subject, or null if no subject is selected
+	 */
 	public Subject getSelectedSubject() {
 		return subjectBox.getValue();
 	}

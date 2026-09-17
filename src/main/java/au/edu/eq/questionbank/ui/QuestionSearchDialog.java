@@ -46,13 +46,20 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		setHeaderText("Find questions by current curriculum");
 		setResizable(true);
 		ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
+		ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
 		ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
-		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, editAnswerButtonType, ButtonType.CLOSE);
+		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, editMetadataButtonType, editAnswerButtonType,
+				ButtonType.CLOSE);
 		searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
 		getDialogPane().setContent(searchPane);
 		Node editQuestionButton = getDialogPane().lookupButton(editQuestionButtonType);
+		Node editMetadataButton = getDialogPane().lookupButton(editMetadataButtonType);
 		Node editAnswerButton = getDialogPane().lookupButton(editAnswerButtonType);
+		editQuestionButton.setId("question-search-edit-question");
+		editMetadataButton.setId("question-search-edit-metadata");
+		editAnswerButton.setId("question-search-edit-answer");
 		editQuestionButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
+		editMetadataButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
 		editAnswerButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
 			return selected == null || !selected.hasAnswer();
@@ -64,6 +71,9 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			}
 			if (buttonType == editQuestionButtonType) {
 				return new EditRequest(selected, EditTarget.QUESTION);
+			}
+			if (buttonType == editMetadataButtonType) {
+				return new EditRequest(selected, EditTarget.METADATA);
 			}
 			if (buttonType == editAnswerButtonType) {
 				return new EditRequest(selected, EditTarget.ANSWER);
@@ -84,14 +94,15 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	/**
 	 * Refreshes the active search after an edit.
 	 *
-	 * @param questionId the persistent question identifier to reselect if still present
+	 * @param questionId the persistent question identifier to reselect if still
+	 *                   present
 	 */
 	void refreshAfterEdit(long questionId) {
 		searchPane.refreshAfterEdit(questionId);
 	}
 
 	enum EditTarget {
-		QUESTION, ANSWER
+		QUESTION, METADATA, ANSWER
 	}
 
 	record EditRequest(Question question, EditTarget target) {

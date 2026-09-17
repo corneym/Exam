@@ -7,20 +7,25 @@ import java.nio.file.Path;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.apache.pdfbox.text.PDFTextStripper;
 
 /**
  * An open PDF document and renderer used for repeated page operations.
  * <p>
  * Domain page numbers remain one-based; this class performs the conversion to
  * PDFBox's zero-based page indexes. Sessions own their PDFBox document and must
- * be closed by their owner. Sessions are not thread-safe; callers must serialize
- * rendering and closing, and must not use a session after closing it.
+ * be closed by their owner. Sessions are not thread-safe; callers must
+ * serialize rendering and closing, and must not use a session after closing it.
  */
 public class PdfSession implements AutoCloseable {
 
 	private final PDDocument document;
-
 	private final PDFRenderer renderer;
+
+	private PdfSession(PDDocument document) {
+		this.document = document;
+		this.renderer = new PDFRenderer(document);
+	}
 
 	/**
 	 * Opens a PDF session for a source file.
@@ -38,11 +43,6 @@ public class PdfSession implements AutoCloseable {
 		return new PdfSession(document);
 	}
 
-	private PdfSession(PDDocument document) {
-		this.document = document;
-		this.renderer = new PDFRenderer(document);
-	}
-
 	/**
 	 * Closes the owned PDFBox document.
 	 *
@@ -51,6 +51,27 @@ public class PdfSession implements AutoCloseable {
 	@Override
 	public void close() throws Exception {
 		document.close();
+	}
+
+	/**
+	 * Extracts plain text from one displayed PDF page.
+	 * <p>
+	 * Page numbers are one-based, matching the rest of the application's PDF model.
+	 *
+	 * @param pageNumber the one-based page number
+	 * @return extracted page text
+	 * @throws IOException              if PDFBox cannot extract the text
+	 * @throws IllegalArgumentException if the page number is outside the document
+	 */
+	public String extractPageText(int pageNumber) throws IOException {
+		if (pageNumber < 1 || pageNumber > getPageCount()) {
+			throw new IllegalArgumentException(
+					String.format("Page number must be between 1 and %d: %d", getPageCount(), pageNumber));
+		}
+		PDFTextStripper stripper = new PDFTextStripper();
+		stripper.setStartPage(pageNumber);
+		stripper.setEndPage(pageNumber);
+		return stripper.getText(document);
 	}
 
 	/**
@@ -81,8 +102,6 @@ public class PdfSession implements AutoCloseable {
 		if (!Float.isFinite(dpi) || dpi <= 0.0f) {
 			throw new IllegalArgumentException("DPI must be positive and finite: " + dpi);
 		}
-
 		return renderer.renderImageWithDPI(pageNumber - 1, dpi);
 	}
-
 }

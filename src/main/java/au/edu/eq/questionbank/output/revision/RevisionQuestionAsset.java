@@ -34,6 +34,8 @@ public final class RevisionQuestionAsset {
 	}
 
 	/**
+	 * Returns the stored question represented by this rendered image.
+	 *
 	 * @return the question represented by this image
 	 */
 	public Question getQuestion() {
@@ -41,6 +43,8 @@ public final class RevisionQuestionAsset {
 	}
 
 	/**
+	 * Returns the exported question image location within the generated site.
+	 *
 	 * @return the normalized image path relative to the export root
 	 */
 	public Path getRelativePath() {

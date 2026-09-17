@@ -39,6 +39,10 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
@@ -48,14 +52,18 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.application.Platform;
 import javafx.event.Event;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TextField;
@@ -64,6 +72,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
 
@@ -95,6 +104,11 @@ class QuestionBankApplicationWorkflowTest {
 		Method method = owner.getClass().getDeclaredMethod(methodName, parameterTypes);
 		method.setAccessible(true);
 		return method.invoke(owner, arguments);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static <T> ListView<T> listView(FxRobot robot, String selector) {
+		return robot.lookup(selector).queryAs(ListView.class);
 	}
 
 	private static <T extends Node> T lookup(FxRobot robot, String selector, Class<T> type) {
@@ -206,9 +220,18 @@ class QuestionBankApplicationWorkflowTest {
 				.orElseThrow();
 		assertTrue(stored.hasAnswer(), "PDF loading follows the committed transaction");
 		Platform.runLater(() -> completeLoad.get().accept(new IOException("Simulated next-PDF failure")));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot
-				.lookup("Answer saved, but the next question's PDF could not be loaded.").tryQuery().isPresent());
-		robot.clickOn("OK");
+		AtomicReference<DialogPane> failureDialog = new AtomicReference<>();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			DialogPane dialog = robot.lookup(".dialog-pane").queryAll().stream().filter(DialogPane.class::isInstance)
+					.map(DialogPane.class::cast).filter(DialogPane::isVisible)
+					.filter(candidate -> "Answer saved, but the next question's PDF could not be loaded."
+							.equals(candidate.getHeaderText()))
+					.findFirst().orElse(null);
+			failureDialog.set(dialog);
+			return dialog != null;
+		});
+		robot.interact(() -> ((Button) failureDialog.get().lookupButton(ButtonType.OK)).fire());
+		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(answerCapturePane().isSaveInProgress());
 		assertTrue(questions.getItems().stream().noneMatch(question -> question.getId() == first.getId()));
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
@@ -439,6 +462,70 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void changingFullWidthSelectionClearsPendingAnswerSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "FW1");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.ANSWER));
+		assertNotNull(field(answerCapturePane(), "currentAnswerSelection", Object.class));
+		CheckBox fullWidth = field(pdfWorkspace(), "fullWidthSelectionCheckBox", CheckBox.class);
+		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
+		assertTrue(selectionRectangle.isVisible());
+		robot.interact(fullWidth::fire);
+		assertFalse(selectionState.hasPendingSelection());
+		assertNull(field(answerCapturePane(), "currentAnswerSelection", Object.class));
+		assertFalse(selectionRectangle.isVisible());
+	}
+
+	@Test
+	void changingFullWidthSelectionClearsPendingQuestionSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		assertNotNull(field(questionCapturePane(), "currentSelection", QuestionRegion.class));
+		CheckBox fullWidth = field(pdfWorkspace(), "fullWidthSelectionCheckBox", CheckBox.class);
+		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
+		assertTrue(selectionRectangle.isVisible());
+		robot.interact(fullWidth::fire);
+		assertFalse(selectionState.hasPendingSelection());
+		assertNull(field(questionCapturePane(), "currentSelection", QuestionRegion.class));
+		assertFalse(selectionRectangle.isVisible());
+	}
+
+	@Test
+	void changingFullWidthSelectionClearsPendingSharedContextSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(questionCode).write("24a");
+		robot.clickOn(marks).write("2");
+		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		assertTrue(preamble.isVisible());
+		assertFalse(preamble.isSelected());
+		robot.clickOn(preamble);
+		assertTrue(preamble.isSelected());
+		assertTrue(questionCapturePane().isCapturingSharedContext());
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		SharedContextCapturePane sharedContextPane = field(questionCapturePane(), "sharedContextCapturePane",
+				SharedContextCapturePane.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.SHARED_CONTEXT));
+		assertTrue(sharedContextPane.hasCurrentSelection());
+		CheckBox fullWidth = field(pdfWorkspace(), "fullWidthSelectionCheckBox", CheckBox.class);
+		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
+		assertTrue(selectionRectangle.isVisible());
+		robot.interact(fullWidth::fire);
+		assertFalse(selectionState.hasPendingSelection());
+		assertFalse(sharedContextPane.hasCurrentSelection());
+		assertFalse(selectionRectangle.isVisible());
+	}
+
+	@Test
 	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		assertNotNull(examMetadataPane().getBooklet());
@@ -542,8 +629,10 @@ class QuestionBankApplicationWorkflowTest {
 		selectFirstFinalClassification(robot);
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
+		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
 		robot.clickOn(questionCodeField).write("Q7");
 		robot.clickOn(marksField).write("1");
+		robot.interact(() -> responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE));
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
 		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
@@ -555,6 +644,7 @@ class QuestionBankApplicationWorkflowTest {
 		assertEquals("Q7", questionCodeField.getText());
 		assertEquals("1", marksField.getText());
 		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertFalse(lookup(robot, "#save-question", Button.class).isDisabled());
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		long matchingQuestions = repository.findAll().stream()
 				.filter(question -> question.getQuestionCode().equals("Q7")).count();
@@ -717,8 +807,10 @@ class QuestionBankApplicationWorkflowTest {
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-		Question first = stored.save(booklet, "41", "", 1, List.of(), classification, false, null, null);
-		Question second = stored.save(booklet, "42", "", 1, List.of(), classification, false, null, null);
+		Question first = stored.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question second = stored.save(booklet, "42", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
 		robot.interact(pane::showImportedQuestionCapture);
 		ComboBox<Question> imported = comboBox(robot, "#imported-question");
@@ -761,6 +853,178 @@ class QuestionBankApplicationWorkflowTest {
 		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
 		assertFalse(legacyControls.isVisible());
 		assertFalse(legacyControls.isManaged());
+	}
+
+	// @SuppressWarnings("unchecked")
+	@Test
+	void metadataPreambleConversionMayKeepConvertedQuestionRegions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		CurriculumNode classification = model.getClassification();
+		assertNotNull(booklet);
+		assertNotNull(classification);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q62 introductory material",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "62", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.40, 0.80, 0.30)), classification, true, null, context);
+		assertTrue(question.isPreambleCaptureRequired());
+		assertTrue(question.hasSharedContext());
+		assertEquals(1, question.getRegions().size());
+		/*
+		 * Open Search Questions through the real application workflow.
+		 */
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
+		QuestionRetrievalResult selectedResult = results.getItems().stream()
+				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		robot.clickOn("#question-search-edit-metadata");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
+		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		assertTrue(preamble.isSelected());
+		robot.interact(() -> preamble.setSelected(false));
+		robot.clickOn("#legacy-metadata-save");
+		/*
+		 * The metadata transaction has already converted and persisted the regions
+		 * before this decision is requested.
+		 */
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("Keep converted regions").tryQuery().isPresent());
+		Question converted = questionRepository.findById(question.getId()).orElseThrow();
+		assertFalse(converted.isPreambleCaptureRequired());
+		assertFalse(converted.hasSharedContext());
+		assertEquals(2, converted.getRegions().size());
+		assertEquals(0.10, converted.getRegions().get(0).y(), 0.000001);
+		assertEquals(0.40, converted.getRegions().get(1).y(), 0.000001);
+		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
+		robot.clickOn("Keep converted regions");
+		/*
+		 * Keeping the converted regions returns to Search rather than entering question
+		 * recapture.
+		 */
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		assertFalse(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
+		Question retained = questionRepository.findById(question.getId()).orElseThrow();
+		assertEquals(2, retained.getRegions().size());
+		assertFalse(retained.hasSharedContext());
+		/*
+		 * Close Search Questions so its nested event loop unwinds.
+		 */
+		robot.clickOn("Close");
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
+//	@SuppressWarnings("unchecked")
+	@Test
+	void metadataPreambleConversionMayStartSafeCompleteQuestionRecapture(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		CurriculumNode classification = model.getClassification();
+		assertNotNull(booklet);
+		assertNotNull(classification);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q63 introductory material",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.20)));
+		Question question = questionRepository.save(booklet, "63", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.40, 0.80, 0.30)), classification, true, null, context);
+		/*
+		 * Open Search Questions through the real application workflow.
+		 */
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
+		QuestionRetrievalResult selectedResult = results.getItems().stream()
+				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		robot.clickOn("#question-search-edit-metadata");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
+		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		assertTrue(preamble.isSelected());
+		robot.interact(() -> preamble.setSelected(false));
+		robot.clickOn("#legacy-metadata-save");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("Recapture complete question").tryQuery().isPresent());
+		/*
+		 * Conversion has already committed before recapture is offered.
+		 */
+		Question converted = questionRepository.findById(question.getId()).orElseThrow();
+		assertFalse(converted.isPreambleCaptureRequired());
+		assertFalse(converted.hasSharedContext());
+		assertEquals(2, converted.getRegions().size());
+		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
+		robot.clickOn("Recapture complete question");
+		WaitForAsyncUtils.waitForFxEvents();
+		/*
+		 * Search is no longer active. Question Capture is now editing the existing
+		 * question, but its transient replacement region list is empty.
+		 */
+		assertFalse(robot.lookup("#question-search-results").tryQuery().isPresent());
+		assertTrue(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
+		assertEquals("63", lookup(robot, "#question-code", TextField.class).getText());
+		assertEquals("2", lookup(robot, "#question-marks", TextField.class).getText());
+		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertTrue(lookup(robot, "#save-question", Button.class).isDisable());
+		/*
+		 * Starting recapture has not deleted the safely converted regions.
+		 */
+		Question duringRecapture = questionRepository.findById(question.getId()).orElseThrow();
+		assertEquals(2, duringRecapture.getRegions().size());
+		/*
+		 * Cancelling recapture must preserve that safe converted state and resume
+		 * Search Questions.
+		 */
+		robot.clickOn("#cancel-question-edit");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		Question afterCancel = questionRepository.findById(question.getId()).orElseThrow();
+		assertEquals(2, afterCancel.getRegions().size());
+		assertFalse(afterCancel.hasSharedContext());
+		assertFalse(afterCancel.isPreambleCaptureRequired());
+		robot.clickOn("Close");
+		WaitForAsyncUtils.waitForFxEvents();
 	}
 
 	@Test
@@ -826,6 +1090,67 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void multipleChoiceUsesChoicesWithoutPdfOrAnswerRegions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
+		robot.interact(() -> responseType.setValue(QuestionResponseType.MULTIPLE_CHOICE));
+		Question question = captureQuestion(robot, "MC1");
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, question.getResponseType());
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		Node multipleChoiceControls = lookup(robot, "#multiple-choice-answer-controls", Node.class);
+		Node pdfControls = lookup(robot, "#answer-pdf-controls", Node.class);
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		Button save = lookup(robot, "#save-answer", Button.class);
+		assertTrue(multipleChoiceControls.isVisible());
+		assertTrue(multipleChoiceControls.isManaged());
+		assertFalse(pdfControls.isVisible());
+		assertFalse(pdfControls.isManaged());
+		assertFalse(addRegion.isVisible());
+		assertFalse(addRegion.isManaged());
+		assertTrue(save.isDisabled());
+		robot.clickOn("#answer-choice-a");
+		assertFalse(save.isDisabled());
+		robot.clickOn(save);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitForFxEvents();
+		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow();
+		assertTrue(stored.hasAnswer());
+		assertEquals("A", stored.getAnswer().getAnswerText());
+		assertTrue(stored.getAnswer().getRegions().isEmpty());
+	}
+
+	@Test
+	void newQuestionRequiresExplicitResponseTypeAndPersistsIt(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
+		Button save = lookup(robot, "#save-question", Button.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		/*
+		 * The shared test setup chooses WRITTEN_RESPONSE for older tests. Clear it here
+		 * to exercise the production requirement explicitly.
+		 */
+		robot.interact(() -> responseType.setValue(null));
+		robot.clickOn(questionCode).write("R1");
+		robot.clickOn(marks).write("2");
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-question-region");
+		assertTrue(save.isDisabled(), "Question capture must require an explicit response type");
+		robot.interact(() -> responseType.setValue(QuestionResponseType.MULTIPLE_CHOICE));
+		assertFalse(save.isDisabled());
+		robot.clickOn("#save-question");
+		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+		WaitForAsyncUtils.waitForFxEvents();
+		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
+				.filter(question -> "R1".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, stored.getResponseType());
+		assertNull(responseType.getValue(), "A completed new Question must reset the response-type selector");
+	}
+
+	@Test
 	void questionCaptureModesCanBeSelectedFromPaneAndMenu(FxRobot robot) {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 		MenuItem captureNewItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
@@ -879,6 +1204,26 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(saveInProgressAtCompletion.get(),
 				"Question edit completion must run after the save-in-progress state is cleared");
 		assertFalse(pane.isSaveInProgress());
+	}
+
+	@Test
+	void questionEditLoadsAndUpdatesResponseType(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "R2");
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, question.getResponseType());
+		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+		robot.interact(() -> assertTrue(pane.editQuestion(question, () -> {
+		})));
+		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, responseType.getValue());
+		robot.interact(() -> responseType.setValue(QuestionResponseType.MULTIPLE_CHOICE));
+		robot.clickOn("#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+		WaitForAsyncUtils.waitForFxEvents();
+		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow();
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, stored.getResponseType());
+		assertEquals(1, stored.getRegions().size());
 	}
 
 	@Test
@@ -1001,6 +1346,36 @@ class QuestionBankApplicationWorkflowTest {
 				gate.countDown();
 			}
 		}
+	}
+
+	@Test
+	void recaptureQuestionStartsEmptyWithoutChangingStoredRegions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "59");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		assertEquals(1, repository.findById(question.getId()).orElseThrow().getRegions().size());
+		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+		AtomicInteger completed = new AtomicInteger();
+		robot.interact(() -> assertTrue(pane.recaptureQuestion(question, completed::incrementAndGet)));
+		WaitForAsyncUtils.waitForFxEvents();
+		/*
+		 * Recapture starts with no transient replacement regions.
+		 */
+		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertTrue(lookup(robot, "#save-question", Button.class).isDisable());
+		assertTrue(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
+		/*
+		 * Nothing has yet changed in SQLite.
+		 */
+		assertEquals(1, repository.findById(question.getId()).orElseThrow().getRegions().size());
+		assertEquals(0, completed.get());
+		/*
+		 * Cancelling recapture leaves the persisted question untouched.
+		 */
+		robot.clickOn("#cancel-question-edit");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, completed.get());
+		assertEquals(1, repository.findById(question.getId()).orElseThrow().getRegions().size());
 	}
 
 	@Test
@@ -1268,6 +1643,85 @@ class QuestionBankApplicationWorkflowTest {
 		setField(application, "scormExportRunning", Boolean.FALSE);
 	}
 
+//	@SuppressWarnings("unchecked")
+	@Test
+	void searchEditMetadataCorrectsMetadataOnlyQuestion(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		CurriculumNode classification = model.getClassification();
+		assertNotNull(booklet);
+		assertNotNull(classification);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question metadataOnlyQuestion = repository.save(booklet, "61", "", 2, List.of(), classification, true, null,
+				null);
+		assertTrue(metadataOnlyQuestion.getRegions().isEmpty());
+		/*
+		 * Open Search Questions through the real application method. showAndWait()
+		 * enters a nested JavaFX event loop, so schedule it rather than blocking the
+		 * TestFX interaction thread.
+		 */
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
+				.anyMatch(result -> result.getQuestion().getId() == metadataOnlyQuestion.getId()));
+		QuestionRetrievalResult selectedResult = results.getItems().stream()
+				.filter(result -> result.getQuestion().getId() == metadataOnlyQuestion.getId()).findFirst()
+				.orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		Button editMetadata = lookup(robot, "#question-search-edit-metadata", Button.class);
+		assertFalse(editMetadata.isDisabled());
+		robot.clickOn(editMetadata);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#legacy-metadata-question-code").tryQuery().isPresent());
+		TextField questionCode = lookup(robot, "#legacy-metadata-question-code", TextField.class);
+		TextField marks = lookup(robot, "#legacy-metadata-marks", TextField.class);
+		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#legacy-metadata-response-type");
+		assertEquals("61", questionCode.getText());
+		assertEquals("2", marks.getText());
+		assertTrue(preamble.isSelected());
+		robot.interact(() -> {
+			questionCode.setText("61a");
+			marks.setText("4");
+			preamble.setSelected(false);
+			responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE);
+		});
+		robot.clickOn("#legacy-metadata-save");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> repository.findById(metadataOnlyQuestion.getId())
+				.map(question -> "61a".equals(question.getQuestionCode())).orElse(false));
+		Question updated = repository.findById(metadataOnlyQuestion.getId()).orElseThrow();
+		assertEquals("61a", updated.getQuestionCode());
+		assertEquals(4, updated.getMarks());
+		assertFalse(updated.isPreambleCaptureRequired());
+		assertTrue(updated.getRegions().isEmpty());
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.getResponseType());
+		assertEquals(classification.getId(), updated.getClassification().getId());
+		/*
+		 * Saving metadata reopens Search Questions. Close it so the application
+		 * workflow unwinds cleanly before the test ends.
+		 */
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		robot.clickOn("Close");
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
 	@Start
 	void start(Stage stage) throws Exception {
 		Path testRoot = Files.createTempDirectory("question-bank-ui-");
@@ -1290,6 +1744,34 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void unknownResponseTypeDisablesAnswerEntry(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question unknown = repository.save(booklet, "U1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20)), classification, false, null, null,
+				QuestionResponseType.UNKNOWN);
+		robot.interact(() -> answerCapturePane().refreshQuestions());
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		Question queued = questions.getItems().stream().filter(question -> question.getId() == unknown.getId())
+				.findFirst().orElseThrow();
+		robot.interact(() -> questions.getSelectionModel().select(queued));
+		Label status = lookup(robot, "#selected-answer-question", Label.class);
+		Node multipleChoiceControls = lookup(robot, "#multiple-choice-answer-controls", Node.class);
+		Node pdfControls = lookup(robot, "#answer-pdf-controls", Node.class);
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		Button save = lookup(robot, "#save-answer", Button.class);
+		assertTrue(status.getText().contains("response type unresolved"));
+		assertFalse(multipleChoiceControls.isVisible());
+		assertFalse(pdfControls.isVisible());
+		assertFalse(addRegion.isVisible());
+		assertTrue(save.isDisabled());
+		assertFalse(answerCapturePane().canCaptureRegions());
+	}
+
+	@Test
 	void windowCloseCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
 		AtomicInteger exitCount = new AtomicInteger();
 		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
@@ -1299,6 +1781,28 @@ class QuestionBankApplicationWorkflowTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(1, exitCount.get());
 		assertEquals(1, automaticBackupCount());
+	}
+
+	@Test
+	void writtenResponseUsesPersistedTypeDespiteMcqBookletName(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		/*
+		 * The fixture booklet is named "Paper 1 MCQ", but the Question itself is
+		 * explicitly WRITTEN_RESPONSE.
+		 */
+		Question question = captureQuestion(robot, "WR1");
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, question.getResponseType());
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		Node multipleChoiceControls = lookup(robot, "#multiple-choice-answer-controls", Node.class);
+		Node pdfControls = lookup(robot, "#answer-pdf-controls", Node.class);
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		assertFalse(multipleChoiceControls.isVisible());
+		assertFalse(multipleChoiceControls.isManaged());
+		assertTrue(pdfControls.isVisible());
+		assertTrue(pdfControls.isManaged());
+		assertTrue(addRegion.isVisible());
+		assertTrue(addRegion.isManaged());
 	}
 
 	private AnswerCapturePane answerCapturePane() {
@@ -1351,6 +1855,15 @@ class QuestionBankApplicationWorkflowTest {
 		robot.clickOn(questionCodeField).write(questionCode);
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(marksField).write("1");
+		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
+		/*
+		 * Most existing workflow tests pre-date explicit response type and exercise
+		 * written-response capture. Supply that test-fixture default only when the test
+		 * has not deliberately selected another response type.
+		 */
+		if (responseType.getValue() == null) {
+			robot.interact(() -> responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE));
+		}
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
 		robot.clickOn("#save-question");
@@ -1509,6 +2022,16 @@ class QuestionBankApplicationWorkflowTest {
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
+		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
+		robot.interact(() -> responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE));
+	}
+
+	private QuestionCapturePane questionCapturePane() {
+		try {
+			return field(application, "questionCapturePane", QuestionCapturePane.class);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	private void selectFirst(FxRobot robot, String selector) throws Exception {

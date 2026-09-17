@@ -42,6 +42,8 @@ public final class RevisionAnswerAsset {
 	}
 
 	/**
+	 * Returns the source region represented by this answer image.
+	 *
 	 * @return the authoritative answer source region
 	 */
 	public AnswerRegion getAnswerRegion() {
@@ -49,6 +51,8 @@ public final class RevisionAnswerAsset {
 	}
 
 	/**
+	 * Returns the question answered by this image.
+	 *
 	 * @return the question whose answer region was rendered
 	 */
 	public Question getQuestion() {
@@ -56,6 +60,8 @@ public final class RevisionAnswerAsset {
 	}
 
 	/**
+	 * Returns the image's position in the answer region sequence.
+	 *
 	 * @return the one-based position within the ordered answer regions
 	 */
 	public int getRegionNumber() {
@@ -63,6 +69,8 @@ public final class RevisionAnswerAsset {
 	}
 
 	/**
+	 * Returns the exported answer image location within the generated site.
+	 *
 	 * @return the normalized image path relative to the export root
 	 */
 	public Path getRelativePath() {

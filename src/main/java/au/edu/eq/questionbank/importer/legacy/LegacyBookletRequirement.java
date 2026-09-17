@@ -12,6 +12,13 @@ package au.edu.eq.questionbank.importer.legacy;
  */
 public record LegacyBookletRequirement(String providerName, int year, String bookletName) {
 
+	/**
+	 * Creates a booklet identity with non-blank names and a positive exam year.
+	 *
+	 * @param providerName the examination provider named by the worksheet
+	 * @param year         the examination year
+	 * @param bookletName  the normalised booklet name used by the application
+	 */
 	public LegacyBookletRequirement {
 		if (providerName == null || providerName.isBlank()) {
 			throw new IllegalArgumentException("providerName must not be blank");

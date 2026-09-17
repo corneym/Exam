@@ -29,6 +29,7 @@ public class Question {
 	private final SourceQuestion sourceQuestion;
 	private final SharedQuestionContext sharedContext;
 	private Answer answer;
+	private final QuestionResponseType responseType;
 
 	/**
 	 * Creates a question through the normal capture workflow.
@@ -76,6 +77,10 @@ public class Question {
 	/**
 	 * Creates a question with its optional source-question and shared-context
 	 * relationships.
+	 * <p>
+	 * This compatibility constructor represents response type as
+	 * {@link QuestionResponseType#UNKNOWN}. Callers that know the authoritative
+	 * response type should use the overload accepting {@link QuestionResponseType}.
 	 *
 	 * @param id                      the persistent question identifier
 	 * @param booklet                 the booklet containing the question
@@ -91,6 +96,29 @@ public class Question {
 	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+		this(id, booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired,
+				sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
+	}
+
+	/**
+	 * Creates a question with its persisted response type and optional capture
+	 * relationships.
+	 *
+	 * @param id                      the persistent question identifier
+	 * @param booklet                 the booklet containing the question
+	 * @param questionCode            the question or part-question identifier
+	 * @param questionText            supplementary searchable or transcribed text
+	 * @param marks                   the positive mark value
+	 * @param regions                 zero or more source regions in assembly order
+	 * @param classification          the syllabus subtopic or descriptor
+	 * @param preambleCaptureRequired historical legacy preamble-capture evidence
+	 * @param sourceQuestion          common source-question identity, or null
+	 * @param sharedContext           reusable shared question context, or null
+	 * @param responseType            authoritative Question response type
+	 */
+	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -111,6 +139,9 @@ public class Question {
 		}
 		if (classification == null) {
 			throw new NullPointerException("classification");
+		}
+		if (responseType == null) {
+			throw new NullPointerException("responseType");
 		}
 		CurriculumLevel classificationLevel = classification.getLevel();
 		if (classificationLevel != CurriculumLevel.SUBTOPIC && classificationLevel != CurriculumLevel.DESCRIPTOR) {
@@ -143,6 +174,7 @@ public class Question {
 		this.preambleCaptureRequired = preambleCaptureRequired;
 		this.sourceQuestion = sourceQuestion;
 		this.sharedContext = sharedContext;
+		this.responseType = responseType;
 	}
 
 	private static ExamBooklet bookletFromRegions(Exam exam, List<QuestionRegion> regions) {
@@ -187,6 +219,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the original syllabus classification selected for this question.
+	 *
 	 * @return the best-fit subtopic or descriptor in the exam subject
 	 */
 	public CurriculumNode getClassification() {
@@ -194,6 +228,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the examination from which this question was captured.
+	 *
 	 * @return the exam owning the source booklet
 	 */
 	public Exam getExam() {
@@ -201,6 +237,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the persistent identity of this question.
+	 *
 	 * @return the positive persistent identifier
 	 */
 	public long getId() {
@@ -217,6 +255,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the original examination question or part code.
+	 *
 	 * @return the non-blank question or part code, preserved as supplied
 	 */
 	public String getQuestionCode() {
@@ -224,6 +264,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns supplementary wording stored alongside the authoritative source regions.
+	 *
 	 * @return supplementary text, which may be blank but is never null
 	 */
 	public String getQuestionText() {
@@ -231,13 +273,28 @@ public class Question {
 	}
 
 	/**
-	 * @return an immutable list in assembly order; empty for metadata-only questions
+	 * Returns the source regions used to assemble this question.
+	 *
+	 * @return an immutable list in assembly order; empty for metadata-only
+	 *         questions
 	 */
 	public List<QuestionRegion> getRegions() {
 		return regions;
 	}
 
 	/**
+	 * Returns the persisted response type that determines the required Answer
+	 * representation.
+	 *
+	 * @return the Question response type
+	 */
+	public QuestionResponseType getResponseType() {
+		return responseType;
+	}
+
+	/**
+	 * Returns the shared preamble linked to this question.
+	 *
 	 * @return the reusable preamble context, or {@code null} when unlinked
 	 */
 	public SharedQuestionContext getSharedContext() {
@@ -245,6 +302,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the source-question identity used to group related parts.
+	 *
 	 * @return the common source identity, or {@code null} when unlinked
 	 */
 	public SourceQuestion getSourceQuestion() {
@@ -252,6 +311,8 @@ public class Question {
 	}
 
 	/**
+	 * Indicates whether an answer is attached to this question instance.
+	 *
 	 * @return whether an answer is associated in memory
 	 */
 	public boolean hasAnswer() {
@@ -259,6 +320,8 @@ public class Question {
 	}
 
 	/**
+	 * Indicates whether reusable preamble material is linked.
+	 *
 	 * @return whether reusable source context is linked
 	 */
 	public boolean hasSharedContext() {
@@ -266,6 +329,8 @@ public class Question {
 	}
 
 	/**
+	 * Indicates whether a persisted source-question identity is linked.
+	 *
 	 * @return whether the question belongs to a common source identity
 	 */
 	public boolean hasSourceQuestion() {
@@ -293,7 +358,8 @@ public class Question {
 	}
 
 	/**
-	 * Associates or replaces this question's in-memory answer without persisting it.
+	 * Associates or replaces this question's in-memory answer without persisting
+	 * it.
 	 *
 	 * @param answer the answer to associate with the question
 	 * @throws NullPointerException     if {@code answer} is {@code null}

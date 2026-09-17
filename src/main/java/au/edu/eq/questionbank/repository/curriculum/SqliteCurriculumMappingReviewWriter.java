@@ -25,6 +25,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 	private final SqliteDatabase database;
 
 	/**
+	 * Creates a writer for atomic mapping-review decisions.
+	 *
 	 * @param database the initialised question-bank database
 	 * @throws NullPointerException if {@code database} is {@code null}
 	 */

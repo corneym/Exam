@@ -23,6 +23,12 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
  */
 public class LegacyQuestionWorkbookReader {
 
+	/**
+	 * Creates a reader for provider worksheets in legacy question workbooks.
+	 */
+	public LegacyQuestionWorkbookReader() {
+	}
+
 	private static final String YEAR = "Year";
 	private static final String PAPER = "Paper";
 	private static final String QUESTION = "Question";

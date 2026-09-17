@@ -1,8 +1,8 @@
 # Exam Question Bank — Roadmap
 
-> Consolidated forward plan at 11 September 2026.
+> Consolidated forward plan at 17 September 2026.
 >
-> Completed Sprints 01–07 are not future milestones. `DEVELOPMENT_ROADMAP.md`
+> Completed Sprints 01–08 are not future milestones.  `DEVELOPMENT_ROADMAP.md`
 > contains the detailed sequence and `design/backlog.md` is the authoritative
 > deferred-work list.
 
@@ -11,7 +11,7 @@
 **IMPLEMENTED / CURRENT**
 
 - Java 25 / JavaFX / Maven desktop application.
-- SQLite runtime with foreign keys and migrations through schema v6.
+- SQLite runtime with foreign keys and migrations through schema v8.
 - Managed source PDFs and portable relative paths.
 - PDF viewer and managed Exam import.
 - Multi-region Question and Answer capture.
@@ -26,35 +26,52 @@
 - Sprint 07 persisted SourceQuestion/shared-context semantics, preamble-aware
   capture, Question/Answer correction, syllabus-sensitive classification,
   multipart/shared-context revision output and capture responsiveness work.
+  - Sprint 08 subject-neutral curriculum authoring, application-authoritative
+  mapping coverage, legacy metadata correction, persisted Question response type,
+  corpus audit/completeness tooling and capture/search hardening.
 
-## Immediate closeout
+## Current development position
 
-Sprint 07 is implemented on `feature/preamble-capture`. Documentation
-consolidation and the final branch-versus-`main` merge-readiness review are
-complete, with no known merge blocker remaining after final regression
-verification.
+Sprint 07 is complete and merged.
 
-Canonical Sprint 07 record:
+Sprint 08 — Curriculum and Corpus Completion has completed implementation and
+branch-level validation on `feature/data-completion`. Final independent review
+and merge remain.
 
-`docs/design/sprint-07-preamble-aware-question-capture-ui-redesign.md`
+Canonical Sprint 08 design and implementation record:
 
-## Milestone 1 — Corpus completion and mapping reconciliation
+`docs/design/sprint-08-Curriculum-and-Corpus-Completion.md`
 
-**HIGH PRIORITY / NEXT PRODUCT VALUE**
+## Milestone 1 — Curriculum and corpus completion
 
-Continue real-data completion without redesigning the implemented core model:
+**HIGH PRIORITY / CURRENT PRODUCT VALUE**
 
-- capture remaining Question regions;
-- capture remaining Answer/marking regions;
-- resolve missing source documents;
-- verify historical classifications;
-- review and reconcile the 5 September Chemistry 2019 -> 2025 mapping workbook
-  with SQLite mapping records;
-- establish coverage statistics after reconciliation;
-- exercise larger real datasets.
+The application now provides the core tooling required for curriculum and corpus
+completion:
 
-A broad filtered capture/audit queue is useful follow-on work rather than a
-prerequisite for data capture.
+- expert-authored curriculum from authoritative syllabus PDFs without automatic
+  hierarchy inference;
+- first-class `Unit -> Topic -> Descriptor` structures with optional Subtopic;
+- resumable/finalisable curriculum persistence and managed syllabus provenance;
+- application-authoritative Descriptor/Subtopic mapping coverage;
+- legacy metadata correction;
+- persisted per-Question response type;
+- response-type-aware Answer completeness;
+- a corpus audit queue with Subject/provider/year/booklet/completion/problem
+  filters and summary totals;
+- routing from corpus problems into the existing metadata, Question and Answer
+  workflows.
+
+Sprint 08 regression/capture hardening and closeout validation are complete on
+the feature branch. Real bank population remains an ongoing data task rather
+than application implementation work.
+
+Real bank population remains an ongoing data task: the tools can identify and
+route incomplete Questions, but implementation of the queue does not imply that
+the real question corpus itself is complete.
+
+The separate Chemistry 2019 -> 2025 mapping workbook remains reference material.
+Application SQLite review state is authoritative.
 
 ## Milestone 2 — Bank-management and retrieval hardening
 
@@ -62,12 +79,11 @@ prerequisite for data capture.
 
 Focus on the workflows needed to maintain a growing real question bank:
 
-- broad capture/audit queue and completeness filters;
 - exam-specific metadata correction;
-- import audit/reconciliation reporting;
+- import and data-integrity audit reporting;
 - additional real-world legacy-workbook validation;
-- remaining asynchronous search/preview lifecycle tests;
-- retrieval-domain and SQLite integration hardening;
+- retrieval-domain and SQLite integration hardening beyond the completed
+  Sprint 08 asynchronous Question Search regression pass;
 - measurement-driven search/preview performance work.
 
 Do not let cosmetic UI work displace data-correctness or corpus-management work.
@@ -83,13 +99,6 @@ whether a Question may carry multiple original classifications.
 
 Any change must review schema, repositories, capture/editing, applicability,
 retrieval duplicate semantics, provenance and output placement.
-
-### Question-level response type
-
-Replace booklet-name inference with persisted Question-level response type such
-as `MULTIPLE_CHOICE`, `WRITTEN_RESPONSE` and `UNKNOWN`.
-
-Use it to drive Answer UI behaviour and support mixed-response booklets.
 
 ### Question-level applicability exceptions
 
@@ -111,9 +120,6 @@ explicitly out of scope
 
 **BACKLOG / SMALLER WORK**
 
-- multi-page automatic shared-preamble capture;
-- Answer-pane layout stability;
-- Full-width-selection state change clearing a pending selection;
 - optional MCQ explanation-region capture.
 
 These are bounded follow-on improvements, not reasons to reopen Sprint 07.
@@ -227,7 +233,7 @@ mappings.
 Merge Sprint 07
         |
         v
-Corpus completion + Chemistry mapping reconciliation
+Corpus completion + application-authoritative Chemistry mapping review/coverage
         |
         v
 Bank-management + retrieval/testing hardening

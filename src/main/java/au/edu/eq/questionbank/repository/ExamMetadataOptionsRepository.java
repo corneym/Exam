@@ -11,6 +11,12 @@ import java.util.prefs.Preferences;
  */
 public class ExamMetadataOptionsRepository {
 
+	/**
+	 * Creates a repository backed by the current user's saved examination labels.
+	 */
+	public ExamMetadataOptionsRepository() {
+	}
+
 	private static final String PROVIDERS = "providers";
 	private static final String ASSESSMENTS = "assessments";
 	private static final String BOOKLETS = "booklets";

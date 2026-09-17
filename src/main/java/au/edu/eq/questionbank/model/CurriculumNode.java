@@ -119,30 +119,65 @@ public abstract class CurriculumNode {
 		return id == other.id;
 	}
 
+	/**
+	 * Returns this node's code within its syllabus version.
+	 *
+	 * @return curriculum code, independent of the explicit node level
+	 */
 	public String getCode() {
 		return code;
 	}
 
+	/**
+	 * Returns the ordering value used to present this node among siblings.
+	 *
+	 * @return non-negative display order
+	 */
 	public int getDisplayOrder() {
 		return displayOrder;
 	}
 
+	/**
+	 * Returns the persistent identity of this curriculum node.
+	 *
+	 * @return positive curriculum-node identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns this node's explicit role in the curriculum hierarchy.
+	 *
+	 * @return unit, topic, subtopic or descriptor level
+	 */
 	public CurriculumLevel getLevel() {
 		return level;
 	}
 
+	/**
+	 * Returns the syllabus wording associated with this node.
+	 *
+	 * @return non-blank curriculum name or descriptor text
+	 */
 	public String getName() {
 		return name;
 	}
 
+	/**
+	 * Returns the parent in the explicit curriculum hierarchy.
+	 *
+	 * @return parent node, or null for a root unit
+	 */
 	public CurriculumNode getParent() {
 		return parent;
 	}
 
+	/**
+	 * Returns the syllabus version that owns this node.
+	 *
+	 * @return owning syllabus version
+	 */
 	public SyllabusVersion getSyllabusVersion() {
 		return syllabusVersion;
 	}

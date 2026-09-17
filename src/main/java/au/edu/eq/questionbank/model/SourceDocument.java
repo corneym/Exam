@@ -32,10 +32,20 @@ public class SourceDocument {
 		this.relativePath = relativePath;
 	}
 
+	/**
+	 * Returns the persistent identity of this source-document reference.
+	 *
+	 * @return positive source-document identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns the stored source path for resolution through a containment-checking PDF store.
+	 *
+	 * @return path relative to the configured data root, as supplied
+	 */
 	public String getRelativePath() {
 		return relativePath;
 	}

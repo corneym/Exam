@@ -46,18 +46,38 @@ public class ExamBooklet {
 		this.sourceDocument = sourceDocument;
 	}
 
+	/**
+	 * Returns the examination containing this booklet.
+	 *
+	 * @return owning examination
+	 */
 	public Exam getExam() {
 		return exam;
 	}
 
+	/**
+	 * Returns the persistent identity of this examination booklet.
+	 *
+	 * @return positive booklet identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns the label distinguishing this booklet within its exam.
+	 *
+	 * @return non-blank booklet name
+	 */
 	public String getName() {
 		return name;
 	}
 
+	/**
+	 * Returns the original document from which booklet regions are captured.
+	 *
+	 * @return managed source-document reference
+	 */
 	public SourceDocument getSourceDocument() {
 		return sourceDocument;
 	}

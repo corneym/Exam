@@ -9,5 +9,5 @@ import org.junit.platform.suite.api.Suite;
 @SelectPackages("au.edu.eq.questionbank")
 @IncludeClassNamePatterns(".*Test")
 @ExcludeTags("ui")
-public class AllTests {
+public class NonUITests {
 }

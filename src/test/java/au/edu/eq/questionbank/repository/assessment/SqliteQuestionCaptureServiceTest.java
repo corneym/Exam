@@ -17,6 +17,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
@@ -31,6 +32,26 @@ class SqliteQuestionCaptureServiceTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void compatibilityRequestPreservesExistingResponseType() throws Exception {
+		Fixture fixture = createFixture("preserve-response-type.db");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		Question original = repository.save(fixture.booklet(), "Q3", "", 1,
+				List.of(new QuestionRegion(fixture.booklet(), 1, 0.10, 0.10, 0.70, 0.20)), fixture.classification(),
+				false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
+		/*
+		 * Deliberately use the old constructor without a response-type argument.
+		 */
+		Question edited = service.save(
+				new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.EDIT, fixture.booklet(),
+						original, "Q3", 2, original.getRegions(), fixture.classification(), null, null));
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, edited.getResponseType());
+		Question reloaded = repository.findById(original.getId()).orElseThrow();
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
+		assertEquals(2, reloaded.getMarks());
+	}
 
 	@Test
 	void editingLastMultipartPartToNonMultipartRemovesUnreferencedSourceQuestionButRetainsContext() throws Exception {
@@ -168,6 +189,38 @@ class SqliteQuestionCaptureServiceTest {
 		assertTrue(new SqliteSharedQuestionContextRepository(fixture.database()).findByBooklet(fixture.booklet())
 				.isEmpty());
 		assertTrue(new SqliteQuestionRepository(fixture.database()).findAll().isEmpty());
+	}
+
+	@Test
+	void importedCaptureCanResolveUnknownResponseType() throws Exception {
+		Fixture fixture = createFixture("imported-response-type.db");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		Question imported = repository.save(fixture.booklet(), "Q2", "", 2, List.of(), fixture.classification(), false);
+		assertEquals(QuestionResponseType.UNKNOWN, imported.getResponseType());
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
+		Question captured = service
+				.save(new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.IMPORTED,
+						fixture.booklet(), imported, imported.getQuestionCode(), imported.getMarks(),
+						List.of(new QuestionRegion(fixture.booklet(), 2, 0.10, 0.20, 0.70, 0.20)),
+						fixture.classification(), QuestionResponseType.WRITTEN_RESPONSE, null, null));
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, captured.getResponseType());
+		Question reloaded = repository.findById(imported.getId()).orElseThrow();
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloaded.getResponseType());
+		assertEquals(1, reloaded.getRegions().size());
+	}
+
+	@Test
+	void newCapturePersistsExplicitResponseType() throws Exception {
+		Fixture fixture = createFixture("new-response-type.db");
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
+		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(
+				SqliteQuestionCaptureService.Operation.NEW, fixture.booklet(), null, "Q1", 1,
+				List.of(new QuestionRegion(fixture.booklet(), 1, 0.10, 0.10, 0.70, 0.20)), fixture.classification(),
+				QuestionResponseType.MULTIPLE_CHOICE, null, null);
+		Question saved = service.save(request);
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, saved.getResponseType());
+		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(saved.getId()).orElseThrow();
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
 	}
 
 	private Fixture createFixture(String databaseName) throws Exception {

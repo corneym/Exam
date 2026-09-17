@@ -21,9 +21,26 @@ import au.edu.eq.questionbank.service.revision.RevisionQuestionPlacement;
  */
 public final class RevisionExportValidator {
 
+	/**
+	 * Creates a validator for generated revision pages and their local assets.
+	 */
+	public RevisionExportValidator() {
+	}
+
 	private static final Pattern REFERENCE_PATTERN = Pattern.compile("(?:href|src)\\s*=\\s*\"([^\"]+)\"",
 			Pattern.CASE_INSENSITIVE);
 
+	/**
+	 * Checks generated pages, local references and required source-derived assets before publication.
+	 *
+	 * @param exportRoot staged revision-site directory
+	 * @param corpus source corpus defining required question and answer content
+	 * @param htmlFiles generated HTML file paths beneath the export root
+	 * @param questionAssets rendered question images
+	 * @param answerAssets rendered answer-region images
+	 * @param sharedContextAssets rendered reusable preamble images
+	 * @throws IOException if generated files or references fail validation
+	 */
 	public void validate(Path exportRoot, RevisionCorpus corpus, List<Path> htmlFiles,
 			List<RevisionQuestionAsset> questionAssets, List<RevisionAnswerAsset> answerAssets,
 			List<RevisionSharedContextAsset> sharedContextAssets) throws IOException {

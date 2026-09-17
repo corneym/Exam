@@ -11,6 +11,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
@@ -28,6 +29,11 @@ public final class SqliteQuestionCaptureService {
 	private final SqliteSourceQuestionRepository sourceQuestionRepository;
 	private final SqliteSharedQuestionContextRepository sharedContextRepository;
 
+	/**
+	 * Creates a capture service sharing one database across question and context writers.
+	 *
+	 * @param database initialised question-bank database
+	 */
 	public SqliteQuestionCaptureService(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");
@@ -38,6 +44,13 @@ public final class SqliteQuestionCaptureService {
 		this.sharedContextRepository = new SqliteSharedQuestionContextRepository(database);
 	}
 
+	/**
+	 * Persists capture metadata, source identity and shared context in one transaction.
+	 *
+	 * @param request validated capture operation
+	 * @return question resulting from the committed capture
+	 * @throws IllegalStateException if the database transaction fails
+	 */
 	public Question save(Request request) {
 		if (request == null) {
 			throw new NullPointerException("request");
@@ -133,32 +146,38 @@ public final class SqliteQuestionCaptureService {
 			SharedQuestionContext sharedContext) throws SQLException {
 		if (request.operation() == Operation.NEW) {
 			return questionWriter.insertQuestion(connection, request.booklet(), request.questionCode(), "",
-					request.marks(), request.regions(), request.classification(), false, sourceQuestion, sharedContext);
+					request.marks(), request.regions(), request.classification(), false, sourceQuestion, sharedContext,
+					request.responseType());
 		}
 		Question existing = request.existingQuestion();
 		if (request.operation() == Operation.IMPORTED) {
 			if (existing.getRegions().isEmpty()) {
 				questionWriter.attachRegions(connection, existing.getId(), request.regions(), request.classification(),
 						sourceQuestion, sharedContext);
-				return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), request.regions(),
+			} else {
+				questionWriter.updateCaptureRelationships(connection, existing.getId(), existing.getBooklet(),
 						request.classification(), sourceQuestion, sharedContext);
 			}
-			questionWriter.updateCaptureRelationships(connection, existing.getId(), existing.getBooklet(),
-					request.classification(), sourceQuestion, sharedContext);
-			return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), existing.getRegions(),
-					request.classification(), sourceQuestion, sharedContext);
+			questionWriter.updateResponseType(connection, existing.getId(), existing.getBooklet(),
+					request.responseType());
+			List<QuestionRegion> resultingRegions = existing.getRegions().isEmpty() ? request.regions()
+					: existing.getRegions();
+			return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), resultingRegions,
+					request.classification(), sourceQuestion, sharedContext, request.responseType());
 		}
 		questionWriter.updateQuestion(connection, existing.getId(), existing.getBooklet(), request.questionCode(),
 				request.marks(), request.regions(), request.classification(), sourceQuestion, sharedContext);
+		questionWriter.updateResponseType(connection, existing.getId(), existing.getBooklet(), request.responseType());
 		return rebuildQuestion(existing, request.questionCode(), request.marks(), request.regions(),
-				request.classification(), sourceQuestion, sharedContext);
+				request.classification(), sourceQuestion, sharedContext, request.responseType());
 	}
 
 	private Question rebuildQuestion(Question existing, String questionCode, int marks, List<QuestionRegion> regions,
-			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
+			QuestionResponseType responseType) {
 		Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
 				existing.getQuestionText(), marks, regions, classification, existing.isPreambleCaptureRequired(),
-				sourceQuestion, sharedContext);
+				sourceQuestion, sharedContext, responseType);
 		if (existing.hasAnswer()) {
 			updated.setAnswer(existing.getAnswer());
 		}
@@ -213,12 +232,32 @@ public final class SqliteQuestionCaptureService {
 		return sourceQuestionRepository.save(connection, request.booklet(), sourceCode);
 	}
 
+	/**
+	 * Kind of question capture to persist.
+	 */
 	public enum Operation {
-		NEW, IMPORTED, EDIT
+		/** Create a newly captured question. */
+		NEW,
+		/** Capture source regions or context for an imported question. */
+		IMPORTED,
+		/** Correct an existing question while retaining its persistent identity. */
+		EDIT
 	}
 
+	/**
+	 * Shared preamble captured in memory and awaiting persistence.
+	 *
+	 * @param label non-blank label for the new reusable preamble
+	 * @param regions non-empty shared-context regions in source order
+	 */
 	public record PendingSharedContext(String label, List<SharedQuestionContextRegion> regions) {
 
+		/**
+		 * Validates a pending preamble and copies its ordered regions.
+		 *
+		 * @param label non-blank label for the new reusable preamble
+		 * @param regions non-empty shared-context regions in source order
+		 */
 		public PendingSharedContext {
 			if (label == null || label.isBlank()) {
 				throw new IllegalArgumentException("label must not be blank");
@@ -233,10 +272,63 @@ public final class SqliteQuestionCaptureService {
 		}
 	}
 
+	/**
+	 * Validated inputs for an atomic question-capture operation.
+	 *
+	 * @param operation new, imported or edit capture
+	 * @param booklet source examination booklet
+	 * @param existingQuestion stored question for imported or edit capture; null for new capture
+	 * @param questionCode non-blank examination question or part code
+	 * @param marks positive mark value
+	 * @param regions ordered ordinary question regions
+	 * @param classification original syllabus Subtopic or Descriptor
+	 * @param responseType authoritative response type, including UNKNOWN when unresolved
+	 * @param selectedSharedContext existing reusable preamble, or null
+	 * @param pendingSharedContext newly captured preamble to persist, or null
+	 */
 	public record Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
-			int marks, List<QuestionRegion> regions, CurriculumNode classification,
+			int marks, List<QuestionRegion> regions, CurriculumNode classification, QuestionResponseType responseType,
 			SharedQuestionContext selectedSharedContext, PendingSharedContext pendingSharedContext) {
 
+		/**
+		 * Compatibility constructor used by existing capture callers while
+		 * response-type-aware UI is introduced.
+		 * <p>
+		 * Existing Questions retain their stored response type. A new Question created
+		 * through this compatibility form remains UNKNOWN.
+		 *
+		 * @param operation new, imported or edit capture
+		 * @param booklet source examination booklet
+		 * @param existingQuestion stored question for imported or edit capture; null for new capture
+		 * @param questionCode non-blank examination question or part code
+		 * @param marks positive mark value
+		 * @param regions ordered ordinary question regions
+		 * @param classification original syllabus Subtopic or Descriptor
+		 * @param selectedSharedContext existing reusable preamble, or null
+		 * @param pendingSharedContext newly captured preamble to persist, or null
+		 */
+		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
+				int marks, List<QuestionRegion> regions, CurriculumNode classification,
+				SharedQuestionContext selectedSharedContext, PendingSharedContext pendingSharedContext) {
+			this(operation, booklet, existingQuestion, questionCode, marks, regions, classification,
+					existingQuestion == null ? QuestionResponseType.UNKNOWN : existingQuestion.getResponseType(),
+					selectedSharedContext, pendingSharedContext);
+		}
+
+		/**
+		 * Validates capture state and retains an immutable copy of the ordinary regions.
+		 *
+		 * @param operation new, imported or edit capture
+		 * @param booklet source examination booklet
+		 * @param existingQuestion stored question for imported or edit capture; null for new capture
+		 * @param questionCode non-blank examination question or part code
+		 * @param marks positive mark value
+		 * @param regions ordered ordinary question regions
+		 * @param classification original syllabus Subtopic or Descriptor
+		 * @param responseType authoritative response type, including UNKNOWN when unresolved
+		 * @param selectedSharedContext existing reusable preamble, or null
+		 * @param pendingSharedContext newly captured preamble to persist, or null
+		 */
 		public Request {
 			if (operation == null) {
 				throw new NullPointerException("operation");
@@ -255,6 +347,9 @@ public final class SqliteQuestionCaptureService {
 			}
 			if (classification == null) {
 				throw new NullPointerException("classification");
+			}
+			if (responseType == null) {
+				throw new NullPointerException("responseType");
 			}
 			regions = List.copyOf(regions);
 			if (operation == Operation.NEW && existingQuestion != null) {

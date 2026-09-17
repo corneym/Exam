@@ -61,8 +61,10 @@ Use the Maven wrapper so contributors use the configured Maven version.
 
 Windows commands:
 
-- `.\mvnw.cmd clean test` — compile and run the complete test suite
-- `.\mvnw.cmd package` — run tests and build the JAR
+- `.\mvnw.cmd clean test` — compile and run the non-UI suite
+- `.\mvnw.cmd -Pheadless-ui-tests test` — run the headless JavaFX suite
+- `.\mvnw.cmd -Pui-tests test` — run the JavaFX suite with a display
+- `.\mvnw.cmd package` — run the non-UI suite and build the JAR
 - `.\mvnw.cmd compile exec:java -Dexec.mainClass=au.edu.eq.questionbank.Main`
   — run the current proof of concept
 
@@ -173,9 +175,12 @@ Run the Maven test suite after production-code changes.
 
 Test classes should normally be named `*Test.java`.
 
-`AllTests` discovers tests recursively under `au.edu.eq.questionbank`.
+`NonUITests` discovers tests recursively under `au.edu.eq.questionbank` and
+excludes the `ui` tag. `UITests` discovers tests tagged `ui`; the `ui-tests`
+and `headless-ui-tests` Maven profiles select that suite. Run both suites for
+complete automated regression verification.
 New tests must follow that package structure and the `*Test.java` naming
-convention so they are included in the suite.
+convention; tag JavaFX tests with `@Tag("ui")`.
 
 Use descriptive behavior-oriented test names.
 

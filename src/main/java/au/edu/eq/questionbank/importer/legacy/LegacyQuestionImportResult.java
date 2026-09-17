@@ -9,6 +9,13 @@ package au.edu.eq.questionbank.importer.legacy;
  */
 public record LegacyQuestionImportResult(int insertedQuestions, int existingQuestions, int insertedAnswers) {
 
+	/**
+	 * Creates an import summary with non-negative question and answer counts.
+	 *
+	 * @param insertedQuestions newly inserted question rows
+	 * @param existingQuestions compatible questions reused by the import
+	 * @param insertedAnswers   newly inserted text answers
+	 */
 	public LegacyQuestionImportResult {
 		if (insertedQuestions < 0) {
 			throw new IllegalArgumentException("insertedQuestions must not be negative");

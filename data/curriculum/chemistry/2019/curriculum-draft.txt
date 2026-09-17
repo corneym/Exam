@@ -1,0 +1,2066 @@
+CURRICULUM DRAFT
+================
+
+Source PDF: D:\git\Exam\data\curriculum\Chemistry\2019\sources\Chemistry-Syllabus-v1.4.pdf
+Node count: 257
+
+VALIDATION: VALID
+
+NODES
+-----
+
+UNIT [draftId=1]
+  code: 1
+  parentDraftId: <none>
+  displayOrder: 0
+  sourcePage: <none>
+  text:
+    Chemical fundamentals — structure, properties and reactions
+
+  TOPIC [draftId=2]
+    code: 1.1
+    parentDraftId: 1
+    displayOrder: 0
+    sourcePage: <none>
+    text:
+      Properties and structure of atoms
+
+    SUBTOPIC [draftId=3]
+      code: 1.1.1
+      parentDraftId: 2
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Periodic Table and Trends
+
+      DESCRIPTOR [draftId=4]
+        code: 1.1.1.1
+        parentDraftId: 3
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          Recall that elements are represented by symbols and recognise that the structure of the periodic table is based on the atomic number and the properties of the elements
+
+      DESCRIPTOR [draftId=5]
+        code: 1.1.1.2
+        parentDraftId: 3
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          describe and explain that elements of the periodic table show trends across periods and down groups, including atomic radii, valencies, ionic radii, 1st ionisation energy and electronegativities as exemplified by groups 1, 2, 13–18 and period 3
+
+      DESCRIPTOR [draftId=6]
+        code: 1.1.1.3
+        parentDraftId: 3
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          explain how successive ionisation energy data is related to the electron configuration of an atom
+
+      DESCRIPTOR [draftId=7]
+        code: 1.1.1.4
+        parentDraftId: 3
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          compare and explain the metallic and non-metallic behaviours of elements, including group trends and the reactivity for the alkali metals (Li–Cs) and the halogens (F–I)
+
+      DESCRIPTOR [draftId=8]
+        code: 1.1.1.5
+        parentDraftId: 3
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          recognise that oxides change from basic through amphoteric to acidic across a period
+
+      DESCRIPTOR [draftId=9]
+        code: 1.1.1.6
+        parentDraftId: 3
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          analyse, evaluate and interpret data to explain and justify conclusions for periodic trends, patterns and relationships
+
+    SUBTOPIC [draftId=10]
+      code: 1.1.2
+      parentDraftId: 2
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Atomic Structure
+
+      DESCRIPTOR [draftId=11]
+        code: 1.1.2.1
+        parentDraftId: 10
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that atoms can be modelled as a nucleus surrounded by electrons in distinct energy levels held together by electrostatic forces of attraction between the nucleus and electrons; the location of electrons within atoms can be represented using electron configurations; and the structure of the periodic table is based on the electronic configuration of atoms
+
+      DESCRIPTOR [draftId=12]
+        code: 1.1.2.2
+        parentDraftId: 10
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          use and apply the nuclear symbol AZX notation to determine the number of protons, neutrons and electrons in atoms, ions and isotopes
+
+      DESCRIPTOR [draftId=13]
+        code: 1.1.2.3
+        parentDraftId: 10
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          recall the relative energies of the s, p and d orbitals in energy levels to construct electron configurations for atoms and ions up to Z = 36 and recognise that the periodic table is arranged into four blocks associated with the four sub-levels — s, p, d and f
+
+      DESCRIPTOR [draftId=14]
+        code: 1.1.2.4
+        parentDraftId: 10
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          apply the Aufbau principle, Hund’s rule and the Pauli exclusion principle to write electron configurations for atoms and ions up to Z = 36 and use orbital diagrams to represent the character and relative energy of orbitals
+
+      DESCRIPTOR [draftId=15]
+        code: 1.1.2.5
+        parentDraftId: 10
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          recognise the electron configuration of Cr and Cu as exceptions
+
+    SUBTOPIC [draftId=16]
+      code: 1.1.3
+      parentDraftId: 2
+      displayOrder: 2
+      sourcePage: <none>
+      text:
+        Introduction to Bonding
+
+      DESCRIPTOR [draftId=17]
+        code: 1.1.3.1
+        parentDraftId: 16
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that the properties of atoms, including their ability to form chemical bonds, are explained by the arrangement of electrons in the atom and by the stability of the valence electron shell
+
+      DESCRIPTOR [draftId=18]
+        code: 1.1.3.2
+        parentDraftId: 16
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that the number of electrons lost, gained or shared is determined by the electron configuration of the atom and recall that transitional elements can form more than one ion
+
+      DESCRIPTOR [draftId=19]
+        code: 1.1.3.3
+        parentDraftId: 16
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          recognise that ions are atoms or groups of atoms that are electrically charged due to an imbalance in the number of electrons and protons and recognise that ions are represented by formulas which include the number of constituent atoms and the charge of the ion
+
+      DESCRIPTOR [draftId=20]
+        code: 1.1.3.4
+        parentDraftId: 16
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          understand that chemical bonds are caused by electrostatic attractions that arise because of the sharing or transfer of electrons between participating atoms and the valency is a measure of the number of bonds that an atom can form
+
+      DESCRIPTOR [draftId=21]
+        code: 1.1.3.5
+        parentDraftId: 16
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          determine the formula of an ionic compound from the charges on the relative ions and name the compound
+
+      DESCRIPTOR [draftId=22]
+        code: 1.1.3.6
+        parentDraftId: 16
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          deduce Lewis (electron dot) structure of molecules and ions showing all valence electrons for up to four electron pairs for each atom
+
+      DESCRIPTOR [draftId=23]
+        code: 1.1.3.7
+        parentDraftId: 16
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          identify the numbers of bonding and lone pairs of electrons around each atom in a molecule
+
+    SUBTOPIC [draftId=24]
+      code: 1.1.4
+      parentDraftId: 2
+      displayOrder: 3
+      sourcePage: <none>
+      text:
+        Isotopes
+
+      DESCRIPTOR [draftId=25]
+        code: 1.1.4.1
+        parentDraftId: 24
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recall isotopes are atoms of the same element that have different numbers of neutrons and can be represented in the form AX (IUPAC) or X-A
+
+      DESCRIPTOR [draftId=26]
+        code: 1.1.4.2
+        parentDraftId: 24
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          recognise that isotopes of an element have the same electron configuration and possess similar chemical properties but have different physical properties
+
+      DESCRIPTOR [draftId=27]
+        code: 1.1.4.3
+        parentDraftId: 24
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          understand that the relative atomic mass of an element is the ratio of the weighted average mass per atom of the naturally occurring form of the element to 1/12 the mass of an atom of carbon-12.
+
+    SUBTOPIC [draftId=28]
+      code: 1.1.5
+      parentDraftId: 2
+      displayOrder: 4
+      sourcePage: <none>
+      text:
+        Analytical techniques
+
+      DESCRIPTOR [draftId=29]
+        code: 1.1.5.1
+        parentDraftId: 28
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that mass spectrometry involves the ionisation of substances and the separation and detection of the resulting ions, and that the spectra generated can be analysed to determine the isotopic composition of elements, and interpreted to determine relative atomic mass (analysis to determine)
+
+      DESCRIPTOR [draftId=30]
+        code: 1.1.5.2
+        parentDraftId: 28
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that flame tests and atomic absorption spectroscopy (AAS) are analytical techniques that can be used to identify elements; these methods rely on electron transfer between atomic energy levels and are shown by line spectra
+
+      DESCRIPTOR [draftId=31]
+        code: 1.1.5.3
+        parentDraftId: 28
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          distinguish between absorption and emission spectra and recognise that the emission spectrum of hydrogen provides evidence for the existence of electrons in discrete energy levels (Bohr model), which converge at higher energies. Explain that emission spectra are produced when photons are emitted from atoms when excited electrons return to a lower energy level.
+
+      DESCRIPTOR [draftId=32]
+        code: 1.1.5.4
+        parentDraftId: 28
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          analyse, interpret and evaluate data from flame tests and atomic absorption spectroscopy (AAS) to determine the presence and concentration of metallic ions in solution
+
+      DESCRIPTOR [draftId=33]
+        code: 1.1.5.5
+        parentDraftId: 28
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representations to make inferences and to solve problems, including calculating the relative atomic mass of an element and percentage abundances of the isotopes of an element from data.
+
+  TOPIC [draftId=34]
+    code: 1.2
+    parentDraftId: 1
+    displayOrder: 1
+    sourcePage: <none>
+    text:
+      Properties and structure of materials
+
+    SUBTOPIC [draftId=35]
+      code: 1.2.1
+      parentDraftId: 34
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Compounds and mixtures
+
+      DESCRIPTOR [draftId=36]
+        code: 1.2.1.1
+        parentDraftId: 35
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recall that pure substances may be elements or compounds
+
+      DESCRIPTOR [draftId=37]
+        code: 1.2.1.2
+        parentDraftId: 35
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          recognise that materials are either pure substances with distinct measurable properties (e.g. melting and boiling point, reactivity, strength, density) or mixtures with properties dependent on the identity and relative amounts of the substances that make up the mixture
+
+      DESCRIPTOR [draftId=38]
+        code: 1.2.1.3
+        parentDraftId: 35
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          distinguish between heterogeneous and homogeneous mixtures
+
+      DESCRIPTOR [draftId=39]
+        code: 1.2.1.4
+        parentDraftId: 35
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          recognise that nanomaterials are substances that contain particles in the size range 1–100 nm and have specific properties relating to the size of these particles.
+
+      DESCRIPTOR [draftId=40]
+        code: 1.2.1.5
+        parentDraftId: 35
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          analyse and interpret given data to evaluate the physical properties of pure substances and mixtures.
+
+    SUBTOPIC [draftId=41]
+      code: 1.2.2
+      parentDraftId: 34
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Bonding and properties
+
+      DESCRIPTOR [draftId=42]
+        code: 1.2.2.1
+        parentDraftId: 41
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that the properties of ionic compounds, including high melting point, brittleness, and ability to conduct electricity when liquid or an aqueous solution, can be explained by modelling ionic bonding as ions arranged in a crystalline lattice structure with strong electrostatic forces of attraction between oppositely charged ions (metallic lattice, giant covalent networks, allotropes — carbon)
+
+      DESCRIPTOR [draftId=43]
+        code: 1.2.2.2
+        parentDraftId: 41
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that the type of bonding within ionic, metallic and covalent substances explains their physical properties, including melting and boiling point, thermal and electrical conductivity, strength and hardness
+
+      DESCRIPTOR [draftId=44]
+        code: 1.2.2.3
+        parentDraftId: 41
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          understand that hydrocarbons, including alkanes (saturated), alkenes (unsaturated) and benzene, have different chemical properties that are determined by the nature of the bonding within the molecules
+
+      DESCRIPTOR [draftId=45]
+        code: 1.2.2.4
+        parentDraftId: 41
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          analyse and interpret given data to evaluate the properties, structure and bonding of ionic, covalent and metallic compounds.
+
+  TOPIC [draftId=46]
+    code: 1.3
+    parentDraftId: 1
+    displayOrder: 2
+    sourcePage: <none>
+    text:
+      Chemical reactions — reactants, products and energy change
+
+    SUBTOPIC [draftId=47]
+      code: 1.3.1
+      parentDraftId: 46
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Chemical reactions
+
+      DESCRIPTOR [draftId=48]
+        code: 1.3.1.1
+        parentDraftId: 47
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recall that chemical reactions and phase changes involve energy changes commonly observable as changes in the temperature of the surroundings and/or the emission of light
+
+      DESCRIPTOR [draftId=49]
+        code: 1.3.1.2
+        parentDraftId: 47
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          deduce and construct balanced chemical equations when reactants and products are specified and apply state symbols (s), (l), (g) and (aq).
+
+    SUBTOPIC [draftId=50]
+      code: 1.3.2
+      parentDraftId: 46
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Exothermic and endothermic reactions
+
+      DESCRIPTOR [draftId=51]
+        code: 1.3.2.1
+        parentDraftId: 50
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          explain how endothermic and exothermic reactions relate to the law of conservation of energy and the breaking and reforming of bonds; understand that heat energy is released or absorbed by the system to or from the surrounds
+
+      DESCRIPTOR [draftId=52]
+        code: 1.3.2.2
+        parentDraftId: 50
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that heat is a form of energy and that temperature is a measure of the average kinetic energy of the particles
+
+      DESCRIPTOR [draftId=53]
+        code: 1.3.2.3
+        parentDraftId: 50
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          apply the relationship between temperature and enthalpy changes to identify thermochemical reactions as exothermic or endothermic; deduce from enthalpy level diagrams and thermochemical equations the relative stabilities of reactants and products, and the sign of the enthalpy change (ΔH) for a reaction
+
+      DESCRIPTOR [draftId=54]
+        code: 1.3.2.4
+        parentDraftId: 50
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          explain, in terms of average bond enthalpies, why reactions are exothermic or endothermic
+
+      DESCRIPTOR [draftId=55]
+        code: 1.3.2.5
+        parentDraftId: 50
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          construct and use appropriate representations (including chemical symbols and formulas, and chemical and thermochemical equations) to communicate conceptual understanding, solve problems and make predictions
+
+      DESCRIPTOR [draftId=56]
+        code: 1.3.2.6
+        parentDraftId: 50
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          calculate the heat change for a substance given the mass, specific heat capacity and temperature change
+
+      DESCRIPTOR [draftId=57]
+        code: 1.3.2.7
+        parentDraftId: 50
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          use data to calculate the enthalpy change (ΔH) for a reaction.
+
+      DESCRIPTOR [draftId=58]
+        code: 1.3.2.8
+        parentDraftId: 50
+        displayOrder: 7
+        sourcePage: <none>
+        text:
+          Mandatory practical:  Conduct a calorimetry experiment to measure the enthalpy of a reaction.
+
+    SUBTOPIC [draftId=59]
+      code: 1.3.3
+      parentDraftId: 46
+      displayOrder: 2
+      sourcePage: <none>
+      text:
+        Measurement, uncertainty and error
+
+      DESCRIPTOR [draftId=60]
+        code: 1.3.3.1
+        parentDraftId: 59
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          distinguish between precision and accuracy and appreciate that all measurements have limits to their precision and accuracy that must be considered when evaluating experimental results
+
+      DESCRIPTOR [draftId=61]
+        code: 1.3.3.2
+        parentDraftId: 59
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          distinguish between qualitative and quantitative data; appreciate that quantitative data obtained from measurements is always associated with random error/measurement uncertainties
+
+      DESCRIPTOR [draftId=62]
+        code: 1.3.3.3
+        parentDraftId: 59
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          communicate measurement uncertainties as a range (±) to an appropriate precision
+
+      DESCRIPTOR [draftId=63]
+        code: 1.3.3.4
+        parentDraftId: 59
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          understand that propagation of random error in data processing shows the impact of measurement uncertainties on the final result
+
+      DESCRIPTOR [draftId=64]
+        code: 1.3.3.5
+        parentDraftId: 59
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          calculate the measurement uncertainties in processed data, including the use of absolute uncertainties and percentage uncertainties
+
+      DESCRIPTOR [draftId=65]
+        code: 1.3.3.6
+        parentDraftId: 59
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          construct and use appropriate graphical representations to communicate understanding, solve problems and make predictions; interpret graphs in terms of the relationship between dependent and independent variables; draw and interpret best-fit lines or curves through data points, including evaluating when it can and cannot be considered as a linear function
+
+      DESCRIPTOR [draftId=66]
+        code: 1.3.3.7
+        parentDraftId: 59
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          calculate the percentage error when the experimental result can be compared with a theoretical or accepted result (value)
+
+      DESCRIPTOR [draftId=67]
+        code: 1.3.3.8
+        parentDraftId: 59
+        displayOrder: 7
+        sourcePage: <none>
+        text:
+          distinguish between random and systematic errors; understand that experimental design and procedure usually leads to systematic errors in measurement, which causes a deviation in a direction and appreciate that repeated trials and measurements will reduce random error but not systematic error
+
+      DESCRIPTOR [draftId=68]
+        code: 1.3.3.9
+        parentDraftId: 59
+        displayOrder: 8
+        sourcePage: <none>
+        text:
+          analyse the impact of random error/measurement uncertainties and systematic errors in experimental work and evaluate how these errors/measurement uncertainties can be reduced
+
+      DESCRIPTOR [draftId=69]
+        code: 1.3.3.10
+        parentDraftId: 59
+        displayOrder: 9
+        sourcePage: <none>
+        text:
+          understand that the number of significant figures in a result is based on the figures given in the data and determine results of calculations to the appropriate number of significant figures.
+
+    SUBTOPIC [draftId=70]
+      code: 1.3.4
+      parentDraftId: 46
+      displayOrder: 3
+      sourcePage: <none>
+      text:
+        Fuels
+
+      DESCRIPTOR [draftId=71]
+        code: 1.3.4.1
+        parentDraftId: 70
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          compare fuels, including fossil fuels and biofuels, in terms of their energy output, and evaluate their suitability for purpose, and the nature of products of combustion.
+
+    SUBTOPIC [draftId=72]
+      code: 1.3.5
+      parentDraftId: 46
+      displayOrder: 4
+      sourcePage: <none>
+      text:
+        Mole concept and law of conservation of mass
+
+      DESCRIPTOR [draftId=73]
+        code: 1.3.5.1
+        parentDraftId: 72
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that a mole is a precisely defined quantity of matter equal to Avogadro’s number of particles
+
+      DESCRIPTOR [draftId=74]
+        code: 1.3.5.2
+        parentDraftId: 72
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          appreciate the law of conservation of mass and understand that the mole concept relates mass, moles and molar mass
+
+      DESCRIPTOR [draftId=75]
+        code: 1.3.5.3
+        parentDraftId: 72
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          understand that the empirical formula expresses the simplest whole number ratio of elements in a compound
+
+      DESCRIPTOR [draftId=76]
+        code: 1.3.5.4
+        parentDraftId: 72
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          use the appropriate stoichiometric ratio to determine that reactants can be limiting
+
+      DESCRIPTOR [draftId=77]
+        code: 1.3.5.5
+        parentDraftId: 72
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          appreciate that experimental yield can be different from theoretical yield
+
+      DESCRIPTOR [draftId=78]
+        code: 1.3.5.6
+        parentDraftId: 72
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representation to solve problems and make predictions, including using the mole concept to calculate the mass of reactants and products; amount of substance in moles; number of representative particles; and molar mass of atoms, ions, molecules and formula units
+
+      DESCRIPTOR [draftId=79]
+        code: 1.3.5.7
+        parentDraftId: 72
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representation to solve problems and make predictions, including determining the percentage composition from relative atomic masses; empirical formula of a compound from the percentage composition by mass; and molecular formula of a compound from its empirical formula and molar mass
+
+      DESCRIPTOR [draftId=80]
+        code: 1.3.5.8
+        parentDraftId: 72
+        displayOrder: 7
+        sourcePage: <none>
+        text:
+          calculate percentage yield from experimental or given data.
+
+      DESCRIPTOR [draftId=81]
+        code: 1.3.5.9
+        parentDraftId: 72
+        displayOrder: 8
+        sourcePage: <none>
+        text:
+          Mandatory practical:  Derive the empirical formula of a compound from reactions involving mass changes
+
+UNIT [draftId=82]
+  code: 2
+  parentDraftId: <none>
+  displayOrder: 1
+  sourcePage: <none>
+  text:
+    Molecular interactions and reactions
+
+  TOPIC [draftId=83]
+    code: 2.1
+    parentDraftId: 82
+    displayOrder: 0
+    sourcePage: <none>
+    text:
+      Intermolecular forces and gases
+
+    SUBTOPIC [draftId=84]
+      code: 2.1.1
+      parentDraftId: 83
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Intermolecular forces
+
+      DESCRIPTOR [draftId=85]
+        code: 2.1.1.1
+        parentDraftId: 84
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          apply the valence shell electron pair repulsion (VSEPR) theory to predict, draw and explain the shapes of molecules
+
+      DESCRIPTOR [draftId=86]
+        code: 2.1.1.2
+        parentDraftId: 84
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          use molecular shape, understanding of symmetry, and comparison of the electronegativity of elements to explain and predict the polarity of molecules
+
+      DESCRIPTOR [draftId=87]
+        code: 2.1.1.3
+        parentDraftId: 84
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          explain the relationship between observable properties, including vapour pressure, melting point, boiling point and solubility, and the nature and strength of intermolecular forces, including dispersion forces, dipole–dipole attractions and hydrogen bonding within molecular covalent substances
+
+      DESCRIPTOR [draftId=88]
+        code: 2.1.1.4
+        parentDraftId: 84
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          Mandatory practical: Construct 3D models (real or virtual) of linear, bent, trigonal planar, tetrahedral and pyramidal molecules.
+
+    SUBTOPIC [draftId=89]
+      code: 2.1.2
+      parentDraftId: 83
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Chromatography techniques
+
+      DESCRIPTOR [draftId=90]
+        code: 2.1.2.1
+        parentDraftId: 89
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that chromatography techniques, including paper, thin layer, gas and high-performance liquid chromatography, can be used to determine the composition and purity of substances
+
+      DESCRIPTOR [draftId=91]
+        code: 2.1.2.2
+        parentDraftId: 89
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          describe and explain how variations in the strength of the interactions between atoms, molecules or ions in the mobile and stationary phases can be used to separate components
+
+      DESCRIPTOR [draftId=92]
+        code: 2.1.2.3
+        parentDraftId: 89
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          analyse, interpret and evaluate data from chromatographs to determine the composition and purity of substances, including calculating Rf values.
+
+    SUBTOPIC [draftId=93]
+      code: 2.1.3
+      parentDraftId: 83
+      displayOrder: 2
+      sourcePage: <none>
+      text:
+        Gases
+
+      DESCRIPTOR [draftId=94]
+        code: 2.1.3.1
+        parentDraftId: 93
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          consider the relationship between the volume, number of moles and molar volume at standard temperature and pressure (STP)
+
+      DESCRIPTOR [draftId=95]
+        code: 2.1.3.2
+        parentDraftId: 93
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          use the kinetic theory of gases to describe and explain the behaviour of gases, including the qualitative relationships between pressure, temperature and volume
+
+      DESCRIPTOR [draftId=96]
+        code: 2.1.3.3
+        parentDraftId: 93
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          appreciate that the kinetic theory of gases applies to ideal gases and solve problems related to the ideal gas equation
+
+      DESCRIPTOR [draftId=97]
+        code: 2.1.3.4
+        parentDraftId: 93
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representation to solve problems and make predictions, including the mole concept, to calculate the mass of chemicals and/or the volume of a gas (at standard temperature and pressure) involved in a chemical reaction.
+
+  TOPIC [draftId=98]
+    code: 2.2
+    parentDraftId: 82
+    displayOrder: 1
+    sourcePage: <none>
+    text:
+      Aqueous solutions and acidity
+
+    SUBTOPIC [draftId=99]
+      code: 2.2.1
+      parentDraftId: 98
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Aqueous solutions and molarity
+
+      DESCRIPTOR [draftId=100]
+        code: 2.2.1.1
+        parentDraftId: 99
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that the unique properties of water, including boiling point, density in solid and liquid phases, surface tension and ability to act as a solvent can be explained by its molecular shape and hydrogen bonding between molecules
+
+      DESCRIPTOR [draftId=101]
+        code: 2.2.1.2
+        parentDraftId: 99
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          distinguish between the terms solute, solvent, solution, and concentration
+
+      DESCRIPTOR [draftId=102]
+        code: 2.2.1.3
+        parentDraftId: 99
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          recall that concentration can be represented in a variety of ways including the number of moles of the solute per litre of solution (mol L–1) and the mass of the solute per litre of solution (g L–1) or parts per million (ppm)
+
+      DESCRIPTOR [draftId=103]
+        code: 2.2.1.4
+        parentDraftId: 99
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          distinguish between unsaturated, saturated and supersaturated solutions
+
+      DESCRIPTOR [draftId=104]
+        code: 2.2.1.5
+        parentDraftId: 99
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representations to solve and make predictions (including using the mole concept and the relationship between the number of moles of solute, concentration and volume of a solution) to calculate unknown values.
+
+    SUBTOPIC [draftId=105]
+      code: 2.2.2
+      parentDraftId: 98
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Identifying ions in a solution
+
+      DESCRIPTOR [draftId=106]
+        code: 2.2.2.1
+        parentDraftId: 105
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          apply solubility rules to determine the products of reactions and to predict if a precipitate will form
+
+      DESCRIPTOR [draftId=107]
+        code: 2.2.2.2
+        parentDraftId: 105
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          determine the presence of specific ions in solutions based on evidence derived from chemical reactions, including precipitation and acid-carbonate reactions
+
+      DESCRIPTOR [draftId=108]
+        code: 2.2.2.3
+        parentDraftId: 105
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          construct and use appropriate representations, including ionic formulas, chemical formulas, chemical equations and phase descriptions for chemical species to communicate conceptual understanding, solve problems and make predictions.
+
+      DESCRIPTOR [draftId=109]
+        code: 2.2.2.4
+        parentDraftId: 105
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          Mandatory practical:  precipitation reactions to identify cations and ansions
+
+    SUBTOPIC [draftId=110]
+      code: 2.2.3
+      parentDraftId: 98
+      displayOrder: 2
+      sourcePage: <none>
+      text:
+        Solubility
+
+      DESCRIPTOR [draftId=111]
+        code: 2.2.3.1
+        parentDraftId: 110
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          explain the relationship between the solubility of substances in water, including ionic and molecular substances, and the intermolecular forces between species in the substances and water molecules
+
+      DESCRIPTOR [draftId=112]
+        code: 2.2.3.2
+        parentDraftId: 110
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          recognise that changes in temperature can affect solubility and recall that most gases become less soluble as solvent temperature increases while most solutes become more soluble as the solvent temperature increases
+
+      DESCRIPTOR [draftId=113]
+        code: 2.2.3.3
+        parentDraftId: 110
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          interpret, analyse and evaluate data and solubility curves to communicate conceptual understanding, solve problems and make predictions.
+
+    SUBTOPIC [draftId=114]
+      code: 2.2.4
+      parentDraftId: 98
+      displayOrder: 3
+      sourcePage: <none>
+      text:
+        pH
+
+      DESCRIPTOR [draftId=115]
+        code: 2.2.4.1
+        parentDraftId: 114
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recall that pH is dependent on the concentration of hydrogen ions in solution
+
+      DESCRIPTOR [draftId=116]
+        code: 2.2.4.2
+        parentDraftId: 114
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          use the pH scale to compare the levels of acidity or alkalinity of aqueous solutions
+
+      DESCRIPTOR [draftId=117]
+        code: 2.2.4.3
+        parentDraftId: 114
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          use the Arrhenius model to explain the behaviour of strong and weak acids and bases in aqueous solutions.
+
+    SUBTOPIC [draftId=118]
+      code: 2.2.5
+      parentDraftId: 98
+      displayOrder: 4
+      sourcePage: <none>
+      text:
+        Reaction of acids
+
+      DESCRIPTOR [draftId=119]
+        code: 2.2.5.1
+        parentDraftId: 118
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand and apply the reactions of acids with bases, metals and carbonates to determine reactants and products
+
+      DESCRIPTOR [draftId=120]
+        code: 2.2.5.2
+        parentDraftId: 118
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          construct and use appropriate representations, including ionic formulas, chemical formulas and chemical equations, to symbolise the reactions of acids and bases; and ionic equations to represent the reacting species and products in these reactions.
+
+  TOPIC [draftId=121]
+    code: 2.3
+    parentDraftId: 82
+    displayOrder: 2
+    sourcePage: <none>
+    text:
+      Rates of chemical reactions
+
+    SUBTOPIC [draftId=122]
+      code: 2.3.1
+      parentDraftId: 121
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Rates of reactions
+
+      DESCRIPTOR [draftId=123]
+        code: 2.3.1.1
+        parentDraftId: 122
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          explain how varying the conditions present during chemical reactions, including temperature, surface area, pressure (gaseous systems), concentration and the presence of a catalyst can affect the rate of the reaction
+
+      DESCRIPTOR [draftId=124]
+        code: 2.3.1.2
+        parentDraftId: 122
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          use the collision theory to explain and predict the effect of concentration, temperature, pressure and surface area on the rate of chemical reactions by considering the structure of the reactants and the energy of particles
+
+      DESCRIPTOR [draftId=125]
+        code: 2.3.1.3
+        parentDraftId: 122
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          construct and explain Maxwell-Boltzmann distribution curves for reactions with and without catalysts
+
+      DESCRIPTOR [draftId=126]
+        code: 2.3.1.4
+        parentDraftId: 122
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          recognise that activation energy (Ea) is the minimum energy required for a chemical reaction to occur and is related to the strength and number of the existing chemical bonds; the magnitude of the activation energy influences the rate of a chemical reaction
+
+      DESCRIPTOR [draftId=127]
+        code: 2.3.1.5
+        parentDraftId: 122
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          sketch and use energy profile diagrams, including the transitional state and catalysed and uncatalysed pathways, to represent the enthalpy changes and activation energy associated with a chemical reaction
+
+      DESCRIPTOR [draftId=128]
+        code: 2.3.1.6
+        parentDraftId: 122
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          explain how catalysts, including enzymes and metal nanoparticles, affect the rate of certain reactions by providing an alternative reaction pathway with a reduced activation energy, hence increasing the proportion of collisions that lead to a chemical change
+
+      DESCRIPTOR [draftId=129]
+        code: 2.3.1.7
+        parentDraftId: 122
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representations to calculate the rate of chemical reactions by measuring the rate of formation of products or the depletion of reactants
+
+      DESCRIPTOR [draftId=130]
+        code: 2.3.1.8
+        parentDraftId: 122
+        displayOrder: 7
+        sourcePage: <none>
+        text:
+          analyse experimental data, including constructing and using appropriate graphical representations of relative changes in the concentration, volume and mass against time
+
+UNIT [draftId=131]
+  code: 3
+  parentDraftId: <none>
+  displayOrder: 2
+  sourcePage: <none>
+  text:
+    Equilibrium, Acids and Redox Reactions
+
+  TOPIC [draftId=132]
+    code: 3.1
+    parentDraftId: 131
+    displayOrder: 0
+    sourcePage: <none>
+    text:
+      Chemical Equilibrium Systems
+
+    SUBTOPIC [draftId=133]
+      code: 3.1.1
+      parentDraftId: 132
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Chemical equilibrium
+
+      DESCRIPTOR [draftId=134]
+        code: 3.1.1.1
+        parentDraftId: 133
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that chemical systems may be open (allowing matter and energy to be exchanged with the surroundings) or closed (allow energy, but not matter, to be exchanged with the surroundings) 
+
+      DESCRIPTOR [draftId=135]
+        code: 3.1.1.2
+        parentDraftId: 133
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that physical changes are usually reversible, whereas only some chemical reactions are reversible 
+
+      DESCRIPTOR [draftId=136]
+        code: 3.1.1.3
+        parentDraftId: 133
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          appreciate that observable changes in chemical reactions and physical changes can be described and explained at an atomic and molecular level 
+
+      DESCRIPTOR [draftId=137]
+        code: 3.1.1.4
+        parentDraftId: 133
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          symbolise equilibrium equations by using ⇌ in balanced chemical equations 
+
+      DESCRIPTOR [draftId=138]
+        code: 3.1.1.5
+        parentDraftId: 133
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          understand that, over time, physical changes and reversible chemical reactions reach a state of dynamic equilibrium in a closed system, with the relative concentrations of products and reactants defining the position of equilibrium 
+
+      DESCRIPTOR [draftId=139]
+        code: 3.1.1.6
+        parentDraftId: 133
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          explain the reversibility of chemical reactions by considering the activation energies of the forward and reverse reactions 
+
+      DESCRIPTOR [draftId=140]
+        code: 3.1.1.7
+        parentDraftId: 133
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          analyse experimental data, including constructing and using appropriate graphical representations of relative changes in the concentration of reactants and product against time, to identify the position of equilibrium. 
+
+    SUBTOPIC [draftId=141]
+      code: 3.1.2
+      parentDraftId: 132
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Factors that affect equilibrium
+
+      DESCRIPTOR [draftId=142]
+        code: 3.1.2.1
+        parentDraftId: 141
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          explain and predict the effect of temperature change on chemical systems at equilibrium by considering the enthalpy change for the forward and reverse reactions 
+
+      DESCRIPTOR [draftId=143]
+        code: 3.1.2.2
+        parentDraftId: 141
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          explain the effect of changes of concentration and pressure on chemical systems at equilibrium by applying collision theory to the forward and reverse reactions 
+
+      DESCRIPTOR [draftId=144]
+        code: 3.1.2.3
+        parentDraftId: 141
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          apply Le Châtelier’s principle to predict the effect changes of temperature, concentration of chemicals, pressure and the addition of a catalyst have on the position of equilibrium and on the value of the equilibrium constant. 
+
+    SUBTOPIC [draftId=145]
+      code: 3.1.3
+      parentDraftId: 132
+      displayOrder: 2
+      sourcePage: <none>
+      text:
+        Equilibrium Constants
+
+      DESCRIPTOR [draftId=146]
+        code: 3.1.3.1
+        parentDraftId: 145
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that equilibrium law expressions can be written for homogeneous and heterogeneous systems and that the equilibrium constant (Kc), at any given temperature, indicates the relationship between product and reactant concentrations at equilibrium 
+
+      DESCRIPTOR [draftId=147]
+        code: 3.1.3.2
+        parentDraftId: 145
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          deduce the equilibrium law expression from the equation for a homogeneous reaction and use equilibrium constants (Kc), to predict qualitatively, the relative amounts of reactants and products (equilibrium position) 
+
+      DESCRIPTOR [draftId=148]
+        code: 3.1.3.3
+        parentDraftId: 145
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          deduce the extent of a reaction from the magnitude of the equilibrium constant 
+
+      DESCRIPTOR [draftId=149]
+        code: 3.1.3.4
+        parentDraftId: 145
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representation to solve problems, including calculating equilibrium constants and the concentration of reactants and products. 
+
+    SUBTOPIC [draftId=150]
+      code: 3.1.4
+      parentDraftId: 132
+      displayOrder: 3
+      sourcePage: <none>
+      text:
+        Properties of acids and bases
+
+      DESCRIPTOR [draftId=151]
+        code: 3.1.4.1
+        parentDraftId: 150
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that acids are substances that can act as proton (hydrogen ion) donors and can be classified as monoprotic or polyprotic depending on the number of protons donated by each molecule of the acid 
+
+      DESCRIPTOR [draftId=152]
+        code: 3.1.4.2
+        parentDraftId: 150
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          distinguish between strong and weak acids and bases in terms of the extent of dissociation, reaction with water and electrical conductivity and distinguish between the terms strong and concentrated for acids and bases. 
+
+    SUBTOPIC [draftId=153]
+      code: 3.1.5
+      parentDraftId: 132
+      displayOrder: 4
+      sourcePage: <none>
+      text:
+        The pH scale
+
+      DESCRIPTOR [draftId=154]
+        code: 3.1.5.1
+        parentDraftId: 153
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that water is a weak electrolyte and the self-ionisation of water is represented by Kw = [H+][OH–]; Kw can be used to calculate the concentration of hydrogen ions from the concentration of hydroxide ions in a solution 
+
+      DESCRIPTOR [draftId=155]
+        code: 3.1.5.2
+        parentDraftId: 153
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that the pH scale is a logarithmic scale and the pH of a solution can be calculated from the concentration of hydrogen ions using the relationship pH = –log10[H+]
+
+      DESCRIPTOR [draftId=156]
+        code: 3.1.5.3
+        parentDraftId: 153
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representation to solve problems for hydrogen ion concentration [H+(aq)], pH, hydroxide ion concentrations [OH–(aq)] and pOH. 
+
+    SUBTOPIC [draftId=157]
+      code: 3.1.6
+      parentDraftId: 132
+      displayOrder: 5
+      sourcePage: <none>
+      text:
+        Brønsted-Lowry model 
+
+      DESCRIPTOR [draftId=158]
+        code: 3.1.6.1
+        parentDraftId: 157
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that the relationship between acids and bases in equilibrium systems can be explained using the Brønsted-Lowry model and represented using chemical equations that illustrate the transfer of hydrogen ions (protons) between conjugate acid-base pairs 
+
+      DESCRIPTOR [draftId=159]
+        code: 3.1.6.2
+        parentDraftId: 157
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          recognise that amphiprotic species can act as Brønsted-Lowry acids and bases 
+
+      DESCRIPTOR [draftId=160]
+        code: 3.1.6.3
+        parentDraftId: 157
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          identify and deduce the formula of the conjugate acid (or base) of any Brønsted-Lowry base (or acid) 
+
+      DESCRIPTOR [draftId=161]
+        code: 3.1.6.4
+        parentDraftId: 157
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          appreciate that buffers are solutions that are conjugate in nature and resist a change in pH when a small amount of an acid or base is added; Le Châtelier’s principle can be applied to predict how buffer solutions respond to the addition of hydrogen ions and hydroxide ions. 
+
+    SUBTOPIC [draftId=162]
+      code: 3.1.7
+      parentDraftId: 132
+      displayOrder: 6
+      sourcePage: <none>
+      text:
+        Dissociation constants
+
+      DESCRIPTOR [draftId=163]
+        code: 3.1.7.1
+        parentDraftId: 162
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that the strength of acids is explained by the degree of ionisation at equilibrium in aqueous solution, which can be represented with chemical equations and equilibrium constants (Ka) 
+
+      DESCRIPTOR [draftId=164]
+        code: 3.1.7.2
+        parentDraftId: 162
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          determine the expression for the dissociation constant for weak acids (Ka) and weak bases (Kb) from balanced chemical equations 
+
+      DESCRIPTOR [draftId=165]
+        code: 3.1.7.3
+        parentDraftId: 162
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          analyse experimental data to determine and compare the relative strengths of acids and bases 
+
+      DESCRIPTOR [draftId=166]
+        code: 3.1.7.4
+        parentDraftId: 162
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representation to solve problems, including calculating dissociation constants (Ka and Kb) and the concentration of reactants and products. 
+
+    SUBTOPIC [draftId=167]
+      code: 3.1.8
+      parentDraftId: 132
+      displayOrder: 7
+      sourcePage: <none>
+      text:
+        Acid-base indicators
+
+      DESCRIPTOR [draftId=168]
+        code: 3.1.8.1
+        parentDraftId: 167
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that an acid-base indicator is a weak acid or a weak base where the components of the conjugate acid-base pair have different colours; the acidic form is of a different colour to the basic form 
+
+      DESCRIPTOR [draftId=169]
+        code: 3.1.8.2
+        parentDraftId: 167
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          explain the relationship between the pH range of an acid-base indicator and its pKa value 
+
+      DESCRIPTOR [draftId=170]
+        code: 3.1.8.3
+        parentDraftId: 167
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          recognise that indicators change colour when the pH = pKa and identify an appropriate indicator for a titration, given equivalence point of the titration and pH range of the indicator. 
+
+    SUBTOPIC [draftId=171]
+      code: 3.1.9
+      parentDraftId: 132
+      displayOrder: 8
+      sourcePage: <none>
+      text:
+        Volumetric analysis
+
+      DESCRIPTOR [draftId=172]
+        code: 3.1.9.1
+        parentDraftId: 171
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          distinguish between the terms end point and equivalence point 
+
+      DESCRIPTOR [draftId=173]
+        code: 3.1.9.2
+        parentDraftId: 171
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          recognise that acid-base titrations rely on the identification of an equivalence point by measuring the associated change in pH, using chemical indicators or pH meters, to reveal an observable end point 
+
+      DESCRIPTOR [draftId=174]
+        code: 3.1.9.3
+        parentDraftId: 171
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          sketch the general shapes of graphs of pH against volume (titration curves) involving strong and weak acids and bases. Identify and explain their important features, including the intercept with pH axis, equivalence point, buffer region and points where pKa = pH or pKb = pOH 
+
+      DESCRIPTOR [draftId=175]
+        code: 3.1.9.4
+        parentDraftId: 171
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representations and analyse experimental data and titration curves to solve problems and make predictions, including using the mole concept to calculate moles, mass, volume and concentration from volumetric analysis data. 
+
+  TOPIC [draftId=176]
+    code: 3.2
+    parentDraftId: 131
+    displayOrder: 1
+    sourcePage: <none>
+    text:
+      Oxidation and Reduction
+
+    SUBTOPIC [draftId=177]
+      code: 3.2.1
+      parentDraftId: 176
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Redox reactions
+
+      DESCRIPTOR [draftId=178]
+        code: 3.2.1.1
+        parentDraftId: 177
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that a range of reactions, including displacement reactions of metals, combustion, corrosion and electrochemical processes, can be modelled as redox reactions involving oxidation of one substance and reduction of another substance 
+
+      DESCRIPTOR [draftId=179]
+        code: 3.2.1.2
+        parentDraftId: 177
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that the ability of an atom to gain or lose electrons can be predicted from the atom’s position in the periodic table, and explained with reference to valence electrons, consideration of energy and the overall stability of the atom 
+
+      DESCRIPTOR [draftId=180]
+        code: 3.2.1.3
+        parentDraftId: 177
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          identify the species oxidised and reduced, and the oxidising agent and reducing agent, in redox reactions 
+
+      DESCRIPTOR [draftId=181]
+        code: 3.2.1.4
+        parentDraftId: 177
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          understand that oxidation can be modelled as the loss of electrons from a chemical species, and reduction can be modelled as the gain of electrons by a chemical species; these processes can be represented using balanced half-equations and redox equations (acidic conditions only) 
+
+      DESCRIPTOR [draftId=182]
+        code: 3.2.1.5
+        parentDraftId: 177
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          deduce the oxidation state of an atom in an ion or compound and name transitional metal compounds from a given formula by applying oxidation numbers represented as roman numerals 
+
+      DESCRIPTOR [draftId=183]
+        code: 3.2.1.6
+        parentDraftId: 177
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          use appropriate representations, including half-equations and oxidation numbers, to communicate conceptual understanding, solve problems and make predictions. 
+
+    SUBTOPIC [draftId=184]
+      code: 3.2.2
+      parentDraftId: 176
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Electrochemical cells
+
+      DESCRIPTOR [draftId=185]
+        code: 3.2.2.1
+        parentDraftId: 184
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that electrochemical cells, including galvanic and electrolytic cells, consist of oxidation and reduction half-reactions connected via an external circuit that allows electrons to move from the anode (oxidation reaction) to the cathode (reduction reaction). 
+
+    SUBTOPIC [draftId=186]
+      code: 3.2.3
+      parentDraftId: 176
+      displayOrder: 2
+      sourcePage: <none>
+      text:
+        Galvanic cells
+
+      DESCRIPTOR [draftId=187]
+        code: 3.2.3.1
+        parentDraftId: 186
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that galvanic cells, including fuel cells, generate an electrical potential difference from a spontaneous redox reaction which can be represented as cell diagrams including anode and cathode half-equations 
+
+      DESCRIPTOR [draftId=188]
+        code: 3.2.3.2
+        parentDraftId: 186
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          recognise that oxidation occurs at the negative electrode (anode) and reduction occurs at the positive electrode (cathode) and explain how two half-cells can be connected by a salt bridge to create a voltaic cell (examples of half-cells are Mg, Zn, Fe and Cu and their solutions of ions) 
+
+      DESCRIPTOR [draftId=189]
+        code: 3.2.3.3
+        parentDraftId: 186
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          describe, using a diagram, the essential components of a galvanic cell; including the oxidation and reduction half-cells, the positive and negative electrodes and their solutions of their ions, the flow of electrons and the movement of ions, and the salt bridge. 
+
+    SUBTOPIC [draftId=190]
+      code: 3.2.4
+      parentDraftId: 176
+      displayOrder: 3
+      sourcePage: <none>
+      text:
+        Standard electrode potential
+
+      DESCRIPTOR [draftId=191]
+        code: 3.2.4.1
+        parentDraftId: 190
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          determine the relative strength of oxidising and reducing agents by comparing standard electrode potentials 
+
+      DESCRIPTOR [draftId=192]
+        code: 3.2.4.2
+        parentDraftId: 190
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          recognise that cell potentials at standard conditions can be calculated from standard electrode potentials; these values can be used to compare cells constructed from different materials 
+
+      DESCRIPTOR [draftId=193]
+        code: 3.2.4.3
+        parentDraftId: 190
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          recognise the limitation associated with standard reduction potentials 
+
+      DESCRIPTOR [draftId=194]
+        code: 3.2.4.4
+        parentDraftId: 190
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          use appropriate mathematical representation to solve problems and make predictions about spontaneous reactions, including calculating cell potentials under standard condition. 
+
+    SUBTOPIC [draftId=195]
+      code: 3.2.5
+      parentDraftId: 176
+      displayOrder: 4
+      sourcePage: <none>
+      text:
+        Electrolytic cells
+
+      DESCRIPTOR [draftId=196]
+        code: 3.2.5.1
+        parentDraftId: 195
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          understand that electrolytic cells use an external electrical potential difference to provide the energy to allow a non-spontaneous redox reaction to occur, and appreciate that these can be used in small-scale and industrial situations, including metal plating and the purification of copper 
+
+      DESCRIPTOR [draftId=197]
+        code: 3.2.5.2
+        parentDraftId: 195
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          predict and explain the products of the electrolysis of a molten salt and aqueous solutions of sodium chloride and copper sulfate. Explanations should refer to Eø values, the nature of the electrolyte and the concentration of the electrolyte 
+
+      DESCRIPTOR [draftId=198]
+        code: 3.2.5.3
+        parentDraftId: 195
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          describe, using a diagram, the essential components of an electrolytic cell; including source of electric current and conductors, positive and negative electrodes, and the electrolyte. 
+
+UNIT [draftId=199]
+  code: 4
+  parentDraftId: <none>
+  displayOrder: 3
+  sourcePage: <none>
+  text:
+    Structure, Synthesis and Design
+
+  TOPIC [draftId=200]
+    code: 4.1
+    parentDraftId: 199
+    displayOrder: 0
+    sourcePage: <none>
+    text:
+      Properties and Structure of Organic Materials
+
+    SUBTOPIC [draftId=201]
+      code: 4.1.1
+      parentDraftId: 200
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Structure of organic compounds
+
+      DESCRIPTOR [draftId=202]
+        code: 4.1.1.1
+        parentDraftId: 201
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that organic molecules have a hydrocarbon skeleton and can contain functional groups, including alkenes, alcohols, aldehydes, ketones, carboxylic acids, haloalkanes, esters, nitriles, amines, amides and that structural formulas (condensed and extended) can be used to show the arrangement of atoms and bonding in organic molecules 
+
+      DESCRIPTOR [draftId=203]
+        code: 4.1.1.2
+        parentDraftId: 201
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          deduce the structural formulas and apply IUPAC rules in the nomenclature of organic compounds (parent chain up to 10 carbon atoms) with simple branching for alkanes, alkenes, alkynes, alcohols, aldehydes, ketones, carboxylic acids, haloalkanes, esters, nitriles, amines and amides 
+
+      DESCRIPTOR [draftId=204]
+        code: 4.1.1.3
+        parentDraftId: 201
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          identify structural isomers as compounds with the same molecular formula but different arrangement of atoms; deduce the structural formulas and apply IUPAC rules in the nomenclature for isomers of the non-cyclic alkanes up to C6
+
+      DESCRIPTOR [draftId=205]
+        code: 4.1.1.4
+        parentDraftId: 201
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          identify stereoisomers as compounds with the same structural formula but with different arrangement of atoms in space; describe and explain geometrical (cis and trans) isomerism in non-cyclic alkenes. 
+
+      DESCRIPTOR [draftId=206]
+        code: 4.1.1.5
+        parentDraftId: 201
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          Mandatory practical: Construct 3D models of organic molecules.
+
+    SUBTOPIC [draftId=207]
+      code: 4.1.2
+      parentDraftId: 200
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Physical properties and trends
+
+      DESCRIPTOR [draftId=208]
+        code: 4.1.2.1
+        parentDraftId: 207
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          recognise that organic compounds display characteristic physical properties, including melting point, boiling point and solubility in water and organic solvents that can be explained in terms of intermolecular forces (dispersion forces, dipole-dipole interactions and hydrogen bonds), which are influenced by the nature of the functional groups 
+
+      DESCRIPTOR [draftId=209]
+        code: 4.1.2.2
+        parentDraftId: 207
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          predict and explain the trends in melting and boiling point for members of a homologous series 
+
+      DESCRIPTOR [draftId=210]
+        code: 4.1.2.3
+        parentDraftId: 207
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          discuss the volatility and solubility in water of alcohols, aldehydes, ketones, carboxylic acids and halides. 
+
+    SUBTOPIC [draftId=211]
+      code: 4.1.3
+      parentDraftId: 200
+      displayOrder: 2
+      sourcePage: <none>
+      text:
+        Organic reactions and reaction pathways
+
+      DESCRIPTOR [draftId=212]
+        code: 4.1.3.1
+        parentDraftId: 211
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          appreciate that each class of organic compound displays characteristic chemical properties and undergoes specific reactions based on the functional group present; these reactions, including acid-base and oxidation reactions, can be used to identify the class of the organic compound 
+
+      DESCRIPTOR [draftId=213]
+        code: 4.1.3.2
+        parentDraftId: 211
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that saturated compounds contain single bonds only and undergo substitution reactions, and that unsaturated compounds contain double or triple bonds and undergo addition reactions 
+
+      DESCRIPTOR [draftId=214]
+        code: 4.1.3.3
+        parentDraftId: 211
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          determine the primary, secondary and tertiary carbon atoms in halogenoalkanes and alcohols and apply IUPAC rules of nomenclature 
+
+      DESCRIPTOR [draftId=215]
+        code: 4.1.3.4
+        parentDraftId: 211
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          describe, using equations: oxidation reactions of alcohols and the complete combustion of alkanes and alcohols; substitution reactions of alkanes with halogens; substitution reactions of haloalkanes with halogens, sodium hydroxide, ammonia and potassium cyanide; addition reactions of alkenes with water, halogens and hydrogen halides; addition reactions of alkenes to form poly(alkenes).
+
+      DESCRIPTOR [draftId=216]
+        code: 4.1.3.5
+        parentDraftId: 211
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          recall the acid-base properties of carboxylic acids and explain, using equations, that esterification is a reversible reaction between an alcohol and a carboxylic acid 
+
+      DESCRIPTOR [draftId=217]
+        code: 4.1.3.6
+        parentDraftId: 211
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          recognise the acid-base properties of amines and explain, using equations, the reaction with carboxylic acids to form amides 
+
+      DESCRIPTOR [draftId=218]
+        code: 4.1.3.7
+        parentDraftId: 211
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          recognise reduction reactions and explain, using equations, the reaction of nitriles to form amines and alkenes to form alkanes
+
+      DESCRIPTOR [draftId=219]
+        code: 4.1.3.8
+        parentDraftId: 211
+        displayOrder: 7
+        sourcePage: <none>
+        text:
+          recognise and explain, using equations, that: esters and amides are formed by condensation reactions; elimination reactions can produce unsaturated molecule and explain, using equations, the reaction of haloalkanes to form alkenes.
+
+      DESCRIPTOR [draftId=220]
+        code: 4.1.3.9
+        parentDraftId: 211
+        displayOrder: 8
+        sourcePage: <none>
+        text:
+          understand that organic reactions can be identified using characteristic observations and recall tests to distinguish between: alkanes and alkenes using bromine water; primary, secondary and tertiary alcohols using acidified potassium dichromate (VI) and potassium manganate (VII)
+
+      DESCRIPTOR [draftId=221]
+        code: 4.1.3.10
+        parentDraftId: 211
+        displayOrder: 9
+        sourcePage: <none>
+        text:
+          understand that the synthesis of organic compounds often involves constructing reaction pathways that may include more than one chemical reaction 
+
+      DESCRIPTOR [draftId=222]
+        code: 4.1.3.11
+        parentDraftId: 211
+        displayOrder: 10
+        sourcePage: <none>
+        text:
+          deduce reaction pathways, including reagents, condition and chemical equations, given the starting materials and the product. 
+
+    SUBTOPIC [draftId=223]
+      code: 4.1.4
+      parentDraftId: 200
+      displayOrder: 3
+      sourcePage: <none>
+      text:
+        Organic materials: structure and function
+
+      DESCRIPTOR [draftId=224]
+        code: 4.1.4.1
+        parentDraftId: 223
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          appreciate that organic materials including proteins, carbohydrates, lipids and synthetic polymers display properties including strength, density and biodegradability that can be explained by considering the primary, secondary and tertiary structures of the materials 
+
+      DESCRIPTOR [draftId=225]
+        code: 4.1.4.2
+        parentDraftId: 223
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          describe and explain the primary, secondary (α-helix and β-pleated sheets), tertiary and quaternary structure of proteins 
+
+      DESCRIPTOR [draftId=226]
+        code: 4.1.4.3
+        parentDraftId: 223
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          recognise that enzymes are proteins and describe the characteristics of biological catalysts (enzymes) including that activity depends on the structure and the specificity of the enzyme action 
+
+      DESCRIPTOR [draftId=227]
+        code: 4.1.4.4
+        parentDraftId: 223
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          recognise that monosaccharides contain either an aldehyde group (aldose) or a ketone group (ketose) and several -OH groups, and have the empirical formula CH2O 
+
+      DESCRIPTOR [draftId=228]
+        code: 4.1.4.5
+        parentDraftId: 223
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          distinguish between α-glucose and β-glucose, and compare and explain the structural properties of starch (amylose and amylopectin) and cellulose 
+
+      DESCRIPTOR [draftId=229]
+        code: 4.1.4.6
+        parentDraftId: 223
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          recognise that triglycerides (lipids) are esters and describe the difference in structure between saturated and unsaturated fatty acids 
+
+      DESCRIPTOR [draftId=230]
+        code: 4.1.4.7
+        parentDraftId: 223
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          describe, using equations, the base hydrolysis (saponification) of fats (triglycerides) to produce glycerol and its long chain fatty acid salt (soap), and explain how their cleaning action and solubility in hard water is related to their chemical structure 
+
+      DESCRIPTOR [draftId=231]
+        code: 4.1.4.8
+        parentDraftId: 223
+        displayOrder: 7
+        sourcePage: <none>
+        text:
+          explain how the properties of polymers depends on their structural features including; the degree of branching in polyethene (LDPE and HDPE), the position of the methyl group in polypropene (syntactic, isotactic and atactic) and polytetrafluorethene. 
+
+    SUBTOPIC [draftId=232]
+      code: 4.1.5
+      parentDraftId: 200
+      displayOrder: 4
+      sourcePage: <none>
+      text:
+        Analytical techniques
+
+      DESCRIPTOR [draftId=233]
+        code: 4.1.5.1
+        parentDraftId: 232
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          explain how proteins can be analysed by chromatography and electrophoresis 
+
+      DESCRIPTOR [draftId=234]
+        code: 4.1.5.2
+        parentDraftId: 232
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          select and use data from analytical techniques, including mass spectrometry, x-ray crystallography and infrared spectroscopy, to determine the structure of organic molecules 
+
+      DESCRIPTOR [draftId=235]
+        code: 4.1.5.3
+        parentDraftId: 232
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          analyse data from spectra, including mass spectrometry and infrared spectroscopy, to communicate conceptual understanding, solve problems and make predictions. 
+
+  TOPIC [draftId=236]
+    code: 4.2
+    parentDraftId: 199
+    displayOrder: 1
+    sourcePage: <none>
+    text:
+      Chemical Synthesis and Design
+
+    SUBTOPIC [draftId=237]
+      code: 4.2.1
+      parentDraftId: 236
+      displayOrder: 0
+      sourcePage: <none>
+      text:
+        Chemical synthesis
+
+      DESCRIPTOR [draftId=238]
+        code: 4.2.1.1
+        parentDraftId: 237
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          appreciate that chemical synthesis involves the selection of particular reagents to form a product with specific properties 
+
+      DESCRIPTOR [draftId=239]
+        code: 4.2.1.2
+        parentDraftId: 237
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          understand that reagents and reaction conditions are chosen to optimise the yield and rate for chemical synthesis processes, including the production of ammonia (Haber process), sulfuric acid (contact process) and biodiesel (base-catalysed and lipase-catalysed methods) 
+
+      DESCRIPTOR [draftId=240]
+        code: 4.2.1.3
+        parentDraftId: 237
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          understand that fuels, including biodiesel, ethanol and hydrogen, can be synthesised from a range of chemical reactions including, addition, oxidation and esterification 
+
+      DESCRIPTOR [draftId=241]
+        code: 4.2.1.4
+        parentDraftId: 237
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          understand that enzymes can be used on an industrial scale for chemical synthesis to achieve an economically viable rate, including fermentation to produce ethanol and lipase-catalysed transesterification to produce biodiesel 
+
+      DESCRIPTOR [draftId=242]
+        code: 4.2.1.5
+        parentDraftId: 237
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          describe, using equations, the production of ethanol from fermentation and the hydration of ethene 
+
+      DESCRIPTOR [draftId=243]
+        code: 4.2.1.6
+        parentDraftId: 237
+        displayOrder: 5
+        sourcePage: <none>
+        text:
+          describe, using equations, the transesterification of triglycerides to produce biodiesel 
+
+      DESCRIPTOR [draftId=244]
+        code: 4.2.1.7
+        parentDraftId: 237
+        displayOrder: 6
+        sourcePage: <none>
+        text:
+          discuss, using diagrams and relevant half-equations, the operation of a hydrogen fuel cell under acidic and alkaline conditions. 
+
+      DESCRIPTOR [draftId=245]
+        code: 4.2.1.8
+        parentDraftId: 237
+        displayOrder: 7
+        sourcePage: <none>
+        text:
+          calculate the yield of chemical synthesis reactions by comparing stoichiometric quantities with actual quantities and by determining limiting reagents. 
+
+    SUBTOPIC [draftId=246]
+      code: 4.2.2
+      parentDraftId: 236
+      displayOrder: 1
+      sourcePage: <none>
+      text:
+        Green chemistry
+
+      DESCRIPTOR [draftId=247]
+        code: 4.2.2.1
+        parentDraftId: 246
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          appreciate that green chemistry principles include the design of chemical synthesis processes that use renewable raw materials, limit the use of potentially harmful solvents and minimise the amount of unwanted products 
+
+      DESCRIPTOR [draftId=248]
+        code: 4.2.2.2
+        parentDraftId: 246
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          outline the principles of green chemistry and recognise that the higher the atom economy, the ‘greener’ the process 
+
+      DESCRIPTOR [draftId=249]
+        code: 4.2.2.3
+        parentDraftId: 246
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          calculate atom economy and draw conclusions about the economic and environmental impact of chemical synthesis processes. 
+
+    SUBTOPIC [draftId=250]
+      code: 4.2.3
+      parentDraftId: 236
+      displayOrder: 2
+      sourcePage: <none>
+      text:
+        Macromolecules: polymers, proteins and carbohydrates
+
+      DESCRIPTOR [draftId=251]
+        code: 4.2.3.1
+        parentDraftId: 250
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          describe, using equations, how addition polymers can be produced from their monomers including polyethene (LDPE and HDPE), polypropene and polytetrafluorethene 
+
+      DESCRIPTOR [draftId=252]
+        code: 4.2.3.2
+        parentDraftId: 250
+        displayOrder: 1
+        sourcePage: <none>
+        text:
+          describe, using equations, how condensation polymers, including polypeptides (proteins), polysaccharides (carbohydrates) and polyesters, can be produced from their monomers 
+
+      DESCRIPTOR [draftId=253]
+        code: 4.2.3.3
+        parentDraftId: 250
+        displayOrder: 2
+        sourcePage: <none>
+        text:
+          discuss the advantages and disadvantages of polymer use, including strength, density, lack of reactivity, use of natural resources and biodegradability 
+
+      DESCRIPTOR [draftId=254]
+        code: 4.2.3.4
+        parentDraftId: 250
+        displayOrder: 3
+        sourcePage: <none>
+        text:
+          describe the condensation reaction of 2-amino acids to form polypeptides (involving up to three amino acids), and understand that polypeptides (proteins) are formed when amino acid monomers are joined by peptide bonds 
+
+      DESCRIPTOR [draftId=255]
+        code: 4.2.3.5
+        parentDraftId: 250
+        displayOrder: 4
+        sourcePage: <none>
+        text:
+          describe the condensation reaction of monosaccharides to form disaccharides (lactose, maltose and sucrose) and polysaccharides (starch, glycogen and cellulose), and understand that polysaccharides are formed when monosaccharides monomers are joined by glycosidic bonds. 
+
+    SUBTOPIC [draftId=256]
+      code: 4.2.4
+      parentDraftId: 236
+      displayOrder: 3
+      sourcePage: <none>
+      text:
+        Molecular manufacturing
+
+      DESCRIPTOR [draftId=257]
+        code: 4.2.4.1
+        parentDraftId: 256
+        displayOrder: 0
+        sourcePage: <none>
+        text:
+          appreciate that molecular manufacturing processes involve the positioning of molecules to facilitate a specific chemical reaction; such methods have the potential to synthesise specialised products, including proteins, carbon nanotubes, nanorobots and chemical sensors used in medicine. 
