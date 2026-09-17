@@ -44,7 +44,6 @@ class LegacyQuestionMetadataImporterTest {
 				Statement statement = connection.createStatement()) {
 			statement.executeUpdate("UPDATE answers SET answer_text = 'C'");
 		}
-
 		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
 				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
 		assertTrue(exception.getMessage().contains("Existing answer conflicts"));
@@ -68,7 +67,6 @@ class LegacyQuestionMetadataImporterTest {
 				Statement statement = connection.createStatement()) {
 			statement.executeUpdate("DELETE FROM answers");
 		}
-
 		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
 		assertEquals(new LegacyQuestionImportResult(0, 2, 1), result);
 		try (Connection connection = fixture.database().openConnection();

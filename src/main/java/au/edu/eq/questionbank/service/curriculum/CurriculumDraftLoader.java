@@ -34,13 +34,13 @@ public final class CurriculumDraftLoader {
 	 * Loads persisted nodes into a fresh draft with session-local IDs bound to
 	 * their existing database IDs. Retains codes, wording, parent relationships,
 	 * sibling order and optional source pages without renumbering the curriculum.
-	 * Records the complete persisted node snapshot for stale-save detection.
-	 * The supplied syllabus snapshot is retained; loading a final curriculum does
-	 * not reopen it or authorise saving it.
+	 * Records the complete persisted node snapshot for stale-save detection. The
+	 * supplied syllabus snapshot is retained; loading a final curriculum does not
+	 * reopen it or authorise saving it.
 	 *
 	 * @param syllabusVersion syllabus snapshot whose persisted nodes are loaded
 	 * @return fresh session, possibly containing an empty draft
-	 * @throws NullPointerException if {@code syllabusVersion} is {@code null}
+	 * @throws NullPointerException  if {@code syllabusVersion} is {@code null}
 	 * @throws IllegalStateException if reading fails or the stored hierarchy has
 	 *                               duplicate identities, orphans or cycles
 	 */

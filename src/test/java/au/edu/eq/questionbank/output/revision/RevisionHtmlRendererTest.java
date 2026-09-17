@@ -48,8 +48,8 @@ class RevisionHtmlRendererTest {
 	@Test
 	void omitsDescriptorSectionWhenItHasNoRenderableQuestions() throws Exception {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createCorpus(
-				_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.subtopic)));
+		RevisionCorpus corpus = fixture
+				.createCorpus(_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.subtopic)));
 		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
 				Path.of("assets", "questions", "question-2.png"));
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, List.of(questionAsset), List.of());
@@ -67,8 +67,8 @@ class RevisionHtmlRendererTest {
 	@Test
 	void rejectsMissingAnswerAssetForPersistedAnswerRegion() throws Exception {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createCorpus(_ -> List
-				.of(new QuestionApplicabilityMatch(fixture.answeredQuestion, fixture.directDescriptor)));
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.answeredQuestion, fixture.directDescriptor)));
 		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.answeredQuestion,
 				Path.of("assets", "questions", "question-1.png"));
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, List.of(questionAsset), List.of());
@@ -78,8 +78,8 @@ class RevisionHtmlRendererTest {
 	@Test
 	void rejectsMissingQuestionAssetForRenderablePlacement() throws Exception {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createCorpus(_ -> List
-				.of(new QuestionApplicabilityMatch(fixture.answeredQuestion, fixture.directDescriptor)));
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.answeredQuestion, fixture.directDescriptor)));
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, List.of(), List.of());
 		assertThrows(IllegalStateException.class, () -> renderer.renderTopicPages(corpus, tempDir.resolve("output")));
 	}
@@ -128,8 +128,8 @@ class RevisionHtmlRendererTest {
 	@Test
 	void rendersSubjectUnitAndTopicNavigation() throws Exception {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createCorpus(_ -> List
-				.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.directDescriptor)));
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.directDescriptor)));
 		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
 				Path.of("assets", "questions", "question-2.png"));
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, List.of(questionAsset), List.of());
@@ -160,8 +160,8 @@ class RevisionHtmlRendererTest {
 	@Test
 	void rendersSubtopicAsSelectablePage() throws Exception {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createCorpus(
-				_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.subtopic)));
+		RevisionCorpus corpus = fixture
+				.createCorpus(_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.subtopic)));
 		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
 				Path.of("assets", "questions", "question-2.png"));
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, List.of(questionAsset), List.of());
@@ -187,10 +187,10 @@ class RevisionHtmlRendererTest {
 	@Test
 	void rendersTopicQuestionCardsAnswersAndSourceAttribution() throws Exception {
 		Fixture fixture = new Fixture();
-		RevisionCorpus corpus = fixture.createCorpus(_ -> List.of(
-				new QuestionApplicabilityMatch(fixture.answeredQuestion, fixture.directDescriptor),
-				new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.directDescriptor),
-				new QuestionApplicabilityMatch(fixture.incompleteQuestion, fixture.directDescriptor)));
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.answeredQuestion, fixture.directDescriptor),
+						new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.directDescriptor),
+						new QuestionApplicabilityMatch(fixture.incompleteQuestion, fixture.directDescriptor)));
 		RevisionQuestionAsset answeredAsset = new RevisionQuestionAsset(fixture.answeredQuestion,
 				Path.of("assets", "questions", "question-1.png"));
 		RevisionQuestionAsset noAnswerAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,

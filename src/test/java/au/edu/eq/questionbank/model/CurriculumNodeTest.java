@@ -32,7 +32,6 @@ class CurriculumNodeTest {
 	@Test
 	void acceptsZeroDisplayOrder() {
 		Unit firstUnit = new Unit(6, syllabusVersion, "2", "Unit 2", 0);
-
 		assertEquals(0, firstUnit.getDisplayOrder());
 	}
 
@@ -68,7 +67,6 @@ class CurriculumNodeTest {
 	void equalityUsesIdAcrossConcreteNodeTypes() {
 		Unit sameIdUnit = new Unit(7, syllabusVersion, "3", "Unit 3", 1);
 		Topic sameIdTopic = new Topic(7, syllabusVersion, unit, "1.2", "Topic 2", 1);
-
 		assertEquals(sameIdUnit, sameIdTopic);
 		assertEquals(sameIdTopic, sameIdUnit);
 		assertEquals(sameIdUnit.hashCode(), sameIdTopic.hashCode());
@@ -87,7 +85,6 @@ class CurriculumNodeTest {
 	@Test
 	void exposesNodeValuesAndReadableText() {
 		Unit unit = new Unit(10, syllabusVersion, "3", "Unit 3", 1);
-
 		assertAll(() -> assertEquals(10, unit.getId()), () -> assertEquals(syllabusVersion, unit.getSyllabusVersion()),
 				() -> assertEquals("3", unit.getCode()), () -> assertEquals("Unit 3", unit.getName()),
 				() -> assertEquals(CurriculumLevel.UNIT, unit.getLevel()),
@@ -99,7 +96,6 @@ class CurriculumNodeTest {
 		SyllabusVersion syllabus2019 = new SyllabusVersion(2, chemistry, "2019", false);
 		Unit unit2019 = new Unit(6, syllabus2019, "3", "Unit 3", 1);
 		Topic topic2019 = new Topic(7, syllabus2019, unit2019, "3.1", "Topic 3.1", 1);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new Descriptor(8, syllabusVersion, topic2019, "3.1.a", "Descriptor", 0));
 	}

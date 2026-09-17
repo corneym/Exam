@@ -65,6 +65,7 @@ final class OptionsDialog extends Dialog<ButtonType> {
 				chooser.setInitialDirectory(currentDirectory);
 			}
 		} catch (IllegalArgumentException e) {
+
 			// Leave the chooser at its default location when the entered path is invalid.
 		}
 		File selectedDirectory = chooser.showDialog(owner);

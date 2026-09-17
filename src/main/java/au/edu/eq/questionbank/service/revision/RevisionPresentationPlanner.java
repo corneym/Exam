@@ -30,10 +30,12 @@ public final class RevisionPresentationPlanner {
 			.thenComparingLong(Question::getId);
 
 	/**
-	 * Groups renderable corpus placements into numbered student-facing presentations.
+	 * Groups renderable corpus placements into numbered student-facing
+	 * presentations.
 	 *
 	 * @param corpus source corpus organised by current curriculum
-	 * @return presentation hierarchy with source-question parts grouped within each bucket
+	 * @return presentation hierarchy with source-question parts grouped within each
+	 *         bucket
 	 */
 	public RevisionPresentationPlan plan(RevisionCorpus corpus) {
 		if (corpus == null) {

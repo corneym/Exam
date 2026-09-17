@@ -26,11 +26,11 @@ public class CurriculumMapping {
 	 * @throws NullPointerException     if {@code source}, {@code target}, or
 	 *                                  {@code status} is {@code null}
 	 * @throws IllegalArgumentException if the identifier is not positive, the nodes
-	 *                                  have different subjects or curriculum levels,
-	 *                                  or belong to the same syllabus version
+	 *                                  have different subjects or curriculum
+	 *                                  levels, or belong to the same syllabus
+	 *                                  version
 	 */
 	public CurriculumMapping(long id, CurriculumNode source, CurriculumNode target, MappingStatus status) {
-
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -44,22 +44,21 @@ public class CurriculumMapping {
 			throw new NullPointerException("status");
 		}
 
-		// Translate between equivalent hierarchy levels across versions of the same subject.
+		// Translate between equivalent hierarchy levels across versions of the same
+		// subject.
 		if (!source.getSyllabusVersion().getSubject().equals(target.getSyllabusVersion().getSubject())) {
-
 			throw new IllegalArgumentException("source and target must belong to the same subject");
 		}
-
 		if (source.getSyllabusVersion().equals(target.getSyllabusVersion())) {
-
 			throw new IllegalArgumentException("source and target must belong to different syllabus versions");
 		}
 		if (source.getLevel() != target.getLevel()) {
 			throw new IllegalArgumentException("source and target must be the same curriculum level");
 		}
-
 		this.id = id;
-		// Retain the caller's direction; creating this relationship does not create its reverse.
+
+		// Retain the caller's direction; creating this relationship does not create its
+		// reverse.
 		this.source = source;
 		this.target = target;
 		this.status = status;

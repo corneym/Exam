@@ -41,9 +41,10 @@ class SqliteSharedQuestionContextRepositoryTest {
 					END
 					""");
 		}
-		assertThrows(IllegalStateException.class, () -> fixture.repository().save(fixture.firstBooklet(),
-				"Preamble", List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2),
-						new SharedQuestionContextRegion(2, 0.1, 0.1, 0.5, 0.2))));
+		assertThrows(IllegalStateException.class,
+				() -> fixture.repository().save(fixture.firstBooklet(), "Preamble",
+						List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2),
+								new SharedQuestionContextRegion(2, 0.1, 0.1, 0.5, 0.2))));
 		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
 		assertEquals(0, rowCount(fixture.database(), "shared_question_context_regions"));
 	}
@@ -89,7 +90,8 @@ class SqliteSharedQuestionContextRepositoryTest {
 	@Test
 	void rollsBackContextWhenARegionCannotBeInserted() throws Exception {
 		RepositoryFixture fixture = createFixture("shared-context-rollback.db");
-		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
 			statement.execute("""
 					CREATE TRIGGER reject_test_context_region
 					BEFORE INSERT ON shared_question_context_regions
@@ -98,8 +100,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 					END
 					""");
 		}
-		List<SharedQuestionContextRegion> regions = List.of(
-				new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2));
+		List<SharedQuestionContextRegion> regions = List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2));
 		assertThrows(IllegalStateException.class,
 				() -> fixture.repository().save(fixture.firstBooklet(), "Question 21 preamble", regions));
 		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
@@ -122,7 +123,8 @@ class SqliteSharedQuestionContextRepositoryTest {
 	}
 
 	private int rowCount(SqliteDatabase database, String table) throws Exception {
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
 			assertTrue(result.next());
 			return result.getInt(1);

@@ -22,6 +22,7 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -82,6 +83,7 @@ final class AnswerCapturePane extends VBox {
 					marksLabel(question.getMarks()), answerState);
 		}
 	};
+
 	// Workflow dependencies and application callbacks.
 	private final QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor;
@@ -93,11 +95,13 @@ final class AnswerCapturePane extends VBox {
 	private final Runnable answerDocumentHandler;
 	private final SqliteAnswerWriter answerWriter;
 	private final BooleanSupplier answerTransitionAllowed;
+
 	// Question and answer source selection.
 	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
 	private final Label selectedAnswerQuestionLabel = new Label("No question selected");
 	private final Button chooseAnswerPdfButton = new Button("Choose PDF...");
 	private final Label selectedAnswerPdfLabel = new Label("No PDF selected");
+
 	// Answer content and region controls.
 	private final ToggleGroup multipleChoiceAnswerGroup = new ToggleGroup();
 	private final RadioButton answerAButton = new RadioButton("A");
@@ -113,14 +117,17 @@ final class AnswerCapturePane extends VBox {
 	private final VBox answerRegionListBox = new VBox(COMPACT_SPACING);
 	private final HBox answerPdfControls = new HBox();
 	private final ScrollPane answerRegionsScrollPane = new ScrollPane(answerRegionListBox);
+
 	// Save and edit controls.
 	private final Button saveAnswerButton = new Button("Save");
 	private final Button cancelAnswerEditButton = new Button("Cancel");
+
 	// Transient capture and edit state.
 	private final List<AnswerRegion> pendingAnswerRegions = new ArrayList<>();
 	private AnswerFile answerFile;
 	private AnswerRegion currentAnswerSelection;
 	private boolean restoringUnansweredQuestionSelection;
+
 	// A question-save snapshot may predate an answer committed while it was
 	// loading.
 	private final Set<Long> locallyAnsweredQuestionIds = new HashSet<>();

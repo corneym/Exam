@@ -16,18 +16,16 @@ public final class ScormExportResult {
 	 * Creates a result after successful package publication.
 	 *
 	 * @param destination the published SCORM ZIP
-	 * @param statistics statistics from the underlying revision corpus
+	 * @param statistics  statistics from the underlying revision corpus
 	 * @throws NullPointerException if either argument is null
 	 */
 	ScormExportResult(Path destination, RevisionCorpusStatistics statistics) {
 		if (destination == null) {
 			throw new NullPointerException("destination");
 		}
-
 		if (statistics == null) {
 			throw new NullPointerException("statistics");
 		}
-
 		this.destination = destination;
 		this.statistics = statistics;
 	}

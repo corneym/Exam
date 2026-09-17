@@ -51,6 +51,7 @@ public final class QuestionSourceOrder {
 		Matcher leftMatcher = SUPPORTED_QUESTION_CODE.matcher(left);
 		Matcher rightMatcher = SUPPORTED_QUESTION_CODE.matcher(right);
 		if (leftMatcher.matches() && rightMatcher.matches()) {
+
 			// Compare any existing alphabetic prefix before the numeric Question number.
 			int prefixComparison = compareText(leftMatcher.group(1), rightMatcher.group(1));
 			if (prefixComparison != 0) {
@@ -86,23 +87,27 @@ public final class QuestionSourceOrder {
 	private static int compareQuestions(Question left, Question right) {
 		Objects.requireNonNull(left, "left");
 		Objects.requireNonNull(right, "right");
+
 		// Provider is the first source-level grouping required by the capture workflow.
 		int providerComparison = compareText(left.getExam().getProvider().getName(),
 				right.getExam().getProvider().getName());
 		if (providerComparison != 0) {
 			return providerComparison;
 		}
+
 		// Within a provider, examinations follow chronological source order.
 		int yearComparison = Integer.compare(left.getExam().getYear(), right.getExam().getYear());
 		if (yearComparison != 0) {
 			return yearComparison;
 		}
+
 		// Booklets belonging to the same provider/year are grouped by their stored
 		// name.
 		int bookletComparison = compareText(left.getBooklet().getName(), right.getBooklet().getName());
 		if (bookletComparison != 0) {
 			return bookletComparison;
 		}
+
 		// Question codes use numeric-aware ordering with optional alphabetic parts.
 		int questionComparison = compareQuestionCodes(left.getQuestionCode(), right.getQuestionCode());
 		if (questionComparison != 0) {
@@ -117,12 +122,14 @@ public final class QuestionSourceOrder {
 	}
 
 	private static int compareText(String left, String right) {
+
 		// Compare case-insensitively first so presentation capitalisation does not
 		// alter grouping.
 		int comparison = left.toLowerCase(Locale.ROOT).compareTo(right.toLowerCase(Locale.ROOT));
 		if (comparison != 0) {
 			return comparison;
 		}
+
 		// Preserve deterministic ordering if two labels differ only by capitalisation.
 		return left.compareTo(right);
 	}

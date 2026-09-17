@@ -58,13 +58,11 @@ final class PdfFilePicker {
 		if (selectedFile == null) {
 			return null;
 		}
-
 		Path selectedPath = selectedFile.toPath().toAbsolutePath().normalize();
 		if (!isInsideDataRoot(selectedPath)) {
 			showInvalidPathAlert(invalidPathMessage);
 			return null;
 		}
-
 		return new SelectedPdf(selectedFile, selectedPath, dataRoot);
 	}
 

@@ -18,6 +18,7 @@ class QuestionSourceOrderTest {
 	@Test
 	void naturallyOrdersExistingAlphabeticPrefixForm() {
 		List<String> codes = new ArrayList<>(List.of("Q10", "Q3b", "Q3", "Q3a"));
+
 		// Existing Q-prefixed codes use the same numeric and alphabetic-part ordering.
 		codes.sort(QuestionSourceOrder::compareQuestionCodes);
 		assertEquals(List.of("Q3", "Q3a", "Q3b", "Q10"), codes);
@@ -26,6 +27,7 @@ class QuestionSourceOrderTest {
 	@Test
 	void naturallyOrdersNumericQuestionsAndAlphabeticParts() {
 		List<String> codes = new ArrayList<>(List.of("10", "3b", "3", "3a", "2"));
+
 		// Sort the deliberately scrambled codes using the source-order Question syntax.
 		codes.sort(QuestionSourceOrder::compareQuestionCodes);
 		assertEquals(List.of("2", "3", "3a", "3b", "10"), codes);
@@ -51,6 +53,7 @@ class QuestionSourceOrderTest {
 		Question beta2022Question1 = question(46, beta2022Paper1, "1");
 		List<Question> questions = new ArrayList<>(List.of(beta2022Question1, alpha2024Question1, alpha2023Question10,
 				alpha2023Paper2Question1, alpha2023Question3b, alpha2023Question3a, alpha2023Question3));
+
 		// Apply the complete provider/year/booklet/Question source-order policy.
 		questions.sort(QuestionSourceOrder.comparator());
 		assertEquals(List.of(alpha2023Question3, alpha2023Question3a, alpha2023Question3b, alpha2023Question10,
@@ -58,6 +61,7 @@ class QuestionSourceOrderTest {
 	}
 
 	private ExamBooklet booklet(long id, Exam exam, String name, String relativePath) {
+
 		// Give each test booklet its own persisted source-document identity.
 		return new ExamBooklet(id, exam, name, new SourceDocument(id + 100, relativePath));
 	}

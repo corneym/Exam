@@ -1083,6 +1083,7 @@ public class QuestionBankApplication extends Application {
 
 	private void openCurriculumAuthoringWindow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
 			CurriculumAuthoringSession session) {
+
 		// Windows are the registry: hiding/closing releases access automatically,
 		// while a cancelled close retains it. Include FINAL views that can reopen.
 		for (Window window : List.copyOf(Window.getWindows())) {
@@ -1151,6 +1152,7 @@ public class QuestionBankApplication extends Application {
 		if (blockWhileCaptureSaveInProgress(primaryStage, "closing the application")) {
 			return;
 		}
+
 		// Authoring windows own independent drafts. Resolve them before backup or
 		// resource shutdown, which must include any curriculum saved by this prompt.
 		for (Window window : List.copyOf(Window.getWindows())) {
@@ -1183,6 +1185,7 @@ public class QuestionBankApplication extends Application {
 				completeExitWithoutBackup(primaryStage);
 				return;
 			}
+
 			// RETRY deliberately loops through prepareForExit().
 		}
 	}

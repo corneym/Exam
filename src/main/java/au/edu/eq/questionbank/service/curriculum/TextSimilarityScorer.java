@@ -4,6 +4,7 @@ package au.edu.eq.questionbank.service.curriculum;
  * Scores the textual similarity of two pieces of curriculum content.
  */
 public interface TextSimilarityScorer {
+
 	/**
 	 * Returns a normalised similarity score.
 	 *

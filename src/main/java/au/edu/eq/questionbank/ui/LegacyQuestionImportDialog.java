@@ -124,8 +124,7 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	private void configureSelectors() {
 		subjectBox.getItems().setAll(curriculumRepository.findAllSubjects());
 		subjectBox.setPrefWidth(220);
-		subjectBox.valueProperty()
-				.addListener((_, _, newSubject) -> loadSyllabusVersions(newSubject));
+		subjectBox.valueProperty().addListener((_, _, newSubject) -> loadSyllabusVersions(newSubject));
 		syllabusBox.setPrefWidth(220);
 		syllabusBox.setDisable(true);
 	}

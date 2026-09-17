@@ -8,8 +8,8 @@ import org.junit.jupiter.api.Test;
 class QuestionCaptureValidatorTest {
 
 	private QuestionCaptureValidator.State state(boolean examSet, String questionCode, boolean subjectSelected,
-			boolean unitSelected, boolean topicSelected, boolean classificationSelected, boolean currentSelectionPending,
-			int acceptedRegionCount) {
+			boolean unitSelected, boolean topicSelected, boolean classificationSelected,
+			boolean currentSelectionPending, int acceptedRegionCount) {
 		return new QuestionCaptureValidator.State(examSet, questionCode, "1", subjectSelected, unitSelected,
 				topicSelected, classificationSelected, currentSelectionPending, acceptedRegionCount);
 	}
@@ -17,7 +17,6 @@ class QuestionCaptureValidatorTest {
 	@Test
 	void acceptsCompleteQuestionCaptureState() {
 		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, false, 1);
-
 		assertNull(QuestionCaptureValidator.findError(state));
 	}
 
@@ -40,14 +39,12 @@ class QuestionCaptureValidatorTest {
 	@Test
 	void requiresAtLeastOneAcceptedRegion() {
 		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, false, 0);
-
 		assertEquals("Add at least one question region.", QuestionCaptureValidator.findError(state));
 	}
 
 	@Test
 	void requiresPendingSelectionToBeAccepted() {
 		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, true, 1);
-
 		assertEquals("The current selection has not been added to Accepted regions.",
 				QuestionCaptureValidator.findError(state));
 	}

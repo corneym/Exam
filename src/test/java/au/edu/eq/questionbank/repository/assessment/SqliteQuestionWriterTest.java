@@ -88,10 +88,8 @@ class SqliteQuestionWriterTest {
 		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
 				"External Assessment", "Question booklet", "Chemistry/2025/questions.pdf");
 		QuestionRegion region = new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20);
-
 		assertThrows(IllegalArgumentException.class, () -> new SqliteQuestionWriter(database).insertQuestion(booklet,
 				"Q1", "", 1, List.of(region), physicsSubtopic, false));
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet questions = statement.executeQuery("SELECT COUNT(*) FROM questions")) {

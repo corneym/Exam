@@ -42,8 +42,8 @@ public final class SourceQuestion {
 	 *                           absent or present
 	 * @throws IllegalArgumentException if {@code id} is not positive or the source
 	 *                                  code is blank
-	 * @throws NullPointerException     if {@code booklet} or
-	 *                                  {@code preambleStatus} is {@code null}
+	 * @throws NullPointerException     if {@code booklet} or {@code preambleStatus}
+	 *                                  is {@code null}
 	 */
 	public SourceQuestion(long id, ExamBooklet booklet, String sourceQuestionCode, PreambleStatus preambleStatus) {
 		if (id < 1) {
@@ -74,7 +74,8 @@ public final class SourceQuestion {
 	}
 
 	/**
-	 * Returns the persistent identity shared by captured parts of this source question.
+	 * Returns the persistent identity shared by captured parts of this source
+	 * question.
 	 *
 	 * @return the positive persistent identifier
 	 */

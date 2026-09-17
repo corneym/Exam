@@ -56,12 +56,10 @@ class SqliteSourceQuestionRepositoryTest {
 				() -> assertThrows(IllegalArgumentException.class,
 						() -> repository.findByBookletAndCode(fixture.firstBooklet(), " ")),
 				() -> assertThrows(NullPointerException.class, () -> repository.save(null, "21")),
-				() -> assertThrows(IllegalArgumentException.class,
-						() -> repository.save(fixture.firstBooklet(), " ")),
+				() -> assertThrows(IllegalArgumentException.class, () -> repository.save(fixture.firstBooklet(), " ")),
 				() -> assertThrows(NullPointerException.class,
 						() -> repository.updatePreambleStatus(null, PreambleStatus.NONE)),
-				() -> assertThrows(NullPointerException.class,
-						() -> repository.updatePreambleStatus(missing, null)),
+				() -> assertThrows(NullPointerException.class, () -> repository.updatePreambleStatus(missing, null)),
 				() -> assertThrows(IllegalStateException.class,
 						() -> repository.updatePreambleStatus(missing, PreambleStatus.PRESENT)));
 	}

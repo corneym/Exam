@@ -49,7 +49,9 @@ public record LegacyQuestionRow(int year, String paperCode, String questionCode,
 		if (classificationCode == null || classificationCode.isBlank()) {
 			throw new IllegalArgumentException("classificationCode must not be blank");
 		}
-		// Treat blank answers as absent while retaining non-blank answer text exactly as supplied.
+
+		// Treat blank answers as absent while retaining non-blank answer text exactly
+		// as supplied.
 		if (answer != null && answer.isBlank()) {
 			answer = null;
 		}

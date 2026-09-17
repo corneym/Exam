@@ -38,9 +38,8 @@ class SqliteCurriculumHierarchyImportTest {
 	Path tempDirectory;
 
 	private List<CurriculumImportRow> comparisonRows() {
-		return List.of(new CurriculumImportRow("1", "Unit one"),
-				new CurriculumImportRow("1.1", "Topic one"), new CurriculumImportRow("1.2", "Topic two"),
-				new CurriculumImportRow("1.1.1", "Descriptor one"),
+		return List.of(new CurriculumImportRow("1", "Unit one"), new CurriculumImportRow("1.1", "Topic one"),
+				new CurriculumImportRow("1.2", "Topic two"), new CurriculumImportRow("1.1.1", "Descriptor one"),
 				new CurriculumImportRow("1.1.2", "Descriptor two"));
 	}
 
@@ -75,10 +74,10 @@ class SqliteCurriculumHierarchyImportTest {
 				while (result.next()) {
 					long parentId = result.getLong("parent_id");
 					String parent = result.wasNull() ? "null" : Long.toString(parentId);
-					snapshot.add("node|" + result.getLong("id") + "|" + result.getLong("syllabus_version_id")
-							+ "|" + parent + "|" + result.getString("curriculum_code") + "|"
-							+ result.getString("curriculum_name") + "|" + result.getString("curriculum_level")
-							+ "|" + result.getInt("display_order"));
+					snapshot.add("node|" + result.getLong("id") + "|" + result.getLong("syllabus_version_id") + "|"
+							+ parent + "|" + result.getString("curriculum_code") + "|"
+							+ result.getString("curriculum_name") + "|" + result.getString("curriculum_level") + "|"
+							+ result.getInt("display_order"));
 				}
 			}
 		}
@@ -96,7 +95,6 @@ class SqliteCurriculumHierarchyImportTest {
 
 	private void assertNode(Connection connection, String code, String expectedLevel, String expectedParentCode)
 			throws Exception {
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
 				    node.curriculum_level,
@@ -126,27 +124,21 @@ class SqliteCurriculumHierarchyImportTest {
 		Path excelFile = tempDirectory.resolve("curriculum.xlsx");
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("Curriculum");
-
 			Row header = sheet.createRow(0);
 			header.createCell(0).setCellValue("Code");
 			header.createCell(1).setCellValue("Content");
-
 			Row unit = sheet.createRow(1);
 			unit.createCell(0).setCellValue("1");
 			unit.createCell(1).setCellValue("Chemical fundamentals");
-
 			Row topic = sheet.createRow(2);
 			topic.createCell(0).setCellValue("1.1");
 			topic.createCell(1).setCellValue("Atomic structure");
-
 			Row subtopic = sheet.createRow(3);
 			subtopic.createCell(0).setCellValue("1.1.1");
 			subtopic.createCell(1).setCellValue("Atomic models");
-
 			Row descriptor = sheet.createRow(4);
 			descriptor.createCell(0).setCellValue("1.1.1.1");
 			descriptor.createCell(1).setCellValue("Describe the structure of an atom");
-
 			try (OutputStream output = Files.newOutputStream(excelFile)) {
 				workbook.write(output);
 			}
@@ -252,18 +244,15 @@ class SqliteCurriculumHierarchyImportTest {
 		database.initialiseSchema();
 		SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database,
 				new SqliteCurriculumWriter(database));
-
-		CurriculumImportResult first = importer.importSyllabusWithResult("Chemistry", "2019", false,
-				comparisonRows());
+		CurriculumImportResult first = importer.importSyllabusWithResult("Chemistry", "2019", false, comparisonRows());
 		List<String> afterFirstImport = databaseSnapshot(database);
-		CurriculumImportResult second = importer.importSyllabusWithResult("Chemistry", "2019", false,
-				comparisonRows());
-
+		CurriculumImportResult second = importer.importSyllabusWithResult("Chemistry", "2019", false, comparisonRows());
 		assertTrue(first.imported());
 		assertFalse(second.imported());
 		assertEquals(first.syllabusVersion().getId(), second.syllabusVersion().getId());
 		assertEquals(afterFirstImport, databaseSnapshot(database));
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
 						SELECT
 						    (SELECT COUNT(*) FROM subjects) AS subject_count,
@@ -288,10 +277,8 @@ class SqliteCurriculumHierarchyImportTest {
 				new CurriculumImportRow("1.1", "Topic one"), new CurriculumImportRow("1.2", "Topic two"),
 				new CurriculumImportRow("1.1.1", "Changed descriptor"),
 				new CurriculumImportRow("1.1.2", "Descriptor two"));
-
 		CurriculumImportConflictException exception = assertConflictLeavesDatabaseUnchanged(database, importer, false,
 				changedRows);
-
 		assertTrue(exception.getMessage().contains("curriculum code 1.1.1 differs"));
 	}
 
@@ -304,10 +291,8 @@ class SqliteCurriculumHierarchyImportTest {
 		importer.importSyllabus("Chemistry", "2019", false, comparisonRows());
 		List<CurriculumImportRow> changedRows = new ArrayList<>(comparisonRows());
 		changedRows.add(new CurriculumImportRow("1.2.1", "Added descriptor"));
-
 		CurriculumImportConflictException exception = assertConflictLeavesDatabaseUnchanged(database, importer, false,
 				changedRows);
-
 		assertTrue(exception.getMessage().contains("adds curriculum code 1.2.1"));
 	}
 
@@ -319,10 +304,8 @@ class SqliteCurriculumHierarchyImportTest {
 				new SqliteCurriculumWriter(database));
 		importer.importSyllabus("Chemistry", "2019", false, comparisonRows());
 		List<CurriculumImportRow> changedRows = comparisonRows().subList(0, comparisonRows().size() - 1);
-
 		CurriculumImportConflictException exception = assertConflictLeavesDatabaseUnchanged(database, importer, false,
 				changedRows);
-
 		assertTrue(exception.getMessage().contains("omits curriculum code 1.1.2"));
 	}
 
@@ -344,10 +327,8 @@ class SqliteCurriculumHierarchyImportTest {
 					WHERE curriculum_code = '1.1.1'
 					""");
 		}
-
 		CurriculumImportConflictException exception = assertConflictLeavesDatabaseUnchanged(database, importer, false,
 				comparisonRows());
-
 		assertTrue(exception.getMessage().contains("curriculum code 1.1.1 differs"));
 	}
 
@@ -360,12 +341,9 @@ class SqliteCurriculumHierarchyImportTest {
 		importer.importSyllabus("Chemistry", "2019", false, comparisonRows());
 		List<CurriculumImportRow> reorderedRows = List.of(new CurriculumImportRow("1", "Unit one"),
 				new CurriculumImportRow("1.1", "Topic one"), new CurriculumImportRow("1.2", "Topic two"),
-				new CurriculumImportRow("1.1.2", "Descriptor two"),
-				new CurriculumImportRow("1.1.1", "Descriptor one"));
-
+				new CurriculumImportRow("1.1.2", "Descriptor two"), new CurriculumImportRow("1.1.1", "Descriptor one"));
 		CurriculumImportConflictException exception = assertConflictLeavesDatabaseUnchanged(database, importer, false,
 				reorderedRows);
-
 		assertTrue(exception.getMessage().contains("curriculum code 1.1.1 differs"));
 	}
 
@@ -377,10 +355,8 @@ class SqliteCurriculumHierarchyImportTest {
 				new SqliteCurriculumWriter(database));
 		importer.importSyllabus("Chemistry", "2019", false, comparisonRows());
 		importer.importSyllabus("Chemistry", "2025", true, comparisonRows());
-
 		CurriculumImportConflictException exception = assertConflictLeavesDatabaseUnchanged(database, importer, true,
 				comparisonRows());
-
 		assertTrue(exception.getMessage().contains("already imported as historical"));
 		assertTrue(exception.getMessage().contains("cannot be re-imported as current"));
 	}

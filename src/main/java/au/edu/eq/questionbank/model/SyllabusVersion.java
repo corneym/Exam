@@ -65,7 +65,9 @@ public class SyllabusVersion {
 		if (sourcePdfPath != null && sourcePdfPath.isBlank()) {
 			throw new IllegalArgumentException("sourcePdfPath must be null or non-blank");
 		}
-		// Finalisation state and timestamp must agree, independently of the current-syllabus flag.
+
+		// Finalisation state and timestamp must agree, independently of the
+		// current-syllabus flag.
 		if (curriculumStatus == CurriculumStatus.FINAL && curriculumFinalisedAt == null) {
 			throw new IllegalArgumentException("FINAL curriculum requires curriculumFinalisedAt");
 		}
@@ -89,7 +91,9 @@ public class SyllabusVersion {
 		if (!(object instanceof SyllabusVersion other)) {
 			return false;
 		}
-		// Lifecycle or provenance changes produce new snapshots of the same persistent version.
+
+		// Lifecycle or provenance changes produce new snapshots of the same persistent
+		// version.
 		return id == other.id;
 	}
 

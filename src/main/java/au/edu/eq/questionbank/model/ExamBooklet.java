@@ -23,8 +23,8 @@ public class ExamBooklet {
 	 * @param sourceDocument the source file containing the booklet
 	 * @throws IllegalArgumentException if {@code id} is not positive or
 	 *                                  {@code name} is blank
-	 * @throws NullPointerException     if {@code exam} or
-	 *                                  {@code sourceDocument} is {@code null}
+	 * @throws NullPointerException     if {@code exam} or {@code sourceDocument} is
+	 *                                  {@code null}
 	 */
 	public ExamBooklet(long id, Exam exam, String name, SourceDocument sourceDocument) {
 		if (id < 1) {
@@ -39,7 +39,6 @@ public class ExamBooklet {
 		if (sourceDocument == null) {
 			throw new NullPointerException("sourceDocument");
 		}
-
 		this.id = id;
 		this.exam = exam;
 		this.name = name;

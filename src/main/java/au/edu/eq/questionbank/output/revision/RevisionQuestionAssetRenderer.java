@@ -80,6 +80,7 @@ public final class RevisionQuestionAssetRenderer {
 			throw new NullPointerException("progress");
 		}
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
+		// One question may appear under several curriculum nodes; render its body only once.
 		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectRenderableQuestions(rootNode, questionsById);
@@ -101,6 +102,7 @@ public final class RevisionQuestionAssetRenderer {
 						"Question source PDF is not available for question " + question.getId() + ": " + sourcePdf);
 			}
 			try {
+				// Keep the shared preamble separate so multipart presentation can display it once per group.
 				questionExtractor.extractQuestionBody(sourcePdf, question, outputFile.toFile());
 			} catch (Exception e) {
 				throw new IOException("Could not render question " + question.getId() + " from " + sourcePdf, e);

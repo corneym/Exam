@@ -26,7 +26,6 @@ public class CurriculumMappingExcelImporter {
 	}
 
 	private static final int HEADER_SEARCH_LIMIT = 20;
-
 	/*
 	 * Accepts either a descriptor code such as 3.1.1.4 or a subtopic code such as
 	 * 3.1.1. Only the first three components are retained.
@@ -37,11 +36,9 @@ public class CurriculumMappingExcelImporter {
 	private final DataFormatter formatter = new DataFormatter();
 
 	public List<CurriculumMappingImportRow> read(Path path) throws IOException {
-
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
-
 		Set<CurriculumMappingImportRow> mappings = new LinkedHashSet<>();
 		try (InputStream inputStream = Files.newInputStream(path);
 				Workbook workbook = WorkbookFactory.create(inputStream)) {
@@ -58,7 +55,6 @@ public class CurriculumMappingExcelImporter {
 				readSheet(sheet, columns, evaluator, mappings);
 			}
 		}
-
 		if (mappings.isEmpty()) {
 			throw new IllegalArgumentException("No curriculum mappings found in " + path.getFileName());
 		}
@@ -130,7 +126,6 @@ public class CurriculumMappingExcelImporter {
 			}
 			String targetCode = extractSingleSubtopicCode(target2025, sheet, rowIndex, "2025");
 			List<String> sourceCodes = extractSubtopicCodes(source2019);
-
 			/*
 			 * NEW/NO means the 2025 descriptor has no 2019 equivalent, so there is no
 			 * legacy mapping to create.
@@ -139,7 +134,6 @@ public class CurriculumMappingExcelImporter {
 				if (NEW_MARKER.matcher(source2019).find()) {
 					continue;
 				}
-
 				throw new IllegalArgumentException("No valid 2019 mapping in sheet " + sheet.getSheetName()
 						+ " at Excel row " + (rowIndex + 1) + ": " + source2019);
 			}

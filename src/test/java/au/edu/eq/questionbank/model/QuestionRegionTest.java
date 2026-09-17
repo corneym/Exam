@@ -15,7 +15,6 @@ class QuestionRegionTest {
 	@Test
 	void acceptsAFullPageRegion() {
 		QuestionRegion region = new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0);
-
 		assertAll(() -> assertEquals(0.0, region.x()), () -> assertEquals(0.0, region.y()),
 				() -> assertEquals(1.0, region.width()), () -> assertEquals(1.0, region.height()));
 	}
@@ -23,7 +22,6 @@ class QuestionRegionTest {
 	@Test
 	void acceptsARegionEndingExactlyAtTheRightAndBottomEdges() {
 		QuestionRegion region = new QuestionRegion(booklet, 1, 0.75, 0.75, 0.25, 0.25);
-
 		assertAll(() -> assertEquals(0.75, region.x()), () -> assertEquals(0.75, region.y()),
 				() -> assertEquals(0.25, region.width()), () -> assertEquals(0.25, region.height()));
 	}
@@ -31,7 +29,6 @@ class QuestionRegionTest {
 	@Test
 	void exposesItsBookletPageAndNormalisedRectangle() {
 		QuestionRegion region = new QuestionRegion(booklet, 3, 0.125, 0.25, 0.5, 0.625);
-
 		assertAll(() -> assertSame(booklet, region.booklet()), () -> assertEquals(3, region.pageNumber()),
 				() -> assertEquals(0.125, region.x()), () -> assertEquals(0.25, region.y()),
 				() -> assertEquals(0.5, region.width()), () -> assertEquals(0.625, region.height()));
@@ -117,7 +114,6 @@ class QuestionRegionTest {
 		ExamProvider provider = new ExamProvider(45, "QCAA");
 		Exam exam = new Exam(9, subject, provider, 2020, "Test exam");
 		SourceDocument document = new SourceDocument(4, "path");
-
 		booklet = new ExamBooklet(3, exam, "Test booklet", document);
 	}
 
@@ -125,7 +121,6 @@ class QuestionRegionTest {
 	void usesValueEquality() {
 		QuestionRegion first = new QuestionRegion(booklet, 2, 0.1, 0.2, 0.3, 0.4);
 		QuestionRegion sameValues = new QuestionRegion(booklet, 2, 0.1, 0.2, 0.3, 0.4);
-
 		assertEquals(first, sameValues);
 		assertEquals(first.hashCode(), sameValues.hashCode());
 	}

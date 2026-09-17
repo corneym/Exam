@@ -20,7 +20,6 @@ public class ExamMetadataOptionsRepository {
 	private static final String PROVIDERS = "providers";
 	private static final String ASSESSMENTS = "assessments";
 	private static final String BOOKLETS = "booklets";
-
 	private final Preferences preferences = Preferences.userNodeForPackage(ExamMetadataOptionsRepository.class);
 
 	/**
@@ -82,11 +81,9 @@ public class ExamMetadataOptionsRepository {
 
 	private List<String> getValues(String key) {
 		String stored = preferences.get(key, "");
-
 		if (stored.isBlank()) {
 			return List.of();
 		}
-
 		String[] values = stored.split("\\|");
 		Arrays.sort(values, String.CASE_INSENSITIVE_ORDER);
 		return List.copyOf(Arrays.asList(values));
@@ -94,13 +91,10 @@ public class ExamMetadataOptionsRepository {
 
 	private void addValue(String key, String value) {
 		String trimmed = value.trim();
-
 		if (trimmed.isBlank()) {
 			return;
 		}
-
 		List<String> values = getValues(key);
-
 		boolean alreadyExists = false;
 		for (String existing : values) {
 			if (existing.equalsIgnoreCase(trimmed)) {
@@ -108,13 +102,10 @@ public class ExamMetadataOptionsRepository {
 				break;
 			}
 		}
-
 		if (alreadyExists) {
 			return;
 		}
-
 		String updated = values.isEmpty() ? trimmed : String.join("|", values) + "|" + trimmed;
-
 		preferences.put(key, updated);
 	}
 }

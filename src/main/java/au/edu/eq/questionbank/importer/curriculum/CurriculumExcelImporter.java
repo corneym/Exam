@@ -22,8 +22,8 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
  * Reads curriculum data from the standard two-column workbook format.
  *
  * Column A contains the curriculum code and column B contains its label or
- * descriptor text. Hidden sheets and sheets without the expected header row
- * are ignored.
+ * descriptor text. Hidden sheets and sheets without the expected header row are
+ * ignored.
  */
 public class CurriculumExcelImporter {
 
@@ -42,66 +42,59 @@ public class CurriculumExcelImporter {
 	 *
 	 * @param path the workbook to read
 	 * @return an immutable, non-empty list of curriculum rows
-	 * @throws IOException if the workbook cannot be opened or read
-	 * @throws NullPointerException if {@code path} is {@code null}
+	 * @throws IOException              if the workbook cannot be opened or read
+	 * @throws NullPointerException     if {@code path} is {@code null}
 	 * @throws IllegalArgumentException if no curriculum data is found or a row has
 	 *                                  missing, invalid, or duplicate values
 	 */
 	public List<CurriculumImportRow> read(Path path) throws IOException {
-
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
-
 		try (InputStream inputStream = Files.newInputStream(path);
 				Workbook workbook = WorkbookFactory.create(inputStream)) {
-
 			FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
-
 			List<CurriculumImportRow> importRows = new ArrayList<>();
 
-			// Share the code index across sheets so duplicates cannot cross sheet boundaries.
+			// Share the code index across sheets so duplicates cannot cross sheet
+			// boundaries.
 			Set<String> codes = new HashSet<>();
-
 			for (int sheetIndex = 0; sheetIndex < workbook.getNumberOfSheets(); sheetIndex++) {
 
 				// Hidden worksheets may contain supporting data rather than curriculum rows.
 				if (workbook.isSheetHidden(sheetIndex) || workbook.isSheetVeryHidden(sheetIndex)) {
 					continue;
 				}
-
 				Sheet sheet = workbook.getSheetAt(sheetIndex);
-
 				readSheet(sheet, evaluator, importRows, codes);
 			}
-
 			if (importRows.isEmpty()) {
 				throw new IllegalArgumentException("No curriculum data could be found in " + path.getFileName());
 			}
-
 			return List.copyOf(importRows);
 		}
 	}
 
 	private String getText(Row row, int columnIndex, FormulaEvaluator evaluator) {
-
 		Cell cell = row.getCell(columnIndex, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
-
 		if (cell == null) {
 			return "";
 		}
 
-		// Read the displayed value, including formula results, and remove surrounding whitespace.
+		// Read the displayed value, including formula results, and remove surrounding
+		// whitespace.
 		return formatter.formatCellValue(cell, evaluator).strip();
 	}
 
 	private void readSheet(Sheet sheet, FormulaEvaluator evaluator, List<CurriculumImportRow> importRows,
 			Set<String> codes) {
+
 		// Only opt in sheets whose first defined row identifies the two-column format.
 		Row header = sheet.getRow(sheet.getFirstRowNum());
 		if (!hasExpectedHeaders(header, evaluator)) {
 			return;
 		}
+
 		// Keep workbook row order; the builder uses it to assign sibling display order.
 		for (int rowIndex = sheet.getFirstRowNum() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
 			Row row = sheet.getRow(rowIndex);
@@ -132,6 +125,7 @@ public class CurriculumExcelImporter {
 		}
 		String code = getText(row, 0, evaluator);
 		String content = getText(row, 1, evaluator);
+
 		// Allow spacer rows, but reject partially populated curriculum entries.
 		if (code.isBlank() && content.isBlank()) {
 			return null;
@@ -149,9 +143,9 @@ public class CurriculumExcelImporter {
 
 	private void validateCode(String code) {
 
-		// Accept one to four numeric components; parent relationships are checked by the builder.
+		// Accept one to four numeric components; parent relationships are checked by
+		// the builder.
 		if (!code.matches("\\d+(\\.\\d+){0,3}")) {
-
 			throw new IllegalArgumentException("Invalid curriculum code: " + code);
 		}
 	}

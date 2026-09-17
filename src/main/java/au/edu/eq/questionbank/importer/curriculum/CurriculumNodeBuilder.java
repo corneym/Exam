@@ -27,27 +27,29 @@ public class CurriculumNodeBuilder {
 
 	/**
 	 * Builds nodes in hierarchy order: units, topics, then subtopics and
-	 * descriptors. A three-part code with children becomes a subtopic; a
-	 * childless three-part code becomes a descriptor directly beneath its topic.
-	 * Four-part codes are descriptors beneath subtopics.
+	 * descriptors. A three-part code with children becomes a subtopic; a childless
+	 * three-part code becomes a descriptor directly beneath its topic. Four-part
+	 * codes are descriptors beneath subtopics.
 	 *
 	 * @param syllabusVersion the version containing every generated node
-	 * @param rows unique curriculum rows with complete parent chains
-	 * @param idSupplier supplies a positive identifier for each generated node
+	 * @param rows            unique curriculum rows with complete parent chains
+	 * @param idSupplier      supplies a positive identifier for each generated node
 	 * @return an immutable list ordered by hierarchy level and source-row order
 	 *         within each level
-	 * @throws NullPointerException if an argument or row element is {@code null}
-	 * @throws IllegalArgumentException if a code is invalid or duplicated, a
-	 *                                  parent row is absent, or a supplied model
-	 *                                  value is invalid
+	 * @throws NullPointerException     if an argument or row element is
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if a code is invalid or duplicated, a parent
+	 *                                  row is absent, or a supplied model value is
+	 *                                  invalid
 	 */
 	public List<CurriculumNode> build(SyllabusVersion syllabusVersion, List<CurriculumImportRow> rows,
 			LongSupplier idSupplier) {
 		validateArguments(syllabusVersion, rows, idSupplier);
-		// Validate row codes and parent chains before consuming identifiers or constructing nodes.
+
+		// Validate row codes and parent chains before consuming identifiers or
+		// constructing nodes.
 		Map<String, CurriculumImportRow> rowsByCode = indexRows(rows);
 		validateParents(rowsByCode);
-
 		List<CurriculumNode> nodes = new ArrayList<>();
 		Map<String, Unit> units = new HashMap<>();
 		Map<String, Topic> topics = new HashMap<>();
@@ -62,7 +64,6 @@ public class CurriculumNodeBuilder {
 		addThreePartNodes(syllabusVersion, idSupplier, rowsByCode, topics, subtopics, nextSubtopicOrder,
 				nextDescriptorOrder, nodes);
 		addFourPartDescriptors(syllabusVersion, idSupplier, rowsByCode, subtopics, nextDescriptorOrder, nodes);
-
 		return List.copyOf(nodes);
 	}
 
@@ -71,17 +72,16 @@ public class CurriculumNodeBuilder {
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
 		}
-
 		if (rows == null) {
 			throw new NullPointerException("rows");
 		}
-
 		if (idSupplier == null) {
 			throw new NullPointerException("idSupplier");
 		}
 	}
 
 	private Map<String, CurriculumImportRow> indexRows(List<CurriculumImportRow> rows) {
+
 		// Preserve source order rather than sorting by the numeric-looking codes.
 		Map<String, CurriculumImportRow> rowsByCode = new LinkedHashMap<>();
 		for (CurriculumImportRow row : rows) {
@@ -128,9 +128,10 @@ public class CurriculumNodeBuilder {
 	}
 
 	private void addThreePartNodes(SyllabusVersion syllabusVersion, LongSupplier idSupplier,
-			Map<String, CurriculumImportRow> rowsByCode, Map<String, Topic> topics,
-			Map<String, Subtopic> subtopics, Map<String, Integer> nextSubtopicOrder,
-			Map<String, Integer> nextDescriptorOrder, List<CurriculumNode> nodes) {
+			Map<String, CurriculumImportRow> rowsByCode, Map<String, Topic> topics, Map<String, Subtopic> subtopics,
+			Map<String, Integer> nextSubtopicOrder, Map<String, Integer> nextDescriptorOrder,
+			List<CurriculumNode> nodes) {
+
 		// A three-part node is a subtopic when it has children, otherwise a descriptor.
 		for (CurriculumImportRow row : rowsByCode.values()) {
 			if (depth(row.code()) != 3) {
@@ -145,7 +146,9 @@ public class CurriculumNodeBuilder {
 				subtopics.put(row.code(), subtopic);
 				nodes.add(subtopic);
 			} else {
-				// A leaf at this depth attaches directly to the topic, without a synthetic subtopic.
+
+				// A leaf at this depth attaches directly to the topic, without a synthetic
+				// subtopic.
 				int order = nextOrder(nextDescriptorOrder, topicCode);
 				Descriptor descriptor = new Descriptor(idSupplier.getAsLong(), syllabusVersion, topic, row.code(),
 						row.content(), order);
@@ -178,61 +181,50 @@ public class CurriculumNodeBuilder {
 
 		// Match a complete code component so, for example, 1.2.3 does not match 1.2.30.
 		String childPrefix = code + ".";
-
 		for (String possibleChild : rowsByCode.keySet()) {
-
 			if (possibleChild.startsWith(childPrefix) && depth(possibleChild) == depth(code) + 1) {
-
 				return true;
 			}
 		}
-
 		return false;
 	}
 
 	private int nextOrder(Map<String, Integer> nextOrders, String parentCode) {
 
-		// Each parent has its own one-based sequence, independent of gaps in imported codes.
+		// Each parent has its own one-based sequence, independent of gaps in imported
+		// codes.
 		Integer next = nextOrders.get(parentCode);
-
 		if (next == null) {
 			next = 1;
 		}
-
 		nextOrders.put(parentCode, next + 1);
-
 		return next;
 	}
 
 	private String parentCode(String code) {
 		int lastDot = code.lastIndexOf('.');
-
 		if (lastDot < 0) {
 			return null;
 		}
-
 		return code.substring(0, lastDot);
 	}
 
 	private void validateCode(String code) {
 		if (code == null || !code.matches("\\d+(\\.\\d+){0,3}")) {
-
 			throw new IllegalArgumentException("Invalid curriculum code: " + code);
 		}
 	}
 
 	private void validateParents(Map<String, CurriculumImportRow> rowsByCode) {
 
-		// Requiring every immediate parent also ensures the whole chain back to a unit exists.
+		// Requiring every immediate parent also ensures the whole chain back to a unit
+		// exists.
 		for (CurriculumImportRow row : rowsByCode.values()) {
 			int depth = depth(row.code());
-
 			if (depth == 1) {
 				continue;
 			}
-
 			String parentCode = parentCode(row.code());
-
 			if (!rowsByCode.containsKey(parentCode)) {
 				throw new IllegalArgumentException(
 						"Missing parent " + parentCode + " for curriculum code " + row.code());

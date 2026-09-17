@@ -40,11 +40,12 @@ public abstract class CurriculumNode {
 		validateValues(id, syllabusVersion, code, name, level);
 		validateParent(syllabusVersion, parent, level);
 		validateDisplayOrder(displayOrder);
-
 		this.id = id;
 		this.syllabusVersion = syllabusVersion;
 		this.parent = parent;
-		// Keep imported codes and authored whitespace intact; hierarchy comes from explicit relationships.
+
+		// Keep imported codes and authored whitespace intact; hierarchy comes from
+		// explicit relationships.
 		this.code = code;
 		this.name = name;
 		this.level = level;
@@ -71,7 +72,9 @@ public abstract class CurriculumNode {
 	}
 
 	private void validateParent(SyllabusVersion syllabusVersion, CurriculumNode parent, CurriculumLevel level) {
-		// Units are roots; every other node must connect to a parent in the same syllabus version.
+
+		// Units are roots; every other node must connect to a parent in the same
+		// syllabus version.
 		if (level == CurriculumLevel.UNIT) {
 			if (parent != null) {
 				throw new IllegalArgumentException("UNIT must not have a parent");
@@ -92,6 +95,7 @@ public abstract class CurriculumNode {
 				validParent = parent.getLevel() == CurriculumLevel.TOPIC;
 				break;
 			case DESCRIPTOR:
+
 				// The optional subtopic level allows descriptors to attach directly to topics.
 				validParent = parent.getLevel() == CurriculumLevel.TOPIC
 						|| parent.getLevel() == CurriculumLevel.SUBTOPIC;
@@ -119,6 +123,7 @@ public abstract class CurriculumNode {
 		if (!(object instanceof CurriculumNode other)) {
 			return false;
 		}
+
 		// Reloading or editing wording must not change a persisted node's identity.
 		return id == other.id;
 	}

@@ -102,8 +102,8 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	/**
-	 * Cancels outstanding loads and clears results and previews. Idempotent;
-	 * late task completions are ignored through generation and task-identity checks.
+	 * Cancels outstanding loads and clears results and previews. Idempotent; late
+	 * task completions are ignored through generation and task-identity checks.
 	 * Must be called on the JavaFX application thread.
 	 */
 	void dispose() {
@@ -121,7 +121,8 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	/**
-	 * @return the selected persisted question, or {@code null} when no result is selected
+	 * @return the selected persisted question, or {@code null} when no result is
+	 *         selected
 	 */
 	Question getSelectedQuestion() {
 		QuestionRetrievalResult result = resultsList.getSelectionModel().getSelectedItem();
@@ -403,7 +404,8 @@ public class QuestionSearchPane extends BorderPane {
 			startAutomaticSearch(classification);
 			return;
 		}
-		startHierarchyLoad(() -> curriculumRepository.findChildren(classification), children -> showDescriptors(classification, children));
+		startHierarchyLoad(() -> curriculumRepository.findChildren(classification),
+				children -> showDescriptors(classification, children));
 	}
 
 	private void handleDescriptorBoxMousePress() {
@@ -435,7 +437,8 @@ public class QuestionSearchPane extends BorderPane {
 		if (subject == null) {
 			return;
 		}
-		startHierarchyLoad(() -> loadSubjectNavigation(subject), navigation -> showSubjectNavigation(subject, navigation));
+		startHierarchyLoad(() -> loadSubjectNavigation(subject),
+				navigation -> showSubjectNavigation(subject, navigation));
 	}
 
 	private void handleTopicBoxMousePress() {
@@ -455,7 +458,8 @@ public class QuestionSearchPane extends BorderPane {
 		if (topic == null) {
 			return;
 		}
-		startHierarchyLoad(() -> curriculumRepository.findChildren(topic), classifications -> showClassifications(topic, classifications));
+		startHierarchyLoad(() -> curriculumRepository.findChildren(topic),
+				classifications -> showClassifications(topic, classifications));
 	}
 
 	private void handleUnitBoxMousePress() {
@@ -825,5 +829,4 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		startAutomaticSearch(unit);
 	}
-
 }

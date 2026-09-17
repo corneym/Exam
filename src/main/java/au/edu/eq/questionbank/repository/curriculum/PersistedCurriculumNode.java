@@ -18,7 +18,8 @@ public record PersistedCurriculumNode(long persistentId, CurriculumLevel level, 
 		Long parentPersistentId, int displayOrder, Integer sourcePageNumber) {
 
 	/**
-	 * Validates a stored curriculum-node snapshot, including identity and source-page provenance.
+	 * Validates a stored curriculum-node snapshot, including identity and
+	 * source-page provenance.
 	 *
 	 * @param persistentId       SQLite curriculum-node identifier
 	 * @param level              explicit curriculum level

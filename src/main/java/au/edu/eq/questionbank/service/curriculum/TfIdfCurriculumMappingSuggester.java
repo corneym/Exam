@@ -16,6 +16,7 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
  * identifier; ranking never confirms a mapping.
  */
 public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingSuggester {
+
 	private record SimilarityCorpora(List<String> descriptorTexts, List<String> contextTexts) {
 	}
 
@@ -27,8 +28,8 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 	/**
 	 * Creates a descriptor suggester using syllabus text and ancestor context.
 	 *
-	 * @param repository the curriculum hierarchy used to build the source and target
-	 *                   corpora
+	 * @param repository the curriculum hierarchy used to build the source and
+	 *                   target corpora
 	 * @throws NullPointerException if {@code repository} is {@code null}
 	 */
 	public TfIdfCurriculumMappingSuggester(CurriculumRepository repository) {

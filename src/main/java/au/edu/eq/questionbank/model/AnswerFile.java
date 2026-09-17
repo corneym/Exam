@@ -24,7 +24,6 @@ public class AnswerFile {
 	 *                                  {@code null}
 	 */
 	public AnswerFile(long id, Exam exam, String name, SourceDocument sourceDocument) {
-
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -37,7 +36,6 @@ public class AnswerFile {
 		if (sourceDocument == null) {
 			throw new NullPointerException("sourceDocument");
 		}
-
 		this.id = id;
 		this.exam = exam;
 		this.name = name;

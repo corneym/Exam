@@ -45,7 +45,6 @@ public final class QuestionRetrievalResult {
 				throw new IllegalArgumentException("currentApplicability must contain only current nodes");
 			}
 		}
-
 		this.question = question;
 		this.currentApplicability = List.copyOf(currentApplicability);
 	}

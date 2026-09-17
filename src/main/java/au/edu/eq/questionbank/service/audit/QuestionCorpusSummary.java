@@ -16,7 +16,8 @@ public record QuestionCorpusSummary(int totalQuestions, int completeQuestions, i
 		int missingQuestionSource, int missingAnswer, int unresolvedSharedContext, int unknownResponseType) {
 
 	/**
-	 * Creates a corpus summary whose complete and incomplete counts equal the total.
+	 * Creates a corpus summary whose complete and incomplete counts equal the
+	 * total.
 	 *
 	 * @param totalQuestions          total Questions assessed
 	 * @param completeQuestions       Questions with no completeness problems

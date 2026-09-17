@@ -20,7 +20,6 @@ class SqlResourceLoaderTest {
 	@Test
 	void loadsMigrationResource() throws Exception {
 		String sql = SqlResourceLoader.load("/db/migration-v1-to-v2.sql");
-
 		assertTrue(sql.contains("CREATE TABLE curriculum_mappings"));
 		assertTrue(sql.contains("WHERE version = 1"));
 	}

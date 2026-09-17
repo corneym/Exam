@@ -190,8 +190,8 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 
 	private void requireSessionMatchesDatabase(Connection connection, long syllabusVersionId,
 			CurriculumAuthoringSession session) throws SQLException {
-		Set<PersistedCurriculumNode> actual = Set.copyOf(
-				SqliteCurriculumAuthoringRepository.findNodes(connection, syllabusVersionId));
+		Set<PersistedCurriculumNode> actual = Set
+				.copyOf(SqliteCurriculumAuthoringRepository.findNodes(connection, syllabusVersionId));
 		Set<Long> actualIds = new HashSet<>();
 		for (PersistedCurriculumNode node : actual) {
 			actualIds.add(node.persistentId());

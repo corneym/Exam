@@ -26,6 +26,7 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteCurriculumMappingReviewWriterTest {
+
 	@TempDir
 	Path tempDir;
 	private SqliteDatabase database;
@@ -164,9 +165,7 @@ class SqliteCurriculumMappingReviewWriterTest {
 					VALUES (12, 3, 'MATCHED')
 					""");
 		}
-
 		writer.replaceMappings(source, targetVersion, List.of(targetTwo));
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("""
 					SELECT target_node_id
@@ -200,12 +199,10 @@ class SqliteCurriculumMappingReviewWriterTest {
 	@Test
 	void rejectsReviewsThatAreNotDirectedFromNonCurrentToCurrent() throws Exception {
 		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> writer.confirmMappings(targetOne, sourceVersion, List.of(source)));
 		assertThrows(IllegalArgumentException.class,
 				() -> writer.confirmMappings(source, otherTargetVersion, List.of(otherVersionTarget)));
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
 				assertTrue(result.next());
@@ -225,10 +222,8 @@ class SqliteCurriculumMappingReviewWriterTest {
 			statement.execute("UPDATE syllabus_versions SET is_current = 1 WHERE id = 1");
 		}
 		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> writer.confirmMappings(source, targetVersion, List.of(targetOne)));
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
 				assertTrue(result.next());
@@ -285,9 +280,7 @@ class SqliteCurriculumMappingReviewWriterTest {
 		SqliteCurriculumMappingWriter mappingWriter = new SqliteCurriculumMappingWriter(database);
 		mappingWriter.insertMapping(source, targetOne, MappingStatus.CONFIRMED);
 		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
-
 		assertThrows(IllegalStateException.class, () -> reviewWriter.confirmNoMatch(source, targetVersion));
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
@@ -304,7 +297,6 @@ class SqliteCurriculumMappingReviewWriterTest {
 	@Test
 	void rejectsMappingBetweenDifferentCurriculumLevels() {
 		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> writer.confirmMappings(sourceSubtopic, targetVersion, List.of(targetOne)));
 	}
@@ -314,10 +306,8 @@ class SqliteCurriculumMappingReviewWriterTest {
 		Topic claimedParent = (Topic) targetOne.getParent();
 		Descriptor fabricatedTarget = new Descriptor(32, targetVersion, claimedParent, "1.1.9", "Fabricated target", 9);
 		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> writer.confirmMappings(source, targetVersion, List.of(targetOne, fabricatedTarget)));
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("""
 					SELECT COUNT(*)
@@ -347,10 +337,8 @@ class SqliteCurriculumMappingReviewWriterTest {
 		Descriptor fabricatedTarget = new Descriptor(targetOne.getId(), fabricatedVersion, fabricatedTopic,
 				targetOne.getCode(), targetOne.getName(), targetOne.getDisplayOrder());
 		SqliteCurriculumMappingReviewWriter writer = new SqliteCurriculumMappingReviewWriter(database);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> writer.confirmMappings(source, targetVersion, List.of(fabricatedTarget)));
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
 				assertTrue(result.next());
@@ -433,10 +421,8 @@ class SqliteCurriculumMappingReviewWriterTest {
 					END
 					""");
 		}
-
 		assertThrows(SQLException.class,
 				() -> writer.replaceMappings(source, targetVersion, List.of(targetOne, targetTwo)));
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("""
 					SELECT target_node_id, mapping_status

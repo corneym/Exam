@@ -32,11 +32,12 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
 class SqliteCurriculumMappingRepositoryTest {
+
 	@TempDir
 	Path tempDir;
 
-	private record Fixture(SqliteDatabase database, SqliteCurriculumMappingWriter writer,
-			List<CurriculumNode> sources, List<CurriculumNode> targets) {
+	private record Fixture(SqliteDatabase database, SqliteCurriculumMappingWriter writer, List<CurriculumNode> sources,
+			List<CurriculumNode> targets) {
 	}
 
 	private Fixture createFixture(boolean arbitraryCodes) throws Exception {
@@ -47,11 +48,12 @@ class SqliteCurriculumMappingRepositoryTest {
 		SyllabusVersion source = writer.insertSyllabusVersion(subject, "Original", false);
 		SyllabusVersion target = writer.insertSyllabusVersion(subject, "Revised", true);
 		return new Fixture(database, new SqliteCurriculumMappingWriter(database),
-				createHierarchy(writer, source, "1", arbitraryCodes), createHierarchy(writer, target, "2", arbitraryCodes));
+				createHierarchy(writer, source, "1", arbitraryCodes),
+				createHierarchy(writer, target, "2", arbitraryCodes));
 	}
 
-	private List<CurriculumNode> createHierarchy(SqliteCurriculumWriter writer, SyllabusVersion version,
-			String prefix, boolean arbitraryCodes) throws Exception {
+	private List<CurriculumNode> createHierarchy(SqliteCurriculumWriter writer, SyllabusVersion version, String prefix,
+			boolean arbitraryCodes) throws Exception {
 		Unit unit = writer.insertUnit(version, arbitraryCodes ? "Unit." + prefix : prefix, "Unit", 1);
 		Topic topic = writer.insertTopic(unit, arbitraryCodes ? "Topic " + prefix : prefix + ".1", "Topic", 1);
 		Subtopic subtopic = writer.insertSubtopic(topic, arbitraryCodes ? "Subtopic " + prefix : prefix + ".1.1",
@@ -95,8 +97,8 @@ class SqliteCurriculumMappingRepositoryTest {
 		assertHierarchy(source, loaded.getSource());
 		assertHierarchy(target, loaded.getTarget());
 		new SqliteCurriculumMappingWriter(reopened).updateStatus(loaded, MappingStatus.CONFIRMED);
-		CurriculumMapping confirmed = new SqliteCurriculumMappingRepository(new SqliteDatabase(tempDir.resolve("mapping.db")))
-				.findTargets(source).getFirst();
+		CurriculumMapping confirmed = new SqliteCurriculumMappingRepository(
+				new SqliteDatabase(tempDir.resolve("mapping.db"))).findTargets(source).getFirst();
 		assertEquals(stored.getId(), confirmed.getId());
 		assertEquals(MappingStatus.CONFIRMED, confirmed.getStatus());
 		assertHierarchy(source, confirmed.getSource());
@@ -120,8 +122,8 @@ class SqliteCurriculumMappingRepositoryTest {
 		assertEquals(List.of(second, third), repository.findSources(target));
 		assertEquals(List.of(), repository.findSources(source));
 		assertEquals(List.of(), repository.findTargets(target));
-		assertEquals(List.of(), repository.findTargets(new Unit(999999, source.getSyllabusVersion(),
-				source.getCode(), source.getName(), source.getDisplayOrder())));
+		assertEquals(List.of(), repository.findTargets(new Unit(999999, source.getSyllabusVersion(), source.getCode(),
+				source.getName(), source.getDisplayOrder())));
 	}
 
 	@ParameterizedTest
@@ -131,7 +133,8 @@ class SqliteCurriculumMappingRepositoryTest {
 		CurriculumNode source = fixture.sources().getFirst();
 		CurriculumNode target = fixture.targets().getFirst();
 		fixture.writer().insertMapping(source, target, MappingStatus.CONFIRMED);
-		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
 			statement.execute("PRAGMA foreign_keys = OFF");
 			try (PreparedStatement delete = connection.prepareStatement("DELETE FROM curriculum_nodes WHERE id = ?")) {
 				delete.setLong(1, removeSource ? source.getId() : target.getId());
@@ -151,7 +154,8 @@ class SqliteCurriculumMappingRepositoryTest {
 		CurriculumNode source = fixture.sources().getFirst();
 		CurriculumNode target = fixture.targets().getFirst();
 		CurriculumMapping mapping = fixture.writer().insertMapping(source, target, MappingStatus.SUGGESTED);
-		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
 			if ("invalid_status".equals(corruption)) {
 				statement.execute("PRAGMA ignore_check_constraints = ON");
 				statement.execute("UPDATE curriculum_mappings SET mapping_status = 'UNKNOWN'");
@@ -164,8 +168,8 @@ class SqliteCurriculumMappingRepositoryTest {
 				} else {
 					targetId = fixture.targets().get(1).getId();
 				}
-				try (PreparedStatement update = connection.prepareStatement(
-						"UPDATE curriculum_mappings SET target_node_id = ? WHERE id = ?")) {
+				try (PreparedStatement update = connection
+						.prepareStatement("UPDATE curriculum_mappings SET target_node_id = ? WHERE id = ?")) {
 					update.setLong(1, targetId);
 					update.setLong(2, mapping.getId());
 					update.executeUpdate();
@@ -184,10 +188,12 @@ class SqliteCurriculumMappingRepositoryTest {
 		CurriculumNode source = fixture.sources().get(3);
 		CurriculumNode target = fixture.targets().get(3);
 		fixture.writer().insertMapping(source, target, MappingStatus.CONFIRMED);
-		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
 			statement.execute("PRAGMA foreign_keys = OFF");
 			if ("missing_version".equals(corruption)) {
-				try (PreparedStatement delete = connection.prepareStatement("DELETE FROM syllabus_versions WHERE id = ?")) {
+				try (PreparedStatement delete = connection
+						.prepareStatement("DELETE FROM syllabus_versions WHERE id = ?")) {
 					delete.setLong(1, source.getSyllabusVersion().getId());
 					delete.executeUpdate();
 				}
@@ -200,7 +206,8 @@ class SqliteCurriculumMappingRepositoryTest {
 					nodeId = source.getParent().getId();
 					parentId = nodeId;
 				}
-				try (PreparedStatement update = connection.prepareStatement("UPDATE curriculum_nodes SET parent_id = ? WHERE id = ?")) {
+				try (PreparedStatement update = connection
+						.prepareStatement("UPDATE curriculum_nodes SET parent_id = ? WHERE id = ?")) {
 					update.setLong(1, parentId);
 					update.setLong(2, nodeId);
 					update.executeUpdate();

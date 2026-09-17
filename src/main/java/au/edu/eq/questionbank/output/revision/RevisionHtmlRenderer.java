@@ -797,6 +797,17 @@ public final class RevisionHtmlRenderer {
 				subjectHref, escapeText(corpus.getSubject().getName()), unitHref, escapeText(nodeLabel(unit)),
 				escapeText(nodeLabel(topic)), escapeText(corpus.getSubject().getName()),
 				escapeText(corpus.getSyllabusVersion().getName()), escapeText(nodeLabel(topic))));
+		appendTopicContent(html, unitNode, topicNode, outputRoot, outputFile);
+		html.append("""
+				</main>
+				</body>
+				</html>
+				""");
+		Files.writeString(outputFile, html.toString());
+	}
+
+	private void appendTopicContent(StringBuilder html, RevisionCorpusNode unitNode, RevisionCorpusNode topicNode,
+			Path outputRoot, Path outputFile) {
 		List<RevisionCorpusNode> children = topicNode.getChildren();
 		if (children.isEmpty()) {
 			html.append("""
@@ -845,12 +856,6 @@ public final class RevisionHtmlRenderer {
 				throw new IllegalStateException("Topic corpus children must be Subtopic or Descriptor nodes");
 			}
 		}
-		html.append("""
-				</main>
-				</body>
-				</html>
-				""");
-		Files.writeString(outputFile, html.toString());
 	}
 
 	private void renderUnitPage(RevisionCorpus corpus, RevisionCorpusNode unitNode, Path outputRoot, Path outputFile)

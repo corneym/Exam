@@ -13,6 +13,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  * means that the source remains unreviewed for that target version.
  */
 public interface CurriculumMappingReviewRepository {
+
 	/**
 	 * Finds source-node identifiers reviewed for one ordered pair of syllabus
 	 * versions.
@@ -20,10 +21,10 @@ public interface CurriculumMappingReviewRepository {
 	 * @param sourceVersion the version containing the source nodes
 	 * @param targetVersion the version against which they were reviewed
 	 * @return the reviewed source-node identifiers
-	 * @throws NullPointerException if either version is {@code null}
+	 * @throws NullPointerException     if either version is {@code null}
 	 * @throws IllegalArgumentException if the versions have different subjects or
 	 *                                  are the same version
-	 * @throws IllegalStateException if persisted review state cannot be read
+	 * @throws IllegalStateException    if persisted review state cannot be read
 	 */
 	Set<Long> findReviewedSourceIds(SyllabusVersion sourceVersion, SyllabusVersion targetVersion);
 
@@ -33,10 +34,10 @@ public interface CurriculumMappingReviewRepository {
 	 * @param source        the directional source node
 	 * @param targetVersion the syllabus version against which it was reviewed
 	 * @return the outcome, or an empty value when this pair is unreviewed
-	 * @throws NullPointerException if either argument is {@code null}
+	 * @throws NullPointerException     if either argument is {@code null}
 	 * @throws IllegalArgumentException if the source and target version have
 	 *                                  different subjects or use the same version
-	 * @throws IllegalStateException if persisted review state cannot be read
+	 * @throws IllegalStateException    if persisted review state cannot be read
 	 */
 	Optional<CurriculumMappingReviewOutcome> findOutcome(CurriculumNode source, SyllabusVersion targetVersion);
 }

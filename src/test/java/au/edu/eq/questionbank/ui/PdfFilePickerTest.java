@@ -17,7 +17,6 @@ class PdfFilePickerTest {
 	@Test
 	void acceptsNormalizedPathsInsideConfiguredRoot() {
 		PdfFilePicker picker = new PdfFilePicker(dataRoot);
-
 		assertTrue(picker.isInsideDataRoot(dataRoot.resolve("chemistry").resolve("..").resolve("exam.pdf")));
 	}
 
@@ -25,7 +24,6 @@ class PdfFilePickerTest {
 	void rejectsSiblingWhoseNameOnlySharesTheRootPrefix() {
 		PdfFilePicker picker = new PdfFilePicker(dataRoot);
 		Path sibling = dataRoot.resolveSibling(dataRoot.getFileName() + "-other").resolve("exam.pdf");
-
 		assertFalse(picker.isInsideDataRoot(sibling));
 	}
 
@@ -33,7 +31,6 @@ class PdfFilePickerTest {
 	void selectedPdfProducesRelativeSourceDocumentPath() {
 		Path pdf = dataRoot.resolve("chemistry/QCAA/2024/exam.pdf").toAbsolutePath().normalize();
 		SelectedPdf selectedPdf = new SelectedPdf(pdf.toFile(), pdf, dataRoot.toAbsolutePath().normalize());
-
 		assertEquals(Path.of("chemistry", "QCAA", "2024", "exam.pdf").toString(), selectedPdf.relativePath());
 	}
 }

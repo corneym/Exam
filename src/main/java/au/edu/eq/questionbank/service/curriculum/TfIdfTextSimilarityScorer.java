@@ -12,6 +12,7 @@ import java.util.Set;
  * Scores text similarity using TF-IDF weighted cosine similarity.
  */
 public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
+
 	private static final Set<String> STOP_WORDS = Set.of("a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
 			"in", "is", "it", "of", "on", "or", "that", "the", "their", "to", "was", "were", "which", "with");
 	private final int documentCount;
@@ -27,8 +28,8 @@ public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
 	 *
 	 * @param corpus the non-empty collection of documents used to calculate term
 	 *               weights
-	 * @throws NullPointerException if the corpus or one of its documents is
-	 *                              {@code null}
+	 * @throws NullPointerException     if the corpus or one of its documents is
+	 *                                  {@code null}
 	 * @throws IllegalArgumentException if the corpus is empty
 	 */
 	public TfIdfTextSimilarityScorer(List<String> corpus) {

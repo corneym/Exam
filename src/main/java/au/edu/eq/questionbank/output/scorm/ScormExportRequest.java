@@ -15,7 +15,7 @@ public final class ScormExportRequest {
 	/**
 	 * Creates a request for one Subject and final ZIP destination.
 	 *
-	 * @param subject the Subject whose current revision corpus will be exported
+	 * @param subject     the Subject whose current revision corpus will be exported
 	 * @param destination the final SCORM ZIP path
 	 * @throws NullPointerException if either argument is null
 	 */
@@ -23,11 +23,9 @@ public final class ScormExportRequest {
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
-
 		if (destination == null) {
 			throw new NullPointerException("destination");
 		}
-
 		this.subject = subject;
 		this.destination = destination;
 	}

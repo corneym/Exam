@@ -38,5 +38,4 @@ final class ExamImportDialog extends Dialog<Void> {
 			event.consume();
 		}
 	}
-
 }

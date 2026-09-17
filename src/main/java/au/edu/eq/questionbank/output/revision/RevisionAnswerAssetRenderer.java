@@ -81,10 +81,12 @@ public final class RevisionAnswerAssetRenderer {
 			throw new NullPointerException("progress");
 		}
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
+		// Repeated curriculum placements share one set of assets, rendered in stable question-id order.
 		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectQuestionsWithAnswers(rootNode, questionsById);
 		}
+		// Progress counts region images, so text-only answers contribute no rendering work.
 		int total = 0;
 		for (Question question : questionsById.values()) {
 			total += question.getAnswer().getRegions().size();
@@ -94,36 +96,43 @@ public final class RevisionAnswerAssetRenderer {
 		for (Question question : questionsById.values()) {
 			Answer answer = question.getAnswer();
 			List<AnswerRegion> regions = answer.getRegions();
+			// Number images by persisted region order, even when an answer spans different source files.
 			for (int index = 0; index < regions.size(); index++) {
 				AnswerRegion region = regions.get(index);
 				int regionNumber = index + 1;
-				Path relativePath = answerAssetPath(question, regionNumber);
-				Path outputFile = normalizedOutputRoot.resolve(relativePath).normalize();
-				if (!outputFile.startsWith(normalizedOutputRoot)) {
-					throw new IOException("Answer asset path escapes the export root: " + relativePath);
-				}
-				Files.createDirectories(outputFile.getParent());
-				String sourceRelativePath = region.answerFile().getSourceDocument().getRelativePath();
-				Path sourcePdf = pdfStore.resolve(sourceRelativePath);
-				if (!Files.isRegularFile(sourcePdf)) {
-					throw new IOException("Answer source PDF is not available for question " + question.getId()
-							+ ", answer region " + regionNumber + ": " + sourcePdf);
-				}
-				try {
-					questionExtractor.extractRegion(sourcePdf, region, outputFile.toFile());
-				} catch (Exception e) {
-					throw new IOException("Could not render answer region " + regionNumber + " for question "
-							+ question.getId() + " from " + sourcePdf, e);
-				}
-				if (!Files.isRegularFile(outputFile) || Files.size(outputFile) == 0) {
-					throw new IOException("Answer image was not written for question " + question.getId()
-							+ ", answer region " + regionNumber);
-				}
-				assets.add(new RevisionAnswerAsset(question, region, regionNumber, relativePath));
+				assets.add(renderAnswerRegion(question, region, regionNumber, normalizedOutputRoot));
 				progress.accept(Integer.valueOf(assets.size()), Integer.valueOf(total));
 			}
 		}
 		return List.copyOf(assets);
+	}
+
+	private RevisionAnswerAsset renderAnswerRegion(Question question, AnswerRegion region, int regionNumber,
+			Path normalizedOutputRoot) throws IOException {
+		// Resolve each region's own answer document and publish an asset record only after the PNG exists.
+		Path relativePath = answerAssetPath(question, regionNumber);
+		Path outputFile = normalizedOutputRoot.resolve(relativePath).normalize();
+		if (!outputFile.startsWith(normalizedOutputRoot)) {
+			throw new IOException("Answer asset path escapes the export root: " + relativePath);
+		}
+		Files.createDirectories(outputFile.getParent());
+		String sourceRelativePath = region.answerFile().getSourceDocument().getRelativePath();
+		Path sourcePdf = pdfStore.resolve(sourceRelativePath);
+		if (!Files.isRegularFile(sourcePdf)) {
+			throw new IOException("Answer source PDF is not available for question " + question.getId()
+					+ ", answer region " + regionNumber + ": " + sourcePdf);
+		}
+		try {
+			questionExtractor.extractRegion(sourcePdf, region, outputFile.toFile());
+		} catch (Exception e) {
+			throw new IOException("Could not render answer region " + regionNumber + " for question "
+					+ question.getId() + " from " + sourcePdf, e);
+		}
+		if (!Files.isRegularFile(outputFile) || Files.size(outputFile) == 0) {
+			throw new IOException("Answer image was not written for question " + question.getId()
+					+ ", answer region " + regionNumber);
+		}
+		return new RevisionAnswerAsset(question, region, regionNumber, relativePath);
 	}
 
 	private Path answerAssetPath(Question question, int regionNumber) {

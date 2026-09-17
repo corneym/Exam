@@ -18,6 +18,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  * Reads completed curriculum-mapping reviews from SQLite.
  */
 public final class SqliteCurriculumMappingReviewRepository implements CurriculumMappingReviewRepository {
+
 	private final SqliteDatabase database;
 
 	/**

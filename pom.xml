@@ -141,11 +141,19 @@
 							<include>src/test/java/**/*.java</include>
 						</includes>
 
+						<eclipse>
+							<file>
+								${project.basedir}/config/eclipse-java-formatter.xml</file>
+						</eclipse>
+
 						<replaceRegex>
 							<name>Blank line before standalone line comments</name>
 							<searchRegex>(?m)^([ \t]*)(?!//)(\S.*)\R([ \t]*//)</searchRegex>
 							<replacement>$1$2&#10;&#10;$3</replacement>
 						</replaceRegex>
+
+						<trimTrailingWhitespace />
+						<endWithNewline />
 					</java>
 				</configuration>
 			</plugin>

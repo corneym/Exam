@@ -29,7 +29,7 @@ public final class RevisionSharedContextAssetRenderer {
 	/**
 	 * Creates a renderer for shared-context source regions in managed PDFs.
 	 *
-	 * @param pdfStore resolver for source examination PDFs
+	 * @param pdfStore          resolver for source examination PDFs
 	 * @param questionExtractor renderer for ordered shared-context regions
 	 */
 	public RevisionSharedContextAssetRenderer(PdfStore pdfStore, QuestionExtractor questionExtractor) {
@@ -46,7 +46,7 @@ public final class RevisionSharedContextAssetRenderer {
 	/**
 	 * Renders one image per shared context used by renderable corpus questions.
 	 *
-	 * @param corpus corpus whose reusable preambles are required
+	 * @param corpus     corpus whose reusable preambles are required
 	 * @param outputRoot destination root for generated assets
 	 * @return immutable rendered assets ordered by shared-context identity
 	 * @throws IOException if source material is unavailable or rendering fails
@@ -68,6 +68,7 @@ public final class RevisionSharedContextAssetRenderer {
 			throw new NullPointerException("progress");
 		}
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
+		// Deduplicate by context identity across questions and curriculum placements, with stable output order.
 		Map<Long, SharedQuestionContext> contextsById = new TreeMap<>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectRenderableContexts(rootNode, contextsById);
@@ -113,6 +114,7 @@ public final class RevisionSharedContextAssetRenderer {
 			}
 			SharedQuestionContext context = question.getSharedContext();
 			SharedQuestionContext existing = contextsById.putIfAbsent(context.getId(), context);
+			// A reused identity must still identify material in the same source booklet.
 			if (existing != null && existing.getBooklet().getId() != context.getBooklet().getId()) {
 				throw new IllegalStateException(
 						"Shared-context id " + context.getId() + " occurs in more than one booklet");

@@ -15,7 +15,6 @@ class ScormSchemaSupportTest {
 
 	private void assertNonEmpty(String fileName) throws Exception {
 		Path file = tempDir.resolve(fileName);
-
 		assertTrue(Files.isRegularFile(file));
 		assertTrue(Files.size(file) > 0);
 	}
@@ -23,9 +22,7 @@ class ScormSchemaSupportTest {
 	@Test
 	void copiesAllScorm12SchemaFilesToPackageRoot() throws Exception {
 		ScormSchemaSupport support = new ScormSchemaSupport();
-
 		support.copyTo(tempDir);
-
 		assertNonEmpty("adlcp_rootv1p2.xsd");
 		assertNonEmpty("ims_xml.xsd");
 		assertNonEmpty("imscp_rootv1p1p2.xsd");

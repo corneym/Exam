@@ -32,8 +32,8 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	/**
 	 * Creates the subject and destination chooser for a revision HTML export.
 	 *
-	 * @param owner window owning the dialog
-	 * @param subjects available export subjects
+	 * @param owner          window owning the dialog
+	 * @param subjects       available export subjects
 	 * @param defaultSubject initial subject selection, or null
 	 */
 	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
@@ -76,8 +76,7 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		exportButton = (Button) getDialogPane().lookupButton(exportButtonType);
 		exportButton.setId("revision-export-start");
 		exportButton.setDisable(true);
-		subjectBox.valueProperty()
-				.addListener((_, _, _) -> updateExportButton(exportButton));
+		subjectBox.valueProperty().addListener((_, _, _) -> updateExportButton(exportButton));
 		updateExportButton(exportButton);
 	}
 

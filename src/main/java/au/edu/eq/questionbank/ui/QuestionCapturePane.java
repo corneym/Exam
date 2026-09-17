@@ -69,6 +69,7 @@ final class QuestionCapturePane extends VBox {
 	private static final String REQUIRED_STATUS_STYLE = "-fx-text-fill: #b71c1c;-fx-font-weight: bold;";
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
 	private static final String SUCCESS_STATUS_STYLE = "-fx-text-fill: #2e7d32;";
+
 	// Workflow dependencies and application callbacks.
 	private final QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor;
@@ -78,6 +79,7 @@ final class QuestionCapturePane extends VBox {
 	private final Supplier<PdfSession> examPdfSessionSupplier;
 	private final Runnable selectionClearHandler;
 	private final Consumer<List<Question>> questionsChangedHandler;
+
 	// Reuse the worker's snapshot throughout synchronous listeners fired by save
 	// completion.
 	private List<Question> completionQuestions;
@@ -87,6 +89,7 @@ final class QuestionCapturePane extends VBox {
 	private final SharedContextCapturePane sharedContextCapturePane;
 	private final SourceQuestionRepository sourceQuestionRepository;
 	private final SqliteQuestionCaptureService questionCaptureService;
+
 	// Capture mode and imported-question selection.
 	private final ToggleButton newQuestionsModeButton = new ToggleButton("New Questions");
 	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Imported Questions");
@@ -95,6 +98,7 @@ final class QuestionCapturePane extends VBox {
 	private final Label importedClassificationLabel = new Label();
 	private final Label captureHintLabel = new Label();
 	private final VBox legacyCaptureBox = new VBox(COMPACT_SPACING);
+
 	// Question metadata and shared preamble controls.
 	private final TextField questionCodeField = new TextField();
 	private final TextField marksField = new TextField();
@@ -102,6 +106,7 @@ final class QuestionCapturePane extends VBox {
 	private final CheckBox firstRegionPreambleCheckBox = new CheckBox("First region is shared preamble");
 	private final Label preambleStatusLabel = new Label();
 	private final VBox preambleControlsBox = new VBox(COMPACT_SPACING);
+
 	// Pending and accepted region controls.
 	private final Button addRegionButton = new Button("Add Region");
 	private final Button removeCurrentSelectionButton = new Button("Clear");
@@ -109,10 +114,12 @@ final class QuestionCapturePane extends VBox {
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final VBox regionPreviewBox = new VBox(SECTION_SPACING);
 	private final ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
+
 	// Save and edit controls.
 	private final Button saveQuestionButton = new Button("Save Question");
 	private final Button cancelQuestionEditButton = new Button("Cancel");
 	private final Label saveStatusLabel = new Label();
+
 	// Transient capture and edit state.
 	private boolean refreshingPreambleControls;
 	private boolean questionSaveInProgress;
@@ -272,6 +279,32 @@ final class QuestionCapturePane extends VBox {
 	 */
 	void clearSharedContextCurrentSelection() {
 		sharedContextCapturePane.clearCurrentSelection();
+		refreshSaveButtonState();
+	}
+
+	/**
+	 * Discards local unaccepted Question or shared-context selection state after a
+	 * different workflow takes ownership of the single PDF selection.
+	 */
+	void discardCurrentSelectionForOwnershipLoss() {
+		/*
+		 * Do not invoke the normal clear handler here. The PDF workspace already
+		 * contains the replacement selection belonging to another workflow.
+		 */
+		currentSelection = null;
+		sharedContextCapturePane.discardCurrentSelectionForOwnershipLoss();
+		if (sharedContextCapturePane.isCaptureMode()) {
+			/*
+			 * Shared-preamble capture remains active even though its previous rectangle was
+			 * superseded by another workflow.
+			 */
+			saveStatusLabel.setText("Shared preamble capture active — select a region");
+		} else {
+
+			// Restore status to the accepted-region state rather than a stale pending
+			// state.
+			showQuestionPendingStatus();
+		}
 		refreshSaveButtonState();
 	}
 
@@ -1250,6 +1283,7 @@ final class QuestionCapturePane extends VBox {
 				try {
 					return new QuestionSaveResult(saved, questionRepository.findAll(), null, null);
 				} catch (RuntimeException refreshFailure) {
+
 					// The transaction has committed. Never report a refresh failure as a failed
 					// save.
 					List<Question> fallback = new ArrayList<>(beforeSave);

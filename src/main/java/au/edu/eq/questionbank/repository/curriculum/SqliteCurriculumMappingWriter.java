@@ -12,12 +12,13 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.MappingStatus;
 
 /**
- * Writes directional curriculum mappings from a non-current syllabus version
- * to the current version of the same subject. Each operation validates
- * persisted endpoint identities and current-version flags and writes within one
+ * Writes directional curriculum mappings from a non-current syllabus version to
+ * the current version of the same subject. Each operation validates persisted
+ * endpoint identities and current-version flags and writes within one
  * transaction; syllabus names do not determine direction.
  */
 public final class SqliteCurriculumMappingWriter {
+
 	private final SqliteDatabase database;
 
 	/**
@@ -42,12 +43,14 @@ public final class SqliteCurriculumMappingWriter {
 	 * @param target the persisted target node
 	 * @param status the review state to store
 	 * @return the mapping with its generated persistent identifier
-	 * @throws NullPointerException if an argument is {@code null}
+	 * @throws NullPointerException     if an argument is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents its
-	 *                                  persisted identity, is directed other than from
-	 *                                  a non-current version to the current version, or
-	 *                                  violates another mapping invariant
-	 * @throws SQLException if the pair already exists or the transaction fails
+	 *                                  persisted identity, is directed other than
+	 *                                  from a non-current version to the current
+	 *                                  version, or violates another mapping
+	 *                                  invariant
+	 * @throws SQLException             if the pair already exists or the
+	 *                                  transaction fails
 	 */
 	public CurriculumMapping insertMapping(CurriculumNode source, CurriculumNode target, MappingStatus status)
 			throws SQLException {
@@ -88,12 +91,14 @@ public final class SqliteCurriculumMappingWriter {
 	 * precondition for the update.
 	 *
 	 * @param mapping the mapping whose persistent identity and endpoints must match
-	 * @param status the review state to store
+	 * @param status  the review state to store
 	 * @return a new mapping with the stored status and unchanged identity/endpoints
-	 * @throws NullPointerException if either argument is {@code null}
+	 * @throws NullPointerException     if either argument is {@code null}
 	 * @throws IllegalArgumentException if the mapping or its endpoints misrepresent
-	 *                                  persistent state or violate mapping invariants
-	 * @throws SQLException if the mapping is missing or the transaction fails
+	 *                                  persistent state or violate mapping
+	 *                                  invariants
+	 * @throws SQLException             if the mapping is missing or the transaction
+	 *                                  fails
 	 */
 	public CurriculumMapping updateStatus(CurriculumMapping mapping, MappingStatus status) throws SQLException {
 		if (mapping == null) {
@@ -217,8 +222,8 @@ public final class SqliteCurriculumMappingWriter {
 	private void validatePersistentEndpoint(CurriculumNode node, long versionId, long subjectId, String level,
 			boolean current, String endpointName) {
 		if (versionId != node.getSyllabusVersion().getId()
-				|| subjectId != node.getSyllabusVersion().getSubject().getId()
-				|| !level.equals(node.getLevel().name()) || current != node.getSyllabusVersion().isCurrent()) {
+				|| subjectId != node.getSyllabusVersion().getSubject().getId() || !level.equals(node.getLevel().name())
+				|| current != node.getSyllabusVersion().isCurrent()) {
 			throw new IllegalArgumentException(endpointName + " does not match persisted curriculum node");
 		}
 	}
@@ -263,6 +268,7 @@ public final class SqliteCurriculumMappingWriter {
 	}
 
 	private record PersistentMappingEndpoints(long sourceVersionId, long targetVersionId, long sourceSubjectId,
-			long targetSubjectId, String sourceLevel, String targetLevel, boolean sourceCurrent, boolean targetCurrent) {
+			long targetSubjectId, String sourceLevel, String targetLevel, boolean sourceCurrent,
+			boolean targetCurrent) {
 	}
 }

@@ -43,11 +43,9 @@ public final class DatabaseResetTool {
 		if (Files.isDirectory(normalizedPath)) {
 			throw new IOException("Configured database path is a directory: " + normalizedPath);
 		}
-
 		Files.deleteIfExists(normalizedPath);
 		Files.deleteIfExists(sidecarPath(normalizedPath, "-wal"));
 		Files.deleteIfExists(sidecarPath(normalizedPath, "-shm"));
-
 		Path parent = normalizedPath.getParent();
 		if (parent != null) {
 			Files.createDirectories(parent);
@@ -68,7 +66,6 @@ public final class DatabaseResetTool {
 		if (error == null) {
 			throw new NullPointerException("error");
 		}
-
 		ApplicationConfig config;
 		try {
 			config = ApplicationConfig.load(propertiesFile);
@@ -81,13 +78,11 @@ public final class DatabaseResetTool {
 			error.println(e.getMessage());
 			return 1;
 		}
-
 		Path databasePath = config.databasePath();
 		if (args.length != 1 || !CONFIRMATION_FLAG.equals(args[0])) {
 			printUsage(output, databasePath);
 			return 2;
 		}
-
 		output.println("Resetting configured database:");
 		output.println(databasePath);
 		try {

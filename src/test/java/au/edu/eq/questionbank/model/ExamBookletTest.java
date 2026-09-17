@@ -16,7 +16,6 @@ class ExamBookletTest {
 	@Test
 	void linksAnExamToItsSourceDocument() {
 		ExamBooklet booklet = new ExamBooklet(1, exam, "Question and response booklet", sourceDocument);
-
 		assertAll(() -> assertEquals(1, booklet.getId()), () -> assertSame(exam, booklet.getExam()),
 				() -> assertEquals("Question and response booklet", booklet.getName()),
 				() -> assertSame(sourceDocument, booklet.getSourceDocument()));
@@ -27,8 +26,7 @@ class ExamBookletTest {
 		assertAll(
 				() -> assertThrows(IllegalArgumentException.class,
 						() -> new ExamBooklet(1, exam, null, sourceDocument)),
-				() -> assertThrows(IllegalArgumentException.class,
-						() -> new ExamBooklet(1, exam, "", sourceDocument)),
+				() -> assertThrows(IllegalArgumentException.class, () -> new ExamBooklet(1, exam, "", sourceDocument)),
 				() -> assertThrows(IllegalArgumentException.class,
 						() -> new ExamBooklet(1, exam, " \t", sourceDocument)));
 	}
@@ -44,8 +42,7 @@ class ExamBookletTest {
 
 	@Test
 	void rejectsNullExam() {
-		assertThrows(NullPointerException.class,
-				() -> new ExamBooklet(1, null, "Question booklet", sourceDocument));
+		assertThrows(NullPointerException.class, () -> new ExamBooklet(1, null, "Question booklet", sourceDocument));
 	}
 
 	@Test

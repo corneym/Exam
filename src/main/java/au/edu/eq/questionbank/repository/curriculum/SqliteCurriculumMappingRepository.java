@@ -17,11 +17,12 @@ import au.edu.eq.questionbank.model.MappingStatus;
 /**
  * Reads directional curriculum mappings from SQLite in persistent mapping-id
  * order. Nodes are reconstructed through the shared curriculum repository using
- * stored identities and parent links, not assumptions about classification codes.
- * Missing or inconsistent persisted state and SQL failures are reported as
- * {@link IllegalStateException}.
+ * stored identities and parent links, not assumptions about classification
+ * codes. Missing or inconsistent persisted state and SQL failures are reported
+ * as {@link IllegalStateException}.
  */
 public final class SqliteCurriculumMappingRepository implements CurriculumMappingRepository {
+
 	private final SqliteDatabase database;
 	private final SqliteCurriculumRepository curriculumRepository;
 
@@ -64,6 +65,7 @@ public final class SqliteCurriculumMappingRepository implements CurriculumMappin
 
 	/**
 	 * {@inheritDoc}
+	 *
 	 * @throws NullPointerException if {@code target} is {@code null}
 	 */
 	@Override
@@ -76,6 +78,7 @@ public final class SqliteCurriculumMappingRepository implements CurriculumMappin
 
 	/**
 	 * {@inheritDoc}
+	 *
 	 * @throws NullPointerException if {@code source} is {@code null}
 	 */
 	@Override
@@ -98,7 +101,8 @@ public final class SqliteCurriculumMappingRepository implements CurriculumMappin
 			MappingStatus status = MappingStatus.valueOf(storedStatus);
 			return new CurriculumMapping(mappingId, source, target, status);
 		} catch (IllegalArgumentException | IllegalStateException e) {
-			throw new IllegalStateException("Invalid stored curriculum mapping " + mappingId + ": " + e.getMessage(), e);
+			throw new IllegalStateException("Invalid stored curriculum mapping " + mappingId + ": " + e.getMessage(),
+					e);
 		}
 	}
 

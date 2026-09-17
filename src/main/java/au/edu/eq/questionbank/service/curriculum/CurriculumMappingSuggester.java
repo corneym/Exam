@@ -11,6 +11,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  * node to the current syllabus version of the same subject.
  */
 public interface CurriculumMappingSuggester {
+
 	/**
 	 * Finds candidate target nodes for the supplied source node. Implementations do
 	 * not confirm or persist the highest-ranked candidate automatically.
@@ -18,7 +19,7 @@ public interface CurriculumMappingSuggester {
 	 * @param source        the node in a non-current syllabus being mapped from
 	 * @param targetVersion the current syllabus version to search
 	 * @return candidate mappings ordered from strongest to weakest match
-	 * @throws NullPointerException if either argument is {@code null}
+	 * @throws NullPointerException     if either argument is {@code null}
 	 * @throws IllegalArgumentException if the source is unsupported or the selected
 	 *                                  versions violate mapping invariants
 	 */

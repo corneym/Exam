@@ -24,18 +24,14 @@ class CurriculumMappingBuilderTest {
 
 	private SyllabusVersion syllabus2019;
 	private SyllabusVersion syllabus2025;
-
 	private CurriculumNode source;
 	private CurriculumNode target;
-
 	private CurriculumRepository repository;
 
 	@Test
 	void rejectsUnknown2019Code() {
 		CurriculumMappingBuilder builder = new CurriculumMappingBuilder();
-
 		AtomicLong ids = new AtomicLong(1);
-
 		assertThrows(IllegalArgumentException.class, () -> builder.build(repository, syllabus2019, syllabus2025,
 				List.of(new CurriculumMappingImportRow("9.9.9", "3.2.1")), ids::getAndIncrement));
 	}
@@ -43,9 +39,7 @@ class CurriculumMappingBuilderTest {
 	@Test
 	void rejectsUnknown2025Code() {
 		CurriculumMappingBuilder builder = new CurriculumMappingBuilder();
-
 		AtomicLong ids = new AtomicLong(1);
-
 		assertThrows(IllegalArgumentException.class, () -> builder.build(repository, syllabus2019, syllabus2025,
 				List.of(new CurriculumMappingImportRow("3.1.2", "9.9.9")), ids::getAndIncrement));
 	}
@@ -53,16 +47,11 @@ class CurriculumMappingBuilderTest {
 	@Test
 	void resolvesCodesAndBuildsConfirmedMapping() {
 		CurriculumMappingBuilder builder = new CurriculumMappingBuilder();
-
 		AtomicLong ids = new AtomicLong(1);
-
 		List<CurriculumMapping> mappings = builder.build(repository, syllabus2019, syllabus2025,
 				List.of(new CurriculumMappingImportRow("3.1.2", "3.2.1")), ids::getAndIncrement);
-
 		assertEquals(1, mappings.size());
-
 		CurriculumMapping mapping = mappings.get(0);
-
 		assertEquals(source, mapping.getSource());
 		assertEquals(target, mapping.getTarget());
 		assertEquals(MappingStatus.CONFIRMED, mapping.getStatus());

@@ -35,7 +35,8 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 	 * Creates a suggester backed by curriculum hierarchy and directional mapping
 	 * lookups.
 	 *
-	 * @param curriculumRepository the hierarchy used to find direct source descriptors
+	 * @param curriculumRepository the hierarchy used to find direct source
+	 *                             descriptors
 	 * @param mappingRepository    confirmed descriptor mapping lookup
 	 * @throws NullPointerException if either repository is {@code null}
 	 */
@@ -54,7 +55,6 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 	@Override
 	public List<CurriculumMappingSuggestion> suggest(CurriculumNode source, SyllabusVersion targetVersion) {
 		validateRequest(source, targetVersion);
-
 		List<CurriculumNode> sourceDescriptors = findDirectDescriptors(source);
 		if (sourceDescriptors.isEmpty()) {
 			return List.of();
@@ -75,17 +75,14 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 				if (mapping.getStatus() != MappingStatus.CONFIRMED) {
 					continue;
 				}
-
 				CurriculumNode targetDescriptor = mapping.getTarget();
 				if (!targetDescriptor.getSyllabusVersion().equals(targetVersion)) {
 					continue;
 				}
-
 				CurriculumNode targetParent = targetDescriptor.getParent();
 				if (targetParent == null || targetParent.getLevel() != CurriculumLevel.SUBTOPIC) {
 					continue;
 				}
-
 				if (supportedTargetSubtopicIds.add(targetParent.getId())) {
 					evidenceCounts.merge(targetParent, 1, Integer::sum);
 				}
@@ -116,13 +113,11 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 
 	private List<CurriculumNode> findDirectDescriptors(CurriculumNode subtopic) {
 		List<CurriculumNode> descriptors = new ArrayList<>();
-
 		for (CurriculumNode child : curriculumRepository.findChildren(subtopic)) {
 			if (child.getLevel() == CurriculumLevel.DESCRIPTOR) {
 				descriptors.add(child);
 			}
 		}
-
 		return descriptors;
 	}
 

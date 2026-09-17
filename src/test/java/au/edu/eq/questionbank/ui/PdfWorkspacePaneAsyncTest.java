@@ -60,6 +60,7 @@ class PdfWorkspacePaneAsyncTest {
 				failure.set(error);
 				done.countDown();
 			});
+
 			// Invalidate before the worker's completion can run on the FX thread.
 			pane.showDocument(PdfWorkspacePane.DocumentMode.EXAM);
 		});

@@ -28,6 +28,7 @@ import au.edu.eq.questionbank.model.Unit;
  * current version for the same subject is cleared within that transaction.
  */
 public final class SqliteCurriculumImporter {
+
 	private record CurriculumNodeDefinition(String code, String name, String level, String parentCode,
 			int displayOrder) {
 	}
@@ -58,14 +59,15 @@ public final class SqliteCurriculumImporter {
 	 * <p>
 	 * An identical existing version is returned without modification.
 	 *
-	 * @param subjectName the existing or new subject name
+	 * @param subjectName  the existing or new subject name
 	 * @param syllabusName the syllabus-version name
-	 * @param current whether this version is current for the subject
+	 * @param current      whether this version is current for the subject
 	 * @return the newly stored or already matching syllabus version
-	 * @throws SQLException if the import cannot be stored or committed
+	 * @throws SQLException                      if the import cannot be stored or
+	 *                                           committed
 	 * @throws CurriculumImportConflictException if the named version exists with
 	 *                                           nodes or a different current status
-	 * @throws IllegalArgumentException if a required name is blank
+	 * @throws IllegalArgumentException          if a required name is blank
 	 */
 	public SyllabusVersion importSyllabus(String subjectName, String syllabusName, boolean current)
 			throws SQLException {
@@ -80,10 +82,11 @@ public final class SqliteCurriculumImporter {
 	 * @param syllabusName the syllabus-version name
 	 * @param current      whether this version is current for the subject
 	 * @return the import result
-	 * @throws SQLException if the import cannot be read, stored, or committed
+	 * @throws SQLException                      if the import cannot be read,
+	 *                                           stored, or committed
 	 * @throws CurriculumImportConflictException if the named version exists with
 	 *                                           nodes or a different current status
-	 * @throws IllegalArgumentException if a required name is blank
+	 * @throws IllegalArgumentException          if a required name is blank
 	 */
 	public CurriculumImportResult importSyllabusWithResult(String subjectName, String syllabusName, boolean current)
 			throws SQLException {
@@ -171,7 +174,6 @@ public final class SqliteCurriculumImporter {
 					+ existingVersion.getName() + " is already imported as " + storedStatus
 					+ " and cannot be re-imported as " + requestedStatus + ".");
 		}
-
 		Map<String, CurriculumNodeDefinition> stored = readStoredDefinitions(connection, existingVersion);
 		Map<String, CurriculumNodeDefinition> incoming = definitions(incomingNodes);
 		for (String code : new TreeSet<>(incoming.keySet())) {
@@ -208,7 +210,6 @@ public final class SqliteCurriculumImporter {
 		} else {
 			subject = writer.insertSubject(connection, subjectName);
 		}
-
 		if (current) {
 			clearCurrentVersion(connection, subject);
 		}
@@ -230,23 +231,19 @@ public final class SqliteCurriculumImporter {
 				break;
 			case TOPIC:
 				Unit unit = (Unit) storedNodes.get(node.getParent().getCode());
-
 				storedNode = writer.insertTopic(connection, unit, node.getCode(), node.getName(),
 						node.getDisplayOrder());
 				break;
 			case SUBTOPIC:
 				Topic topic = (Topic) storedNodes.get(node.getParent().getCode());
-
 				storedNode = writer.insertSubtopic(connection, topic, node.getCode(), node.getName(),
 						node.getDisplayOrder());
 				break;
 			case DESCRIPTOR:
 				CurriculumNode parent = storedNodes.get(node.getParent().getCode());
-
 				if (parent instanceof Topic topicParent) {
 					storedNode = writer.insertDescriptor(connection, topicParent, node.getCode(), node.getName(),
 							node.getDisplayOrder());
-
 				} else if (parent instanceof Subtopic subtopicParent) {
 					storedNode = writer.insertDescriptor(connection, subtopicParent, node.getCode(), node.getName(),
 							node.getDisplayOrder());
@@ -286,17 +283,19 @@ public final class SqliteCurriculumImporter {
 	 * rows. The version and all generated nodes are committed or rolled back
 	 * together. An identical existing hierarchy is returned without modification.
 	 *
-	 * @param subjectName the existing or new subject name
+	 * @param subjectName  the existing or new subject name
 	 * @param syllabusName the syllabus-version name
-	 * @param current whether this version is current for the subject
-	 * @param rows validated import rows from which the hierarchy is built
+	 * @param current      whether this version is current for the subject
+	 * @param rows         validated import rows from which the hierarchy is built
 	 * @return the newly stored or already matching syllabus version
-	 * @throws SQLException if the import cannot be stored or committed
-	 * @throws NullPointerException if {@code rows} is {@code null}
+	 * @throws SQLException                      if the import cannot be stored or
+	 *                                           committed
+	 * @throws NullPointerException              if {@code rows} is {@code null}
 	 * @throws CurriculumImportConflictException if the named version exists with
 	 *                                           different hierarchy data or current
 	 *                                           status
-	 * @throws IllegalArgumentException if names or hierarchy rows are invalid
+	 * @throws IllegalArgumentException          if names or hierarchy rows are
+	 *                                           invalid
 	 */
 	public SyllabusVersion importSyllabus(String subjectName, String syllabusName, boolean current,
 			List<CurriculumImportRow> rows) throws SQLException {
@@ -307,21 +306,22 @@ public final class SqliteCurriculumImporter {
 	 * Imports a syllabus hierarchy or reuses the matching stored hierarchy without
 	 * writing duplicate rows.
 	 *
-	 * @param subjectName the existing or new subject name
+	 * @param subjectName  the existing or new subject name
 	 * @param syllabusName the syllabus-version name
-	 * @param current whether this version is current for the subject
-	 * @param rows validated import rows from which the hierarchy is built
+	 * @param current      whether this version is current for the subject
+	 * @param rows         validated import rows from which the hierarchy is built
 	 * @return whether the hierarchy was newly imported or already present
-	 * @throws SQLException if the import cannot be read, stored, or committed
-	 * @throws NullPointerException if {@code rows} is {@code null}
+	 * @throws SQLException                      if the import cannot be read,
+	 *                                           stored, or committed
+	 * @throws NullPointerException              if {@code rows} is {@code null}
 	 * @throws CurriculumImportConflictException if the named version exists with
 	 *                                           different hierarchy data or current
 	 *                                           status
-	 * @throws IllegalArgumentException if names or hierarchy rows are invalid
+	 * @throws IllegalArgumentException          if names or hierarchy rows are
+	 *                                           invalid
 	 */
 	public CurriculumImportResult importSyllabusWithResult(String subjectName, String syllabusName, boolean current,
 			List<CurriculumImportRow> rows) throws SQLException {
-
 		if (rows == null) {
 			throw new NullPointerException("rows");
 		}
@@ -335,7 +335,6 @@ public final class SqliteCurriculumImporter {
 				WHERE subject_id = ?
 				  AND is_current = 1
 				""")) {
-
 			statement.setLong(1, subject.getId());
 			statement.executeUpdate();
 		}

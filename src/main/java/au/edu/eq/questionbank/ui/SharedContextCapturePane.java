@@ -38,6 +38,7 @@ final class SharedContextCapturePane extends VBox {
 	private static final double PREVIEW_HEIGHT = 90.0;
 	private static final double PREVIEW_WIDTH = 180.0;
 	private static final Insets CAPTURE_PADDING = new Insets(8);
+
 	// Workflow dependencies and application callbacks.
 	private final SharedQuestionContextRepository contextRepository;
 	private final Supplier<ExamBooklet> bookletSupplier;
@@ -45,11 +46,13 @@ final class SharedContextCapturePane extends VBox {
 	private final Supplier<PdfSession> examPdfSessionSupplier;
 	private final Runnable selectionClearHandler;
 	private final BooleanSupplier captureStartAllowed;
+
 	// Existing context and new capture controls.
 	private final ComboBox<SharedQuestionContext> existingContextField = new ComboBox<>();
 	private final Button newContextButton = new Button("New Context");
 	private final TextField contextLabelField = new TextField();
 	private final Label statusLabel = new Label("No shared context selected");
+
 	// Pending and accepted region controls.
 	private final Button addRegionButton = new Button("Add");
 	private final Button clearSelectionButton = new Button("Clear");
@@ -58,10 +61,12 @@ final class SharedContextCapturePane extends VBox {
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final VBox acceptedRegionBox = new VBox(COMPACT_SPACING);
 	private final ScrollPane acceptedRegionScroll = new ScrollPane(acceptedRegionBox);
+
 	// Save and cancel controls.
 	private final Button saveContextButton = new Button("Save Context");
 	private final Button cancelContextButton = new Button("Cancel");
 	private final VBox newContextBox = new VBox(COMPACT_SPACING);
+
 	// Transient capture and edit state.
 	private final List<SharedQuestionContextRegion> pendingRegions = new ArrayList<>();
 	private SharedQuestionContextRegion currentSelection;
@@ -217,6 +222,28 @@ final class SharedContextCapturePane extends VBox {
 		}
 		existingContextField.getSelectionModel().clearSelection();
 		statusLabel.setText("No shared context selected");
+	}
+
+	/**
+	 * Discards only this pane's local unaccepted selection after another capture
+	 * workflow takes ownership of the PDF selection.
+	 * <p>
+	 * This deliberately does not call the selection-clear handler because the PDF
+	 * workspace now contains the new owner's selection rectangle.
+	 */
+	void discardCurrentSelectionForOwnershipLoss() {
+
+		// Remove the stale shared-context rectangle retained by this pane.
+		currentSelection = null;
+		currentPreview.setImage(null);
+		setSelectionButtonsEnabled(false);
+		if (captureMode) {
+			/*
+			 * Shared-context capture remains active; only ownership of the previous
+			 * unaccepted rectangle has been lost.
+			 */
+			statusLabel.setText("Shared context capture active — select a region");
+		}
 	}
 
 	String getPendingAutomaticContextLabel() {
@@ -383,8 +410,7 @@ final class SharedContextCapturePane extends VBox {
 		clearRegionsButton.setOnAction(_ -> clearRegions());
 		saveContextButton.setOnAction(_ -> saveContext());
 		cancelContextButton.setOnAction(_ -> cancelNewContext());
-		existingContextField.valueProperty()
-				.addListener((_, _, newContext) -> updateSelectedContextStatus(newContext));
+		existingContextField.valueProperty().addListener((_, _, newContext) -> updateSelectedContextStatus(newContext));
 	}
 
 	private void configureCaptureControls() {

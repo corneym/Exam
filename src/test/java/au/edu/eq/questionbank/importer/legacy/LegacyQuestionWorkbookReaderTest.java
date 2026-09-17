@@ -36,7 +36,6 @@ class LegacyQuestionWorkbookReaderTest {
 			header.createCell(4).setCellValue("Topic");
 			header.createCell(5).setCellValue("Answer");
 			header.createCell(6).setCellValue("Preamble");
-
 			Row first = sheet.createRow(1);
 			first.createCell(0).setCellValue(2020);
 			first.createCell(1).setCellValue("MCQ");
@@ -44,7 +43,6 @@ class LegacyQuestionWorkbookReaderTest {
 			first.createCell(3).setCellValue(1);
 			first.createCell(4).setCellValue("1.1.1");
 			first.createCell(5).setCellValue("B");
-
 			Row second = sheet.createRow(2);
 			second.createCell(0).setCellValue(2020);
 			second.createCell(1).setCellValue("1");
@@ -52,7 +50,6 @@ class LegacyQuestionWorkbookReaderTest {
 			second.createCell(3).setCellValue(3);
 			second.createCell(4).setCellValue("2.3.1");
 			second.createCell(6).setCellValue(1);
-
 			try (OutputStream output = Files.newOutputStream(path)) {
 				workbook.write(output);
 			}
@@ -68,7 +65,6 @@ class LegacyQuestionWorkbookReaderTest {
 		LegacyQuestionSheet sheet = sheets.getFirst();
 		assertEquals("QCAA", sheet.providerName());
 		assertEquals(2, sheet.questions().size());
-
 		LegacyQuestionRow first = sheet.questions().get(0);
 		assertEquals(2020, first.year());
 		assertEquals("MCQ", first.paperCode());
@@ -77,7 +73,6 @@ class LegacyQuestionWorkbookReaderTest {
 		assertEquals("1.1.1", first.classificationCode());
 		assertEquals("B", first.answer());
 		assertFalse(first.preambleCaptureRequired());
-
 		LegacyQuestionRow second = sheet.questions().get(1);
 		assertEquals("21a", second.questionCode());
 		assertEquals(3, second.marks());
@@ -143,9 +138,7 @@ class LegacyQuestionWorkbookReaderTest {
 				workbook.write(output);
 			}
 		}
-
 		LegacyQuestionRow row = new LegacyQuestionWorkbookReader().read(path).getFirst().questions().get(1);
-
 		assertEquals(2020, row.year());
 		assertEquals(3, row.marks());
 	}
@@ -159,10 +152,8 @@ class LegacyQuestionWorkbookReaderTest {
 				workbook.write(output);
 			}
 		}
-
 		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
 				() -> new LegacyQuestionWorkbookReader().read(path));
-
 		assertTrue(exception.getMessage().contains("Duplicate column: Year"));
 	}
 }

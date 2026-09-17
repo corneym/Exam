@@ -16,7 +16,8 @@ public record QuestionCorpusFilter(Long subjectId, Long providerId, Integer year
 		QuestionCorpusCompletionFilter completion, QuestionCorpusProblem problem) {
 
 	/**
-	 * Creates a queue filter with positive optional identifiers and an explicit completion choice.
+	 * Creates a queue filter with positive optional identifiers and an explicit
+	 * completion choice.
 	 *
 	 * @param subjectId  subject identifier, or null
 	 * @param providerId provider identifier, or null

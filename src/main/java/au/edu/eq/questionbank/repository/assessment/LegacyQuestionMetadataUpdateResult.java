@@ -11,7 +11,8 @@ import au.edu.eq.questionbank.model.Question;
 public record LegacyQuestionMetadataUpdateResult(Question question, PreambleOutcome preambleOutcome) {
 
 	/**
-	 * Creates a correction result containing the reloaded question and capture outcome.
+	 * Creates a correction result containing the reloaded question and capture
+	 * outcome.
 	 *
 	 * @param question        reloaded persisted question
 	 * @param preambleOutcome effect, if any, of correcting the legacy preamble flag

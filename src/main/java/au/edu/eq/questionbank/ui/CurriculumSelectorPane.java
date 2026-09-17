@@ -369,14 +369,10 @@ public class CurriculumSelectorPane extends VBox {
 	private void configureSelectionHandlers() {
 		subjectBox.setOnAction(_ -> handleSubjectSelection());
 		syllabusBox.setOnAction(_ -> handleSyllabusSelection());
-		unitBox.getSelectionModel().selectedItemProperty()
-				.addListener((_, _, _) -> handleUnitSelection());
-		topicBox.getSelectionModel().selectedItemProperty()
-				.addListener((_, _, _) -> handleTopicSelection());
-		subtopicBox.getSelectionModel().selectedItemProperty()
-				.addListener((_, _, _) -> handleSubtopicSelection());
-		descriptorBox.getSelectionModel().selectedItemProperty()
-				.addListener((_, _, _) -> handleDescriptorSelection());
+		unitBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleUnitSelection());
+		topicBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleTopicSelection());
+		subtopicBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleSubtopicSelection());
+		descriptorBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleDescriptorSelection());
 	}
 
 	private GridPane createGrid() {

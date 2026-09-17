@@ -15,7 +15,6 @@ class AnswerFileTest {
 	@Test
 	void createsValidAnswerFile() {
 		AnswerFile answerFile = new AnswerFile(1, exam, "Marking guide", sourceDocument);
-
 		assertEquals(1, answerFile.getId());
 		assertSame(exam, answerFile.getExam());
 		assertEquals("Marking guide", answerFile.getName());
@@ -46,9 +45,7 @@ class AnswerFileTest {
 	void setUp() {
 		Subject subject = new Subject(1, "Chemistry");
 		ExamProvider provider = new ExamProvider(1, "QCAA");
-
 		exam = new Exam(1, subject, provider, 2025, "External Assessment");
-
 		sourceDocument = new SourceDocument(1, "chemistry/QCAA/2025/marking-guide.pdf");
 	}
 }

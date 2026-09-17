@@ -1,8 +1,8 @@
 package au.edu.eq.questionbank.model;
 
 /**
- * Records whether a multipart source question has shared preamble content.
- * This source-level state is distinct from a legacy question's indication that
+ * Records whether a multipart source question has shared preamble content. This
+ * source-level state is distinct from a legacy question's indication that
  * preamble capture is still required.
  */
 public enum PreambleStatus {

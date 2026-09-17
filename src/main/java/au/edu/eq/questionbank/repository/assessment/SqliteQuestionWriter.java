@@ -150,12 +150,15 @@ public final class SqliteQuestionWriter {
 	 * @param classification          the question's syllabus subtopic or descriptor
 	 * @param preambleCaptureRequired whether shared or introductory material must
 	 *                                be included during later capture
-	 * @param sourceQuestion optional persisted source identity for related parts
-	 * @param sharedContext optional reusable preamble belonging to the same booklet
+	 * @param sourceQuestion          optional persisted source identity for related
+	 *                                parts
+	 * @param sharedContext           optional reusable preamble belonging to the
+	 *                                same booklet
 	 * @return the stored question with its generated identifier
 	 * @throws SQLException             if the transaction cannot be completed
 	 * @throws NullPointerException     if a required object is {@code null}
-	 * @throws IllegalArgumentException if the question metadata or relationships are invalid
+	 * @throws IllegalArgumentException if the question metadata or relationships
+	 *                                  are invalid
 	 */
 	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,

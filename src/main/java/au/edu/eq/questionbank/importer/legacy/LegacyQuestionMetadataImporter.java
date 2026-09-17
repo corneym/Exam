@@ -72,7 +72,9 @@ public final class LegacyQuestionMetadataImporter {
 		try (Connection connection = database.openConnection()) {
 			ImportContext context = findImportContext(connection, subjectName, syllabusName);
 			Set<LegacyBookletRequirement> missing = new LinkedHashSet<>();
-			// Validate classifications even when a row's booklet still needs to be supplied.
+
+			// Validate classifications even when a row's booklet still needs to be
+			// supplied.
 			for (LegacyQuestionSheet sheet : sheets) {
 				for (LegacyQuestionRow row : sheet.questions()) {
 					findClassificationNodeId(connection, context.syllabusVersionId(), sheet.providerName(), row);
@@ -117,7 +119,9 @@ public final class LegacyQuestionMetadataImporter {
 		try (Connection connection = database.openConnection()) {
 			ImportContext context = findImportContext(connection, subjectName, syllabusName);
 			Set<LegacyBookletRequirement> required = new LinkedHashSet<>();
-			// Collapse repeated question references into one requirement per provider/year/booklet.
+
+			// Collapse repeated question references into one requirement per
+			// provider/year/booklet.
 			for (LegacyQuestionSheet sheet : sheets) {
 				for (LegacyQuestionRow row : sheet.questions()) {
 					findClassificationNodeId(connection, context.syllabusVersionId(), sheet.providerName(), row);
@@ -162,10 +166,14 @@ public final class LegacyQuestionMetadataImporter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				// Resolution can create multipart source identities, so it belongs inside the transaction.
+
+				// Resolution can create multipart source identities, so it belongs inside the
+				// transaction.
 				ImportContext context = findImportContext(connection, subjectName, syllabusName);
 				List<ResolvedQuestion> questions = resolveQuestions(connection, sheets, context);
-				// Write questions and answers only after every row has passed compatibility checks.
+
+				// Write questions and answers only after every row has passed compatibility
+				// checks.
 				LegacyQuestionImportResult result = writeQuestions(connection, questions);
 				connection.commit();
 				return result;
@@ -173,6 +181,7 @@ public final class LegacyQuestionMetadataImporter {
 				try {
 					connection.rollback();
 				} catch (SQLException rollbackFailure) {
+
 					// Keep the original import failure as the primary diagnostic.
 					e.addSuppressed(rollbackFailure);
 				}
@@ -230,7 +239,9 @@ public final class LegacyQuestionMetadataImporter {
 
 	private long findBookletId(Connection connection, long subjectId, String providerName, LegacyQuestionRow row)
 			throws SQLException {
-		// The workbook has no assessment name; require a unique match across exams for this identity.
+
+		// The workbook has no assessment name; require a unique match across exams for
+		// this identity.
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT eb.id
 				FROM exam_booklets eb
@@ -265,7 +276,9 @@ public final class LegacyQuestionMetadataImporter {
 
 	private long findClassificationNodeId(Connection connection, long syllabusVersionId, String providerName,
 			LegacyQuestionRow row) throws SQLException {
-		// Resolve codes in the explicitly selected syllabus, which need not be the current syllabus.
+
+		// Resolve codes in the explicitly selected syllabus, which need not be the
+		// current syllabus.
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT id, curriculum_level
 				FROM curriculum_nodes
@@ -281,7 +294,9 @@ public final class LegacyQuestionMetadataImporter {
 				}
 				long classificationNodeId = result.getLong("id");
 				String level = result.getString("curriculum_level");
-				// Both hierarchy shapes can classify questions: a subtopic or a descriptor is valid.
+
+				// Both hierarchy shapes can classify questions: a subtopic or a descriptor is
+				// valid.
 				if (!"SUBTOPIC".equals(level) && !"DESCRIPTOR".equals(level)) {
 					throw new IllegalArgumentException("Classification " + row.classificationCode()
 							+ " is not a SUBTOPIC or DESCRIPTOR for " + description(providerName, row));
@@ -378,7 +393,9 @@ public final class LegacyQuestionMetadataImporter {
 
 	private Long findOrCreateSourceQuestionId(Connection connection, long bookletId, String questionCode)
 			throws SQLException {
-		// Derive multipart ownership from the question code, not from the preamble-capture hint.
+
+		// Derive multipart ownership from the question code, not from the
+		// preamble-capture hint.
 		String sourceQuestionCode = SourceQuestionCodeParser.derive(questionCode);
 		if (sourceQuestionCode == null) {
 			return null;
@@ -427,7 +444,9 @@ public final class LegacyQuestionMetadataImporter {
 	}
 
 	private long insertQuestion(Connection connection, ResolvedQuestion question) throws SQLException {
-		// Import metadata only; authoritative question content will be supplied by later PDF capture.
+
+		// Import metadata only; authoritative question content will be supplied by
+		// later PDF capture.
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO questions
 				    (booklet_id,
@@ -464,7 +483,9 @@ public final class LegacyQuestionMetadataImporter {
 	private List<ResolvedQuestion> resolveQuestions(Connection connection, List<LegacyQuestionSheet> sheets,
 			ImportContext context) throws SQLException {
 		List<ResolvedQuestion> resolved = new ArrayList<>();
-		// Detect duplicate persisted identities across the whole workbook, including separate sheets.
+
+		// Detect duplicate persisted identities across the whole workbook, including
+		// separate sheets.
 		Set<QuestionKey> workbookQuestions = new HashSet<>();
 		for (LegacyQuestionSheet sheet : sheets) {
 			for (LegacyQuestionRow row : sheet.questions()) {
@@ -507,6 +528,7 @@ public final class LegacyQuestionMetadataImporter {
 
 	private boolean shouldInsertAnswer(Connection connection, long questionId, String providerName,
 			LegacyQuestionRow row) throws SQLException {
+
 		// A blank workbook answer leaves any persisted answer untouched.
 		if (row.answer() == null) {
 			return false;
@@ -515,7 +537,9 @@ public final class LegacyQuestionMetadataImporter {
 		if (!existingAnswer.exists()) {
 			return true;
 		}
-		// Reuse identical text, but reject conflicts instead of overwriting captured or corrected answers.
+
+		// Reuse identical text, but reject conflicts instead of overwriting captured or
+		// corrected answers.
 		if (!row.answer().equals(existingAnswer.answerText())) {
 			throw new IllegalArgumentException("Existing answer conflicts with " + description(providerName, row));
 		}
@@ -523,7 +547,9 @@ public final class LegacyQuestionMetadataImporter {
 	}
 
 	private QuestionResponseType responseType(String paperCode) {
-		// Only the explicit MCQ paper code establishes response type; numbered papers leave it unknown.
+
+		// Only the explicit MCQ paper code establishes response type; numbered papers
+		// leave it unknown.
 		return switch (paperCode) {
 		case "MCQ" -> QuestionResponseType.MULTIPLE_CHOICE;
 		case "1", "2" -> QuestionResponseType.UNKNOWN;
@@ -592,7 +618,9 @@ public final class LegacyQuestionMetadataImporter {
 				questionId = insertQuestion(connection, question);
 				insertedQuestions++;
 			} else {
-				// Reuse the question identity and captured content, applying only the resolved metadata updates.
+
+				// Reuse the question identity and captured content, applying only the resolved
+				// metadata updates.
 				questionId = question.existingQuestionId();
 				if (question.sourceQuestionId() != null) {
 					updateExistingSourceQuestionLink(connection, questionId, question.sourceQuestionId().longValue());

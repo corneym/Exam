@@ -19,7 +19,7 @@ public final class CurriculumSourcePdfService {
 	/**
 	 * Creates a service coordinating managed PDF files with syllabus metadata.
 	 *
-	 * @param store managed syllabus-PDF storage
+	 * @param store      managed syllabus-PDF storage
 	 * @param repository writer for the persisted relative PDF path
 	 */
 	public CurriculumSourcePdfService(CurriculumSourcePdfStore store, CurriculumSourcePdfRepository repository) {

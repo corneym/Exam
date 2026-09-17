@@ -24,11 +24,9 @@ class InMemoryCurriculumMappingRepositoryTest {
 	private CurriculumNode source2;
 	private CurriculumNode target1;
 	private CurriculumNode target2;
-
 	private CurriculumMapping mapping1;
 	private CurriculumMapping mapping2;
 	private CurriculumMapping mapping3;
-
 	private CurriculumMappingRepository repository;
 
 	@Test
@@ -50,7 +48,6 @@ class InMemoryCurriculumMappingRepositoryTest {
 	void rejectsDuplicateMappingIds() {
 		CurriculumMapping duplicate = new CurriculumMapping(mapping1.getId(), source2, target1,
 				MappingStatus.CONFIRMED);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new InMemoryCurriculumMappingRepository(List.of(mapping1, duplicate)));
 	}
@@ -82,13 +79,9 @@ class InMemoryCurriculumMappingRepositoryTest {
 	@Test
 	void takesImmutableSnapshotOfMappings() {
 		List<CurriculumMapping> mappings = new java.util.ArrayList<>(List.of(mapping1));
-
 		CurriculumMappingRepository snapshotRepository = new InMemoryCurriculumMappingRepository(mappings);
-
 		mappings.clear();
-
 		assertEquals(List.of(mapping1), snapshotRepository.findAll());
-
 		assertThrows(UnsupportedOperationException.class, () -> snapshotRepository.findAll().add(mapping2));
 	}
 }

@@ -43,22 +43,24 @@ public final class SqliteCurriculumAuthoringRepository implements CurriculumAuth
 		}
 	}
 
-	/** Reads on the caller's transaction so snapshot checks and writes are atomic. */
+	/**
+	 * Reads on the caller's transaction so snapshot checks and writes are atomic.
+	 */
 	static List<PersistedCurriculumNode> findNodes(Connection connection, long syllabusVersionId) throws SQLException {
 		List<PersistedCurriculumNode> nodes = new ArrayList<>();
 		try (PreparedStatement statement = connection.prepareStatement("""
-						SELECT
-						    id,
-						    parent_id,
-						    curriculum_code,
-						    curriculum_name,
-						    curriculum_level,
-						    display_order,
-						    source_page_number
-						FROM curriculum_nodes
-						WHERE syllabus_version_id = ?
-						ORDER BY id
-						""")) {
+				SELECT
+				    id,
+				    parent_id,
+				    curriculum_code,
+				    curriculum_name,
+				    curriculum_level,
+				    display_order,
+				    source_page_number
+				FROM curriculum_nodes
+				WHERE syllabus_version_id = ?
+				ORDER BY id
+				""")) {
 			statement.setLong(1, syllabusVersionId);
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {

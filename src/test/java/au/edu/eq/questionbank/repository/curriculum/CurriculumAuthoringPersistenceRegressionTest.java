@@ -143,6 +143,7 @@ class CurriculumAuthoringPersistenceRegressionTest {
 		var bindingsBefore = session.persistentBindings();
 		var deletionsBefore = session.deletedPersistentIds();
 		var draftBefore = session.draft().nodes();
+
 		// The trigger only fires after an earlier insertion and text update are visible
 		// inside this transaction. This exercises rollback, not early validation.
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {

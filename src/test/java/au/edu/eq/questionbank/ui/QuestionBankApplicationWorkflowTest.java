@@ -795,6 +795,7 @@ class QuestionBankApplicationWorkflowTest {
 		assertTrue(pdfControls.isManaged());
 		openAnswerPdfForTest(question);
 		WaitForAsyncUtils.waitForFxEvents();
+
 		// Visibility and layout participation are controlled by the containing HBox.
 		assertFalse(pdfControls.isVisible());
 		assertFalse(pdfControls.isManaged());

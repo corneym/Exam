@@ -12,6 +12,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  * curriculum hierarchies.
  */
 public interface CurriculumRepository {
+
 	/**
 	 * Lists subjects available in the curriculum repository.
 	 *

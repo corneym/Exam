@@ -120,6 +120,7 @@ class CurriculumAuthoringApplicationRegressionTest {
 					window.hide();
 				}
 			}
+
 			// Detach controls while their database still exists: losing focus can
 			// trigger curriculum lookups during TestFX's later window cleanup.
 			primaryStage.hide();
@@ -262,6 +263,7 @@ class CurriculumAuthoringApplicationRegressionTest {
 		writer.insertDescriptor(topic, "1.1.1", "Original descriptor", 0);
 		application = new QuestionBankApplication();
 		primaryStage = stage;
+
 		// Use the application's existing bootstrap and exit seam, as in its workflow
 		// tests. No test may call Platform.exit and terminate the shared FX toolkit.
 		Method start = QuestionBankApplication.class.getDeclaredMethod("startApplication", Stage.class,

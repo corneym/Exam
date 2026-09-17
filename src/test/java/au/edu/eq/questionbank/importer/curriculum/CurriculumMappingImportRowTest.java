@@ -20,7 +20,6 @@ class CurriculumMappingImportRowTest {
 	@Test
 	void storesSourceAndTargetCodes() {
 		CurriculumMappingImportRow row = new CurriculumMappingImportRow("3.1.2", "3.2.1");
-
 		assertEquals("3.1.2", row.sourceCode());
 		assertEquals("3.2.1", row.targetCode());
 	}

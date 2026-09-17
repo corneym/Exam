@@ -45,17 +45,18 @@ public final class ScormManifestWriter {
 	 * Writes a SCORM 1.2 manifest containing one organisation, item and SCO
 	 * resource.
 	 *
-	 * @param packageRoot package directory in which to write the manifest
+	 * @param packageRoot        package directory in which to write the manifest
 	 * @param manifestIdentifier stable identifier for the manifest
-	 * @param title display title for the organisation and item
-	 * @param launchFile relative path to the SCO launch file
-	 * @param contentFiles complete learning-content inventory, including the launch
-	 *                     file
+	 * @param title              display title for the organisation and item
+	 * @param launchFile         relative path to the SCO launch file
+	 * @param contentFiles       complete learning-content inventory, including the
+	 *                           launch file
 	 * @return the written manifest path
-	 * @throws IOException if the manifest cannot be written
+	 * @throws IOException              if the manifest cannot be written
 	 * @throws IllegalArgumentException if text is blank, a path is unsafe, a path
 	 *                                  is duplicated, or the launch file is absent
-	 * @throws NullPointerException if a required argument or content path is null
+	 * @throws NullPointerException     if a required argument or content path is
+	 *                                  null
 	 */
 	public Path write(Path packageRoot, String manifestIdentifier, String title, Path launchFile,
 			List<Path> contentFiles) throws IOException {

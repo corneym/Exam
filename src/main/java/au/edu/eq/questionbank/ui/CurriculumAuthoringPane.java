@@ -80,6 +80,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	private final Button finaliseButton = new Button("Mark Final");
 	private final Button reopenButton = new Button("Reopen for editing");
 	private boolean dirty;
+
 	// The editor remains bound to this node while tree selection is changing.
 	private Long editorDraftId;
 	private boolean changingTree;
@@ -478,6 +479,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 				applyPendingEditorText();
 				refreshSelectedNodeDetails();
 			} catch (IllegalArgumentException e) {
+
 				// Keep invalid wording visible and bound to its original node.
 				changingTree = true;
 				try {

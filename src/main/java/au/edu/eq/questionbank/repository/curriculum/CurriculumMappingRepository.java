@@ -6,8 +6,7 @@ import au.edu.eq.questionbank.model.CurriculumMapping;
 import au.edu.eq.questionbank.model.CurriculumNode;
 
 /**
- * Read-only lookup boundary for directional mappings between syllabus
- * versions.
+ * Read-only lookup boundary for directional mappings between syllabus versions.
  */
 public interface CurriculumMappingRepository {
 

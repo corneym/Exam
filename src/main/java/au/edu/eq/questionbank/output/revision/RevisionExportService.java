@@ -32,12 +32,12 @@ public final class RevisionExportService {
 	/**
 	 * Creates an exporter from corpus, rendering and validation services.
 	 *
-	 * @param presentationPlanner   multipart grouping and numbering planner
+	 * @param presentationPlanner        multipart grouping and numbering planner
 	 * @param sharedContextAssetRenderer the reusable preamble image renderer
-	 * @param corpusBuilder         the subject corpus builder
-	 * @param questionAssetRenderer the question image renderer
-	 * @param answerAssetRenderer   the answer image renderer
-	 * @param validator             the generated-site validator
+	 * @param corpusBuilder              the subject corpus builder
+	 * @param questionAssetRenderer      the question image renderer
+	 * @param answerAssetRenderer        the answer image renderer
+	 * @param validator                  the generated-site validator
 	 * @throws NullPointerException if any dependency is null
 	 */
 	public RevisionExportService(RevisionCorpusBuilder corpusBuilder, RevisionPresentationPlanner presentationPlanner,
@@ -110,6 +110,7 @@ public final class RevisionExportService {
 		}
 		Files.createDirectories(parent);
 		String destinationName = destination.getFileName().toString();
+		// Stage beside the destination so publication can use a same-filesystem move.
 		Path staging = parent.resolve(destinationName + ".staging-" + UUID.randomUUID()).normalize();
 		if (!staging.getParent().equals(parent)) {
 			throw new IOException("Revision export staging directory escaped destination parent");
@@ -135,6 +136,7 @@ public final class RevisionExportService {
 					sharedContextAssets);
 			List<Path> htmlFiles = htmlRenderer.render(corpus, staging);
 			progress.update("Validating export...", 0, 0);
+			// Check the complete site before exposing it at the requested destination.
 			validator.validate(staging, corpus, htmlFiles, questionAssets, answerAssets, sharedContextAssets);
 			progress.update("Publishing export...", 0, 0);
 			promote(staging, destination);
@@ -142,6 +144,7 @@ public final class RevisionExportService {
 			progress.update("Export complete.", 1, 1);
 			return new RevisionExportResult(destination, corpus.getStatistics());
 		} finally {
+			// Only unfinished staging belongs to cleanup; successful publication retains the destination.
 			if (!promoted && Files.exists(staging)) {
 				deleteRecursively(staging);
 			}
@@ -153,6 +156,7 @@ public final class RevisionExportService {
 			return;
 		}
 		try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
+			// Remove descendants before their directories.
 			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
 				Files.deleteIfExists(path);
 			}

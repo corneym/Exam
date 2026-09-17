@@ -11,7 +11,6 @@ class SourceDocumentTest {
 	@Test
 	void retainsItsIdAndDataRootRelativePath() {
 		SourceDocument document = new SourceDocument(9, "chemistry/QCAA/2025/paper-1.pdf");
-
 		assertAll(() -> assertEquals(9, document.getId()),
 				() -> assertEquals("chemistry/QCAA/2025/paper-1.pdf", document.getRelativePath()));
 	}
