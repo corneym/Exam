@@ -839,27 +839,6 @@ final class QuestionCapturePane extends VBox {
 		return regionsScrollPane;
 	}
 
-	private StringConverter<QuestionResponseType> createResponseTypeConverter() {
-
-		// Convert response types to the user-facing labels shown by the ComboBox.
-		return new StringConverter<QuestionResponseType>() {
-
-			@Override
-			public QuestionResponseType fromString(String text) {
-				// The ComboBox is selection-only, so text is never parsed back to a value.
-				return null;
-			}
-
-			@Override
-			public String toString(QuestionResponseType responseType) {
-				if (responseType == null) {
-					return "";
-				}
-				return responseTypeLabel(responseType);
-			}
-		};
-	}
-
 	private Label createSectionLabel(String text) {
 		Label label = new Label(text);
 		label.setStyle(SECTION_HEADING_STYLE);
@@ -1284,14 +1263,6 @@ final class QuestionCapturePane extends VBox {
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
 		refreshSaveButtonState();
-	}
-
-	private String responseTypeLabel(QuestionResponseType responseType) {
-		return switch (responseType) {
-		case MULTIPLE_CHOICE -> "Multiple choice";
-		case WRITTEN_RESPONSE -> "Written response";
-		case UNKNOWN -> "Unknown";
-		};
 	}
 
 	private void restoreCaptureModeToggle() {

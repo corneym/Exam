@@ -140,6 +140,50 @@ class SqliteQuestionRelationshipPersistenceTest {
 	}
 
 	@Test
+	void replacingSharedContextPreservesAllQuestionLinks() throws Exception {
+		Fixture fixture = createFixture("replace-linked-context.db");
+
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(fixture.database());
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(
+				fixture.database());
+
+		SourceQuestion sourceQuestion = sourceRepository.save(fixture.firstBooklet(), "22");
+
+		SharedQuestionContext originalContext = contextRepository.save(fixture.firstBooklet(), "Question 22 preamble",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.70, 0.15)));
+
+		Question partA = questionRepository.save(fixture.firstBooklet(), "22a", "", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 2, 0.10, 0.35, 0.70, 0.15)),
+				fixture.classification(), true, sourceQuestion, originalContext);
+
+		Question partB = questionRepository.save(fixture.firstBooklet(), "22b", "", 3,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 2, 0.10, 0.55, 0.70, 0.15)),
+				fixture.classification(), true, sourceQuestion, originalContext);
+
+		List<SharedQuestionContextRegion> correctedRegions = List
+				.of(new SharedQuestionContextRegion(3, 0.12, 0.12, 0.65, 0.18));
+
+		SharedQuestionContext correctedContext = contextRepository.replace(originalContext,
+				"Corrected Question 22 preamble", correctedRegions);
+
+		Question reloadedA = questionRepository.findById(partA.getId()).orElseThrow();
+		Question reloadedB = questionRepository.findById(partB.getId()).orElseThrow();
+
+		// Both parts still point to the same persistent context after its source
+		// regions are corrected.
+		assertEquals(originalContext.getId(), correctedContext.getId());
+		assertEquals(originalContext.getId(), reloadedA.getSharedContext().getId());
+		assertEquals(originalContext.getId(), reloadedB.getSharedContext().getId());
+
+		// Reloading each Question must expose the corrected shared-context content.
+		assertEquals("Corrected Question 22 preamble", reloadedA.getSharedContext().getLabel());
+		assertEquals(correctedRegions, reloadedA.getSharedContext().getRegions());
+		assertEquals("Corrected Question 22 preamble", reloadedB.getSharedContext().getLabel());
+		assertEquals(correctedRegions, reloadedB.getSharedContext().getRegions());
+	}
+
+	@Test
 	void resolvesSharedContextWithoutReplacingExistingQuestionRegions() throws Exception {
 		Fixture fixture = createFixture("relationship-only-resolution.db");
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());

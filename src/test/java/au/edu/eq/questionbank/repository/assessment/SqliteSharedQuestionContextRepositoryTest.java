@@ -28,6 +28,75 @@ class SqliteSharedQuestionContextRepositoryTest {
 	Path tempDirectory;
 
 	@Test
+	void rejectsInvalidArguments() throws Exception {
+		RepositoryFixture fixture = createFixture("invalid-shared-context.db");
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+		SharedQuestionContextRegion region = new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2);
+		assertAll(() -> assertThrows(NullPointerException.class, () -> new SqliteSharedQuestionContextRepository(null)),
+				() -> assertThrows(NullPointerException.class, () -> repository.findByBooklet(null)),
+				() -> assertThrows(NullPointerException.class,
+						() -> repository.save(null, "Preamble", List.of(region))),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> repository.save(fixture.firstBooklet(), " ", List.of(region))),
+				() -> assertThrows(NullPointerException.class,
+						() -> repository.save(fixture.firstBooklet(), "Preamble", null)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> repository.save(fixture.firstBooklet(), "Preamble", List.of())),
+				() -> assertThrows(NullPointerException.class,
+						() -> repository.save(fixture.firstBooklet(), "Preamble", Arrays.asList(region, null))));
+	}
+
+	@Test
+	void replacesSharedContextWithoutChangingIdentity() throws Exception {
+		RepositoryFixture fixture = createFixture("replace-shared-context.db");
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+
+		SharedQuestionContext saved = repository.save(fixture.firstBooklet(), "Question 21 preamble",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.70, 0.15)));
+
+		List<SharedQuestionContextRegion> replacementRegions = List.of(
+				new SharedQuestionContextRegion(3, 0.12, 0.20, 0.65, 0.18),
+				new SharedQuestionContextRegion(4, 0.14, 0.10, 0.60, 0.22));
+
+		SharedQuestionContext replaced = repository.replace(saved, "Corrected Question 21 preamble",
+				replacementRegions);
+
+		// Correction must preserve the shared-context identity so existing Question
+		// foreign keys continue to refer to this same logical preamble.
+		assertEquals(saved.getId(), replaced.getId());
+		assertEquals(fixture.firstBooklet().getId(), replaced.getBooklet().getId());
+		assertEquals("Corrected Question 21 preamble", replaced.getLabel());
+		assertEquals(replacementRegions, replaced.getRegions());
+
+		List<SharedQuestionContext> reloaded = repository.findByBooklet(fixture.firstBooklet());
+
+		assertEquals(1, reloaded.size());
+		assertEquals(saved.getId(), reloaded.getFirst().getId());
+		assertEquals("Corrected Question 21 preamble", reloaded.getFirst().getLabel());
+		assertEquals(replacementRegions, reloaded.getFirst().getRegions());
+	}
+
+	@Test
+	void rollsBackContextWhenARegionCannotBeInserted() throws Exception {
+		RepositoryFixture fixture = createFixture("shared-context-rollback.db");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_test_context_region
+					BEFORE INSERT ON shared_question_context_regions
+					BEGIN
+					    SELECT RAISE(ABORT, 'deliberate test failure');
+					END
+					""");
+		}
+		List<SharedQuestionContextRegion> regions = List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2));
+		assertThrows(IllegalStateException.class,
+				() -> fixture.repository().save(fixture.firstBooklet(), "Question 21 preamble", regions));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_context_regions"));
+	}
+
+	@Test
 	void rollsBackEarlierRegionsWhenALaterRegionFails() throws Exception {
 		RepositoryFixture fixture = createFixture("later-region-rollback.db");
 		try (Connection connection = fixture.database().openConnection();
@@ -66,45 +135,6 @@ class SqliteSharedQuestionContextRepositoryTest {
 		assertEquals("Question 21 preamble", context.getLabel());
 		assertEquals(regions, context.getRegions());
 		assertEquals(1, repository.findByBooklet(fixture.secondBooklet()).size());
-	}
-
-	@Test
-	void rejectsInvalidArguments() throws Exception {
-		RepositoryFixture fixture = createFixture("invalid-shared-context.db");
-		SqliteSharedQuestionContextRepository repository = fixture.repository();
-		SharedQuestionContextRegion region = new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2);
-		assertAll(() -> assertThrows(NullPointerException.class, () -> new SqliteSharedQuestionContextRepository(null)),
-				() -> assertThrows(NullPointerException.class, () -> repository.findByBooklet(null)),
-				() -> assertThrows(NullPointerException.class,
-						() -> repository.save(null, "Preamble", List.of(region))),
-				() -> assertThrows(IllegalArgumentException.class,
-						() -> repository.save(fixture.firstBooklet(), " ", List.of(region))),
-				() -> assertThrows(NullPointerException.class,
-						() -> repository.save(fixture.firstBooklet(), "Preamble", null)),
-				() -> assertThrows(IllegalArgumentException.class,
-						() -> repository.save(fixture.firstBooklet(), "Preamble", List.of())),
-				() -> assertThrows(NullPointerException.class,
-						() -> repository.save(fixture.firstBooklet(), "Preamble", Arrays.asList(region, null))));
-	}
-
-	@Test
-	void rollsBackContextWhenARegionCannotBeInserted() throws Exception {
-		RepositoryFixture fixture = createFixture("shared-context-rollback.db");
-		try (Connection connection = fixture.database().openConnection();
-				Statement statement = connection.createStatement()) {
-			statement.execute("""
-					CREATE TRIGGER reject_test_context_region
-					BEFORE INSERT ON shared_question_context_regions
-					BEGIN
-					    SELECT RAISE(ABORT, 'deliberate test failure');
-					END
-					""");
-		}
-		List<SharedQuestionContextRegion> regions = List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2));
-		assertThrows(IllegalStateException.class,
-				() -> fixture.repository().save(fixture.firstBooklet(), "Question 21 preamble", regions));
-		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
-		assertEquals(0, rowCount(fixture.database(), "shared_question_context_regions"));
 	}
 
 	private RepositoryFixture createFixture(String databaseName) throws Exception {

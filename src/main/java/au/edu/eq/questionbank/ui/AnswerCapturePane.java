@@ -22,7 +22,6 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
-
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -456,6 +455,12 @@ final class AnswerCapturePane extends VBox {
 		refreshSaveButtonState();
 	}
 
+	private double answerRegionsPreferredHeight() {
+		// Grow with the accepted-region content until the scrollable maximum is
+		// reached.
+		return Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, answerRegionListBox.getLayoutBounds().getHeight() + 4.0);
+	}
+
 	private void applyRestoredQuestionSelection(Question previousQuestion) {
 		restoringUnansweredQuestionSelection = true;
 		try {
@@ -691,8 +696,12 @@ final class AnswerCapturePane extends VBox {
 		answerRegionListBox.setFillWidth(true);
 		answerRegionListBox.setMaxWidth(Double.MAX_VALUE);
 		answerRegionsScrollPane.setMinHeight(0);
-		answerRegionsScrollPane.setPrefHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
 		answerRegionsScrollPane.setMaxHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
+
+		// Size the accepted-region area to its actual content instead of immediately
+		// claiming the full 300 px viewport height when the first region is added.
+		answerRegionsScrollPane.prefHeightProperty().bind(Bindings
+				.createDoubleBinding(this::answerRegionsPreferredHeight, answerRegionListBox.layoutBoundsProperty()));
 		answerRegionsScrollPane.setMaxWidth(Double.MAX_VALUE);
 		answerRegionsScrollPane.setVisible(false);
 		answerRegionsScrollPane.setManaged(false);

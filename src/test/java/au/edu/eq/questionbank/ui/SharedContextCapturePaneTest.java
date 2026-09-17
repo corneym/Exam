@@ -172,6 +172,29 @@ class SharedContextCapturePaneTest {
 		}
 
 		@Override
+		public SharedQuestionContext replace(SharedQuestionContext context, String label,
+				List<SharedQuestionContextRegion> regions) {
+
+			// Preserve the existing context identity while replacing its editable data,
+			// matching the production repository contract.
+			for (int i = 0; i < contexts.size(); i++) {
+				SharedQuestionContext existing = contexts.get(i);
+
+				if (existing.getId() != context.getId()) {
+					continue;
+				}
+
+				SharedQuestionContext replacement = new SharedQuestionContext(existing.getId(), existing.getBooklet(),
+						label, regions);
+
+				contexts.set(i, replacement);
+				return replacement;
+			}
+
+			throw new IllegalArgumentException("Shared context does not exist");
+		}
+
+		@Override
 		public SharedQuestionContext save(ExamBooklet booklet, String label,
 				List<SharedQuestionContextRegion> regions) {
 			saveCount++;

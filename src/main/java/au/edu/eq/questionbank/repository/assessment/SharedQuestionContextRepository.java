@@ -20,6 +20,23 @@ public interface SharedQuestionContextRepository {
 	List<SharedQuestionContext> findByBooklet(ExamBooklet booklet);
 
 	/**
+	 * Replaces the editable content of an existing shared context while preserving
+	 * its persistent identity and therefore every Question relationship to it.
+	 *
+	 * @param context the existing shared context to replace
+	 * @param label   the replacement non-blank display label
+	 * @param regions one or more replacement regions in source order
+	 * @return the updated shared context with its original persistent identity
+	 * @throws NullPointerException     if {@code context}, {@code regions}, or a
+	 *                                  region is {@code null}
+	 * @throws IllegalArgumentException if the label is blank, no regions are
+	 *                                  supplied, or the context no longer exists
+	 * @throws IllegalStateException    if the replacement cannot be persisted
+	 */
+	SharedQuestionContext replace(SharedQuestionContext context, String label,
+			List<SharedQuestionContextRegion> regions);
+
+	/**
 	 * Persists a shared context and all of its ordered regions atomically.
 	 *
 	 * @param booklet the booklet containing the regions

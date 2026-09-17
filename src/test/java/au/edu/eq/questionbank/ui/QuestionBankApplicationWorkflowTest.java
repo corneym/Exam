@@ -123,6 +123,47 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void acceptedAnswerRegionUsesContentHeightInsteadOfFullViewport(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+
+		Question question = captureQuestion(robot, "Q1");
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+
+		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
+
+		openAnswerPdfForTest(question);
+
+		// Use a deliberately shallow source region so its preview requires much less
+		// than the 300 px maximum region viewport.
+		robot.interact(() -> answerCapturePane().acceptSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.ANSWER, 1, 0.10, 0.10, 0.70, 0.05)));
+
+		robot.clickOn("#add-answer-region");
+
+		javafx.scene.control.ScrollPane regionsPane = field(answerCapturePane(), "answerRegionsScrollPane",
+				javafx.scene.control.ScrollPane.class);
+
+		robot.interact(() -> {
+			primaryStage.getScene().getRoot().applyCss();
+			primaryStage.getScene().getRoot().layout();
+		});
+
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertTrue(regionsPane.isVisible());
+		assertTrue(regionsPane.isManaged());
+
+		// A small accepted region must not make the Answer pane immediately request
+		// the full 300 px maximum viewport.
+		assertTrue(regionsPane.getPrefHeight() < 300.0,
+				"One small Answer region must use its content height rather than the full viewport");
+
+		double contentHeight = regionsPane.getContent().getLayoutBounds().getHeight();
+
+		assertEquals(Math.min(300.0, contentHeight + 4.0), regionsPane.getPrefHeight(), 1.0);
+	}
+
+	@Test
 	void acceptedQuestionRegionDoesNotLockNewQuestionNumber(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);

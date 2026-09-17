@@ -71,6 +71,82 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		return List.copyOf(contexts);
 	}
 
+	@Override
+	public SharedQuestionContext replace(SharedQuestionContext context, String label,
+			List<SharedQuestionContextRegion> regions) {
+
+		if (context == null) {
+			throw new NullPointerException("context");
+		}
+		if (label == null || label.isBlank()) {
+			throw new IllegalArgumentException("label must not be blank");
+		}
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("regions must not be empty");
+		}
+		for (SharedQuestionContextRegion region : regions) {
+			if (region == null) {
+				throw new NullPointerException("regions contains null");
+			}
+		}
+
+		ExamBooklet booklet = context.getBooklet();
+
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			try {
+				// Update the existing row rather than creating a new context so every
+				// Question already linked by shared_context_id remains linked.
+				try (PreparedStatement statement = connection.prepareStatement("""
+						UPDATE shared_question_contexts
+						SET context_label = ?
+						WHERE id = ?
+						  AND booklet_id = ?
+						""")) {
+
+					statement.setString(1, label);
+					statement.setLong(2, context.getId());
+					statement.setLong(3, booklet.getId());
+
+					if (statement.executeUpdate() != 1) {
+						throw new IllegalArgumentException("Shared context does not exist for booklet");
+					}
+				}
+
+				// Region rows belong entirely to the shared context, so replacement
+				// removes the old ordered set before storing the corrected set.
+				try (PreparedStatement statement = connection.prepareStatement("""
+						DELETE FROM shared_question_context_regions
+						WHERE shared_context_id = ?
+						""")) {
+
+					statement.setLong(1, context.getId());
+					statement.executeUpdate();
+				}
+
+				insertRegions(connection, context.getId(), regions);
+
+				SharedQuestionContext replaced = new SharedQuestionContext(context.getId(), booklet, label, regions);
+
+				connection.commit();
+				return replaced;
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not replace shared question context", e);
+		}
+	}
+
 	/**
 	 * {@inheritDoc}
 	 *
