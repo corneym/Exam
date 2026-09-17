@@ -46,6 +46,9 @@ public final class ScormSchemaSupport {
 		}
 		Path root = packageRoot.toAbsolutePath().normalize();
 		Files.createDirectories(root);
+
+		// Copy the fixed bundled schema set so the package carries its support files
+		// offline.
 		for (String fileName : REQUIRED_SCHEMA_FILES) {
 			copySchemaFile(root, fileName);
 		}

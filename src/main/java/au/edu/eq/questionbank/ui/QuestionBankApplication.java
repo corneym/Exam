@@ -365,6 +365,35 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	/**
+	 * Transfers ownership of a newly completed PDF selection and removes stale
+	 * local pending-selection state from the previous workflow.
+	 *
+	 * @param newOwner workflow receiving the newly completed selection
+	 */
+	private void claimCaptureSelection(CaptureSelectionOwner newOwner) {
+		CaptureSelectionOwner previousOwner = captureSelectionState.getOwner();
+		/*
+		 * Record the new owner first. Any local cleanup performed below must not clear
+		 * the newly completed rectangle from the shared PDF workspace.
+		 */
+		captureSelectionState.claim(newOwner);
+		if (previousOwner == null || previousOwner == newOwner) {
+			return;
+		}
+		if (previousOwner == CaptureSelectionOwner.ANSWER) {
+
+			// A new Question-side selection supersedes the stale Answer selection.
+			answerCapturePane.discardCurrentSelectionForOwnershipLoss();
+			return;
+		}
+		/*
+		 * QUESTION and SHARED_CONTEXT both live inside QuestionCapturePane, which
+		 * clears the appropriate stale local state without touching the PDF rectangle.
+		 */
+		questionCapturePane.discardCurrentSelectionForOwnershipLoss();
+	}
+
 	private void clearCaptureSelection(CaptureSelectionOwner owner) {
 		if (captureSelectionState.clear(owner)) {
 			pdfWorkspace.clearSelection();
@@ -837,16 +866,28 @@ public class QuestionBankApplication extends Application {
 
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.ANSWER) {
-			captureSelectionState.claim(CaptureSelectionOwner.ANSWER);
+			/*
+			 * The newly completed Answer rectangle becomes the application's single pending
+			 * selection before AnswerCapturePane receives it.
+			 */
+			claimCaptureSelection(CaptureSelectionOwner.ANSWER);
 			answerCapturePane.acceptSelection(selection);
 			return;
 		}
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.EXAM) {
 			if (questionCapturePane.isCapturingSharedContext()) {
-				captureSelectionState.claim(CaptureSelectionOwner.SHARED_CONTEXT);
+				/*
+				 * Shared-context capture owns this Exam-PDF rectangle and supersedes any
+				 * incompatible pending selection from another workflow.
+				 */
+				claimCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT);
 				questionCapturePane.acceptSharedContextSelection(selection);
 			} else {
-				captureSelectionState.claim(CaptureSelectionOwner.QUESTION);
+				/*
+				 * Ordinary Question capture owns this Exam-PDF rectangle and supersedes any
+				 * incompatible pending selection from another workflow.
+				 */
+				claimCaptureSelection(CaptureSelectionOwner.QUESTION);
 				questionCapturePane.acceptSelection(selection);
 			}
 		}

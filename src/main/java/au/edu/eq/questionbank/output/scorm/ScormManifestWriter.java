@@ -84,6 +84,9 @@ public final class ScormManifestWriter {
 	}
 
 	private List<String> normaliseContentFiles(List<Path> contentFiles) {
+
+		// Sort portable paths and reject aliases that normalize to the same resource
+		// file.
 		Set<String> sortedHrefs = new TreeSet<>();
 		for (Path contentFile : contentFiles) {
 			Objects.requireNonNull(contentFile, "contentFile");
@@ -132,6 +135,9 @@ public final class ScormManifestWriter {
 		xml.writeAttribute("version", "1");
 		xml.writeAttribute("xsi", XMLConstants.W3C_XML_SCHEMA_INSTANCE_NS_URI, "schemaLocation", SCHEMA_LOCATION);
 		writeMetadata(xml);
+
+		// The single organization item refers to the single SCO resource written
+		// immediately afterwards.
 		writeOrganizations(xml, title);
 		writeResources(xml, launchHref, fileHrefs);
 		xml.writeCharacters("\n");
@@ -196,6 +202,9 @@ public final class ScormManifestWriter {
 	}
 
 	private void writeTextElement(XMLStreamWriter xml, String elementName, String text) throws XMLStreamException {
+
+		// Delegate XML escaping to the writer so titles remain data even when they
+		// contain markup characters.
 		xml.writeStartElement("", elementName, IMS_CONTENT_PACKAGING_NAMESPACE);
 		xml.writeCharacters(text);
 		xml.writeEndElement();

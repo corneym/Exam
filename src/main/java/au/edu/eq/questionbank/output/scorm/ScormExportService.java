@@ -126,6 +126,9 @@ public final class ScormExportService {
 			progress.update("Generating revision content...", 0, 0);
 			RevisionExportResult revisionResult = revisionExportService
 					.export(new RevisionExportRequest(request.getSubject(), revisionRoot), progress);
+
+			// Inventory learning content before adding schemas and the manifest, which are
+			// package infrastructure.
 			List<Path> contentFiles = collectContentFiles(revisionRoot);
 			progress.update("Adding SCORM support files...", 0, 0);
 			schemaSupport.copyTo(revisionRoot);
@@ -134,6 +137,9 @@ public final class ScormExportService {
 			String title = request.getSubject().getName() + " Revision";
 			manifestWriter.write(revisionRoot, manifestIdentifier, title, Path.of("index.html"), contentFiles);
 			progress.update("Validating SCORM package...", 0, 0);
+
+			// Validate the assembled directory before the ZIP writer stages and publishes
+			// the archive.
 			packageValidator.validate(revisionRoot);
 			progress.update("Creating SCORM ZIP...", 0, 0);
 			zipWriter.write(revisionRoot, destination);
@@ -147,6 +153,9 @@ public final class ScormExportService {
 				deleteRecursively(workspace);
 			} catch (IOException cleanupException) {
 				if (failure != null) {
+
+					// Preserve the export error while retaining evidence that workspace cleanup
+					// also failed.
 					failure.addSuppressed(cleanupException);
 				} else {
 					throw cleanupException;

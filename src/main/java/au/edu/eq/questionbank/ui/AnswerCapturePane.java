@@ -290,6 +290,23 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Discards only the unaccepted Answer selection after another capture workflow
+	 * takes ownership of the single PDF selection.
+	 */
+	void discardCurrentSelectionForOwnershipLoss() {
+		/*
+		 * The new workflow already owns the visible PDF rectangle, so clear only this
+		 * pane's stale local state and never call selectionClearHandler here.
+		 */
+		currentAnswerSelection = null;
+		setSelectionActionsEnabled(false);
+
+		// Restore the status derived from any already accepted Answer regions.
+		showAcceptedRegionStatus();
+		refreshSaveButtonState();
+	}
+
+	/**
 	 * Loads a persisted answer for editing after the transition guard succeeds. The
 	 * selected question remains locked until the edit ends.
 	 *

@@ -59,7 +59,9 @@ public class HtmlQuestionRenderer {
 				<body>
 				""");
 		for (Path image : questionImages) {
-			// Keep links portable with the HTML directory and escape filenames before inserting attributes.
+
+			// Keep links portable with the HTML directory and escape filenames before
+			// inserting attributes.
 			Path relativeImage = outputFile.getParent().relativize(image);
 			String source = escapeAttribute(relativeImage.toString().replace('\\', '/'));
 			html.append("""

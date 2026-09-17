@@ -65,13 +65,21 @@ public class PdfStore {
 			throw new IllegalArgumentException("PDF destination must remain within the configured data root");
 		}
 		Path destination = destinationDirectory.resolve(source.getFileName()).normalize();
+
+		// A file already at its managed destination needs no copy.
 		if (source.equals(destination)) {
 			return destination;
 		}
 		Files.createDirectories(destinationDirectory);
 		if (!Files.exists(destination)) {
+
+			// Do not replace an existing authoritative source, including one created since
+			// the existence check.
 			return Files.copy(source, destination);
 		}
+
+		// Reuse either the same physical file or a byte-identical copy, without
+		// creating duplicate filenames.
 		if (Files.isSameFile(source, destination)) {
 			return destination;
 		}
@@ -103,6 +111,9 @@ public class PdfStore {
 		if (path.isAbsolute() || path.getRoot() != null) {
 			throw new IllegalArgumentException("PDF path must be relative: " + relativePath);
 		}
+
+		// Collapse dot segments before checking lexical containment beneath the
+		// configured root.
 		Path resolved = pdfRoot.resolve(path).normalize();
 		if (!resolved.startsWith(pdfRoot)) {
 			throw new IllegalArgumentException("PDF path must remain within the configured data root: " + relativePath);
@@ -115,6 +126,9 @@ public class PdfStore {
 			throw new IllegalArgumentException(fieldName + " must not be blank");
 		}
 		String trimmed = value.trim();
+
+		// Subject and provider labels each supply one directory component, not a
+		// relative path.
 		if (".".equals(trimmed) || "..".equals(trimmed) || trimmed.contains("/") || trimmed.contains("\\")) {
 			throw new IllegalArgumentException(fieldName + " is not a valid directory name: " + value);
 		}

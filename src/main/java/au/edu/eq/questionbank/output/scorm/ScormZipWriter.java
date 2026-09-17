@@ -35,6 +35,9 @@ public final class ScormZipWriter {
 		}
 		List<Path> packageFiles = new ArrayList<Path>();
 		Set<String> entryNames = new HashSet<String>();
+
+		// Reject links before classifying files, preventing linked content from
+		// entering the archive.
 		for (Path path : discoveredPaths) {
 			if (Files.isSymbolicLink(path)) {
 				throw new IOException("SCORM package must not contain symbolic links: " + path);
@@ -51,6 +54,9 @@ public final class ScormZipWriter {
 			}
 			packageFiles.add(path);
 		}
+
+		// Stable entry order complements the fixed timestamps used when writing the
+		// ZIP.
 		packageFiles.sort(Comparator.comparing(path -> {
 			try {
 				return toEntryName(root, path);
@@ -122,6 +128,8 @@ public final class ScormZipWriter {
 		Path stagingZip = Files.createTempFile(destinationParent, "scorm-", ".staging.zip");
 		boolean promoted = false;
 		try {
+
+			// Closing the staging archive writes its central directory before publication.
 			writeArchive(root, packageFiles, stagingZip);
 			promote(stagingZip, destination);
 			promoted = true;

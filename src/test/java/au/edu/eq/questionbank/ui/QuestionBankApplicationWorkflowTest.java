@@ -238,6 +238,50 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void answerSelectionSupersedesPendingQuestionSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		/*
+		 * First create a persisted unanswered Question so that Answer capture has a
+		 * legitimate target.
+		 */
+		Question question = captureQuestion(robot, "Q1");
+		/*
+		 * Draw another Exam-PDF rectangle without accepting it. Question capture now
+		 * owns the application's single pending selection.
+		 */
+		dragRegionOnDisplayedPage(robot);
+		Button addQuestionRegion = lookup(robot, "#add-question-region", Button.class);
+		Button clearQuestionSelection = lookup(robot, "#clear-question-selection", Button.class);
+		assertFalse(addQuestionRegion.isDisabled());
+		assertFalse(clearQuestionSelection.isDisabled());
+		/*
+		 * Activate Answer capture for the stored Question and display its answer PDF.
+		 * The old Question pane still has local state until another completed rectangle
+		 * explicitly takes ownership.
+		 */
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		/*
+		 * Completing an Answer rectangle transfers global ownership to Answer capture
+		 * and must discard the stale pending Question rectangle.
+		 */
+		dragRegionOnDisplayedPage(robot);
+		Button addAnswerRegion = lookup(robot, "#add-answer-region", Button.class);
+		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
+		assertTrue(addQuestionRegion.isDisabled());
+		assertTrue(clearQuestionSelection.isDisabled());
+		assertFalse(addAnswerRegion.isDisabled());
+		assertFalse(clearAnswerSelection.isDisabled());
+		/*
+		 * The central ownership state must agree with the controls presented to the
+		 * user.
+		 */
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.ANSWER));
+	}
+
+	@Test
 	void canRemoveAcceptedAnswerRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q3");

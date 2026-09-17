@@ -81,12 +81,16 @@ public final class RevisionAnswerAssetRenderer {
 			throw new NullPointerException("progress");
 		}
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
-		// Repeated curriculum placements share one set of assets, rendered in stable question-id order.
+
+		// Repeated curriculum placements share one set of assets, rendered in stable
+		// question-id order.
 		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectQuestionsWithAnswers(rootNode, questionsById);
 		}
-		// Progress counts region images, so text-only answers contribute no rendering work.
+
+		// Progress counts region images, so text-only answers contribute no rendering
+		// work.
 		int total = 0;
 		for (Question question : questionsById.values()) {
 			total += question.getAnswer().getRegions().size();
@@ -96,7 +100,9 @@ public final class RevisionAnswerAssetRenderer {
 		for (Question question : questionsById.values()) {
 			Answer answer = question.getAnswer();
 			List<AnswerRegion> regions = answer.getRegions();
-			// Number images by persisted region order, even when an answer spans different source files.
+
+			// Number images by persisted region order, even when an answer spans different
+			// source files.
 			for (int index = 0; index < regions.size(); index++) {
 				AnswerRegion region = regions.get(index);
 				int regionNumber = index + 1;
@@ -109,7 +115,9 @@ public final class RevisionAnswerAssetRenderer {
 
 	private RevisionAnswerAsset renderAnswerRegion(Question question, AnswerRegion region, int regionNumber,
 			Path normalizedOutputRoot) throws IOException {
-		// Resolve each region's own answer document and publish an asset record only after the PNG exists.
+
+		// Resolve each region's own answer document and publish an asset record only
+		// after the PNG exists.
 		Path relativePath = answerAssetPath(question, regionNumber);
 		Path outputFile = normalizedOutputRoot.resolve(relativePath).normalize();
 		if (!outputFile.startsWith(normalizedOutputRoot)) {
@@ -125,12 +133,12 @@ public final class RevisionAnswerAssetRenderer {
 		try {
 			questionExtractor.extractRegion(sourcePdf, region, outputFile.toFile());
 		} catch (Exception e) {
-			throw new IOException("Could not render answer region " + regionNumber + " for question "
-					+ question.getId() + " from " + sourcePdf, e);
+			throw new IOException("Could not render answer region " + regionNumber + " for question " + question.getId()
+					+ " from " + sourcePdf, e);
 		}
 		if (!Files.isRegularFile(outputFile) || Files.size(outputFile) == 0) {
-			throw new IOException("Answer image was not written for question " + question.getId()
-					+ ", answer region " + regionNumber);
+			throw new IOException("Answer image was not written for question " + question.getId() + ", answer region "
+					+ regionNumber);
 		}
 		return new RevisionAnswerAsset(question, region, regionNumber, relativePath);
 	}

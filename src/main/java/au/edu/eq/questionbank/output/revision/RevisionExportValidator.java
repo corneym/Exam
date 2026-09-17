@@ -68,7 +68,9 @@ public final class RevisionExportValidator {
 		if (sharedContextAssets == null) {
 			throw new NullPointerException("sharedContextAssets");
 		}
-		// Validate files and required asset coverage before following links between generated pages.
+
+		// Validate files and required asset coverage before following links between
+		// generated pages.
 		validateSubjectIndex(root);
 		validateHtmlFiles(root, htmlFiles);
 		validateQuestionAssets(root, corpus, questionAssets);
@@ -139,7 +141,9 @@ public final class RevisionExportValidator {
 			}
 		}
 		Set<String> expectedRegions = new HashSet<String>();
-		// Compare question/region identities, not just counts, to catch missing or substituted assets.
+
+		// Compare question/region identities, not just counts, to catch missing or
+		// substituted assets.
 		collectExpectedAnswerRegions(corpus.getRootNodes(), expectedRegions);
 		if (!suppliedRegions.equals(expectedRegions)) {
 			throw new IOException("Answer assets do not match persisted answer regions. Expected " + expectedRegions
@@ -159,7 +163,9 @@ public final class RevisionExportValidator {
 		if (normalized.startsWith("..")) {
 			throw new IOException(description + " path escapes the export root: " + relativePath);
 		}
-		// Canonicalize equivalent relative paths before checking whether two assets claim the same file.
+
+		// Canonicalize equivalent relative paths before checking whether two assets
+		// claim the same file.
 		String key = normalized.toString().replace('\\', '/');
 		if (!claimedPaths.add(key)) {
 			throw new IOException("Duplicate " + description + " output path: " + key);
@@ -248,7 +254,9 @@ public final class RevisionExportValidator {
 		if (reference.contains("#") || reference.contains("?")) {
 			throw new IOException("Generated HTML reference must be a plain relative file path: " + reference);
 		}
-		// Links are relative to their containing page, which may be several directories below the root.
+
+		// Links are relative to their containing page, which may be several directories
+		// below the root.
 		Path target = htmlFile.getParent().resolve(reference.replace('/', java.io.File.separatorChar)).normalize();
 		validateInsideRoot(root, target, "HTML reference");
 		validateNonEmptyFile(target, "HTML reference");

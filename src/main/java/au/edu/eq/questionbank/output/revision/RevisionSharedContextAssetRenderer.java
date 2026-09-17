@@ -68,7 +68,9 @@ public final class RevisionSharedContextAssetRenderer {
 			throw new NullPointerException("progress");
 		}
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
-		// Deduplicate by context identity across questions and curriculum placements, with stable output order.
+
+		// Deduplicate by context identity across questions and curriculum placements,
+		// with stable output order.
 		Map<Long, SharedQuestionContext> contextsById = new TreeMap<>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectRenderableContexts(rootNode, contextsById);
@@ -114,6 +116,7 @@ public final class RevisionSharedContextAssetRenderer {
 			}
 			SharedQuestionContext context = question.getSharedContext();
 			SharedQuestionContext existing = contextsById.putIfAbsent(context.getId(), context);
+
 			// A reused identity must still identify material in the same source booklet.
 			if (existing != null && existing.getBooklet().getId() != context.getBooklet().getId()) {
 				throw new IllegalStateException(
