@@ -30,6 +30,11 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a transactional writer for resumable authoring sessions.
+	 *
+	 * @param database initialised question-bank database
+	 */
 	public SqliteCurriculumAuthoringWriter(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");

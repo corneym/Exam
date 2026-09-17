@@ -17,6 +17,12 @@ public final class CurriculumAuthoringOpenService {
 	private final CurriculumRepository curriculumRepository;
 	private final CurriculumDraftLoader draftLoader;
 
+	/**
+	 * Creates an authoring opener using persisted curriculum lookup and draft loading.
+	 *
+	 * @param curriculumRepository subject and syllabus lookup
+	 * @param draftLoader resumable authoring-session loader
+	 */
 	public CurriculumAuthoringOpenService(CurriculumRepository curriculumRepository,
 			CurriculumDraftLoader draftLoader) {
 		if (curriculumRepository == null) {
@@ -29,6 +35,11 @@ public final class CurriculumAuthoringOpenService {
 		this.draftLoader = draftLoader;
 	}
 
+	/**
+	 * Lists persisted syllabuses available for authoring across all subjects.
+	 *
+	 * @return immutable versions sorted by subject and version name, ignoring case
+	 */
 	public List<SyllabusVersion> availableVersions() {
 		List<SyllabusVersion> versions = new ArrayList<>();
 		for (Subject subject : curriculumRepository.findAllSubjects()) {
@@ -40,6 +51,12 @@ public final class CurriculumAuthoringOpenService {
 		return List.copyOf(versions);
 	}
 
+	/**
+	 * Loads the selected syllabus into a resumable authoring session.
+	 *
+	 * @param syllabusVersion persisted syllabus to open
+	 * @return loaded draft with its persistent identity bindings
+	 */
 	public CurriculumAuthoringSession open(SyllabusVersion syllabusVersion) {
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");

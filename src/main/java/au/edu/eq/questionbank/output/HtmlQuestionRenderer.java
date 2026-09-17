@@ -12,6 +12,12 @@ import java.util.List;
 public class HtmlQuestionRenderer {
 
 	/**
+	 * Creates a renderer for question images in HTML documents.
+	 */
+	public HtmlQuestionRenderer() {
+	}
+
+	/**
 	 * Renders question images in list order using paths relative to the output
 	 * document's directory.
 	 *

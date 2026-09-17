@@ -31,6 +31,12 @@ import org.xml.sax.SAXParseException;
 public final class ScormPackageValidator {
 
 	/**
+	 * Creates a validator for staged SCORM package contents.
+	 */
+	public ScormPackageValidator() {
+	}
+
+	/**
 	 * Validates the SCORM profile, package structure, references and exact
 	 * learning-content inventory of a staged package.
 	 *

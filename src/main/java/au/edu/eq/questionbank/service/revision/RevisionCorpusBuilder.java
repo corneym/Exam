@@ -27,6 +27,12 @@ public final class RevisionCorpusBuilder {
 	private final CurriculumRepository curriculumRepository;
 	private final QuestionRetrievalService questionRetrievalService;
 
+	/**
+	 * Creates a builder combining current curriculum structure with applicable questions.
+	 *
+	 * @param curriculumRepository subject and curriculum hierarchy lookup
+	 * @param questionRetrievalService current-curriculum question retrieval
+	 */
 	public RevisionCorpusBuilder(CurriculumRepository curriculumRepository,
 			QuestionRetrievalService questionRetrievalService) {
 		if (curriculumRepository == null) {
@@ -39,6 +45,12 @@ public final class RevisionCorpusBuilder {
 		this.questionRetrievalService = questionRetrievalService;
 	}
 
+	/**
+	 * Builds an ordered revision corpus beneath the subject's current syllabus.
+	 *
+	 * @param subject subject to assemble for revision
+	 * @return curriculum hierarchy with question placements and completeness statistics
+	 */
 	public RevisionCorpus build(Subject subject) {
 		if (subject == null) {
 			throw new NullPointerException("subject");

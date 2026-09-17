@@ -22,6 +22,8 @@ public final class CurrentCurriculumApplicabilityService {
 	private final CurriculumMappingRepository mappingRepository;
 
 	/**
+	 * Creates an applicability service using directional curriculum mappings.
+	 *
 	 * @param mappingRepository directional mapping lookup
 	 * @throws NullPointerException if the repository is {@code null}
 	 */

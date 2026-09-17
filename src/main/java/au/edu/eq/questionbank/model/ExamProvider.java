@@ -27,10 +27,20 @@ public class ExamProvider {
 		this.name = name;
 	}
 
+	/**
+	 * Returns the persistent identity of this examination provider.
+	 *
+	 * @return positive provider identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns the name of the organisation providing examinations.
+	 *
+	 * @return non-blank provider name
+	 */
 	public String getName() {
 		return name;
 	}

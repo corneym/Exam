@@ -10,6 +10,12 @@ import au.edu.eq.questionbank.model.Question;
  */
 public record QuestionCorpusWorkItem(Question question, QuestionCorpusStatus status) {
 
+	/**
+	 * Pairs a stored question with its non-null audit status.
+	 *
+	 * @param question persisted Question
+	 * @param status   current completeness status
+	 */
 	public QuestionCorpusWorkItem {
 		if (question == null) {
 			throw new NullPointerException("question");

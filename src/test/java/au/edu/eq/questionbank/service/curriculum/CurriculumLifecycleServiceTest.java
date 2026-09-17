@@ -87,7 +87,7 @@ class CurriculumLifecycleServiceTest {
 		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 		Subject engineering = writer.insertSubject("Engineering");
 		SyllabusVersion syllabus = writer.insertSyllabusVersion(engineering, "2025", true);
-		Unit unit = writer.insertUnit(syllabus, "1", "Engineering fundamentals", 0);
+		writer.insertUnit(syllabus, "1", "Engineering fundamentals", 0);
 		CurriculumAuthoringSession session = new CurriculumDraftLoader(
 				new SqliteCurriculumAuthoringRepository(database)).load(syllabus);
 		CurriculumDraftNode draftUnit = session.draft().childrenOf(null).get(0);

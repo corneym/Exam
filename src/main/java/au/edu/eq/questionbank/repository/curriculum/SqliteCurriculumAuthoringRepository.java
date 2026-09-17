@@ -18,6 +18,11 @@ public final class SqliteCurriculumAuthoringRepository implements CurriculumAuth
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a reader for persisted authoring hierarchies.
+	 *
+	 * @param database initialised question-bank database
+	 */
 	public SqliteCurriculumAuthoringRepository(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");

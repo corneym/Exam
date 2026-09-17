@@ -20,6 +20,12 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
  */
 public final class CurriculumDraft {
 
+	/**
+	 * Creates an empty authoring draft with session-local node identities.
+	 */
+	public CurriculumDraft() {
+	}
+
 	private final List<CurriculumDraftNode> nodes = new ArrayList<>();
 	private final CurriculumDraftValidator validator = new CurriculumDraftValidator();
 	private long nextDraftId = 1;

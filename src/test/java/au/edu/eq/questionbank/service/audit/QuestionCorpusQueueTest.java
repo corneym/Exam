@@ -98,8 +98,6 @@ class QuestionCorpusQueueTest {
 				new SourceDocument(19, "Chemistry/2023/paper2.pdf"));
 		private final ExamBooklet physicsPaper = new ExamBooklet(20, physics2024, "Paper 1",
 				new SourceDocument(21, "Physics/2024/paper1.pdf"));
-		private final AnswerFile chemistryAnswers = new AnswerFile(22, chemistry2024, "Answers",
-				new SourceDocument(23, "Chemistry/2024/answers.pdf"));
 		private final AnswerFile chemistry2023Answers = new AnswerFile(24, chemistry2023, "Answers",
 				new SourceDocument(25, "Chemistry/2023/answers.pdf"));
 

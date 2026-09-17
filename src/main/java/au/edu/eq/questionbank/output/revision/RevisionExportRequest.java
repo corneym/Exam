@@ -31,6 +31,8 @@ public final class RevisionExportRequest {
 	}
 
 	/**
+	 * Returns the requested destination directory for the generated revision site.
+	 *
 	 * @return the requested output directory, as supplied
 	 */
 	public Path getDestination() {
@@ -38,6 +40,8 @@ public final class RevisionExportRequest {
 	}
 
 	/**
+	 * Returns the subject whose current curriculum will organise the export.
+	 *
 	 * @return the subject to export
 	 */
 	public Subject getSubject() {

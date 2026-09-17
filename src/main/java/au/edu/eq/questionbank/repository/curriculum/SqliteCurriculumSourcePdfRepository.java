@@ -15,6 +15,11 @@ public final class SqliteCurriculumSourcePdfRepository implements CurriculumSour
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a writer for managed syllabus source-PDF references.
+	 *
+	 * @param database initialised question-bank database
+	 */
 	public SqliteCurriculumSourcePdfRepository(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");

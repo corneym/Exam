@@ -22,6 +22,12 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 public final class CurriculumDraftNumberingService {
 
 	/**
+	 * Creates a numbering service for explicitly parented curriculum drafts.
+	 */
+	public CurriculumDraftNumberingService() {
+	}
+
+	/**
 	 * Adds a node and assigns the lowest available hierarchical code beneath its
 	 * explicit parent.
 	 *

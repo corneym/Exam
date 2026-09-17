@@ -45,6 +45,8 @@ public final class CurriculumMappingSuggestion {
 	}
 
 	/**
+	 * Returns the text-similarity score used to rank this suggestion.
+	 *
 	 * @return the normalised similarity score from {@code 0.0} to {@code 1.0}
 	 */
 	public double getScore() {
@@ -52,6 +54,8 @@ public final class CurriculumMappingSuggestion {
 	}
 
 	/**
+	 * Returns the source node being considered for mapping.
+	 *
 	 * @return the directional source node
 	 */
 	public CurriculumNode getSource() {
@@ -59,6 +63,8 @@ public final class CurriculumMappingSuggestion {
 	}
 
 	/**
+	 * Returns the candidate node in the target syllabus.
+	 *
 	 * @return the directional candidate target node
 	 */
 	public CurriculumNode getTarget() {

@@ -26,6 +26,12 @@ public final class RevisionSharedContextAssetRenderer {
 	private final PdfStore pdfStore;
 	private final QuestionExtractor questionExtractor;
 
+	/**
+	 * Creates a renderer for shared-context source regions in managed PDFs.
+	 *
+	 * @param pdfStore resolver for source examination PDFs
+	 * @param questionExtractor renderer for ordered shared-context regions
+	 */
 	public RevisionSharedContextAssetRenderer(PdfStore pdfStore, QuestionExtractor questionExtractor) {
 		if (pdfStore == null) {
 			throw new NullPointerException("pdfStore");
@@ -37,6 +43,14 @@ public final class RevisionSharedContextAssetRenderer {
 		this.questionExtractor = questionExtractor;
 	}
 
+	/**
+	 * Renders one image per shared context used by renderable corpus questions.
+	 *
+	 * @param corpus corpus whose reusable preambles are required
+	 * @param outputRoot destination root for generated assets
+	 * @return immutable rendered assets ordered by shared-context identity
+	 * @throws IOException if source material is unavailable or rendering fails
+	 */
 	public List<RevisionSharedContextAsset> render(RevisionCorpus corpus, Path outputRoot) throws IOException {
 		return render(corpus, outputRoot, (_, _) -> {
 		});

@@ -17,6 +17,17 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 public record PersistedCurriculumNode(long persistentId, CurriculumLevel level, String code, String name,
 		Long parentPersistentId, int displayOrder, Integer sourcePageNumber) {
 
+	/**
+	 * Validates a stored curriculum-node snapshot, including identity and source-page provenance.
+	 *
+	 * @param persistentId       SQLite curriculum-node identifier
+	 * @param level              explicit curriculum level
+	 * @param code               curriculum code
+	 * @param name               curriculum text
+	 * @param parentPersistentId persistent parent identifier, or {@code null}
+	 * @param displayOrder       sibling display order
+	 * @param sourcePageNumber   one-based syllabus source page, or {@code null}
+	 */
 	public PersistedCurriculumNode {
 		if (persistentId < 1) {
 			throw new IllegalArgumentException("persistentId must be positive");

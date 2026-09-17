@@ -91,26 +91,56 @@ public class SyllabusVersion {
 		return id == other.id;
 	}
 
+	/**
+	 * Returns the recorded time of curriculum finalisation.
+	 *
+	 * @return finalisation instant, or null while authoring is in progress
+	 */
 	public Instant getCurriculumFinalisedAt() {
 		return curriculumFinalisedAt;
 	}
 
+	/**
+	 * Returns authoring lifecycle state independently of the current-version flag.
+	 *
+	 * @return in-progress or final curriculum status
+	 */
 	public CurriculumStatus getCurriculumStatus() {
 		return curriculumStatus;
 	}
 
+	/**
+	 * Returns the persistent identity of this syllabus edition.
+	 *
+	 * @return positive syllabus-version identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns the label distinguishing this syllabus edition within its subject.
+	 *
+	 * @return non-blank version name
+	 */
 	public String getName() {
 		return name;
 	}
 
+	/**
+	 * Returns the managed source-PDF reference retained as syllabus provenance.
+	 *
+	 * @return path relative to the curriculum data root, or null if unattached
+	 */
 	public String getSourcePdfPath() {
 		return sourcePdfPath;
 	}
 
+	/**
+	 * Returns the school subject governed by this syllabus edition.
+	 *
+	 * @return owning subject
+	 */
 	public Subject getSubject() {
 		return subject;
 	}
@@ -120,10 +150,20 @@ public class SyllabusVersion {
 		return Objects.hash(id);
 	}
 
+	/**
+	 * Indicates whether this is the subject's current classification syllabus.
+	 *
+	 * @return current-version flag, independent of authoring completion
+	 */
 	public boolean isCurrent() {
 		return current;
 	}
 
+	/**
+	 * Indicates whether the curriculum has been explicitly finalised.
+	 *
+	 * @return true when its authoring lifecycle state is FINAL
+	 */
 	public boolean isCurriculumFinal() {
 		return curriculumStatus == CurriculumStatus.FINAL;
 	}

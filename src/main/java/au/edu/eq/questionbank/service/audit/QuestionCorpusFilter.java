@@ -15,6 +15,16 @@ package au.edu.eq.questionbank.service.audit;
 public record QuestionCorpusFilter(Long subjectId, Long providerId, Integer year, Long bookletId,
 		QuestionCorpusCompletionFilter completion, QuestionCorpusProblem problem) {
 
+	/**
+	 * Creates a queue filter with positive optional identifiers and an explicit completion choice.
+	 *
+	 * @param subjectId  subject identifier, or null
+	 * @param providerId provider identifier, or null
+	 * @param year       exam year, or null
+	 * @param bookletId  booklet identifier, or null
+	 * @param completion completion-state filter
+	 * @param problem    specific problem, or null for any problem
+	 */
 	public QuestionCorpusFilter {
 		validatePositive(subjectId, "subjectId");
 		validatePositive(providerId, "providerId");
@@ -27,6 +37,11 @@ public record QuestionCorpusFilter(Long subjectId, Long providerId, Integer year
 		}
 	}
 
+	/**
+	 * Creates a filter that includes every question in the supplied corpus.
+	 *
+	 * @return unrestricted queue filter
+	 */
 	public static QuestionCorpusFilter all() {
 		return new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.ALL, null);
 	}

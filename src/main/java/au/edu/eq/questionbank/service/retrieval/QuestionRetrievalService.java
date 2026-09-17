@@ -25,6 +25,8 @@ public final class QuestionRetrievalService {
 	private final CurriculumSearchNodeExpansionService searchNodeExpansionService;
 
 	/**
+	 * Creates a retrieval service backed by curriculum-aware question lookup.
+	 *
 	 * @param retrievalRepository        curriculum-aware question persistence
 	 *                                   boundary
 	 * @param searchNodeExpansionService current curriculum hierarchy expansion

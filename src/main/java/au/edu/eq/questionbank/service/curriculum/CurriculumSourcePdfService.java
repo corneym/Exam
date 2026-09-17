@@ -16,6 +16,12 @@ public final class CurriculumSourcePdfService {
 	private final CurriculumSourcePdfStore store;
 	private final CurriculumSourcePdfRepository repository;
 
+	/**
+	 * Creates a service coordinating managed PDF files with syllabus metadata.
+	 *
+	 * @param store managed syllabus-PDF storage
+	 * @param repository writer for the persisted relative PDF path
+	 */
 	public CurriculumSourcePdfService(CurriculumSourcePdfStore store, CurriculumSourcePdfRepository repository) {
 		if (store == null) {
 			throw new NullPointerException("store");

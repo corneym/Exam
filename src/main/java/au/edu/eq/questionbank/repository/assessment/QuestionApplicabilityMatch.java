@@ -51,10 +51,20 @@ public final class QuestionApplicabilityMatch {
 		this.currentNode = currentNode;
 	}
 
+	/**
+	 * Returns the current curriculum node matched by this question.
+	 *
+	 * @return applicable current Subtopic or Descriptor
+	 */
 	public CurriculumNode getCurrentNode() {
 		return currentNode;
 	}
 
+	/**
+	 * Returns the stored question contributing this applicability match.
+	 *
+	 * @return question with its original classification
+	 */
 	public Question getQuestion() {
 		return question;
 	}

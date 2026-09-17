@@ -102,6 +102,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	 *                                reviews
 	 * @param reviewRepository        completed-review lookup
 	 * @param mappingRepository       directional mapping lookup
+	 * @param coverageService         mapping-review coverage reporting service
 	 * @param reviewWriter            atomic review persistence boundary
 	 * @throws NullPointerException if a repository, service or writer is
 	 *                              {@code null}

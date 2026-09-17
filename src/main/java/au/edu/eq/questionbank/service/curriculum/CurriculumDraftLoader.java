@@ -18,6 +18,11 @@ public final class CurriculumDraftLoader {
 
 	private final CurriculumAuthoringRepository repository;
 
+	/**
+	 * Creates a loader for persisted authoring hierarchies.
+	 *
+	 * @param repository source of syllabus nodes and their persistent identities
+	 */
 	public CurriculumDraftLoader(CurriculumAuthoringRepository repository) {
 		if (repository == null) {
 			throw new NullPointerException("repository");

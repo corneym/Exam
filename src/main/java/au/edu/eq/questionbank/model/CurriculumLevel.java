@@ -5,5 +5,12 @@ package au.edu.eq.questionbank.model;
  * to its most specific descriptor level.
  */
 public enum CurriculumLevel {
-	UNIT, TOPIC, SUBTOPIC, DESCRIPTOR
+	/** Root grouping within a syllabus. */
+	UNIT,
+	/** Curriculum topic belonging to a unit. */
+	TOPIC,
+	/** Optional subdivision of a topic. */
+	SUBTOPIC,
+	/** Assessable curriculum statement under a topic or subtopic. */
+	DESCRIPTOR
 }

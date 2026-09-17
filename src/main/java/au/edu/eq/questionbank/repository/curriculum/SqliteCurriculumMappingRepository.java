@@ -26,6 +26,8 @@ public final class SqliteCurriculumMappingRepository implements CurriculumMappin
 	private final SqliteCurriculumRepository curriculumRepository;
 
 	/**
+	 * Creates a reader for directional mappings in the supplied database.
+	 *
 	 * @param database the initialised question-bank database
 	 * @throws NullPointerException if {@code database} is {@code null}
 	 */

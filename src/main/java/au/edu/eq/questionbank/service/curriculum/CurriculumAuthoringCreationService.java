@@ -13,6 +13,12 @@ public final class CurriculumAuthoringCreationService {
 	private final SqliteCurriculumImporter curriculumImporter;
 	private final CurriculumDraftLoader draftLoader;
 
+	/**
+	 * Creates a service that persists new syllabuses and loads their authoring drafts.
+	 *
+	 * @param curriculumImporter transactional syllabus creator
+	 * @param draftLoader loader for the newly persisted hierarchy
+	 */
 	public CurriculumAuthoringCreationService(SqliteCurriculumImporter curriculumImporter,
 			CurriculumDraftLoader draftLoader) {
 		if (curriculumImporter == null) {

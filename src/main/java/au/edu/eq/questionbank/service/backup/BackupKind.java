@@ -7,7 +7,13 @@ import java.util.List;
  */
 public enum BackupKind {
 
+	/**
+	 * Automatic backup containing the database and manifest only.
+	 */
 	AUTOMATIC_DATABASE("auto", List.of(BackupArchiveLayout.MANIFEST_ENTRY, BackupArchiveLayout.DATABASE_ENTRY)),
+	/**
+	 * Full backup containing the database, manifest and managed source files.
+	 */
 	FULL("full", List.of(BackupArchiveLayout.MANIFEST_ENTRY, BackupArchiveLayout.DATABASE_ENTRY,
 			BackupArchiveLayout.PDF_DIRECTORY_ENTRY, BackupArchiveLayout.CURRICULUM_DIRECTORY_ENTRY));
 

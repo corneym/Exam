@@ -16,6 +16,11 @@ public final class SqliteCurriculumLifecycleRepository implements CurriculumLife
 
 	private final SqliteDatabase database;
 
+	/**
+	 * Creates a repository for curriculum finalisation and reopening.
+	 *
+	 * @param database initialised question-bank database
+	 */
 	public SqliteCurriculumLifecycleRepository(SqliteDatabase database) {
 		if (database == null) {
 			throw new NullPointerException("database");

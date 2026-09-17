@@ -44,10 +44,20 @@ public class Subject {
 		return id == other.id;
 	}
 
+	/**
+	 * Returns the persistent identity of this school subject.
+	 *
+	 * @return positive subject identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns the subject name used in curriculum and examination selection.
+	 *
+	 * @return non-blank subject name
+	 */
 	public String getName() {
 		return name;
 	}

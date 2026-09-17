@@ -50,14 +50,29 @@ public class Answer {
 		this.regions = List.copyOf(regions);
 	}
 
+	/**
+	 * Returns the textual part of this answer, if supplied.
+	 *
+	 * @return answer text, possibly null or blank for a region-only answer
+	 */
 	public String getAnswerText() {
 		return answerText;
 	}
 
+	/**
+	 * Returns the persistent identity of this answer.
+	 *
+	 * @return positive answer-row identifier
+	 */
 	public long getId() {
 		return id;
 	}
 
+	/**
+	 * Returns source regions in answer presentation order.
+	 *
+	 * @return immutable ordered regions, empty for a text-only answer
+	 */
 	public List<AnswerRegion> getRegions() {
 		return regions;
 	}

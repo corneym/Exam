@@ -23,6 +23,12 @@ public final class CurriculumAuthoringSession {
 	private Set<PersistedCurriculumNode> persistedSnapshot = Set.of();
 	private final Map<Long, Long> persistentIdByDraftId = new HashMap<>();
 
+	/**
+	 * Creates an authoring session with no persistent bindings and an empty stored baseline.
+	 *
+	 * @param syllabusVersion syllabus being authored
+	 * @param draft hierarchy to edit in this session
+	 */
 	public CurriculumAuthoringSession(SyllabusVersion syllabusVersion, CurriculumDraft draft) {
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
@@ -79,6 +85,11 @@ public final class CurriculumAuthoringSession {
 		return Set.copyOf(deleted);
 	}
 
+	/**
+	 * Returns the editable hierarchy belonging to this session.
+	 *
+	 * @return mutable session draft
+	 */
 	public CurriculumDraft draft() {
 		return draft;
 	}
@@ -116,10 +127,21 @@ public final class CurriculumAuthoringSession {
 		persistedSnapshot = Set.copyOf(nodes);
 	}
 
+	/**
+	 * Returns a snapshot of draft-to-database identity bindings.
+	 *
+	 * @return immutable map from transient draft IDs to persistent node IDs
+	 */
 	public Map<Long, Long> persistentBindings() {
 		return Map.copyOf(persistentIdByDraftId);
 	}
 
+	/**
+	 * Looks up the database identity associated with a transient draft node.
+	 *
+	 * @param draftId session-local node identifier
+	 * @return persistent node ID, or empty if the node has no binding
+	 */
 	public OptionalLong persistentIdForDraftId(long draftId) {
 		Long persistentId = persistentIdByDraftId.get(draftId);
 		if (persistentId == null) {
@@ -128,6 +150,12 @@ public final class CurriculumAuthoringSession {
 		return OptionalLong.of(persistentId);
 	}
 
+	/**
+	 * Refreshes syllabus metadata while retaining the session's persistent syllabus identity.
+	 *
+	 * @param syllabusVersion replacement snapshot with the same persistent ID
+	 * @throws IllegalArgumentException if the replacement identifies another syllabus
+	 */
 	public void replaceSyllabusVersion(SyllabusVersion syllabusVersion) {
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
@@ -138,6 +166,11 @@ public final class CurriculumAuthoringSession {
 		this.syllabusVersion = syllabusVersion;
 	}
 
+	/**
+	 * Returns the session's current syllabus metadata snapshot.
+	 *
+	 * @return syllabus version including its authoring lifecycle state
+	 */
 	public SyllabusVersion syllabusVersion() {
 		return syllabusVersion;
 	}

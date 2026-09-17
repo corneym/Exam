@@ -25,6 +25,8 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 	private static final int MAX_SUGGESTIONS = 5;
 
 	/**
+	 * Creates a descriptor suggester using syllabus text and ancestor context.
+	 *
 	 * @param repository the curriculum hierarchy used to build the source and target
 	 *                   corpora
 	 * @throws NullPointerException if {@code repository} is {@code null}

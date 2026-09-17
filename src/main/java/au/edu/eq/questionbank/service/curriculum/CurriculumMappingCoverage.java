@@ -14,6 +14,14 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 public record CurriculumMappingCoverage(SyllabusVersion sourceVersion, SyllabusVersion targetVersion,
 		CurriculumMappingLevelCoverage descriptorCoverage, CurriculumMappingLevelCoverage subtopicCoverage) {
 
+	/**
+	 * Creates coverage for a syllabus pair, validating the reported node levels.
+	 *
+	 * @param sourceVersion      historical source syllabus
+	 * @param targetVersion      current target syllabus
+	 * @param descriptorCoverage descriptor review coverage
+	 * @param subtopicCoverage   subtopic review coverage
+	 */
 	public CurriculumMappingCoverage {
 		if (sourceVersion == null) {
 			throw new NullPointerException("sourceVersion");

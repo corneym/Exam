@@ -19,6 +19,20 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 public record CurriculumMappingLevelCoverage(CurriculumLevel level, int total, int matched, int noMatch, int unreviewed,
 		int inconsistent, int uncoveredTargetCount) {
 
+	/**
+	 * Creates level coverage with non-negative counts that partition the source total.
+	 *
+	 * @param level                DESCRIPTOR or SUBTOPIC
+	 * @param total                total historical source nodes at this level
+	 * @param matched              sources with a valid MATCHED review
+	 * @param noMatch              sources with a valid NO_MATCH review
+	 * @param unreviewed           sources with neither a review nor confirmed
+	 *                             mapping
+	 * @param inconsistent         sources whose review/mapping state contradicts
+	 *                             itself
+	 * @param uncoveredTargetCount current target nodes with no confirmed
+	 *                             predecessor from the selected historical syllabus
+	 */
 	public CurriculumMappingLevelCoverage {
 		if (level == null) {
 			throw new NullPointerException("level");
@@ -34,10 +48,20 @@ public record CurriculumMappingLevelCoverage(CurriculumLevel level, int total, i
 		}
 	}
 
+	/**
+	 * Counts historical nodes with a valid matched or explicit no-match decision.
+	 *
+	 * @return matched plus no-match source count
+	 */
 	public int deliberatelyReviewed() {
 		return matched + noMatch;
 	}
 
+	/**
+	 * Calculates the share of historical nodes with deliberate review decisions.
+	 *
+	 * @return reviewed percentage from 0 to 100, or zero when there are no source nodes
+	 */
 	public double reviewedPercentage() {
 		if (total == 0) {
 			return 0.0;
@@ -45,6 +69,11 @@ public record CurriculumMappingLevelCoverage(CurriculumLevel level, int total, i
 		return deliberatelyReviewed() * 100.0 / total;
 	}
 
+	/**
+	 * Summarises review completeness for this curriculum level.
+	 *
+	 * @return not applicable for no sources, complete for fully reviewed sources, otherwise incomplete
+	 */
 	public CurriculumMappingCoverageStatus status() {
 		if (total == 0) {
 			return CurriculumMappingCoverageStatus.NOT_APPLICABLE;

@@ -217,6 +217,15 @@ public final class LegacyQuestionMetadataDialog
 	public record Result(String questionCode, int marks, CurriculumNode classification, boolean preambleCaptureRequired,
 			QuestionResponseType responseType) {
 
+		/**
+		 * Validates the replacement metadata accepted by the dialog.
+		 *
+		 * @param questionCode            corrected question code
+		 * @param marks                   corrected positive mark value
+		 * @param classification          corrected classification
+		 * @param preambleCaptureRequired corrected historical preamble hint
+		 * @param responseType            corrected Question response type
+		 */
 		public Result {
 			if (questionCode == null || questionCode.isBlank()) {
 				throw new IllegalArgumentException("questionCode must not be blank");

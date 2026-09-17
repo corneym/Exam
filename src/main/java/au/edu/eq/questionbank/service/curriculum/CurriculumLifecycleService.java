@@ -18,6 +18,13 @@ public final class CurriculumLifecycleService {
 	private final CurriculumLifecycleRepository lifecycleRepository;
 	private final Clock clock;
 
+	/**
+	 * Creates a coordinator for saving drafts and changing curriculum lifecycle state.
+	 *
+	 * @param authoringWriter transactional draft writer
+	 * @param lifecycleRepository persisted finalisation and reopening operations
+	 * @param clock source of finalisation timestamps
+	 */
 	public CurriculumLifecycleService(CurriculumAuthoringWriter authoringWriter,
 			CurriculumLifecycleRepository lifecycleRepository, Clock clock) {
 		if (authoringWriter == null) {

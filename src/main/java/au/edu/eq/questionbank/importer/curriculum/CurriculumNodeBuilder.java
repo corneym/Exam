@@ -20,6 +20,12 @@ import au.edu.eq.questionbank.model.Unit;
 public class CurriculumNodeBuilder {
 
 	/**
+	 * Creates a builder for converting imported rows into curriculum nodes.
+	 */
+	public CurriculumNodeBuilder() {
+	}
+
+	/**
 	 * Builds nodes in hierarchy order: units, topics, then subtopics and
 	 * descriptors. A three-part code with children becomes a subtopic; a
 	 * childless three-part code becomes a descriptor directly beneath its topic.

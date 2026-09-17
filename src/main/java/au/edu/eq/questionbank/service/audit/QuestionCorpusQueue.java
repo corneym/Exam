@@ -13,6 +13,13 @@ public final class QuestionCorpusQueue {
 	private QuestionCorpusQueue() {
 	}
 
+	/**
+	 * Assesses questions and returns those matching the queue filter in input order.
+	 *
+	 * @param questions ordered corpus questions
+	 * @param filter completion, problem and examination restrictions
+	 * @return immutable matching work items
+	 */
 	public static List<QuestionCorpusWorkItem> build(List<Question> questions, QuestionCorpusFilter filter) {
 		if (questions == null) {
 			throw new NullPointerException("questions");
@@ -33,6 +40,12 @@ public final class QuestionCorpusQueue {
 		return List.copyOf(result);
 	}
 
+	/**
+	 * Counts complete questions and each independent corpus problem.
+	 *
+	 * @param questions questions to assess
+	 * @return aggregate counts; one question may contribute to several problem counts
+	 */
 	public static QuestionCorpusSummary summarise(List<Question> questions) {
 		if (questions == null) {
 			throw new NullPointerException("questions");

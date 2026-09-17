@@ -146,18 +146,56 @@ public final class LegacyQuestionMetadataService {
 				.question();
 	}
 
+	/**
+	 * Atomically corrects legacy metadata including the response type.
+	 *
+	 * @param question persisted question being corrected
+	 * @param questionCode replacement non-blank question code
+	 * @param marks replacement positive mark value
+	 * @param classification replacement Subtopic or Descriptor from the existing syllabus
+	 * @param preambleCaptureRequired corrected historical preamble-capture hint
+	 * @param responseType replacement question response type
+	 * @return reloaded question after successful persistence
+	 * @throws IllegalArgumentException if metadata or classification is invalid
+	 * @throws IllegalStateException if persistence fails
+	 */
 	public Question updateMetadata(Question question, String questionCode, int marks, CurriculumNode classification,
 			boolean preambleCaptureRequired, QuestionResponseType responseType) {
 		return updateMetadataWithResult(question, questionCode, marks, classification, preambleCaptureRequired,
 				responseType).question();
 	}
 
+	/**
+	 * Atomically corrects legacy metadata while preserving the response type.
+	 *
+	 * @param question persisted question being corrected
+	 * @param questionCode replacement non-blank question code
+	 * @param marks replacement positive mark value
+	 * @param classification replacement Subtopic or Descriptor from the existing syllabus
+	 * @param preambleCaptureRequired corrected historical preamble-capture hint
+	 * @return reloaded question and the effect on preamble capture
+	 * @throws IllegalArgumentException if metadata or classification is invalid
+	 * @throws IllegalStateException if persistence fails
+	 */
 	public LegacyQuestionMetadataUpdateResult updateMetadataWithResult(Question question, String questionCode,
 			int marks, CurriculumNode classification, boolean preambleCaptureRequired) {
 		return updateMetadataWithResultInternal(question, questionCode, marks, classification, preambleCaptureRequired,
 				null);
 	}
 
+	/**
+	 * Atomically corrects legacy metadata including the response type.
+	 *
+	 * @param question persisted question being corrected
+	 * @param questionCode replacement non-blank question code
+	 * @param marks replacement positive mark value
+	 * @param classification replacement Subtopic or Descriptor from the existing syllabus
+	 * @param preambleCaptureRequired corrected historical preamble-capture hint
+	 * @param responseType replacement question response type
+	 * @return reloaded question and the effect on preamble capture
+	 * @throws IllegalArgumentException if metadata or classification is invalid
+	 * @throws IllegalStateException if persistence fails
+	 */
 	public LegacyQuestionMetadataUpdateResult updateMetadataWithResult(Question question, String questionCode,
 			int marks, CurriculumNode classification, boolean preambleCaptureRequired,
 			QuestionResponseType responseType) {

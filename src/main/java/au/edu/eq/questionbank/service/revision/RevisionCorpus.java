@@ -53,18 +53,38 @@ public final class RevisionCorpus {
 		this.statistics = statistics;
 	}
 
+	/**
+	 * Returns the current syllabus units organising this corpus.
+	 *
+	 * @return immutable unit roots in revision order
+	 */
 	public List<RevisionCorpusNode> getRootNodes() {
 		return rootNodes;
 	}
 
+	/**
+	 * Returns completeness counts computed when the corpus was built.
+	 *
+	 * @return corpus placement and unique-question statistics
+	 */
 	public RevisionCorpusStatistics getStatistics() {
 		return statistics;
 	}
 
+	/**
+	 * Returns the subject covered by this revision corpus.
+	 *
+	 * @return revision subject
+	 */
 	public Subject getSubject() {
 		return subject;
 	}
 
+	/**
+	 * Returns the current syllabus used to organise revision content.
+	 *
+	 * @return current syllabus version
+	 */
 	public SyllabusVersion getSyllabusVersion() {
 		return syllabusVersion;
 	}

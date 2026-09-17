@@ -21,6 +21,8 @@ public final class SqliteCurriculumMappingReviewRepository implements Curriculum
 	private final SqliteDatabase database;
 
 	/**
+	 * Creates a reader for target-specific curriculum review decisions.
+	 *
 	 * @param database the initialised question-bank database
 	 * @throws NullPointerException if {@code database} is {@code null}
 	 */

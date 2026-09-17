@@ -12,6 +12,8 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 public interface CurriculumMappingRepository {
 
 	/**
+	 * Lists the stored directional mappings across syllabus versions.
+	 *
 	 * @return all curriculum mappings
 	 */
 	List<CurriculumMapping> findAll();

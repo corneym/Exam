@@ -219,6 +219,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the original syllabus classification selected for this question.
+	 *
 	 * @return the best-fit subtopic or descriptor in the exam subject
 	 */
 	public CurriculumNode getClassification() {
@@ -226,6 +228,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the examination from which this question was captured.
+	 *
 	 * @return the exam owning the source booklet
 	 */
 	public Exam getExam() {
@@ -233,6 +237,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the persistent identity of this question.
+	 *
 	 * @return the positive persistent identifier
 	 */
 	public long getId() {
@@ -249,6 +255,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the original examination question or part code.
+	 *
 	 * @return the non-blank question or part code, preserved as supplied
 	 */
 	public String getQuestionCode() {
@@ -256,6 +264,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns supplementary wording stored alongside the authoritative source regions.
+	 *
 	 * @return supplementary text, which may be blank but is never null
 	 */
 	public String getQuestionText() {
@@ -263,6 +273,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the source regions used to assemble this question.
+	 *
 	 * @return an immutable list in assembly order; empty for metadata-only
 	 *         questions
 	 */
@@ -281,6 +293,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the shared preamble linked to this question.
+	 *
 	 * @return the reusable preamble context, or {@code null} when unlinked
 	 */
 	public SharedQuestionContext getSharedContext() {
@@ -288,6 +302,8 @@ public class Question {
 	}
 
 	/**
+	 * Returns the source-question identity used to group related parts.
+	 *
 	 * @return the common source identity, or {@code null} when unlinked
 	 */
 	public SourceQuestion getSourceQuestion() {
@@ -295,6 +311,8 @@ public class Question {
 	}
 
 	/**
+	 * Indicates whether an answer is attached to this question instance.
+	 *
 	 * @return whether an answer is associated in memory
 	 */
 	public boolean hasAnswer() {
@@ -302,6 +320,8 @@ public class Question {
 	}
 
 	/**
+	 * Indicates whether reusable preamble material is linked.
+	 *
 	 * @return whether reusable source context is linked
 	 */
 	public boolean hasSharedContext() {
@@ -309,6 +329,8 @@ public class Question {
 	}
 
 	/**
+	 * Indicates whether a persisted source-question identity is linked.
+	 *
 	 * @return whether the question belongs to a common source identity
 	 */
 	public boolean hasSourceQuestion() {

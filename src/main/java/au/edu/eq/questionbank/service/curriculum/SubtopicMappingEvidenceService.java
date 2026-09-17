@@ -21,6 +21,8 @@ public final class SubtopicMappingEvidenceService {
 	private final CurriculumMappingReviewRepository reviewRepository;
 
 	/**
+	 * Creates an evidence service using direct descriptors and their target-specific reviews.
+	 *
 	 * @param curriculumRepository hierarchy lookup used to find direct descriptors
 	 * @param reviewRepository     target-specific descriptor review lookup
 	 * @throws NullPointerException if either repository is {@code null}

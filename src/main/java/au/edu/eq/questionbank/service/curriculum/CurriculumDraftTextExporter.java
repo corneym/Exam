@@ -18,6 +18,12 @@ import java.util.Set;
 public final class CurriculumDraftTextExporter {
 
 	/**
+	 * Creates a text exporter for curriculum draft review.
+	 */
+	public CurriculumDraftTextExporter() {
+	}
+
+	/**
 	 * Renders a curriculum draft as plain text.
 	 *
 	 * @param draft         draft to render

@@ -26,6 +26,11 @@ public final class CurriculumSourcePdfStore {
 	private static final String SOURCES_DIRECTORY = "sources";
 	private final Path curriculumDataRoot;
 
+	/**
+	 * Creates managed syllabus-PDF storage beneath the configured curriculum root.
+	 *
+	 * @param curriculumDataRoot root against which stored relative PDF paths are resolved
+	 */
 	public CurriculumSourcePdfStore(Path curriculumDataRoot) {
 		if (curriculumDataRoot == null) {
 			throw new NullPointerException("curriculumDataRoot");

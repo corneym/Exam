@@ -20,6 +20,12 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 public final class CurriculumDraftValidator {
 
 	/**
+	 * Creates a validator for supported curriculum hierarchy shapes.
+	 */
+	public CurriculumDraftValidator() {
+	}
+
+	/**
 	 * Returns all structural problems found in the supplied draft.
 	 *
 	 * @param nodes draft nodes to validate

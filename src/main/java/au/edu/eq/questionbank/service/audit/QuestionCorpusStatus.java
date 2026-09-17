@@ -17,6 +17,18 @@ import java.util.Set;
 public record QuestionCorpusStatus(boolean questionSourceCaptured, boolean responseTypeResolved, boolean answerComplete,
 		boolean sharedContextResolved, Set<QuestionCorpusProblem> problems) {
 
+	/**
+	 * Creates a completeness snapshot with an immutable set of reported problems.
+	 *
+	 * @param questionSourceCaptured whether at least one Question source region
+	 *                               exists
+	 * @param responseTypeResolved   whether the response type is authoritative
+	 * @param answerComplete         whether the required Answer representation
+	 *                               exists
+	 * @param sharedContextResolved  whether any required shared context has been
+	 *                               resolved
+	 * @param problems               current corpus problems
+	 */
 	public QuestionCorpusStatus {
 		if (problems == null) {
 			throw new NullPointerException("problems");
@@ -25,6 +37,8 @@ public record QuestionCorpusStatus(boolean questionSourceCaptured, boolean respo
 	}
 
 	/**
+	 * Indicates whether the audit found no outstanding corpus problems.
+	 *
 	 * @return whether no corpus-completeness problems remain
 	 */
 	public boolean isComplete() {
@@ -32,6 +46,8 @@ public record QuestionCorpusStatus(boolean questionSourceCaptured, boolean respo
 	}
 
 	/**
+	 * Tests whether a specific corpus problem was reported.
+	 *
 	 * @param problem problem to test
 	 * @return whether this status contains the problem
 	 */

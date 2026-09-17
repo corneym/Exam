@@ -113,7 +113,7 @@ class CurriculumSourcePdfServiceTest {
 				replacement syllabus
 				%%EOF
 				""".getBytes(StandardCharsets.UTF_8));
-		CurriculumSourcePdfService failingService = new CurriculumSourcePdfService(store, (version, relativePath) -> {
+		CurriculumSourcePdfService failingService = new CurriculumSourcePdfService(store, (_, _) -> {
 			throw new IllegalStateException("deliberate metadata failure");
 		});
 		IllegalStateException failure = assertThrows(IllegalStateException.class,

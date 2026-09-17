@@ -125,7 +125,7 @@ class SqliteCurriculumAuthoringWriterTest {
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Forces", 0);
 		var firstDescriptor = curriculumWriter.insertDescriptor(topic, "1.1.1", "First descriptor", 0);
 		var secondDescriptor = curriculumWriter.insertDescriptor(topic, "1.1.2", "Second descriptor", 1);
-		var deletedDescriptor = curriculumWriter.insertDescriptor(topic, "1.1.3", "Descriptor to remove", 2);
+		curriculumWriter.insertDescriptor(topic, "1.1.3", "Descriptor to remove", 2);
 		CurriculumDraftLoader loader = new CurriculumDraftLoader(new SqliteCurriculumAuthoringRepository(database));
 		CurriculumAuthoringSession session = loader.load(syllabus);
 		CurriculumDraft draft = session.draft();

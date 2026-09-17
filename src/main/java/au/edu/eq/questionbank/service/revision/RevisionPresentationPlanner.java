@@ -20,9 +20,21 @@ import au.edu.eq.questionbank.model.SourceQuestion;
  */
 public final class RevisionPresentationPlanner {
 
+	/**
+	 * Creates a planner for curriculum-grouped, multipart revision presentations.
+	 */
+	public RevisionPresentationPlanner() {
+	}
+
 	private static final Comparator<Question> MEMBER_ORDER = Comparator.comparing(Question::getQuestionCode)
 			.thenComparingLong(Question::getId);
 
+	/**
+	 * Groups renderable corpus placements into numbered student-facing presentations.
+	 *
+	 * @param corpus source corpus organised by current curriculum
+	 * @return presentation hierarchy with source-question parts grouped within each bucket
+	 */
 	public RevisionPresentationPlan plan(RevisionCorpus corpus) {
 		if (corpus == null) {
 			throw new NullPointerException("corpus");

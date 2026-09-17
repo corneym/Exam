@@ -12,6 +12,12 @@ import java.util.List;
  */
 public final class ScormSchemaSupport {
 
+	/**
+	 * Creates support for the bundled SCORM manifest schemas.
+	 */
+	public ScormSchemaSupport() {
+	}
+
 	private static final String RESOURCE_ROOT = "/au/edu/eq/questionbank/output/scorm/schema/";
 
 	static final List<String> REQUIRED_SCHEMA_FILES = List.of("adlcp_rootv1p2.xsd", "ims_xml.xsd",
