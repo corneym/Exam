@@ -21,6 +21,8 @@ assumptions.
 Do not assume that code shown earlier in the conversation is still current when
 the repository can be checked.
 
+DO NOT DEVIATE from the instructions in this message
+
 ### How I make code changes
 
 I make Java changes manually in Eclipse.
@@ -28,7 +30,7 @@ I make Java changes manually in Eclipse.
 For every Java code-change instruction, always give:
 
 - `Class: <fully-qualified-class-name>`;
-- `Method: <actual method name/signature>` when editing an existing method;
+- `Method: <actual method name/signature>` when editing an existing method; include scope qualifier so I know where to look in the source tree.
 - one operation label from:
   - ADD
   - DELETE
@@ -40,7 +42,7 @@ For every Java code-change instruction, always give:
 Do not use vague instructions such as "put this near..." or "add this somewhere
 below...".
 
-For new methods, do not tell me where to insert them within the class. Eclipse
+For new methods, DO NOT tell me where to insert them within the class. Eclipse
 can organise methods. Only say that the change is at class scope when that
 matters.
 
@@ -49,6 +51,8 @@ nested structure, identify the exact block being changed.
 
 Prefer complete methods or complete replacement sections over fragments where
 there is any risk of ambiguity.
+
+All code written MUST contain inline comments explaining the algorithmic meaning of what is happening. 
 
 When tests contain nested helper classes or fixtures, distinguish clearly
 between the outer test class and the nested class.
@@ -60,7 +64,7 @@ Work in small, testable slices.
 Do not give me a large batch of unrelated implementation changes at once unless
 I explicitly ask for that.
 
-After a code slice, tell me which test command to run.
+After a code slice, tell me which test command to run.  Do not test beyond what needs to be tested.  Some test classes are becoming behemoths and take minutes to test.
 
 If I report that the tests are green, continue to the next logical slice.
 
@@ -102,7 +106,7 @@ Do not perform GitHub writes or commits on my behalf unless I explicitly ask.
 
 ### Codex/reviews
 
-I may use Codex separately for repository reviews.
+I use Codex separately for repository reviews.
 
 Do not say that you communicate with Codex.
 
