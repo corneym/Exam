@@ -500,7 +500,16 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void changingFullWidthSelectionClearsPendingSharedContextSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-		robot.clickOn("#new-shared-context");
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(questionCode).write("24a");
+		robot.clickOn(marks).write("2");
+		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		assertTrue(preamble.isVisible());
+		assertFalse(preamble.isSelected());
+		robot.clickOn(preamble);
+		assertTrue(preamble.isSelected());
+		assertTrue(questionCapturePane().isCapturingSharedContext());
 		dragRegionOnDisplayedPage(robot);
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 		SharedContextCapturePane sharedContextPane = field(questionCapturePane(), "sharedContextCapturePane",

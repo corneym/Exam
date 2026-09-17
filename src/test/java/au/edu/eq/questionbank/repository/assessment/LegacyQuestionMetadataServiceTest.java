@@ -27,8 +27,16 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
+import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import au.edu.eq.questionbank.service.revision.RevisionCorpus;
+import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlan;
+import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
+import au.edu.eq.questionbank.service.revision.RevisionQuestionPresentation;
 
 class LegacyQuestionMetadataServiceTest {
 
@@ -121,6 +129,59 @@ class LegacyQuestionMetadataServiceTest {
 		assertTrue(trueVersion.isPreambleCaptureRequired());
 		Question falseVersion = service.updateMetadata(trueVersion, "Q2", 1, historicalSubtopicOne, false);
 		assertFalse(falseVersion.isPreambleCaptureRequired());
+	}
+
+	@Test
+	void changingMultipartCodeCanJoinCompatibleGroupAndRemainsPresentableAfterReload() {
+		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SourceQuestion sourceTwentyOne = sourceRepository.save(booklet, "Q21");
+		SourceQuestion sourceTwentyTwo = sourceRepository.save(booklet, "Q22");
+		SharedQuestionContext sharedContext = contextRepository.save(booklet, "Q22 shared material",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		Question movingQuestion = questionRepository.save(booklet, "Q21a", "", 2,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.35, 0.80, 0.20)), historicalSubtopicOne, false,
+				sourceTwentyOne, sharedContext);
+		Question destinationSibling = questionRepository.save(booklet, "Q22b", "", 3,
+				List.of(new QuestionRegion(booklet, 3, 0.10, 0.30, 0.80, 0.25)), historicalSubtopicOne, false,
+				sourceTwentyTwo, sharedContext);
+		service.updateMetadata(movingQuestion, "Q22a", 2, historicalSubtopicOne, false);
+		/*
+		 * Reload both questions so the presentation check uses persisted state, not
+		 * objects returned or retained from the correction operation.
+		 */
+		Question reloadedMoving = questionRepository.findById(movingQuestion.getId()).orElseThrow();
+		Question reloadedSibling = questionRepository.findById(destinationSibling.getId()).orElseThrow();
+		assertEquals("Q22a", reloadedMoving.getQuestionCode());
+		assertTrue(reloadedMoving.hasSourceQuestion());
+		assertTrue(reloadedSibling.hasSourceQuestion());
+		assertEquals("Q22", reloadedMoving.getSourceQuestion().getSourceQuestionCode());
+		assertEquals(reloadedSibling.getSourceQuestion().getId(), reloadedMoving.getSourceQuestion().getId());
+		assertTrue(reloadedMoving.hasSharedContext());
+		assertTrue(reloadedSibling.hasSharedContext());
+		assertEquals(sharedContext.getId(), reloadedMoving.getSharedContext().getId());
+		assertEquals(sharedContext.getId(), reloadedSibling.getSharedContext().getId());
+		/*
+		 * Build a real revision corpus around the reloaded questions. The retrieval
+		 * boundary is deliberately small here because this regression is concerned with
+		 * persistence and presentation consistency, not mapping behaviour.
+		 */
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(currentNodes -> {
+			assertTrue(currentNodes.stream().anyMatch(node -> node.getId() == currentSubtopic.getId()));
+			return List.of(new QuestionApplicabilityMatch(reloadedMoving, currentSubtopic),
+					new QuestionApplicabilityMatch(reloadedSibling, currentSubtopic));
+		}, new CurriculumSearchNodeExpansionService(curriculumRepository));
+		RevisionCorpus corpus = new RevisionCorpusBuilder(curriculumRepository, retrievalService)
+				.build(booklet.getExam().getSubject());
+		RevisionPresentationPlan plan = new RevisionPresentationPlanner().plan(corpus);
+		RevisionQuestionPresentation presentation = plan.getRootNodes().getFirst().getChildren().getFirst()
+				.getChildren().getFirst().getPresentations().getFirst();
+		assertTrue(presentation.isMultipart());
+		assertEquals(List.of("Q22a", "Q22b"),
+				presentation.getMembers().stream().map(Question::getQuestionCode).toList());
+		assertEquals(sharedContext.getId(), presentation.getSharedContext().getId());
+		assertEquals("Q22", presentation.getSourceQuestion().getSourceQuestionCode());
 	}
 
 	@Test
