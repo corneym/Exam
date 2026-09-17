@@ -70,7 +70,6 @@ final class QuestionCapturePane extends VBox {
 	private static final String REQUIRED_STATUS_STYLE = "-fx-text-fill: #b71c1c;-fx-font-weight: bold;";
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
 	private static final String SUCCESS_STATUS_STYLE = "-fx-text-fill: #2e7d32;";
-
 	// Workflow dependencies and application callbacks.
 	private final QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor;
@@ -80,7 +79,6 @@ final class QuestionCapturePane extends VBox {
 	private final Supplier<PdfSession> examPdfSessionSupplier;
 	private final Runnable selectionClearHandler;
 	private final Consumer<List<Question>> questionsChangedHandler;
-
 	// Reuse the worker's snapshot throughout synchronous listeners fired by save
 	// completion.
 	private List<Question> completionQuestions;
@@ -90,7 +88,6 @@ final class QuestionCapturePane extends VBox {
 	private final SharedContextCapturePane sharedContextCapturePane;
 	private final SourceQuestionRepository sourceQuestionRepository;
 	private final SqliteQuestionCaptureService questionCaptureService;
-
 	// Capture mode and imported-question selection.
 	private final ToggleButton newQuestionsModeButton = new ToggleButton("Capture New Questions");
 	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Capture Imported Questions");
@@ -99,7 +96,6 @@ final class QuestionCapturePane extends VBox {
 	private final Label importedClassificationLabel = new Label();
 	private final Label captureHintLabel = new Label();
 	private final VBox legacyCaptureBox = new VBox(COMPACT_SPACING);
-
 	// Question metadata and shared preamble controls.
 	private final TextField questionCodeField = new TextField();
 	private final TextField marksField = new TextField();
@@ -109,7 +105,6 @@ final class QuestionCapturePane extends VBox {
 	private final CheckBox firstRegionPreambleCheckBox = new CheckBox("First region is shared preamble");
 	private final Label preambleStatusLabel = new Label();
 	private final VBox preambleControlsBox = new VBox(COMPACT_SPACING);
-
 	// Pending and accepted region controls.
 	private final Button addRegionButton = new Button("Add Region");
 	private final Button removeCurrentSelectionButton = new Button("Clear");
@@ -117,12 +112,10 @@ final class QuestionCapturePane extends VBox {
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final VBox regionPreviewBox = new VBox(SECTION_SPACING);
 	private final ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
-
 	// Save and edit controls.
 	private final Button saveQuestionButton = new Button("Save Question");
 	private final Button cancelQuestionEditButton = new Button("Cancel");
 	private final Label saveStatusLabel = new Label();
-
 	// Transient capture and edit state.
 	private boolean refreshingPreambleControls;
 	private boolean questionSaveInProgress;
@@ -303,7 +296,6 @@ final class QuestionCapturePane extends VBox {
 			 */
 			saveStatusLabel.setText("Shared preamble capture active — select a region");
 		} else {
-
 			// Restore status to the accepted-region state rather than a stale pending
 			// state.
 			showQuestionPendingStatus();
@@ -444,25 +436,18 @@ final class QuestionCapturePane extends VBox {
 			restoreCaptureModeToggle();
 			return;
 		}
-		long totalStart = System.nanoTime();
+
 		try {
-			long backfillStart = System.nanoTime();
-
-			// Measure legacy/source-identity maintenance separately because it scans
-			// persisted Questions before the imported queue can be displayed.
+			// Repair derived source-question relationships before resolving any
+			// reusable shared-context relationships.
 			backfillDerivedSourceQuestions();
-			long backfillEnd = System.nanoTime();
-
-			// Measure shared-context reconciliation independently from the backfill.
 			reconcileKnownSharedContexts();
-			long reconciliationEnd = System.nanoTime();
-			System.out.printf("Imported capture timing: backfill=%.1f ms, reconciliation=%.1f ms%n",
-					(backfillEnd - backfillStart) / 1_000_000.0, (reconciliationEnd - backfillEnd) / 1_000_000.0);
 		} catch (IllegalStateException e) {
 			showAlert(Alert.AlertType.ERROR, "Shared preamble links are inconsistent.", e.getMessage());
 			restoreCaptureModeToggle();
 			return;
 		}
+
 		if (!importedCaptureMode || editingQuestion != null) {
 			questionEditCompletedHandler = () -> {
 			};
@@ -470,19 +455,18 @@ final class QuestionCapturePane extends VBox {
 			clearImportedQuestionSelection();
 			importedCaptureMode = true;
 		}
-		selectCaptureModeToggle(true);
-		long refreshStart = System.nanoTime();
 
-		// Measure queue reconstruction separately from relationship maintenance.
+		selectCaptureModeToggle(true);
+
+		// Refresh the queue after relationship reconciliation so the visible
+		// questions reflect the persisted capture state.
 		refreshImportedQuestions();
-		long refreshEnd = System.nanoTime();
+
 		setLegacyCaptureControlsVisible(true);
+
 		if (importedQuestion == null) {
 			showImportedQueueMode();
 		}
-		long totalEnd = System.nanoTime();
-		System.out.printf("Imported capture timing: refresh=%.1f ms, total=%.1f ms%n",
-				(refreshEnd - refreshStart) / 1_000_000.0, (totalEnd - totalStart) / 1_000_000.0);
 	}
 
 	/**
@@ -696,14 +680,12 @@ final class QuestionCapturePane extends VBox {
 		writtenResponseButton.setToggleGroup(responseTypeGroup);
 		multipleChoiceResponseButton.setUserData(QuestionResponseType.MULTIPLE_CHOICE);
 		writtenResponseButton.setUserData(QuestionResponseType.WRITTEN_RESPONSE);
-
 		// Keep both labels fully readable at the minimum supported workspace width.
 		multipleChoiceResponseButton.setMinWidth(Region.USE_PREF_SIZE);
 		writtenResponseButton.setMinWidth(Region.USE_PREF_SIZE);
 		saveQuestionButton.setId("save-question");
 		saveQuestionButton.setDisable(true);
 		saveStatusLabel.setId("question-save-status");
-
 		// Capture, edit and preamble status messages can be longer than the narrow
 		// workspace width, so keep the complete message visible by wrapping it.
 		saveStatusLabel.setWrapText(true);
@@ -711,7 +693,6 @@ final class QuestionCapturePane extends VBox {
 		regionCountLabel.setId("question-region-count");
 		addRegionButton.setId("add-question-region");
 		removeCurrentSelectionButton.setId("clear-question-selection");
-
 		// Keep Question-capture action labels fully readable at the minimum
 		// supported capture-workspace width.
 		addRegionButton.setMinWidth(Region.USE_PREF_SIZE);
@@ -720,7 +701,6 @@ final class QuestionCapturePane extends VBox {
 		cancelQuestionEditButton.setMinWidth(Region.USE_PREF_SIZE);
 		addRegionButton.setPadding(COMPACT_BUTTON_PADDING);
 		removeCurrentSelectionButton.setPadding(COMPACT_BUTTON_PADDING);
-
 		// Region actions are meaningful only while an unaccepted compatible PDF
 		// selection is pending. Selection acceptance will enable them as required.
 		addRegionButton.setDisable(true);
@@ -737,7 +717,6 @@ final class QuestionCapturePane extends VBox {
 		importedClassificationLabel.setManaged(false);
 		newQuestionsModeButton.setId("capture-mode-new");
 		importedQuestionsModeButton.setId("capture-mode-imported");
-
 		// Capture-mode actions must keep their complete labels at supported pane
 		// widths.
 		newQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
@@ -777,18 +756,15 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private VBox createCurrentSelectionControls() {
-
 		// Keep pending-selection actions together on their own row.
 		HBox selectionControls = new HBox(CONTROL_SPACING, addRegionButton, removeCurrentSelectionButton);
 		selectionControls.setAlignment(Pos.CENTER_LEFT);
-
 		// Keep persistence actions on a separate row so Save/Update and Cancel
 		// cannot be squeezed by the selection controls.
 		Region spacer = new Region();
 		HBox.setHgrow(spacer, Priority.ALWAYS);
 		HBox saveControls = new HBox(CONTROL_SPACING, spacer, saveQuestionButton, cancelQuestionEditButton);
 		saveControls.setAlignment(Pos.CENTER_LEFT);
-
 		// Two short rows remain readable at the minimum supported pane width.
 		VBox controls = new VBox(COMPACT_SPACING, selectionControls, saveControls);
 		controls.setFillWidth(true);
@@ -802,13 +778,11 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private StringConverter<Question> createImportedQuestionConverter() {
-
 		// Convert imported Questions to the descriptive labels shown in the ComboBox.
 		return new StringConverter<Question>() {
 
 			@Override
 			public Question fromString(String text) {
-
 				// The ComboBox is selection-only, so displayed text is never parsed.
 				return null;
 			}
@@ -833,7 +807,6 @@ final class QuestionCapturePane extends VBox {
 		Label marksLabel = new Label("Marks");
 		marksLabel.setId("question-marks-label");
 		marksLabel.setMinWidth(Region.USE_PREF_SIZE);
-
 		// Keep the frequently edited Question number and marks on a short,
 		// compact row that remains readable at narrow workspace widths.
 		HBox questionDetails = new HBox(CONTROL_SPACING, questionLabel, questionCodeField, marksLabel, marksField);
@@ -841,7 +814,6 @@ final class QuestionCapturePane extends VBox {
 		Label responseTypeLabel = new Label("Response type");
 		responseTypeLabel.setId("question-response-type-label");
 		responseTypeLabel.setMinWidth(Region.USE_PREF_SIZE);
-
 		// Response type remains on its own row so both explicit choices are visible.
 		HBox responseTypeControls = new HBox(CONTROL_SPACING, responseTypeLabel, multipleChoiceResponseButton,
 				writtenResponseButton);
@@ -874,7 +846,6 @@ final class QuestionCapturePane extends VBox {
 
 			@Override
 			public QuestionResponseType fromString(String text) {
-
 				// The ComboBox is selection-only, so text is never parsed back to a value.
 				return null;
 			}
@@ -1022,10 +993,9 @@ final class QuestionCapturePane extends VBox {
 				return;
 			}
 			String label = "Question " + sourceCode + " preamble";
-			/*
-			 * If the user drew the rectangle before identifying this as a multipart
-			 * question, reinterpret that same pending rectangle as the shared preamble.
-			 */
+
+			// If the user drew the rectangle before identifying this as a multipart
+			// question, reinterpret that same pending rectangle as the shared preamble.
 			if (currentSelection != null) {
 				boolean started = sharedContextCapturePane.beginAutomaticContext(label, currentSelection);
 				if (!started) {
@@ -1132,7 +1102,6 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void loadResponseType(Question question) {
-
 		// Restore the persisted response type into the capture control.
 		selectResponseType(question.getResponseType());
 	}
@@ -1147,8 +1116,12 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void reconcileKnownSharedContexts() {
+
+		// Load one consistent Question snapshot for the complete reconciliation pass.
+		// Reusing it avoids re-reading the entire corpus for every source question.
+		List<Question> questions = currentQuestions();
 		List<Long> processedSourceQuestionIds = new ArrayList<>();
-		for (Question question : questionRepository.findAll()) {
+		for (Question question : questions) {
 			if (!question.hasSourceQuestion() || !question.hasSharedContext()) {
 				continue;
 			}
@@ -1156,7 +1129,10 @@ final class QuestionCapturePane extends VBox {
 			if (processedSourceQuestionIds.contains(sourceQuestion.getId())) {
 				continue;
 			}
-			SharedQuestionContext sharedContext = findSharedContextForSourceQuestion(sourceQuestion);
+
+			// Search the already-loaded snapshot rather than calling currentQuestions()
+			// again for each distinct source question.
+			SharedQuestionContext sharedContext = findSharedContextForSourceQuestion(sourceQuestion, questions);
 			if (sharedContext != null) {
 				questionRepository.applySharedContextToSourceQuestion(sourceQuestion, sharedContext);
 			}
@@ -1371,7 +1347,6 @@ final class QuestionCapturePane extends VBox {
 				try {
 					return new QuestionSaveResult(saved, questionRepository.findAll(), null, null);
 				} catch (RuntimeException refreshFailure) {
-
 					// The transaction has committed. Never report a refresh failure as a failed
 					// save.
 					List<Question> fallback = new ArrayList<>(beforeSave);
@@ -1449,7 +1424,6 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private QuestionResponseType selectedResponseType() {
-
 		// No selected radio button represents an unresolved response type.
 		if (responseTypeGroup.getSelectedToggle() == null) {
 			return null;
@@ -1458,7 +1432,6 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void selectResponseType(QuestionResponseType responseType) {
-
 		// UNKNOWN is represented by having neither response-type button selected.
 		if (responseType == null || responseType == QuestionResponseType.UNKNOWN) {
 			responseTypeGroup.selectToggle(null);
@@ -1495,7 +1468,6 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void setResponseTypeDisabled(boolean disabled) {
-
 		// Keep enablement independent of the concrete response-type controls.
 		multipleChoiceResponseButton.setDisable(disabled);
 		writtenResponseButton.setDisable(disabled);
@@ -1579,7 +1551,6 @@ final class QuestionCapturePane extends VBox {
 	private void showImportedQueueMode() {
 		questionCodeField.setDisable(true);
 		marksField.setDisable(true);
-
 		// Imported queue mode has no editable response type until a question is
 		// selected.
 		selectResponseType(null);
