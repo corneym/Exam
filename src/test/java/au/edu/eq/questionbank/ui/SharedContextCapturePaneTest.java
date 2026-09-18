@@ -35,6 +35,8 @@ import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.SharedQuestionContextRepository;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.image.ImageView;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -71,6 +73,28 @@ class SharedContextCapturePaneTest {
 			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextLabel);
 			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextRegions);
 		});
+	}
+
+	@Test
+	void acceptedRegionRemovesTransientPreviewFromLayout(FxRobot robot) {
+		robot.clickOn("#new-shared-context");
+
+		robot.interact(() -> pane.acceptSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.60, 0.20)));
+
+		ImageView currentPreview = robot.lookup("#shared-context-current-preview").queryAs(ImageView.class);
+
+		assertTrue(currentPreview.isVisible());
+		assertTrue(currentPreview.isManaged());
+
+		robot.clickOn("#add-shared-context-region");
+
+		// Once the selection becomes an accepted region, its separate transient
+		// preview must no longer reserve vertical space above the accepted list.
+		assertFalse(currentPreview.isVisible());
+		assertFalse(currentPreview.isManaged());
+
+		assertEquals("Regions: 1", robot.lookup("#shared-context-region-count").queryAs(Label.class).getText());
 	}
 
 	@Test

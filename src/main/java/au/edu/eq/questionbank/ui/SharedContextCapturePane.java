@@ -185,6 +185,7 @@ final class SharedContextCapturePane extends VBox {
 					transferredSelection.x(), transferredSelection.y(), transferredSelection.width(),
 					transferredSelection.height());
 			currentPreview.setImage(null);
+			currentPreview.setVisible(false);
 			setSelectionButtonsEnabled(true);
 		}
 		contextLabelField.setText(label);
@@ -209,6 +210,7 @@ final class SharedContextCapturePane extends VBox {
 	void clearCurrentSelection() {
 		currentSelection = null;
 		currentPreview.setImage(null);
+		currentPreview.setVisible(false);
 		selectionClearHandler.run();
 		setSelectionButtonsEnabled(false);
 	}
@@ -236,16 +238,15 @@ final class SharedContextCapturePane extends VBox {
 	 * workspace now contains the new owner's selection rectangle.
 	 */
 	void discardCurrentSelectionForOwnershipLoss() {
-
 		// Remove the stale shared-context rectangle retained by this pane.
 		currentSelection = null;
 		currentPreview.setImage(null);
+		currentPreview.setVisible(false);
 		setSelectionButtonsEnabled(false);
+
 		if (captureMode) {
-			/*
-			 * Shared-context capture remains active; only ownership of the previous
-			 * unaccepted rectangle has been lost.
-			 */
+			// Shared-context capture remains active; only ownership of the previous
+			// unaccepted rectangle has been lost.
 			statusLabel.setText("Shared context capture active — select a region");
 		}
 	}
@@ -401,12 +402,16 @@ final class SharedContextCapturePane extends VBox {
 		if (currentSelection == null) {
 			return;
 		}
+
 		pendingRegions.add(currentSelection);
 		currentSelection = null;
 		currentPreview.setImage(null);
+		currentPreview.setVisible(false);
+
 		selectionClearHandler.run();
 		setSelectionButtonsEnabled(false);
 		refreshRegionPreviews();
+
 		statusLabel.setText(pendingRegions.size() + " shared context region(s) accepted");
 	}
 
@@ -483,6 +488,7 @@ final class SharedContextCapturePane extends VBox {
 		pendingRegions.clear();
 		contextLabelField.clear();
 		currentPreview.setImage(null);
+		currentPreview.setVisible(false);
 	}
 
 	private void clearRegions() {
@@ -511,12 +517,21 @@ final class SharedContextCapturePane extends VBox {
 		saveContextButton.setId("save-shared-context");
 		cancelContextButton.setId("cancel-shared-context");
 		regionCountLabel.setId("shared-context-region-count");
+
+		currentPreview.setId("shared-context-current-preview");
 		currentPreview.setPreserveRatio(true);
 		currentPreview.setFitWidth(PREVIEW_WIDTH);
 		currentPreview.setFitHeight(PREVIEW_HEIGHT);
+
+		// The transient preview should occupy layout space only while an unaccepted
+		// PDF selection is actually being previewed.
+		currentPreview.setVisible(false);
+		currentPreview.managedProperty().bind(currentPreview.visibleProperty());
+
 		acceptedRegionScroll.setFitToWidth(true);
 		acceptedRegionScroll.setPrefViewportHeight(100.0);
 		acceptedRegionScroll.setMaxHeight(120.0);
+
 		setSelectionButtonsEnabled(false);
 	}
 
@@ -706,7 +721,11 @@ final class SharedContextCapturePane extends VBox {
 	private void showCurrentPreview() {
 		try {
 			BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), currentSelection);
+
 			currentPreview.setImage(SwingFXUtils.toFXImage(image, null));
+
+			// A pending selection now has something meaningful to preview.
+			currentPreview.setVisible(true);
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview shared context selection", e);
 		}
