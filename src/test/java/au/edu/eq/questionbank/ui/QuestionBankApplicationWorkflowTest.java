@@ -243,6 +243,65 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void answerEditOpensFirstStoredRegionPage(FxRobot robot) throws Exception {
+
+		prepareExamAndClassification(robot);
+
+		Question question = captureQuestion(robot, "ANSWER-PAGE2");
+
+		ComboBox<Question> questions = unansweredQuestions(robot);
+
+		robot.interact(() -> questions.getSelectionModel().select(question));
+
+		openAnswerPdfForTest(question);
+
+		// Capture the persisted Answer region on page 2.
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2));
+
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
+
+		dragRegionOnDisplayedPage(robot);
+
+		robot.clickOn("#add-answer-region");
+		robot.clickOn("#save-answer");
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertTrue(question.hasAnswer());
+
+		assertEquals(1, question.getAnswer().getRegions().size());
+
+		assertEquals(2, question.getAnswer().getRegions().getFirst().pageNumber());
+
+		// Move away from the stored source page before starting the edit so the test
+		// proves that editAnswer performs the page navigation itself.
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 1));
+
+		assertEquals(1, pdfWorkspace().getCurrentPageNumber());
+
+		AtomicInteger completed = new AtomicInteger();
+
+		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, completed::incrementAndGet)));
+
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Editing should restore the registered Answer PDF and position it at the
+		// first persisted Answer region.
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
+
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
+
+		assertEquals(0, completed.get());
+
+		robot.clickOn("#cancel-answer-edit");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertEquals(1, completed.get());
+	}
+
+	@Test
 	void answerPdfControlsRemainReadableAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q1");
@@ -1415,6 +1474,9 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(addRegion.isManaged());
 		assertTrue(save.isDisabled());
 		robot.clickOn("#answer-choice-a");
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !save.isDisabled());
+
 		assertFalse(save.isDisabled());
 		robot.clickOn(save);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());

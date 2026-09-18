@@ -14,6 +14,7 @@ import java.util.concurrent.CancellationException;
 import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.Answer;
@@ -22,7 +23,6 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
-
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -96,6 +96,7 @@ final class AnswerCapturePane extends VBox {
 	private final Runnable answerDocumentHandler;
 	private final SqliteAnswerWriter answerWriter;
 	private final BooleanSupplier answerTransitionAllowed;
+	private final IntConsumer answerPageNavigationHandler;
 
 	// Question and answer source selection.
 	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
@@ -151,7 +152,7 @@ final class AnswerCapturePane extends VBox {
 			PdfFilePicker pdfFilePicker, Consumer<SelectedPdf> answerPdfHandler, Runnable answerDocumentHandler,
 			BooleanSupplier answerTransitionAllowed, Runnable selectionClearHandler,
 			QuestionExtractor questionExtractor, Supplier<PdfSession> answerPdfSessionSupplier,
-			BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader) {
+			IntConsumer answerPageNavigationHandler, BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -170,6 +171,9 @@ final class AnswerCapturePane extends VBox {
 		if (answerPdfSessionSupplier == null) {
 			throw new NullPointerException("answerPdfSessionSupplier");
 		}
+		if (answerPageNavigationHandler == null) {
+			throw new NullPointerException("answerPageNavigationHandler");
+		}
 		if (answerWriter == null) {
 			throw new NullPointerException("answerWriter");
 		}
@@ -186,6 +190,7 @@ final class AnswerCapturePane extends VBox {
 		this.selectionClearHandler = selectionClearHandler;
 		this.questionExtractor = questionExtractor;
 		this.answerPdfSessionSupplier = answerPdfSessionSupplier;
+		this.answerPageNavigationHandler = answerPageNavigationHandler;
 		this.answerWriter = answerWriter;
 		this.answerDocumentHandler = answerDocumentHandler;
 		this.answerTransitionAllowed = answerTransitionAllowed;
@@ -348,6 +353,10 @@ final class AnswerCapturePane extends VBox {
 			restoringUnansweredQuestionSelection = false;
 		}
 		applyUnansweredQuestionChange(question);
+
+		// applyUnansweredQuestionChange restores the registered Answer PDF. Once that
+		// document is available, position it at the first persisted Answer region.
+		showFirstStoredAnswerRegionPage(question);
 		saveAnswerButton.setText("Update Answer");
 		cancelAnswerEditButton.setVisible(true);
 		cancelAnswerEditButton.setManaged(true);
@@ -606,6 +615,29 @@ final class AnswerCapturePane extends VBox {
 		selectionClearHandler.run();
 		setSelectionActionsEnabled(false);
 		refreshSaveButtonState();
+	}
+
+	// Update local choices only after persistence succeeds, then load the next PDF
+	// asynchronously.
+	private void completeAnswerSave(Question question, Answer answer, boolean editing, int previousIndex) {
+		question.setAnswer(answer);
+		locallyAnsweredQuestionIds.add(question.getId());
+		if (editing) {
+			Runnable completedHandler = null;
+			try {
+				completedHandler = finishAnswerEditState(false);
+			} finally {
+				finishAnswerSaveTransition(null);
+			}
+			if (completedHandler != null) {
+				completedHandler.run();
+			}
+			return;
+		}
+		clearPendingAnswerRegions();
+		clearMultipleChoiceAnswer();
+		Question next = removeSavedQuestionAndSelectNext(question, previousIndex);
+		loadNextAnswerDocument(next);
 	}
 
 	private void configureActions(Stage stage) {
@@ -1104,29 +1136,6 @@ final class AnswerCapturePane extends VBox {
 		saveThread.start();
 	}
 
-	// Update local choices only after persistence succeeds, then load the next PDF
-	// asynchronously.
-	private void completeAnswerSave(Question question, Answer answer, boolean editing, int previousIndex) {
-		question.setAnswer(answer);
-		locallyAnsweredQuestionIds.add(question.getId());
-		if (editing) {
-			Runnable completedHandler = null;
-			try {
-				completedHandler = finishAnswerEditState(false);
-			} finally {
-				finishAnswerSaveTransition(null);
-			}
-			if (completedHandler != null) {
-				completedHandler.run();
-			}
-			return;
-		}
-		clearPendingAnswerRegions();
-		clearMultipleChoiceAnswer();
-		Question next = removeSavedQuestionAndSelectNext(question, previousIndex);
-		loadNextAnswerDocument(next);
-	}
-
 	private void selectMultipleChoiceAnswer(String answerText) {
 		multipleChoiceAnswerGroup.selectToggle(null);
 		preservedAnswerText = null;
@@ -1214,6 +1223,25 @@ final class AnswerCapturePane extends VBox {
 		alert.setHeaderText("Answer is incomplete.");
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	private void showFirstStoredAnswerRegionPage(Question question) {
+
+		if (!isWrittenResponseQuestion(question) || !question.hasAnswer()
+				|| question.getAnswer().getRegions().isEmpty()) {
+			return;
+		}
+
+		AnswerRegion firstRegion = question.getAnswer().getRegions().getFirst();
+
+		// Navigate only when the PDF currently loaded into the Answer workspace is
+		// the same persisted AnswerFile that owns the stored region.
+		if (answerFile == null || firstRegion.answerFile().getId() != answerFile.getId()
+				|| answerPdfSessionSupplier.get() == null) {
+			return;
+		}
+
+		answerPageNavigationHandler.accept(firstRegion.pageNumber());
 	}
 
 	private void showSelectedAnswerDocument() {

@@ -136,6 +136,59 @@ class SharedContextCapturePaneTest {
 	}
 
 	@Test
+	void cancellingSharedContextRecapturePreservesPersistedContext(FxRobot robot) {
+
+		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20);
+
+		SharedQuestionContext original = repository.save(booklet, "Question 22 preamble", List.of(originalRegion));
+
+		AtomicInteger completed = new AtomicInteger();
+
+		robot.interact(() -> {
+			pane.refreshForCurrentBooklet();
+
+			assertTrue(pane.recaptureContext(original, completed::incrementAndGet));
+		});
+
+		assertTrue(pane.isCaptureMode());
+		assertEquals(0, completed.get());
+
+		SharedQuestionContextRegion replacementRegion = new SharedQuestionContextRegion(1, 0.20, 0.25, 0.60, 0.30);
+
+		robot.interact(
+				() -> pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+						replacementRegion.pageNumber(), replacementRegion.x(), replacementRegion.y(),
+						replacementRegion.width(), replacementRegion.height())));
+
+		robot.clickOn("#add-shared-context-region");
+
+		// The replacement is only transient until Save Replacement is used.
+		assertTrue(pane.hasUnsavedContextCapture());
+
+		SharedQuestionContext beforeCancel = repository.findByBooklet(booklet).getFirst();
+
+		assertEquals(original.getId(), beforeCancel.getId());
+		assertEquals("Question 22 preamble", beforeCancel.getLabel());
+		assertEquals(List.of(originalRegion), beforeCancel.getRegions());
+
+		robot.clickOn("#cancel-shared-context");
+
+		// Cancelling the correction must discard only the transient replacement and
+		// notify the containing workflow that the correction operation has finished.
+		assertFalse(pane.isCaptureMode());
+		assertFalse(pane.hasCurrentSelection());
+		assertFalse(pane.hasUnsavedContextCapture());
+		assertEquals(1, completed.get());
+
+		SharedQuestionContext afterCancel = repository.findByBooklet(booklet).getFirst();
+
+		// The persisted context must remain exactly as it was before recapture began.
+		assertEquals(original.getId(), afterCancel.getId());
+		assertEquals("Question 22 preamble", afterCancel.getLabel());
+		assertEquals(List.of(originalRegion), afterCancel.getRegions());
+	}
+
+	@Test
 	void recapturingContextReplacesRegionsWithoutChangingIdentity(FxRobot robot) {
 		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20);
 		SharedQuestionContext original = repository.save(booklet, "Question 21 preamble", List.of(originalRegion));

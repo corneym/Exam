@@ -114,6 +114,60 @@ class SqliteSharedQuestionContextRepositoryTest {
 	}
 
 	@Test
+	void rollsBackSharedContextReplacementWhenRegionInsertFails() throws Exception {
+
+		RepositoryFixture fixture = createFixture("replace-shared-context-rollback.db");
+
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+
+		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.60, 0.20);
+
+		SharedQuestionContext original = repository.save(fixture.firstBooklet(), "Original preamble",
+				List.of(originalRegion));
+
+		// Fail only the replacement insert. The original context and region have
+		// already been persisted successfully before this trigger is installed.
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			statement.execute("""
+					CREATE TRIGGER reject_replacement_context_region
+					BEFORE INSERT ON shared_question_context_regions
+					WHEN NEW.page_number = 2
+					BEGIN
+					    SELECT RAISE(
+					        ABORT,
+					        'deliberate replacement failure');
+					END
+					""");
+		}
+
+		SharedQuestionContextRegion replacementRegion = new SharedQuestionContextRegion(2, 0.20, 0.25, 0.55, 0.30);
+
+		assertThrows(IllegalStateException.class,
+				() -> repository.replace(original, "Changed preamble", List.of(replacementRegion)));
+
+		List<SharedQuestionContext> reloaded = repository.findByBooklet(fixture.firstBooklet());
+
+		assertEquals(1, reloaded.size());
+
+		SharedQuestionContext afterFailure = reloaded.getFirst();
+
+		// replace() updates the context label and deletes its old regions before
+		// inserting the replacement set. A failed insert must roll all of those
+		// changes back within the same transaction.
+		assertEquals(original.getId(), afterFailure.getId());
+
+		assertEquals("Original preamble", afterFailure.getLabel());
+
+		assertEquals(List.of(originalRegion), afterFailure.getRegions());
+
+		assertEquals(1, rowCount(fixture.database(), "shared_question_contexts"));
+
+		assertEquals(1, rowCount(fixture.database(), "shared_question_context_regions"));
+	}
+
+	@Test
 	void savesReloadsOrderedRegionsAndScopesByBooklet() throws Exception {
 		RepositoryFixture fixture = createFixture("shared-context.db");
 		SqliteSharedQuestionContextRepository repository = fixture.repository();
