@@ -68,8 +68,10 @@ public final class CurriculumLifecycleService {
 		if (!problems.isEmpty()) {
 			throw new IllegalArgumentException("Cannot finalise invalid curriculum: " + String.join("; ", problems));
 		}
+
 		// Save first so a failed lifecycle update leaves the authored draft persisted.
-		// These are separate transactions; retry finalisation after resolving the failure.
+		// These are separate transactions; retry finalisation after resolving the
+		// failure.
 		authoringWriter.save(session);
 		Instant finalisedAt = clock.instant();
 		SyllabusVersion updated = lifecycleRepository.finalise(session.syllabusVersion(), finalisedAt);

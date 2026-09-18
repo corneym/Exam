@@ -68,7 +68,9 @@ public final class CurriculumAuthoringCreationService {
 			throw new IllegalArgumentException(
 					normalisedSubjectName + " " + normalisedSyllabusName + " already exists");
 		}
-		// Creation has already committed; loading establishes bindings for later draft saves.
+
+		// Creation has already committed; loading establishes bindings for later draft
+		// saves.
 		return draftLoader.load(result.syllabusVersion());
 	}
 }

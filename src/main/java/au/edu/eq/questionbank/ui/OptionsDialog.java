@@ -24,7 +24,6 @@ final class OptionsDialog extends Dialog<ButtonType> {
 	private static final int PATH_FIELD_COLUMNS = 40;
 	private static final int FORM_GAP = 8;
 	private static final int FORM_PADDING = 10;
-
 	private final TextField dataRootField = new TextField();
 
 	/**

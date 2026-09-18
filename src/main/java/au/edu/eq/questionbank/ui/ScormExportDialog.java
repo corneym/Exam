@@ -28,7 +28,6 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 8;
 	private static final int FORM_PADDING = 10;
-
 	private final ComboBox<Subject> subjectBox = new ComboBox<Subject>();
 	private final TextField destinationField = new TextField();
 	private Path destinationParent;

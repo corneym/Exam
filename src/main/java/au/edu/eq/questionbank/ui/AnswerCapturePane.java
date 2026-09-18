@@ -22,6 +22,7 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -58,7 +59,6 @@ import javafx.util.StringConverter;
 final class AnswerCapturePane extends VBox {
 
 	private static final double REGION_VIEWPORT_EXTRA_HEIGHT = 4.0;
-
 	private static final double ANSWER_REGIONS_VIEWPORT_HEIGHT = 300.0;
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
@@ -211,6 +211,7 @@ final class AnswerCapturePane extends VBox {
 			Set<Long> locallyAnsweredQuestionIds) {
 		Objects.requireNonNull(questions, "questions");
 		Objects.requireNonNull(locallyAnsweredQuestionIds, "locallyAnsweredQuestionIds");
+
 		// Exclude both persisted Answers and Questions known to have been answered
 		// locally since the supplied snapshot was obtained, then apply the common
 		// source-order policy used by other corpus work queues.
@@ -299,6 +300,7 @@ final class AnswerCapturePane extends VBox {
 	 * takes ownership of the single PDF selection.
 	 */
 	void discardCurrentSelectionForOwnershipLoss() {
+
 		// The new workflow already owns the visible PDF rectangle, so clear only this
 		// pane's stale local state and never call selectionClearHandler here.
 		currentAnswerSelection = null;
@@ -385,12 +387,14 @@ final class AnswerCapturePane extends VBox {
 	void refreshQuestions(List<Question> questions) {
 		Question editTarget = editingAnswerQuestion;
 		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;
+
 		// Build the Answer work queue independently of repository insertion order so
 		// that sustained Answer capture follows the examination's natural source order.
 		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds);
 		Question matching = editTarget;
 		if (matching == null && selected != null) {
 			for (Question question : unansweredQuestions) {
+
 				// Preserve the currently selected Question across queue refreshes by persistent
 				// identity rather than object instance.
 				if (question.getId() == selected.getId()) {
@@ -399,6 +403,7 @@ final class AnswerCapturePane extends VBox {
 				}
 			}
 		}
+
 		// Suppress the normal selection listener while replacing the queue and
 		// restoring the previous selection.
 		restoringUnansweredQuestionSelection = true;
@@ -448,11 +453,11 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private double answerRegionsPreferredHeight() {
+
 		// Measure what the accepted-region content wants to be, rather than its
 		// current laid-out height. The latter can still be near zero immediately
 		// after the first preview is added.
 		double contentHeight = answerRegionListBox.prefHeight(answerRegionListBox.getWidth());
-
 		return Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, contentHeight + REGION_VIEWPORT_EXTRA_HEIGHT);
 	}
 
@@ -493,6 +498,7 @@ final class AnswerCapturePane extends VBox {
 		if (question.hasAnswer()) {
 			Answer answer = question.getAnswer();
 			selectMultipleChoiceAnswer(answer.getAnswerText());
+
 			// Preserve any historical regions regardless of response type. MCQ mode simply
 			// does not display or require them.
 			pendingAnswerRegions.addAll(answer.getRegions());
@@ -695,8 +701,10 @@ final class AnswerCapturePane extends VBox {
 		// claiming the full 300 px viewport height when the first region is added.
 		answerRegionsScrollPane.prefHeightProperty()
 				.bind(Bindings.createDoubleBinding(this::answerRegionsPreferredHeight,
+
 						// Adding or removing a preview changes the preferred content height.
 						answerRegionListBox.getChildren(),
+
 						// Resizing the Answer pane changes the preview width and therefore
 						// the height required to preserve the image aspect ratio.
 						widthProperty()));
@@ -713,6 +721,7 @@ final class AnswerCapturePane extends VBox {
 			previewView.setPreserveRatio(true);
 			previewView.setSmooth(true);
 			previewView.setCache(true);
+
 			// Bind to the containing Answer pane rather than the ScrollPane viewport. The
 			// Answer pane is already laid out when the first region is accepted, and its
 			// width is unaffected by the ScrollPane's vertical scrollbar.
@@ -725,6 +734,7 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private VBox createAnswerPdfControls() {
+
 		// A filename can be much wider than the capture workspace. Give it a dedicated
 		// wrapping row so it can never force the Choose PDF action below its readable
 		// width.
@@ -961,6 +971,7 @@ final class AnswerCapturePane extends VBox {
 	private void refreshAnswerRegionList() {
 		boolean hasRegions = !pendingAnswerRegions.isEmpty();
 		boolean showRegions = hasRegions && isWrittenResponseQuestion(unansweredQuestionField.getValue());
+
 		// Stored regions remain in pendingAnswerRegions even when the current response
 		// type does not display region capture. This is important when legacy
 		// answer-region data exists for a Question later classified as MCQ.
@@ -1054,7 +1065,9 @@ final class AnswerCapturePane extends VBox {
 		}
 		int previousIndex = unansweredQuestionField.getSelectionModel().getSelectedIndex();
 		String storedText = answerText.isBlank() ? null : answerText;
-		// Snapshot accepted regions before the background task takes ownership of the save.
+
+		// Snapshot accepted regions before the background task takes ownership of the
+		// save.
 		List<AnswerRegion> regions = List.copyOf(pendingAnswerRegions);
 		boolean updating = question.hasAnswer();
 		long existingAnswerId = updating ? question.getAnswer().getId() : 0;
@@ -1091,7 +1104,8 @@ final class AnswerCapturePane extends VBox {
 		saveThread.start();
 	}
 
-	// Update local choices only after persistence succeeds, then load the next PDF asynchronously.
+	// Update local choices only after persistence succeeds, then load the next PDF
+	// asynchronously.
 	private void completeAnswerSave(Question question, Answer answer, boolean editing, int previousIndex) {
 		question.setAnswer(answer);
 		locallyAnsweredQuestionIds.add(question.getId());
@@ -1136,6 +1150,7 @@ final class AnswerCapturePane extends VBox {
 			multipleChoiceAnswerGroup.selectToggle(answerDButton);
 			return;
 		}
+
 		// Preserve older arbitrary textual answers even though the current capture UI
 		// only exposes A-D choices.
 		preservedAnswerText = answerText;

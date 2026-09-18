@@ -140,7 +140,6 @@ public class QuestionBankApplication extends Application {
 	private static final int AUTHORING_WINDOW_WIDTH = 1400;
 	private static final int AUTHORING_WINDOW_HEIGHT = 840;
 	private static final int FIRST_DUPLICATE_SUFFIX = 2;
-
 	private static final double SECTION_SPACING = 10.0;
 	private static final double PREVIEW_PANE_INITIAL_WIDTH = 525.0;
 	private static final double PREVIEW_PANE_MIN_WIDTH = 400.0;
@@ -381,6 +380,7 @@ public class QuestionBankApplication extends Application {
 	 */
 	private void claimCaptureSelection(CaptureSelectionOwner newOwner) {
 		CaptureSelectionOwner previousOwner = captureSelectionState.getOwner();
+
 		// Record the new owner first. Any local cleanup performed below must not clear
 		// the newly completed rectangle from the shared PDF workspace.
 		captureSelectionState.claim(newOwner);
@@ -393,6 +393,7 @@ public class QuestionBankApplication extends Application {
 			answerCapturePane.discardCurrentSelectionForOwnershipLoss();
 			return;
 		}
+
 		// QUESTION and SHARED_CONTEXT both live inside QuestionCapturePane, which
 		// clears the appropriate stale local state without touching the PDF rectangle.
 		questionCapturePane.discardCurrentSelectionForOwnershipLoss();
@@ -542,6 +543,7 @@ public class QuestionBankApplication extends Application {
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
 		MenuItem authorItem = createMenuItem("_Author / Edit...", () -> showCurriculumAuthoring(primaryStage, config));
+
 		// Retain the existing id so any UI automation referring to this menu action
 		// remains compatible.
 		authorItem.setId("author-curriculum-pdf");
@@ -869,6 +871,7 @@ public class QuestionBankApplication extends Application {
 
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.ANSWER) {
+
 			// The newly completed Answer rectangle becomes the application's single pending
 			// selection before AnswerCapturePane receives it.
 			claimCaptureSelection(CaptureSelectionOwner.ANSWER);
@@ -877,11 +880,13 @@ public class QuestionBankApplication extends Application {
 		}
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.EXAM) {
 			if (questionCapturePane.isCapturingSharedContext()) {
+
 				// Shared-context capture owns this Exam-PDF rectangle and supersedes any
 				// incompatible pending selection from another workflow.
 				claimCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT);
 				questionCapturePane.acceptSharedContextSelection(selection);
 			} else {
+
 				// Ordinary Question capture owns this Exam-PDF rectangle and supersedes any
 				// incompatible pending selection from another workflow.
 				claimCaptureSelection(CaptureSelectionOwner.QUESTION);
@@ -1562,49 +1567,38 @@ public class QuestionBankApplication extends Application {
 
 	private void showQuestionSearchDialog(Stage primaryStage, QuestionSearchDialog dialog,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
-
 		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
-
 		if (result.isEmpty()) {
 			dialog.dispose();
 			questionCapturePane.clearSaveStatus();
 			return;
 		}
-
 		QuestionSearchDialog.EditRequest request = result.get();
 		Question question = request.question();
-
 		if (request.target() == QuestionSearchDialog.EditTarget.METADATA) {
 			editQuestionMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
 			return;
 		}
-
 		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_PREAMBLE) {
-
 			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question,
 					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
 							metadataService));
-
 			if (!correctionStarted) {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 			}
 			return;
 		}
-
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
 			boolean editingStarted = questionCapturePane.editQuestion(question,
 					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
 							metadataService));
-
 			if (!editingStarted) {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 			}
 			return;
 		}
-
 		boolean editingStarted = answerCapturePane.editAnswer(question, () -> resumeSearchAfterEdit(primaryStage,
 				dialog, question.getId(), curriculumRepository, metadataService));
-
 		if (!editingStarted) {
 			showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 		}

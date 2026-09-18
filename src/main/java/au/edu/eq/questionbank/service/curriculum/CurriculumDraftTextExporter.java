@@ -57,7 +57,9 @@ public final class CurriculumDraftTextExporter {
 		for (CurriculumDraftNode root : draft.childrenOf(null)) {
 			appendNode(output, draft, root, 0, visited);
 		}
-		// Include unreachable nodes as well: a diagnostic preview must not hide invalid authored data.
+
+		// Include unreachable nodes as well: a diagnostic preview must not hide invalid
+		// authored data.
 		for (CurriculumDraftNode node : draft.nodes()) {
 			if (!visited.contains(node.draftId())) {
 				output.append("\n[UNREACHABLE OR INVALID HIERARCHY]\n");
@@ -105,7 +107,9 @@ public final class CurriculumDraftTextExporter {
 		output.append(indent).append("  sourcePage: ")
 				.append(node.sourcePageNumber() == null ? "<none>" : node.sourcePageNumber()).append('\n');
 		output.append(indent).append("  text:\n");
-		// Preserve trailing blank lines so the diagnostic text reflects the authored wording.
+
+		// Preserve trailing blank lines so the diagnostic text reflects the authored
+		// wording.
 		String[] textLines = node.name().split("\\R", -1);
 		for (String textLine : textLines) {
 			output.append(indent).append("    ").append(textLine).append('\n');

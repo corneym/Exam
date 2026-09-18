@@ -30,7 +30,6 @@ final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 	private static final int CONTENT_PADDING = 10;
 	private static final int PDF_LABEL_WIDTH = 300;
 	private static final int ROW_SPACING = 8;
-
 	private final List<ExamKey> exams;
 	private final Map<ExamKey, Path> selectedPdfs = new LinkedHashMap<>();
 	private final Map<ExamKey, Label> pdfLabels = new LinkedHashMap<>();

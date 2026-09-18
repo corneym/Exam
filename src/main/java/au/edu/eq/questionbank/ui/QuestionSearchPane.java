@@ -55,7 +55,6 @@ public class QuestionSearchPane extends BorderPane {
 	private static final double DETAILS_DIVIDER_POSITION = 0.48;
 	private static final int SELECTOR_COLUMN_GAP = 8;
 	private static final int SELECTOR_ROW_GAP = 6;
-
 	private final CurriculumRepository curriculumRepository;
 	private final QuestionRetrievalService retrievalService;
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
@@ -700,15 +699,16 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startSubjectLoading() {
-		startHierarchyLoad(curriculumRepository::findAllSubjects,
-				subjects -> subjectBox.getItems().setAll(subjects));
+		startHierarchyLoad(curriculumRepository::findAllSubjects, subjects -> subjectBox.getItems().setAll(subjects));
 	}
 
 	private record SubjectNavigation(SyllabusVersion currentSyllabus, List<CurriculumNode> units) {
 	}
 
 	private void completeSearch(Task<List<QuestionRetrievalResult>> task, long generation) {
-		// Cancellation can race with completion; only the current request may publish results.
+
+		// Cancellation can race with completion; only the current request may publish
+		// results.
 		if (generation != searchGeneration || task != activeSearchTask) {
 			return;
 		}
@@ -739,7 +739,9 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private <T> void completeHierarchyLoad(Task<T> task, long generation, Consumer<T> onSucceeded) {
-		// Ignore a hierarchy loaded for a selection that has since changed or been disposed.
+
+		// Ignore a hierarchy loaded for a selection that has since changed or been
+		// disposed.
 		if (generation != hierarchyGeneration || task != activeHierarchyTask) {
 			return;
 		}
@@ -763,6 +765,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void completePreview(Task<Optional<BufferedImage>> task, long generation) {
+
 		// A late image must never replace the preview for a newer selection.
 		if (generation != previewGeneration || task != activePreviewTask) {
 			return;

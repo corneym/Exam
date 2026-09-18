@@ -69,6 +69,7 @@ public final class SubtopicMappingEvidenceService {
 			if (outcome.isEmpty()) {
 				continue;
 			}
+
 			// An explicit no-match is still a deliberate review decision.
 			reviewedDescriptorCount++;
 			if (outcome.get() == CurriculumMappingReviewOutcome.NO_MATCH) {

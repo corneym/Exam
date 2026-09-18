@@ -26,7 +26,6 @@ final class NewCurriculumDialog extends Dialog<ButtonType> {
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 8;
 	private static final int FORM_PADDING = 10;
-
 	private final RadioButton existingSubjectButton = new RadioButton("Existing subject");
 	private final RadioButton newSubjectButton = new RadioButton("New subject");
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();

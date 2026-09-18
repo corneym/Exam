@@ -57,7 +57,6 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	private static final double WORKSPACE_DIVIDER_POSITION = 0.50;
 	private static final int PAGE_TEXT_ROWS = 18;
 	private static final int PAGE_TEXT_MIN_HEIGHT = 300;
-
 	private final Stage ownerStage;
 	private final PdfFilePicker pdfFilePicker;
 	private final CurriculumDraft draft;
@@ -309,6 +308,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			statusLabel.setText(parentInstruction(level));
 			return;
 		}
+
 		// Units are always root nodes. Tree selection provides parent context only for
 		// Topic, Subtopic and Descriptor capture.
 		Long parentDraftId = level == CurriculumLevel.UNIT ? null : selectedParent.draftId();
@@ -319,9 +319,11 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 			markDirty();
 			Long selectionAfterCapture;
 			if (level == CurriculumLevel.UNIT) {
+
 				// A new Unit becomes the current context so topics can be captured immediately.
 				selectionAfterCapture = added.draftId();
 			} else {
+
 				// Keep the existing parent selected. This is important for capturing several
 				// siblings in succession.
 				selectionAfterCapture = parentDraftId;
@@ -395,6 +397,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		HBox pdfHeader = new HBox(SECTION_SPACING, new Label("Syllabus PDF:"), pdfPathLabel, browseButton);
 		pdfHeader.setPadding(new Insets(SOURCE_PADDING));
 		VBox textCaptureBox = createTextCaptureBox();
+
 		// The PDF is reference material. Give roughly half of the left-hand workspace
 		// to the PDF and half to extracted/selectable text.
 		pdfWorkspace.setMinHeight(PDF_MIN_HEIGHT);
@@ -402,10 +405,12 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		SplitPane sourceSplit = new SplitPane(pdfWorkspace, textCaptureBox);
 		sourceSplit.setId("curriculum-source-split");
 		sourceSplit.setOrientation(Orientation.VERTICAL);
+
 		// Start with less space for the PDF and more for the selectable extracted text.
 		// The divider remains draggable by the user.
 		sourceSplit.setDividerPositions(SOURCE_DIVIDER_POSITION);
 		VBox treeBox = createDraftTreeBox();
+
 		// The curriculum tree is now the complete right-hand working pane.
 		SplitPane workspaceSplit = new SplitPane(sourceSplit, treeBox);
 		workspaceSplit.setDividerPositions(WORKSPACE_DIVIDER_POSITION);
@@ -417,9 +422,10 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		Label captureInstruction = new Label(
 				"Highlight wording below, select its parent in the curriculum tree, " + "then choose the node type.");
 		captureInstruction.setWrapText(true);
-		HBox captureButtons = new HBox(CONTROL_SPACING, addUnitButton, addTopicButton, addSubtopicButton, addDescriptorButton);
-		VBox textCaptureBox = new VBox(CONTROL_SPACING, new Label("Current page text"), captureInstruction, pageTextArea,
-				captureButtons, contextLabel);
+		HBox captureButtons = new HBox(CONTROL_SPACING, addUnitButton, addTopicButton, addSubtopicButton,
+				addDescriptorButton);
+		VBox textCaptureBox = new VBox(CONTROL_SPACING, new Label("Current page text"), captureInstruction,
+				pageTextArea, captureButtons, contextLabel);
 		textCaptureBox.setPadding(new Insets(SOURCE_PADDING));
 		VBox.setVgrow(pageTextArea, Priority.ALWAYS);
 		return textCaptureBox;
@@ -435,11 +441,12 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		selectedDetails.add(selectedCodeValue, 1, 1);
 		selectedDetails.add(new Label("Source page:"), 0, 2);
 		selectedDetails.add(selectedPageValue, 1, 2);
-		HBox correctionButtons = new HBox(CONTROL_SPACING, updateTextButton, moveUpButton, moveDownButton, deleteButton);
+		HBox correctionButtons = new HBox(CONTROL_SPACING, updateTextButton, moveUpButton, moveDownButton,
+				deleteButton);
 		HBox persistenceButtons = new HBox(CONTROL_SPACING, saveButton, finaliseButton, reopenButton);
-		VBox treeBox = new VBox(SECTION_SPACING, lifecycleLabel, persistenceButtons, new Label("Draft curriculum"), draftTree,
-				new Label("Selected node"), selectedDetails, editTextArea, correctionButtons, new Label("Validation"),
-				validationArea, statusLabel);
+		VBox treeBox = new VBox(SECTION_SPACING, lifecycleLabel, persistenceButtons, new Label("Draft curriculum"),
+				draftTree, new Label("Selected node"), selectedDetails, editTextArea, correctionButtons,
+				new Label("Validation"), validationArea, statusLabel);
 		treeBox.setPadding(new Insets(TREE_PADDING));
 		VBox.setVgrow(draftTree, Priority.ALWAYS);
 		return treeBox;
@@ -663,6 +670,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		for (CurriculumDraftNode rootNode : draft.childrenOf(null)) {
 			treeRoot.getChildren().add(buildTreeItem(rootNode, visited, collapsedDraftIds));
 		}
+
 		// A malformed draft should never silently disappear from the UI. Show any
 		// unreachable nodes at root level for correction.
 		for (CurriculumDraftNode node : draft.nodes()) {

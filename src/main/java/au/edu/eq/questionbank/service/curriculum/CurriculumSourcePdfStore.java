@@ -79,7 +79,9 @@ public final class CurriculumSourcePdfStore {
 		if (!sourceFileName.toLowerCase().endsWith(".pdf")) {
 			throw new IllegalArgumentException("Syllabus source file must be a PDF: " + source);
 		}
-		// Persistent IDs distinguish names that sanitise to the same directory component.
+
+		// Persistent IDs distinguish names that sanitise to the same directory
+		// component.
 		String subjectDirectory = safeComponent(syllabusVersion.getSubject().getName(), "subject") + "--subject-"
 				+ syllabusVersion.getSubject().getId();
 		String versionDirectory = safeComponent(syllabusVersion.getName(), "version") + "--syllabus-"
@@ -88,7 +90,9 @@ public final class CurriculumSourcePdfStore {
 		if (!safeFileName.toLowerCase().endsWith(".pdf")) {
 			safeFileName += ".pdf";
 		}
-		// A replacement must not overwrite the file still referenced by stored metadata.
+
+		// A replacement must not overwrite the file still referenced by stored
+		// metadata.
 		String managedFileName = UUID.randomUUID() + "--" + safeFileName;
 		Path relativePath = Path.of(subjectDirectory, versionDirectory, SOURCES_DIRECTORY, managedFileName);
 		Path target = curriculumDataRoot.resolve(relativePath).normalize();
@@ -100,7 +104,9 @@ public final class CurriculumSourcePdfStore {
 	private void copyToManagedFile(Path source, Path target) throws IOException {
 		Path parent = target.getParent();
 		Files.createDirectories(parent);
-		// Stage beside the destination so an atomic move is possible on supported filesystems.
+
+		// Stage beside the destination so an atomic move is possible on supported
+		// filesystems.
 		Path temporary = Files.createTempFile(parent, ".curriculum-source-", ".tmp");
 		boolean moved = false;
 		try {
@@ -134,7 +140,9 @@ public final class CurriculumSourcePdfStore {
 		if (stored.isAbsolute()) {
 			throw new IllegalArgumentException("Managed curriculum PDF path must be relative");
 		}
-		// Collapse parent segments before checking containment of the untrusted stored path.
+
+		// Collapse parent segments before checking containment of the untrusted stored
+		// path.
 		Path resolved = curriculumDataRoot.resolve(stored).normalize();
 		requireInsideCurriculumRoot(resolved);
 		return resolved;

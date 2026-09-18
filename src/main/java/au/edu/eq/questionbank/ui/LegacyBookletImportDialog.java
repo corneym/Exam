@@ -32,7 +32,6 @@ final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 	private static final int ROW_SPACING = 8;
 	private static final int BOOKLET_LABEL_WIDTH = 140;
 	private static final int PDF_LABEL_WIDTH = 260;
-
 	private final List<LegacyBookletRequirement> requirements;
 	private final Map<ExamKey, TextField> assessmentFields = new LinkedHashMap<>();
 	private final Map<ExamKey, Path> selectedAnswerPdfs = new LinkedHashMap<>();

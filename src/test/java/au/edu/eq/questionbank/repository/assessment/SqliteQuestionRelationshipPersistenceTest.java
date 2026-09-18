@@ -142,31 +142,23 @@ class SqliteQuestionRelationshipPersistenceTest {
 	@Test
 	void replacingSharedContextPreservesAllQuestionLinks() throws Exception {
 		Fixture fixture = createFixture("replace-linked-context.db");
-
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(fixture.database());
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(
 				fixture.database());
-
 		SourceQuestion sourceQuestion = sourceRepository.save(fixture.firstBooklet(), "22");
-
 		SharedQuestionContext originalContext = contextRepository.save(fixture.firstBooklet(), "Question 22 preamble",
 				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.70, 0.15)));
-
 		Question partA = questionRepository.save(fixture.firstBooklet(), "22a", "", 2,
 				List.of(new QuestionRegion(fixture.firstBooklet(), 2, 0.10, 0.35, 0.70, 0.15)),
 				fixture.classification(), true, sourceQuestion, originalContext);
-
 		Question partB = questionRepository.save(fixture.firstBooklet(), "22b", "", 3,
 				List.of(new QuestionRegion(fixture.firstBooklet(), 2, 0.10, 0.55, 0.70, 0.15)),
 				fixture.classification(), true, sourceQuestion, originalContext);
-
 		List<SharedQuestionContextRegion> correctedRegions = List
 				.of(new SharedQuestionContextRegion(3, 0.12, 0.12, 0.65, 0.18));
-
 		SharedQuestionContext correctedContext = contextRepository.replace(originalContext,
 				"Corrected Question 22 preamble", correctedRegions);
-
 		Question reloadedA = questionRepository.findById(partA.getId()).orElseThrow();
 		Question reloadedB = questionRepository.findById(partB.getId()).orElseThrow();
 

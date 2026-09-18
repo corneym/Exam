@@ -35,7 +35,6 @@ public final class LegacyQuestionMetadataDialog
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 8;
 	private static final int FORM_PADDING = 10;
-
 	private final Question question;
 	private final CurriculumRepository curriculumRepository;
 	private final TextField questionCodeField = new TextField();

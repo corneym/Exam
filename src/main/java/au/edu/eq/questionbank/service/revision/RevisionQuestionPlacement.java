@@ -21,7 +21,9 @@ public final class RevisionQuestionPlacement {
 		if (currentNode == null) {
 			throw new NullPointerException("currentNode");
 		}
-		// Zero denotes an unnumbered diagnostic placement, never a displayed question number.
+
+		// Zero denotes an unnumbered diagnostic placement, never a displayed question
+		// number.
 		boolean renderable = !question.getRegions().isEmpty();
 		if (renderable && revisionNumber < 1) {
 			throw new IllegalArgumentException("Renderable placement must have a positive revision number");

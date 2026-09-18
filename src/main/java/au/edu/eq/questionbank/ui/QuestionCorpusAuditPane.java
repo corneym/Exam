@@ -340,7 +340,9 @@ final class QuestionCorpusAuditPane extends VBox {
 	}
 
 	private void refresh() {
-		// Summarise the exam scope before completion and problem filters narrow the work list.
+
+		// Summarise the exam scope before completion and problem filters narrow the
+		// work list.
 		QuestionCorpusFilter scopeFilter = createFilter(QuestionCorpusCompletionFilter.ALL, null);
 		List<Question> scopeQuestions = QuestionCorpusQueue.build(questions, scopeFilter).stream()
 				.map(QuestionCorpusWorkItem::question).toList();
@@ -369,7 +371,9 @@ final class QuestionCorpusAuditPane extends VBox {
 		if (selected.isEmpty()) {
 			return List.of();
 		}
-		// Reject the entire selection rather than overwrite any already-known response type.
+
+		// Reject the entire selection rather than overwrite any already-known response
+		// type.
 		if (selected.stream().anyMatch(item -> item.question().getResponseType() != QuestionResponseType.UNKNOWN)) {
 			return List.of();
 		}

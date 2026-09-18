@@ -50,14 +50,11 @@ class SqliteSharedQuestionContextRepositoryTest {
 	void replacesSharedContextWithoutChangingIdentity() throws Exception {
 		RepositoryFixture fixture = createFixture("replace-shared-context.db");
 		SqliteSharedQuestionContextRepository repository = fixture.repository();
-
 		SharedQuestionContext saved = repository.save(fixture.firstBooklet(), "Question 21 preamble",
 				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.70, 0.15)));
-
 		List<SharedQuestionContextRegion> replacementRegions = List.of(
 				new SharedQuestionContextRegion(3, 0.12, 0.20, 0.65, 0.18),
 				new SharedQuestionContextRegion(4, 0.14, 0.10, 0.60, 0.22));
-
 		SharedQuestionContext replaced = repository.replace(saved, "Corrected Question 21 preamble",
 				replacementRegions);
 
@@ -67,9 +64,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 		assertEquals(fixture.firstBooklet().getId(), replaced.getBooklet().getId());
 		assertEquals("Corrected Question 21 preamble", replaced.getLabel());
 		assertEquals(replacementRegions, replaced.getRegions());
-
 		List<SharedQuestionContext> reloaded = repository.findByBooklet(fixture.firstBooklet());
-
 		assertEquals(1, reloaded.size());
 		assertEquals(saved.getId(), reloaded.getFirst().getId());
 		assertEquals("Corrected Question 21 preamble", reloaded.getFirst().getLabel());

@@ -56,13 +56,11 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private static final int SOURCE_CELL_WIDTH = 800;
 	private static final int SOURCE_TEXT_PADDING = 6;
 	private static final int SUGGESTION_HORIZONTAL_INSET = 20;
-
 	private static final int TARGET_LIST_HEIGHT = 320;
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 6;
 	private static final int FORM_PADDING = 10;
 	private static final int HEADING_TOP_PADDING = 4;
-
 	private static final double CONTENT_WIDTH = 850;
 	private static final double CONTROL_GAP = 10;
 	private static final double DESCRIPTOR_TEXT_HEIGHT = 78;

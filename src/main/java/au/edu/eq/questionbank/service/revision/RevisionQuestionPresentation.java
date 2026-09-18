@@ -156,6 +156,7 @@ public final class RevisionQuestionPresentation {
 			}
 			validateSourceQuestion(question, sourceQuestion);
 			validateSharedContext(question, sharedContext);
+
 			// Fail on overflow rather than publishing a wrapped total to the student.
 			marks = Math.addExact(marks, question.getMarks());
 		}

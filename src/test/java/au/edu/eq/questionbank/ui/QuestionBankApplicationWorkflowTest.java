@@ -125,39 +125,29 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void acceptedAnswerRegionUsesContentHeightImmediately(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		Question question = captureQuestion(robot, "Q1");
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
-
 		openAnswerPdfForTest(question);
 
 		// Use a shallow region so the required preview area remains clearly below
 		// the 300 px maximum viewport height.
 		robot.interact(() -> answerCapturePane().acceptSelection(
 				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.ANSWER, 1, 0.10, 0.10, 0.70, 0.05)));
-
 		robot.clickOn("#add-answer-region");
 		WaitForAsyncUtils.waitForFxEvents();
-
 		javafx.scene.control.ScrollPane regionsPane = field(answerCapturePane(), "answerRegionsScrollPane",
 				javafx.scene.control.ScrollPane.class);
-
 		javafx.scene.layout.VBox regionList = field(answerCapturePane(), "answerRegionListBox",
 				javafx.scene.layout.VBox.class);
-
 		assertTrue(regionsPane.isVisible());
 		assertTrue(regionsPane.isManaged());
 
 		// The preview must acquire its content-derived height without requiring an
 		// unrelated window or SplitPane resize to force another layout pass.
 		double expectedHeight = Math.min(300.0, regionList.prefHeight(regionList.getWidth()) + 4.0);
-
 		assertTrue(expectedHeight > 4.0, "Accepted Answer content must have a measurable preferred height");
-
 		assertEquals(expectedHeight, regionsPane.getPrefHeight(), 1.0);
-
 		assertTrue(regionsPane.getPrefHeight() < 300.0,
 				"One small Answer region must not claim the full maximum viewport");
 	}
@@ -1553,6 +1543,52 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void questionEditOpensFirstStoredRegionPage(FxRobot robot) throws Exception {
+
+		prepareExamAndClassification(robot);
+
+		// Capture the Question while page 2 is displayed so its persisted first
+		// source region belongs to page 2.
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 2));
+
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
+
+		Question question = captureQuestion(robot, "PAGE2");
+
+		assertEquals(1, question.getRegions().size());
+
+		assertEquals(2, question.getRegions().getFirst().pageNumber());
+
+		// Move away from the Question's source page before starting the edit. This
+		// proves that editQuestion performs the navigation rather than merely
+		// inheriting the page that was used during capture.
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 1));
+
+		assertEquals(1, pdfWorkspace().getCurrentPageNumber());
+
+		AtomicInteger completed = new AtomicInteger();
+
+		robot.interact(() -> assertTrue(questionCapturePane().editQuestion(question, completed::incrementAndGet)));
+
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Editing an existing Question should start on the page containing its first
+		// persisted Question region.
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
+
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
+
+		assertEquals(0, completed.get());
+
+		// Finish through the real edit workflow so the test leaves no active edit
+		// state behind.
+		robot.clickOn("#cancel-question-edit");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertEquals(1, completed.get());
+	}
+
+	@Test
 	void questionListRefreshPreservesActiveAnswerEdit(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "59");
@@ -2143,21 +2179,16 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void sharedPreambleCanBeRecapturedFromSearch(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
-
 		assertNotNull(booklet);
 		assertNotNull(classification);
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
-
 		SharedQuestionContext originalContext = contextRepository.save(booklet, "Question 64 preamble",
 				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.50, 0.10)));
-
 		Question question = questionRepository.save(booklet, "64a", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.35, 0.70, 0.20)), classification, true, null,
 				originalContext, QuestionResponseType.WRITTEN_RESPONSE);
@@ -2171,41 +2202,32 @@ class QuestionBankApplicationWorkflowTest {
 				throw new RuntimeException(exception);
 			}
 		});
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-
 		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
-
 		robot.interact(() -> subjectBox.setValue(chemistry));
-
 		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
-
 		QuestionRetrievalResult selectedResult = results.getItems().stream()
 				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
-
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
-
 		Button recapture = lookup(robot, "#question-search-recapture-preamble", Button.class);
-
 		assertFalse(recapture.isDisabled());
-
 		robot.clickOn(recapture);
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> !robot.lookup("#question-search-results").tryQuery().isPresent());
 
-		Button saveReplacement = lookup(robot, "#save-shared-context", Button.class);
+		// Recapture should reopen the exam on the page containing the first stored
+		// shared-preamble region rather than leaving the user at page 1.
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
 
+		Button saveReplacement = lookup(robot, "#save-shared-context", Button.class);
 		assertTrue(saveReplacement.isVisible());
 		assertEquals("Save Replacement", saveReplacement.getText());
 		TextField sharedContextLabel = lookup(robot, "#shared-context-label", TextField.class);
@@ -2215,11 +2237,9 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(sharedContextLabel.isVisible());
 		assertFalse(sharedContextLabel.isManaged());
 		assertEquals("Question 64 preamble", sharedContextLabel.getText());
-
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
-
 		CurriculumSelectorPane classificationPane = field(application, "curriculumSelectorPane",
 				CurriculumSelectorPane.class);
 
@@ -2228,42 +2248,31 @@ class QuestionBankApplicationWorkflowTest {
 		assertEquals("64a", questionCode.getText());
 		assertEquals("2", marks.getText());
 		assertTrue(writtenResponse.isSelected());
-
 		assertTrue(questionCode.isDisabled());
 		assertTrue(marks.isDisabled());
 		assertTrue(writtenResponse.isDisabled());
-
 		assertClassificationControlShows(robot, classification);
 		assertTrue(classificationPane.isDisabled());
-
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText()
 				.contains("Recapturing shared preamble used by Question 64a"));
 
 		// Starting recapture must leave the persisted original unchanged.
 		SharedQuestionContext beforeReplacement = contextRepository.findByBooklet(booklet).stream()
 				.filter(context -> context.getId() == originalContext.getId()).findFirst().orElseThrow();
-
 		assertEquals(originalContext.getRegions(), beforeReplacement.getRegions());
-
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-shared-context-region");
 		robot.clickOn("#save-shared-context");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
-
 		SharedQuestionContext replaced = contextRepository.findByBooklet(booklet).stream()
 				.filter(context -> context.getId() == originalContext.getId()).findFirst().orElseThrow();
-
 		assertEquals(originalContext.getId(), replaced.getId());
-
 		assertFalse(originalContext.getRegions().equals(replaced.getRegions()));
-
 		Question reloaded = questionRepository.findById(question.getId()).orElseThrow();
 
 		// The Question must still reference the same shared entity after replacement.
 		assertEquals(originalContext.getId(), reloaded.getSharedContext().getId());
-
 		robot.clickOn("Close");
 		WaitForAsyncUtils.waitForFxEvents();
 	}

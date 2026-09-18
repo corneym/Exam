@@ -35,7 +35,6 @@ final class ExamMetadataPane extends VBox {
 
 	private static final double SUBJECT_FIELD_WIDTH = 140.0;
 	private static final int FORM_GAP = 12;
-
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double PROVIDER_FIELD_WIDTH = 240.0;
 	private static final double YEAR_FIELD_WIDTH = 100.0;

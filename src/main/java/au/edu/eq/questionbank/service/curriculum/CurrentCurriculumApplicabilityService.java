@@ -49,7 +49,9 @@ public final class CurrentCurriculumApplicabilityService {
 		if (classification == null) {
 			throw new NullPointerException("classification");
 		}
-		// Current classifications apply directly; mapping lookup is only for historical nodes.
+
+		// Current classifications apply directly; mapping lookup is only for historical
+		// nodes.
 		if (classification.getSyllabusVersion().isCurrent()) {
 			return List.of(classification);
 		}
@@ -63,7 +65,9 @@ public final class CurrentCurriculumApplicabilityService {
 			if (!target.getSyllabusVersion().isCurrent()) {
 				continue;
 			}
-			// Deduplicate by persistent identity while retaining repository order for display.
+
+			// Deduplicate by persistent identity while retaining repository order for
+			// display.
 			if (currentNodeIds.add(target.getId())) {
 				currentNodes.add(target);
 			}

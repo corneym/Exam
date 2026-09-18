@@ -78,22 +78,17 @@ class SharedContextCapturePaneTest {
 	@Test
 	void acceptedRegionRemovesTransientPreviewFromLayout(FxRobot robot) {
 		robot.clickOn("#new-shared-context");
-
 		robot.interact(() -> pane.acceptSelection(
 				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.60, 0.20)));
-
 		ImageView currentPreview = robot.lookup("#shared-context-current-preview").queryAs(ImageView.class);
-
 		assertTrue(currentPreview.isVisible());
 		assertTrue(currentPreview.isManaged());
-
 		robot.clickOn("#add-shared-context-region");
 
 		// Once the selection becomes an accepted region, its separate transient
 		// preview must no longer reserve vertical space above the accepted list.
 		assertFalse(currentPreview.isVisible());
 		assertFalse(currentPreview.isManaged());
-
 		assertEquals("Regions: 1", robot.lookup("#shared-context-region-count").queryAs(Label.class).getText());
 	}
 
@@ -143,43 +138,30 @@ class SharedContextCapturePaneTest {
 	@Test
 	void recapturingContextReplacesRegionsWithoutChangingIdentity(FxRobot robot) {
 		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20);
-
 		SharedQuestionContext original = repository.save(booklet, "Question 21 preamble", List.of(originalRegion));
-
 		AtomicInteger completed = new AtomicInteger();
-
 		robot.interact(() -> {
 			pane.refreshForCurrentBooklet();
-
 			assertTrue(pane.recaptureContext(original, completed::incrementAndGet));
 		});
-
 		assertTrue(pane.isCaptureMode());
 		assertEquals("Regions: 0",
 				robot.lookup("#shared-context-region-count").queryAs(javafx.scene.control.Label.class).getText());
-
 		Button save = robot.lookup("#save-shared-context").queryButton();
-
 		assertEquals("Save Replacement", save.getText());
-
 		SharedQuestionContext beforeSave = repository.findByBooklet(booklet).getFirst();
 
 		// Starting recapture must not mutate the persisted original.
 		assertEquals(original.getId(), beforeSave.getId());
 		assertEquals(List.of(originalRegion), beforeSave.getRegions());
-
 		SharedQuestionContextRegion replacementRegion = new SharedQuestionContextRegion(1, 0.20, 0.25, 0.60, 0.30);
-
 		robot.interact(
 				() -> pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
 						replacementRegion.pageNumber(), replacementRegion.x(), replacementRegion.y(),
 						replacementRegion.width(), replacementRegion.height())));
-
 		robot.clickOn("#add-shared-context-region");
 		robot.clickOn("#save-shared-context");
-
 		SharedQuestionContext replaced = repository.findByBooklet(booklet).getFirst();
-
 		assertEquals(original.getId(), replaced.getId());
 		assertEquals("Question 21 preamble", replaced.getLabel());
 		assertEquals(List.of(replacementRegion), replaced.getRegions());
@@ -216,7 +198,10 @@ class SharedContextCapturePaneTest {
 		selectionClearCount = new AtomicInteger();
 		pane = new SharedContextCapturePane(repository, () -> booklet, new QuestionExtractor(), () -> session,
 				selectionClearCount::incrementAndGet, () -> true);
-		stage.setScene(new Scene(pane, 650, 400));
+
+		// Give the standalone component fixture enough vertical space for the
+		// full-width pending and accepted previews used by the production workflow.
+		stage.setScene(new Scene(pane, 650, 650));
 		stage.show();
 	}
 
@@ -251,18 +236,14 @@ class SharedContextCapturePaneTest {
 			// matching the production repository contract.
 			for (int i = 0; i < contexts.size(); i++) {
 				SharedQuestionContext existing = contexts.get(i);
-
 				if (existing.getId() != context.getId()) {
 					continue;
 				}
-
 				SharedQuestionContext replacement = new SharedQuestionContext(existing.getId(), existing.getBooklet(),
 						label, regions);
-
 				contexts.set(i, replacement);
 				return replacement;
 			}
-
 			throw new IllegalArgumentException("Shared context does not exist");
 		}
 

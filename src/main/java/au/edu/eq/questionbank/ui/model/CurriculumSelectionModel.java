@@ -97,13 +97,14 @@ public class CurriculumSelectionModel {
 	 * @return descriptors available at the current hierarchy position
 	 */
 	public List<CurriculumNode> getDescriptors() {
-		// A syllabus may place Descriptors directly under Topics, with no Subtopic level.
+
+		// A syllabus may place Descriptors directly under Topics, with no Subtopic
+		// level.
 		CurriculumNode parent = subtopic != null ? subtopic : topic;
 		if (parent == null) {
 			return List.of();
 		}
-		return repository.findChildren(parent).stream().filter(CurriculumSelectionModel::isDescriptor)
-				.toList();
+		return repository.findChildren(parent).stream().filter(CurriculumSelectionModel::isDescriptor).toList();
 	}
 
 	/**
@@ -142,8 +143,7 @@ public class CurriculumSelectionModel {
 		if (topic == null) {
 			return List.of();
 		}
-		return repository.findChildren(topic).stream().filter(CurriculumSelectionModel::isSubtopic)
-				.toList();
+		return repository.findChildren(topic).stream().filter(CurriculumSelectionModel::isSubtopic).toList();
 	}
 
 	/**
@@ -229,7 +229,9 @@ public class CurriculumSelectionModel {
 			return;
 		}
 		if (classification.getLevel() == CurriculumLevel.DESCRIPTOR) {
-			// Recover the optional Subtopic from the chosen Descriptor, clearing any stale Subtopic.
+
+			// Recover the optional Subtopic from the chosen Descriptor, clearing any stale
+			// Subtopic.
 			CurriculumNode parent = classification.getParent();
 			subtopic = parent != null && parent.getLevel() == CurriculumLevel.SUBTOPIC ? parent : null;
 			this.classification = classification;
@@ -248,7 +250,9 @@ public class CurriculumSelectionModel {
 		if (descriptor != null && descriptor.getLevel() != CurriculumLevel.DESCRIPTOR) {
 			throw new IllegalArgumentException("Expected a descriptor");
 		}
-		// Clearing the finer selection retains the broader Subtopic classification when available.
+
+		// Clearing the finer selection retains the broader Subtopic classification when
+		// available.
 		classification = descriptor != null ? descriptor : subtopic;
 	}
 
@@ -263,7 +267,9 @@ public class CurriculumSelectionModel {
 	public void selectSubject(Subject subject) {
 		this.subject = subject;
 		syllabusVersion = null;
-		// Clear the previous path before lookup so it cannot remain attached to the new subject.
+
+		// Clear the previous path before lookup so it cannot remain attached to the new
+		// subject.
 		clearCurriculumNodeSelections();
 		if (subject == null) {
 			return;
@@ -302,7 +308,9 @@ public class CurriculumSelectionModel {
 	 *                                  selected subject
 	 */
 	public void selectSyllabusVersion(SyllabusVersion syllabusVersion) {
-		// Validate before mutating the path so a rejected version leaves the user's selection intact.
+
+		// Validate before mutating the path so a rejected version leaves the user's
+		// selection intact.
 		if (syllabusVersion != null) {
 			if (subject == null) {
 				throw new IllegalStateException("Select a subject before selecting a syllabus version");

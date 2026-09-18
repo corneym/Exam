@@ -72,10 +72,14 @@ public final class RevisionCorpusBuilder {
 			}
 			mutableRoots.add(buildHierarchy(root, currentVersion, nodesById, visitedNodeIds));
 		}
-		// Build the complete tree before resolving applicability to its final classification nodes.
+
+		// Build the complete tree before resolving applicability to its final
+		// classification nodes.
 		placeQuestions(subject, currentVersion, nodesById);
 		List<RevisionCorpusNode> rootNodes = new ArrayList<RevisionCorpusNode>();
-		// Share one sequence across Units so placement numbering follows the full traversal order.
+
+		// Share one sequence across Units so placement numbering follows the full
+		// traversal order.
 		RevisionNumberSequence revisionNumbers = new RevisionNumberSequence();
 		for (MutableCorpusNode mutableRoot : mutableRoots) {
 			rootNodes.add(freeze(mutableRoot, revisionNumbers));
@@ -85,7 +89,9 @@ public final class RevisionCorpusBuilder {
 	}
 
 	private void accumulateStatistics(MutableCorpusNode node, StatisticsAccumulator accumulator) {
-		// Count every placement, but count capture and answer state once per stored question.
+
+		// Count every placement, but count capture and answer state once per stored
+		// question.
 		accumulator.applicablePlacements += node.questionsById.size();
 		for (Question question : node.questionsById.values()) {
 			long questionId = question.getId();
@@ -97,13 +103,16 @@ public final class RevisionCorpusBuilder {
 			} else {
 				accumulator.renderableQuestionIds.add(questionId);
 			}
+
 			// These statistics record answer presence, not response-type completeness.
 			if (question.hasAnswer()) {
 				accumulator.questionIdsWithAnswers.add(questionId);
 			} else {
 				accumulator.questionIdsWithoutAnswers.add(questionId);
 			}
-			// Preserve the legacy review signal even when shared context has since been captured.
+
+			// Preserve the legacy review signal even when shared context has since been
+			// captured.
 			if (question.isPreambleCaptureRequired()) {
 				accumulator.preambleReviewQuestionIds.add(questionId);
 			}
@@ -146,7 +155,9 @@ public final class RevisionCorpusBuilder {
 		if (versions == null) {
 			throw new IllegalStateException("Curriculum repository returned null syllabus versions");
 		}
-		// Do not choose arbitrarily if persisted data identifies more than one current syllabus.
+
+		// Do not choose arbitrarily if persisted data identifies more than one current
+		// syllabus.
 		SyllabusVersion currentVersion = null;
 		for (SyllabusVersion version : versions) {
 			if (version == null) {
@@ -172,7 +183,9 @@ public final class RevisionCorpusBuilder {
 	private RevisionCorpusNode freeze(MutableCorpusNode mutableNode, RevisionNumberSequence revisionNumbers) {
 		List<RevisionQuestionPlacement> placements = new ArrayList<RevisionQuestionPlacement>();
 		for (Question question : mutableNode.questionsById.values()) {
-			// Retain uncaptured questions for diagnostics without consuming a revision number.
+
+			// Retain uncaptured questions for diagnostics without consuming a revision
+			// number.
 			int revisionNumber = 0;
 			if (!question.getRegions().isEmpty()) {
 				revisionNumber = revisionNumbers.next();
@@ -188,7 +201,9 @@ public final class RevisionCorpusBuilder {
 
 	private List<CurriculumNode> orderedNodes(List<CurriculumNode> nodes) {
 		List<CurriculumNode> ordered = new ArrayList<CurriculumNode>(nodes);
-		// Author-defined order takes precedence; codes and IDs provide deterministic tie-breaks.
+
+		// Author-defined order takes precedence; codes and IDs provide deterministic
+		// tie-breaks.
 		ordered.sort(Comparator.comparingInt(CurriculumNode::getDisplayOrder).thenComparing(CurriculumNode::getCode)
 				.thenComparingLong(CurriculumNode::getId));
 		return ordered;
@@ -210,7 +225,9 @@ public final class RevisionCorpusBuilder {
 			}
 			for (CurriculumNode currentNode : result.getCurrentApplicability()) {
 				MutableCorpusNode target = requirePlacementTarget(currentNode, currentVersion, nodesById);
-				// Deduplicate within a bucket while allowing the same question in other applicable buckets.
+
+				// Deduplicate within a bucket while allowing the same question in other
+				// applicable buckets.
 				target.questionsById.putIfAbsent(question.getId(), question);
 			}
 		}
@@ -247,7 +264,9 @@ public final class RevisionCorpusBuilder {
 
 	private void validateChildren(CurriculumNode parent, List<CurriculumNode> children,
 			SyllabusVersion currentVersion) {
-		// A Topic may omit Subtopics, but its children must consistently use one supported level.
+
+		// A Topic may omit Subtopics, but its children must consistently use one
+		// supported level.
 		CurriculumLevel topicChildMode = null;
 		for (CurriculumNode child : children) {
 			validateCurrentNode(child, currentVersion);

@@ -27,7 +27,6 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 8;
 	private static final int FORM_PADDING = 10;
-
 	private final TextField subjectField = new TextField();
 	private final TextField versionField = new TextField();
 	private final CheckBox currentCheckBox = new CheckBox();

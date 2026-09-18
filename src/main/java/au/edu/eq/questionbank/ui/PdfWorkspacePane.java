@@ -45,7 +45,6 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private static final int SELECTION_STROKE_WIDTH = 2;
 	private static final double ANCHOR_STROKE_WIDTH = 1.5;
 	private static final int ANCHOR_CLICK_COUNT = 2;
-
 	private static final float DISPLAY_DPI = 120;
 	private static final double MIN_SELECTION_SIZE = 5.0;
 	private static final double PAGE_CONTROL_SPACING = 10.0;
@@ -472,17 +471,14 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		if (documentMode == null) {
 			throw new NullPointerException("documentMode");
 		}
-
 		PdfSession targetSession = switch (documentMode) {
 		case EXAM -> examPdfSession;
 		case ANSWER -> answerPdfSession;
 		case VIEWER -> viewerPdfSession;
 		};
-
 		if (targetSession == null) {
 			throw new IllegalStateException("No " + documentMode + " PDF is currently open");
 		}
-
 		if (pageNumber < 1 || pageNumber > targetSession.getPageCount()) {
 			throw new IllegalArgumentException(
 					"Page " + pageNumber + " is outside the document range 1-" + targetSession.getPageCount());
@@ -493,12 +489,10 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		if (displayedDocument != documentMode) {
 			showDocument(documentMode);
 		}
-
 		if (currentPageNumber == pageNumber) {
 			restorePageNumberField();
 			return;
 		}
-
 		currentPageNumber = pageNumber;
 		showCurrentPage();
 	}
@@ -671,7 +665,9 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pageView.setOnMouseReleased(this::handleSelectionReleased);
 		pageView.setOnMouseClicked(this::handleSelectionClicked);
 		fullWidthSelectionCheckBox.selectedProperty().addListener((_, _, _) -> {
-			// Both the rectangle and its capture owner must forget bounds made under the old mode.
+
+			// Both the rectangle and its capture owner must forget bounds made under the
+			// old mode.
 			clearSelection();
 			selectionModeChangedHandler.run();
 		});

@@ -18,7 +18,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 	private static final int DIALOG_WIDTH = 900;
 	private static final int DIALOG_HEIGHT = 700;
-
 	private final QuestionSearchPane searchPane;
 
 	/**
@@ -53,7 +52,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		ButtonType recapturePreambleButtonType = new ButtonType("Recapture Shared Preamble",
 				ButtonBar.ButtonData.OTHER);
 		ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
-
 		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, editMetadataButtonType,
 				recapturePreambleButtonType, editAnswerButtonType, ButtonType.CLOSE);
 		searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);

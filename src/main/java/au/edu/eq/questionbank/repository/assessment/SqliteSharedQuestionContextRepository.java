@@ -83,7 +83,6 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 	@Override
 	public SharedQuestionContext replace(SharedQuestionContext context, String label,
 			List<SharedQuestionContextRegion> regions) {
-
 		if (context == null) {
 			throw new NullPointerException("context");
 		}
@@ -101,13 +100,11 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				throw new NullPointerException("regions contains null");
 			}
 		}
-
 		ExamBooklet booklet = context.getBooklet();
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try {
+
 				// Update the existing row rather than creating a new context so every
 				// Question already linked by shared_context_id remains linked.
 				try (PreparedStatement statement = connection.prepareStatement("""
@@ -116,11 +113,9 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 						WHERE id = ?
 						  AND booklet_id = ?
 						""")) {
-
 					statement.setString(1, label);
 					statement.setLong(2, context.getId());
 					statement.setLong(3, booklet.getId());
-
 					if (statement.executeUpdate() != 1) {
 						throw new IllegalArgumentException("Shared context does not exist for booklet");
 					}
@@ -132,15 +127,11 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 						DELETE FROM shared_question_context_regions
 						WHERE shared_context_id = ?
 						""")) {
-
 					statement.setLong(1, context.getId());
 					statement.executeUpdate();
 				}
-
 				insertRegions(connection, context.getId(), regions);
-
 				SharedQuestionContext replaced = new SharedQuestionContext(context.getId(), booklet, label, regions);
-
 				connection.commit();
 				return replaced;
 			} catch (SQLException | RuntimeException e) {

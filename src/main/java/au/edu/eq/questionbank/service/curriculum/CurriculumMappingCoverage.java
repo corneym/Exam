@@ -59,7 +59,9 @@ public record CurriculumMappingCoverage(SyllabusVersion sourceVersion, SyllabusV
 				&& subtopicStatus == CurriculumMappingCoverageStatus.NOT_APPLICABLE) {
 			return CurriculumMappingCoverageStatus.NOT_APPLICABLE;
 		}
-		// An absent optional level must not prevent the other level from being complete.
+
+		// An absent optional level must not prevent the other level from being
+		// complete.
 		return CurriculumMappingCoverageStatus.COMPLETE;
 	}
 

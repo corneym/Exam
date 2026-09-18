@@ -32,7 +32,6 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	private static final int FILE_FIELD_WIDTH = 300;
 	private static final int FILE_CONTROL_SPACING = 6;
 	private static final int SELECTOR_WIDTH = 220;
-
 	private final CurriculumRepository curriculumRepository;
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();

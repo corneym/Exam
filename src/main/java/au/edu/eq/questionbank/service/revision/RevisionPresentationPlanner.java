@@ -42,7 +42,9 @@ public final class RevisionPresentationPlanner {
 			throw new NullPointerException("corpus");
 		}
 		RevisionNumberSequence revisionNumbers = new RevisionNumberSequence();
-		// Number the grouped presentations afresh; corpus placement numbers may collapse into one group.
+
+		// Number the grouped presentations afresh; corpus placement numbers may
+		// collapse into one group.
 		List<RevisionPresentationNode> roots = new ArrayList<>();
 		for (RevisionCorpusNode root : corpus.getRootNodes()) {
 			roots.add(planNode(root, revisionNumbers));
@@ -58,7 +60,9 @@ public final class RevisionPresentationPlanner {
 	}
 
 	private List<PresentationDraft> createDrafts(List<RevisionQuestionPlacement> placements) {
-		// Uncaptured parts remain in corpus statistics but cannot join a rendered presentation.
+
+		// Uncaptured parts remain in corpus statistics but cannot join a rendered
+		// presentation.
 		List<RevisionQuestionPlacement> renderablePlacements = new ArrayList<>();
 		for (RevisionQuestionPlacement placement : placements) {
 			if (placement.isRenderable()) {
@@ -67,7 +71,9 @@ public final class RevisionPresentationPlanner {
 		}
 		List<PresentationDraft> drafts = new ArrayList<>();
 		Set<SourceKey> emittedSources = new HashSet<>();
-		// Emit a multipart group where its first member occurs, preserving the surrounding question order.
+
+		// Emit a multipart group where its first member occurs, preserving the
+		// surrounding question order.
 		for (RevisionQuestionPlacement placement : renderablePlacements) {
 			Question question = placement.getQuestion();
 			if (!question.hasSourceQuestion()) {
@@ -110,7 +116,9 @@ public final class RevisionPresentationPlanner {
 	}
 
 	private RevisionPresentationNode planNode(RevisionCorpusNode corpusNode, RevisionNumberSequence revisionNumbers) {
-		// Group only this bucket's placements so shared source identity cannot cross curriculum boundaries.
+
+		// Group only this bucket's placements so shared source identity cannot cross
+		// curriculum boundaries.
 		List<RevisionQuestionPresentation> presentations = planPresentations(corpusNode, revisionNumbers);
 		List<RevisionPresentationNode> children = new ArrayList<>();
 		for (RevisionCorpusNode child : corpusNode.getChildren()) {
@@ -126,7 +134,9 @@ public final class RevisionPresentationPlanner {
 		ContextKey previousContext = null;
 		for (PresentationDraft draft : drafts) {
 			ContextKey currentContext = ContextKey.from(draft.sharedContext());
-			// Render again after a different context (including none), and at the start of each bucket.
+
+			// Render again after a different context (including none), and at the start of
+			// each bucket.
 			boolean renderSharedContext = currentContext != null && !currentContext.equals(previousContext);
 			presentations.add(new RevisionQuestionPresentation(revisionNumbers.next(), corpusNode.getCurriculumNode(),
 					draft.members(), draft.sourceQuestion(), draft.sharedContext(), renderSharedContext));
@@ -141,7 +151,9 @@ public final class RevisionPresentationPlanner {
 			throw new IllegalStateException("Source question has no renderable members");
 		}
 		SharedQuestionContext expected = members.getFirst().getSharedContext();
-		// Missing versus linked context is also a conflict; choosing one would hide inconsistent source data.
+
+		// Missing versus linked context is also a conflict; choosing one would hide
+		// inconsistent source data.
 		for (Question member : members) {
 			if (!contextsMatch(expected, member.getSharedContext())) {
 				throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()

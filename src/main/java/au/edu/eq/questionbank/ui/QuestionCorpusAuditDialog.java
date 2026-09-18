@@ -22,7 +22,6 @@ final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.R
 
 	private static final int DIALOG_WIDTH = 1100;
 	private static final int DIALOG_HEIGHT = 700;
-
 	private final QuestionCorpusAuditPane auditPane;
 
 	QuestionCorpusAuditDialog(Window owner, List<Question> questions) {

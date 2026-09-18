@@ -46,7 +46,9 @@ public final class QuestionRetrievalResult {
 			}
 		}
 		this.question = question;
-		// Keep the search's applicability snapshot separate from the question's stored classification.
+
+		// Keep the search's applicability snapshot separate from the question's stored
+		// classification.
 		this.currentApplicability = List.copyOf(currentApplicability);
 	}
 

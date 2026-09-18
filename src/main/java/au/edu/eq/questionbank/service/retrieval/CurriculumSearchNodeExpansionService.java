@@ -70,7 +70,9 @@ public final class CurriculumSearchNodeExpansionService {
 		}
 		SyllabusVersion currentVersion = findCurrentVersion(subject);
 		if (currentVersion == null) {
-			// A subject without a current syllabus has no current classification scope to search.
+
+			// A subject without a current syllabus has no current classification scope to
+			// search.
 			return List.of();
 		}
 		List<CurriculumNode> rootNodes = curriculumRepository.findRootNodes(currentVersion);
@@ -78,7 +80,9 @@ public final class CurriculumSearchNodeExpansionService {
 			throw new IllegalStateException("Curriculum repository returned null root nodes");
 		}
 		List<CurriculumNode> expandedNodes = new ArrayList<CurriculumNode>();
-		// Share the visited set across roots to detect nodes repeated in separate branches.
+
+		// Share the visited set across roots to detect nodes repeated in separate
+		// branches.
 		Set<Long> visitedNodeIds = new HashSet<Long>();
 		for (CurriculumNode rootNode : rootNodes) {
 			if (rootNode == null) {
@@ -100,7 +104,9 @@ public final class CurriculumSearchNodeExpansionService {
 		if (versions == null) {
 			throw new IllegalStateException("Curriculum repository returned null syllabus versions");
 		}
-		// Inspect every version: selecting the first current one would hide ambiguous stored state.
+
+		// Inspect every version: selecting the first current one would hide ambiguous
+		// stored state.
 		SyllabusVersion currentVersion = null;
 		for (SyllabusVersion version : versions) {
 			if (version == null) {
@@ -131,7 +137,9 @@ public final class CurriculumSearchNodeExpansionService {
 			return;
 		}
 		if (level == CurriculumLevel.SUBTOPIC) {
-			// Questions can be classified at the Subtopic itself as well as at its Descriptors.
+
+			// Questions can be classified at the Subtopic itself as well as at its
+			// Descriptors.
 			expandedNodes.add(currentNode);
 			collectSubtopicChildren(currentNode, expandedNodes, visitedNodeIds);
 			return;
@@ -162,7 +170,9 @@ public final class CurriculumSearchNodeExpansionService {
 	private void collectTopicChildren(CurriculumNode topic, List<CurriculumNode> expandedNodes,
 			Set<Long> visitedNodeIds) {
 		List<CurriculumNode> children = findChildren(topic);
-		// Support Topics with direct Descriptors, but reject mixed child levels within one Topic.
+
+		// Support Topics with direct Descriptors, but reject mixed child levels within
+		// one Topic.
 		CurriculumLevel childMode = null;
 		for (CurriculumNode child : children) {
 			validateCommonChild(topic, child);
