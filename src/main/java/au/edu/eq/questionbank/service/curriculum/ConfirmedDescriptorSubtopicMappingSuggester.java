@@ -70,6 +70,7 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 			SyllabusVersion targetVersion) {
 		Map<CurriculumNode, Integer> evidenceCounts = new HashMap<>();
 		for (CurriculumNode sourceDescriptor : sourceDescriptors) {
+			// One source descriptor gets one vote per target subtopic, even after a split mapping.
 			Set<Long> supportedTargetSubtopicIds = new HashSet<>();
 			for (CurriculumMapping mapping : mappingRepository.findTargets(sourceDescriptor)) {
 				if (mapping.getStatus() != MappingStatus.CONFIRMED) {
@@ -80,6 +81,7 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 					continue;
 				}
 				CurriculumNode targetParent = targetDescriptor.getParent();
+				// Descriptors directly under Topics provide no evidence for a Subtopic mapping.
 				if (targetParent == null || targetParent.getLevel() != CurriculumLevel.SUBTOPIC) {
 					continue;
 				}
@@ -95,6 +97,7 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 			Map<CurriculumNode, Integer> evidenceCounts) {
 		List<CurriculumMappingSuggestion> suggestions = new ArrayList<>();
 		for (Map.Entry<CurriculumNode, Integer> entry : evidenceCounts.entrySet()) {
+			// Include unmapped source descriptors in the denominator to avoid overstating support.
 			double score = (double) entry.getValue() / sourceDescriptorCount;
 			suggestions.add(new CurriculumMappingSuggestion(source, entry.getKey(), score));
 		}
@@ -107,6 +110,7 @@ public final class ConfirmedDescriptorSubtopicMappingSuggester implements Curric
 			if (scoreComparison != 0) {
 				return scoreComparison;
 			}
+			// Keep tied suggestions stable regardless of map iteration order.
 			return Long.compare(first.getTarget().getId(), second.getTarget().getId());
 		});
 	}

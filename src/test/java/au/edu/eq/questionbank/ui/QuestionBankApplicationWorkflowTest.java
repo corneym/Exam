@@ -2160,7 +2160,7 @@ class QuestionBankApplicationWorkflowTest {
 
 		Question question = questionRepository.save(booklet, "64a", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.35, 0.70, 0.20)), classification, true, null,
-				originalContext);
+				originalContext, QuestionResponseType.WRITTEN_RESPONSE);
 
 		// Open Search Questions through the real application workflow.
 		Platform.runLater(() -> {
@@ -2208,6 +2208,36 @@ class QuestionBankApplicationWorkflowTest {
 
 		assertTrue(saveReplacement.isVisible());
 		assertEquals("Save Replacement", saveReplacement.getText());
+		TextField sharedContextLabel = lookup(robot, "#shared-context-label", TextField.class);
+
+		// Existing context identity and naming are not editable during source-region
+		// recapture.
+		assertFalse(sharedContextLabel.isVisible());
+		assertFalse(sharedContextLabel.isManaged());
+		assertEquals("Question 64 preamble", sharedContextLabel.getText());
+
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+
+		CurriculumSelectorPane classificationPane = field(application, "curriculumSelectorPane",
+				CurriculumSelectorPane.class);
+
+		// The Question remains visible as read-only context while only its shared
+		// preamble is being replaced.
+		assertEquals("64a", questionCode.getText());
+		assertEquals("2", marks.getText());
+		assertTrue(writtenResponse.isSelected());
+
+		assertTrue(questionCode.isDisabled());
+		assertTrue(marks.isDisabled());
+		assertTrue(writtenResponse.isDisabled());
+
+		assertClassificationControlShows(robot, classification);
+		assertTrue(classificationPane.isDisabled());
+
+		assertTrue(lookup(robot, "#question-save-status", Label.class).getText()
+				.contains("Recapturing shared preamble used by Question 64a"));
 
 		// Starting recapture must leave the persisted original unchanged.
 		SharedQuestionContext beforeReplacement = contextRepository.findByBooklet(booklet).stream()

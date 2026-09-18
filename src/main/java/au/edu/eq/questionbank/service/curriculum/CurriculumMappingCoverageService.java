@@ -103,6 +103,7 @@ public final class CurriculumMappingCoverageService {
 				break;
 			}
 		}
+		// New target content may have no predecessor even when all source reviews are complete.
 		int uncoveredTargetCount = 0;
 		for (CurriculumNode target : targetNodes) {
 			if (!confirmedMappedTargetIds.contains(target.getId())) {
@@ -123,6 +124,7 @@ public final class CurriculumMappingCoverageService {
 	}
 
 	private ConfirmedPairMappings confirmedPairMappings(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
+		// Suggestions and mappings for other syllabus pairs cannot establish this pair's coverage.
 		Set<Long> sourceIds = new HashSet<>();
 		Set<Long> targetIds = new HashSet<>();
 		for (CurriculumMapping mapping : mappingRepository.findAll()) {
@@ -145,6 +147,7 @@ public final class CurriculumMappingCoverageService {
 			Set<Long> reviewedSourceIds, Set<Long> confirmedMappedSourceIds) {
 		boolean reviewed = reviewedSourceIds.contains(source.getId());
 		boolean confirmedMapping = confirmedMappedSourceIds.contains(source.getId());
+		// A mapping alone is not a completed review; the explicit outcome must agree with it.
 		if (!reviewed) {
 			return confirmedMapping ? CurriculumMappingSourceState.INCONSISTENT
 					: CurriculumMappingSourceState.UNREVIEWED;
@@ -156,6 +159,7 @@ public final class CurriculumMappingCoverageService {
 		if (outcome.get() == CurriculumMappingReviewOutcome.MATCHED) {
 			return confirmedMapping ? CurriculumMappingSourceState.MATCHED : CurriculumMappingSourceState.INCONSISTENT;
 		}
+		// An explicit no-match decision is complete only when no confirmed target contradicts it.
 		return confirmedMapping ? CurriculumMappingSourceState.INCONSISTENT : CurriculumMappingSourceState.NO_MATCH;
 	}
 

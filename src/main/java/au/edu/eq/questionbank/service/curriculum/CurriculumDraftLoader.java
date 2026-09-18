@@ -67,8 +67,10 @@ public final class CurriculumDraftLoader {
 			loadNode(root, null, childrenByParent, draft, session, loadedPersistentIds);
 		}
 		if (loadedPersistentIds.size() != persistedNodes.size()) {
+			// Root traversal cannot reach orphaned nodes or a disconnected cycle.
 			throw new IllegalStateException("Persisted curriculum contains an orphaned or cyclic hierarchy");
 		}
+		// Save uses this stored baseline to detect edits made by another authoring session.
 		session.recordPersistedSnapshot(persistedNodes);
 		return session;
 	}
@@ -80,6 +82,7 @@ public final class CurriculumDraftLoader {
 			throw new IllegalStateException(
 					"Cyclic curriculum hierarchy at persistent node " + persistedNode.persistentId());
 		}
+		// Load parents first so child links use new draft IDs, never database IDs.
 		CurriculumDraftNode draftNode = draft.addNode(persistedNode.level(), persistedNode.code(), persistedNode.name(),
 				parentDraftId, persistedNode.sourcePageNumber());
 		session.bindPersistentId(draftNode.draftId(), persistedNode.persistentId());

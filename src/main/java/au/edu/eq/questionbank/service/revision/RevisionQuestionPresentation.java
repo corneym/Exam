@@ -44,18 +44,7 @@ public final class RevisionQuestionPresentation {
 		if (renderSharedContext && sharedContext == null) {
 			throw new IllegalArgumentException("Cannot render an absent shared context");
 		}
-		int marks = 0;
-		for (Question question : members) {
-			if (question == null) {
-				throw new NullPointerException("members contains null");
-			}
-			if (question.getRegions().isEmpty()) {
-				throw new IllegalArgumentException("Presentation members must be renderable");
-			}
-			validateSourceQuestion(question, sourceQuestion);
-			validateSharedContext(question, sharedContext);
-			marks = Math.addExact(marks, question.getMarks());
-		}
+		int marks = validateMembersAndSumMarks(members, sourceQuestion, sharedContext);
 		this.revisionNumber = revisionNumber;
 		this.currentNode = currentNode;
 		this.members = List.copyOf(members);
@@ -153,6 +142,24 @@ public final class RevisionQuestionPresentation {
 	 */
 	public boolean shouldRenderSharedContext() {
 		return renderSharedContext;
+	}
+
+	private int validateMembersAndSumMarks(List<Question> members, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) {
+		int marks = 0;
+		for (Question question : members) {
+			if (question == null) {
+				throw new NullPointerException("members contains null");
+			}
+			if (question.getRegions().isEmpty()) {
+				throw new IllegalArgumentException("Presentation members must be renderable");
+			}
+			validateSourceQuestion(question, sourceQuestion);
+			validateSharedContext(question, sharedContext);
+			// Fail on overflow rather than publishing a wrapped total to the student.
+			marks = Math.addExact(marks, question.getMarks());
+		}
+		return marks;
 	}
 
 	private void validateSharedContext(Question question, SharedQuestionContext expectedContext) {

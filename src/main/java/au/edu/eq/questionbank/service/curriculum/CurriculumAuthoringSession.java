@@ -55,6 +55,7 @@ public final class CurriculumAuthoringSession {
 			throw new IllegalArgumentException("persistentId must be positive");
 		}
 		Long existing = persistentIdByDraftId.get(draftId);
+		// A binding must remain one-to-one so saving cannot update the wrong stored node.
 		if (existing != null && existing.longValue() != persistentId) {
 			throw new IllegalStateException(
 					"Draft node " + draftId + " is already bound to persistent node " + existing);
@@ -73,6 +74,7 @@ public final class CurriculumAuthoringSession {
 	 * @return persistent curriculum-node IDs pending deletion
 	 */
 	public Set<Long> deletedPersistentIds() {
+		// Keep removed nodes' bindings until a successful save acknowledges their deletion.
 		Set<Long> currentDraftIds = new HashSet<>();
 		for (CurriculumDraftNode node : draft.nodes()) {
 			currentDraftIds.add(node.draftId());

@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.SharedQuestionContextRepository;
+import javafx.beans.binding.Bindings;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -35,8 +36,9 @@ final class SharedContextCapturePane extends VBox {
 
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
-	private static final double PREVIEW_HEIGHT = 90.0;
-	private static final double PREVIEW_WIDTH = 180.0;
+	private static final double REGION_PREVIEW_HORIZONTAL_INSET = 24.0;
+	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
+	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
 	private static final Insets CAPTURE_PADDING = new Insets(8);
 
 	// Workflow dependencies and application callbacks.
@@ -351,6 +353,11 @@ final class SharedContextCapturePane extends VBox {
 		// Replacement capture starts empty. The persisted original remains available
 		// until Save successfully replaces it.
 		contextLabelField.setText(context.getLabel());
+
+		// Recapture corrects only the stored source regions. The existing context
+		// label remains authoritative and is not editable in this workflow.
+		contextLabelField.setVisible(false);
+		contextLabelField.setManaged(false);
 		pendingRegions.clear();
 		refreshRegionPreviews();
 
@@ -434,6 +441,10 @@ final class SharedContextCapturePane extends VBox {
 
 		enterCaptureMode();
 		contextLabelField.clear();
+
+		// A newly created shared context still requires its own label.
+		contextLabelField.setVisible(true);
+		contextLabelField.setManaged(true);
 		clearCurrentSelection();
 		refreshRegionPreviews();
 
@@ -480,8 +491,12 @@ final class SharedContextCapturePane extends VBox {
 		editingContext = null;
 		contextEditCompletedHandler = () -> {
 		};
+
 		contextCaptureHeadingLabel.setText("New shared context");
 		saveContextButton.setText("Save Context");
+
+		contextLabelField.setVisible(true);
+		contextLabelField.setManaged(true);
 	}
 
 	private void clearPersistedCaptureState() {
@@ -511,6 +526,7 @@ final class SharedContextCapturePane extends VBox {
 	private void configureCaptureControls() {
 		contextLabelField.setId("shared-context-label");
 		contextLabelField.setPromptText("Context label, e.g. Question 24 preamble");
+
 		addRegionButton.setId("add-shared-context-region");
 		clearSelectionButton.setId("clear-shared-context-selection");
 		clearRegionsButton.setId("clear-shared-context-regions");
@@ -520,8 +536,15 @@ final class SharedContextCapturePane extends VBox {
 
 		currentPreview.setId("shared-context-current-preview");
 		currentPreview.setPreserveRatio(true);
-		currentPreview.setFitWidth(PREVIEW_WIDTH);
-		currentPreview.setFitHeight(PREVIEW_HEIGHT);
+
+		// Match the accepted-region presentation so the pending selection is previewed
+		// at the same scale before and after Add.
+		currentPreview.fitWidthProperty()
+				.bind(Bindings.createDoubleBinding(
+						() -> Math.max(0.0, newContextBox.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
+						newContextBox.widthProperty()));
+
+		currentPreview.setSmooth(true);
 
 		// The transient preview should occupy layout space only while an unaccepted
 		// PDF selection is actually being previewed.
@@ -529,8 +552,17 @@ final class SharedContextCapturePane extends VBox {
 		currentPreview.managedProperty().bind(currentPreview.visibleProperty());
 
 		acceptedRegionScroll.setFitToWidth(true);
-		acceptedRegionScroll.setPrefViewportHeight(100.0);
-		acceptedRegionScroll.setMaxHeight(120.0);
+		acceptedRegionScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		acceptedRegionScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+		acceptedRegionScroll.setMinHeight(0);
+		acceptedRegionScroll.setMaxHeight(REGIONS_VIEWPORT_HEIGHT);
+
+		// Grow the accepted-region area with its actual content until the same
+		// 300 px scrolling limit used by ordinary Question capture is reached.
+		acceptedRegionScroll.prefHeightProperty()
+				.bind(Bindings.createDoubleBinding(
+						() -> Math.min(REGIONS_VIEWPORT_HEIGHT, acceptedRegionBox.getLayoutBounds().getHeight() + 4.0),
+						acceptedRegionBox.layoutBoundsProperty()));
 
 		setSelectionButtonsEnabled(false);
 	}
@@ -576,19 +608,42 @@ final class SharedContextCapturePane extends VBox {
 		return controls;
 	}
 
-	private HBox createRegionPreview(SharedQuestionContextRegion region, int regionIndex) {
+	private VBox createRegionPreview(SharedQuestionContextRegion region, int regionIndex) {
+
 		try {
 			BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
+
 			ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
+
+			imageView.setId("shared-context-region-preview-" + regionIndex);
+
 			imageView.setPreserveRatio(true);
-			imageView.setFitWidth(PREVIEW_WIDTH);
-			imageView.setFitHeight(PREVIEW_HEIGHT);
+
+			// Match ordinary Question-region presentation: use the available pane width
+			// and derive the preview height from the source image aspect ratio.
+			imageView.fitWidthProperty()
+					.bind(Bindings.createDoubleBinding(
+							() -> Math.max(0.0, acceptedRegionScroll.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
+							acceptedRegionScroll.widthProperty()));
+
+			imageView.setSmooth(true);
+
 			Label label = new Label(String.format("Region %d — Page %d", regionIndex + 1, region.pageNumber()));
+
 			Button removeButton = new Button("Remove");
+
+			removeButton.setId("remove-shared-context-region-" + regionIndex);
+
 			removeButton.setOnAction(_ -> removeRegion(regionIndex));
-			HBox row = new HBox(CONTROL_SPACING, imageView, new VBox(COMPACT_SPACING, label, removeButton));
-			row.setAlignment(Pos.CENTER_LEFT);
-			return row;
+
+			// Keep the controls below the full-width preview rather than consuming
+			// horizontal space beside the captured image.
+			HBox footer = new HBox(CONTROL_SPACING, label, removeButton);
+
+			footer.setAlignment(Pos.CENTER_LEFT);
+
+			return new VBox(REGION_PREVIEW_ITEM_SPACING, imageView, footer);
+
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview shared context region", e);
 		}

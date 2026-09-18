@@ -34,6 +34,7 @@ public final class RevisionPresentationNode {
 			}
 		}
 		CurriculumLevel level = curriculumNode.getLevel();
+		// Grouping must retain the same classification boundaries used by corpus placements.
 		if (level != CurriculumLevel.SUBTOPIC && level != CurriculumLevel.DESCRIPTOR && !presentations.isEmpty()) {
 			throw new IllegalArgumentException("Only Subtopic and Descriptor nodes may contain presentations");
 		}

@@ -76,6 +76,7 @@ public final class CurriculumMappingSuggestionProbe {
 	}
 
 	private static String clean(String text) {
+		// Authored tabs and line breaks must not create extra TSV columns or records.
 		return text.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ');
 	}
 

@@ -78,6 +78,7 @@ public record CurriculumMappingLevelCoverage(CurriculumLevel level, int total, i
 	 *         otherwise incomplete
 	 */
 	public CurriculumMappingCoverageStatus status() {
+		// Completion measures source review decisions, not coverage of newly introduced target content.
 		if (total == 0) {
 			return CurriculumMappingCoverageStatus.NOT_APPLICABLE;
 		}

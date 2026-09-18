@@ -47,6 +47,7 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 		if (targetDescriptors.isEmpty()) {
 			return List.of();
 		}
+		// Weight terms against both syllabuses so source and target vectors share one scale.
 		SimilarityCorpora corpora = buildCorpora(sourceDescriptors, targetDescriptors);
 		TextSimilarityScorer descriptorScorer = new TfIdfTextSimilarityScorer(corpora.descriptorTexts());
 		TextSimilarityScorer contextScorer = new TfIdfTextSimilarityScorer(corpora.contextTexts());
@@ -121,6 +122,7 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 	}
 
 	private String contextText(CurriculumNode descriptor) {
+		// Score ancestor wording separately so it supplements, rather than repeats, descriptor text.
 		StringBuilder context = new StringBuilder();
 		CurriculumNode parent = descriptor.getParent();
 		while (parent != null) {

@@ -131,6 +131,7 @@ public final class CurriculumDraft {
 		CurriculumDraftNode root = requireNode(draftId);
 		Long formerParentDraftId = root.parentDraftId();
 		Set<Long> idsToRemove = new HashSet<>();
+		// Discover the whole subtree before removing nodes needed to find descendants.
 		collectSubtreeIds(draftId, idsToRemove);
 		List<CurriculumDraftNode> removed = nodes.stream().filter(node -> idsToRemove.contains(node.draftId()))
 				.toList();
@@ -180,6 +181,7 @@ public final class CurriculumDraft {
 	}
 
 	private void collectSubtreeIds(long draftId, Set<Long> idsToRemove) {
+		// Drafts can be structurally invalid while editing; stop revisiting a cycle.
 		if (!idsToRemove.add(draftId)) {
 			return;
 		}
@@ -200,6 +202,7 @@ public final class CurriculumDraft {
 	}
 
 	private void normaliseSiblingOrder(Long parentDraftId) {
+		// Close display-order gaps without changing curriculum codes or draft identities.
 		List<CurriculumDraftNode> siblings = childrenOf(parentDraftId);
 		for (int index = 0; index < siblings.size(); index++) {
 			replaceDisplayOrder(siblings.get(index), index);

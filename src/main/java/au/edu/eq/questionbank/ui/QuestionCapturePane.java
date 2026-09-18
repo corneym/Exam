@@ -459,8 +459,8 @@ final class QuestionCapturePane extends VBox {
 			return false;
 		}
 
-		// Leave ordinary Question capture in a clean state while the independent
-		// shared-context entity is being corrected.
+		// Shared-preamble correction is independent of Question editing, so clear
+		// ordinary edit/queue ownership before preparing the contextual display.
 		importedQuestion = null;
 		importedCaptureMode = false;
 		editingQuestion = null;
@@ -469,8 +469,11 @@ final class QuestionCapturePane extends VBox {
 
 		selectCaptureModeToggle(false);
 		setLegacyCaptureControlsVisible(false);
-		showNewQuestionMode();
+
+		// Clear stale capture state first, then restore this Question's persisted
+		// metadata as read-only context for the correction.
 		resetQuestionEntry();
+		showSharedContextCorrectionQuestion(question);
 
 		sharedContextCapturePane.refreshForCurrentBooklet();
 		setSharedContextCorrectionVisible(true);
@@ -480,6 +483,8 @@ final class QuestionCapturePane extends VBox {
 
 		if (!started) {
 			setSharedContextCorrectionVisible(false);
+			showNewQuestionMode();
+			resetQuestionEntry();
 			return false;
 		}
 
@@ -1032,11 +1037,14 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void finishSharedContextRecapture(Runnable completedHandler) {
-		// Restore ordinary Question capture only after the shared-context pane has
-		// completed its own save or cancellation cleanup.
+
+		// Hide the shared-context editor before returning the Question workspace to
+		// its ordinary new-question state.
 		setSharedContextCorrectionVisible(false);
-		showNewQuestionCapture();
+
 		resetQuestionEntry();
+		showNewQuestionMode();
+
 		refreshImportedQuestions();
 
 		completedHandler.run();
@@ -1699,6 +1707,35 @@ final class QuestionCapturePane extends VBox {
 			return;
 		}
 		importedQuestionActivationHandler.test(question);
+	}
+
+	private void showSharedContextCorrectionQuestion(Question question) {
+		// Display the Question that led to this shared-preamble correction without
+		// turning the operation into an ordinary Question edit.
+		loadingQuestionEdit = true;
+
+		try {
+			questionCodeField.setText(question.getQuestionCode());
+			marksField.setText(Integer.toString(question.getMarks()));
+			loadResponseType(question);
+			curriculumSelectorPane.selectClassificationPath(question.getClassification());
+		} finally {
+			loadingQuestionEdit = false;
+		}
+
+		// These values identify the Question that uses the shared preamble. They are
+		// contextual information only and cannot be changed by this workflow.
+		questionCodeField.setDisable(true);
+		marksField.setDisable(true);
+		setResponseTypeDisabled(true);
+
+		curriculumSelectorPane.setSyllabusContextLocked(true);
+		curriculumSelectorPane.setDisable(true);
+
+		hideImportedClassification();
+		hidePreambleControls();
+
+		saveStatusLabel.setText("Recapturing shared preamble used by Question " + question.getQuestionCode());
 	}
 
 	private boolean showStoredPreamble(String sourceCode, SourceQuestion sourceQuestion) {

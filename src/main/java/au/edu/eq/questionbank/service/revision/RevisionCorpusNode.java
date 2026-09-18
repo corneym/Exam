@@ -34,6 +34,7 @@ public final class RevisionCorpusNode {
 			}
 		}
 		CurriculumLevel level = curriculumNode.getLevel();
+		// Units and Topics organise the tree; questions belong only to classifiable nodes.
 		if (level != CurriculumLevel.SUBTOPIC && level != CurriculumLevel.DESCRIPTOR && !questionPlacements.isEmpty()) {
 			throw new IllegalArgumentException("Only Subtopic and Descriptor nodes may contain question placements");
 		}

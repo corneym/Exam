@@ -43,6 +43,7 @@ public final class CurriculumAuthoringOpenService {
 	 */
 	public List<SyllabusVersion> availableVersions() {
 		List<SyllabusVersion> versions = new ArrayList<>();
+		// Historical and final syllabuses remain available for inspection and explicit reopening.
 		for (Subject subject : curriculumRepository.findAllSubjects()) {
 			versions.addAll(curriculumRepository.findVersionsForSubject(subject));
 		}
