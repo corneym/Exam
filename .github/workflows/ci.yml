@@ -50,4 +50,3 @@ jobs:
 
       - name: Run UI tests
         run: xvfb-run --auto-servernum bash ./mvnw --batch-mode -Pui-tests test
-		
