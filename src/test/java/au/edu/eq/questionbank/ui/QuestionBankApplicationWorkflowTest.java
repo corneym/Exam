@@ -47,7 +47,9 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
@@ -969,6 +971,112 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
+	void examMetadataCanBeCorrectedFromSearch(FxRobot robot) throws Exception {
+
+		// Reproduce the legacy-style malformed Exam metadata through the real import
+		// workflow so both persistence and the active ExamMetadataPane see it.
+		prepareExamAndClassification(robot, "Chemistry", "2022 QCAA", 2022, "2022", "Paper 1");
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+		long originalExamId = originalBooklet.getExam().getId();
+		long originalBookletId = originalBooklet.getId();
+		long originalSourceDocumentId = originalBooklet.getSourceDocument().getId();
+		Question question = captureQuestion(robot, "65");
+
+		// Open Search Questions through the production application workflow.
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+
+		// Search populates its curriculum controls asynchronously. Wait for the
+		// required Subject before retrieving it from the ComboBox.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
+		QuestionRetrievalResult selectedResult = results.getItems().stream()
+				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		Button editExam = lookup(robot, "#question-search-edit-exam", Button.class);
+		assertFalse(editExam.isDisabled());
+		robot.clickOn(editExam);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#exam-correction-provider").tryQuery().isPresent());
+		TextField provider = lookup(robot, "#exam-correction-provider", TextField.class);
+		TextField year = lookup(robot, "#exam-correction-year", TextField.class);
+		TextField assessment = lookup(robot, "#exam-correction-assessment", TextField.class);
+
+		// The correction dialog must show the malformed stored values rather than
+		// inferred or default metadata.
+		assertEquals("2022 QCAA", provider.getText());
+		assertEquals("2022", year.getText());
+		assertEquals("2022", assessment.getText());
+		robot.interact(() -> {
+			provider.setText("QCAA");
+			year.setText("2022");
+			assessment.setText("External Assessment");
+		});
+		robot.clickOn("#exam-correction-save");
+
+		// Saving the correction should return to Search Questions.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question reloaded = repository.findById(question.getId()).orElseThrow();
+
+		// The owning Exam is corrected in place, so downstream identities are
+		// unchanged after a complete repository reload.
+		assertEquals(originalExamId, reloaded.getExam().getId());
+		assertEquals(originalBookletId, reloaded.getBooklet().getId());
+		assertEquals(originalSourceDocumentId, reloaded.getBooklet().getSourceDocument().getId());
+		assertEquals("QCAA", reloaded.getExam().getProvider().getName());
+		assertEquals(2022, reloaded.getExam().getYear());
+		assertEquals("External Assessment", reloaded.getExam().getName());
+
+		// The currently active capture booklet must also be refreshed rather than
+		// retaining the stale Exam object that existed before correction.
+		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
+		assertNotNull(activeBooklet);
+		assertEquals(originalBookletId, activeBooklet.getId());
+		assertEquals(originalExamId, activeBooklet.getExam().getId());
+		assertEquals("QCAA", activeBooklet.getExam().getProvider().getName());
+		assertEquals("External Assessment", activeBooklet.getExam().getName());
+
+		// The malformed provider is now orphaned and must disappear from both
+		// authoritative persistence and future Import Exam suggestions.
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		assertFalse(examWriter.examProviderExists("2022 QCAA"));
+
+		// ExamMetadataPane lives inside the Import Exam dialog, which is not currently
+		// visible while Search Questions is open. Inspect its refreshed provider
+		// control directly rather than querying the active TestFX scene graph.
+		ComboBox<?> importProviders = field(examMetadataPane(), "providerField", ComboBox.class);
+		assertFalse(importProviders.getItems().stream().map(Object::toString).anyMatch("2022 QCAA"::equalsIgnoreCase));
+		assertTrue(importProviders.getItems().stream().map(Object::toString).anyMatch("QCAA"::equalsIgnoreCase));
+
+		// Search refresh must still contain the same Question after its owning Exam
+		// metadata changes.
+		ListView<QuestionRetrievalResult> refreshedResults = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> refreshedResults.getItems().stream()
+				.anyMatch(result -> result.getQuestion().getId() == question.getId()));
+		robot.clickOn("Close");
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
+	@Test
 	void exportMenuContainsRevisionHtmlCommand(FxRobot robot) {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 		MenuItem exportItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
@@ -1065,12 +1173,9 @@ class QuestionBankApplicationWorkflowTest {
 			Platform.runLater(exitItem::fire);
 			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 					() -> robot.lookup("Save in progress").tryQuery().isPresent());
-
 			assertEquals(0, exitCount.get());
 			assertEquals(0, automaticBackupCount());
-
 			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
-
 			Button okButton = robot.lookup("OK").queryButton();
 			robot.interact(okButton::fire);
 			WaitForAsyncUtils.waitForFxEvents();
@@ -1142,6 +1247,60 @@ class QuestionBankApplicationWorkflowTest {
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		assertNotNull(booklet);
 		assertEquals(pdfDataRoot.relativize(expectedPath).toString(), booklet.getSourceDocument().getRelativePath());
+	}
+
+	@Test
+	void knownManagedExamPdfReusesStoredMetadataAndBooklet(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet original = examMetadataPane().getBooklet();
+		assertNotNull(original);
+		long originalExamId = original.getExam().getId();
+		long originalBookletId = original.getId();
+		long originalSourceDocumentId = original.getSourceDocument().getId();
+		Path storedPdf = new PdfStore(pdfDataRoot).resolve(original.getSourceDocument().getRelativePath());
+		assertTrue(Files.isRegularFile(storedPdf));
+
+		// Start another Open Exam workflow and select the PDF that persistence
+		// already identifies as this booklet.
+		WaitForAsyncUtils.asyncFx(() -> {
+			examMetadataPane().beginImport();
+			examImportDialog().show();
+		}).get();
+		WaitForAsyncUtils.asyncFx(() -> examMetadataPane().stageExamPdf(storedPdf)).get();
+		ComboBox<Subject> subject = comboBox(robot, "#exam-subject");
+		ComboBox<String> provider = comboBox(robot, "#exam-provider");
+		ComboBox<Integer> year = comboBox(robot, "#exam-year");
+		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
+		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
+
+		// Recognition must populate the persisted metadata without requiring the
+		// user to re-enter or infer anything from the filename.
+		assertEquals(original.getExam().getSubject().getId(), subject.getValue().getId());
+		assertEquals(original.getExam().getProvider().getName(), provider.getValue());
+		assertEquals(original.getExam().getYear(), year.getValue());
+		assertEquals(original.getExam().getName(), assessment.getValue());
+		assertEquals(original.getName(), booklet.getValue());
+
+		// Existing metadata is authoritative in this workflow. Corrections belong
+		// to Edit Exam rather than creating a second hierarchy for the same source.
+		assertTrue(subject.isDisabled());
+		assertTrue(provider.isDisabled());
+		assertTrue(year.isDisabled());
+		assertTrue(assessment.isDisabled());
+		assertTrue(booklet.isDisabled());
+		robot.clickOn("#confirm-exam-details");
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamBooklet reopened = examMetadataPane().getBooklet();
+		assertNotNull(reopened);
+
+		// Opening the known PDF must retain every persistent identity.
+		assertEquals(originalExamId, reopened.getExam().getId());
+		assertEquals(originalBookletId, reopened.getId());
+		assertEquals(originalSourceDocumentId, reopened.getSourceDocument().getId());
+		assertEquals(original.getExam().getProvider().getName(), reopened.getExam().getProvider().getName());
+		assertEquals(original.getExam().getYear(), reopened.getExam().getYear());
+		assertEquals(original.getExam().getName(), reopened.getExam().getName());
+		assertEquals(original.getName(), reopened.getName());
 	}
 
 	@Test
@@ -1458,11 +1617,9 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(addRegion.isVisible());
 		assertFalse(addRegion.isManaged());
 		assertTrue(save.isDisabled());
-
 		RadioButton answerA = lookup(robot, "#answer-choice-a", RadioButton.class);
 		robot.interact(answerA::fire);
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertTrue(answerA.isSelected());
 		assertFalse(save.isDisabled());
 		robot.clickOn(save);
@@ -2585,28 +2742,26 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	private void prepareExamAndClassification(FxRobot robot, String subjectName) throws Exception {
+		prepareExamAndClassification(robot, subjectName, "QCAA", 2024, "External Assessment", "Paper 1 MCQ");
+	}
+
+	private void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
+			String assessmentName, String bookletName) throws Exception {
 		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
 		WaitForAsyncUtils.asyncFx(() -> examMetadataPane().stageExamPdf(examPdf)).get();
 		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
-		Subject selectedSubject = null;
-		for (Subject subject : examSubject.getItems()) {
-			if (subjectName.equals(subject.getName())) {
-				selectedSubject = subject;
-				break;
-			}
-		}
-		assertNotNull(selectedSubject);
-		Subject subjectSelection = selectedSubject;
+		Subject selectedSubject = examSubject.getItems().stream()
+				.filter(subject -> subjectName.equals(subject.getName())).findFirst().orElseThrow();
 		ComboBox<String> provider = comboBox(robot, "#exam-provider");
 		ComboBox<Integer> year = comboBox(robot, "#exam-year");
 		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
 		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
 		robot.interact(() -> {
-			examSubject.setValue(subjectSelection);
-			provider.getEditor().setText("QCAA");
-			year.getSelectionModel().select(Integer.valueOf(2024));
-			assessment.getEditor().setText("External Assessment");
-			booklet.getEditor().setText("Paper 1 MCQ");
+			examSubject.setValue(selectedSubject);
+			provider.getEditor().setText(providerName);
+			year.getSelectionModel().select(Integer.valueOf(yearValue));
+			assessment.getEditor().setText(assessmentName);
+			booklet.getEditor().setText(bookletName);
 		});
 		robot.clickOn("#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();

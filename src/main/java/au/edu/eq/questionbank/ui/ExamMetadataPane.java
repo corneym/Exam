@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Year;
@@ -13,6 +14,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -51,6 +53,7 @@ final class ExamMetadataPane extends VBox {
 	private final Button choosePdfButton = new Button("Choose PDF...");
 	private final Label selectedPdfLabel = new Label("No PDF selected");
 	private final SqliteExamImporter examImporter;
+	private final SqliteExamWriter examWriter;
 	private final CurriculumSelectionModel curriculumSelectionModel;
 	private final ExamMetadataOptionsRepository optionsRepository;
 	private final PdfFilePicker pdfFilePicker;
@@ -63,13 +66,14 @@ final class ExamMetadataPane extends VBox {
 	private Path currentPdfPath;
 	private Path pendingPdfPath;
 	private ExamBooklet booklet;
+	private ExamBooklet pendingKnownBooklet;
 
 	/**
 	 * Creates the exam metadata workflow controls and persistence integration.
 	 */
 	ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
 			ExamMetadataOptionsRepository optionsRepository, SqliteExamImporter examImporter,
-			BooleanSupplier examChangeAllowed, Consumer<SelectedPdf> examPdfHandler,
+			SqliteExamWriter examWriter, BooleanSupplier examChangeAllowed, Consumer<SelectedPdf> examPdfHandler,
 			Consumer<Boolean> selectionCursorHandler, Consumer<Subject> examSubjectHandler) {
 		if (pdfDataRoot == null) {
 			throw new NullPointerException("pdfDataRoot");
@@ -95,12 +99,16 @@ final class ExamMetadataPane extends VBox {
 		if (examSubjectHandler == null) {
 			throw new NullPointerException("examSubjectHandler");
 		}
+		if (examWriter == null) {
+			throw new NullPointerException("examWriter");
+		}
 		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
 		this.curriculumSelectionModel = curriculumSelectionModel;
 		this.optionsRepository = optionsRepository;
 		this.examChangeAllowed = examChangeAllowed;
 		this.examPdfHandler = examPdfHandler;
 		this.examImporter = examImporter;
+		this.examWriter = examWriter;
 		this.selectionCursorHandler = selectionCursorHandler;
 		this.examSubjectHandler = examSubjectHandler;
 		pdfFilePicker = new PdfFilePicker(this.pdfDataRoot);
@@ -127,22 +135,22 @@ final class ExamMetadataPane extends VBox {
 		if (pdfPath == null) {
 			throw new NullPointerException("pdfPath");
 		}
-		Exam exam = booklet.getExam();
 		this.booklet = booklet;
 		currentPdfPath = pdfPath.toAbsolutePath().normalize();
-		subjectField.setValue(exam.getSubject());
-		providerField.setValue(exam.getProvider().getName());
-		yearField.setValue(exam.getYear());
-		assessmentField.setValue(exam.getName());
-		bookletField.setValue(booklet.getName());
+		applyBookletMetadataToControls(booklet);
 		selectedPdfLabel.setText(currentPdfPath.getFileName().toString());
 		selectionCursorHandler.accept(true);
-		examSubjectHandler.accept(exam.getSubject());
+		examSubjectHandler.accept(booklet.getExam().getSubject());
 	}
 
 	void beginImport() {
 		pendingPdfPath = null;
+		pendingKnownBooklet = null;
 		selectedPdfLabel.setText("No PDF selected");
+
+		// A new open/import attempt must allow metadata entry unless the selected
+		// PDF is subsequently recognised as an existing persisted booklet.
+		setKnownPdfMetadataMode(false);
 		providerField.getSelectionModel().clearSelection();
 		providerField.getEditor().clear();
 		yearField.getSelectionModel().clearSelection();
@@ -171,6 +179,12 @@ final class ExamMetadataPane extends VBox {
 		if (prerequisiteError != null) {
 			showError(prerequisiteError);
 			return false;
+		}
+
+		// A recognised source already owns authoritative Exam/Booklet metadata. Reopen
+		// that persisted entity instead of passing it through the import/create path.
+		if (pendingKnownBooklet != null) {
+			return confirmKnownBooklet();
 		}
 		ExamMetadataInput input = readInput();
 		if (!isComplete(input)) {
@@ -205,6 +219,59 @@ final class ExamMetadataPane extends VBox {
 			showFileError(e.getMessage());
 			return false;
 		}
+	}
+
+	/**
+	 * Corrects an existing Exam and refreshes the active capture metadata when that
+	 * Exam is currently open.
+	 *
+	 * @param exam           persisted Exam being corrected
+	 * @param providerName   corrected provider name
+	 * @param year           corrected assessment year
+	 * @param assessmentName corrected assessment name
+	 * @return corrected Exam with the same persistent identity
+	 * @throws SQLException if the correction cannot be persisted
+	 */
+	/**
+	 * Corrects an existing Exam and refreshes the active capture metadata when that
+	 * Exam is currently open.
+	 *
+	 * @param exam           persisted Exam being corrected
+	 * @param providerName   corrected provider name
+	 * @param year           corrected assessment year
+	 * @param assessmentName corrected assessment name
+	 * @return corrected Exam with the same persistent identity
+	 * @throws SQLException if the correction cannot be persisted
+	 */
+	Exam correctExamMetadata(Exam exam, String providerName, int year, String assessmentName) throws SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		String previousProviderName = exam.getProvider().getName();
+		Exam corrected = examWriter.correctExamMetadata(exam, providerName, year, assessmentName);
+
+		// Remove a corrected typo from the reusable Provider suggestions only when
+		// persistence confirms that no remaining Exam still uses that provider.
+		if (!previousProviderName.equals(corrected.getProvider().getName())
+				&& !examWriter.examProviderExists(previousProviderName)) {
+			optionsRepository.removeProvider(previousProviderName);
+		}
+		optionsRepository.addProvider(corrected.getProvider().getName());
+		optionsRepository.addAssessment(corrected.getName());
+
+		// Rebuild the suggestion lists immediately so the Import Exam controls do
+		// not continue showing a provider label that has just been corrected.
+		loadOptions();
+
+		// If this Exam is currently active, replace only the in-memory Exam object.
+		// Booklet and source-document identities remain unchanged.
+		if (booklet != null && booklet.getExam().getId() == corrected.getId()) {
+			booklet = new ExamBooklet(booklet.getId(), corrected, booklet.getName(), booklet.getSourceDocument());
+			providerField.setValue(corrected.getProvider().getName());
+			yearField.setValue(corrected.getYear());
+			assessmentField.setValue(corrected.getName());
+		}
+		return corrected;
 	}
 
 	/**
@@ -274,8 +341,42 @@ final class ExamMetadataPane extends VBox {
 		if (sourcePath == null) {
 			throw new NullPointerException("sourcePath");
 		}
-		pendingPdfPath = sourcePath.toAbsolutePath().normalize();
-		selectedPdfLabel.setText(pendingPdfPath.getFileName().toString());
+		Path normalizedSource = sourcePath.toAbsolutePath().normalize();
+		pendingPdfPath = normalizedSource;
+		pendingKnownBooklet = null;
+		selectedPdfLabel.setText(normalizedSource.getFileName().toString());
+
+		// Remove metadata belonging to a previously staged PDF before deciding
+		// whether this source is a persisted booklet or a genuinely new import.
+		clearPendingImportMetadata();
+		setKnownPdfMetadataMode(false);
+		try {
+			ExamBooklet knownBooklet = findKnownManagedBooklet(normalizedSource);
+			if (knownBooklet == null) {
+				return;
+			}
+			pendingKnownBooklet = knownBooklet;
+			applyBookletMetadataToControls(knownBooklet);
+
+			// Persisted metadata is authoritative here. Corrections belong in the
+			// explicit Edit Exam workflow rather than creating another Exam while
+			// reopening an existing PDF.
+			setKnownPdfMetadataMode(true);
+		} catch (SQLException exception) {
+			pendingPdfPath = null;
+			pendingKnownBooklet = null;
+			selectedPdfLabel.setText("No PDF selected");
+			showDatabaseError(exception.getMessage());
+		}
+	}
+
+	private void applyBookletMetadataToControls(ExamBooklet existingBooklet) {
+		Exam exam = existingBooklet.getExam();
+		subjectField.setValue(exam.getSubject());
+		providerField.setValue(exam.getProvider().getName());
+		yearField.setValue(exam.getYear());
+		assessmentField.setValue(exam.getName());
+		bookletField.setValue(existingBooklet.getName());
 	}
 
 	private void applyInputToControls(ExamMetadataInput input) {
@@ -290,6 +391,16 @@ final class ExamMetadataPane extends VBox {
 			return;
 		}
 		stageExamPdf(selectedPath);
+	}
+
+	private void clearPendingImportMetadata() {
+		providerField.getSelectionModel().clearSelection();
+		providerField.getEditor().clear();
+		yearField.getSelectionModel().clearSelection();
+		assessmentField.getSelectionModel().clearSelection();
+		assessmentField.getEditor().clear();
+		bookletField.getSelectionModel().clearSelection();
+		bookletField.getEditor().clear();
 	}
 
 	private void configureActions(Stage stage) {
@@ -325,6 +436,41 @@ final class ExamMetadataPane extends VBox {
 			subjectField.setValue(currentSubject);
 		}
 		selectedPdfLabel.setWrapText(true);
+	}
+
+	private boolean confirmKnownBooklet() {
+		if (!examChangeAllowed.getAsBoolean()) {
+			return false;
+		}
+		ExamBooklet existingBooklet = pendingKnownBooklet;
+		Path storedPath;
+		try {
+
+			// Always reopen the authoritative managed PDF, even when later recognition
+			// is extended to external byte-identical copies.
+			storedPath = pdfStore.resolve(existingBooklet.getSourceDocument().getRelativePath());
+		} catch (IllegalArgumentException exception) {
+			showFileError(exception.getMessage());
+			return false;
+		}
+		if (!Files.isRegularFile(storedPath)) {
+			showFileError("Stored exam PDF is unavailable: " + storedPath);
+			return false;
+		}
+		try {
+			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfDataRoot);
+
+			// Open the authoritative persisted document first. Only after that succeeds
+			// should the in-memory active booklet be changed.
+			examPdfHandler.accept(selectedPdf);
+			activateExistingBooklet(existingBooklet, storedPath);
+			pendingPdfPath = null;
+			pendingKnownBooklet = null;
+			return true;
+		} catch (RuntimeException exception) {
+			showFileError(exception.getMessage());
+			return false;
+		}
 	}
 
 	private GridPane createDetailsGrid() {
@@ -363,6 +509,17 @@ final class ExamMetadataPane extends VBox {
 		return controls;
 	}
 
+	private ExamBooklet findKnownManagedBooklet(Path sourcePath) throws SQLException {
+
+		// A direct persisted-path match is authoritative only for files beneath the
+		// configured PDF data root. External copies are handled separately later.
+		if (!sourcePath.startsWith(pdfDataRoot)) {
+			return null;
+		}
+		String relativePath = pdfDataRoot.relativize(sourcePath).toString();
+		return examWriter.findExamBookletBySourceDocumentPath(relativePath);
+	}
+
 	private String findPrerequisiteError() {
 		if (pendingPdfPath == null) {
 			return "Choose a PDF first.";
@@ -395,6 +552,18 @@ final class ExamMetadataPane extends VBox {
 		optionsRepository.addAssessment(input.assessmentName());
 		optionsRepository.addBooklet(input.bookletName());
 		loadOptions();
+	}
+
+	private void setKnownPdfMetadataMode(boolean knownPdf) {
+
+		// When persistence already identifies the selected document, these values
+		// describe the existing Exam/Booklet relationship and must not be edited as
+		// though a new hierarchy were being imported.
+		subjectField.setDisable(knownPdf);
+		providerField.setDisable(knownPdf);
+		yearField.setDisable(knownPdf);
+		assessmentField.setDisable(knownPdf);
+		bookletField.setDisable(knownPdf);
 	}
 
 	private void showDatabaseError(String message) {

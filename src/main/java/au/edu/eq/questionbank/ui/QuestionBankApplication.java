@@ -786,6 +786,32 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void editExamMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
+			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
+		ExamMetadataCorrectionDialog correctionDialog = new ExamMetadataCorrectionDialog(primaryStage,
+				question.getExam());
+		Optional<ExamMetadataCorrectionDialog.Result> result = correctionDialog.showAndWait();
+		if (result.isEmpty()) {
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		ExamMetadataCorrectionDialog.Result replacement = result.get();
+		try {
+			examMetadataPane.correctExamMetadata(question.getExam(), replacement.providerName(), replacement.year(),
+					replacement.assessmentName());
+
+			// Reload every capture queue that may currently contain Question objects
+			// carrying the old Exam metadata.
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository, metadataService);
+		} catch (SQLException | IllegalArgumentException exception) {
+			showAlert(Alert.AlertType.ERROR, "Edit Exam Metadata", "The exam metadata could not be saved.",
+					exception.getMessage());
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+		}
+	}
+
 	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
@@ -1048,8 +1074,8 @@ public class QuestionBankApplication extends Application {
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
-				new ExamMetadataOptionsRepository(), examImporter, this::allowExamImportConfirmation, this::openExamPdf,
-				pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
+				new ExamMetadataOptionsRepository(), examImporter, examWriter, this::allowExamImportConfirmation,
+				this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
 		curriculumSelectorPane = createCurriculumSelectorPane();
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
@@ -1576,6 +1602,10 @@ public class QuestionBankApplication extends Application {
 		}
 		QuestionSearchDialog.EditRequest request = result.get();
 		Question question = request.question();
+		if (request.target() == QuestionSearchDialog.EditTarget.EXAM) {
+			editExamMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
+			return;
+		}
 		if (request.target() == QuestionSearchDialog.EditTarget.METADATA) {
 			editQuestionMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
 			return;

@@ -49,23 +49,27 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		setResizable(true);
 		ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
 		ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
+		ButtonType editExamButtonType = new ButtonType("Edit Exam", ButtonBar.ButtonData.OTHER);
 		ButtonType recapturePreambleButtonType = new ButtonType("Recapture Shared Preamble",
 				ButtonBar.ButtonData.OTHER);
 		ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
-		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, editMetadataButtonType,
+		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, editMetadataButtonType, editExamButtonType,
 				recapturePreambleButtonType, editAnswerButtonType, ButtonType.CLOSE);
 		searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
 		getDialogPane().setContent(searchPane);
 		Node editQuestionButton = getDialogPane().lookupButton(editQuestionButtonType);
 		Node editMetadataButton = getDialogPane().lookupButton(editMetadataButtonType);
+		Node editExamButton = getDialogPane().lookupButton(editExamButtonType);
 		Node recapturePreambleButton = getDialogPane().lookupButton(recapturePreambleButtonType);
 		Node editAnswerButton = getDialogPane().lookupButton(editAnswerButtonType);
 		editQuestionButton.setId("question-search-edit-question");
 		editMetadataButton.setId("question-search-edit-metadata");
+		editExamButton.setId("question-search-edit-exam");
 		recapturePreambleButton.setId("question-search-recapture-preamble");
 		editAnswerButton.setId("question-search-edit-answer");
 		editQuestionButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
 		editMetadataButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
+		editExamButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
 		recapturePreambleButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
 			return selected == null || !selected.hasSharedContext();
@@ -84,6 +88,9 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			}
 			if (buttonType == editMetadataButtonType) {
 				return new EditRequest(selected, EditTarget.METADATA);
+			}
+			if (buttonType == editExamButtonType) {
+				return new EditRequest(selected, EditTarget.EXAM);
 			}
 			if (buttonType == recapturePreambleButtonType) {
 				return new EditRequest(selected, EditTarget.SHARED_PREAMBLE);
@@ -115,7 +122,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	enum EditTarget {
-		QUESTION, METADATA, SHARED_PREAMBLE, ANSWER
+		QUESTION, METADATA, EXAM, SHARED_PREAMBLE, ANSWER
 	}
 
 	record EditRequest(Question question, EditTarget target) {

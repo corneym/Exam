@@ -87,6 +87,39 @@ class SqliteExamWriterTest {
 			// provider.
 			assertNotNull(writer.findExamProviderByName(connection, "QCAA"));
 		}
+
+		// The malformed provider became orphaned during correction and should have
+		// been removed, while the corrected provider remains authoritative.
+		assertFalse(writer.examProviderExists("2022 QCAA"));
+		assertTrue(writer.examProviderExists("QCAA"));
+	}
+
+	@Test
+	void findsExamBookletByPersistedSourceDocumentPath() throws Exception {
+		Path databasePath = tempDirectory.resolve("booklet-by-source-path.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		SourceDocument sourceDocument = writer.insertSourceDocument("Chemistry/QCAA/2024/paper1.pdf");
+		Exam exam = writer.insertExam(chemistry, provider, 2024, "External Assessment");
+		ExamBooklet stored = writer.insertExamBooklet(exam, sourceDocument, "Paper 1");
+		ExamBooklet found = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2024/paper1.pdf");
+		assertNotNull(found);
+		assertEquals(stored.getId(), found.getId());
+		assertEquals(exam.getId(), found.getExam().getId());
+		assertEquals(chemistry.getId(), found.getExam().getSubject().getId());
+		assertEquals("QCAA", found.getExam().getProvider().getName());
+		assertEquals(2024, found.getExam().getYear());
+		assertEquals("External Assessment", found.getExam().getName());
+		assertEquals("Paper 1", found.getName());
+		assertEquals(sourceDocument.getId(), found.getSourceDocument().getId());
+		assertEquals("Chemistry/QCAA/2024/paper1.pdf", found.getSourceDocument().getRelativePath());
+
+		// An arbitrary path must not be inferred to belong to an Exam merely because
+		// its filename or directory structure resembles a persisted source.
+		assertNull(writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2024/unknown.pdf"));
 	}
 
 	@Test
@@ -221,40 +254,30 @@ class SqliteExamWriterTest {
 
 	@Test
 	void retainsOldProviderWhenAnotherExamStillUsesIt() throws Exception {
-
 		Path databasePath = tempDirectory.resolve("shared-malformed-provider.db");
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		database.initialiseSchema();
-
 		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
-
 		SqliteExamWriter writer = new SqliteExamWriter(database);
-
 		ExamProvider malformedProvider = writer.insertExamProvider("2022 QCAA");
-
 		Exam examToCorrect = writer.insertExam(chemistry, malformedProvider, 2022, "Paper 1");
-
 		Exam otherExam = writer.insertExam(chemistry, malformedProvider, 2023, "Paper 2");
-
 		Exam corrected = writer.correctExamMetadata(examToCorrect, "QCAA", 2022, "Paper 1");
-
 		assertEquals("QCAA", corrected.getProvider().getName());
-
 		try (Connection connection = database.openConnection()) {
 
 			// The malformed provider cannot yet be removed because another Exam still
 			// references it.
 			ExamProvider retained = writer.findExamProviderByName(connection, "2022 QCAA");
-
 			assertNotNull(retained);
 			assertEquals(malformedProvider.getId(), retained.getId());
 		}
-
 		Exam remaining = writer.findExamByProviderAndYear(chemistry, "2022 QCAA", 2023);
-
 		assertNotNull(remaining);
 		assertEquals(otherExam.getId(), remaining.getId());
+
+		// Because another Exam still refers to the old provider, correction of only
+		// one Exam must not remove that provider.
+		assertTrue(writer.examProviderExists("2022 QCAA"));
 	}
 }
