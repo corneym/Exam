@@ -7,7 +7,7 @@ import org.junit.platform.suite.api.Suite;
 
 @Suite
 @SelectPackages("au.edu.eq.questionbank.ui")
-@IncludeClassNamePatterns(".*QuestionBankApplicationWorkflowTest")
-@IncludeTags("ui")
+@IncludeClassNamePatterns(".*Test")
+@IncludeTags("workflow-ui")
 public class WorkflowUITests {
 }
