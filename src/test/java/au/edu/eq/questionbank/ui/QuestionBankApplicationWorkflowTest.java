@@ -178,10 +178,9 @@ class QuestionBankApplicationWorkflowTest {
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
 		openAnswerPdfForTest(question);
-		/*
-		 * Force the capture workspace down to its configured minimum width so this test
-		 * exercises the narrowest supported production layout.
-		 */
+
+		// Force the capture workspace down to its configured minimum width so this test
+		// exercises the narrowest supported production layout.
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
 		robot.interact(() -> {
@@ -190,30 +189,27 @@ class QuestionBankApplicationWorkflowTest {
 			primaryStage.getScene().getRoot().layout();
 		});
 		WaitForAsyncUtils.waitForFxEvents();
-		/*
-		 * Create a pending Answer selection so selection actions, status and save
-		 * controls are simultaneously present in their real capture state.
-		 */
+
+		// Create a pending Answer selection so selection actions, status and save
+		// controls are simultaneously present in their real capture state.
 		dragRegionOnDisplayedPage(robot);
 		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
 		Button clearSelection = lookup(robot, "#clear-answer-selection", Button.class);
 		Button saveAnswer = lookup(robot, "#save-answer", Button.class);
 		Label status = lookup(robot, "#answer-region-status", Label.class);
-		/*
-		 * JavaFX HBox layout honours each child's minimum width. These controls use
-		 * USE_PREF_SIZE as their minimum, so compare their allocated width with the
-		 * actual minimum width JavaFX computes for their laid-out height.
-		 */
+
+		// JavaFX HBox layout honours each child's minimum width. These controls use
+		// USE_PREF_SIZE as their minimum, so compare their allocated width with the
+		// actual minimum width JavaFX computes for their laid-out height.
 		assertTrue(addRegion.getWidth() + 0.5 >= addRegion.minWidth(addRegion.getHeight()),
 				"Add Region must not be compressed below its readable minimum width");
 		assertTrue(clearSelection.getWidth() + 0.5 >= clearSelection.minWidth(clearSelection.getHeight()),
 				"Clear must not be compressed below its readable minimum width");
 		assertTrue(saveAnswer.getWidth() + 0.5 >= saveAnswer.minWidth(saveAnswer.getHeight()),
 				"Save Answer must not be compressed below its readable minimum width");
-		/*
-		 * Variable-length status text belongs on its own wrapping row so it cannot
-		 * consume horizontal space needed by either set of action buttons.
-		 */
+
+		// Variable-length status text belongs on its own wrapping row so it cannot
+		// consume horizontal space needed by either set of action buttons.
 		assertTrue(status.isWrapText());
 		assertFalse(status.getParent() == addRegion.getParent(),
 				"Answer status must not share the selection-action row");
@@ -1092,6 +1088,146 @@ class QuestionBankApplicationWorkflowTest {
 				.filter(item -> "export-revision-scorm".equals(item.getId())).findFirst().orElseThrow();
 		assertEquals("Revision _SCORM...", exportItem.getText());
 		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
+	void externalIdenticalExamPdfIsRejectedWhenPersistedMatchIsAmbiguous(FxRobot robot) throws Exception {
+
+		prepareExamAndClassification(robot);
+
+		ExamBooklet original = examMetadataPane().getBooklet();
+
+		assertNotNull(original);
+
+		PdfStore pdfStore = new PdfStore(pdfDataRoot);
+
+		Path firstStoredPdf = pdfStore.resolve(original.getSourceDocument().getRelativePath());
+
+		assertTrue(Files.isRegularFile(firstStoredPdf));
+
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+
+		// Persist a second booklet backed by a different managed source file whose
+		// bytes are deliberately identical to the first booklet's PDF.
+		Path secondStoredPdf = firstStoredPdf.getParent().resolve("byte-identical-second.pdf");
+
+		Files.copy(firstStoredPdf, secondStoredPdf);
+
+		String secondRelativePath = pdfDataRoot.relativize(secondStoredPdf).toString();
+
+		var secondSource = writer.insertSourceDocument(secondRelativePath);
+
+		var secondBooklet = writer.insertExamBooklet(original.getExam(), secondSource, "Paper 2");
+
+		assertTrue(secondBooklet.getId() != original.getId());
+
+		assertEquals(2, writer.findAllExamBooklets().size());
+
+		// This third file is outside the managed store and has a completely
+		// unrelated filename. It is byte-identical to both persisted sources.
+		Path externalCopy = databasePath.getParent().resolve("ambiguous-external-copy.pdf");
+
+		Files.copy(firstStoredPdf, externalCopy);
+
+		assertFalse(externalCopy.startsWith(pdfDataRoot));
+
+		WaitForAsyncUtils.asyncFx(() -> {
+			examMetadataPane().beginImport();
+			examImportDialog().show();
+		}).get();
+
+		// stageExamPdf shows a modal error for ambiguity, so start it asynchronously
+		// rather than waiting for the call itself to return.
+		Platform.runLater(() -> examMetadataPane().stageExamPdf(externalCopy));
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> robot
+				.lookup("Selected PDF matches more than one persisted exam booklet.").tryQuery().isPresent());
+
+		// Ambiguity must be reported rather than resolved by filename, insertion
+		// order or any other arbitrary choice.
+		assertTrue(robot.lookup("Exam details could not be saved.").tryQuery().isPresent());
+
+		robot.clickOn("OK");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Rejection must not create another ExamBooklet or alter either existing
+		// persisted relationship.
+		List<ExamBooklet> persisted = writer.findAllExamBooklets();
+
+		assertEquals(2, persisted.size());
+
+		assertTrue(persisted.stream().anyMatch(booklet -> booklet.getId() == original.getId()));
+
+		assertTrue(persisted.stream().anyMatch(booklet -> booklet.getId() == secondBooklet.getId()));
+
+		// The failed selection must not remain staged for confirmation.
+		Path pendingPdfPath = field(examMetadataPane(), "pendingPdfPath", Path.class);
+
+		ExamBooklet pendingKnownBooklet = field(examMetadataPane(), "pendingKnownBooklet", ExamBooklet.class);
+
+		assertNull(pendingPdfPath);
+		assertNull(pendingKnownBooklet);
+
+		robot.clickOn("#cancel-exam-import");
+
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
+	@Test
+	void externalIdenticalExamPdfReusesPersistedBooklet(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet original = examMetadataPane().getBooklet();
+		assertNotNull(original);
+		Path storedPdf = new PdfStore(pdfDataRoot).resolve(original.getSourceDocument().getRelativePath());
+		assertTrue(Files.isRegularFile(storedPdf));
+
+		// Use a different filename outside the managed PDF root. Recognition must
+		// therefore come from byte identity rather than filename or directory names.
+		Path externalCopy = databasePath.getParent().resolve("completely-different-name.pdf");
+		Files.copy(storedPdf, externalCopy);
+		assertFalse(externalCopy.startsWith(pdfDataRoot));
+		WaitForAsyncUtils.asyncFx(() -> {
+			examMetadataPane().beginImport();
+			examImportDialog().show();
+		}).get();
+		WaitForAsyncUtils.asyncFx(() -> examMetadataPane().stageExamPdf(externalCopy)).get();
+		ComboBox<Subject> subject = comboBox(robot, "#exam-subject");
+		ComboBox<String> provider = comboBox(robot, "#exam-provider");
+		ComboBox<Integer> year = comboBox(robot, "#exam-year");
+		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
+		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
+
+		// The differently named external copy must resolve to the metadata already
+		// owned by the byte-identical persisted source document.
+		assertEquals(original.getExam().getSubject().getId(), subject.getValue().getId());
+		assertEquals(original.getExam().getProvider().getName(), provider.getValue());
+		assertEquals(original.getExam().getYear(), year.getValue());
+		assertEquals(original.getExam().getName(), assessment.getValue());
+		assertEquals(original.getName(), booklet.getValue());
+		assertTrue(subject.isDisabled());
+		assertTrue(provider.isDisabled());
+		assertTrue(year.isDisabled());
+		assertTrue(assessment.isDisabled());
+		assertTrue(booklet.isDisabled());
+		robot.clickOn("#confirm-exam-details");
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamBooklet reopened = examMetadataPane().getBooklet();
+		assertNotNull(reopened);
+
+		// Reopening an external identical copy must activate the original persisted
+		// booklet rather than create a duplicate Exam, SourceDocument or Booklet.
+		assertEquals(original.getExam().getId(), reopened.getExam().getId());
+		assertEquals(original.getId(), reopened.getId());
+		assertEquals(original.getSourceDocument().getId(), reopened.getSourceDocument().getId());
+		assertEquals(original.getSourceDocument().getRelativePath(), reopened.getSourceDocument().getRelativePath());
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		assertEquals(1, writer.findAllExamBooklets().size());
+
+		// Confirmation opens the authoritative managed source rather than changing
+		// persistence to point at the external copy.
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
 	}
 
 	@Test

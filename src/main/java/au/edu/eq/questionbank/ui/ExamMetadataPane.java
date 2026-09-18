@@ -351,7 +351,7 @@ final class ExamMetadataPane extends VBox {
 		clearPendingImportMetadata();
 		setKnownPdfMetadataMode(false);
 		try {
-			ExamBooklet knownBooklet = findKnownManagedBooklet(normalizedSource);
+			ExamBooklet knownBooklet = findKnownBooklet(normalizedSource);
 			if (knownBooklet == null) {
 				return;
 			}
@@ -363,6 +363,16 @@ final class ExamMetadataPane extends VBox {
 			// reopening an existing PDF.
 			setKnownPdfMetadataMode(true);
 		} catch (SQLException exception) {
+			pendingPdfPath = null;
+			pendingKnownBooklet = null;
+			selectedPdfLabel.setText("No PDF selected");
+			showDatabaseError(exception.getMessage());
+		} catch (IOException exception) {
+			pendingPdfPath = null;
+			pendingKnownBooklet = null;
+			selectedPdfLabel.setText("No PDF selected");
+			showFileError(exception.getMessage());
+		} catch (IllegalStateException exception) {
 			pendingPdfPath = null;
 			pendingKnownBooklet = null;
 			selectedPdfLabel.setText("No PDF selected");
@@ -478,21 +488,29 @@ final class ExamMetadataPane extends VBox {
 		grid.setHgap(FORM_GAP);
 		grid.setVgap(FORM_GAP);
 		grid.setStyle(BORDER_STYLE);
-		grid.add(new Label("Subject:"), 0, 0);
+
+		grid.add(createFieldLabel("Subject:"), 0, 0);
 		grid.add(subjectField, 1, 0);
-		grid.add(new Label("PDF:"), 0, 1);
+
+		grid.add(createFieldLabel("PDF:"), 0, 1);
 		grid.add(createPdfControls(), 1, 1);
-		grid.add(new Label("Provider:"), 0, 2);
+
+		grid.add(createFieldLabel("Provider:"), 0, 2);
 		grid.add(providerField, 1, 2);
-		grid.add(new Label("Year:"), 0, 3);
+
+		grid.add(createFieldLabel("Year:"), 0, 3);
 		grid.add(yearField, 1, 3);
-		grid.add(new Label("Assessment:"), 0, 4);
+
+		grid.add(createFieldLabel("Assessment:"), 0, 4);
 		grid.add(assessmentField, 1, 4);
-		grid.add(new Label("Booklet:"), 0, 5);
+
+		grid.add(createFieldLabel("Booklet:"), 0, 5);
 		grid.add(bookletField, 1, 5);
+
 		GridPane.setHgrow(providerField, Priority.ALWAYS);
 		GridPane.setHgrow(assessmentField, Priority.ALWAYS);
 		GridPane.setHgrow(bookletField, Priority.ALWAYS);
+
 		return grid;
 	}
 
@@ -502,11 +520,72 @@ final class ExamMetadataPane extends VBox {
 				input.bookletName(), relativePath);
 	}
 
+	private Label createFieldLabel(String text) {
+		Label label = new Label(text);
+
+		// Form labels must retain enough width to display their complete text.
+		label.setMinWidth(Region.USE_PREF_SIZE);
+
+		return label;
+	}
+
 	private HBox createPdfControls() {
 		HBox controls = new HBox(CONTROL_SPACING, choosePdfButton, selectedPdfLabel);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(selectedPdfLabel, Priority.ALWAYS);
 		return controls;
+	}
+
+	private ExamBooklet findKnownBooklet(Path sourcePath) throws SQLException, IOException {
+
+		// A persisted managed path is authoritative. Use it before considering
+		// content identity so duplicate bytes elsewhere cannot make an exact path
+		// relationship ambiguous.
+		ExamBooklet managedMatch = findKnownManagedBooklet(sourcePath);
+		if (managedMatch != null) {
+			return managedMatch;
+		}
+		if (!Files.isRegularFile(sourcePath)) {
+			throw new IOException("Exam PDF source is not a regular file: " + sourcePath);
+		}
+		long sourceSize = Files.size(sourcePath);
+		ExamBooklet byteMatch = null;
+		for (ExamBooklet candidate : examWriter.findAllExamBooklets()) {
+			Path storedPath;
+			try {
+				storedPath = pdfStore.resolve(candidate.getSourceDocument().getRelativePath());
+			} catch (IllegalArgumentException exception) {
+
+				// An invalid persisted path cannot establish identity with the selected
+				// external file. Leave correction of that stored path to data repair.
+				continue;
+			}
+			if (!Files.isRegularFile(storedPath)) {
+
+				// A missing stored PDF cannot be compared safely, so it cannot establish
+				// content identity with this selection.
+				continue;
+			}
+			if (Files.size(storedPath) != sourceSize) {
+
+				// Different byte lengths cannot represent the same PDF. This inexpensive
+				// filter avoids unnecessary full-file comparisons.
+				continue;
+			}
+			boolean identical = Files.isSameFile(sourcePath, storedPath)
+					|| Files.mismatch(sourcePath, storedPath) == -1;
+			if (!identical) {
+				continue;
+			}
+			if (byteMatch != null && byteMatch.getId() != candidate.getId()) {
+
+				// Two persisted booklets with identical source bytes make an external
+				// copy ambiguous. Do not choose one based on filename or row order.
+				throw new IllegalStateException("Selected PDF matches more than one persisted exam booklet.");
+			}
+			byteMatch = candidate;
+		}
+		return byteMatch;
 	}
 
 	private ExamBooklet findKnownManagedBooklet(Path sourcePath) throws SQLException {
