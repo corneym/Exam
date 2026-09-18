@@ -23,6 +23,7 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -1226,12 +1227,10 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private void showFirstStoredAnswerRegionPage(Question question) {
-
 		if (!isWrittenResponseQuestion(question) || !question.hasAnswer()
 				|| question.getAnswer().getRegions().isEmpty()) {
 			return;
 		}
-
 		AnswerRegion firstRegion = question.getAnswer().getRegions().getFirst();
 
 		// Navigate only when the PDF currently loaded into the Answer workspace is
@@ -1240,7 +1239,6 @@ final class AnswerCapturePane extends VBox {
 				|| answerPdfSessionSupplier.get() == null) {
 			return;
 		}
-
 		answerPageNavigationHandler.accept(firstRegion.pageNumber());
 	}
 

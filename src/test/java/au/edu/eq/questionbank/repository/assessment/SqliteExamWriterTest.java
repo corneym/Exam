@@ -29,6 +29,56 @@ class SqliteExamWriterTest {
 	Path tempDirectory;
 
 	@Test
+	void correctsExamMetadataWithoutChangingIdentityOrBookletLinks() throws Exception {
+		Path databasePath = tempDirectory.resolve("correct-exam-metadata.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider malformedProvider = writer.insertExamProvider("2022 QCAA");
+		SourceDocument sourceDocument = writer.insertSourceDocument("Chemistry/2022/paper1.pdf");
+		Exam original = writer.insertExam(chemistry, malformedProvider, 2022, "2022");
+		ExamBooklet booklet = writer.insertExamBooklet(original, sourceDocument, "Paper 1");
+		Exam corrected = writer.correctExamMetadata(original, "QCAA", 2022, "External Assessment");
+
+		// Correction updates the owning Exam rather than replacing it, so every
+		// downstream foreign key can continue to reference the same identity.
+		assertEquals(original.getId(), corrected.getId());
+		assertEquals(chemistry.getId(), corrected.getSubject().getId());
+		assertEquals("QCAA", corrected.getProvider().getName());
+		assertEquals(2022, corrected.getYear());
+		assertEquals("External Assessment", corrected.getName());
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    eb.id AS booklet_id,
+						    eb.exam_id,
+						    eb.source_document_id,
+						    e.exam_year,
+						    e.exam_name,
+						    p.provider_name
+						FROM exam_booklets eb
+						JOIN exams e
+						    ON e.id = eb.exam_id
+						JOIN exam_providers p
+						    ON p.id = e.provider_id
+						WHERE eb.id = ?
+						""")) {
+			statement.setLong(1, booklet.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				assertTrue(result.next());
+				assertEquals(booklet.getId(), result.getLong("booklet_id"));
+				assertEquals(original.getId(), result.getLong("exam_id"));
+				assertEquals(sourceDocument.getId(), result.getLong("source_document_id"));
+				assertEquals(2022, result.getInt("exam_year"));
+				assertEquals("External Assessment", result.getString("exam_name"));
+				assertEquals("QCAA", result.getString("provider_name"));
+				assertFalse(result.next());
+			}
+		}
+	}
+
+	@Test
 	void findsExistingExamMetadata() throws Exception {
 		Path databasePath = tempDirectory.resolve("existing-exam.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -131,5 +181,30 @@ class SqliteExamWriterTest {
 		assertThrows(SQLException.class, () -> writer.insertExam(chemistry, provider, 2019, "External Assessment"));
 		assertThrows(SQLException.class, () -> writer.insertExamBooklet(exam,
 				writer.insertSourceDocument("Chemistry/2019/paper1-alternate.pdf"), "Paper 1"));
+	}
+
+	@Test
+	void rejectsExamMetadataCorrectionThatWouldMergeExistingExams() throws Exception {
+		Path databasePath = tempDirectory.resolve("exam-metadata-collision.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider malformedProvider = writer.insertExamProvider("2022 QCAA");
+		ExamProvider correctProvider = writer.insertExamProvider("QCAA");
+		Exam malformedExam = writer.insertExam(chemistry, malformedProvider, 2022, "2022");
+		Exam existingCorrectExam = writer.insertExam(chemistry, correctProvider, 2022, "External Assessment");
+		assertThrows(IllegalArgumentException.class,
+				() -> writer.correctExamMetadata(malformedExam, "QCAA", 2022, "External Assessment"));
+
+		// A rejected correction must leave the original Exam unchanged rather than
+		// merging its identity into the already-existing destination Exam.
+		Exam reloadedMalformed = writer.findExamByProviderAndYear(chemistry, "2022 QCAA", 2022);
+		assertNotNull(reloadedMalformed);
+		assertEquals(malformedExam.getId(), reloadedMalformed.getId());
+		assertEquals("2022", reloadedMalformed.getName());
+		Exam reloadedCorrect = writer.findExamByProviderAndYear(chemistry, "QCAA", 2022);
+		assertNotNull(reloadedCorrect);
+		assertEquals(existingCorrectExam.getId(), reloadedCorrect.getId());
 	}
 }

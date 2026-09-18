@@ -36,6 +36,89 @@ public final class SqliteExamWriter {
 	}
 
 	/**
+	 * Corrects metadata owned by an existing Exam while preserving its persistent
+	 * identity and all relationships that reference that Exam.
+	 *
+	 * <p>
+	 * The Exam subject is deliberately not changed here. Provider, year and
+	 * assessment name are the supported Exam-level correction fields.
+	 * </p>
+	 *
+	 * @param exam         existing persisted Exam
+	 * @param providerName corrected non-blank provider name
+	 * @param year         corrected positive assessment year
+	 * @param name         corrected non-blank assessment name
+	 * @return the corrected Exam with the same persistent identifier
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if {@code exam} is {@code null}
+	 * @throws IllegalArgumentException if supplied metadata is invalid or another
+	 *                                  Exam already owns the requested natural
+	 *                                  identity
+	 */
+	public Exam correctExamMetadata(Exam exam, String providerName, int year, String name) throws SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (providerName == null || providerName.isBlank()) {
+			throw new IllegalArgumentException("providerName must not be blank");
+		}
+		if (year < 1) {
+			throw new IllegalArgumentException("year must be positive");
+		}
+		if (name == null || name.isBlank()) {
+			throw new IllegalArgumentException("name must not be blank");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+
+				// Reuse an existing provider where possible. Changing one Exam must
+				// not rename a provider row that may also belong to other Exams.
+				ExamProvider provider = findExamProviderByName(connection, providerName);
+				if (provider == null) {
+					provider = insertExamProvider(connection, providerName);
+				}
+				Exam collision = findExam(connection, exam.getSubject(), provider, year, name);
+
+				// Updating this Exam to an identity already owned by a different Exam
+				// would implicitly merge two persisted assessment entities. Reject it
+				// rather than silently moving any relationships.
+				if (collision != null && collision.getId() != exam.getId()) {
+					throw new IllegalArgumentException("Another exam already exists with the requested "
+							+ "subject, provider, year and assessment name");
+				}
+				try (PreparedStatement statement = connection.prepareStatement("""
+						UPDATE exams
+						SET provider_id = ?,
+						    exam_year = ?,
+						    exam_name = ?
+						WHERE id = ?
+						  AND subject_id = ?
+						""")) {
+					statement.setLong(1, provider.getId());
+					statement.setInt(2, year);
+					statement.setString(3, name);
+					statement.setLong(4, exam.getId());
+					statement.setLong(5, exam.getSubject().getId());
+					if (statement.executeUpdate() != 1) {
+						throw new IllegalArgumentException("Exam does not exist for its stored subject");
+					}
+				}
+				Exam corrected = new Exam(exam.getId(), exam.getSubject(), provider, year, name);
+				connection.commit();
+				return corrected;
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
+	/**
 	 * Finds the single exam for a subject, provider, and year.
 	 *
 	 * @param subject      the persisted subject

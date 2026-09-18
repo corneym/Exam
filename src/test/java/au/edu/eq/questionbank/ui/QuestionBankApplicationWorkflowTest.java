@@ -244,60 +244,39 @@ class QuestionBankApplicationWorkflowTest {
 
 	@Test
 	void answerEditOpensFirstStoredRegionPage(FxRobot robot) throws Exception {
-
 		prepareExamAndClassification(robot);
-
 		Question question = captureQuestion(robot, "ANSWER-PAGE2");
-
 		ComboBox<Question> questions = unansweredQuestions(robot);
-
 		robot.interact(() -> questions.getSelectionModel().select(question));
-
 		openAnswerPdfForTest(question);
 
 		// Capture the persisted Answer region on page 2.
 		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2));
-
 		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
-
 		dragRegionOnDisplayedPage(robot);
-
 		robot.clickOn("#add-answer-region");
 		robot.clickOn("#save-answer");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
-
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertTrue(question.hasAnswer());
-
 		assertEquals(1, question.getAnswer().getRegions().size());
-
 		assertEquals(2, question.getAnswer().getRegions().getFirst().pageNumber());
 
 		// Move away from the stored source page before starting the edit so the test
 		// proves that editAnswer performs the page navigation itself.
 		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 1));
-
 		assertEquals(1, pdfWorkspace().getCurrentPageNumber());
-
 		AtomicInteger completed = new AtomicInteger();
-
 		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, completed::incrementAndGet)));
-
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Editing should restore the registered Answer PDF and position it at the
 		// first persisted Answer region.
 		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
-
 		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
-
 		assertEquals(0, completed.get());
-
 		robot.clickOn("#cancel-answer-edit");
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertEquals(1, completed.get());
 	}
 
@@ -1473,10 +1452,12 @@ class QuestionBankApplicationWorkflowTest {
 		assertFalse(addRegion.isVisible());
 		assertFalse(addRegion.isManaged());
 		assertTrue(save.isDisabled());
-		robot.clickOn("#answer-choice-a");
 
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !save.isDisabled());
+		RadioButton answerA = lookup(robot, "#answer-choice-a", RadioButton.class);
+		robot.interact(answerA::fire);
+		WaitForAsyncUtils.waitForFxEvents();
 
+		assertTrue(answerA.isSelected());
 		assertFalse(save.isDisabled());
 		robot.clickOn(save);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
@@ -1606,47 +1587,35 @@ class QuestionBankApplicationWorkflowTest {
 
 	@Test
 	void questionEditOpensFirstStoredRegionPage(FxRobot robot) throws Exception {
-
 		prepareExamAndClassification(robot);
 
 		// Capture the Question while page 2 is displayed so its persisted first
 		// source region belongs to page 2.
 		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 2));
-
 		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
-
 		Question question = captureQuestion(robot, "PAGE2");
-
 		assertEquals(1, question.getRegions().size());
-
 		assertEquals(2, question.getRegions().getFirst().pageNumber());
 
 		// Move away from the Question's source page before starting the edit. This
 		// proves that editQuestion performs the navigation rather than merely
 		// inheriting the page that was used during capture.
 		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 1));
-
 		assertEquals(1, pdfWorkspace().getCurrentPageNumber());
-
 		AtomicInteger completed = new AtomicInteger();
-
 		robot.interact(() -> assertTrue(questionCapturePane().editQuestion(question, completed::incrementAndGet)));
-
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Editing an existing Question should start on the page containing its first
 		// persisted Question region.
 		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
-
 		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
-
 		assertEquals(0, completed.get());
 
 		// Finish through the real edit workflow so the test leaves no active edit
 		// state behind.
 		robot.clickOn("#cancel-question-edit");
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertEquals(1, completed.get());
 	}
 
@@ -2288,7 +2257,6 @@ class QuestionBankApplicationWorkflowTest {
 		// shared-preamble region rather than leaving the user at page 1.
 		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
 		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
-
 		Button saveReplacement = lookup(robot, "#save-shared-context", Button.class);
 		assertTrue(saveReplacement.isVisible());
 		assertEquals("Save Replacement", saveReplacement.getText());
