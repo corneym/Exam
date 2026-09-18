@@ -2061,7 +2061,7 @@ class QuestionBankApplicationWorkflowTest {
 		setField(application, "scormExportRunning", Boolean.FALSE);
 	}
 
-//	@SuppressWarnings("unchecked")
+	// @SuppressWarnings("unchecked")
 	@Test
 	void searchEditMetadataCorrectsMetadataOnlyQuestion(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
@@ -2136,6 +2136,104 @@ class QuestionBankApplicationWorkflowTest {
 		 */
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		robot.clickOn("Close");
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
+	@Test
+	void sharedPreambleCanBeRecapturedFromSearch(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+
+		assertNotNull(booklet);
+		assertNotNull(classification);
+
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+
+		SharedQuestionContext originalContext = contextRepository.save(booklet, "Question 64 preamble",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.10)));
+
+		Question question = questionRepository.save(booklet, "64a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.35, 0.70, 0.20)), classification, true, null,
+				originalContext);
+
+		// Open Search Questions through the real application workflow.
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+
+		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
+
+		QuestionRetrievalResult selectedResult = results.getItems().stream()
+				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
+
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		Button recapture = lookup(robot, "#question-search-recapture-preamble", Button.class);
+
+		assertFalse(recapture.isDisabled());
+
+		robot.clickOn(recapture);
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> !robot.lookup("#question-search-results").tryQuery().isPresent());
+
+		Button saveReplacement = lookup(robot, "#save-shared-context", Button.class);
+
+		assertTrue(saveReplacement.isVisible());
+		assertEquals("Save Replacement", saveReplacement.getText());
+
+		// Starting recapture must leave the persisted original unchanged.
+		SharedQuestionContext beforeReplacement = contextRepository.findByBooklet(booklet).stream()
+				.filter(context -> context.getId() == originalContext.getId()).findFirst().orElseThrow();
+
+		assertEquals(originalContext.getRegions(), beforeReplacement.getRegions());
+
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-shared-context-region");
+		robot.clickOn("#save-shared-context");
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+
+		SharedQuestionContext replaced = contextRepository.findByBooklet(booklet).stream()
+				.filter(context -> context.getId() == originalContext.getId()).findFirst().orElseThrow();
+
+		assertEquals(originalContext.getId(), replaced.getId());
+
+		assertFalse(originalContext.getRegions().equals(replaced.getRegions()));
+
+		Question reloaded = questionRepository.findById(question.getId()).orElseThrow();
+
+		// The Question must still reference the same shared entity after replacement.
+		assertEquals(originalContext.getId(), reloaded.getSharedContext().getId());
+
 		robot.clickOn("Close");
 		WaitForAsyncUtils.waitForFxEvents();
 	}

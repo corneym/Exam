@@ -52,6 +52,7 @@ final class SharedContextCapturePane extends VBox {
 	private final Button newContextButton = new Button("New Context");
 	private final TextField contextLabelField = new TextField();
 	private final Label statusLabel = new Label("No shared context selected");
+	private final Label contextCaptureHeadingLabel = new Label("New shared context");
 
 	// Pending and accepted region controls.
 	private final Button addRegionButton = new Button("Add");
@@ -71,6 +72,9 @@ final class SharedContextCapturePane extends VBox {
 	private final List<SharedQuestionContextRegion> pendingRegions = new ArrayList<>();
 	private SharedQuestionContextRegion currentSelection;
 	private boolean captureMode;
+	private SharedQuestionContext editingContext;
+	private Runnable contextEditCompletedHandler = () -> {
+	};
 
 	/**
 	 * Creates shared-context controls for the active booklet and exam PDF. The
@@ -303,6 +307,61 @@ final class SharedContextCapturePane extends VBox {
 	}
 
 	/**
+	 * Starts replacement capture for an existing shared context.
+	 *
+	 * <p>
+	 * The persisted context remains unchanged until the replacement is saved.
+	 * Saving preserves the existing context identifier so all linked Questions
+	 * continue to share the corrected preamble.
+	 * </p>
+	 *
+	 * @param context          the persisted shared context to replace
+	 * @param completedHandler callback run after replacement is saved or cancelled
+	 * @return {@code true} when replacement capture started
+	 * @throws NullPointerException     if either argument is {@code null}
+	 * @throws IllegalArgumentException if the context belongs to another booklet
+	 */
+	boolean recaptureContext(SharedQuestionContext context, Runnable completedHandler) {
+
+		if (context == null) {
+			throw new NullPointerException("context");
+		}
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
+		}
+		if (!captureStartAllowed.getAsBoolean()) {
+			showWarning("Question selection pending",
+					"Add or clear the current question selection before recapturing shared context.");
+			return false;
+		}
+
+		ExamBooklet booklet = bookletSupplier.get();
+
+		if (booklet == null || context.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared context must belong to the active booklet");
+		}
+
+		editingContext = context;
+		contextEditCompletedHandler = completedHandler;
+
+		enterCaptureMode();
+		clearCurrentSelection();
+
+		// Replacement capture starts empty. The persisted original remains available
+		// until Save successfully replaces it.
+		contextLabelField.setText(context.getLabel());
+		pendingRegions.clear();
+		refreshRegionPreviews();
+
+		contextCaptureHeadingLabel.setText("Recapture shared preamble");
+		saveContextButton.setText("Save Replacement");
+		statusLabel.setText("Recapturing: " + context.getLabel());
+		setNewContextBoxVisible(true);
+
+		return true;
+	}
+
+	/**
 	 * Reloads the contexts belonging to the active booklet after clearing transient
 	 * capture state.
 	 */
@@ -357,15 +416,24 @@ final class SharedContextCapturePane extends VBox {
 					"Add or clear the current question selection before capturing shared context.");
 			return;
 		}
+
 		ExamBooklet booklet = bookletSupplier.get();
+
 		if (booklet == null) {
 			showWarning("Exam details have not been set.", "Select an exam booklet before capturing shared context.");
 			return;
 		}
+
+		// Ordinary creation must not retain state from an earlier replacement.
+		clearContextEditState();
+
 		enterCaptureMode();
 		contextLabelField.clear();
 		clearCurrentSelection();
 		refreshRegionPreviews();
+
+		contextCaptureHeadingLabel.setText("New shared context");
+		saveContextButton.setText("Save Context");
 		statusLabel.setText("Capturing new shared context");
 		setNewContextBoxVisible(true);
 	}
@@ -375,11 +443,21 @@ final class SharedContextCapturePane extends VBox {
 	}
 
 	private void buildNewContextBox() {
-		newContextBox.getChildren().addAll(new Label("New shared context"), contextLabelField,
+		newContextBox.getChildren().addAll(contextCaptureHeadingLabel, contextLabelField,
 				createCurrentSelectionControls(), currentPreview, regionCountLabel, acceptedRegionScroll,
 				createSaveControls());
+
 		newContextBox.setPadding(CAPTURE_PADDING);
 		setNewContextBoxVisible(false);
+	}
+
+	private void cancelContextCaptureFromUser() {
+		Runnable completedHandler = contextEditCompletedHandler;
+
+		cancelNewContext();
+
+		// For ordinary new-context capture this is the no-op handler.
+		completedHandler.run();
 	}
 
 	private void cancelNewContext() {
@@ -388,7 +466,17 @@ final class SharedContextCapturePane extends VBox {
 		refreshRegionPreviews();
 		contextLabelField.clear();
 		leaveCaptureMode();
+		clearContextEditState();
 		statusLabel.setText("No shared context selected");
+	}
+
+	private void clearContextEditState() {
+		// Return the shared-context controls to their ordinary creation state.
+		editingContext = null;
+		contextEditCompletedHandler = () -> {
+		};
+		contextCaptureHeadingLabel.setText("New shared context");
+		saveContextButton.setText("Save Context");
 	}
 
 	private void clearPersistedCaptureState() {
@@ -409,7 +497,8 @@ final class SharedContextCapturePane extends VBox {
 		clearSelectionButton.setOnAction(_ -> clearCurrentSelection());
 		clearRegionsButton.setOnAction(_ -> clearRegions());
 		saveContextButton.setOnAction(_ -> saveContext());
-		cancelContextButton.setOnAction(_ -> cancelNewContext());
+		cancelContextButton.setOnAction(_ -> cancelContextCaptureFromUser());
+
 		existingContextField.valueProperty().addListener((_, _, newContext) -> updateSelectedContextStatus(newContext));
 	}
 
@@ -554,30 +643,54 @@ final class SharedContextCapturePane extends VBox {
 			showWarning("Shared context selection pending", "Click Add or Clear before saving the shared context.");
 			return;
 		}
+
 		String label = contextLabelField.getText().trim();
+
 		if (label.isBlank()) {
 			showWarning("Shared context is incomplete.", "Enter a label for the shared context.");
 			return;
 		}
+
 		if (pendingRegions.isEmpty()) {
 			showWarning("Shared context is incomplete.", "Capture at least one shared context region.");
 			return;
 		}
+
 		ExamBooklet booklet = bookletSupplier.get();
+
 		if (booklet == null) {
 			showWarning("Exam details have not been set.", "Select an exam booklet before saving shared context.");
 			return;
 		}
+
+		Runnable completedHandler = contextEditCompletedHandler;
 		SharedQuestionContext saved = savePendingContext(booklet, label);
+
 		leaveCaptureMode();
 		clearPersistedCaptureState();
+		clearContextEditState();
+
 		SharedQuestionContext matching = reloadSavedContext(booklet, saved);
+
 		existingContextField.setValue(matching);
 		statusLabel.setText("Linked: " + saved.getLabel());
+
+		// Search correction workflows resume only after the replacement is safely
+		// persisted and the pane has returned to its normal state.
+		completedHandler.run();
 	}
 
 	private SharedQuestionContext savePendingContext(ExamBooklet booklet, String label) {
-		return contextRepository.save(booklet, label, List.copyOf(pendingRegions));
+
+		List<SharedQuestionContextRegion> regions = List.copyOf(pendingRegions);
+
+		if (editingContext != null) {
+			// Replacement preserves the existing shared-context identity and all
+			// Question foreign-key relationships to it.
+			return contextRepository.replace(editingContext, label, regions);
+		}
+
+		return contextRepository.save(booklet, label, regions);
 	}
 
 	private void setNewContextBoxVisible(boolean visible) {

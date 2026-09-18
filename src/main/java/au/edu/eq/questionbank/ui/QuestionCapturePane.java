@@ -29,6 +29,7 @@ import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -420,6 +421,72 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Starts replacement capture for the shared preamble linked to a Question.
+	 *
+	 * <p>
+	 * The Question's booklet and exam PDF are activated before the shared-context
+	 * editor is shown. The persisted shared context remains unchanged until the
+	 * replacement is saved.
+	 * </p>
+	 *
+	 * @param question         a Question linked to the shared context to replace
+	 * @param completedHandler callback after replacement is saved or cancelled
+	 * @return {@code true} when correction capture started
+	 * @throws NullPointerException     if either argument is {@code null}
+	 * @throws IllegalArgumentException if the Question has no shared context
+	 */
+	boolean recaptureSharedContext(Question question, Runnable completedHandler) {
+
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
+		}
+		if (!question.hasSharedContext()) {
+			throw new IllegalArgumentException("Question does not have a shared preamble to recapture");
+		}
+
+		if (!captureModeChangeAllowed()) {
+			restoreCaptureModeToggle();
+			return false;
+		}
+
+		// Activate the authoritative booklet and stored exam PDF before any new
+		// shared-context regions can be selected.
+		if (!importedQuestionActivationHandler.test(question)) {
+			restoreCaptureModeToggle();
+			return false;
+		}
+
+		// Leave ordinary Question capture in a clean state while the independent
+		// shared-context entity is being corrected.
+		importedQuestion = null;
+		importedCaptureMode = false;
+		editingQuestion = null;
+		questionEditCompletedHandler = () -> {
+		};
+
+		selectCaptureModeToggle(false);
+		setLegacyCaptureControlsVisible(false);
+		showNewQuestionMode();
+		resetQuestionEntry();
+
+		sharedContextCapturePane.refreshForCurrentBooklet();
+		setSharedContextCorrectionVisible(true);
+
+		boolean started = sharedContextCapturePane.recaptureContext(question.getSharedContext(),
+				() -> finishSharedContextRecapture(completedHandler));
+
+		if (!started) {
+			setSharedContextCorrectionVisible(false);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
 	 * Reloads persisted questions that still require question-region capture while
 	 * retaining the selected item when it remains available.
 	 */
@@ -574,11 +641,20 @@ final class QuestionCapturePane extends VBox {
 	private void buildContent() {
 		legacyCaptureBox.getChildren().addAll(new Label("Question awaiting capture"), createImportedQuestionControls(),
 				importedClassificationLabel, captureHintLabel);
+
 		preambleControlsBox.getChildren().addAll(firstRegionPreambleCheckBox, preambleStatusLabel);
+
 		setLegacyCaptureControlsVisible(false);
+
+		// The shared-context editor is exposed only for an explicit correction
+		// workflow. Automatic preamble capture continues to use it as internal state.
+		sharedContextCapturePane.setVisible(false);
+		sharedContextCapturePane.setManaged(false);
+
 		getChildren().addAll(createSectionLabel("Question"), createCaptureModeControls(), legacyCaptureBox,
 				createQuestionControls(), preambleControlsBox, saveStatusLabel, createCurrentSelectionControls(),
-				new Separator(), new Label("Accepted regions"), regionCountLabel, createRegionsScrollPane());
+				new Separator(), new Label("Accepted regions"), regionCountLabel, createRegionsScrollPane(),
+				sharedContextCapturePane);
 	}
 
 	private void cancelQuestionEdit() {
@@ -953,6 +1029,17 @@ final class QuestionCapturePane extends VBox {
 		showNewQuestionMode();
 		resetQuestionEntry();
 		return editCompletedHandler;
+	}
+
+	private void finishSharedContextRecapture(Runnable completedHandler) {
+		// Restore ordinary Question capture only after the shared-context pane has
+		// completed its own save or cancellation cleanup.
+		setSharedContextCorrectionVisible(false);
+		showNewQuestionCapture();
+		resetQuestionEntry();
+		refreshImportedQuestions();
+
+		completedHandler.run();
 	}
 
 	private void handlePreambleOptionChanged(boolean selected) {
@@ -1442,6 +1529,19 @@ final class QuestionCapturePane extends VBox {
 		// Keep enablement independent of the concrete response-type controls.
 		multipleChoiceResponseButton.setDisable(disabled);
 		writtenResponseButton.setDisable(disabled);
+	}
+
+	private void setSharedContextCorrectionVisible(boolean visible) {
+		sharedContextCapturePane.setVisible(visible);
+		sharedContextCapturePane.setManaged(visible);
+
+		// During preamble correction, ordinary Question controls must not trigger
+		// listeners that could cancel or otherwise alter the replacement capture.
+		for (Node child : getChildren()) {
+			if (child != sharedContextCapturePane) {
+				child.setDisable(visible);
+			}
+		}
 	}
 
 	private String sharedContextValidationError(String sourceCode, SourceQuestion sourceQuestion,

@@ -34,6 +34,7 @@ import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.SharedQuestionContextRepository;
 import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -113,6 +114,53 @@ class SharedContextCapturePaneTest {
 			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextRegions);
 		});
 		assertEquals(0, repository.saveCount());
+	}
+
+	@Test
+	void recapturingContextReplacesRegionsWithoutChangingIdentity(FxRobot robot) {
+		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20);
+
+		SharedQuestionContext original = repository.save(booklet, "Question 21 preamble", List.of(originalRegion));
+
+		AtomicInteger completed = new AtomicInteger();
+
+		robot.interact(() -> {
+			pane.refreshForCurrentBooklet();
+
+			assertTrue(pane.recaptureContext(original, completed::incrementAndGet));
+		});
+
+		assertTrue(pane.isCaptureMode());
+		assertEquals("Regions: 0",
+				robot.lookup("#shared-context-region-count").queryAs(javafx.scene.control.Label.class).getText());
+
+		Button save = robot.lookup("#save-shared-context").queryButton();
+
+		assertEquals("Save Replacement", save.getText());
+
+		SharedQuestionContext beforeSave = repository.findByBooklet(booklet).getFirst();
+
+		// Starting recapture must not mutate the persisted original.
+		assertEquals(original.getId(), beforeSave.getId());
+		assertEquals(List.of(originalRegion), beforeSave.getRegions());
+
+		SharedQuestionContextRegion replacementRegion = new SharedQuestionContextRegion(1, 0.20, 0.25, 0.60, 0.30);
+
+		robot.interact(
+				() -> pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+						replacementRegion.pageNumber(), replacementRegion.x(), replacementRegion.y(),
+						replacementRegion.width(), replacementRegion.height())));
+
+		robot.clickOn("#add-shared-context-region");
+		robot.clickOn("#save-shared-context");
+
+		SharedQuestionContext replaced = repository.findByBooklet(booklet).getFirst();
+
+		assertEquals(original.getId(), replaced.getId());
+		assertEquals("Question 21 preamble", replaced.getLabel());
+		assertEquals(List.of(replacementRegion), replaced.getRegions());
+		assertEquals(1, completed.get());
+		assertFalse(pane.isCaptureMode());
 	}
 
 	@Test

@@ -1567,29 +1567,49 @@ public class QuestionBankApplication extends Application {
 
 	private void showQuestionSearchDialog(Stage primaryStage, QuestionSearchDialog dialog,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
+
 		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
+
 		if (result.isEmpty()) {
 			dialog.dispose();
 			questionCapturePane.clearSaveStatus();
 			return;
 		}
+
 		QuestionSearchDialog.EditRequest request = result.get();
 		Question question = request.question();
+
 		if (request.target() == QuestionSearchDialog.EditTarget.METADATA) {
 			editQuestionMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
 			return;
 		}
+
+		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_PREAMBLE) {
+
+			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question,
+					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
+							metadataService));
+
+			if (!correctionStarted) {
+				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
+			}
+			return;
+		}
+
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
 			boolean editingStarted = questionCapturePane.editQuestion(question,
 					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
 							metadataService));
+
 			if (!editingStarted) {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 			}
 			return;
 		}
+
 		boolean editingStarted = answerCapturePane.editAnswer(question, () -> resumeSearchAfterEdit(primaryStage,
 				dialog, question.getId(), curriculumRepository, metadataService));
+
 		if (!editingStarted) {
 			showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 		}
