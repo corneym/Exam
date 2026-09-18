@@ -33,6 +33,9 @@ import javafx.stage.Stage;
  */
 final class ExamMetadataPane extends VBox {
 
+	private static final double SUBJECT_FIELD_WIDTH = 140.0;
+	private static final int FORM_GAP = 12;
+
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double PROVIDER_FIELD_WIDTH = 240.0;
 	private static final double YEAR_FIELD_WIDTH = 100.0;
@@ -316,7 +319,7 @@ final class ExamMetadataPane extends VBox {
 		bookletField.setEditable(true);
 		subjectField.setId("exam-subject");
 		subjectField.setPromptText("Select subject");
-		subjectField.setPrefWidth(140.0);
+		subjectField.setPrefWidth(SUBJECT_FIELD_WIDTH);
 		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
 		Subject currentSubject = curriculumSelectionModel.getSubject();
 		if (currentSubject != null) {
@@ -327,8 +330,8 @@ final class ExamMetadataPane extends VBox {
 
 	private GridPane createDetailsGrid() {
 		GridPane grid = new GridPane();
-		grid.setHgap(12);
-		grid.setVgap(12);
+		grid.setHgap(FORM_GAP);
+		grid.setVgap(FORM_GAP);
 		grid.setStyle(BORDER_STYLE);
 		grid.add(new Label("Subject:"), 0, 0);
 		grid.add(subjectField, 1, 0);

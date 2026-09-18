@@ -20,6 +20,9 @@ import javafx.stage.Window;
  */
 final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.ResolutionRequest> {
 
+	private static final int DIALOG_WIDTH = 1100;
+	private static final int DIALOG_HEIGHT = 700;
+
 	private final QuestionCorpusAuditPane auditPane;
 
 	QuestionCorpusAuditDialog(Window owner, List<Question> questions) {
@@ -58,8 +61,8 @@ final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.R
 			}
 			return new ResolutionRequest(item.question(), target);
 		});
-		getDialogPane().setPrefWidth(1100);
-		getDialogPane().setPrefHeight(700);
+		getDialogPane().setPrefWidth(DIALOG_WIDTH);
+		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
 	}
 
 	static ResolutionTarget resolutionTarget(QuestionCorpusWorkItem item) {

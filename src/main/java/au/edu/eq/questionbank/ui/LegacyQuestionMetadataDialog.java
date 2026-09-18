@@ -31,6 +31,11 @@ import javafx.stage.Window;
 public final class LegacyQuestionMetadataDialog
 		extends javafx.scene.control.Dialog<LegacyQuestionMetadataDialog.Result> {
 
+	private static final int DIALOG_WIDTH = 650;
+	private static final int FORM_COLUMN_GAP = 10;
+	private static final int FORM_ROW_GAP = 8;
+	private static final int FORM_PADDING = 10;
+
 	private final Question question;
 	private final CurriculumRepository curriculumRepository;
 	private final TextField questionCodeField = new TextField();
@@ -75,7 +80,7 @@ public final class LegacyQuestionMetadataDialog
 			return new Result(questionCodeField.getText().trim(), Integer.parseInt(marksField.getText().trim()),
 					classificationBox.getValue(), preambleRequiredCheckBox.isSelected(), responseTypeBox.getValue());
 		});
-		getDialogPane().setPrefWidth(650);
+		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 	}
 
 	private void collectClassifications(CurriculumNode node, List<CurriculumNode> classifications) {
@@ -117,9 +122,9 @@ public final class LegacyQuestionMetadataDialog
 
 	private GridPane createContent() {
 		GridPane grid = new GridPane();
-		grid.setHgap(10);
-		grid.setVgap(8);
-		grid.setPadding(new Insets(10));
+		grid.setHgap(FORM_COLUMN_GAP);
+		grid.setVgap(FORM_ROW_GAP);
+		grid.setPadding(new Insets(FORM_PADDING));
 		SyllabusVersion syllabusVersion = question.getClassification().getSyllabusVersion();
 		Label subjectValue = new Label(syllabusVersion.getSubject().getName());
 		Label syllabusValue = new Label(syllabusVersion.getName());

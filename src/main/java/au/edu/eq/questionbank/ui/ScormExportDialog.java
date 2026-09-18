@@ -24,6 +24,11 @@ import javafx.stage.Window;
  */
 public final class ScormExportDialog extends Dialog<ButtonType> {
 
+	private static final int FILE_CONTROL_SPACING = 6;
+	private static final int FORM_COLUMN_GAP = 10;
+	private static final int FORM_ROW_GAP = 8;
+	private static final int FORM_PADDING = 10;
+
 	private final ComboBox<Subject> subjectBox = new ComboBox<Subject>();
 	private final TextField destinationField = new TextField();
 	private Path destinationParent;
@@ -66,11 +71,11 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		Button browseButton = new Button("Browse...");
 		browseButton.setId("scorm-export-browse");
 		browseButton.setOnAction(_ -> chooseDestination(owner));
-		HBox destinationBox = new HBox(6, destinationField, browseButton);
+		HBox destinationBox = new HBox(FILE_CONTROL_SPACING, destinationField, browseButton);
 		GridPane grid = new GridPane();
-		grid.setHgap(10);
-		grid.setVgap(8);
-		grid.setPadding(new Insets(10));
+		grid.setHgap(FORM_COLUMN_GAP);
+		grid.setVgap(FORM_ROW_GAP);
+		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
 		grid.add(subjectBox, 1, 0);
 		grid.add(new Label("Destination parent:"), 0, 1);

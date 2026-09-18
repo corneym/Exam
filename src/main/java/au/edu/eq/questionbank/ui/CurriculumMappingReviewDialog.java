@@ -53,6 +53,16 @@ import javafx.stage.Window;
  */
 public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 
+	private static final int SOURCE_CELL_WIDTH = 800;
+	private static final int SOURCE_TEXT_PADDING = 6;
+	private static final int SUGGESTION_HORIZONTAL_INSET = 20;
+
+	private static final int TARGET_LIST_HEIGHT = 320;
+	private static final int FORM_COLUMN_GAP = 10;
+	private static final int FORM_ROW_GAP = 6;
+	private static final int FORM_PADDING = 10;
+	private static final int HEADING_TOP_PADDING = 4;
+
 	private static final double CONTENT_WIDTH = 850;
 	private static final double CONTROL_GAP = 10;
 	private static final double DESCRIPTOR_TEXT_HEIGHT = 78;
@@ -204,12 +214,12 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		sourceDescriptorRow.setMaxWidth(CONTENT_WIDTH);
 		StackPane targetListPane = new StackPane(suggestionsList, reviewedMappingsList);
 		targetListPane.setPrefWidth(CONTENT_WIDTH);
-		targetListPane.setPrefHeight(320);
+		targetListPane.setPrefHeight(TARGET_LIST_HEIGHT);
 		HBox reviewOptions = new HBox(CONTROL_GAP, showReviewedCheckBox, editReviewButton);
 		GridPane grid = new GridPane();
-		grid.setHgap(10);
-		grid.setVgap(6);
-		grid.setPadding(new Insets(10));
+		grid.setHgap(FORM_COLUMN_GAP);
+		grid.setVgap(FORM_ROW_GAP);
+		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
 		grid.add(subjectBox, 1, 0);
 		grid.add(new Label("Source syllabus:"), 0, 1);
@@ -269,7 +279,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		showReviewedCheckBox.setOnAction(_ -> loadSourceDescriptors());
 		editReviewButton.setDisable(true);
 		editReviewButton.setOnAction(_ -> toggleReviewEditing());
-		sourceNodeHeading.setPadding(new Insets(4, 0, 0, 0));
+		sourceNodeHeading.setPadding(new Insets(HEADING_TOP_PADDING, 0, 0, 0));
 		GridPane.setValignment(sourceNodeHeading, VPos.TOP);
 		subtopicEvidenceLabel.setId("curriculum-mapping-subtopic-evidence");
 		subtopicEvidenceLabel.setWrapText(true);
@@ -281,7 +291,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 
 	private void configureReviewedMappingsList() {
 		reviewedMappingsList.setPrefWidth(CONTENT_WIDTH);
-		reviewedMappingsList.setPrefHeight(320);
+		reviewedMappingsList.setPrefHeight(TARGET_LIST_HEIGHT);
 		reviewedMappingsList.setCellFactory(_ -> new ListCell<>() {
 
 			@Override
@@ -329,7 +339,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 			protected void updateItem(CurriculumNode descriptor, boolean empty) {
 				super.updateItem(descriptor, empty);
 				setWrapText(true);
-				setPrefWidth(800);
+				setPrefWidth(SOURCE_CELL_WIDTH);
 				if (empty || descriptor == null) {
 					setText(null);
 					return;
@@ -344,20 +354,20 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		sourceDescriptorTextBox.setMinHeight(DESCRIPTOR_TEXT_HEIGHT);
 		sourceDescriptorTextBox.setPrefHeight(DESCRIPTOR_TEXT_HEIGHT);
 		sourceDescriptorTextBox.setMaxHeight(DESCRIPTOR_TEXT_HEIGHT);
-		sourceDescriptorTextBox.setPadding(new Insets(6));
+		sourceDescriptorTextBox.setPadding(new Insets(SOURCE_TEXT_PADDING));
 		sourceDescriptorTextBox
 				.setStyle("-fx-border-color: #b0b0b0; -fx-border-width: 1; -fx-background-color: white;");
 	}
 
 	private void configureSuggestionList() {
 		suggestionsList.setPrefWidth(CONTENT_WIDTH);
-		suggestionsList.setPrefHeight(320);
+		suggestionsList.setPrefHeight(TARGET_LIST_HEIGHT);
 		suggestionsList.setCellFactory(_ -> new ListCell<>() {
 
 			private final CheckBox checkBox = new CheckBox();
 			{
 				checkBox.setWrapText(true);
-				checkBox.setMaxWidth(CONTENT_WIDTH - 20);
+				checkBox.setMaxWidth(CONTENT_WIDTH - SUGGESTION_HORIZONTAL_INSET);
 				checkBox.setOnAction(_ -> updateTargetSelection(getItem(), checkBox.isSelected()));
 				setGraphic(checkBox);
 			}
@@ -887,7 +897,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private void wireListeners(ButtonType confirmButtonType) {
 		confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);
 		confirmButton.setDisable(true);
-		confirmButton.addEventFilter(ActionEvent.ACTION, event -> handleConfirmReview(event));
+		confirmButton.addEventFilter(ActionEvent.ACTION, this::handleConfirmReview);
 		subjectBox.valueProperty().addListener((_, _, newSubject) -> loadVersions(newSubject));
 		sourceVersionBox.valueProperty().addListener((_, _, _) -> loadSourceDescriptors());
 		targetVersionBox.valueProperty().addListener((_, _, _) -> loadSourceDescriptors());

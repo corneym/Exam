@@ -58,6 +58,8 @@ import javafx.util.StringConverter;
  */
 final class QuestionCapturePane extends VBox {
 
+	private static final double REGION_VIEWPORT_EXTRA_HEIGHT = 4.0;
+
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double MARKS_FIELD_WIDTH = 60.0;
@@ -292,17 +294,13 @@ final class QuestionCapturePane extends VBox {
 	 * different workflow takes ownership of the single PDF selection.
 	 */
 	void discardCurrentSelectionForOwnershipLoss() {
-		/*
-		 * Do not invoke the normal clear handler here. The PDF workspace already
-		 * contains the replacement selection belonging to another workflow.
-		 */
+		// Do not invoke the normal clear handler here. The PDF workspace already
+		// contains the replacement selection belonging to another workflow.
 		currentSelection = null;
 		sharedContextCapturePane.discardCurrentSelectionForOwnershipLoss();
 		if (sharedContextCapturePane.isCaptureMode()) {
-			/*
-			 * Shared-preamble capture remains active even though its previous rectangle was
-			 * superseded by another workflow.
-			 */
+			// Shared-preamble capture remains active even though its previous rectangle was
+			// superseded by another workflow.
 			saveStatusLabel.setText("Shared preamble capture active — select a region");
 		} else {
 			// Restore status to the accepted-region state rather than a stale pending
@@ -616,11 +614,9 @@ final class QuestionCapturePane extends VBox {
 			BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
 			ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
 			imageView.setPreserveRatio(true);
-			/*
-			 * Do not bind the image width to the viewport width. The viewport changes width
-			 * when its vertical scrollbar appears or disappears, which can otherwise cause
-			 * continuous resizing.
-			 */
+			// Do not bind the image width to the viewport width. The viewport changes width
+			// when its vertical scrollbar appears or disappears, which can otherwise cause
+			// continuous resizing.
 			imageView.fitWidthProperty()
 					.bind(Bindings.createDoubleBinding(
 							() -> Math.max(0.0, regionsScrollPane.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
@@ -923,7 +919,7 @@ final class QuestionCapturePane extends VBox {
 		regionsScrollPane.setMaxHeight(REGIONS_VIEWPORT_HEIGHT);
 		regionsScrollPane.prefHeightProperty()
 				.bind(Bindings.createDoubleBinding(
-						() -> Math.min(REGIONS_VIEWPORT_HEIGHT, regionPreviewBox.getLayoutBounds().getHeight() + 4.0),
+						() -> Math.min(REGIONS_VIEWPORT_HEIGHT, regionPreviewBox.getLayoutBounds().getHeight() + REGION_VIEWPORT_EXTRA_HEIGHT),
 						regionPreviewBox.layoutBoundsProperty()));
 		regionsScrollPane.setVisible(false);
 		regionsScrollPane.setManaged(false);
@@ -1091,10 +1087,8 @@ final class QuestionCapturePane extends VBox {
 					setPreambleCheckBoxSelected(false);
 					return;
 				}
-				/*
-				 * The rectangle now belongs to SharedContextCapturePane. Do not clear the PDF
-				 * selection.
-				 */
+				// The rectangle now belongs to SharedContextCapturePane. Do not clear the PDF
+				// selection.
 				currentSelection = null;
 				saveStatusLabel.setText("Shared preamble selection pending " + "— click Add Region or Clear");
 				updateQuestionCodeLock();
@@ -1292,18 +1286,14 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshSaveButtonState() {
-		/*
-		 * A selection is compatible with these controls only when it belongs to the
-		 * currently active Question or automatic shared-preamble capture workflow.
-		 */
+		// A selection is compatible with these controls only when it belongs to the
+		// currently active Question or automatic shared-preamble capture workflow.
 		boolean compatibleSelectionPending = sharedContextCapturePane.isCaptureMode()
 				? sharedContextCapturePane.hasCurrentSelection()
 				: currentSelection != null;
-		/*
-		 * Add and Clear must never appear actionable without a compatible pending
-		 * rectangle, and no capture action may run while Question persistence is
-		 * active.
-		 */
+		// Add and Clear must never appear actionable without a compatible pending
+		// rectangle, and no capture action may run while Question persistence is
+		// active.
 		boolean selectionActionsEnabled = !questionSaveInProgress && compatibleSelectionPending;
 		addRegionButton.setDisable(!selectionActionsEnabled);
 		removeCurrentSelectionButton.setDisable(!selectionActionsEnabled);
@@ -1316,10 +1306,8 @@ final class QuestionCapturePane extends VBox {
 		try {
 			ready = findValidationError() == null;
 		} catch (IllegalStateException e) {
-			/*
-			 * An inconsistent stored relationship must never make Save available. Save-time
-			 * validation remains the defensive backstop.
-			 */
+			// An inconsistent stored relationship must never make Save available. Save-time
+			// validation remains the defensive backstop.
 			ready = false;
 		}
 		saveQuestionButton.setDisable(!ready);
@@ -1414,65 +1402,12 @@ final class QuestionCapturePane extends VBox {
 
 			@Override
 			protected QuestionSaveResult call() {
-				List<Question> beforeSave = questionRepository.findAll();
-				String validationError = validateStoredQuestion(request, beforeSave);
-				if (validationError != null) {
-					return new QuestionSaveResult(null, beforeSave, validationError, null);
-				}
-				Question saved = questionCaptureService.save(request);
-				try {
-					return new QuestionSaveResult(saved, questionRepository.findAll(), null, null);
-				} catch (RuntimeException refreshFailure) {
-					// The transaction has committed. Never report a refresh failure as a failed
-					// save.
-					List<Question> fallback = new ArrayList<>(beforeSave);
-					fallback.removeIf(question -> question.getId() == saved.getId());
-					fallback.add(saved);
-					return new QuestionSaveResult(saved, List.copyOf(fallback), null, refreshFailure);
-				}
+				return persistQuestionCapture(request);
 			}
 		};
 		saveTask.setOnSucceeded(_ -> {
 			QuestionSaveResult result = saveTask.getValue();
-			completionQuestions = result.questions();
-			Runnable editCompletedHandler = null;
-			try {
-				if (result.validationError() != null) {
-					saveStatusLabel.setText("Question not saved — check question details");
-					showAlert(Alert.AlertType.WARNING, "Question could not be saved.", result.validationError());
-					return;
-				}
-				Question question = result.question();
-				questionsChangedHandler.accept(result.questions());
-				if (editing) {
-					editCompletedHandler = finishQuestionEditState();
-				} else {
-					resetAfterQuestionSave(savedPreviousImportedIndex);
-				}
-				String action = "Saved";
-				if (editing) {
-					action = "Updated";
-				} else if (imported) {
-					action = savedHadStoredRegions ? "Resolved" : "Captured";
-				}
-				showSavedQuestionStatus(action, question);
-				if (result.refreshFailure() != null) {
-					saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
-					showAlert(Alert.AlertType.WARNING, "Question saved; lists could not be fully refreshed.",
-							"The question is stored. Do not save it again. Reopen capture to reload the question lists.");
-				}
-			} finally {
-				questionSaveInProgress = false;
-				setDisable(false);
-				try {
-					refreshSaveButtonState();
-				} finally {
-					completionQuestions = null;
-				}
-			}
-			if (editCompletedHandler != null) {
-				editCompletedHandler.run();
-			}
+			completeQuestionSave(result, editing, imported, savedPreviousImportedIndex, savedHadStoredRegions);
 		});
 		saveTask.setOnFailed(_ -> {
 			questionSaveInProgress = false;
@@ -1484,6 +1419,70 @@ final class QuestionCapturePane extends VBox {
 		Thread saveThread = new Thread(saveTask, "question-save");
 		saveThread.setDaemon(true);
 		saveThread.start();
+	}
+
+	// Run validation, persistence and list reconstruction on the save task, away from the FX thread.
+	private QuestionSaveResult persistQuestionCapture(SqliteQuestionCaptureService.Request request) {
+		List<Question> beforeSave = questionRepository.findAll();
+		String validationError = validateStoredQuestion(request, beforeSave);
+		if (validationError != null) {
+			return new QuestionSaveResult(null, beforeSave, validationError, null);
+		}
+		Question saved = questionCaptureService.save(request);
+		try {
+			return new QuestionSaveResult(saved, questionRepository.findAll(), null, null);
+		} catch (RuntimeException refreshFailure) {
+			// The transaction has committed. Never report a refresh failure as a failed
+			// save.
+			List<Question> fallback = new ArrayList<>(beforeSave);
+			fallback.removeIf(question -> question.getId() == saved.getId());
+			fallback.add(saved);
+			return new QuestionSaveResult(saved, List.copyOf(fallback), null, refreshFailure);
+		}
+	}
+
+	// Publish the committed result on the FX thread before handing control back to an edit caller.
+	private void completeQuestionSave(QuestionSaveResult result, boolean editing, boolean imported,
+			int previousImportedIndex, boolean hadStoredRegions) {
+		completionQuestions = result.questions();
+		Runnable editCompletedHandler = null;
+		try {
+			if (result.validationError() != null) {
+				saveStatusLabel.setText("Question not saved — check question details");
+				showAlert(Alert.AlertType.WARNING, "Question could not be saved.", result.validationError());
+				return;
+			}
+			Question question = result.question();
+			questionsChangedHandler.accept(result.questions());
+			if (editing) {
+				editCompletedHandler = finishQuestionEditState();
+			} else {
+				resetAfterQuestionSave(previousImportedIndex);
+			}
+			String action = "Saved";
+			if (editing) {
+				action = "Updated";
+			} else if (imported) {
+				action = hadStoredRegions ? "Resolved" : "Captured";
+			}
+			showSavedQuestionStatus(action, question);
+			if (result.refreshFailure() != null) {
+				saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
+				showAlert(Alert.AlertType.WARNING, "Question saved; lists could not be fully refreshed.",
+						"The question is stored. Do not save it again. Reopen capture to reload the question lists.");
+			}
+		} finally {
+			questionSaveInProgress = false;
+			setDisable(false);
+			try {
+				refreshSaveButtonState();
+			} finally {
+				completionQuestions = null;
+			}
+		}
+		if (editCompletedHandler != null) {
+			editCompletedHandler.run();
+		}
 	}
 
 	private void selectCaptureModeToggle(boolean imported) {
@@ -1793,13 +1792,11 @@ final class QuestionCapturePane extends VBox {
 			questionCodeField.setDisable(true);
 			return;
 		}
-		/*
-		 * Ordinary accepted question regions do not lock the question number. The user
-		 * may still correct or enter metadata before Save.
-		 *
-		 * A captured shared preamble does lock the number because changing the source
-		 * question would change ownership of that preamble.
-		 */
+		// Ordinary accepted question regions do not lock the question number. The user
+		// may still correct or enter metadata before Save.
+		//
+		// A captured shared preamble does lock the number because changing the source
+		// question would change ownership of that preamble.
 		questionCodeField.setDisable(sharedContextCapturePane.hasPendingAutomaticRegion());
 	}
 

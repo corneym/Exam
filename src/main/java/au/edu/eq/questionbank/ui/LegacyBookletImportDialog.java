@@ -24,6 +24,15 @@ import javafx.stage.Window;
 
 final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 
+	private static final int VIEWPORT_WIDTH = 680;
+	private static final int VIEWPORT_HEIGHT = 500;
+	private static final int SECTION_SPACING = 12;
+	private static final int CONTENT_PADDING = 10;
+	private static final int EXAM_FIELD_WIDTH = 300;
+	private static final int ROW_SPACING = 8;
+	private static final int BOOKLET_LABEL_WIDTH = 140;
+	private static final int PDF_LABEL_WIDTH = 260;
+
 	private final List<LegacyBookletRequirement> requirements;
 	private final Map<ExamKey, TextField> assessmentFields = new LinkedHashMap<>();
 	private final Map<ExamKey, Path> selectedAnswerPdfs = new LinkedHashMap<>();
@@ -48,11 +57,11 @@ final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 		VBox content = createContent(owner);
 		ScrollPane scrollPane = new ScrollPane(content);
 		scrollPane.setFitToWidth(true);
-		scrollPane.setPrefViewportWidth(680);
-		scrollPane.setPrefViewportHeight(500);
+		scrollPane.setPrefViewportWidth(VIEWPORT_WIDTH);
+		scrollPane.setPrefViewportHeight(VIEWPORT_HEIGHT);
 		getDialogPane().setContent(scrollPane);
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
-		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
+		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, this::validateImportAction);
 	}
 
 	List<LegacyBookletImportRequest> getRequests() {
@@ -102,8 +111,8 @@ final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 	}
 
 	private VBox createContent(Window owner) {
-		VBox content = new VBox(12);
-		content.setPadding(new Insets(10));
+		VBox content = new VBox(SECTION_SPACING);
+		content.setPadding(new Insets(CONTENT_PADDING));
 		ExamKey previousKey = null;
 		for (LegacyBookletRequirement requirement : requirements) {
 			ExamKey key = new ExamKey(requirement.providerName(), requirement.year());
@@ -112,26 +121,26 @@ final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 				heading.setStyle("-fx-font-weight: bold;");
 				TextField assessmentField = new TextField();
 				assessmentField.setPromptText("e.g. External Assessment");
-				assessmentField.setPrefWidth(300);
+				assessmentField.setPrefWidth(EXAM_FIELD_WIDTH);
 				assessmentFields.put(key, assessmentField);
-				HBox assessmentRow = new HBox(8, new Label("Assessment:"), assessmentField);
+				HBox assessmentRow = new HBox(ROW_SPACING, new Label("Assessment:"), assessmentField);
 				Label answerPdfLabel = new Label("No answer PDF selected");
-				answerPdfLabel.setPrefWidth(300);
+				answerPdfLabel.setPrefWidth(EXAM_FIELD_WIDTH);
 				answerPdfLabels.put(key, answerPdfLabel);
 				Button chooseAnswerButton = new Button("Choose Answer PDF...");
 				chooseAnswerButton.setOnAction(_ -> chooseAnswerPdf(owner, key));
-				HBox answerRow = new HBox(8, new Label("Answer PDF:"), answerPdfLabel, chooseAnswerButton);
+				HBox answerRow = new HBox(ROW_SPACING, new Label("Answer PDF:"), answerPdfLabel, chooseAnswerButton);
 				content.getChildren().addAll(heading, assessmentRow, answerRow);
 				previousKey = key;
 			}
 			Label bookletLabel = new Label(requirement.bookletName());
-			bookletLabel.setPrefWidth(140);
+			bookletLabel.setPrefWidth(BOOKLET_LABEL_WIDTH);
 			Label pdfLabel = new Label("No PDF selected");
-			pdfLabel.setPrefWidth(260);
+			pdfLabel.setPrefWidth(PDF_LABEL_WIDTH);
 			pdfLabels.put(requirement, pdfLabel);
 			Button chooseButton = new Button("Choose PDF...");
 			chooseButton.setOnAction(_ -> choosePdf(owner, requirement));
-			HBox bookletRow = new HBox(8, bookletLabel, pdfLabel, chooseButton);
+			HBox bookletRow = new HBox(ROW_SPACING, bookletLabel, pdfLabel, chooseButton);
 			content.getChildren().add(bookletRow);
 		}
 		return content;

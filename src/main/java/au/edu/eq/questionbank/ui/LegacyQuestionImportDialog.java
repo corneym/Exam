@@ -26,6 +26,13 @@ import javafx.stage.Window;
  */
 public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 
+	private static final int FORM_COLUMN_GAP = 10;
+	private static final int FORM_ROW_GAP = 8;
+	private static final int FORM_PADDING = 10;
+	private static final int FILE_FIELD_WIDTH = 300;
+	private static final int FILE_CONTROL_SPACING = 6;
+	private static final int SELECTOR_WIDTH = 220;
+
 	private final CurriculumRepository curriculumRepository;
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
@@ -80,9 +87,9 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 
 	private void buildContent(HBox fileBox) {
 		GridPane grid = new GridPane();
-		grid.setHgap(10);
-		grid.setVgap(8);
-		grid.setPadding(new Insets(10));
+		grid.setHgap(FORM_COLUMN_GAP);
+		grid.setVgap(FORM_ROW_GAP);
+		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
 		grid.add(subjectBox, 1, 0);
 		grid.add(new Label("Syllabus version:"), 0, 1);
@@ -115,17 +122,17 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 
 	private HBox configureFileControls(Window owner) {
 		fileField.setEditable(false);
-		fileField.setPrefWidth(300);
+		fileField.setPrefWidth(FILE_FIELD_WIDTH);
 		Button browseButton = new Button("Browse...");
 		browseButton.setOnAction(_ -> chooseFile(owner));
-		return new HBox(6, fileField, browseButton);
+		return new HBox(FILE_CONTROL_SPACING, fileField, browseButton);
 	}
 
 	private void configureSelectors() {
 		subjectBox.getItems().setAll(curriculumRepository.findAllSubjects());
-		subjectBox.setPrefWidth(220);
+		subjectBox.setPrefWidth(SELECTOR_WIDTH);
 		subjectBox.valueProperty().addListener((_, _, newSubject) -> loadSyllabusVersions(newSubject));
-		syllabusBox.setPrefWidth(220);
+		syllabusBox.setPrefWidth(SELECTOR_WIDTH);
 		syllabusBox.setDisable(true);
 	}
 
@@ -187,6 +194,6 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 
 	private void wireValidation(ButtonType importButtonType) {
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
-		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
+		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, this::validateImportAction);
 	}
 }

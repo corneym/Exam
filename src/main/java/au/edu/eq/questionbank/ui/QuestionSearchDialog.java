@@ -16,6 +16,9 @@ import javafx.stage.Window;
  */
 public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.EditRequest> {
 
+	private static final int DIALOG_WIDTH = 900;
+	private static final int DIALOG_HEIGHT = 700;
+
 	private final QuestionSearchPane searchPane;
 
 	/**
@@ -92,8 +95,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			}
 			return null;
 		});
-		getDialogPane().setPrefWidth(900);
-		getDialogPane().setPrefHeight(700);
+		getDialogPane().setPrefWidth(DIALOG_WIDTH);
+		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
 	}
 
 	/**

@@ -38,6 +38,14 @@ import javafx.scene.shape.Rectangle;
  */
 final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
+	private static final int PAGE_FIELD_COLUMNS = 4;
+	private static final int PAGE_FIELD_MAX_WIDTH = 70;
+	private static final Color SELECTION_FILL = Color.rgb(0, 120, 215, 0.15);
+	private static final Color SELECTION_COLOR = Color.rgb(0, 90, 180);
+	private static final int SELECTION_STROKE_WIDTH = 2;
+	private static final double ANCHOR_STROKE_WIDTH = 1.5;
+	private static final int ANCHOR_CLICK_COUNT = 2;
+
 	private static final float DISPLAY_DPI = 120;
 	private static final double MIN_SELECTION_SIZE = 5.0;
 	private static final double PAGE_CONTROL_SPACING = 10.0;
@@ -639,8 +647,8 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		nextButton.setDisable(true);
 		nextButton.setId("next-pdf-page");
 		pageNumberField.setId("pdf-page-number");
-		pageNumberField.setPrefColumnCount(4);
-		pageNumberField.setMaxWidth(70);
+		pageNumberField.setPrefColumnCount(PAGE_FIELD_COLUMNS);
+		pageNumberField.setMaxWidth(PAGE_FIELD_MAX_WIDTH);
 		pageNumberField.setDisable(true);
 		pageNumberField.setPromptText("Page");
 		pageNumberField.setOnAction(_ -> goToEnteredPage());
@@ -663,20 +671,21 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pageView.setOnMouseReleased(this::handleSelectionReleased);
 		pageView.setOnMouseClicked(this::handleSelectionClicked);
 		fullWidthSelectionCheckBox.selectedProperty().addListener((_, _, _) -> {
+			// Both the rectangle and its capture owner must forget bounds made under the old mode.
 			clearSelection();
 			selectionModeChangedHandler.run();
 		});
 	}
 
 	private void configureSelectionRectangle() {
-		selectionRectangle.setFill(Color.rgb(0, 120, 215, 0.15));
-		selectionRectangle.setStroke(Color.rgb(0, 90, 180));
-		selectionRectangle.setStrokeWidth(2);
+		selectionRectangle.setFill(SELECTION_FILL);
+		selectionRectangle.setStroke(SELECTION_COLOR);
+		selectionRectangle.setStrokeWidth(SELECTION_STROKE_WIDTH);
 		selectionRectangle.setVisible(false);
 		selectionRectangle.setMouseTransparent(true);
-		selectionAnchorMarker.setFill(Color.rgb(0, 90, 180));
+		selectionAnchorMarker.setFill(SELECTION_COLOR);
 		selectionAnchorMarker.setStroke(Color.WHITE);
-		selectionAnchorMarker.setStrokeWidth(1.5);
+		selectionAnchorMarker.setStrokeWidth(ANCHOR_STROKE_WIDTH);
 		selectionAnchorMarker.setVisible(false);
 		selectionAnchorMarker.setMouseTransparent(true);
 		pagePane.getChildren().addAll(selectionRectangle, selectionAnchorMarker);
@@ -741,7 +750,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	private void handleSelectionClicked(MouseEvent event) {
-		if (event.getButton() != MouseButton.PRIMARY || event.getClickCount() != 2
+		if (event.getButton() != MouseButton.PRIMARY || event.getClickCount() != ANCHOR_CLICK_COUNT
 				|| !selectionAvailable.test(displayedDocument)) {
 			return;
 		}

@@ -46,6 +46,16 @@ import javafx.scene.layout.VBox;
  */
 public class QuestionSearchPane extends BorderPane {
 
+	private static final int PANE_PADDING = 10;
+	private static final int PREVIEW_WIDTH = 820;
+	private static final int DETAIL_ROWS = 6;
+	private static final int SECTION_SPACING = 4;
+	private static final int SECTION_TOP_PADDING = 6;
+	private static final double RESULTS_DIVIDER_POSITION = 0.22;
+	private static final double DETAILS_DIVIDER_POSITION = 0.48;
+	private static final int SELECTOR_COLUMN_GAP = 8;
+	private static final int SELECTOR_ROW_GAP = 6;
+
 	private final CurriculumRepository curriculumRepository;
 	private final QuestionRetrievalService retrievalService;
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
@@ -93,7 +103,7 @@ public class QuestionSearchPane extends BorderPane {
 		this.curriculumRepository = curriculumRepository;
 		this.retrievalService = retrievalService;
 		this.previewService = previewService;
-		setPadding(new Insets(10));
+		setPadding(new Insets(PANE_PADDING));
 		configureControls();
 		configureHandlers();
 		setTop(createSelectionPane());
@@ -257,7 +267,7 @@ public class QuestionSearchPane extends BorderPane {
 		previewImageView.setId("question-search-preview");
 		previewStatusLabel.setId("question-search-preview-status");
 		previewImageView.setPreserveRatio(true);
-		previewImageView.setFitWidth(820);
+		previewImageView.setFitWidth(PREVIEW_WIDTH);
 		previewImageView.setSmooth(true);
 		syllabusValue.setText("No current syllabus");
 		unitBox.setDisable(true);
@@ -271,7 +281,7 @@ public class QuestionSearchPane extends BorderPane {
 		descriptorBox.setMaxWidth(Double.MAX_VALUE);
 		detailsArea.setEditable(false);
 		detailsArea.setWrapText(true);
-		detailsArea.setPrefRowCount(6);
+		detailsArea.setPrefRowCount(DETAIL_ROWS);
 		resultsList.setCellFactory(_ -> new ListCell<>() {
 
 			@Override
@@ -322,8 +332,8 @@ public class QuestionSearchPane extends BorderPane {
 	private VBox createQuestionDetailsPane() {
 		Label label = new Label("Question details");
 		label.setStyle("-fx-font-weight: bold;");
-		VBox pane = new VBox(4, label, detailsArea);
-		pane.setPadding(new Insets(6, 0, 0, 0));
+		VBox pane = new VBox(SECTION_SPACING, label, detailsArea);
+		pane.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));
 		VBox.setVgrow(detailsArea, Priority.ALWAYS);
 		return pane;
 	}
@@ -333,8 +343,8 @@ public class QuestionSearchPane extends BorderPane {
 		label.setStyle("-fx-font-weight: bold;");
 		ScrollPane previewPane = new ScrollPane(previewImageView);
 		previewPane.setFitToWidth(true);
-		VBox pane = new VBox(4, label, previewStatusLabel, previewPane);
-		pane.setPadding(new Insets(6, 0, 0, 0));
+		VBox pane = new VBox(SECTION_SPACING, label, previewStatusLabel, previewPane);
+		pane.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));
 		VBox.setVgrow(previewPane, Priority.ALWAYS);
 		return pane;
 	}
@@ -342,21 +352,21 @@ public class QuestionSearchPane extends BorderPane {
 	private SplitPane createResultsAndDetailsPane() {
 		Label resultsLabel = new Label("Matching questions");
 		resultsLabel.setStyle("-fx-font-weight: bold;");
-		VBox resultsPane = new VBox(4, resultsLabel, resultsList);
+		VBox resultsPane = new VBox(SECTION_SPACING, resultsLabel, resultsList);
 		VBox.setVgrow(resultsList, Priority.ALWAYS);
 		VBox detailsPane = createQuestionDetailsPane();
 		VBox previewPane = createQuestionPreviewPane();
 		SplitPane pane = new SplitPane(resultsPane, detailsPane, previewPane);
 		pane.setOrientation(Orientation.VERTICAL);
-		pane.setDividerPositions(0.22, 0.48);
+		pane.setDividerPositions(RESULTS_DIVIDER_POSITION, DETAILS_DIVIDER_POSITION);
 		return pane;
 	}
 
 	private GridPane createSelectionPane() {
 		GridPane pane = new GridPane();
-		pane.setHgap(8);
-		pane.setVgap(6);
-		pane.setPadding(new Insets(0, 0, 10, 0));
+		pane.setHgap(SELECTOR_COLUMN_GAP);
+		pane.setVgap(SELECTOR_ROW_GAP);
+		pane.setPadding(new Insets(0, 0, PANE_PADDING, 0));
 		pane.add(new Label("Subject"), 0, 0);
 		pane.add(subjectBox, 1, 0);
 		pane.add(new Label("Current syllabus"), 0, 1);
@@ -380,7 +390,7 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void handleClassificationBoxMousePress() {
 		if (!updatingControls && classificationBox.getValue() != null) {
-			Platform.runLater(() -> handleClassificationSelection());
+			Platform.runLater(this::handleClassificationSelection);
 		}
 	}
 
@@ -410,7 +420,7 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void handleDescriptorBoxMousePress() {
 		if (!updatingControls && descriptorBox.getValue() != null) {
-			Platform.runLater(() -> handleDescriptorSelection());
+			Platform.runLater(this::handleDescriptorSelection);
 		}
 	}
 
@@ -424,7 +434,7 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void handleSubjectBoxMousePress() {
 		if (!updatingControls && subjectBox.getValue() != null) {
-			Platform.runLater(() -> handleSubjectSelection());
+			Platform.runLater(this::handleSubjectSelection);
 		}
 	}
 
@@ -443,7 +453,7 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void handleTopicBoxMousePress() {
 		if (!updatingControls && topicBox.getValue() != null) {
-			Platform.runLater(() -> handleTopicSelection());
+			Platform.runLater(this::handleTopicSelection);
 		}
 	}
 
@@ -464,7 +474,7 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void handleUnitBoxMousePress() {
 		if (!updatingControls && unitBox.getValue() != null) {
-			Platform.runLater(() -> handleUnitSelection());
+			Platform.runLater(this::handleUnitSelection);
 		}
 	}
 
@@ -690,7 +700,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startSubjectLoading() {
-		startHierarchyLoad(() -> curriculumRepository.findAllSubjects(),
+		startHierarchyLoad(curriculumRepository::findAllSubjects,
 				subjects -> subjectBox.getItems().setAll(subjects));
 	}
 
@@ -698,6 +708,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void completeSearch(Task<List<QuestionRetrievalResult>> task, long generation) {
+		// Cancellation can race with completion; only the current request may publish results.
 		if (generation != searchGeneration || task != activeSearchTask) {
 			return;
 		}
@@ -728,6 +739,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private <T> void completeHierarchyLoad(Task<T> task, long generation, Consumer<T> onSucceeded) {
+		// Ignore a hierarchy loaded for a selection that has since changed or been disposed.
 		if (generation != hierarchyGeneration || task != activeHierarchyTask) {
 			return;
 		}
@@ -751,6 +763,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void completePreview(Task<Optional<BufferedImage>> task, long generation) {
+		// A late image must never replace the preview for a newer selection.
 		if (generation != previewGeneration || task != activePreviewTask) {
 			return;
 		}

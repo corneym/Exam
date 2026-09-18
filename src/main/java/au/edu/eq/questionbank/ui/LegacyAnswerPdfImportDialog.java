@@ -24,6 +24,13 @@ import javafx.stage.Window;
 
 final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 
+	private static final int VIEWPORT_WIDTH = 620;
+	private static final int VIEWPORT_HEIGHT = 320;
+	private static final int SECTION_SPACING = 12;
+	private static final int CONTENT_PADDING = 10;
+	private static final int PDF_LABEL_WIDTH = 300;
+	private static final int ROW_SPACING = 8;
+
 	private final List<ExamKey> exams;
 	private final Map<ExamKey, Path> selectedPdfs = new LinkedHashMap<>();
 	private final Map<ExamKey, Label> pdfLabels = new LinkedHashMap<>();
@@ -49,8 +56,8 @@ final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 		getDialogPane().getButtonTypes().addAll(continueButton, ButtonType.CANCEL);
 		ScrollPane scrollPane = new ScrollPane(createContent(owner));
 		scrollPane.setFitToWidth(true);
-		scrollPane.setPrefViewportWidth(620);
-		scrollPane.setPrefViewportHeight(320);
+		scrollPane.setPrefViewportWidth(VIEWPORT_WIDTH);
+		scrollPane.setPrefViewportHeight(VIEWPORT_HEIGHT);
 		getDialogPane().setContent(scrollPane);
 	}
 
@@ -83,17 +90,17 @@ final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 	}
 
 	private VBox createContent(Window owner) {
-		VBox content = new VBox(12);
-		content.setPadding(new Insets(10));
+		VBox content = new VBox(SECTION_SPACING);
+		content.setPadding(new Insets(CONTENT_PADDING));
 		for (ExamKey exam : exams) {
 			Label heading = new Label(exam.providerName() + " " + exam.year());
 			heading.setStyle("-fx-font-weight: bold;");
 			Label pdfLabel = new Label("No answer PDF selected");
-			pdfLabel.setPrefWidth(300);
+			pdfLabel.setPrefWidth(PDF_LABEL_WIDTH);
 			pdfLabels.put(exam, pdfLabel);
 			Button chooseButton = new Button("Choose Answer PDF...");
 			chooseButton.setOnAction(_ -> choosePdf(owner, exam));
-			HBox row = new HBox(8, pdfLabel, chooseButton);
+			HBox row = new HBox(ROW_SPACING, pdfLabel, chooseButton);
 			content.getChildren().addAll(heading, row);
 		}
 		return content;

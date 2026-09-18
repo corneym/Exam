@@ -23,6 +23,11 @@ import javafx.stage.Window;
  */
 public class CurriculumImportDialog extends Dialog<ButtonType> {
 
+	private static final int FILE_CONTROL_SPACING = 6;
+	private static final int FORM_COLUMN_GAP = 10;
+	private static final int FORM_ROW_GAP = 8;
+	private static final int FORM_PADDING = 10;
+
 	private final TextField subjectField = new TextField();
 	private final TextField versionField = new TextField();
 	private final CheckBox currentCheckBox = new CheckBox();
@@ -51,11 +56,11 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		fileField.setEditable(false);
 		Button browseButton = new Button("Browse...");
 		browseButton.setOnAction(_ -> chooseFile(owner));
-		HBox fileBox = new HBox(6, fileField, browseButton);
+		HBox fileBox = new HBox(FILE_CONTROL_SPACING, fileField, browseButton);
 		GridPane grid = new GridPane();
-		grid.setHgap(10);
-		grid.setVgap(8);
-		grid.setPadding(new Insets(10));
+		grid.setHgap(FORM_COLUMN_GAP);
+		grid.setVgap(FORM_ROW_GAP);
+		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
 		grid.add(subjectField, 1, 0);
 		grid.add(new Label("Curriculum version:"), 0, 1);
@@ -66,7 +71,7 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		grid.add(fileBox, 1, 3);
 		getDialogPane().setContent(grid);
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
-		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateImportAction(event));
+		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, this::validateImportAction);
 	}
 
 	/**

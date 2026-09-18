@@ -30,6 +30,8 @@ import javafx.scene.layout.VBox;
  */
 public class CurriculumSelectorPane extends VBox {
 
+	private static final int LABEL_COLUMN_WIDTH = 75;
+
 	private static final double ROW_GAP = 4.0;
 	private static final double COLUMN_GAP = 8.0;
 	private static final Insets PANEL_PADDING = new Insets(8);
@@ -380,8 +382,8 @@ public class CurriculumSelectorPane extends VBox {
 		grid.setHgap(COLUMN_GAP);
 		grid.setVgap(ROW_GAP);
 		ColumnConstraints labelColumn = new ColumnConstraints();
-		labelColumn.setMinWidth(75);
-		labelColumn.setPrefWidth(75);
+		labelColumn.setMinWidth(LABEL_COLUMN_WIDTH);
+		labelColumn.setPrefWidth(LABEL_COLUMN_WIDTH);
 		ColumnConstraints controlColumn = new ColumnConstraints();
 		controlColumn.setMinWidth(0);
 		controlColumn.setHgrow(Priority.ALWAYS);
@@ -496,6 +498,7 @@ public class CurriculumSelectorPane extends VBox {
 		if (current != null && code.startsWith(current.getCode())) {
 			return;
 		}
+		// While a code is incomplete, navigate to its deepest existing ancestor.
 		CurriculumNode prefixMatch = findCodePrefixMatch(code);
 		refreshingCode = true;
 		try {

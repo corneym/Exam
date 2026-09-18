@@ -34,6 +34,9 @@ import javafx.util.StringConverter;
  */
 final class SharedContextCapturePane extends VBox {
 
+	private static final double REGION_VIEWPORT_EXTRA_HEIGHT = 4.0;
+	private static final double CONTEXT_SELECTOR_WIDTH = 260.0;
+
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double REGION_PREVIEW_HORIZONTAL_INSET = 24.0;
@@ -161,11 +164,9 @@ final class SharedContextCapturePane extends VBox {
 		if (label == null || label.isBlank()) {
 			throw new IllegalArgumentException("label must not be blank");
 		}
-		/*
-		 * A transferred question selection already exists in the PDF workspace.
-		 * Starting a new automatic capture from scratch must still obey the normal
-		 * transition guard.
-		 */
+		// A transferred question selection already exists in the PDF workspace.
+		// Starting a new automatic capture from scratch must still obey the normal
+		// transition guard.
 		if (transferredSelection == null && !captureStartAllowed.getAsBoolean()) {
 			showWarning("Question selection pending",
 					"Add or clear the current question selection " + "before capturing shared context.");
@@ -561,7 +562,7 @@ final class SharedContextCapturePane extends VBox {
 		// 300 px scrolling limit used by ordinary Question capture is reached.
 		acceptedRegionScroll.prefHeightProperty()
 				.bind(Bindings.createDoubleBinding(
-						() -> Math.min(REGIONS_VIEWPORT_HEIGHT, acceptedRegionBox.getLayoutBounds().getHeight() + 4.0),
+						() -> Math.min(REGIONS_VIEWPORT_HEIGHT, acceptedRegionBox.getLayoutBounds().getHeight() + REGION_VIEWPORT_EXTRA_HEIGHT),
 						acceptedRegionBox.layoutBoundsProperty()));
 
 		setSelectionButtonsEnabled(false);
@@ -576,7 +577,7 @@ final class SharedContextCapturePane extends VBox {
 	private void configureExistingContextField() {
 		existingContextField.setId("shared-context");
 		existingContextField.setPromptText("No shared context");
-		existingContextField.setPrefWidth(260.0);
+		existingContextField.setPrefWidth(CONTEXT_SELECTOR_WIDTH);
 		existingContextField.setConverter(new StringConverter<>() {
 
 			@Override

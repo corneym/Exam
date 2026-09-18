@@ -23,6 +23,10 @@ import javafx.stage.Window;
  */
 final class NewCurriculumDialog extends Dialog<ButtonType> {
 
+	private static final int FORM_COLUMN_GAP = 10;
+	private static final int FORM_ROW_GAP = 8;
+	private static final int FORM_PADDING = 10;
+
 	private final RadioButton existingSubjectButton = new RadioButton("Existing subject");
 	private final RadioButton newSubjectButton = new RadioButton("New subject");
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
@@ -62,9 +66,9 @@ final class NewCurriculumDialog extends Dialog<ButtonType> {
 		existingSubjectButton.selectedProperty().addListener((_, _, _) -> refreshSubjectMode());
 		newSubjectButton.selectedProperty().addListener((_, _, _) -> refreshSubjectMode());
 		GridPane grid = new GridPane();
-		grid.setHgap(10);
-		grid.setVgap(8);
-		grid.setPadding(new Insets(10));
+		grid.setHgap(FORM_COLUMN_GAP);
+		grid.setVgap(FORM_ROW_GAP);
+		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
 		grid.add(existingSubjectButton, 1, 0);
 		grid.add(subjectBox, 1, 1);
@@ -77,7 +81,7 @@ final class NewCurriculumDialog extends Dialog<ButtonType> {
 		getDialogPane().setContent(grid);
 		Button createButton = (Button) getDialogPane().lookupButton(createButtonType);
 		createButton.setId("create-curriculum");
-		createButton.addEventFilter(javafx.event.ActionEvent.ACTION, event -> validateCreateAction(event));
+		createButton.addEventFilter(javafx.event.ActionEvent.ACTION, this::validateCreateAction);
 		refreshSubjectMode();
 	}
 

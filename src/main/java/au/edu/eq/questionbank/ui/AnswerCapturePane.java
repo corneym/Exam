@@ -57,6 +57,8 @@ import javafx.util.StringConverter;
  */
 final class AnswerCapturePane extends VBox {
 
+	private static final double REGION_VIEWPORT_EXTRA_HEIGHT = 4.0;
+
 	private static final double ANSWER_REGIONS_VIEWPORT_HEIGHT = 300.0;
 	private static final double COMPACT_SPACING = 4.0;
 	private static final double CONTROL_SPACING = 8.0;
@@ -209,11 +211,9 @@ final class AnswerCapturePane extends VBox {
 			Set<Long> locallyAnsweredQuestionIds) {
 		Objects.requireNonNull(questions, "questions");
 		Objects.requireNonNull(locallyAnsweredQuestionIds, "locallyAnsweredQuestionIds");
-		/*
-		 * Exclude both persisted Answers and Questions known to have been answered
-		 * locally since the supplied snapshot was obtained, then apply the common
-		 * source-order policy used by other corpus work queues.
-		 */
+		// Exclude both persisted Answers and Questions known to have been answered
+		// locally since the supplied snapshot was obtained, then apply the common
+		// source-order policy used by other corpus work queues.
 		return questions.stream()
 				.filter(question -> !question.hasAnswer() && !locallyAnsweredQuestionIds.contains(question.getId()))
 				.sorted(QuestionSourceOrder.comparator()).toList();
@@ -299,10 +299,8 @@ final class AnswerCapturePane extends VBox {
 	 * takes ownership of the single PDF selection.
 	 */
 	void discardCurrentSelectionForOwnershipLoss() {
-		/*
-		 * The new workflow already owns the visible PDF rectangle, so clear only this
-		 * pane's stale local state and never call selectionClearHandler here.
-		 */
+		// The new workflow already owns the visible PDF rectangle, so clear only this
+		// pane's stale local state and never call selectionClearHandler here.
 		currentAnswerSelection = null;
 		setSelectionActionsEnabled(false);
 
@@ -387,28 +385,22 @@ final class AnswerCapturePane extends VBox {
 	void refreshQuestions(List<Question> questions) {
 		Question editTarget = editingAnswerQuestion;
 		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;
-		/*
-		 * Build the Answer work queue independently of repository insertion order so
-		 * that sustained Answer capture follows the examination's natural source order.
-		 */
+		// Build the Answer work queue independently of repository insertion order so
+		// that sustained Answer capture follows the examination's natural source order.
 		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds);
 		Question matching = editTarget;
 		if (matching == null && selected != null) {
 			for (Question question : unansweredQuestions) {
-				/*
-				 * Preserve the currently selected Question across queue refreshes by persistent
-				 * identity rather than object instance.
-				 */
+				// Preserve the currently selected Question across queue refreshes by persistent
+				// identity rather than object instance.
 				if (question.getId() == selected.getId()) {
 					matching = question;
 					break;
 				}
 			}
 		}
-		/*
-		 * Suppress the normal selection listener while replacing the queue and
-		 * restoring the previous selection.
-		 */
+		// Suppress the normal selection listener while replacing the queue and
+		// restoring the previous selection.
 		restoringUnansweredQuestionSelection = true;
 		try {
 			unansweredQuestionField.getItems().setAll(unansweredQuestions);
@@ -461,7 +453,7 @@ final class AnswerCapturePane extends VBox {
 		// after the first preview is added.
 		double contentHeight = answerRegionListBox.prefHeight(answerRegionListBox.getWidth());
 
-		return Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, contentHeight + 4.0);
+		return Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, contentHeight + REGION_VIEWPORT_EXTRA_HEIGHT);
 	}
 
 	private void applyRestoredQuestionSelection(Question previousQuestion) {
@@ -501,10 +493,8 @@ final class AnswerCapturePane extends VBox {
 		if (question.hasAnswer()) {
 			Answer answer = question.getAnswer();
 			selectMultipleChoiceAnswer(answer.getAnswerText());
-			/*
-			 * Preserve any historical regions regardless of response type. MCQ mode simply
-			 * does not display or require them.
-			 */
+			// Preserve any historical regions regardless of response type. MCQ mode simply
+			// does not display or require them.
 			pendingAnswerRegions.addAll(answer.getRegions());
 			if (writtenResponse) {
 				if (!answer.getRegions().isEmpty()) {
@@ -723,11 +713,9 @@ final class AnswerCapturePane extends VBox {
 			previewView.setPreserveRatio(true);
 			previewView.setSmooth(true);
 			previewView.setCache(true);
-			/*
-			 * Bind to the containing Answer pane rather than the ScrollPane viewport. The
-			 * Answer pane is already laid out when the first region is accepted, and its
-			 * width is unaffected by the ScrollPane's vertical scrollbar.
-			 */
+			// Bind to the containing Answer pane rather than the ScrollPane viewport. The
+			// Answer pane is already laid out when the first region is accepted, and its
+			// width is unaffected by the ScrollPane's vertical scrollbar.
 			previewView.fitWidthProperty().bind(Bindings.createDoubleBinding(
 					() -> Math.max(0.0, getWidth() - REGION_PREVIEW_HORIZONTAL_INSET), widthProperty()));
 			return previewView;
@@ -737,11 +725,9 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private VBox createAnswerPdfControls() {
-		/*
-		 * A filename can be much wider than the capture workspace. Give it a dedicated
-		 * wrapping row so it can never force the Choose PDF action below its readable
-		 * width.
-		 */
+		// A filename can be much wider than the capture workspace. Give it a dedicated
+		// wrapping row so it can never force the Choose PDF action below its readable
+		// width.
 		answerPdfControls.getChildren().setAll(chooseAnswerPdfButton, selectedAnswerPdfLabel);
 		answerPdfControls.setFillWidth(true);
 		return answerPdfControls;
@@ -975,11 +961,9 @@ final class AnswerCapturePane extends VBox {
 	private void refreshAnswerRegionList() {
 		boolean hasRegions = !pendingAnswerRegions.isEmpty();
 		boolean showRegions = hasRegions && isWrittenResponseQuestion(unansweredQuestionField.getValue());
-		/*
-		 * Stored regions remain in pendingAnswerRegions even when the current response
-		 * type does not display region capture. This is important when legacy
-		 * answer-region data exists for a Question later classified as MCQ.
-		 */
+		// Stored regions remain in pendingAnswerRegions even when the current response
+		// type does not display region capture. This is important when legacy
+		// answer-region data exists for a Question later classified as MCQ.
 		answerRegionsScrollPane.setManaged(showRegions);
 		answerRegionsScrollPane.setVisible(showRegions);
 		answerRegionListBox.getChildren().clear();
@@ -1070,6 +1054,7 @@ final class AnswerCapturePane extends VBox {
 		}
 		int previousIndex = unansweredQuestionField.getSelectionModel().getSelectedIndex();
 		String storedText = answerText.isBlank() ? null : answerText;
+		// Snapshot accepted regions before the background task takes ownership of the save.
 		List<AnswerRegion> regions = List.copyOf(pendingAnswerRegions);
 		boolean updating = question.hasAnswer();
 		long existingAnswerId = updating ? question.getAnswer().getId() : 0;
@@ -1088,24 +1073,7 @@ final class AnswerCapturePane extends VBox {
 		};
 		saveTask.setOnSucceeded(_ -> {
 			Answer answer = saveTask.getValue();
-			question.setAnswer(answer);
-			locallyAnsweredQuestionIds.add(question.getId());
-			if (editing) {
-				Runnable completedHandler = null;
-				try {
-					completedHandler = finishAnswerEditState(false);
-				} finally {
-					finishAnswerSaveTransition(null);
-				}
-				if (completedHandler != null) {
-					completedHandler.run();
-				}
-				return;
-			}
-			clearPendingAnswerRegions();
-			clearMultipleChoiceAnswer();
-			Question next = removeSavedQuestionAndSelectNext(question, previousIndex);
-			loadNextAnswerDocument(next);
+			completeAnswerSave(question, answer, editing, previousIndex);
 		});
 		saveTask.setOnFailed(_ -> {
 			answerSaveInProgress = false;
@@ -1121,6 +1089,28 @@ final class AnswerCapturePane extends VBox {
 		Thread saveThread = new Thread(saveTask, "answer-save");
 		saveThread.setDaemon(true);
 		saveThread.start();
+	}
+
+	// Update local choices only after persistence succeeds, then load the next PDF asynchronously.
+	private void completeAnswerSave(Question question, Answer answer, boolean editing, int previousIndex) {
+		question.setAnswer(answer);
+		locallyAnsweredQuestionIds.add(question.getId());
+		if (editing) {
+			Runnable completedHandler = null;
+			try {
+				completedHandler = finishAnswerEditState(false);
+			} finally {
+				finishAnswerSaveTransition(null);
+			}
+			if (completedHandler != null) {
+				completedHandler.run();
+			}
+			return;
+		}
+		clearPendingAnswerRegions();
+		clearMultipleChoiceAnswer();
+		Question next = removeSavedQuestionAndSelectNext(question, previousIndex);
+		loadNextAnswerDocument(next);
 	}
 
 	private void selectMultipleChoiceAnswer(String answerText) {
@@ -1146,10 +1136,8 @@ final class AnswerCapturePane extends VBox {
 			multipleChoiceAnswerGroup.selectToggle(answerDButton);
 			return;
 		}
-		/*
-		 * Preserve older arbitrary textual answers even though the current capture UI
-		 * only exposes A-D choices.
-		 */
+		// Preserve older arbitrary textual answers even though the current capture UI
+		// only exposes A-D choices.
 		preservedAnswerText = answerText;
 	}
 

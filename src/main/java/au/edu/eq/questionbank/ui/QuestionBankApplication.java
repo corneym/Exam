@@ -135,6 +135,12 @@ import javafx.stage.Window;
  */
 public class QuestionBankApplication extends Application {
 
+	private static final int EXPORT_PROGRESS_WIDTH = 360;
+	private static final int EXPORT_PROGRESS_SPACING = 10;
+	private static final int AUTHORING_WINDOW_WIDTH = 1400;
+	private static final int AUTHORING_WINDOW_HEIGHT = 840;
+	private static final int FIRST_DUPLICATE_SUFFIX = 2;
+
 	private static final double SECTION_SPACING = 10.0;
 	private static final double PREVIEW_PANE_INITIAL_WIDTH = 525.0;
 	private static final double PREVIEW_PANE_MIN_WIDTH = 400.0;
@@ -375,10 +381,8 @@ public class QuestionBankApplication extends Application {
 	 */
 	private void claimCaptureSelection(CaptureSelectionOwner newOwner) {
 		CaptureSelectionOwner previousOwner = captureSelectionState.getOwner();
-		/*
-		 * Record the new owner first. Any local cleanup performed below must not clear
-		 * the newly completed rectangle from the shared PDF workspace.
-		 */
+		// Record the new owner first. Any local cleanup performed below must not clear
+		// the newly completed rectangle from the shared PDF workspace.
 		captureSelectionState.claim(newOwner);
 		if (previousOwner == null || previousOwner == newOwner) {
 			return;
@@ -389,10 +393,8 @@ public class QuestionBankApplication extends Application {
 			answerCapturePane.discardCurrentSelectionForOwnershipLoss();
 			return;
 		}
-		/*
-		 * QUESTION and SHARED_CONTEXT both live inside QuestionCapturePane, which
-		 * clears the appropriate stale local state without touching the PDF rectangle.
-		 */
+		// QUESTION and SHARED_CONTEXT both live inside QuestionCapturePane, which
+		// clears the appropriate stale local state without touching the PDF rectangle.
 		questionCapturePane.discardCurrentSelectionForOwnershipLoss();
 	}
 
@@ -540,10 +542,8 @@ public class QuestionBankApplication extends Application {
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
 		MenuItem authorItem = createMenuItem("_Author / Edit...", () -> showCurriculumAuthoring(primaryStage, config));
-		/*
-		 * Retain the existing id so any UI automation referring to this menu action
-		 * remains compatible.
-		 */
+		// Retain the existing id so any UI automation referring to this menu action
+		// remains compatible.
 		authorItem.setId("author-curriculum-pdf");
 		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
 				authorItem, new SeparatorMenuItem(),
@@ -589,9 +589,9 @@ public class QuestionBankApplication extends Application {
 		progressLabel.setWrapText(true);
 		progressLabel.textProperty().bind(task.messageProperty());
 		ProgressBar progressBar = new ProgressBar();
-		progressBar.setPrefWidth(360);
+		progressBar.setPrefWidth(EXPORT_PROGRESS_WIDTH);
 		progressBar.progressProperty().bind(task.progressProperty());
-		VBox progressContent = new VBox(10, progressLabel, progressBar);
+		VBox progressContent = new VBox(EXPORT_PROGRESS_SPACING, progressLabel, progressBar);
 		progressAlert.getDialogPane().setContent(progressContent);
 		progressAlert.getDialogPane().setGraphic(null);
 		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
@@ -869,27 +869,21 @@ public class QuestionBankApplication extends Application {
 
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.ANSWER) {
-			/*
-			 * The newly completed Answer rectangle becomes the application's single pending
-			 * selection before AnswerCapturePane receives it.
-			 */
+			// The newly completed Answer rectangle becomes the application's single pending
+			// selection before AnswerCapturePane receives it.
 			claimCaptureSelection(CaptureSelectionOwner.ANSWER);
 			answerCapturePane.acceptSelection(selection);
 			return;
 		}
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.EXAM) {
 			if (questionCapturePane.isCapturingSharedContext()) {
-				/*
-				 * Shared-context capture owns this Exam-PDF rectangle and supersedes any
-				 * incompatible pending selection from another workflow.
-				 */
+				// Shared-context capture owns this Exam-PDF rectangle and supersedes any
+				// incompatible pending selection from another workflow.
 				claimCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT);
 				questionCapturePane.acceptSharedContextSelection(selection);
 			} else {
-				/*
-				 * Ordinary Question capture owns this Exam-PDF rectangle and supersedes any
-				 * incompatible pending selection from another workflow.
-				 */
+				// Ordinary Question capture owns this Exam-PDF rectangle and supersedes any
+				// incompatible pending selection from another workflow.
 				claimCaptureSelection(CaptureSelectionOwner.QUESTION);
 				questionCapturePane.acceptSelection(selection);
 			}
@@ -1158,7 +1152,7 @@ public class QuestionBankApplication extends Application {
 				"Curriculum Authoring — " + syllabusVersion.getSubject().getName() + " " + syllabusVersion.getName());
 		CurriculumAuthoringPane authoringPane = new CurriculumAuthoringPane(authoringStage, config.curriculumDataRoot(),
 				session, authoringWriter, sourcePdfService, lifecycleService);
-		authoringStage.setScene(new Scene(authoringPane, 1400, 840));
+		authoringStage.setScene(new Scene(authoringPane, AUTHORING_WINDOW_WIDTH, AUTHORING_WINDOW_HEIGHT));
 		authoringStage.setOnCloseRequest(event -> {
 			if (!confirmCurriculumAuthoringClose(authoringStage, authoringPane)) {
 				event.consume();
@@ -1332,7 +1326,7 @@ public class QuestionBankApplication extends Application {
 		}
 		String baseName = subjectName + "-revision";
 		Path destination = normalizedParent.resolve(baseName);
-		int suffix = 2;
+		int suffix = FIRST_DUPLICATE_SUFFIX;
 		while (Files.exists(destination)) {
 			destination = normalizedParent.resolve(baseName + "-" + suffix);
 			suffix++;
@@ -1355,7 +1349,7 @@ public class QuestionBankApplication extends Application {
 		}
 		String baseName = subjectName + "-revision-scorm";
 		Path destination = normalizedParent.resolve(baseName + ".zip");
-		int suffix = 2;
+		int suffix = FIRST_DUPLICATE_SUFFIX;
 		while (Files.exists(destination)) {
 			destination = normalizedParent.resolve(baseName + "-" + suffix + ".zip");
 			suffix++;
