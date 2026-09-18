@@ -4,6 +4,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -142,6 +144,56 @@ public final class SqliteExamWriter {
 		}
 		try (Connection connection = database.openConnection()) {
 			return findExamProviderByName(connection, providerName) != null;
+		}
+	}
+
+	/**
+	 * Returns all persisted examination booklets with their complete Exam and
+	 * SourceDocument relationships.
+	 *
+	 * @return persisted booklets ordered by persistent booklet identifier
+	 * @throws SQLException if the lookup fails
+	 */
+	public List<ExamBooklet> findAllExamBooklets() throws SQLException {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    eb.id AS booklet_id,
+						    eb.booklet_name,
+						    sd.id AS source_document_id,
+						    sd.relative_path,
+						    e.id AS exam_id,
+						    e.exam_year,
+						    e.exam_name,
+						    s.id AS subject_id,
+						    s.subject_name,
+						    p.id AS provider_id,
+						    p.provider_name
+						FROM exam_booklets eb
+						JOIN source_documents sd
+						    ON sd.id = eb.source_document_id
+						JOIN exams e
+						    ON e.id = eb.exam_id
+						JOIN subjects s
+						    ON s.id = e.subject_id
+						JOIN exam_providers p
+						    ON p.id = e.provider_id
+						ORDER BY eb.id
+						""");
+				ResultSet result = statement.executeQuery()) {
+			List<ExamBooklet> booklets = new ArrayList<>();
+			while (result.next()) {
+				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
+				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
+						result.getString("provider_name"));
+				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
+						result.getString("exam_name"));
+				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
+						result.getString("relative_path"));
+				booklets.add(new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
+						sourceDocument));
+			}
+			return List.copyOf(booklets);
 		}
 	}
 

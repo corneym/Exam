@@ -12,6 +12,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -92,6 +93,31 @@ class SqliteExamWriterTest {
 		// been removed, while the corrected provider remains authoritative.
 		assertFalse(writer.examProviderExists("2022 QCAA"));
 		assertTrue(writer.examProviderExists("QCAA"));
+	}
+
+	@Test
+	void findsAllExamBookletsWithSourceRelationships() throws Exception {
+		Path databasePath = tempDirectory.resolve("all-exam-booklets.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2024, "External Assessment");
+		SourceDocument paperOneSource = writer.insertSourceDocument("Chemistry/QCAA/2024/paper1.pdf");
+		SourceDocument paperTwoSource = writer.insertSourceDocument("Chemistry/QCAA/2024/paper2.pdf");
+		ExamBooklet paperOne = writer.insertExamBooklet(exam, paperOneSource, "Paper 1");
+		ExamBooklet paperTwo = writer.insertExamBooklet(exam, paperTwoSource, "Paper 2");
+		List<ExamBooklet> found = writer.findAllExamBooklets();
+		assertEquals(2, found.size());
+		assertEquals(List.of(paperOne.getId(), paperTwo.getId()), found.stream().map(ExamBooklet::getId).toList());
+		ExamBooklet first = found.getFirst();
+		assertEquals(exam.getId(), first.getExam().getId());
+		assertEquals("QCAA", first.getExam().getProvider().getName());
+		assertEquals(2024, first.getExam().getYear());
+		assertEquals("External Assessment", first.getExam().getName());
+		assertEquals(paperOneSource.getId(), first.getSourceDocument().getId());
+		assertEquals("Chemistry/QCAA/2024/paper1.pdf", first.getSourceDocument().getRelativePath());
 	}
 
 	@Test
