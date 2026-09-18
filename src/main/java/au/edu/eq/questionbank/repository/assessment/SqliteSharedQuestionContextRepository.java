@@ -71,6 +71,15 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		return List.copyOf(contexts);
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>
+	 * The context row is updated in place and its ordered region set is replaced in
+	 * the same transaction. Preserving the context identifier means existing
+	 * Question foreign-key relationships remain unchanged.
+	 * </p>
+	 */
 	@Override
 	public SharedQuestionContext replace(SharedQuestionContext context, String label,
 			List<SharedQuestionContextRegion> regions) {

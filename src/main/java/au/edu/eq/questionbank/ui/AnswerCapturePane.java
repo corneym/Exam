@@ -456,9 +456,12 @@ final class AnswerCapturePane extends VBox {
 	}
 
 	private double answerRegionsPreferredHeight() {
-		// Grow with the accepted-region content until the scrollable maximum is
-		// reached.
-		return Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, answerRegionListBox.getLayoutBounds().getHeight() + 4.0);
+		// Measure what the accepted-region content wants to be, rather than its
+		// current laid-out height. The latter can still be near zero immediately
+		// after the first preview is added.
+		double contentHeight = answerRegionListBox.prefHeight(answerRegionListBox.getWidth());
+
+		return Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, contentHeight + 4.0);
 	}
 
 	private void applyRestoredQuestionSelection(Question previousQuestion) {
@@ -700,8 +703,13 @@ final class AnswerCapturePane extends VBox {
 
 		// Size the accepted-region area to its actual content instead of immediately
 		// claiming the full 300 px viewport height when the first region is added.
-		answerRegionsScrollPane.prefHeightProperty().bind(Bindings
-				.createDoubleBinding(this::answerRegionsPreferredHeight, answerRegionListBox.layoutBoundsProperty()));
+		answerRegionsScrollPane.prefHeightProperty()
+				.bind(Bindings.createDoubleBinding(this::answerRegionsPreferredHeight,
+						// Adding or removing a preview changes the preferred content height.
+						answerRegionListBox.getChildren(),
+						// Resizing the Answer pane changes the preview width and therefore
+						// the height required to preserve the image aspect ratio.
+						widthProperty()));
 		answerRegionsScrollPane.setMaxWidth(Double.MAX_VALUE);
 		answerRegionsScrollPane.setVisible(false);
 		answerRegionsScrollPane.setManaged(false);

@@ -123,7 +123,7 @@ class QuestionBankApplicationWorkflowTest {
 	}
 
 	@Test
-	void acceptedAnswerRegionUsesContentHeightInsteadOfFullViewport(FxRobot robot) throws Exception {
+	void acceptedAnswerRegionUsesContentHeightImmediately(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 
 		Question question = captureQuestion(robot, "Q1");
@@ -133,34 +133,33 @@ class QuestionBankApplicationWorkflowTest {
 
 		openAnswerPdfForTest(question);
 
-		// Use a deliberately shallow source region so its preview requires much less
-		// than the 300 px maximum region viewport.
+		// Use a shallow region so the required preview area remains clearly below
+		// the 300 px maximum viewport height.
 		robot.interact(() -> answerCapturePane().acceptSelection(
 				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.ANSWER, 1, 0.10, 0.10, 0.70, 0.05)));
 
 		robot.clickOn("#add-answer-region");
+		WaitForAsyncUtils.waitForFxEvents();
 
 		javafx.scene.control.ScrollPane regionsPane = field(answerCapturePane(), "answerRegionsScrollPane",
 				javafx.scene.control.ScrollPane.class);
 
-		robot.interact(() -> {
-			primaryStage.getScene().getRoot().applyCss();
-			primaryStage.getScene().getRoot().layout();
-		});
-
-		WaitForAsyncUtils.waitForFxEvents();
+		javafx.scene.layout.VBox regionList = field(answerCapturePane(), "answerRegionListBox",
+				javafx.scene.layout.VBox.class);
 
 		assertTrue(regionsPane.isVisible());
 		assertTrue(regionsPane.isManaged());
 
-		// A small accepted region must not make the Answer pane immediately request
-		// the full 300 px maximum viewport.
+		// The preview must acquire its content-derived height without requiring an
+		// unrelated window or SplitPane resize to force another layout pass.
+		double expectedHeight = Math.min(300.0, regionList.prefHeight(regionList.getWidth()) + 4.0);
+
+		assertTrue(expectedHeight > 4.0, "Accepted Answer content must have a measurable preferred height");
+
+		assertEquals(expectedHeight, regionsPane.getPrefHeight(), 1.0);
+
 		assertTrue(regionsPane.getPrefHeight() < 300.0,
-				"One small Answer region must use its content height rather than the full viewport");
-
-		double contentHeight = regionsPane.getContent().getLayoutBounds().getHeight();
-
-		assertEquals(Math.min(300.0, contentHeight + 4.0), regionsPane.getPrefHeight(), 1.0);
+				"One small Answer region must not claim the full maximum viewport");
 	}
 
 	@Test
@@ -1355,12 +1354,11 @@ class QuestionBankApplicationWorkflowTest {
 	@Test
 	void multipleChoiceControlsRemainReadableAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-		/*
-		 * Select MCQ before using the existing capture helper. The helper supplies its
-		 * written-response default only when no response type has already been chosen.
-		 */
-		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#question-response-type");
-		robot.interact(() -> responseType.setValue(QuestionResponseType.MULTIPLE_CHOICE));
+
+		// Select MCQ before using the existing capture helper. The helper supplies its
+		// written-response default only when no response type has already been chosen.
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		robot.clickOn(multipleChoice);
 		Question question = captureQuestion(robot, "MC1");
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
