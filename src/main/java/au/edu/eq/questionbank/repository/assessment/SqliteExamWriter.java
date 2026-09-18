@@ -71,6 +71,9 @@ public final class SqliteExamWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+				// Remember the provider currently owned by this Exam so it can be removed
+				// after reassignment if no other Exam still references it.
+				long previousProviderId = exam.getProvider().getId();
 
 				// Reuse an existing provider where possible. Changing one Exam must
 				// not rename a provider row that may also belong to other Exams.
@@ -104,7 +107,14 @@ public final class SqliteExamWriter {
 						throw new IllegalArgumentException("Exam does not exist for its stored subject");
 					}
 				}
+				// If correction moved this Exam to a different provider, remove the malformed
+				// provider only when no other Exam still references it.
+				if (previousProviderId != provider.getId()) {
+					deleteExamProviderIfUnreferenced(connection, previousProviderId);
+				}
+
 				Exam corrected = new Exam(exam.getId(), exam.getSubject(), provider, year, name);
+
 				connection.commit();
 				return corrected;
 			} catch (SQLException | RuntimeException e) {
@@ -474,6 +484,33 @@ public final class SqliteExamWriter {
 				}
 				return new SourceDocument(result.getLong("id"), relativePath);
 			}
+		}
+	}
+
+	private void deleteExamProviderIfUnreferenced(Connection connection, long providerId) throws SQLException {
+
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (providerId < 1) {
+			throw new IllegalArgumentException("providerId must be positive");
+		}
+
+		// Delete only an orphan. The NOT EXISTS guard ensures an Exam corrected in
+		// isolation cannot remove a provider still used by another Exam.
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM exam_providers
+				WHERE id = ?
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM exams
+				      WHERE provider_id = ?
+				  )
+				""")) {
+
+			statement.setLong(1, providerId);
+			statement.setLong(2, providerId);
+			statement.executeUpdate();
 		}
 	}
 }

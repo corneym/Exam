@@ -1065,9 +1065,15 @@ class QuestionBankApplicationWorkflowTest {
 			Platform.runLater(exitItem::fire);
 			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 					() -> robot.lookup("Save in progress").tryQuery().isPresent());
+
 			assertEquals(0, exitCount.get());
 			assertEquals(0, automaticBackupCount());
-			robot.clickOn("OK");
+
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
+
+			Button okButton = robot.lookup("OK").queryButton();
+			robot.interact(okButton::fire);
+			WaitForAsyncUtils.waitForFxEvents();
 		} finally {
 			setField(pane, "questionSaveInProgress", false);
 		}
