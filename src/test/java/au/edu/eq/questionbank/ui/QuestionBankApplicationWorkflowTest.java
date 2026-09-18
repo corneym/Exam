@@ -2156,7 +2156,7 @@ class QuestionBankApplicationWorkflowTest {
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
 
 		SharedQuestionContext originalContext = contextRepository.save(booklet, "Question 64 preamble",
-				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.10)));
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.50, 0.10)));
 
 		Question question = questionRepository.save(booklet, "64a", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.35, 0.70, 0.20)), classification, true, null,

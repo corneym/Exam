@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -80,6 +81,7 @@ final class QuestionCapturePane extends VBox {
 	private final Supplier<PdfSession> examPdfSessionSupplier;
 	private final Runnable selectionClearHandler;
 	private final Consumer<List<Question>> questionsChangedHandler;
+	private final IntConsumer examPageNavigationHandler;
 	// Reuse the worker's snapshot throughout synchronous listeners fired by save
 	// completion.
 	private List<Question> completionQuestions;
@@ -141,12 +143,16 @@ final class QuestionCapturePane extends VBox {
 			QuestionExtractor questionExtractor, CurriculumSelectionModel curriculumSelectionModel,
 			CurriculumSelectorPane curriculumSelectorPane, Supplier<ExamBooklet> bookletSupplier,
 			Supplier<PdfSession> examPdfSessionSupplier, Predicate<Question> importedQuestionActivationHandler,
-			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
-			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler) {
+			IntConsumer examPageNavigationHandler, BooleanSupplier questionTargetChangeAllowed,
+			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
+			Consumer<List<Question>> questionsChangedHandler) {
+
 		validateDependencies(questionRepository, sourceQuestionRepository, questionCaptureService,
 				sharedContextCapturePane, questionExtractor, curriculumSelectionModel, curriculumSelectorPane,
-				bookletSupplier, examPdfSessionSupplier, importedQuestionActivationHandler, questionTargetChangeAllowed,
-				questionSelectionTransferHandler, selectionClearHandler, questionsChangedHandler);
+				bookletSupplier, examPdfSessionSupplier, importedQuestionActivationHandler, examPageNavigationHandler,
+				questionTargetChangeAllowed, questionSelectionTransferHandler, selectionClearHandler,
+				questionsChangedHandler);
+
 		this.questionRepository = questionRepository;
 		this.questionExtractor = questionExtractor;
 		this.curriculumSelectionModel = curriculumSelectionModel;
@@ -156,11 +162,13 @@ final class QuestionCapturePane extends VBox {
 		this.selectionClearHandler = selectionClearHandler;
 		this.questionsChangedHandler = questionsChangedHandler;
 		this.importedQuestionActivationHandler = importedQuestionActivationHandler;
+		this.examPageNavigationHandler = examPageNavigationHandler;
 		this.questionTargetChangeAllowed = questionTargetChangeAllowed;
 		this.sourceQuestionRepository = sourceQuestionRepository;
 		this.sharedContextCapturePane = sharedContextCapturePane;
 		this.questionSelectionTransferHandler = questionSelectionTransferHandler;
 		this.questionCaptureService = questionCaptureService;
+
 		configureControls();
 		configureActions();
 		buildContent();
@@ -338,6 +346,7 @@ final class QuestionCapturePane extends VBox {
 			restoreCaptureModeToggle();
 			return false;
 		}
+		showFirstQuestionRegionPage(question);
 		refreshingImportedQuestions = true;
 		try {
 			importedQuestionBox.setValue(null);
@@ -458,6 +467,7 @@ final class QuestionCapturePane extends VBox {
 			restoreCaptureModeToggle();
 			return false;
 		}
+		showFirstSharedContextRegionPage(question.getSharedContext());
 
 		// Shared-preamble correction is independent of Question editing, so clear
 		// ordinary edit/queue ownership before preparing the contextual display.
@@ -1578,6 +1588,26 @@ final class QuestionCapturePane extends VBox {
 		captureHintLabel.setManaged(true);
 	}
 
+	private void showFirstQuestionRegionPage(Question question) {
+		if (question.getRegions().isEmpty()) {
+			return;
+		}
+
+		// Persisted Question regions are ordered, so the first region identifies the
+		// most useful source page when entering edit or recapture.
+		examPageNavigationHandler.accept(question.getRegions().getFirst().pageNumber());
+	}
+
+	private void showFirstSharedContextRegionPage(SharedQuestionContext context) {
+
+		if (context.getRegions().isEmpty()) {
+			return;
+		}
+
+		// Shared-context regions are also persisted in source order.
+		examPageNavigationHandler.accept(context.getRegions().getFirst().pageNumber());
+	}
+
 	private void showImportedClassification(Question question) {
 		importedClassificationLabel.setText("Imported classification: " + question.getClassification().getCode() + " — "
 				+ question.getClassification().getName());
@@ -1784,9 +1814,10 @@ final class QuestionCapturePane extends VBox {
 			SharedContextCapturePane sharedContextCapturePane, QuestionExtractor questionExtractor,
 			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
 			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
-			Predicate<Question> importedQuestionActivationHandler, BooleanSupplier questionTargetChangeAllowed,
-			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
-			Consumer<List<Question>> questionsChangedHandler) {
+			Predicate<Question> importedQuestionActivationHandler, IntConsumer examPageNavigationHandler,
+			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
+			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler) {
+
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -1813,6 +1844,9 @@ final class QuestionCapturePane extends VBox {
 		}
 		if (importedQuestionActivationHandler == null) {
 			throw new NullPointerException("importedQuestionActivationHandler");
+		}
+		if (examPageNavigationHandler == null) {
+			throw new NullPointerException("examPageNavigationHandler");
 		}
 		if (questionTargetChangeAllowed == null) {
 			throw new NullPointerException("questionTargetChangeAllowed");

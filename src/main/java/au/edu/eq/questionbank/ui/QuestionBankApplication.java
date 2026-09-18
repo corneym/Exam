@@ -1065,8 +1065,9 @@ public class QuestionBankApplication extends Application {
 		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
 				questionCaptureService, sharedContextCapturePane, questionExtractor, curriculumSelectionModel,
 				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
-				question -> activateImportedQuestion(question, config), this::confirmDiscardAcceptedQuestionRegions,
-				this::transferQuestionSelectionToSharedContext,
+				question -> activateImportedQuestion(question, config),
+				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
+				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
 		questionCapturePane.refreshImportedQuestions();
 	}

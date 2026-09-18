@@ -451,6 +451,50 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		showCurrentPage();
 	}
 
+	/**
+	 * Displays a specific one-based page of an already opened document.
+	 *
+	 * @param documentMode document whose page should be displayed
+	 * @param pageNumber   one-based page number
+	 * @throws NullPointerException     if {@code documentMode} is {@code null}
+	 * @throws IllegalStateException    if that document is not currently open
+	 * @throws IllegalArgumentException if the page number is outside the document
+	 */
+	void showPage(DocumentMode documentMode, int pageNumber) {
+		if (documentMode == null) {
+			throw new NullPointerException("documentMode");
+		}
+
+		PdfSession targetSession = switch (documentMode) {
+		case EXAM -> examPdfSession;
+		case ANSWER -> answerPdfSession;
+		case VIEWER -> viewerPdfSession;
+		};
+
+		if (targetSession == null) {
+			throw new IllegalStateException("No " + documentMode + " PDF is currently open");
+		}
+
+		if (pageNumber < 1 || pageNumber > targetSession.getPageCount()) {
+			throw new IllegalArgumentException(
+					"Page " + pageNumber + " is outside the document range 1-" + targetSession.getPageCount());
+		}
+
+		// Switch documents using the existing workspace lifecycle before selecting
+		// the requested page.
+		if (displayedDocument != documentMode) {
+			showDocument(documentMode);
+		}
+
+		if (currentPageNumber == pageNumber) {
+			restorePageNumberField();
+			return;
+		}
+
+		currentPageNumber = pageNumber;
+		showCurrentPage();
+	}
+
 	private void applyPageImage(Image image, PdfSession session) {
 		pageView.setImage(image);
 		double aspectRatio = image.getHeight() / image.getWidth();

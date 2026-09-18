@@ -161,6 +161,19 @@ class PdfWorkspacePaneAsyncTest {
 		assertThrows(IllegalStateException.class, () -> pane.extractDisplayedPageText());
 	}
 
+	@Test
+	void showsRequestedPageOfOpenDocument(FxRobot robot) throws Exception {
+		Path path = createTextPdf("programmatic-page-jump.pdf", "Page one", "Page two", "Page three");
+
+		robot.interact(() -> {
+			pane.openViewerPdf(path);
+			pane.showPage(PdfWorkspacePane.DocumentMode.VIEWER, 3);
+		});
+
+		assertEquals(3, pane.getCurrentPageNumber());
+		assertEquals("Page three", pane.extractDisplayedPageText().trim());
+	}
+
 	@Start
 	void start(Stage stage) {
 		pane = new PdfWorkspacePane();
