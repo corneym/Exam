@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.export;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -19,10 +19,10 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
 
 /**
- * Collects the Subject and destination parent directory for a SCORM revision
- * export.
+ * Collects the Subject and destination parent directory for a static revision
+ * HTML export.
  */
-public final class ScormExportDialog extends Dialog<ButtonType> {
+public final class RevisionExportDialog extends Dialog<ButtonType> {
 
 	private static final int FILE_CONTROL_SPACING = 6;
 	private static final int FORM_COLUMN_GAP = 10;
@@ -34,16 +34,13 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 	private final Button exportButton;
 
 	/**
-	 * Creates a SCORM export dialog for the available Subjects.
+	 * Creates the subject and destination chooser for a revision HTML export.
 	 *
-	 * @param owner          owner for this dialog and its directory chooser
-	 * @param subjects       Subjects available for export
-	 * @param defaultSubject Subject initially selected when it is in
-	 *                       {@code subjects}; otherwise no Subject is selected
-	 * @throws NullPointerException if {@code subjects} or one of its elements is
-	 *                              null
+	 * @param owner          window owning the dialog
+	 * @param subjects       available export subjects
+	 * @param defaultSubject initial subject selection, or null
 	 */
-	public ScormExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
+	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
 		if (subjects == null) {
 			throw new NullPointerException("subjects");
 		}
@@ -52,23 +49,23 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 				throw new NullPointerException("subjects contains null");
 			}
 		}
-		setTitle("Export Revision SCORM");
-		setHeaderText("Create a SCORM 1.2 revision package for QLearn");
+		setTitle("Export Revision HTML");
+		setHeaderText("Create a student revision website");
 		initOwner(owner);
 		ButtonType exportButtonType = new ButtonType("Export", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(exportButtonType, ButtonType.CANCEL);
-		subjectBox.setId("scorm-export-subject");
+		subjectBox.setId("revision-export-subject");
 		subjectBox.setPromptText("Select subject");
 		subjectBox.getItems().setAll(subjects);
 		subjectBox.setMaxWidth(Double.MAX_VALUE);
 		if (defaultSubject != null && subjectBox.getItems().contains(defaultSubject)) {
 			subjectBox.setValue(defaultSubject);
 		}
-		destinationField.setId("scorm-export-destination");
+		destinationField.setId("revision-export-destination");
 		destinationField.setEditable(false);
 		destinationField.setPromptText("Choose destination folder");
 		Button browseButton = new Button("Browse...");
-		browseButton.setId("scorm-export-browse");
+		browseButton.setId("revision-export-browse");
 		browseButton.setOnAction(_ -> chooseDestination(owner));
 		HBox destinationBox = new HBox(FILE_CONTROL_SPACING, destinationField, browseButton);
 		GridPane grid = new GridPane();
@@ -81,25 +78,25 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		grid.add(destinationBox, 1, 1);
 		getDialogPane().setContent(grid);
 		exportButton = (Button) getDialogPane().lookupButton(exportButtonType);
-		exportButton.setId("scorm-export-start");
+		exportButton.setId("revision-export-start");
 		exportButton.setDisable(true);
-		subjectBox.valueProperty().addListener((_, _, _) -> updateExportButton());
-		updateExportButton();
+		subjectBox.valueProperty().addListener((_, _, _) -> updateExportButton(exportButton));
+		updateExportButton(exportButton);
 	}
 
 	/**
-	 * Returns the selected directory in which the application will name the ZIP.
+	 * Returns the parent directory chosen for the revision export.
 	 *
-	 * @return the absolute normalised directory, or {@code null} until selected
+	 * @return selected directory, or null before one is chosen
 	 */
 	public Path getDestinationParent() {
 		return destinationParent;
 	}
 
 	/**
-	 * Returns the Subject selected for export.
+	 * Returns the subject selected for revision export.
 	 *
-	 * @return the selected Subject, or {@code null} when none is selected
+	 * @return selected subject, or null if no subject is selected
 	 */
 	public Subject getSelectedSubject() {
 		return subjectBox.getValue();
@@ -107,7 +104,7 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 
 	private void chooseDestination(Window owner) {
 		DirectoryChooser chooser = new DirectoryChooser();
-		chooser.setTitle("Choose SCORM Export Destination");
+		chooser.setTitle("Choose Revision Export Destination");
 		if (destinationParent != null) {
 			File current = destinationParent.toFile();
 			if (current.isDirectory()) {
@@ -128,10 +125,10 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		Path normalized = destinationParent.toAbsolutePath().normalize();
 		this.destinationParent = normalized;
 		destinationField.setText(normalized.toString());
-		updateExportButton();
+		updateExportButton(exportButton);
 	}
 
-	private void updateExportButton() {
+	private void updateExportButton(Button exportButton) {
 		exportButton.setDisable(subjectBox.getValue() == null || destinationParent == null);
 	}
 }

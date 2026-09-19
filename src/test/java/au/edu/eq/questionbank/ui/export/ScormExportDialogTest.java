@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.export;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -26,7 +26,7 @@ import javafx.stage.Stage;
 
 @Tag("ui")
 @ExtendWith(ApplicationExtension.class)
-class RevisionExportDialogTest {
+class ScormExportDialogTest {
 
 	private Stage stage;
 
@@ -34,27 +34,27 @@ class RevisionExportDialogTest {
 	void defaultsToCurrentSubjectAndRequiresDestination() throws Exception {
 		Subject chemistry = new Subject(1, "Chemistry");
 		Subject physics = new Subject(2, "Physics");
-		RevisionExportDialog[] holder = new RevisionExportDialog[1];
-		org.testfx.api.FxToolkit.setupFixture(
-				() -> holder[0] = new RevisionExportDialog(stage, List.of(chemistry, physics), chemistry));
-		RevisionExportDialog dialog = holder[0];
+		ScormExportDialog[] holder = new ScormExportDialog[1];
+		org.testfx.api.FxToolkit
+				.setupFixture(() -> holder[0] = new ScormExportDialog(stage, List.of(chemistry, physics), chemistry));
+		ScormExportDialog dialog = holder[0];
 		@SuppressWarnings("unchecked")
-		ComboBox<Subject> subjectBox = (ComboBox<Subject>) dialog.getDialogPane().lookup("#revision-export-subject");
-		Field exportButtonField = RevisionExportDialog.class.getDeclaredField("exportButton");
+		ComboBox<Subject> subjectBox = (ComboBox<Subject>) dialog.getDialogPane().lookup("#scorm-export-subject");
+		Field exportButtonField = ScormExportDialog.class.getDeclaredField("exportButton");
 		exportButtonField.setAccessible(true);
 		Button exportButton = (Button) exportButtonField.get(dialog);
 		assertEquals(List.of(chemistry, physics), subjectBox.getItems());
 		assertEquals(chemistry, dialog.getSelectedSubject());
 		assertNull(dialog.getDestinationParent());
 		assertTrue(exportButton.isDisabled());
-		Path destination = Path.of("target", "revision-export-test").toAbsolutePath().normalize();
-		Method setDestination = RevisionExportDialog.class.getDeclaredMethod("setDestinationParent", Path.class);
+		Path destination = Path.of("target", "scorm-export-test").toAbsolutePath().normalize();
+		Method setDestination = ScormExportDialog.class.getDeclaredMethod("setDestinationParent", Path.class);
 		setDestination.setAccessible(true);
 		org.testfx.api.FxToolkit.setupFixture(() -> {
 			try {
 				setDestination.invoke(dialog, destination);
-			} catch (ReflectiveOperationException e) {
-				throw new RuntimeException(e);
+			} catch (ReflectiveOperationException exception) {
+				throw new RuntimeException(exception);
 			}
 		});
 		WaitForAsyncUtils.waitForFxEvents();
