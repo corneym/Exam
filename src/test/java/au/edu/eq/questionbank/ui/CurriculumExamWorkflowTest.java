@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
-import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
@@ -42,12 +41,6 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
-
-	@Override
-	@Start
-	void start(Stage stage) throws Exception {
-		super.start(stage);
-	}
 
 	@Test
 	void canSelectAndPersistHistoricalSyllabusClassification(FxRobot robot) throws Exception {
@@ -363,7 +356,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Ambiguity must be reported rather than resolved by filename, insertion
 		// order or any other arbitrary choice.
 		assertTrue(robot.lookup("Exam details could not be saved.").tryQuery().isPresent());
-		robot.clickOn("OK");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
+
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Rejection must not create another ExamBooklet or alter either existing
@@ -543,6 +539,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(units.isDisabled());
 		assertNull(syllabuses.getValue());
 		assertFalse(syllabuses.isDisabled());
+	}
+
+	@Override
+	@Start
+	void start(Stage stage) throws Exception {
+		super.start(stage);
 	}
 
 	private void selectSubject(FxRobot robot, String subjectName) {

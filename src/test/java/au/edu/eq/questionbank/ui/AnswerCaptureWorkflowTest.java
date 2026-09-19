@@ -42,12 +42,6 @@ import javafx.stage.Stage;
 @Tag("workflow-ui")
 class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
-	@Override
-	@Start
-	void start(Stage stage) throws Exception {
-		super.start(stage);
-	}
-
 	@Test
 	void answerEditCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
@@ -264,7 +258,11 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn("#save-answer");
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> robot.lookup("Answer could not be saved.").tryQuery().isPresent());
-		robot.clickOn("OK");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
+
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
+		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(answerCapturePane().isSaveInProgress());
 		assertEquals(question.getId(), questions.getValue().getId());
 		assertEquals(1, questions.getItems().size());
@@ -395,6 +393,12 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				"The displayed answer PDF must not be re-rendered");
 		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
+	}
+
+	@Override
+	@Start
+	void start(Stage stage) throws Exception {
+		super.start(stage);
 	}
 
 	private void assertAnswerEntryControlsEnabled(FxRobot robot) {

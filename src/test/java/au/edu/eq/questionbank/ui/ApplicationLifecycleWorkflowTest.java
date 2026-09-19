@@ -21,18 +21,12 @@ import javafx.scene.control.Button;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.layout.BorderPane;
-import javafx.stage.WindowEvent;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 
 @Tag("ui")
 @Tag("workflow-ui")
 class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase {
-
-	@Override
-	@Start
-	void start(Stage stage) throws Exception {
-		super.start(stage);
-	}
 
 	@Test
 	void fileExitCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
@@ -81,10 +75,21 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 					() -> robot.lookup("Save in progress").tryQuery().isPresent());
 			assertEquals(0, exitCount.get());
-			robot.clickOn("OK");
+
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
+
+			Button okButton = robot.lookup("OK").queryButton();
+			robot.interact(okButton::fire);
+			WaitForAsyncUtils.waitForFxEvents();
 		} finally {
 			setField(pane, "answerSaveInProgress", false);
 		}
+	}
+
+	@Override
+	@Start
+	void start(Stage stage) throws Exception {
+		super.start(stage);
 	}
 
 	@Test

@@ -39,12 +39,6 @@ import javafx.stage.Stage;
 @Tag("workflow-ui")
 class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
-	@Override
-	@Start
-	void start(Stage stage) throws Exception {
-		super.start(stage);
-	}
-
 	@Test
 	void acceptedQuestionRegionDoesNotLockNewQuestionNumber(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
@@ -134,7 +128,11 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("Question saved; lists could not be fully refreshed.").tryQuery().isPresent());
 		assertEquals(1, stored.findAll().size());
-		robot.clickOn("OK");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
+
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
+		WaitForAsyncUtils.waitForFxEvents();
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		assertEquals("", lookup(robot, "#question-code", TextField.class).getText());
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText().contains("list refresh failed"));
@@ -297,5 +295,11 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(save.isDisabled());
 		robot.clickOn("#add-question-region");
 		assertFalse(save.isDisabled());
+	}
+
+	@Override
+	@Start
+	void start(Stage stage) throws Exception {
+		super.start(stage);
 	}
 }

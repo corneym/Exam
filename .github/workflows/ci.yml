@@ -77,10 +77,23 @@ jobs:
           path: target/surefire-reports/
           retention-days: 7
 
-  ui-tests-workflow:
-    name: UI tests - application workflow
+  workflow-ui-tests:
+    name: Workflow UI - ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: capture
+            suite: WorkflowCaptureTests.java
+
+          - name: state-editing
+            suite: WorkflowStateEditingTests.java
+
+          - name: application
+            suite: WorkflowApplicationTests.java
 
     steps:
       - name: Check out repository
@@ -96,13 +109,13 @@ jobs:
       - name: Install virtual display
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
-      - name: Run application workflow UI tests
-        run: xvfb-run --auto-servernum bash ./mvnw --batch-mode "-Dtest.suite=**/WorkflowUITests.java" test
+      - name: Run workflow UI tests
+        run: xvfb-run --auto-servernum bash ./mvnw --batch-mode "-Dtest.suite=**/${{ matrix.suite }}" test
 
       - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: workflow-ui-test-reports
+          name: workflow-ui-${{ matrix.name }}-test-reports
           path: target/surefire-reports/
           retention-days: 7
