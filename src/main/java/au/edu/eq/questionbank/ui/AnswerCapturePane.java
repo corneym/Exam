@@ -31,6 +31,8 @@ import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
+import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.concurrent.Task;

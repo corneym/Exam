@@ -16,6 +16,8 @@ import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
+import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Alert;

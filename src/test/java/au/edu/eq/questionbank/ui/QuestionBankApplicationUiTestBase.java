@@ -28,6 +28,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.event.Event;
 import javafx.scene.Node;
 import javafx.scene.control.ComboBox;

@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.pdf;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -10,7 +10,7 @@ import javafx.stage.Stage;
 /**
  * Chooses PDFs and rejects selections outside the configured PDF data root.
  */
-final class PdfFilePicker {
+public final class PdfFilePicker {
 
 	private final Path dataRoot;
 
@@ -19,7 +19,7 @@ final class PdfFilePicker {
 	 *
 	 * @param dataRoot the configured PDF data root
 	 */
-	PdfFilePicker(Path dataRoot) {
+	public PdfFilePicker(Path dataRoot) {
 		if (dataRoot == null) {
 			throw new NullPointerException("dataRoot");
 		}
@@ -74,7 +74,7 @@ final class PdfFilePicker {
 	 * @param title the chooser title
 	 * @return the selected absolute PDF path, or {@code null} when cancelled
 	 */
-	Path chooseAnyPdf(Stage stage, String title) {
+	public Path chooseAnyPdf(Stage stage, String title) {
 		FileChooser chooser = createFileChooser(title);
 		File selectedFile = chooser.showOpenDialog(stage);
 		if (selectedFile == null) {
@@ -83,7 +83,7 @@ final class PdfFilePicker {
 		return selectedFile.toPath().toAbsolutePath().normalize();
 	}
 
-	Path dataRoot() {
+	public Path dataRoot() {
 		return dataRoot;
 	}
 
