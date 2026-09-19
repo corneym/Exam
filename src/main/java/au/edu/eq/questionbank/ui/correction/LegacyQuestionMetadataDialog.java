@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.correction;
 
 import java.util.ArrayList;
 import java.util.List;

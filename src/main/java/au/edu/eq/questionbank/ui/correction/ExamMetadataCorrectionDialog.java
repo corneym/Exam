@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.correction;
 
 import au.edu.eq.questionbank.model.Exam;
 import javafx.beans.binding.Bindings;
