@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.search;
 
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
@@ -121,7 +121,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	/**
 	 * Disposes the search pane and cancels its pending background work.
 	 */
-	void dispose() {
+	public void dispose() {
 		searchPane.dispose();
 	}
 
@@ -131,17 +131,17 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	 * @param questionId the persistent question identifier to reselect if still
 	 *                   present
 	 */
-	void refreshAfterEdit(long questionId) {
+	public void refreshAfterEdit(long questionId) {
 		searchPane.refreshAfterEdit(questionId);
 	}
 
-	enum EditTarget {
+	public enum EditTarget {
 		QUESTION, SPLIT, METADATA, EXAM, SHARED_PREAMBLE, ANSWER
 	}
 
-	record EditRequest(Question question, EditTarget target) {
+	public record EditRequest(Question question, EditTarget target) {
 
-		EditRequest {
+		public EditRequest {
 			if (question == null) {
 				throw new NullPointerException("question");
 			}

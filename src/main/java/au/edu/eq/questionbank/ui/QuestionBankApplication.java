@@ -113,6 +113,7 @@ import au.edu.eq.questionbank.ui.export.RevisionExportDialog;
 import au.edu.eq.questionbank.ui.export.ScormExportDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
+import au.edu.eq.questionbank.ui.search.QuestionSearchDialog;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.concurrent.Task;

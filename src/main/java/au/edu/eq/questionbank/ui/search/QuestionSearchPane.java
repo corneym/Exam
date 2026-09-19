@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.search;
 
 import java.awt.image.BufferedImage;
 import java.util.List;
