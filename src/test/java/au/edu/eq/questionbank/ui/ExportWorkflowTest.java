@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Tag;
@@ -25,12 +24,6 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
-
-	@Override
-	@Start
-	void start(Stage stage) throws Exception {
-		super.start(stage);
-	}
 
 	@Test
 	void exportMenuContainsRevisionHtmlCommand(FxRobot robot) {
@@ -216,5 +209,11 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(Files.exists(destination));
 		assertTrue(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		setField(application, "scormExportRunning", Boolean.FALSE);
+	}
+
+	@Override
+	@Start
+	void start(Stage stage) throws Exception {
+		super.start(stage);
 	}
 }

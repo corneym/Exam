@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
-import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
@@ -42,12 +41,6 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
-
-	@Override
-	@Start
-	void start(Stage stage) throws Exception {
-		super.start(stage);
-	}
 
 	@Test
 	void canSelectAndPersistHistoricalSyllabusClassification(FxRobot robot) throws Exception {
@@ -543,6 +536,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(units.isDisabled());
 		assertNull(syllabuses.getValue());
 		assertFalse(syllabuses.isDisabled());
+	}
+
+	@Override
+	@Start
+	void start(Stage stage) throws Exception {
+		super.start(stage);
 	}
 
 	private void selectSubject(FxRobot robot, String subjectName) {
