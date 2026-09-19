@@ -1,10 +1,11 @@
-> Authoritative project status at 17 September 2026.
+> Authoritative project status at 19 September 2026.
 >
-> Current repository position: `main` after Sprint 08 merge.
+> Current development branch: `feature/capture-workflow`.
 >
-> Sprint 08 — Curriculum and Corpus Completion is complete, independently
-> reviewed, revalidated and merged. Sprint 09 — Capture Workflow and Corpus
-> Correction is planned but implementation has not started.
+> Sprint 08 — Curriculum and Corpus Completion is complete and merged.
+> Sprint 09 — Capture Workflow and Corpus Correction is in progress. Slices 1
+> through 7 are implemented and verified; Slice 8 — Search Questions and Corpus
+> Audit usability — is next.
 
 # Current Status
 
@@ -350,17 +351,41 @@ Sprint 08 was merged to `main` on 17 September 2026.
 
 Sprint 01 through Sprint 08 are complete.
 
-Sprint 09 — Capture Workflow and Corpus Correction is the next planned sprint.
-Its design is recorded in:
+Sprint 09 — Capture Workflow and Corpus Correction is in progress on
+`feature/capture-workflow`.
+
+Slices 1 through 7 are implemented and verified. Delivered Sprint 09 work so far
+includes:
+
+- deterministic natural/source Question ordering foundations;
+- Answer and Question capture layout/control-state improvements;
+- explicit selection-ownership behaviour;
+- Question response-type radio-button capture UI;
+- Imported Questions activation performance improvements;
+- first-class persisted shared-preamble replacement/recapture;
+- supported Exam-level metadata correction;
+- known-PDF metadata reuse;
+- transactional conversion of a legacy single Question into multipart Questions;
+- explicit Answer ownership during a legacy split;
+- split support for no preamble, newly captured shared preamble and compatible
+  existing shared-preamble reuse;
+- rollback/cancellation protection and reload regressions for split Questions.
+
+The malformed real legacy Exam metadata case that displayed as
+`2022 QCAA 2022` has also been corrected successfully through the implemented
+Exam metadata workflow during normal application use.
+
+The next implementation slice is Slice 8:
+
+- Search Questions all-bank versus current-syllabus scope;
+- deterministic Corpus Audit source ordering.
+
+The canonical Sprint 09 design is:
 
 `docs/design/sprint-09-capture-workflow-and-corpus-correction.md`
 
-Sprint 09 is based on sustained use of the real application and focuses on
-capture-pane usability, ordering, metadata correction, shared-preamble
-replacement, legacy Question splitting and bank-management workflow friction.
-
-The revision HTML presentation changes identified during the same usage review
-remain in the backlog rather than being silently folded into Sprint 09.
+Revision HTML presentation refinements identified during application use remain
+outside Sprint 09.
 
 ## Active limitations and backlog themes
 
@@ -389,10 +414,7 @@ Major current themes include:
 
 Do **not** describe the following as current application capabilities:
 
-- a completed Sprint 09 workflow;
-- dedicated one-step split of legacy `3` into `3a`, `3b`, etc.;
-- supported recapture/replacement of an already persisted shared preamble as a
-  first-class workflow;
+- a completed Sprint 09; Slices 8 and 9 remain;
 - complete current-generation Exam Builder/assessment assembly;
 - complete current-curriculum/mapping/question corpus for every science Subject;
 - multiple direct original classifications on one Question;

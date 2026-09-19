@@ -266,11 +266,21 @@ and sprint documentation.
 
 ## 5. Sprint 09 — Capture Workflow and Corpus Correction
 
+**IN PROGRESS — SLICES 1–7 COMPLETE**
+
 **PLANNED / NEXT SPRINT**
 
 Canonical design:
 
 `docs/design/sprint-09-capture-workflow-and-corpus-correction.md`
+
+Implementation progress at 19 September 2026:
+
+- Slices 1–7 are implemented and verified.
+- Shared-preamble recapture, Exam metadata correction, known-PDF reuse and the
+  dedicated legacy Question split workflow are now current capabilities.
+- Slice 8 — Search Questions and Corpus Audit usability — is next.
+- Slice 9 remains the final regression, acceptance and documentation closeout.
 
 Sprint 09 is driven by sustained use of the application while completing the
 real corpus. It focuses on correcting workflow friction rather than introducing
@@ -315,8 +325,9 @@ Continue systematic work through:
 - shared-context resolution;
 - Answer completion;
 - metadata correction;
-- later Sprint 09 split/preamble/exam-correction workflows once implemented.
-
+- use the implemented Sprint 09 split, shared-preamble and Exam-metadata
+  correction workflows while completing the real corpus.
+  
 The standalone Chemistry 2019 -> 2025 mapping workbook remains reference
 material. SQLite review state is authoritative.
 

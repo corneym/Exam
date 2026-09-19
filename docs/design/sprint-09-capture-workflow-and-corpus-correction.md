@@ -307,6 +307,44 @@ Regression coverage should include:
 **Outcome:** real legacy source structure can be corrected explicitly rather than
 worked around through several fragile manual operations.
 
+**Implementation status — COMPLETE, 19 September 2026**
+
+Implemented behaviour:
+
+- Search Questions exposes a dedicated `Split Question...` correction workflow
+  for eligible legacy single Questions.
+- Split metadata is confirmed before region capture, including destination part
+  codes, marks, classification, response type and shared-preamble strategy.
+- Question regions for all resulting parts are staged in memory before any
+  persistence occurs.
+- the original Question row is retained as the explicitly nominated resulting
+  part where safe;
+- an existing Answer is retained only on the explicitly selected resulting part;
+- a split may use no shared preamble, capture one new shared preamble, or reuse
+  the compatible shared preamble of an existing SourceQuestion group;
+- new SourceQuestion, Question and SharedQuestionContext relationships are
+  persisted atomically;
+- compatible existing SourceQuestion/shared-context identity can be reused;
+- duplicate destination identities and incompatible existing groups are rejected;
+- cancellation after staging a preamble and one or more parts leaves the
+  original persisted Question unchanged;
+- reload preserves resulting multipart and shared-context identities;
+- Corpus Audit reconstruction and RevisionPresentationPlanner multipart grouping
+  are covered after reload.
+
+Verification completed:
+
+- `LegacyQuestionSplitServiceTest` green;
+- focused Corpus Audit reload regression green;
+- focused RevisionPresentationPlanner reload/grouping regression green;
+- Search split workflow regressions green for no preamble, newly captured
+  preamble, reused existing preamble and explicit Answer ownership;
+- split cancellation regression green;
+- `QuestionEditingWorkflowTest` and `SharedContextWorkflowTest` green together;
+- complete non-UI suite green with `./mvnw test`;
+- complete UI suite green with `./mvnw -Pui-tests test`;
+- `./mvnw spotless:check` green.
+
 ### Slice 8 — Search Questions and Corpus Audit usability
 
 #### Search Questions
@@ -414,6 +452,6 @@ inventory of all known work.
 
 ## Branch
 
-Recommended branch when implementation begins:
+Sprint 09 implementation branch:
 
-`feature/capture-corpus-correction`
+`feature/capture-workflow`
