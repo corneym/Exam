@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.curriculum;
 
 import java.util.List;
 
@@ -197,7 +197,7 @@ public class CurriculumSelectorPane extends VBox {
 	 *
 	 * @param locked whether the syllabus context is fixed
 	 */
-	void setSyllabusContextLocked(boolean locked) {
+	public void setSyllabusContextLocked(boolean locked) {
 		subjectBox.setDisable(locked);
 		if (locked) {
 			syllabusBox.setDisable(true);

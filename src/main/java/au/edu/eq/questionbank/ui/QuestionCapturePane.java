@@ -29,6 +29,7 @@ import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.S
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
+import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.beans.binding.Bindings;
