@@ -105,6 +105,7 @@ import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
+import au.edu.eq.questionbank.ui.audit.QuestionCorpusAuditDialog;
 import au.edu.eq.questionbank.ui.correction.ExamMetadataCorrectionDialog;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionMetadataDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumImportDialog;

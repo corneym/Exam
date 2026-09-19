@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.audit;
 
 import java.util.List;
 import java.util.function.BiConsumer;
@@ -18,13 +18,13 @@ import javafx.stage.Window;
 /**
  * Dialog containing the question-corpus completeness work queue.
  */
-final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.ResolutionRequest> {
+public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.ResolutionRequest> {
 
 	private static final int DIALOG_WIDTH = 1100;
 	private static final int DIALOG_HEIGHT = 700;
 	private final QuestionCorpusAuditPane auditPane;
 
-	QuestionCorpusAuditDialog(Window owner, List<Question> questions) {
+	public QuestionCorpusAuditDialog(Window owner, List<Question> questions) {
 		if (owner == null) {
 			throw new NullPointerException("owner");
 		}
@@ -81,11 +81,11 @@ final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.R
 		return null;
 	}
 
-	void refreshQuestions(List<Question> questions, long preferredQuestionId) {
+	public void refreshQuestions(List<Question> questions, long preferredQuestionId) {
 		auditPane.refreshQuestions(questions, preferredQuestionId);
 	}
 
-	void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
+	public void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
@@ -111,13 +111,13 @@ final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.R
 		});
 	}
 
-	enum ResolutionTarget {
+	public enum ResolutionTarget {
 		QUESTION, METADATA, ANSWER
 	}
 
-	record ResolutionRequest(Question question, ResolutionTarget target) {
+	public record ResolutionRequest(Question question, ResolutionTarget target) {
 
-		ResolutionRequest {
+		public ResolutionRequest {
 			if (question == null) {
 				throw new NullPointerException("question");
 			}

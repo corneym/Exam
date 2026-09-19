@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.audit;
 
 import java.util.LinkedHashMap;
 import java.util.List;
