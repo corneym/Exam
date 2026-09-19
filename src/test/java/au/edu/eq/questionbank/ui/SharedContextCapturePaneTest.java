@@ -33,6 +33,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.SharedQuestionContextRepository;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;

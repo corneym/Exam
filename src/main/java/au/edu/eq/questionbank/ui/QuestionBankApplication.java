@@ -115,6 +115,7 @@ import au.edu.eq.questionbank.ui.export.ScormExportDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import au.edu.eq.questionbank.ui.search.QuestionSearchDialog;
 import javafx.application.Application;

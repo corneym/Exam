@@ -18,6 +18,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumDraftTextExporter;
 import au.edu.eq.questionbank.service.curriculum.CurriculumLifecycleService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.control.Alert;

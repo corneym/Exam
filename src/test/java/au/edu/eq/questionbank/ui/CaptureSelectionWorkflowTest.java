@@ -14,6 +14,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;

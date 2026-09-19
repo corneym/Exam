@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.pdf;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -36,7 +36,7 @@ import javafx.scene.shape.Rectangle;
  * Displays either an exam booklet PDF or an answer PDF and reports rectangular
  * page selections in proportional page coordinates.
  */
-final class PdfWorkspacePane extends VBox implements AutoCloseable {
+public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	private static final int PAGE_FIELD_COLUMNS = 4;
 	private static final int PAGE_FIELD_MAX_WIDTH = 70;
@@ -91,7 +91,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	/**
 	 * Creates an empty PDF workspace with navigation and region-selection controls.
 	 */
-	PdfWorkspacePane() {
+	public PdfWorkspacePane() {
 		configurePageView();
 		configureSelectionRectangle();
 		configureSelectionHandlers();
@@ -127,7 +127,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	/**
 	 * Removes the visible pending selection rectangle.
 	 */
-	void clearSelection() {
+	public void clearSelection() {
 		clearAnchoredSelectionState();
 		selectionRectangle.setVisible(false);
 		selectionRectangle.setWidth(0);
@@ -138,7 +138,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * Closes the standalone viewer session and restores the previously displayed
 	 * exam or answer page.
 	 */
-	void closeViewerPdf() {
+	public void closeViewerPdf() {
 		documentRequest++;
 		closeExistingViewerPdfSession();
 		displayedDocument = viewerReturnDocument;
@@ -160,7 +160,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @throws IOException           if PDFBox cannot extract the page text
 	 * @throws IllegalStateException if no PDF is currently displayed
 	 */
-	String extractDisplayedPageText() throws IOException {
+	public String extractDisplayedPageText() throws IOException {
 		PdfSession displayedSession = displayedPdfSession();
 		if (displayedSession == null) {
 			throw new IllegalStateException("No PDF is currently displayed");
@@ -172,35 +172,35 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @return the borrowed answer session, or {@code null}; callers must not close
 	 *         it
 	 */
-	PdfSession getAnswerPdfSession() {
+	public PdfSession getAnswerPdfSession() {
 		return answerPdfSession;
 	}
 
 	/**
 	 * @return the one-based page currently selected in the workspace
 	 */
-	int getCurrentPageNumber() {
+	public int getCurrentPageNumber() {
 		return currentPageNumber;
 	}
 
 	/**
 	 * @return the active exam, answer or viewer document mode
 	 */
-	DocumentMode getDisplayedDocument() {
+	public DocumentMode getDisplayedDocument() {
 		return displayedDocument;
 	}
 
 	/**
 	 * @return the borrowed exam session, or {@code null}; callers must not close it
 	 */
-	PdfSession getExamPdfSession() {
+	public PdfSession getExamPdfSession() {
 		return examPdfSession;
 	}
 
 	/**
 	 * @return whether an exam PDF session is open
 	 */
-	boolean hasExamPdf() {
+	public boolean hasExamPdf() {
 		return examPdfSession != null;
 	}
 
@@ -209,7 +209,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param path the answer PDF path
 	 */
-	void openAnswerPdf(Path path) {
+	public void openAnswerPdf(Path path) {
 		documentRequest++;
 		if (path == null) {
 			throw new NullPointerException("path");
@@ -235,7 +235,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * The worker owns a fresh session until it is handed to the UI, so it never
 	 * shares a PDFBox session with selection extraction or navigation.
 	 */
-	void openAnswerPdfAsync(Path path, Consumer<Throwable> completed) {
+	public void openAnswerPdfAsync(Path path, Consumer<Throwable> completed) {
 		if (closed) {
 			completed.accept(new CancellationException("PDF workspace has closed"));
 			return;
@@ -311,7 +311,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param path the exam PDF path
 	 */
-	void openExamPdf(Path path) {
+	public void openExamPdf(Path path) {
 		documentRequest++;
 		if (path == null) {
 			throw new NullPointerException("path");
@@ -343,7 +343,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param path the PDF to open
 	 */
-	void openViewerPdf(Path path) {
+	public void openViewerPdf(Path path) {
 		documentRequest++;
 		if (path == null) {
 			throw new NullPointerException("path");
@@ -372,7 +372,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param pageChangedHandler receives the current one-based page number
 	 */
-	void setPageChangedHandler(IntConsumer pageChangedHandler) {
+	public void setPageChangedHandler(IntConsumer pageChangedHandler) {
 		if (pageChangedHandler == null) {
 			throw new NullPointerException("pageChangedHandler");
 		}
@@ -385,7 +385,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param pageNavigationAllowed returns {@code true} when navigation may proceed
 	 */
-	void setPageNavigationAllowed(BooleanSupplier pageNavigationAllowed) {
+	public void setPageNavigationAllowed(BooleanSupplier pageNavigationAllowed) {
 		if (pageNavigationAllowed == null) {
 			throw new NullPointerException("pageNavigationAllowed");
 		}
@@ -397,7 +397,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param selectionAvailable selection availability by document mode
 	 */
-	void setSelectionAvailable(Predicate<DocumentMode> selectionAvailable) {
+	public void setSelectionAvailable(Predicate<DocumentMode> selectionAvailable) {
 		if (selectionAvailable == null) {
 			throw new NullPointerException("selectionAvailable");
 		}
@@ -409,7 +409,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param enabled whether region selection is enabled
 	 */
-	void setSelectionCursorEnabled(boolean enabled) {
+	public void setSelectionCursorEnabled(boolean enabled) {
 		pagePane.setCursor(enabled ? Cursor.CROSSHAIR : Cursor.DEFAULT);
 	}
 
@@ -418,7 +418,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param selectionHandler the completed-selection consumer
 	 */
-	void setSelectionHandler(Consumer<RegionSelection> selectionHandler) {
+	public void setSelectionHandler(Consumer<RegionSelection> selectionHandler) {
 		if (selectionHandler == null) {
 			throw new NullPointerException("selectionHandler");
 		}
@@ -431,7 +431,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @param selectionModeChangedHandler callback used to clear any logical pending
 	 *                                    capture selection
 	 */
-	void setSelectionModeChangedHandler(Runnable selectionModeChangedHandler) {
+	public void setSelectionModeChangedHandler(Runnable selectionModeChangedHandler) {
 		if (selectionModeChangedHandler == null) {
 			throw new NullPointerException("selectionModeChangedHandler");
 		}
@@ -443,7 +443,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 *
 	 * @param documentMode the document to display
 	 */
-	void showDocument(DocumentMode documentMode) {
+	public void showDocument(DocumentMode documentMode) {
 		documentRequest++;
 		if (documentMode == null) {
 			throw new NullPointerException("documentMode");
@@ -467,7 +467,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @throws IllegalStateException    if that document is not currently open
 	 * @throws IllegalArgumentException if the page number is outside the document
 	 */
-	void showPage(DocumentMode documentMode, int pageNumber) {
+	public void showPage(DocumentMode documentMode, int pageNumber) {
 		if (documentMode == null) {
 			throw new NullPointerException("documentMode");
 		}
@@ -878,7 +878,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		selectionRectangle.setWidth(Math.abs(currentX - selectionStartX));
 	}
 
-	enum DocumentMode {
+	public enum DocumentMode {
 
 		EXAM("Page"), ANSWER("Answer page"), VIEWER("Page");
 
@@ -905,7 +905,7 @@ final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @param width        the proportional width
 	 * @param height       the proportional height
 	 */
-	record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width, double height) {
+	public record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width, double height) {
 	}
 
 	private record LoadedAnswerPage(PdfSession session, Image image, int pageNumber) {

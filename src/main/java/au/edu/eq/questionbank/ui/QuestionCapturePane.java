@@ -30,6 +30,7 @@ import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.beans.binding.Bindings;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;

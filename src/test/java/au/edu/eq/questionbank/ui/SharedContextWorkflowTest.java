@@ -31,6 +31,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionReposito
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;

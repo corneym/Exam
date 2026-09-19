@@ -11,6 +11,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;

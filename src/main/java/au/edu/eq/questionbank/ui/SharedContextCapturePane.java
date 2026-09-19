@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.SharedQuestionContextRepository;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.beans.binding.Bindings;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
