@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.curriculum;
 
 import java.util.List;
 
@@ -21,7 +21,7 @@ import javafx.stage.Window;
  * Modal form for creating an empty persisted syllabus ready for curriculum
  * authoring.
  */
-final class NewCurriculumDialog extends Dialog<ButtonType> {
+public final class NewCurriculumDialog extends Dialog<ButtonType> {
 
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 8;
@@ -33,7 +33,7 @@ final class NewCurriculumDialog extends Dialog<ButtonType> {
 	private final TextField versionField = new TextField();
 	private final CheckBox currentCheckBox = new CheckBox();
 
-	NewCurriculumDialog(Window owner, List<Subject> subjects) {
+	public NewCurriculumDialog(Window owner, List<Subject> subjects) {
 		if (subjects == null) {
 			throw new NullPointerException("subjects");
 		}
@@ -84,7 +84,7 @@ final class NewCurriculumDialog extends Dialog<ButtonType> {
 		refreshSubjectMode();
 	}
 
-	String getSubjectName() {
+	public String getSubjectName() {
 		if (newSubjectButton.isSelected()) {
 			return newSubjectField.getText().strip();
 		}
@@ -92,11 +92,11 @@ final class NewCurriculumDialog extends Dialog<ButtonType> {
 		return subject == null ? "" : subject.getName();
 	}
 
-	String getVersionName() {
+	public String getVersionName() {
 		return versionField.getText().strip();
 	}
 
-	boolean isCurrent() {
+	public boolean isCurrent() {
 		return currentCheckBox.isSelected();
 	}
 
