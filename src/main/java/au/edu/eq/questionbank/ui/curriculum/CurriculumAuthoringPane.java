@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.curriculum;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -45,7 +45,7 @@ import javafx.stage.Stage;
  * explicitly establishes parent context by selecting a node in the draft tree.
  * Numeric codes are derived from that authored hierarchy.
  */
-final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable {
+public final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable {
 
 	private static final int EDITOR_ROWS = 4;
 	private static final int VALIDATION_ROWS = 3;
@@ -100,7 +100,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 	private boolean changingTree;
 	private final Label lifecycleLabel = new Label();
 
-	CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot, CurriculumAuthoringSession authoringSession,
+	public CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot, CurriculumAuthoringSession authoringSession,
 			CurriculumAuthoringWriter authoringWriter, CurriculumSourcePdfService sourcePdfService,
 			CurriculumLifecycleService lifecycleService) {
 		this(ownerStage, curriculumDataRoot, requireDraft(authoringSession), authoringSession, authoringWriter,
@@ -196,12 +196,12 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		statusLabel.setText("Curriculum marked Final.");
 	}
 
-	boolean hasUnsavedChanges() {
+	public boolean hasUnsavedChanges() {
 		return isPersistentMode() && (dirty || hasPendingEditorText());
 	}
 
 	/** Includes FINAL views, because they can be reopened for editing in place. */
-	boolean isForSyllabus(long syllabusVersionId) {
+	public boolean isForSyllabus(long syllabusVersionId) {
 		return isPersistentMode() && authoringSession.syllabusVersion().getId() == syllabusVersionId;
 	}
 
@@ -228,7 +228,7 @@ final class CurriculumAuthoringPane extends BorderPane implements AutoCloseable 
 		statusLabel.setText("Curriculum reopened for editing.");
 	}
 
-	void saveCurriculum() {
+	public void saveCurriculum() {
 		requirePersistentMode();
 		if (!isEditable()) {
 			throw new IllegalStateException("Final curriculum must be reopened before saving");

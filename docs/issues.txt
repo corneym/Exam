@@ -1,3 +1,86 @@
 when Questions -> Search is invoked and the dialog is resized and an action is chosen from the buttons at the bottom, the Search Questions dialog comes back with its original size not its resized size.
 
 In the Question Corpus Audit dialog,  the All Years is not logically sorted.  at the moment it goes 2020, 2021, 2022, 2023, 2025, 2024
+
+Curriculum code entry can leave hierarchy ComboBox visually out of sync. Entering a valid code such as 3.1/3.1.1 correctly updates the underlying curriculum model, but the Topic ComboBox may display blank even while a Subtopic beneath that Topic is selected. Add UI-level assertions for displayed ComboBox values, not only model state.
+
+
+
+>>according to your understanding of the application, should a muliple choice question allow for a shared preamble?  i am capturing some questions and there is a shared context for two successive mcqs.  it is not a big issue if it is not possible.  the questions just need two regions each.
+
+Yes. Conceptually, a multiple-choice question should be able to have a shared preamble.
+
+In the current model, response type and shared context are separate concepts. Question stores QuestionResponseType independently from SharedQuestionContext, and I found no model rule saying that MULTIPLE_CHOICE cannot have shared context. The capture UI also does not appear to disable preamble/shared-context handling when MCQ is selected.
+
+So your example is valid:
+
+shared stimulus/context
+MCQ 1 uses that shared context
+MCQ 2 uses the same shared context
+each MCQ may also have its own question region(s)
+
+That is exactly the sort of thing the shared-context model is intended to represent.
+
+If the current capture workflow makes that awkward or impossible, I would regard that as a UI/workflow limitation rather than a deliberate domain rule.
+
+That said, your workaround is perfectly acceptable for now: capture the shared material as an ordinary region for each MCQ. You will duplicate the image content, but the questions will still be complete and usable.
+
+I would not interrupt the current package refactor to change this. We should note it for the later capture-workflow polish: verify that shared preamble capture/reuse works naturally for MULTIPLE_CHOICE as well as written-response questions.
+
+it is not possible in the current ui.  i am not sure how it should be included.  
+
+The current UI is too tightly coupling “shared preamble” with “multipart question”. That is why your MCQ case falls through the gap.
+
+There are actually two different relationships:
+
+A multipart source question, such as 21a, 21b, where both parts belong to source question 21 and may share a preamble.
+Separate questions, such as MCQ 5 and MCQ 6, which remain independent questions but happen to use the same stimulus/context.
+
+Those should not be represented the same way. In particular, I would not invent a SourceQuestion joining Q5 and Q6 just to make the existing UI work.
+
+The underlying model is already much closer to supporting this than the UI is. A Question can have a SharedQuestionContext without having a SourceQuestion, and the capture service can persist a selected/new shared context independently of whether a source-question code was derived. The current limitation is mainly that QuestionCapturePane only offers the automatic preamble controls when SourceQuestionCodeParser recognises a multipart code.
+
+I think the eventual UI should make “Shared context” an explicit, general part of Question capture rather than something inferred solely from the question number. Something like:
+
+Question
+  Code:          5
+  Marks:         1
+  Response:      (x) Multiple choice   ( ) Written response
+
+  Shared context:
+      (x) None
+      ( ) Capture new
+      ( ) Reuse existing
+
+For your example, you would capture Q5 like this:
+
+Shared context: Capture new
+→ draw the shared stimulus
+→ Add Context
+→ draw Q5's own region
+→ Save Q5
+
+Then Q6:
+
+Shared context: Reuse existing
+→ choose the context just captured for Q5
+→ draw Q6's own region
+→ Save Q6
+
+Q5 and Q6 remain ordinary independent MCQs. They simply both reference the same SharedQuestionContext.
+
+For multipart questions such as 21a and 21b, we can retain the useful automatic behaviour. If the question code indicates a multipart source question, the application can still infer/reuse the shared context associated with source question 21. So this would extend the current design rather than replace it.
+
+I would also consider a small convenience after saving Q5: when the next question is being entered, the Shared context section could offer something like:
+
+Reuse previous: "Q5 shared context"
+
+but I would make that an explicit click rather than automatically carrying it forward. Automatic carry-forward would eventually attach a context to Q7 by mistake.
+
+One terminology change may help as well. The current checkbox says:
+
+First region is shared preamble
+
+That wording describes one particular capture technique, not the underlying concept. I think the UI should use Shared context as the general concept, with “Capture new shared context” and “Reuse shared context”. “Preamble” can remain appropriate when dealing specifically with multipart questions and the legacy preamble semantics.
+
+So I would record this as a genuine Sprint 9 capture-UI gap, not something to fix by storing duplicate regions. Your two-region workaround is safe for the questions you're capturing now, but the proper design is to allow a shared context across otherwise independent questions, including MCQs.
