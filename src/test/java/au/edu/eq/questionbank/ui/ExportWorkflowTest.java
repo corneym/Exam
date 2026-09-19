@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Tag;
@@ -17,6 +18,7 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import javafx.scene.control.Button;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.stage.Stage;
@@ -65,7 +67,8 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(disabledWhileStarting.get());
 		WaitForAsyncUtils.waitFor(10, java.util.concurrent.TimeUnit.SECONDS,
 				() -> robot.lookup("OK").tryQuery().isPresent());
-		robot.clickOn("OK");
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(Files.exists(destination));
 		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
@@ -136,7 +139,10 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		 * The successful export displays its normal information alert. Close it so the
 		 * FX success handler can finish.
 		 */
-		robot.clickOn("OK");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
+
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(field(application, "revisionExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
@@ -166,7 +172,8 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("OK").tryQuery().isPresent());
 		assertTrue(Files.isRegularFile(destination), "SCORM export did not complete");
 		assertTrue(Files.size(destination) > 0, "SCORM export produced an empty ZIP");
-		robot.clickOn("OK");
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());

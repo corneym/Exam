@@ -356,7 +356,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Ambiguity must be reported rather than resolved by filename, insertion
 		// order or any other arbitrary choice.
 		assertTrue(robot.lookup("Exam details could not be saved.").tryQuery().isPresent());
-		robot.clickOn("OK");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
+
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Rejection must not create another ExamBooklet or alter either existing
