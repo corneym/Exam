@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.exam;
 
 import javafx.event.ActionEvent;
 import javafx.scene.control.Button;
@@ -10,9 +10,9 @@ import javafx.stage.Stage;
 /**
  * Hosts the exam metadata import workflow outside the main application window.
  */
-final class ExamImportDialog extends Dialog<Void> {
+public final class ExamImportDialog extends Dialog<Void> {
 
-	ExamImportDialog(Stage owner, ExamMetadataPane examMetadataPane) {
+	public ExamImportDialog(Stage owner, ExamMetadataPane examMetadataPane) {
 		if (owner == null) {
 			throw new NullPointerException("owner");
 		}

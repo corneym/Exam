@@ -113,6 +113,8 @@ import au.edu.eq.questionbank.ui.curriculum.CurriculumImportDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumMappingReviewDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.curriculum.NewCurriculumDialog;
+import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
+import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.exam.LegacyAnswerPdfImportDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyBookletImportDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyQuestionImportDialog;

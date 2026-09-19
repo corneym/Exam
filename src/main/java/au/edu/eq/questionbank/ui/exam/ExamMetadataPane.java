@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.exam;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -36,7 +36,7 @@ import javafx.stage.Stage;
  * Collects exam and booklet metadata and associates it with a selected source
  * PDF.
  */
-final class ExamMetadataPane extends VBox {
+public final class ExamMetadataPane extends VBox {
 
 	private static final double SUBJECT_FIELD_WIDTH = 140.0;
 	private static final int FORM_GAP = 12;
@@ -74,7 +74,7 @@ final class ExamMetadataPane extends VBox {
 	/**
 	 * Creates the exam metadata workflow controls and persistence integration.
 	 */
-	ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
+	public ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
 			ExamMetadataOptionsRepository optionsRepository, SqliteExamImporter examImporter,
 			SqliteExamWriter examWriter, BooleanSupplier examChangeAllowed, Consumer<SelectedPdf> examPdfHandler,
 			Consumer<Boolean> selectionCursorHandler, Consumer<Subject> examSubjectHandler) {
@@ -131,7 +131,7 @@ final class ExamMetadataPane extends VBox {
 	 * @param booklet the existing booklet to activate
 	 * @param pdfPath the resolved path of the booklet's stored PDF
 	 */
-	void activateExistingBooklet(ExamBooklet booklet, Path pdfPath) {
+	public void activateExistingBooklet(ExamBooklet booklet, Path pdfPath) {
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
@@ -146,7 +146,7 @@ final class ExamMetadataPane extends VBox {
 		examSubjectHandler.accept(booklet.getExam().getSubject());
 	}
 
-	void beginImport() {
+	public void beginImport() {
 		pendingPdfPath = null;
 		pendingKnownBooklet = null;
 		selectedPdfLabel.setText("No PDF selected");
@@ -246,7 +246,7 @@ final class ExamMetadataPane extends VBox {
 	 * @return corrected Exam with the same persistent identity
 	 * @throws SQLException if the correction cannot be persisted
 	 */
-	Exam correctExamMetadata(Exam exam, String providerName, int year, String assessmentName) throws SQLException {
+	public Exam correctExamMetadata(Exam exam, String providerName, int year, String assessmentName) throws SQLException {
 		if (exam == null) {
 			throw new NullPointerException("exam");
 		}
@@ -282,7 +282,7 @@ final class ExamMetadataPane extends VBox {
 	 *
 	 * @return the current booklet, or {@code null} before exam metadata is set
 	 */
-	ExamBooklet getBooklet() {
+	public ExamBooklet getBooklet() {
 		return booklet;
 	}
 
@@ -291,7 +291,7 @@ final class ExamMetadataPane extends VBox {
 	 *
 	 * @param subject the newly selected classification subject, or {@code null}
 	 */
-	void invalidateForSubjectChange(Subject subject) {
+	public void invalidateForSubjectChange(Subject subject) {
 		if (booklet == null) {
 			return;
 		}
@@ -302,7 +302,7 @@ final class ExamMetadataPane extends VBox {
 		}
 	}
 
-	void refreshSubjects() {
+	public void refreshSubjects() {
 		Subject selectedSubject = subjectField.getValue();
 		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
 		if (selectedSubject != null) {

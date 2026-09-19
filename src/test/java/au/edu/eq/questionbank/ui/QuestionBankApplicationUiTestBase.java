@@ -28,6 +28,8 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
+import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.event.Event;
@@ -240,7 +242,16 @@ abstract class QuestionBankApplicationUiTestBase {
 	}
 
 	private void openExamPdfForTest() throws Exception {
-		examMetadataPane().selectExamPdf(new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot));
+		invoke(examMetadataPane(), "selectExamPdf", new Class<?>[] { SelectedPdf.class },
+				new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot));
+	}
+
+	void stageExamPdfForTest(Path sourcePath) {
+		try {
+			invoke(examMetadataPane(), "stageExamPdf", new Class<?>[] { Path.class }, sourcePath);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	PdfWorkspacePane pdfWorkspace() {
@@ -262,7 +273,7 @@ abstract class QuestionBankApplicationUiTestBase {
 	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
 			String assessmentName, String bookletName) throws Exception {
 		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
-		WaitForAsyncUtils.asyncFx(() -> examMetadataPane().stageExamPdf(examPdf)).get();
+		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(examPdf)).get();
 		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
 		Subject selectedSubject = examSubject.getItems().stream()
 				.filter(subject -> subjectName.equals(subject.getName())).findFirst().orElseThrow();

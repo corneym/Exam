@@ -351,7 +351,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// stageExamPdf shows a modal error for ambiguity, so start it asynchronously
 		// rather than waiting for the call itself to return.
-		Platform.runLater(() -> examMetadataPane().stageExamPdf(externalCopy));
+		Platform.runLater(() -> stageExamPdfForTest(externalCopy));
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> robot
 				.lookup("Selected PDF matches more than one persisted exam booklet.").tryQuery().isPresent());
 
@@ -396,7 +396,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			examMetadataPane().beginImport();
 			examImportDialog().show();
 		}).get();
-		WaitForAsyncUtils.asyncFx(() -> examMetadataPane().stageExamPdf(externalCopy)).get();
+		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(externalCopy)).get();
 		ComboBox<Subject> subject = comboBox(robot, "#exam-subject");
 		ComboBox<String> provider = comboBox(robot, "#exam-provider");
 		ComboBox<Integer> year = comboBox(robot, "#exam-year");
@@ -462,7 +462,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			examMetadataPane().beginImport();
 			examImportDialog().show();
 		}).get();
-		WaitForAsyncUtils.asyncFx(() -> examMetadataPane().stageExamPdf(storedPdf)).get();
+		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
 		ComboBox<Subject> subject = comboBox(robot, "#exam-subject");
 		ComboBox<String> provider = comboBox(robot, "#exam-provider");
 		ComboBox<Integer> year = comboBox(robot, "#exam-year");
