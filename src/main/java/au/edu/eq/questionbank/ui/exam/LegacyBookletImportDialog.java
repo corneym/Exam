@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.exam;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -22,7 +22,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
-final class LegacyBookletImportDialog extends Dialog<ButtonType> {
+public final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 
 	private static final int VIEWPORT_WIDTH = 680;
 	private static final int VIEWPORT_HEIGHT = 500;
@@ -40,7 +40,7 @@ final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 	private final Map<LegacyBookletRequirement, Label> pdfLabels = new LinkedHashMap<>();
 	private Path lastPdfDirectory;
 
-	LegacyBookletImportDialog(Window owner, List<LegacyBookletRequirement> requirements) {
+	public LegacyBookletImportDialog(Window owner, List<LegacyBookletRequirement> requirements) {
 		if (requirements == null) {
 			throw new NullPointerException("requirements");
 		}
@@ -63,7 +63,7 @@ final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, this::validateImportAction);
 	}
 
-	List<LegacyBookletImportRequest> getRequests() {
+	public List<LegacyBookletImportRequest> getRequests() {
 		List<LegacyBookletImportRequest> requests = new ArrayList<>();
 		for (LegacyBookletRequirement requirement : requirements) {
 			ExamKey key = new ExamKey(requirement.providerName(), requirement.year());

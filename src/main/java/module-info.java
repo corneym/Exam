@@ -42,6 +42,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.ui.audit;
 	opens au.edu.eq.questionbank.ui.correction;
 	opens au.edu.eq.questionbank.ui.curriculum;
+	opens au.edu.eq.questionbank.ui.exam;
 	opens au.edu.eq.questionbank.ui.export;
 	opens au.edu.eq.questionbank.ui.model;
 	opens au.edu.eq.questionbank.ui.pdf;

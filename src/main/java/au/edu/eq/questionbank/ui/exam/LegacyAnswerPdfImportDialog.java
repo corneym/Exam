@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.exam;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -22,7 +22,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
-final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
+public final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 
 	private static final int VIEWPORT_WIDTH = 620;
 	private static final int VIEWPORT_HEIGHT = 320;
@@ -35,7 +35,7 @@ final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 	private final Map<ExamKey, Label> pdfLabels = new LinkedHashMap<>();
 	private Path lastPdfDirectory;
 
-	LegacyAnswerPdfImportDialog(Window owner, List<LegacyBookletRequirement> requirements) {
+	public LegacyAnswerPdfImportDialog(Window owner, List<LegacyBookletRequirement> requirements) {
 		if (requirements == null) {
 			throw new NullPointerException("requirements");
 		}
@@ -60,7 +60,7 @@ final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 		getDialogPane().setContent(scrollPane);
 	}
 
-	List<AnswerPdfSelection> getSelections() {
+	public List<AnswerPdfSelection> getSelections() {
 		List<AnswerPdfSelection> selections = new ArrayList<>();
 		for (ExamKey exam : exams) {
 			Path pdfPath = selectedPdfs.get(exam);
@@ -105,7 +105,7 @@ final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 		return content;
 	}
 
-	record AnswerPdfSelection(String providerName, int year, Path pdfPath) {
+	public record AnswerPdfSelection(String providerName, int year, Path pdfPath) {
 	}
 
 	private record ExamKey(String providerName, int year) {

@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.exam;
 
 import java.io.File;
 import java.nio.file.Path;
