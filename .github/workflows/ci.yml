@@ -6,15 +6,24 @@ on:
       - main
       - 'feature/**'
       - 'refactor/**'
+      - 'chore/**'
 
   pull_request:
     branches:
       - main
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   non-ui-tests:
     name: Non-UI tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Check out repository
@@ -30,9 +39,18 @@ jobs:
       - name: Run non-UI tests
         run: bash ./mvnw --batch-mode clean verify
 
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: non-ui-test-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
   ui-tests-fast:
     name: UI tests - remaining
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -51,9 +69,18 @@ jobs:
       - name: Run remaining UI tests
         run: xvfb-run --auto-servernum bash ./mvnw --batch-mode "-Dtest.suite=**/FastUITests.java" test
 
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: remaining-ui-test-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
   ui-tests-workflow:
     name: UI tests - application workflow
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -71,3 +98,11 @@ jobs:
 
       - name: Run application workflow UI tests
         run: xvfb-run --auto-servernum bash ./mvnw --batch-mode "-Dtest.suite=**/WorkflowUITests.java" test
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: workflow-ui-test-reports
+          path: target/surefire-reports/
+          retention-days: 7
