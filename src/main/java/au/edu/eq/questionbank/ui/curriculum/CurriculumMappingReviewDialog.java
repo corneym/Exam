@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.curriculum;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
