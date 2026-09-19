@@ -129,7 +129,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("Question saved; lists could not be fully refreshed.").tryQuery().isPresent());
 		assertEquals(1, stored.findAll().size());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
-
 		Button okButton = robot.lookup("OK").queryButton();
 		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();

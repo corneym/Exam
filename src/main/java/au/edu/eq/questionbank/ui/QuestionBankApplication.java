@@ -22,7 +22,10 @@ import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.output.revision.RevisionAnswerAssetRenderer;
@@ -44,6 +47,7 @@ import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataUpdateResult;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
@@ -876,6 +880,61 @@ public class QuestionBankApplication extends Application {
 		return message.toString();
 	}
 
+	private SharedQuestionContext findExistingSplitSharedContext(Question originalQuestion) {
+		SourceQuestion matchingSource = null;
+		SharedQuestionContext matchingContext = null;
+		for (Question candidate : questionRepository.findAll()) {
+			if (candidate.getBooklet().getId() != originalQuestion.getBooklet().getId()) {
+				continue;
+			}
+			if (!candidate.hasSourceQuestion()) {
+				continue;
+			}
+			SourceQuestion candidateSource = candidate.getSourceQuestion();
+			if (!candidateSource.getSourceQuestionCode().equals(originalQuestion.getQuestionCode())) {
+				continue;
+			}
+			if (matchingSource != null && matchingSource.getId() != candidateSource.getId()) {
+
+				// The booklet-scoped source code is expected to identify one persisted
+				// SourceQuestion only.
+				throw new IllegalStateException(
+						"More than one SourceQuestion uses source code " + originalQuestion.getQuestionCode());
+			}
+			matchingSource = candidateSource;
+			if (!candidate.hasSharedContext()) {
+				continue;
+			}
+			SharedQuestionContext candidateContext = candidate.getSharedContext();
+			if (matchingContext != null && matchingContext.getId() != candidateContext.getId()) {
+				throw new IllegalStateException("Existing source Question " + originalQuestion.getQuestionCode()
+						+ " has inconsistent shared preamble links");
+			}
+			matchingContext = candidateContext;
+		}
+		if (matchingSource == null) {
+
+			// No existing multipart group is available for reuse.
+			return null;
+		}
+		if (matchingSource.getPreambleStatus() == PreambleStatus.UNKNOWN) {
+			throw new IllegalArgumentException("Existing source Question " + originalQuestion.getQuestionCode()
+					+ " still has unresolved preamble status");
+		}
+		if (matchingSource.getPreambleStatus() == PreambleStatus.NONE) {
+			if (matchingContext != null) {
+				throw new IllegalStateException(
+						"Existing no-preamble source Question unexpectedly uses shared context");
+			}
+			return null;
+		}
+		if (matchingContext == null) {
+			throw new IllegalStateException("Existing source Question " + originalQuestion.getQuestionCode()
+					+ " is recorded as having a shared preamble, but no shared context could be found");
+		}
+		return matchingContext;
+	}
+
 	private void finishRevisionExport() {
 		revisionExportRunning = false;
 		if (revisionExportMenuItem != null) {
@@ -1070,6 +1129,7 @@ public class QuestionBankApplication extends Application {
 		questionRepository = new SqliteQuestionRepository(database);
 		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
 		SqliteQuestionCaptureService questionCaptureService = new SqliteQuestionCaptureService(database);
+		LegacyQuestionSplitService legacyQuestionSplitService = new LegacyQuestionSplitService(database);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
@@ -1089,9 +1149,9 @@ public class QuestionBankApplication extends Application {
 				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
 				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
 		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
-				questionCaptureService, sharedContextCapturePane, questionExtractor, curriculumSelectionModel,
-				curriculumSelectorPane, examMetadataPane::getBooklet, pdfWorkspace::getExamPdfSession,
-				question -> activateImportedQuestion(question, config),
+				questionCaptureService, legacyQuestionSplitService, sharedContextCapturePane, questionExtractor,
+				curriculumSelectionModel, curriculumSelectorPane, examMetadataPane::getBooklet,
+				pdfWorkspace::getExamPdfSession, question -> activateImportedQuestion(question, config),
 				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
 				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
@@ -1610,6 +1670,10 @@ public class QuestionBankApplication extends Application {
 			editQuestionMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
 			return;
 		}
+		if (request.target() == QuestionSearchDialog.EditTarget.SPLIT) {
+			startQuestionSplitFromSearch(primaryStage, dialog, question, curriculumRepository, metadataService);
+			return;
+		}
 		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_PREAMBLE) {
 			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question,
 					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
@@ -1773,6 +1837,36 @@ public class QuestionBankApplication extends Application {
 		initialiseCaptureWorkflow(primaryStage, config, database, answerPdfPicker);
 		configurePdfWorkspace();
 		configurePrimaryStage(primaryStage, config);
+	}
+
+	private void startQuestionSplitFromSearch(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
+			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
+		SharedQuestionContext existingSharedContext;
+		try {
+			existingSharedContext = findExistingSplitSharedContext(question);
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Split Question",
+					"The existing multipart relationships must be corrected before this Question can be split.",
+					exception.getMessage());
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		LegacyQuestionSplitDialog splitDialog = new LegacyQuestionSplitDialog(primaryStage, question,
+				curriculumRepository, existingSharedContext);
+		Optional<LegacyQuestionSplitDialog.Result> splitDefinition = splitDialog.showAndWait();
+		if (splitDefinition.isEmpty()) {
+
+			// Cancelling the definition phase changes nothing and returns directly to
+			// the existing Search dialog.
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		boolean captureStarted = questionCapturePane.beginLegacyQuestionSplit(question, splitDefinition.get(),
+				() -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository,
+						metadataService));
+		if (!captureStarted) {
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+		}
 	}
 
 	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {

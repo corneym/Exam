@@ -357,7 +357,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// order or any other arbitrary choice.
 		assertTrue(robot.lookup("Exam details could not be saved.").tryQuery().isPresent());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
-
 		Button okButton = robot.lookup("OK").queryButton();
 		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();

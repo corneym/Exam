@@ -489,29 +489,21 @@ final class ExamMetadataPane extends VBox {
 		grid.setHgap(FORM_GAP);
 		grid.setVgap(FORM_GAP);
 		grid.setStyle(BORDER_STYLE);
-
 		grid.add(createFieldLabel("Subject:"), 0, 0);
 		grid.add(subjectField, 1, 0);
-
 		grid.add(createFieldLabel("PDF:"), 0, 1);
 		grid.add(createPdfControls(), 1, 1);
-
 		grid.add(createFieldLabel("Provider:"), 0, 2);
 		grid.add(providerField, 1, 2);
-
 		grid.add(createFieldLabel("Year:"), 0, 3);
 		grid.add(yearField, 1, 3);
-
 		grid.add(createFieldLabel("Assessment:"), 0, 4);
 		grid.add(assessmentField, 1, 4);
-
 		grid.add(createFieldLabel("Booklet:"), 0, 5);
 		grid.add(bookletField, 1, 5);
-
 		GridPane.setHgrow(providerField, Priority.ALWAYS);
 		GridPane.setHgrow(assessmentField, Priority.ALWAYS);
 		GridPane.setHgrow(bookletField, Priority.ALWAYS);
-
 		return grid;
 	}
 
@@ -526,7 +518,6 @@ final class ExamMetadataPane extends VBox {
 
 		// Form labels must retain enough width to display their complete text.
 		label.setMinWidth(Region.USE_PREF_SIZE);
-
 		return label;
 	}
 

@@ -3,9 +3,11 @@ package au.edu.eq.questionbank.service.audit;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
@@ -17,15 +19,27 @@ import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.NewSharedContext;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.SplitPart;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.SplitRequest;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class QuestionCorpusAuditTest {
 
 	private final Fixture fixture = new Fixture();
+	@TempDir
+	Path tempDirectory;
 
 	@Test
 	void completeMultipleChoiceRequiresOnlyValidLetter() {
@@ -66,6 +80,55 @@ class QuestionCorpusAuditTest {
 		QuestionCorpusStatus status = QuestionCorpusAudit.assess(question);
 		assertFalse(status.answerComplete());
 		assertTrue(status.hasProblem(QuestionCorpusProblem.MISSING_ANSWER));
+	}
+
+	@Test
+	void reloadedSplitQuestionsHaveResolvedSharedContextForCorpusAudit() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("split-corpus-audit.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Descriptor classification = curriculumWriter.insertDescriptor(topic, "1.1.1", "Descriptor 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
+				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question original = questionRepository.save(booklet, "3", "", 5,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.80, 0.60)), classification, true, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		SplitPart partA = new SplitPart("3a", 2, classification, QuestionResponseType.WRITTEN_RESPONSE,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.80, 0.20)));
+		SplitPart partB = new SplitPart("3b", 3, classification, QuestionResponseType.WRITTEN_RESPONSE,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
+		LegacyQuestionSplitService.SplitResult split = new LegacyQuestionSplitService(database)
+				.split(new SplitRequest(original, "3", List.of(partA, partB), 0,
+						new NewSharedContext(List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)))));
+
+		// Use a fresh repository so Corpus Audit sees reconstructed persistence state,
+		// not the objects returned directly by the split transaction.
+		SqliteQuestionRepository reloadedRepository = new SqliteQuestionRepository(database);
+		Question reloadedA = reloadedRepository.findById(split.questions().get(0).getId()).orElseThrow();
+		Question reloadedB = reloadedRepository.findById(split.questions().get(1).getId()).orElseThrow();
+		assertTrue(reloadedA.hasSourceQuestion());
+		assertTrue(reloadedB.hasSourceQuestion());
+		assertTrue(reloadedA.hasSharedContext());
+		assertTrue(reloadedB.hasSharedContext());
+		assertTrue(reloadedA.getSourceQuestion().getId() == reloadedB.getSourceQuestion().getId());
+		assertTrue(reloadedA.getSharedContext().getId() == reloadedB.getSharedContext().getId());
+		QuestionCorpusStatus statusA = QuestionCorpusAudit.assess(reloadedA);
+		QuestionCorpusStatus statusB = QuestionCorpusAudit.assess(reloadedB);
+
+		// The split parts have captured Question source regions and their persisted
+		// shared preamble is fully resolved after reconstruction.
+		assertTrue(statusA.questionSourceCaptured());
+		assertTrue(statusB.questionSourceCaptured());
+		assertTrue(statusA.sharedContextResolved());
+		assertTrue(statusB.sharedContextResolved());
+		assertFalse(statusA.hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
+		assertFalse(statusB.hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
 	}
 
 	@Test

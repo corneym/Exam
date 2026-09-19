@@ -259,7 +259,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> robot.lookup("Answer could not be saved.").tryQuery().isPresent());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
-
 		Button okButton = robot.lookup("OK").queryButton();
 		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();

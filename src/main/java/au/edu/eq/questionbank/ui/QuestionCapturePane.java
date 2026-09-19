@@ -21,6 +21,11 @@ import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.NewSharedContext;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.SplitPart;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.SplitRequest;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.SplitResult;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
@@ -94,6 +99,7 @@ final class QuestionCapturePane extends VBox {
 	private final SharedContextCapturePane sharedContextCapturePane;
 	private final SourceQuestionRepository sourceQuestionRepository;
 	private final SqliteQuestionCaptureService questionCaptureService;
+	private final LegacyQuestionSplitService legacyQuestionSplitService;
 
 	// Capture mode and imported-question selection.
 	private final ToggleButton newQuestionsModeButton = new ToggleButton("Capture New Questions");
@@ -139,6 +145,7 @@ final class QuestionCapturePane extends VBox {
 	private boolean loadingQuestionEdit;
 	private Runnable questionEditCompletedHandler = () -> {
 	};
+	private LegacySplitCaptureState legacySplitCaptureState;
 
 	/**
 	 * Creates the question-capture workflow and its repository integration.
@@ -147,18 +154,18 @@ final class QuestionCapturePane extends VBox {
 	 * question refreshes with the containing application.
 	 */
 	QuestionCapturePane(QuestionRepository questionRepository, SourceQuestionRepository sourceQuestionRepository,
-			SqliteQuestionCaptureService questionCaptureService, SharedContextCapturePane sharedContextCapturePane,
-			QuestionExtractor questionExtractor, CurriculumSelectionModel curriculumSelectionModel,
-			CurriculumSelectorPane curriculumSelectorPane, Supplier<ExamBooklet> bookletSupplier,
-			Supplier<PdfSession> examPdfSessionSupplier, Predicate<Question> importedQuestionActivationHandler,
-			IntConsumer examPageNavigationHandler, BooleanSupplier questionTargetChangeAllowed,
-			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
-			Consumer<List<Question>> questionsChangedHandler) {
+			SqliteQuestionCaptureService questionCaptureService, LegacyQuestionSplitService legacyQuestionSplitService,
+			SharedContextCapturePane sharedContextCapturePane, QuestionExtractor questionExtractor,
+			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
+			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
+			Predicate<Question> importedQuestionActivationHandler, IntConsumer examPageNavigationHandler,
+			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
+			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler) {
 		validateDependencies(questionRepository, sourceQuestionRepository, questionCaptureService,
-				sharedContextCapturePane, questionExtractor, curriculumSelectionModel, curriculumSelectorPane,
-				bookletSupplier, examPdfSessionSupplier, importedQuestionActivationHandler, examPageNavigationHandler,
-				questionTargetChangeAllowed, questionSelectionTransferHandler, selectionClearHandler,
-				questionsChangedHandler);
+				legacyQuestionSplitService, sharedContextCapturePane, questionExtractor, curriculumSelectionModel,
+				curriculumSelectorPane, bookletSupplier, examPdfSessionSupplier, importedQuestionActivationHandler,
+				examPageNavigationHandler, questionTargetChangeAllowed, questionSelectionTransferHandler,
+				selectionClearHandler, questionsChangedHandler);
 		this.questionRepository = questionRepository;
 		this.questionExtractor = questionExtractor;
 		this.curriculumSelectionModel = curriculumSelectionModel;
@@ -174,6 +181,7 @@ final class QuestionCapturePane extends VBox {
 		this.sharedContextCapturePane = sharedContextCapturePane;
 		this.questionSelectionTransferHandler = questionSelectionTransferHandler;
 		this.questionCaptureService = questionCaptureService;
+		this.legacyQuestionSplitService = legacyQuestionSplitService;
 		configureControls();
 		configureActions();
 		buildContent();
@@ -215,6 +223,72 @@ final class QuestionCapturePane extends VBox {
 		sharedContextCapturePane.acceptSelection(selection);
 		saveStatusLabel.setText("Shared preamble selection pending — click Add Region or Clear");
 		refreshSaveButtonState();
+	}
+
+	/**
+	 * Starts staged region capture for an explicitly defined legacy Question split.
+	 * Nothing is persisted until every resulting part has been captured.
+	 *
+	 * @param question         original persisted Question
+	 * @param definition       user-confirmed split metadata
+	 * @param completedHandler callback after save or cancellation
+	 * @return whether split capture started
+	 */
+	boolean beginLegacyQuestionSplit(Question question, LegacyQuestionSplitDialog.Result definition,
+			Runnable completedHandler) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (definition == null) {
+			throw new NullPointerException("definition");
+		}
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
+		}
+		if (!definition.sourceQuestionCode().equals(question.getQuestionCode())) {
+			throw new IllegalArgumentException("Split source code must match the original Question code");
+		}
+		if (!captureModeChangeAllowed()) {
+			restoreCaptureModeToggle();
+			return false;
+		}
+		if (!importedQuestionActivationHandler.test(question)) {
+			restoreCaptureModeToggle();
+			return false;
+		}
+
+		// Start the correction on the source page already associated with the original
+		// Question where possible.
+		showFirstQuestionRegionPage(question);
+		importedQuestion = null;
+		importedCaptureMode = false;
+		editingQuestion = null;
+		questionEditCompletedHandler = () -> {
+		};
+		captureModeGroup.selectToggle(null);
+		setLegacyCaptureControlsVisible(false);
+
+		// Clear ordinary capture state before establishing split-specific state.
+		resetQuestionEntry();
+		legacySplitCaptureState = new LegacySplitCaptureState(question, definition, completedHandler);
+		setCaptureModeControlsDisabled(true);
+		loadActiveLegacySplitPart();
+		if (definition.preambleChoice() == LegacyQuestionSplitDialog.PreambleChoice.CAPTURE_NEW_SHARED_PREAMBLE) {
+			boolean started = sharedContextCapturePane
+					.beginAutomaticContext("Question " + definition.sourceQuestionCode() + " preamble");
+			if (!started) {
+				cancelLegacyQuestionSplit();
+				return false;
+			}
+			showPreambleRequiredStatus("Capture the shared preamble before capturing "
+					+ legacySplitCaptureState.activeDefinition().questionCode() + ".");
+		}
+		if (definition.preambleChoice() == LegacyQuestionSplitDialog.PreambleChoice.REUSE_EXISTING_SHARED_PREAMBLE) {
+			sharedContextCapturePane.selectContext(definition.existingSharedContext());
+			showPreambleStatus("Reusing shared preamble for Question " + definition.sourceQuestionCode());
+		}
+		refreshSaveButtonState();
+		return true;
 	}
 
 	/**
@@ -394,7 +468,8 @@ final class QuestionCapturePane extends VBox {
 	 * @return {@code true} when accepted transient regions exist
 	 */
 	boolean hasAcceptedRegions() {
-		return !pendingRegions.isEmpty() || sharedContextCapturePane.hasPendingAutomaticRegion();
+		boolean splitPartsStaged = legacySplitCaptureState != null && !legacySplitCaptureState.completedParts.isEmpty();
+		return !pendingRegions.isEmpty() || sharedContextCapturePane.hasPendingAutomaticRegion() || splitPartsStaged;
 	}
 
 	/**
@@ -628,6 +703,26 @@ final class QuestionCapturePane extends VBox {
 		}
 	}
 
+	private void advanceLegacyQuestionSplit() {
+		LegacySplitCaptureState state = legacySplitCaptureState;
+		LegacyQuestionSplitDialog.PartDefinition definition = state.activeDefinition();
+		SplitPart capturedPart = new SplitPart(definition.questionCode(), definition.marks(),
+				definition.classification(), definition.responseType(), List.copyOf(pendingRegions));
+		if (!state.isLastPart()) {
+
+			// Completed parts remain only in memory. SQLite still contains the original
+			// unsplit Question at this point.
+			state.completedParts.add(capturedPart);
+			state.activePartIndex++;
+			loadActiveLegacySplitPart();
+			return;
+		}
+		List<SplitPart> completeParts = new ArrayList<>(state.completedParts);
+		completeParts.add(capturedPart);
+		SplitRequest request = createLegacySplitRequest(state, completeParts);
+		persistLegacyQuestionSplit(request);
+	}
+
 	private void backfillDerivedSourceQuestions() {
 		for (Question question : questionRepository.findAll()) {
 			if (question.hasSourceQuestion()) {
@@ -661,7 +756,18 @@ final class QuestionCapturePane extends VBox {
 				sharedContextCapturePane);
 	}
 
+	private void cancelLegacyQuestionSplit() {
+		Runnable completedHandler = finishLegacyQuestionSplitState();
+		if (completedHandler != null) {
+			completedHandler.run();
+		}
+	}
+
 	private void cancelQuestionEdit() {
+		if (legacySplitCaptureState != null) {
+			cancelLegacyQuestionSplit();
+			return;
+		}
 		if (editingQuestion == null) {
 			return;
 		}
@@ -728,6 +834,33 @@ final class QuestionCapturePane extends VBox {
 		setRegionCountLabel(0);
 		updateQuestionCodeLock();
 		refreshSaveButtonState();
+	}
+
+	private void completeLegacyQuestionSplit(LegacySplitSaveResult result) {
+		completionQuestions = result.questions();
+		Runnable completedHandler = null;
+		try {
+			questionsChangedHandler.accept(result.questions());
+			String sourceCode = result.splitResult().sourceQuestion().getSourceQuestionCode();
+			completedHandler = finishLegacyQuestionSplitState();
+			saveStatusLabel.setText("Split Question " + sourceCode + " into "
+					+ result.splitResult().questions().stream().map(Question::getQuestionCode).toList());
+			if (result.refreshFailure() != null) {
+				showAlert(Alert.AlertType.WARNING, "Question split saved; lists could not be fully refreshed.",
+						"The split is stored. Reopen Search or capture to reload the question lists.");
+			}
+		} finally {
+			questionSaveInProgress = false;
+			setDisable(false);
+			try {
+				refreshSaveButtonState();
+			} finally {
+				completionQuestions = null;
+			}
+		}
+		if (completedHandler != null) {
+			completedHandler.run();
+		}
 	}
 
 	// Publish the committed result on the FX thread before handing control back to
@@ -913,26 +1046,26 @@ final class QuestionCapturePane extends VBox {
 	private StringConverter<Question> createImportedQuestionConverter() {
 
 		// Convert imported Questions to the descriptive labels shown in the ComboBox.
-		return new StringConverter<Question>() {
+		return createStringConverterList();
+	}
 
-			@Override
-			public Question fromString(String text) {
+	private SplitRequest createLegacySplitRequest(LegacySplitCaptureState state, List<SplitPart> completeParts) {
+		NewSharedContext newSharedContext = null;
+		SharedQuestionContext existingSharedContext = null;
+		switch (state.definition.preambleChoice()) {
+		case NO_SHARED_PREAMBLE -> {
 
-				// The ComboBox is selection-only, so displayed text is never parsed.
-				return null;
-			}
-
-			@Override
-			public String toString(Question question) {
-				if (question == null) {
-					return "";
-				}
-				ExamBooklet booklet = question.getBooklet();
-				Exam exam = booklet.getExam();
-				return String.format("%s %d — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
-						booklet.getName(), question.getQuestionCode(), question.getMarks());
-			}
-		};
+			// No shared-context relationship is included in the transaction.
+		}
+		case CAPTURE_NEW_SHARED_PREAMBLE -> {
+			newSharedContext = new NewSharedContext(sharedContextCapturePane.getPendingAutomaticContextRegions());
+		}
+		case REUSE_EXISTING_SHARED_PREAMBLE -> {
+			existingSharedContext = state.definition.existingSharedContext();
+		}
+		}
+		return new SplitRequest(state.originalQuestion, state.definition.sourceQuestionCode(), completeParts,
+				state.definition.retainedPartIndex(), newSharedContext, existingSharedContext);
 	}
 
 	private VBox createQuestionControls() {
@@ -981,6 +1114,39 @@ final class QuestionCapturePane extends VBox {
 		Label label = new Label(text);
 		label.setStyle(SECTION_HEADING_STYLE);
 		return label;
+	}
+
+	private StringConverter<Question> createStringConverterList() {
+		return new StringConverter<Question>() {
+
+			@Override
+			public Question fromString(String text) {
+
+				// The ComboBox is selection-only, so displayed text is never parsed.
+				return null;
+			}
+
+			@Override
+			public String toString(Question question) {
+				if (question == null) {
+					return "";
+				}
+				ExamBooklet booklet = question.getBooklet();
+				Exam exam = booklet.getExam();
+				return String.format("%s %d — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
+						booklet.getName(), question.getQuestionCode(), question.getMarks());
+			}
+		};
+	}
+
+	private Task<QuestionSaveResult> createTaskList(SqliteQuestionCaptureService.Request request) {
+		return new Task<>() {
+
+			@Override
+			protected QuestionSaveResult call() {
+				return persistQuestionCapture(request);
+			}
+		};
 	}
 
 	private List<Question> currentQuestions() {
@@ -1076,6 +1242,24 @@ final class QuestionCapturePane extends VBox {
 		return findSharedContextValidationError();
 	}
 
+	private Runnable finishLegacyQuestionSplitState() {
+		if (legacySplitCaptureState == null) {
+			return null;
+		}
+		Runnable completedHandler = legacySplitCaptureState.completedHandler;
+		legacySplitCaptureState = null;
+		setCaptureModeControlsDisabled(false);
+		importedQuestion = null;
+		importedCaptureMode = false;
+		editingQuestion = null;
+		selectCaptureModeToggle(false);
+		setLegacyCaptureControlsVisible(false);
+		showNewQuestionMode();
+		resetQuestionEntry();
+		refreshImportedQuestions();
+		return completedHandler;
+	}
+
 	private void finishQuestionEdit() {
 		finishQuestionEditState().run();
 	}
@@ -1155,6 +1339,13 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void handleQuestionCodeChanged(String newCode) {
+		if (legacySplitCaptureState != null) {
+
+			// Split metadata was already explicitly confirmed. Updating the displayed
+			// part must not invoke ordinary automatic multipart/preamble inference.
+			refreshSaveButtonState();
+			return;
+		}
 		if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
 			sharedContextCapturePane.selectContext(null);
 		}
@@ -1185,6 +1376,39 @@ final class QuestionCapturePane extends VBox {
 		preambleStatusLabel.setStyle("");
 		preambleStatusLabel.setVisible(false);
 		preambleStatusLabel.setManaged(false);
+	}
+
+	private void loadActiveLegacySplitPart() {
+		LegacyQuestionSplitDialog.PartDefinition part = legacySplitCaptureState.activeDefinition();
+
+		// Only ordinary Question regions are cleared between parts. Any newly captured
+		// shared preamble remains staged until the final atomic split transaction.
+		pendingRegions.clear();
+		clearCurrentSelection();
+		refreshRegionPreviews();
+		setRegionCountLabel(0);
+		questionCodeField.setText(part.questionCode());
+		marksField.setText(Integer.toString(part.marks()));
+		selectResponseType(part.responseType());
+		curriculumSelectorPane.selectClassificationPath(part.classification());
+
+		// Split metadata was explicitly confirmed in the dialog. Region capture must
+		// not allow that metadata to drift while the parts are being staged.
+		questionCodeField.setDisable(true);
+		marksField.setDisable(true);
+		setResponseTypeDisabled(true);
+		curriculumSelectorPane.setSyllabusContextLocked(true);
+		curriculumSelectorPane.setDisable(true);
+		hideImportedClassification();
+		hidePreambleControls();
+		saveQuestionButton.setText(legacySplitCaptureState.isLastPart() ? "Save Split" : "Next Part");
+		cancelQuestionEditButton.setVisible(true);
+		cancelQuestionEditButton.setManaged(true);
+		showCaptureHint("Splitting Question " + legacySplitCaptureState.definition.sourceQuestionCode()
+				+ " — capture part " + (legacySplitCaptureState.activePartIndex + 1) + " of "
+				+ legacySplitCaptureState.definition.parts().size() + " (" + part.questionCode() + ").");
+		showQuestionPendingStatus();
+		refreshSaveButtonState();
 	}
 
 	private void loadImportedQuestion(Question question) {
@@ -1241,6 +1465,48 @@ final class QuestionCapturePane extends VBox {
 		return new SqliteQuestionCaptureService.PendingSharedContext(
 				sharedContextCapturePane.getPendingAutomaticContextLabel(),
 				sharedContextCapturePane.getPendingAutomaticContextRegions());
+	}
+
+	private void persistLegacyQuestionSplit(SplitRequest request) {
+		questionSaveInProgress = true;
+		setDisable(true);
+		saveStatusLabel.setText("Saving split Question " + request.sourceQuestionCode() + "...");
+		Task<LegacySplitSaveResult> saveTask = new Task<>() {
+
+			@Override
+			protected LegacySplitSaveResult call() {
+				return persistLegacyQuestionSplitTransaction(request);
+			}
+		};
+		saveTask.setOnSucceeded(_ -> completeLegacyQuestionSplit(saveTask.getValue()));
+		saveTask.setOnFailed(_ -> {
+			questionSaveInProgress = false;
+			setDisable(false);
+			saveStatusLabel.setText("Split save failed — staged parts retained");
+			showAlert(Alert.AlertType.ERROR, "Question split could not be saved.",
+					"The original Question remains unchanged. " + "The staged split regions have been retained.");
+			refreshSaveButtonState();
+		});
+		Thread saveThread = new Thread(saveTask, "legacy-question-split-save");
+		saveThread.setDaemon(true);
+		saveThread.start();
+	}
+
+	private LegacySplitSaveResult persistLegacyQuestionSplitTransaction(SplitRequest request) {
+		List<Question> beforeSplit = questionRepository.findAll();
+		SplitResult splitResult = legacyQuestionSplitService.split(request);
+		try {
+			return new LegacySplitSaveResult(splitResult, questionRepository.findAll(), null);
+		} catch (RuntimeException refreshFailure) {
+
+			// The split transaction has committed. Reconstruct a safe list from the
+			// pre-save snapshot and committed split result rather than reporting the
+			// persistence itself as failed.
+			List<Question> fallback = new ArrayList<>(beforeSplit);
+			fallback.removeIf(question -> question.getId() == request.originalQuestion().getId());
+			fallback.addAll(splitResult.questions());
+			return new LegacySplitSaveResult(splitResult, List.copyOf(fallback), refreshFailure);
+		}
 	}
 
 	// Run validation, persistence and list reconstruction on the save task, away
@@ -1473,13 +1739,7 @@ final class QuestionCapturePane extends VBox {
 		questionSaveInProgress = true;
 		setDisable(true);
 		saveStatusLabel.setText("Saving " + request.questionCode() + "...");
-		Task<QuestionSaveResult> saveTask = new Task<>() {
-
-			@Override
-			protected QuestionSaveResult call() {
-				return persistQuestionCapture(request);
-			}
-		};
+		Task<QuestionSaveResult> saveTask = createTaskList(request);
 		saveTask.setOnSucceeded(_ -> {
 			QuestionSaveResult result = saveTask.getValue();
 			completeQuestionSave(result, editing, imported, savedPreviousImportedIndex, savedHadStoredRegions);
@@ -1530,6 +1790,14 @@ final class QuestionCapturePane extends VBox {
 			return;
 		}
 		responseTypeGroup.selectToggle(writtenResponseButton);
+	}
+
+	private void setCaptureModeControlsDisabled(boolean disabled) {
+
+		// A split is one correction workflow. New/imported capture cannot be entered
+		// part-way through it.
+		newQuestionsModeButton.setDisable(disabled);
+		importedQuestionsModeButton.setDisable(disabled);
 	}
 
 	private void setLegacyCaptureControlsVisible(boolean visible) {
@@ -1800,6 +2068,12 @@ final class QuestionCapturePane extends VBox {
 	}
 
 	private void updateQuestionCodeLock() {
+		if (legacySplitCaptureState != null) {
+
+			// Split metadata is fixed by the definition dialog.
+			questionCodeField.setDisable(true);
+			return;
+		}
 		if (importedQuestion != null) {
 			questionCodeField.setDisable(true);
 			return;
@@ -1821,14 +2095,27 @@ final class QuestionCapturePane extends VBox {
 
 	private void validateDependencies(QuestionRepository questionRepository,
 			SourceQuestionRepository sourceQuestionRepository, SqliteQuestionCaptureService questionCaptureService,
-			SharedContextCapturePane sharedContextCapturePane, QuestionExtractor questionExtractor,
-			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
-			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
-			Predicate<Question> importedQuestionActivationHandler, IntConsumer examPageNavigationHandler,
-			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
-			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler) {
+			LegacyQuestionSplitService legacyQuestionSplitService, SharedContextCapturePane sharedContextCapturePane,
+			QuestionExtractor questionExtractor, CurriculumSelectionModel curriculumSelectionModel,
+			CurriculumSelectorPane curriculumSelectorPane, Supplier<ExamBooklet> bookletSupplier,
+			Supplier<PdfSession> examPdfSessionSupplier, Predicate<Question> importedQuestionActivationHandler,
+			IntConsumer examPageNavigationHandler, BooleanSupplier questionTargetChangeAllowed,
+			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
+			Consumer<List<Question>> questionsChangedHandler) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
+		}
+		if (sourceQuestionRepository == null) {
+			throw new NullPointerException("sourceQuestionRepository");
+		}
+		if (questionCaptureService == null) {
+			throw new NullPointerException("questionCaptureService");
+		}
+		if (legacyQuestionSplitService == null) {
+			throw new NullPointerException("legacyQuestionSplitService");
+		}
+		if (sharedContextCapturePane == null) {
+			throw new NullPointerException("sharedContextCapturePane");
 		}
 		if (questionExtractor == null) {
 			throw new NullPointerException("questionExtractor");
@@ -1845,12 +2132,6 @@ final class QuestionCapturePane extends VBox {
 		if (examPdfSessionSupplier == null) {
 			throw new NullPointerException("examPdfSessionSupplier");
 		}
-		if (selectionClearHandler == null) {
-			throw new NullPointerException("selectionClearHandler");
-		}
-		if (questionsChangedHandler == null) {
-			throw new NullPointerException("questionsChangedHandler");
-		}
 		if (importedQuestionActivationHandler == null) {
 			throw new NullPointerException("importedQuestionActivationHandler");
 		}
@@ -1860,17 +2141,14 @@ final class QuestionCapturePane extends VBox {
 		if (questionTargetChangeAllowed == null) {
 			throw new NullPointerException("questionTargetChangeAllowed");
 		}
-		if (sourceQuestionRepository == null) {
-			throw new NullPointerException("sourceQuestionRepository");
-		}
-		if (sharedContextCapturePane == null) {
-			throw new NullPointerException("sharedContextCapturePane");
-		}
 		if (questionSelectionTransferHandler == null) {
 			throw new NullPointerException("questionSelectionTransferHandler");
 		}
-		if (questionCaptureService == null) {
-			throw new NullPointerException("questionCaptureService");
+		if (selectionClearHandler == null) {
+			throw new NullPointerException("selectionClearHandler");
+		}
+		if (questionsChangedHandler == null) {
+			throw new NullPointerException("questionsChangedHandler");
 		}
 	}
 
@@ -1880,10 +2158,20 @@ final class QuestionCapturePane extends VBox {
 		}
 		String validationError = findQuestionDetailsValidationError();
 		if (validationError == null && sharedContextCapturePane.isCaptureMode()) {
-			validationError = "Capture the shared preamble region and click Add Region before saving the question.";
+			validationError = "Capture the shared preamble region and click Add Region before continuing.";
+		}
+		if (validationError == null && legacySplitCaptureState != null
+				&& legacySplitCaptureState.definition
+						.preambleChoice() == LegacyQuestionSplitDialog.PreambleChoice.CAPTURE_NEW_SHARED_PREAMBLE
+				&& !sharedContextCapturePane.hasPendingAutomaticRegion()) {
+			validationError = "Capture the shared preamble before continuing with the split.";
 		}
 		if (validationError != null) {
 			showAlert(Alert.AlertType.WARNING, "Question is incomplete.", validationError);
+			return;
+		}
+		if (legacySplitCaptureState != null) {
+			advanceLegacyQuestionSplit();
 			return;
 		}
 		saveQuestion();
@@ -1910,6 +2198,38 @@ final class QuestionCapturePane extends VBox {
 		boolean unresolved = request.existingQuestion() != null
 				&& request.existingQuestion().isSharedContextUnresolved();
 		return sharedContextValidationError(sourceCode, source, unresolved, contextAvailable);
+	}
+
+	private static final class LegacySplitCaptureState {
+
+		private final Question originalQuestion;
+		private final LegacyQuestionSplitDialog.Result definition;
+		private final List<SplitPart> completedParts = new ArrayList<>();
+		private final Runnable completedHandler;
+		private int activePartIndex;
+
+		private LegacySplitCaptureState(Question originalQuestion, LegacyQuestionSplitDialog.Result definition,
+				Runnable completedHandler) {
+			this.originalQuestion = originalQuestion;
+			this.definition = definition;
+			this.completedHandler = completedHandler;
+		}
+
+		private LegacyQuestionSplitDialog.PartDefinition activeDefinition() {
+			return definition.parts().get(activePartIndex);
+		}
+
+		private boolean isLastPart() {
+			return activePartIndex == definition.parts().size() - 1;
+		}
+	}
+
+	private record LegacySplitSaveResult(SplitResult splitResult, List<Question> questions,
+			RuntimeException refreshFailure) {
+
+		private LegacySplitSaveResult {
+			questions = List.copyOf(questions);
+		}
 	}
 
 	private record QuestionSaveResult(Question question, List<Question> questions, String validationError,
