@@ -11,7 +11,6 @@ class ExamProviderTest {
 	@Test
 	void retainsProviderIdentityAndName() {
 		ExamProvider provider = new ExamProvider(4, "Independent Schools Queensland");
-
 		assertAll(() -> assertEquals(4, provider.getId()),
 				() -> assertEquals("Independent Schools Queensland", provider.getName()));
 	}

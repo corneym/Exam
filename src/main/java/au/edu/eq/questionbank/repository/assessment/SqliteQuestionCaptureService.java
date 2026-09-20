@@ -30,7 +30,8 @@ public final class SqliteQuestionCaptureService {
 	private final SqliteSharedQuestionContextRepository sharedContextRepository;
 
 	/**
-	 * Creates a capture service sharing one database across question and context writers.
+	 * Creates a capture service sharing one database across question and context
+	 * writers.
 	 *
 	 * @param database initialised question-bank database
 	 */
@@ -45,7 +46,8 @@ public final class SqliteQuestionCaptureService {
 	}
 
 	/**
-	 * Persists capture metadata, source identity and shared context in one transaction.
+	 * Persists capture metadata, source identity and shared context in one
+	 * transaction.
 	 *
 	 * @param request validated capture operation
 	 * @return question resulting from the committed capture
@@ -58,6 +60,9 @@ public final class SqliteQuestionCaptureService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Resolve identities, propagate the preamble and save capture data in one
+				// transaction.
 				SourceQuestion sourceQuestion = resolveSourceQuestion(connection, request);
 				SharedQuestionContext sharedContext = resolveSharedContext(connection, request, sourceQuestion);
 				if (sourceQuestion != null && sharedContext != null) {
@@ -150,6 +155,9 @@ public final class SqliteQuestionCaptureService {
 					request.responseType());
 		}
 		Question existing = request.existingQuestion();
+
+		// Imported questions keep previously captured regions; only empty captures
+		// receive new ones.
 		if (request.operation() == Operation.IMPORTED) {
 			if (existing.getRegions().isEmpty()) {
 				questionWriter.attachRegions(connection, existing.getId(), request.regions(), request.classification(),
@@ -175,6 +183,9 @@ public final class SqliteQuestionCaptureService {
 	private Question rebuildQuestion(Question existing, String questionCode, int marks, List<QuestionRegion> regions,
 			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
 			QuestionResponseType responseType) {
+
+		// Rebuild editable fields while retaining identity, legacy evidence and the
+		// answer.
 		Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
 				existing.getQuestionText(), marks, regions, classification, existing.isPreambleCaptureRequired(),
 				sourceQuestion, sharedContext, responseType);
@@ -186,6 +197,9 @@ public final class SqliteQuestionCaptureService {
 
 	private SourceQuestion resolvePreambleStatus(Connection connection, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
+
+		// Capture resolves unknown preamble status without replacing an explicit
+		// decision.
 		if (sourceQuestion == null || sourceQuestion.getPreambleStatus() != PreambleStatus.UNKNOWN) {
 			return sourceQuestion;
 		}
@@ -212,6 +226,9 @@ public final class SqliteQuestionCaptureService {
 				return existingContext;
 			}
 		}
+
+		// Create a context only when no retained, selected or sibling context can be
+		// reused.
 		PendingSharedContext pending = request.pendingSharedContext();
 		if (pending == null) {
 			return null;
@@ -247,7 +264,7 @@ public final class SqliteQuestionCaptureService {
 	/**
 	 * Shared preamble captured in memory and awaiting persistence.
 	 *
-	 * @param label non-blank label for the new reusable preamble
+	 * @param label   non-blank label for the new reusable preamble
 	 * @param regions non-empty shared-context regions in source order
 	 */
 	public record PendingSharedContext(String label, List<SharedQuestionContextRegion> regions) {
@@ -255,7 +272,7 @@ public final class SqliteQuestionCaptureService {
 		/**
 		 * Validates a pending preamble and copies its ordered regions.
 		 *
-		 * @param label non-blank label for the new reusable preamble
+		 * @param label   non-blank label for the new reusable preamble
 		 * @param regions non-empty shared-context regions in source order
 		 */
 		public PendingSharedContext {
@@ -275,16 +292,18 @@ public final class SqliteQuestionCaptureService {
 	/**
 	 * Validated inputs for an atomic question-capture operation.
 	 *
-	 * @param operation new, imported or edit capture
-	 * @param booklet source examination booklet
-	 * @param existingQuestion stored question for imported or edit capture; null for new capture
-	 * @param questionCode non-blank examination question or part code
-	 * @param marks positive mark value
-	 * @param regions ordered ordinary question regions
-	 * @param classification original syllabus Subtopic or Descriptor
-	 * @param responseType authoritative response type, including UNKNOWN when unresolved
+	 * @param operation             new, imported or edit capture
+	 * @param booklet               source examination booklet
+	 * @param existingQuestion      stored question for imported or edit capture;
+	 *                              null for new capture
+	 * @param questionCode          non-blank examination question or part code
+	 * @param marks                 positive mark value
+	 * @param regions               ordered ordinary question regions
+	 * @param classification        original syllabus Subtopic or Descriptor
+	 * @param responseType          authoritative response type, including UNKNOWN
+	 *                              when unresolved
 	 * @param selectedSharedContext existing reusable preamble, or null
-	 * @param pendingSharedContext newly captured preamble to persist, or null
+	 * @param pendingSharedContext  newly captured preamble to persist, or null
 	 */
 	public record Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
 			int marks, List<QuestionRegion> regions, CurriculumNode classification, QuestionResponseType responseType,
@@ -297,15 +316,16 @@ public final class SqliteQuestionCaptureService {
 		 * Existing Questions retain their stored response type. A new Question created
 		 * through this compatibility form remains UNKNOWN.
 		 *
-		 * @param operation new, imported or edit capture
-		 * @param booklet source examination booklet
-		 * @param existingQuestion stored question for imported or edit capture; null for new capture
-		 * @param questionCode non-blank examination question or part code
-		 * @param marks positive mark value
-		 * @param regions ordered ordinary question regions
-		 * @param classification original syllabus Subtopic or Descriptor
+		 * @param operation             new, imported or edit capture
+		 * @param booklet               source examination booklet
+		 * @param existingQuestion      stored question for imported or edit capture;
+		 *                              null for new capture
+		 * @param questionCode          non-blank examination question or part code
+		 * @param marks                 positive mark value
+		 * @param regions               ordered ordinary question regions
+		 * @param classification        original syllabus Subtopic or Descriptor
 		 * @param selectedSharedContext existing reusable preamble, or null
-		 * @param pendingSharedContext newly captured preamble to persist, or null
+		 * @param pendingSharedContext  newly captured preamble to persist, or null
 		 */
 		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
 				int marks, List<QuestionRegion> regions, CurriculumNode classification,
@@ -316,18 +336,21 @@ public final class SqliteQuestionCaptureService {
 		}
 
 		/**
-		 * Validates capture state and retains an immutable copy of the ordinary regions.
+		 * Validates capture state and retains an immutable copy of the ordinary
+		 * regions.
 		 *
-		 * @param operation new, imported or edit capture
-		 * @param booklet source examination booklet
-		 * @param existingQuestion stored question for imported or edit capture; null for new capture
-		 * @param questionCode non-blank examination question or part code
-		 * @param marks positive mark value
-		 * @param regions ordered ordinary question regions
-		 * @param classification original syllabus Subtopic or Descriptor
-		 * @param responseType authoritative response type, including UNKNOWN when unresolved
+		 * @param operation             new, imported or edit capture
+		 * @param booklet               source examination booklet
+		 * @param existingQuestion      stored question for imported or edit capture;
+		 *                              null for new capture
+		 * @param questionCode          non-blank examination question or part code
+		 * @param marks                 positive mark value
+		 * @param regions               ordered ordinary question regions
+		 * @param classification        original syllabus Subtopic or Descriptor
+		 * @param responseType          authoritative response type, including UNKNOWN
+		 *                              when unresolved
 		 * @param selectedSharedContext existing reusable preamble, or null
-		 * @param pendingSharedContext newly captured preamble to persist, or null
+		 * @param pendingSharedContext  newly captured preamble to persist, or null
 		 */
 		public Request {
 			if (operation == null) {

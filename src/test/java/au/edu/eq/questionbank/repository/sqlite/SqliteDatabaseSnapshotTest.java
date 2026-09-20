@@ -119,11 +119,10 @@ class SqliteDatabaseSnapshotTest {
 					    (100, 1, 1, 5,
 					     0.12, 0.18, 0.40, 0.20)
 					""");
-			/*
-			 * Keep this connection open while the snapshot is made. The database is in WAL
-			 * mode, so the test exercises snapshotting a live SQLite database rather than
-			 * copying a closed database file.
-			 */
+
+			// Keep this connection open while the snapshot is made. The database is in WAL
+			// mode, so the test exercises snapshotting a live SQLite database rather than
+			// copying a closed database file.
 			database.createConsistentSnapshot(snapshotPath);
 		}
 		assertTrue(Files.isRegularFile(snapshotPath));

@@ -93,6 +93,9 @@ public final class ShutdownCoordinator {
 		if (readyToExit) {
 			return new ShutdownResult(ShutdownStatus.ALREADY_READY, null);
 		}
+
+		// On a resource-close retry, reuse the completed backup instead of creating
+		// another.
 		if (!backupCompleted) {
 			try {
 				backupService.createBackup(automaticBackupRequest);
@@ -103,6 +106,9 @@ public final class ShutdownCoordinator {
 			try {
 				retention.prune(automaticBackupRequest.destinationDirectory());
 			} catch (IOException e) {
+
+				// Retention failure does not invalidate the new backup; retain the warning
+				// across close retries.
 				pendingRetentionWarning = e;
 			}
 		}

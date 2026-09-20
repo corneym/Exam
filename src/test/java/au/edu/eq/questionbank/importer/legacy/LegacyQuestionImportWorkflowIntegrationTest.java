@@ -59,11 +59,9 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 			writeQuestion(qcaa, 2, 2020, "1", "21a", 3, "1.1.1", null, false);
 			writeQuestion(qcaa, 3, 2020, "2", "1a", 2, "1.1.1", null, true);
 			writeQuestion(qcaa, 4, 2021, "1", "21a", 4, "1.1.1", null, true);
-
 			Sheet neap = workbook.createSheet("NEAP");
 			writeHeader(neap);
 			writeQuestion(neap, 1, 2021, "MCQ", "1", 1, "1.1.1", "D", false);
-
 			try (OutputStream output = Files.newOutputStream(path)) {
 				workbook.write(output);
 			}
@@ -80,8 +78,8 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 				return question;
 			}
 		}
-		throw new AssertionError("Question not found: " + provider + " " + year + " " + bookletName + " "
-				+ questionCode);
+		throw new AssertionError(
+				"Question not found: " + provider + " " + year + " " + bookletName + " " + questionCode);
 	}
 
 	private String sourceFilename(LegacyBookletRequirement requirement) {
@@ -122,17 +120,14 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 		Path pdfRoot = tempDirectory.resolve("data/pdf");
 		Path incomingRoot = tempDirectory.resolve("incoming");
 		Files.createDirectories(incomingRoot);
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
 		Subject chemistry = createCurriculum(database);
 		Path workbook = createWorkbook();
 		LegacyQuestionMetadataImporter metadataImporter = new LegacyQuestionMetadataImporter(database);
-
 		List<LegacyBookletRequirement> requirements = metadataImporter.findMissingBooklets(workbook, "Chemistry",
 				"2019");
 		assertEquals(5, requirements.size());
-
 		PdfStore pdfStore = new PdfStore(pdfRoot);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
 		List<Path> storedPdfs = new ArrayList<>();
@@ -149,11 +144,9 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 			examImporter.importExam(chemistry, requirement.providerName(), requirement.year(), "External Assessment",
 					requirement.bookletName(), relativePath);
 		}
-
 		assertTrue(metadataImporter.findMissingBooklets(workbook, "Chemistry", "2019").isEmpty());
 		LegacyQuestionImportResult first = metadataImporter.importWorkbook(workbook, "Chemistry", "2019");
 		LegacyQuestionImportResult second = metadataImporter.importWorkbook(workbook, "Chemistry", "2019");
-
 		assertEquals(new LegacyQuestionImportResult(5, 0, 2), first);
 		assertEquals(new LegacyQuestionImportResult(0, 5, 0), second);
 		for (Path storedPdf : storedPdfs) {
@@ -161,7 +154,6 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 			assertTrue(storedPdf.startsWith(pdfRoot.resolve("Chemistry")));
 			assertFalse(storedPdf.getFileName().toString().contains("(2)"));
 		}
-
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
 		List<Question> importedQuestions = repository.findAll();
 		assertEquals(5, importedQuestions.size());
@@ -170,7 +162,6 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 			assertEquals("2019", question.getClassification().getSyllabusVersion().getName());
 			assertTrue(question.getClassification() instanceof Subtopic);
 		}
-
 		Question mcq = findQuestion(importedQuestions, "QCAA", 2020, "MCQ booklet", "1");
 		Question paper1 = findQuestion(importedQuestions, "QCAA", 2020, "Paper 1", "21a");
 		Question paper2 = findQuestion(importedQuestions, "QCAA", 2020, "Paper 2", "1a");
@@ -179,18 +170,16 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 		assertFalse(paper1.hasAnswer());
 		assertFalse(paper1.isPreambleCaptureRequired());
 		assertTrue(paper2.isPreambleCaptureRequired());
-
 		ExamBooklet booklet = paper1.getBooklet();
 		Question captured = repository.attachRegions(paper1.getId(),
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.70, 0.15)));
 		assertEquals(1, captured.getRegions().size());
-
 		LegacyQuestionImportResult afterCapture = metadataImporter.importWorkbook(workbook, "Chemistry", "2019");
 		assertEquals(new LegacyQuestionImportResult(0, 5, 0), afterCapture);
 		Question reloaded = new SqliteQuestionRepository(database).findById(paper1.getId()).orElseThrow();
 		assertEquals(1, reloaded.getRegions().size());
-
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT relative_path FROM source_documents")) {
 			int pathCount = 0;
 			while (result.next()) {

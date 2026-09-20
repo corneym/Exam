@@ -18,10 +18,11 @@ public final class CurriculumAuthoringOpenService {
 	private final CurriculumDraftLoader draftLoader;
 
 	/**
-	 * Creates an authoring opener using persisted curriculum lookup and draft loading.
+	 * Creates an authoring opener using persisted curriculum lookup and draft
+	 * loading.
 	 *
 	 * @param curriculumRepository subject and syllabus lookup
-	 * @param draftLoader resumable authoring-session loader
+	 * @param draftLoader          resumable authoring-session loader
 	 */
 	public CurriculumAuthoringOpenService(CurriculumRepository curriculumRepository,
 			CurriculumDraftLoader draftLoader) {
@@ -42,6 +43,9 @@ public final class CurriculumAuthoringOpenService {
 	 */
 	public List<SyllabusVersion> availableVersions() {
 		List<SyllabusVersion> versions = new ArrayList<>();
+
+		// Historical and final syllabuses remain available for inspection and explicit
+		// reopening.
 		for (Subject subject : curriculumRepository.findAllSubjects()) {
 			versions.addAll(curriculumRepository.findVersionsForSubject(subject));
 		}

@@ -38,6 +38,9 @@ public final class SqliteCurriculumSourcePdfRepository implements CurriculumSour
 		if (syllabusVersion.getCurriculumStatus() != CurriculumStatus.IN_PROGRESS) {
 			throw new IllegalStateException("Final curriculum must be reopened before changing its source PDF");
 		}
+
+		// Recheck editability in SQL before changing the reference; file copying
+		// belongs to the service.
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						UPDATE syllabus_versions

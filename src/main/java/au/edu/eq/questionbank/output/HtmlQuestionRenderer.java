@@ -24,16 +24,14 @@ public class HtmlQuestionRenderer {
 	 * @param questionImages images to include, in document order
 	 * @param outputFile     destination HTML file with a parent directory against
 	 *                       which image paths can be relativized
-	 * @throws IOException if the output document cannot be written
-	 * @throws NullPointerException if either argument, an image path, or the output
-	 *                              parent directory is {@code null}
+	 * @throws IOException              if the output document cannot be written
+	 * @throws NullPointerException     if either argument, an image path, or the
+	 *                                  output parent directory is {@code null}
 	 * @throws IllegalArgumentException if an image cannot be relativized against
 	 *                                  the output directory
 	 */
 	public void render(List<Path> questionImages, Path outputFile) throws IOException {
-
 		StringBuilder html = new StringBuilder();
-
 		html.append("""
 				<!DOCTYPE html>
 				<html>
@@ -60,24 +58,22 @@ public class HtmlQuestionRenderer {
 				</head>
 				<body>
 				""");
-
 		for (Path image : questionImages) {
 
+			// Keep links portable with the HTML directory and escape filenames before
+			// inserting attributes.
 			Path relativeImage = outputFile.getParent().relativize(image);
 			String source = escapeAttribute(relativeImage.toString().replace('\\', '/'));
-
 			html.append("""
 					<div class="question">
 					    <img src="%s">
 					</div>
 					""".formatted(source));
 		}
-
 		html.append("""
 				</body>
 				</html>
 				""");
-
 		Files.writeString(outputFile, html.toString());
 	}
 

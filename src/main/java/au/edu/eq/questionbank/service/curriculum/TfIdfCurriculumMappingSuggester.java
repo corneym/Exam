@@ -16,6 +16,7 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
  * identifier; ranking never confirms a mapping.
  */
 public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingSuggester {
+
 	private record SimilarityCorpora(List<String> descriptorTexts, List<String> contextTexts) {
 	}
 
@@ -27,8 +28,8 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 	/**
 	 * Creates a descriptor suggester using syllabus text and ancestor context.
 	 *
-	 * @param repository the curriculum hierarchy used to build the source and target
-	 *                   corpora
+	 * @param repository the curriculum hierarchy used to build the source and
+	 *                   target corpora
 	 * @throws NullPointerException if {@code repository} is {@code null}
 	 */
 	public TfIdfCurriculumMappingSuggester(CurriculumRepository repository) {
@@ -46,6 +47,9 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 		if (targetDescriptors.isEmpty()) {
 			return List.of();
 		}
+
+		// Weight terms against both syllabuses so source and target vectors share one
+		// scale.
 		SimilarityCorpora corpora = buildCorpora(sourceDescriptors, targetDescriptors);
 		TextSimilarityScorer descriptorScorer = new TfIdfTextSimilarityScorer(corpora.descriptorTexts());
 		TextSimilarityScorer contextScorer = new TfIdfTextSimilarityScorer(corpora.contextTexts());
@@ -120,6 +124,9 @@ public final class TfIdfCurriculumMappingSuggester implements CurriculumMappingS
 	}
 
 	private String contextText(CurriculumNode descriptor) {
+
+		// Score ancestor wording separately so it supplements, rather than repeats,
+		// descriptor text.
 		StringBuilder context = new StringBuilder();
 		CurriculumNode parent = descriptor.getParent();
 		while (parent != null) {

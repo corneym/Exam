@@ -71,6 +71,9 @@ public final class ScormPackageValidator {
 			packageFiles = stream.filter(path -> Files.isRegularFile(path)).toList();
 		}
 		Set<String> actualContentFiles = new HashSet<String>();
+
+		// Only learning content belongs in the manifest inventory; source PDFs must
+		// never be packaged.
 		for (Path file : packageFiles) {
 			String relativePath = root.relativize(file).toString().replace(File.separatorChar, '/');
 			if (ScormManifestWriter.MANIFEST_FILE_NAME.equals(relativePath)) {
@@ -94,6 +97,8 @@ public final class ScormPackageValidator {
 	private Document parseManifest(Path manifestPath) throws IOException {
 		try {
 			DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+
+			// Parse locally without DTDs, external entities or network schema resolution.
 			factory.setNamespaceAware(true);
 			factory.setXIncludeAware(false);
 			factory.setExpandEntityReferences(false);
@@ -178,6 +183,9 @@ public final class ScormPackageValidator {
 	}
 
 	private void validateActualContentInventory(Path root, Set<String> declaredContentFiles) throws IOException {
+
+		// Require exact agreement: undeclared files are as much an error as missing
+		// declared files.
 		Set<String> actualContentFiles = collectActualContentFiles(root);
 		if (actualContentFiles.equals(declaredContentFiles)) {
 			return;
@@ -273,6 +281,9 @@ public final class ScormPackageValidator {
 	}
 
 	private Element validateSingleScoStructure(Document document) throws IOException {
+
+		// Check the links from default organization to item to launch resource, not
+		// just element presence.
 		Element organizations = requireSingleElement(document, "organizations");
 		Element organization = requireSingleElement(document, "organization");
 		Element item = requireSingleElement(document, "item");

@@ -1,10 +1,11 @@
 package au.edu.eq.questionbank.model;
 
 /**
- * An organisation that issues examinations, such as an assessment authority
- * or a commercial examination provider.
+ * An organisation that issues examinations, such as an assessment authority or
+ * a commercial examination provider.
  */
 public class ExamProvider {
+
 	private final long id;
 	private final String name;
 

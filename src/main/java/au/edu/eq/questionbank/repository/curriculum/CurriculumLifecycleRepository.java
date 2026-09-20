@@ -13,7 +13,7 @@ public interface CurriculumLifecycleRepository {
 	 * Marks the persisted curriculum final at the supplied instant.
 	 *
 	 * @param syllabusVersion syllabus to finalise
-	 * @param finalisedAt finalisation timestamp
+	 * @param finalisedAt     finalisation timestamp
 	 * @return updated syllabus snapshot
 	 */
 	SyllabusVersion finalise(SyllabusVersion syllabusVersion, Instant finalisedAt);

@@ -41,9 +41,8 @@ class SqliteQuestionCaptureServiceTest {
 				List.of(new QuestionRegion(fixture.booklet(), 1, 0.10, 0.10, 0.70, 0.20)), fixture.classification(),
 				false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
-		/*
-		 * Deliberately use the old constructor without a response-type argument.
-		 */
+
+		// Deliberately use the old constructor without a response-type argument.
 		Question edited = service.save(
 				new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.EDIT, fixture.booklet(),
 						original, "Q3", 2, original.getRegions(), fixture.classification(), null, null));

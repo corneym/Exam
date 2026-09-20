@@ -49,10 +49,16 @@ public final class QuestionPreviewService {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
+
+		// Metadata-only questions have no preview, even if shared preamble regions are
+		// already linked.
 		if (question.getRegions().isEmpty()) {
 			return Optional.empty();
 		}
 		Path pdfPath = pdfStore.resolve(question.getBooklet().getSourceDocument().getRelativePath());
+
+		// Each preview owns its PDF session so rendering failures still release the
+		// source file.
 		try (PdfSession session = PdfSession.open(pdfPath)) {
 			return Optional.of(questionExtractor.extractQuestion(session, question));
 		}

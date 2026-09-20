@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class CurriculumMappingSuggestionTest {
+
 	private Subject chemistry;
 	private SyllabusVersion syllabus2019;
 	private SyllabusVersion syllabus2025;

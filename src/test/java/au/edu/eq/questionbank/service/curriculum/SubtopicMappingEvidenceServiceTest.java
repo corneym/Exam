@@ -29,9 +29,7 @@ class SubtopicMappingEvidenceServiceTest {
 				Map.of(fixture.firstDescriptor().getId(), CurriculumMappingReviewOutcome.MATCHED));
 		SubtopicMappingEvidenceService service = new SubtopicMappingEvidenceService(fixture.repository(),
 				reviewRepository);
-
 		SubtopicMappingEvidence evidence = service.summarise(fixture.sourceSubtopic(), fixture.targetVersion());
-
 		assertEquals(1, evidence.reviewedDescriptorCount());
 		assertEquals(3, evidence.totalDescriptorCount());
 		assertEquals(0, evidence.noMatchDescriptorCount());
@@ -42,13 +40,11 @@ class SubtopicMappingEvidenceServiceTest {
 		Fixture fixture = createFixture();
 		CurriculumMappingReviewRepository reviewRepository = new TestReviewRepository(
 				Map.of(fixture.firstDescriptor().getId(), CurriculumMappingReviewOutcome.NO_MATCH,
-						fixture.secondDescriptor().getId(), CurriculumMappingReviewOutcome.MATCHED,
-						999L, CurriculumMappingReviewOutcome.NO_MATCH));
+						fixture.secondDescriptor().getId(), CurriculumMappingReviewOutcome.MATCHED, 999L,
+						CurriculumMappingReviewOutcome.NO_MATCH));
 		SubtopicMappingEvidenceService service = new SubtopicMappingEvidenceService(fixture.repository(),
 				reviewRepository);
-
 		SubtopicMappingEvidence evidence = service.summarise(fixture.sourceSubtopic(), fixture.targetVersion());
-
 		assertEquals(2, evidence.reviewedDescriptorCount());
 		assertEquals(3, evidence.totalDescriptorCount());
 		assertEquals(1, evidence.noMatchDescriptorCount());
@@ -60,12 +56,12 @@ class SubtopicMappingEvidenceServiceTest {
 		Unit sourceUnit = new Unit(10, sourceVersion, "1", "Source unit", 0);
 		Topic sourceTopic = new Topic(11, sourceVersion, sourceUnit, "1.1", "Source topic", 0);
 		Subtopic sourceSubtopic = new Subtopic(12, sourceVersion, sourceTopic, "1.1.1", "Source subtopic", 0);
-		Descriptor firstDescriptor = new Descriptor(13, sourceVersion, sourceSubtopic, "1.1.1.1",
-				"First descriptor", 0);
-		Descriptor secondDescriptor = new Descriptor(14, sourceVersion, sourceSubtopic, "1.1.1.2",
-				"Second descriptor", 1);
-		Descriptor thirdDescriptor = new Descriptor(15, sourceVersion, sourceSubtopic, "1.1.1.3",
-				"Third descriptor", 2);
+		Descriptor firstDescriptor = new Descriptor(13, sourceVersion, sourceSubtopic, "1.1.1.1", "First descriptor",
+				0);
+		Descriptor secondDescriptor = new Descriptor(14, sourceVersion, sourceSubtopic, "1.1.1.2", "Second descriptor",
+				1);
+		Descriptor thirdDescriptor = new Descriptor(15, sourceVersion, sourceSubtopic, "1.1.1.3", "Third descriptor",
+				2);
 		SyllabusVersion targetVersion = new SyllabusVersion(2, subject, "2025", true);
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(subject),
 				List.of(sourceVersion, targetVersion),
@@ -73,11 +69,12 @@ class SubtopicMappingEvidenceServiceTest {
 		return new Fixture(repository, sourceSubtopic, firstDescriptor, secondDescriptor, targetVersion);
 	}
 
-	private record Fixture(InMemoryCurriculumRepository repository, Subtopic sourceSubtopic,
-			Descriptor firstDescriptor, Descriptor secondDescriptor, SyllabusVersion targetVersion) {
+	private record Fixture(InMemoryCurriculumRepository repository, Subtopic sourceSubtopic, Descriptor firstDescriptor,
+			Descriptor secondDescriptor, SyllabusVersion targetVersion) {
 	}
 
 	private static final class TestReviewRepository implements CurriculumMappingReviewRepository {
+
 		private final Map<Long, CurriculumMappingReviewOutcome> outcomes;
 
 		private TestReviewRepository(Map<Long, CurriculumMappingReviewOutcome> outcomes) {

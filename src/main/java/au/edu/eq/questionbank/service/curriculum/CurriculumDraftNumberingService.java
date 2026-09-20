@@ -107,10 +107,14 @@ public final class CurriculumDraftNumberingService {
 					.orElseThrow(() -> new IllegalArgumentException("Unknown parent draft id: " + parentDraftId));
 			prefix = parent.code() + ".";
 		}
+
+		// Codes are unique across the draft, including any manually assigned codes.
 		Set<String> existingCodes = new HashSet<>();
 		for (CurriculumDraftNode node : draft.nodes()) {
 			existingCodes.add(node.code());
 		}
+
+		// Reuse an available gap for the new node without renumbering surviving nodes.
 		int candidateNumber = 1;
 		String candidate = prefix + candidateNumber;
 		while (existingCodes.contains(candidate)) {

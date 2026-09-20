@@ -33,7 +33,6 @@ class CurrentCurriculumApplicabilitySqliteTest {
 
 	@TempDir
 	Path tempDir;
-
 	private SqliteDatabase database;
 	private Descriptor source;
 	private Descriptor sourceSubtopicDescriptorOne;
@@ -49,16 +48,11 @@ class CurrentCurriculumApplicabilitySqliteTest {
 	@Test
 	void derivesCurrentApplicabilityFromPersistedConfirmedReview() throws Exception {
 		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
-
 		reviewWriter.confirmMappings(source, targetVersion, List.of(targetOne, targetTwo));
-
 		SqliteCurriculumMappingRepository reloadedMappingRepository = new SqliteCurriculumMappingRepository(database);
-
 		CurrentCurriculumApplicabilityService service = new CurrentCurriculumApplicabilityService(
 				reloadedMappingRepository);
-
 		List<CurriculumNode> currentNodes = service.findCurrentNodes(source);
-
 		assertEquals(2, currentNodes.size());
 		assertEquals(22, currentNodes.get(0).getId());
 		assertEquals(23, currentNodes.get(1).getId());
@@ -68,9 +62,7 @@ class CurrentCurriculumApplicabilitySqliteTest {
 	void derivesSubtopicApplicabilityFromPersistedConfirmedReview() throws Exception {
 		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
 		reviewWriter.confirmMappings(sourceSubtopic, targetVersion, List.of(targetSubtopicOne, targetSubtopicTwo));
-
 		CurrentCurriculumApplicabilityService service = reopenedService();
-
 		assertEquals(List.of(targetSubtopicOne, targetSubtopicTwo), service.findCurrentNodes(sourceSubtopic));
 	}
 
@@ -85,7 +77,6 @@ class CurrentCurriculumApplicabilitySqliteTest {
 					    (12, 32, 'CONFIRMED')
 					""");
 		}
-
 		assertTrue(reopenedService().findCurrentNodes(source).isEmpty());
 	}
 
@@ -94,13 +85,12 @@ class CurrentCurriculumApplicabilitySqliteTest {
 		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
 		reviewWriter.confirmMappings(source, targetVersion, List.of(targetOne, targetTwo));
 		assertEquals(List.of(targetOne, targetTwo), reopenedService().findCurrentNodes(source));
-
 		reviewWriter.replaceWithNoMatch(source, targetVersion);
 		assertTrue(reopenedService().findCurrentNodes(source).isEmpty());
-		SqliteCurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
+		SqliteCurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(
+				database);
 		assertEquals(CurriculumMappingReviewOutcome.NO_MATCH,
 				reviewRepository.findOutcome(source, targetVersion).orElseThrow());
-
 		reviewWriter.replaceMappings(source, targetVersion, List.of(targetTwo));
 		assertEquals(List.of(targetTwo), reopenedService().findCurrentNodes(source));
 		assertEquals(CurriculumMappingReviewOutcome.MATCHED,
@@ -131,10 +121,8 @@ class CurrentCurriculumApplicabilitySqliteTest {
 					VALUES (1, 1, 12, '1', '', 2, 0)
 					""");
 		}
-
 		Question question = new SqliteQuestionRepository(database).findById(1).orElseThrow();
 		List<CurriculumNode> currentNodes = reopenedService().findCurrentNodes(question);
-
 		assertEquals(1, currentNodes.size());
 		assertEquals(targetOne.getId(), currentNodes.getFirst().getId());
 		assertEquals(source.getId(), question.getClassification().getId());
@@ -144,14 +132,11 @@ class CurrentCurriculumApplicabilitySqliteTest {
 	@Test
 	void persistedDescriptorReviewsProduceSubtopicCoverageAndNoMatchEvidence() throws Exception {
 		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
-		reviewWriter.confirmMappings(sourceSubtopicDescriptorOne, targetVersion,
-				List.of(targetSubtopicDescriptorOne));
+		reviewWriter.confirmMappings(sourceSubtopicDescriptorOne, targetVersion, List.of(targetSubtopicDescriptorOne));
 		reviewWriter.confirmNoMatch(sourceSubtopicDescriptorTwo, targetVersion);
-
 		SubtopicMappingEvidenceService service = new SubtopicMappingEvidenceService(
 				new SqliteCurriculumRepository(database), new SqliteCurriculumMappingReviewRepository(database));
 		SubtopicMappingEvidence evidence = service.summarise(sourceSubtopic, targetVersion);
-
 		assertEquals(2, evidence.reviewedDescriptorCount());
 		assertEquals(3, evidence.totalDescriptorCount());
 		assertEquals(1, evidence.noMatchDescriptorCount());
@@ -165,11 +150,8 @@ class CurrentCurriculumApplicabilitySqliteTest {
 	void setUp() throws Exception {
 		database = new SqliteDatabase(tempDir.resolve("questionbank.db"));
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-
 			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
-
 			statement.execute("""
 					INSERT INTO syllabus_versions
 					    (id, subject_id, syllabus_name, is_current)
@@ -178,7 +160,6 @@ class CurrentCurriculumApplicabilitySqliteTest {
 					    (2, 1, '2025', 1),
 					    (3, 1, '2022', 0)
 					""");
-
 			statement.execute("""
 					INSERT INTO curriculum_nodes
 					    (id, syllabus_version_id, parent_id, curriculum_code,
@@ -206,7 +187,6 @@ class CurrentCurriculumApplicabilitySqliteTest {
 					    (32, 3, 31, '3.1.1', 'Other historical descriptor', 'DESCRIPTOR', 0)
 					""");
 		}
-
 		Subject chemistry = new Subject(1, "Chemistry");
 		SyllabusVersion sourceVersion = new SyllabusVersion(1, chemistry, "2019", false);
 		targetVersion = new SyllabusVersion(2, chemistry, "2025", true);

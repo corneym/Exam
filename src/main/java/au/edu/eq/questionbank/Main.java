@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
  * the maintained desktop workflow starts through {@link Launcher}.
  */
 public class Main {
+
 	private Main() {
 	}
 
@@ -31,17 +32,13 @@ public class Main {
 	 * @throws Exception if configuration, extraction, or output fails
 	 */
 	public static void main(String[] args) throws Exception {
-
 		ApplicationConfig config = ApplicationConfig.load(Path.of("questionbank.properties"));
 		QuestionRepository repository = new InMemoryQuestionRepository();
-
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		QuestionExtractor extractor = new QuestionExtractor();
-
 		Path outputDir = Path.of("target", "extracted");
 		Files.createDirectories(outputDir);
 		List<Path> questionImages = new ArrayList<>();
-
 		for (Question question : repository.findAll()) {
 			QuestionRegion region = question.getRegions().get(0);
 			SourceDocument document = region.booklet().getSourceDocument();
@@ -50,7 +47,6 @@ public class Main {
 			System.out.println(question.getExam().getYear());
 			System.out.println(question.getQuestionCode());
 			System.out.println(pdfPath);
-
 			if (Files.isRegularFile(pdfPath)) {
 				System.out.println("PDF found");
 				Path outputFile = outputDir.resolve("question" + question.getId() + ".png");
@@ -62,7 +58,6 @@ public class Main {
 			}
 			System.out.println();
 		}
-
 		HtmlQuestionRenderer htmlRenderer = new HtmlQuestionRenderer();
 		Path htmlFile = outputDir.resolve("questions.html");
 		htmlRenderer.render(questionImages, htmlFile);

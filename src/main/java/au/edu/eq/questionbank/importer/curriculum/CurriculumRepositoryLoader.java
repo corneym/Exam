@@ -31,7 +31,6 @@ public class CurriculumRepositoryLoader {
 	}
 
 	CurriculumRepositoryLoader(CurriculumExcelImporter importer, CurriculumNodeBuilder nodeBuilder) {
-
 		this.importer = importer;
 		this.nodeBuilder = nodeBuilder;
 	}
@@ -47,32 +46,35 @@ public class CurriculumRepositoryLoader {
 	 * @throws IllegalArgumentException if {@code sources} is {@code null} or empty
 	 */
 	public CurriculumRepository load(List<CurriculumSource> sources) throws IOException {
-
 		if (sources == null || sources.isEmpty()) {
 			throw new IllegalArgumentException("sources must not be empty");
 		}
 
+		// Retain first-seen subject order when several syllabus sources share a
+		// subject.
 		Set<Subject> subjects = new LinkedHashSet<>();
 		List<SyllabusVersion> versions = new ArrayList<>();
 		List<CurriculumNode> nodes = new ArrayList<>();
 
+		// Allocate identifiers across this entire load, rather than restarting for each
+		// version.
 		AtomicLong ids = new AtomicLong(1);
-
 		for (CurriculumSource source : sources) {
 			SyllabusVersion version = source.syllabusVersion();
-
 			subjects.add(version.getSubject());
 			versions.add(version);
 
+			// Combine a version's workbooks to resolve parents and detect duplicates across
+			// files.
 			List<CurriculumImportRow> rows = new ArrayList<>();
-
 			for (Path workbook : source.workbooks()) {
 				rows.addAll(importer.read(workbook));
 			}
-
 			nodes.addAll(nodeBuilder.build(version, rows, ids::getAndIncrement));
 		}
 
+		// Publish the in-memory repository only after every source has been read and
+		// built.
 		return new InMemoryCurriculumRepository(List.copyOf(subjects), List.copyOf(versions), List.copyOf(nodes));
 	}
 }

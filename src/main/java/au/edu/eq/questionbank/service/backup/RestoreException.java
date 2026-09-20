@@ -7,7 +7,8 @@ public class RestoreException extends Exception {
 
 	private static final long serialVersionUID = 1L;
 	/**
-	 * Whether restore closed or altered resources so the current session must terminate.
+	 * Whether restore closed or altered resources so the current session must
+	 * terminate.
 	 */
 	private final boolean applicationMustExit;
 

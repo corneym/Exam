@@ -40,6 +40,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 		if (sharedContext.getBooklet().getId() != sourceQuestion.getBooklet().getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the source question's booklet");
 		}
+
+		// Check every affected part before replacing any in-memory entries.
 		for (Question question : questions) {
 			if (!question.hasSourceQuestion() || question.getSourceQuestion().getId() != sourceQuestion.getId()) {
 				continue;
@@ -52,6 +54,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 						+ " has inconsistent shared preamble links");
 			}
 		}
+
+		// Fill missing links only; retain existing answers and list positions.
 		int updatedCount = 0;
 		for (int i = 0; i < questions.size(); i++) {
 			Question existing = questions.get(i);

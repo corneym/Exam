@@ -21,6 +21,9 @@ import javafx.stage.Stage;
  */
 final class OptionsDialog extends Dialog<ButtonType> {
 
+	private static final int PATH_FIELD_COLUMNS = 40;
+	private static final int FORM_GAP = 8;
+	private static final int FORM_PADDING = 10;
 	private final TextField dataRootField = new TextField();
 
 	/**
@@ -42,13 +45,13 @@ final class OptionsDialog extends Dialog<ButtonType> {
 		ButtonType saveButtonType = new ButtonType("Save", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(saveButtonType, ButtonType.CANCEL);
 		dataRootField.setText(currentDataRoot.toString());
-		dataRootField.setPrefColumnCount(40);
+		dataRootField.setPrefColumnCount(PATH_FIELD_COLUMNS);
 		Button browseButton = new Button("Browse...");
 		browseButton.setOnAction(_ -> browseForDataRoot(owner));
 		GridPane grid = new GridPane();
-		grid.setHgap(8);
-		grid.setVgap(8);
-		grid.setPadding(new Insets(10));
+		grid.setHgap(FORM_GAP);
+		grid.setVgap(FORM_GAP);
+		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Data root:"), 0, 0);
 		grid.add(dataRootField, 1, 0);
 		grid.add(browseButton, 2, 0);
@@ -65,6 +68,7 @@ final class OptionsDialog extends Dialog<ButtonType> {
 				chooser.setInitialDirectory(currentDirectory);
 			}
 		} catch (IllegalArgumentException e) {
+
 			// Leave the chooser at its default location when the entered path is invalid.
 		}
 		File selectedDirectory = chooser.showDialog(owner);

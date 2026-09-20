@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import org.junit.jupiter.api.Test;
 
 class SourceQuestionCodeParserTest {
+
 	@Test
 	void alphabeticCodeHasNoSourceCode() {
 		assertNull(SourceQuestionCodeParser.derive("ABC"));

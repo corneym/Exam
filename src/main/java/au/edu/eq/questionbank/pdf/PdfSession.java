@@ -69,6 +69,9 @@ public class PdfSession implements AutoCloseable {
 					String.format("Page number must be between 1 and %d: %d", getPageCount(), pageNumber));
 		}
 		PDFTextStripper stripper = new PDFTextStripper();
+
+		// Text-stripper page ranges are already one-based, unlike the renderer's page
+		// indexes.
 		stripper.setStartPage(pageNumber);
 		stripper.setEndPage(pageNumber);
 		return stripper.getText(document);
@@ -102,6 +105,9 @@ public class PdfSession implements AutoCloseable {
 		if (!Float.isFinite(dpi) || dpi <= 0.0f) {
 			throw new IllegalArgumentException("DPI must be positive and finite: " + dpi);
 		}
+
+		// Convert only at the rendering boundary; PDFBox applies the crop box and page
+		// rotation.
 		return renderer.renderImageWithDPI(pageNumber - 1, dpi);
 	}
 }

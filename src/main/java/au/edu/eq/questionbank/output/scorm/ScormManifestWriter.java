@@ -45,17 +45,18 @@ public final class ScormManifestWriter {
 	 * Writes a SCORM 1.2 manifest containing one organisation, item and SCO
 	 * resource.
 	 *
-	 * @param packageRoot package directory in which to write the manifest
+	 * @param packageRoot        package directory in which to write the manifest
 	 * @param manifestIdentifier stable identifier for the manifest
-	 * @param title display title for the organisation and item
-	 * @param launchFile relative path to the SCO launch file
-	 * @param contentFiles complete learning-content inventory, including the launch
-	 *                     file
+	 * @param title              display title for the organisation and item
+	 * @param launchFile         relative path to the SCO launch file
+	 * @param contentFiles       complete learning-content inventory, including the
+	 *                           launch file
 	 * @return the written manifest path
-	 * @throws IOException if the manifest cannot be written
+	 * @throws IOException              if the manifest cannot be written
 	 * @throws IllegalArgumentException if text is blank, a path is unsafe, a path
 	 *                                  is duplicated, or the launch file is absent
-	 * @throws NullPointerException if a required argument or content path is null
+	 * @throws NullPointerException     if a required argument or content path is
+	 *                                  null
 	 */
 	public Path write(Path packageRoot, String manifestIdentifier, String title, Path launchFile,
 			List<Path> contentFiles) throws IOException {
@@ -83,6 +84,9 @@ public final class ScormManifestWriter {
 	}
 
 	private List<String> normaliseContentFiles(List<Path> contentFiles) {
+
+		// Sort portable paths and reject aliases that normalize to the same resource
+		// file.
 		Set<String> sortedHrefs = new TreeSet<>();
 		for (Path contentFile : contentFiles) {
 			Objects.requireNonNull(contentFile, "contentFile");
@@ -131,6 +135,9 @@ public final class ScormManifestWriter {
 		xml.writeAttribute("version", "1");
 		xml.writeAttribute("xsi", XMLConstants.W3C_XML_SCHEMA_INSTANCE_NS_URI, "schemaLocation", SCHEMA_LOCATION);
 		writeMetadata(xml);
+
+		// The single organization item refers to the single SCO resource written
+		// immediately afterwards.
 		writeOrganizations(xml, title);
 		writeResources(xml, launchHref, fileHrefs);
 		xml.writeCharacters("\n");
@@ -195,6 +202,9 @@ public final class ScormManifestWriter {
 	}
 
 	private void writeTextElement(XMLStreamWriter xml, String elementName, String text) throws XMLStreamException {
+
+		// Delegate XML escaping to the writer so titles remain data even when they
+		// contain markup characters.
 		xml.writeStartElement("", elementName, IMS_CONTENT_PACKAGING_NAMESPACE);
 		xml.writeCharacters(text);
 		xml.writeEndElement();

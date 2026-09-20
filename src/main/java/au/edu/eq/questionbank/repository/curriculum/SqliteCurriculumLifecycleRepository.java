@@ -36,6 +36,8 @@ public final class SqliteCurriculumLifecycleRepository implements CurriculumLife
 		if (finalisedAt == null) {
 			throw new NullPointerException("finalisedAt");
 		}
+
+		// The status predicate guards the transition against a stale in-memory version.
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						UPDATE syllabus_versions

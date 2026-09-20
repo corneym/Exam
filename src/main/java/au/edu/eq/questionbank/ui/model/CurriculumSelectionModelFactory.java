@@ -28,6 +28,9 @@ public final class CurriculumSelectionModelFactory {
 	 */
 	public CurriculumSelectionModel create(ApplicationConfig config) throws SQLException {
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+		// Complete schema initialisation before exposing repository-backed choices to
+		// the UI.
 		database.initialiseSchema();
 		CurriculumRepository repository = new SqliteCurriculumRepository(database);
 		return new CurriculumSelectionModel(repository);

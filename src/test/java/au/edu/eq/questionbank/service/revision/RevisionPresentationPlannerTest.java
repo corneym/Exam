@@ -6,12 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -21,6 +23,7 @@ import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -29,10 +32,21 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.NewSharedContext;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.SplitPart;
+import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.SplitRequest;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class RevisionPresentationPlannerTest {
 
 	private final RevisionPresentationPlanner planner = new RevisionPresentationPlanner();
+	@TempDir
+	Path tempDirectory;
 
 	@Test
 	void conflictingSharedContextsWithinSourceGroupAreRejected() {
@@ -77,6 +91,55 @@ class RevisionPresentationPlannerTest {
 		assertEquals(1, presentations.size());
 		assertSame(complete, presentations.getFirst().getMembers().getFirst());
 		assertEquals(1, presentations.getFirst().getRevisionNumber());
+	}
+
+	@Test
+	void reloadedSplitQuestionsGroupAsMultipartPresentation() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("split-revision-presentation.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion historicalSyllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit historicalUnit = curriculumWriter.insertUnit(historicalSyllabus, "1", "Historical unit", 1);
+		Topic historicalTopic = curriculumWriter.insertTopic(historicalUnit, "1.1", "Historical topic", 1);
+		Descriptor historicalDescriptor = curriculumWriter.insertDescriptor(historicalTopic, "1.1.1",
+				"Historical descriptor", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
+				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question original = questionRepository.save(booklet, "3", "", 5,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.80, 0.60)), historicalDescriptor, true, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		SplitPart partA = new SplitPart("3a", 2, historicalDescriptor, QuestionResponseType.WRITTEN_RESPONSE,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.80, 0.20)));
+		SplitPart partB = new SplitPart("3b", 3, historicalDescriptor, QuestionResponseType.WRITTEN_RESPONSE,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
+		LegacyQuestionSplitService.SplitResult split = new LegacyQuestionSplitService(database)
+				.split(new SplitRequest(original, "3", List.of(partA, partB), 0,
+						new NewSharedContext(List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)))));
+
+		// Reload both parts through a fresh repository so the planner receives
+		// reconstructed SourceQuestion and SharedQuestionContext relationships.
+		SqliteQuestionRepository reloadedRepository = new SqliteQuestionRepository(database);
+		Question reloadedA = reloadedRepository.findById(split.questions().get(0).getId()).orElseThrow();
+		Question reloadedB = reloadedRepository.findById(split.questions().get(1).getId()).orElseThrow();
+		Fixture presentationFixture = new Fixture();
+		RevisionPresentationPlan plan = planner
+				.plan(presentationFixture.corpus(List.of(reloadedB, reloadedA), List.of()));
+		List<RevisionQuestionPresentation> presentations = presentationFixture.presentations(plan,
+				presentationFixture.firstDescriptor);
+		assertEquals(1, presentations.size());
+		RevisionQuestionPresentation presentation = presentations.getFirst();
+
+		// Grouping must use the persisted SourceQuestion identity rather than input
+		// order or merely matching textual prefixes.
+		assertTrue(presentation.isMultipart());
+		assertEquals(List.of("3a", "3b"), presentation.getMembers().stream().map(Question::getQuestionCode).toList());
+		assertEquals(5, presentation.getTotalMarks());
+		assertEquals(reloadedA.getSourceQuestion().getId(), presentation.getSourceQuestion().getId());
+		assertEquals(reloadedA.getSharedContext().getId(), presentation.getSharedContext().getId());
+		assertTrue(presentation.shouldRenderSharedContext());
 	}
 
 	@Test

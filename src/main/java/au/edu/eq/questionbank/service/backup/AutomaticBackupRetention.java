@@ -59,6 +59,9 @@ public final class AutomaticBackupRetention {
 		if (!Files.isDirectory(directory)) {
 			throw new IOException("Automatic backup location is not a directory: " + directory);
 		}
+
+		// Prune only recognised automatic archives; leave manual backups and symbolic
+		// links alone.
 		List<Path> automaticBackups;
 		try (Stream<Path> stream = Files.list(directory)) {
 			automaticBackups = stream.filter(this::isAutomaticBackup).sorted(this::compareNewestFirst).toList();
@@ -71,6 +74,9 @@ public final class AutomaticBackupRetention {
 	private int compareNewestFirst(Path first, Path second) {
 		String firstName = first.getFileName().toString();
 		String secondName = second.getFileName().toString();
+
+		// Fixed-width UTC timestamps sort chronologically without relying on filesystem
+		// modification times.
 		return secondName.compareTo(firstName);
 	}
 

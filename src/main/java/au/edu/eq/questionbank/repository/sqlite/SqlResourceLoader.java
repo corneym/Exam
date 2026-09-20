@@ -30,6 +30,9 @@ final class SqlResourceLoader {
 			if (input == null) {
 				throw new IOException("SQL resource not found: " + resourcePath);
 			}
+
+			// Decode packaged migrations consistently, independent of the machine default
+			// charset.
 			return new String(input.readAllBytes(), StandardCharsets.UTF_8);
 		}
 	}

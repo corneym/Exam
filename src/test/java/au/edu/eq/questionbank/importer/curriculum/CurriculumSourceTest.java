@@ -26,15 +26,13 @@ class CurriculumSourceTest {
 
 	@Test
 	void rejectsANullSyllabusVersion() {
-		assertThrows(NullPointerException.class,
-				() -> new CurriculumSource(null, List.of(Path.of("curriculum.xlsx"))));
+		assertThrows(NullPointerException.class, () -> new CurriculumSource(null, List.of(Path.of("curriculum.xlsx"))));
 	}
 
 	@Test
 	void rejectsANullWorkbookElement() {
 		List<Path> workbooks = new ArrayList<>();
 		workbooks.add(null);
-
 		assertThrows(NullPointerException.class, () -> new CurriculumSource(syllabusVersion, workbooks));
 	}
 
@@ -53,10 +51,8 @@ class CurriculumSourceTest {
 	void takesAnImmutableSnapshotOfWorkbooks() {
 		Path workbook = Path.of("unit-1-and-2.xlsx");
 		List<Path> suppliedWorkbooks = new ArrayList<>(List.of(workbook));
-
 		CurriculumSource source = new CurriculumSource(syllabusVersion, suppliedWorkbooks);
 		suppliedWorkbooks.add(Path.of("unit-3-and-4.xlsx"));
-
 		assertAll(() -> assertSame(syllabusVersion, source.syllabusVersion()),
 				() -> assertEquals(List.of(workbook), source.workbooks()),
 				() -> assertThrows(UnsupportedOperationException.class,

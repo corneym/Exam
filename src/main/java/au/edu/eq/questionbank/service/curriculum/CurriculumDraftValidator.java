@@ -40,6 +40,20 @@ public final class CurriculumDraftValidator {
 			return List.of("Curriculum draft must contain at least one node");
 		}
 		List<String> problems = new ArrayList<>();
+
+		// Index every node first: a valid parent may occur later in the supplied list.
+		Map<Long, CurriculumDraftNode> nodesById = indexNodes(nodes, problems);
+		for (CurriculumDraftNode node : nodes) {
+			if (node == null) {
+				continue;
+			}
+			validateParent(node, nodesById, problems);
+		}
+		validateHierarchyShape(nodes, nodesById, problems);
+		return List.copyOf(problems);
+	}
+
+	private Map<Long, CurriculumDraftNode> indexNodes(List<CurriculumDraftNode> nodes, List<String> problems) {
 		Map<Long, CurriculumDraftNode> nodesById = new HashMap<>();
 		Set<String> codes = new HashSet<>();
 		for (int index = 0; index < nodes.size(); index++) {
@@ -56,14 +70,7 @@ public final class CurriculumDraftValidator {
 				problems.add("Duplicate curriculum code: " + normalisedCode);
 			}
 		}
-		for (CurriculumDraftNode node : nodes) {
-			if (node == null) {
-				continue;
-			}
-			validateParent(node, nodesById, problems);
-		}
-		validateHierarchyShape(nodes, nodesById, problems);
-		return List.copyOf(problems);
+		return nodesById;
 	}
 
 	private String description(CurriculumDraftNode node) {
@@ -81,6 +88,9 @@ public final class CurriculumDraftValidator {
 
 	private void validateHierarchyShape(List<CurriculumDraftNode> nodes, Map<Long, CurriculumDraftNode> nodesById,
 			List<String> problems) {
+
+		// Either supported hierarchy is valid, but one syllabus must use a consistent
+		// shape.
 		boolean hasSubtopics = nodes.stream().filter(node -> node != null)
 				.anyMatch(node -> node.level() == CurriculumLevel.SUBTOPIC);
 		boolean hasDirectTopicDescriptors = nodes.stream().filter(node -> node != null)

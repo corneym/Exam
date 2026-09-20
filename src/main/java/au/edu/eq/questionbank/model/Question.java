@@ -143,6 +143,30 @@ public class Question {
 		if (responseType == null) {
 			throw new NullPointerException("responseType");
 		}
+
+		// Check classification and source ownership before retaining the supplied
+		// relationships.
+		validateClassification(booklet, classification);
+		validateSourceOwnership(booklet, regions, sourceQuestion, sharedContext);
+		this.id = id;
+		this.booklet = booklet;
+		this.questionCode = questionCode;
+		this.questionText = questionText;
+
+		// Preserve assembly order independently of later changes to the caller's list.
+		this.regions = List.copyOf(regions);
+		this.marks = marks;
+		this.classification = classification;
+		this.preambleCaptureRequired = preambleCaptureRequired;
+		this.sourceQuestion = sourceQuestion;
+		this.sharedContext = sharedContext;
+		this.responseType = responseType;
+	}
+
+	private static void validateClassification(ExamBooklet booklet, CurriculumNode classification) {
+
+		// Accept either supported classification level, including descriptors directly
+		// beneath topics.
 		CurriculumLevel classificationLevel = classification.getLevel();
 		if (classificationLevel != CurriculumLevel.SUBTOPIC && classificationLevel != CurriculumLevel.DESCRIPTOR) {
 			throw new IllegalArgumentException("Question classification must be a SUBTOPIC or DESCRIPTOR");
@@ -150,6 +174,13 @@ public class Question {
 		if (!classification.getSyllabusVersion().getSubject().equals(booklet.getExam().getSubject())) {
 			throw new IllegalArgumentException("Question classification must belong to the exam's subject");
 		}
+	}
+
+	private static void validateSourceOwnership(ExamBooklet booklet, List<QuestionRegion> regions,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
+
+		// An empty list is valid for imported metadata; every supplied region must use
+		// this booklet.
 		for (QuestionRegion region : regions) {
 			if (region == null) {
 				throw new NullPointerException("regions contains null");
@@ -164,17 +195,6 @@ public class Question {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's exam booklet");
 		}
-		this.id = id;
-		this.booklet = booklet;
-		this.questionCode = questionCode;
-		this.questionText = questionText;
-		this.regions = List.copyOf(regions);
-		this.marks = marks;
-		this.classification = classification;
-		this.preambleCaptureRequired = preambleCaptureRequired;
-		this.sourceQuestion = sourceQuestion;
-		this.sharedContext = sharedContext;
-		this.responseType = responseType;
 	}
 
 	private static ExamBooklet bookletFromRegions(Exam exam, List<QuestionRegion> regions) {
@@ -191,6 +211,9 @@ public class Question {
 		if (firstRegion == null) {
 			throw new NullPointerException("regions contains null");
 		}
+
+		// The capture constructor derives ownership here; the common constructor checks
+		// remaining regions.
 		ExamBooklet booklet = firstRegion.booklet();
 		if (booklet.getExam().getId() != exam.getId()) {
 			throw new IllegalArgumentException("Question region booklet must belong to the question's exam");
@@ -264,7 +287,8 @@ public class Question {
 	}
 
 	/**
-	 * Returns supplementary wording stored alongside the authoritative source regions.
+	 * Returns supplementary wording stored alongside the authoritative source
+	 * regions.
 	 *
 	 * @return supplementary text, which may be blank but is never null
 	 */
@@ -370,11 +394,17 @@ public class Question {
 		if (answer == null) {
 			throw new NullPointerException("answer");
 		}
+
+		// Answer files belong to the exam, so they need not share the question
+		// booklet's source document.
 		for (AnswerRegion region : answer.getRegions()) {
 			if (region.answerFile().getExam().getId() != booklet.getExam().getId()) {
 				throw new IllegalArgumentException("Answer region file must belong to the question's exam");
 			}
 		}
+
+		// Replace the association only after every region passes, preserving the old
+		// answer on failure.
 		this.answer = answer;
 	}
 }

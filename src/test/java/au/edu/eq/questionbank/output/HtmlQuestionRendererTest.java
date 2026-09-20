@@ -15,7 +15,6 @@ class HtmlQuestionRendererTest {
 
 	@TempDir
 	Path tempDir;
-
 	private final HtmlQuestionRenderer renderer = new HtmlQuestionRenderer();
 
 	@Test
@@ -23,9 +22,7 @@ class HtmlQuestionRendererTest {
 		Path output = tempDir.resolve("questions.html");
 		Path first = tempDir.resolve("images/question1.png");
 		Path second = tempDir.resolve("question2.png");
-
 		renderer.render(List.of(first, second), output);
-
 		String html = Files.readString(output);
 		assertTrue(html.contains("<meta charset=\"UTF-8\">"));
 		assertTrue(html.contains("<img src=\"images/question1.png\">"));
@@ -36,9 +33,7 @@ class HtmlQuestionRendererTest {
 	@Test
 	void rendersAValidDocumentWhenThereAreNoQuestions() throws Exception {
 		Path output = tempDir.resolve("empty.html");
-
 		renderer.render(List.of(), output);
-
 		String html = Files.readString(output);
 		assertTrue(html.contains("<!DOCTYPE html>"));
 		assertTrue(html.contains("</html>"));
@@ -49,9 +44,7 @@ class HtmlQuestionRendererTest {
 	void escapesImagePathsUsedInHtmlAttributes() throws Exception {
 		Path output = tempDir.resolve("questions.html");
 		Path image = tempDir.resolve("question&answer.png");
-
 		renderer.render(List.of(image), output);
-
 		String html = Files.readString(output);
 		assertTrue(html.contains("<img src=\"question&amp;answer.png\">"));
 	}
@@ -59,7 +52,6 @@ class HtmlQuestionRendererTest {
 	@Test
 	void rejectsAnOutputPathWithoutAParentDirectoryWhenRenderingImages() {
 		Path image = tempDir.resolve("question.png");
-
 		assertThrows(NullPointerException.class,
 				() -> renderer.render(List.of(image), Path.of("questions-without-parent.html")));
 	}

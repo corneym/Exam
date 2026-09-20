@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 
 class TfIdfCurriculumMappingSuggesterTest {
+
 	@Test
 	void ranksRelatedDescriptorAheadOfUnrelatedDescriptor() {
 		Subject chemistry = new Subject(1, "Chemistry");
@@ -96,15 +97,13 @@ class TfIdfCurriculumMappingSuggesterTest {
 				"model particle behaviour", 1);
 		Unit relatedUnit = new Unit(7, targetVersion, "2", "Matter", 2);
 		Topic relatedTopic = new Topic(8, targetVersion, relatedUnit, "2.1", "Particle theory", 1);
-		Descriptor relatedContext = new Descriptor(9, targetVersion, relatedTopic, "2.1.1",
-				"model particle behaviour", 1);
+		Descriptor relatedContext = new Descriptor(9, targetVersion, relatedTopic, "2.1.1", "model particle behaviour",
+				1);
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
 				List.of(sourceVersion, targetVersion), List.of(sourceUnit, sourceTopic, source, unrelatedUnit,
 						unrelatedTopic, unrelatedContext, relatedUnit, relatedTopic, relatedContext));
 		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
-
 		List<CurriculumMappingSuggestion> suggestions = suggester.suggest(source, targetVersion);
-
 		assertEquals(relatedContext, suggestions.getFirst().getTarget());
 		assertTrue(suggestions.getFirst().getScore() > suggestions.get(1).getScore());
 	}
@@ -132,9 +131,7 @@ class TfIdfCurriculumMappingSuggesterTest {
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
 				List.of(sourceVersion, targetVersion), nodes);
 		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
-
 		List<CurriculumMappingSuggestion> suggestions = suggester.suggest(source, targetVersion);
-
 		assertEquals(5, suggestions.size());
 		for (CurriculumMappingSuggestion suggestion : suggestions) {
 			assertEquals(source, suggestion.getSource());
@@ -152,7 +149,6 @@ class TfIdfCurriculumMappingSuggesterTest {
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
 				List.of(sourceVersion, targetVersion), List.of(sourceUnit, targetUnit));
 		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
-
 		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(sourceUnit, targetVersion));
 	}
 
@@ -169,7 +165,6 @@ class TfIdfCurriculumMappingSuggesterTest {
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry, physics),
 				List.of(sourceVersion, physicsVersion), List.of(sourceUnit, sourceTopic, source, physicsUnit));
 		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
-
 		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(source, physicsVersion));
 	}
 
@@ -180,10 +175,9 @@ class TfIdfCurriculumMappingSuggesterTest {
 		Unit unit = new Unit(1, version, "1", "Unit", 1);
 		Topic topic = new Topic(2, version, unit, "1.1", "Topic", 1);
 		Descriptor source = new Descriptor(3, version, topic, "1.1.1", "Descriptor", 1);
-		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
-				List.of(version), List.of(unit, topic, source));
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry), List.of(version),
+				List.of(unit, topic, source));
 		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
-
 		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(source, version));
 	}
 
@@ -198,17 +192,14 @@ class TfIdfCurriculumMappingSuggesterTest {
 		SyllabusVersion currentVersion = new SyllabusVersion(2, chemistry, "Current", true);
 		Unit currentUnit = new Unit(4, currentVersion, "2", "Current unit", 1);
 		Topic currentTopic = new Topic(5, currentVersion, currentUnit, "2.1", "Current topic", 1);
-		Descriptor currentDescriptor = new Descriptor(6, currentVersion, currentTopic, "2.1.1",
-				"Current descriptor", 1);
+		Descriptor currentDescriptor = new Descriptor(6, currentVersion, currentTopic, "2.1.1", "Current descriptor",
+				1);
 		SyllabusVersion otherHistoricalVersion = new SyllabusVersion(3, chemistry, "Other historical", false);
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
-				List.of(historicalVersion, currentVersion, otherHistoricalVersion),
-				List.of(historicalUnit, historicalTopic, historicalDescriptor, currentUnit, currentTopic,
-						currentDescriptor));
+				List.of(historicalVersion, currentVersion, otherHistoricalVersion), List.of(historicalUnit,
+						historicalTopic, historicalDescriptor, currentUnit, currentTopic, currentDescriptor));
 		TfIdfCurriculumMappingSuggester suggester = new TfIdfCurriculumMappingSuggester(repository);
-
-		assertThrows(IllegalArgumentException.class,
-				() -> suggester.suggest(currentDescriptor, historicalVersion));
+		assertThrows(IllegalArgumentException.class, () -> suggester.suggest(currentDescriptor, historicalVersion));
 		assertThrows(IllegalArgumentException.class,
 				() -> suggester.suggest(historicalDescriptor, otherHistoricalVersion));
 	}

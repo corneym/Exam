@@ -59,8 +59,8 @@ public final class RevisionCorpusStatistics {
 	}
 
 	/**
-	 * Counts unique questions carrying the historical legacy preamble hint.
-	 * This count does not subtract questions whose shared context is now linked.
+	 * Counts unique questions carrying the historical legacy preamble hint. This
+	 * count does not subtract questions whose shared context is now linked.
 	 *
 	 * @return the number of questions with legacy preamble evidence
 	 */

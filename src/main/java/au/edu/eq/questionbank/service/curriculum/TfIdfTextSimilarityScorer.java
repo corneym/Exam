@@ -12,6 +12,7 @@ import java.util.Set;
  * Scores text similarity using TF-IDF weighted cosine similarity.
  */
 public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
+
 	private static final Set<String> STOP_WORDS = Set.of("a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
 			"in", "is", "it", "of", "on", "or", "that", "the", "their", "to", "was", "were", "which", "with");
 	private final int documentCount;
@@ -27,8 +28,8 @@ public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
 	 *
 	 * @param corpus the non-empty collection of documents used to calculate term
 	 *               weights
-	 * @throws NullPointerException if the corpus or one of its documents is
-	 *                              {@code null}
+	 * @throws NullPointerException     if the corpus or one of its documents is
+	 *                                  {@code null}
 	 * @throws IllegalArgumentException if the corpus is empty
 	 */
 	public TfIdfTextSimilarityScorer(List<String> corpus) {
@@ -43,6 +44,8 @@ public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
 			if (document == null) {
 				throw new NullPointerException("corpus document");
 			}
+
+			// Document frequency counts presence, not repetitions within a descriptor.
 			Set<String> uniqueTerms = new HashSet<>(tokenise(document));
 			for (String term : uniqueTerms) {
 				Integer frequency = documentFrequencies.get(term);
@@ -85,6 +88,9 @@ public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
 		if (sourceMagnitude == 0.0 || targetMagnitude == 0.0) {
 			return 0.0;
 		}
+
+		// Normalise for text length, then contain floating-point drift within the score
+		// contract.
 		double similarity = dotProduct / (Math.sqrt(sourceMagnitude) * Math.sqrt(targetMagnitude));
 		return Math.max(0.0, Math.min(1.0, similarity));
 	}
@@ -105,6 +111,9 @@ public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
 			double termFrequency = entry.getValue();
 			double inverseDocumentFrequency = inverseDocumentFrequency(entry.getKey());
 			double weight = termFrequency * inverseDocumentFrequency;
+
+			// Shared task verbs are weaker evidence of subject content than the remaining
+			// terms.
 			if (COGNITIVE_VERBS.contains(entry.getKey())) {
 				weight *= COGNITIVE_VERB_WEIGHT;
 			}
@@ -116,6 +125,9 @@ public final class TfIdfTextSimilarityScorer implements TextSimilarityScorer {
 	private double inverseDocumentFrequency(String term) {
 		Integer frequency = documentFrequencies.get(term);
 		int documentFrequency = frequency == null ? 0 : frequency;
+
+		// Add-one smoothing supports unseen terms and keeps ubiquitous terms at nonzero
+		// weight.
 		return Math.log((documentCount + 1.0) / (documentFrequency + 1.0)) + 1.0;
 	}
 

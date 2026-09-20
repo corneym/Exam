@@ -31,6 +31,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
 class SqliteCurriculumMappingWriterTest {
+
 	@TempDir
 	Path tempDir;
 
@@ -50,7 +51,8 @@ class SqliteCurriculumMappingWriterTest {
 	}
 
 	private void assertMappingCount(SqliteDatabase database, int expected) throws Exception {
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
 			assertTrue(result.next());
 			assertEquals(expected, result.getInt(1));
@@ -89,29 +91,28 @@ class SqliteCurriculumMappingWriterTest {
 	@Test
 	void rejectsMappingsThatAreNotDirectedFromNonCurrentToCurrent() throws Exception {
 		Fixture fixture = createFixture();
-
 		assertThrows(IllegalArgumentException.class,
 				() -> fixture.writer().insertMapping(fixture.target(), fixture.source(), MappingStatus.CONFIRMED));
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(fixture.database());
-		SyllabusVersion otherHistoricalVersion = curriculumWriter.insertSyllabusVersion(
-				fixture.source().getSyllabusVersion().getSubject(), "Other historical", false);
-		Unit otherHistoricalTarget = curriculumWriter.insertUnit(otherHistoricalVersion, "3", "Other historical unit", 1);
-		assertThrows(IllegalArgumentException.class, () -> fixture.writer().insertMapping(fixture.source(),
-				otherHistoricalTarget, MappingStatus.CONFIRMED));
+		SyllabusVersion otherHistoricalVersion = curriculumWriter
+				.insertSyllabusVersion(fixture.source().getSyllabusVersion().getSubject(), "Other historical", false);
+		Unit otherHistoricalTarget = curriculumWriter.insertUnit(otherHistoricalVersion, "3", "Other historical unit",
+				1);
+		assertThrows(IllegalArgumentException.class,
+				() -> fixture.writer().insertMapping(fixture.source(), otherHistoricalTarget, MappingStatus.CONFIRMED));
 		assertMappingCount(fixture.database(), 0);
 	}
 
 	@Test
 	void rejectsWhenPersistedCurrentFlagsNoLongerMatchTheEndpoints() throws Exception {
 		Fixture fixture = createFixture();
-		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
 			statement.execute("UPDATE syllabus_versions SET is_current = 0 WHERE id = "
 					+ fixture.target().getSyllabusVersion().getId());
 			statement.execute("UPDATE syllabus_versions SET is_current = 1 WHERE id = "
 					+ fixture.source().getSyllabusVersion().getId());
 		}
-
 		assertThrows(IllegalArgumentException.class,
 				() -> fixture.writer().insertMapping(fixture.source(), fixture.target(), MappingStatus.CONFIRMED));
 		assertMappingCount(fixture.database(), 0);
@@ -212,8 +213,10 @@ class SqliteCurriculumMappingWriterTest {
 	void rollsBackWriteWhenSqlFailsAfterChangingRow(String operation) throws Exception {
 		Fixture fixture = createFixture();
 		CurriculumMapping stored = "UPDATE".equals(operation)
-				? fixture.writer().insertMapping(fixture.source(), fixture.target(), MappingStatus.SUGGESTED) : null;
-		try (Connection connection = fixture.database().openConnection(); Statement statement = connection.createStatement()) {
+				? fixture.writer().insertMapping(fixture.source(), fixture.target(), MappingStatus.SUGGESTED)
+				: null;
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
 			statement.execute("""
 					CREATE TRIGGER fail_mapping_write AFTER %s ON curriculum_mappings
 					BEGIN

@@ -16,7 +16,8 @@ public record QuestionCorpusSummary(int totalQuestions, int completeQuestions, i
 		int missingQuestionSource, int missingAnswer, int unresolvedSharedContext, int unknownResponseType) {
 
 	/**
-	 * Creates a corpus summary whose complete and incomplete counts equal the total.
+	 * Creates a corpus summary whose complete and incomplete counts equal the
+	 * total.
 	 *
 	 * @param totalQuestions          total Questions assessed
 	 * @param completeQuestions       Questions with no completeness problems
@@ -32,6 +33,8 @@ public record QuestionCorpusSummary(int totalQuestions, int completeQuestions, i
 				|| missingAnswer < 0 || unresolvedSharedContext < 0 || unknownResponseType < 0) {
 			throw new IllegalArgumentException("Corpus summary counts must not be negative");
 		}
+
+		// Only completion counts partition the corpus; problem counts may overlap.
 		if (completeQuestions + incompleteQuestions != totalQuestions) {
 			throw new IllegalArgumentException("Complete and incomplete counts must equal totalQuestions");
 		}

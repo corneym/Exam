@@ -36,17 +36,13 @@ public final class QuestionApplicabilityMatch {
 		if (!currentNode.getSyllabusVersion().isCurrent()) {
 			throw new IllegalArgumentException("currentNode must belong to a current syllabus");
 		}
-
 		CurriculumLevel level = currentNode.getLevel();
-
 		if (level != CurriculumLevel.DESCRIPTOR && level != CurriculumLevel.SUBTOPIC) {
 			throw new IllegalArgumentException("currentNode must be a DESCRIPTOR or SUBTOPIC");
 		}
-
 		if (!question.getExam().getSubject().equals(currentNode.getSyllabusVersion().getSubject())) {
 			throw new IllegalArgumentException("question and currentNode must belong to the same subject");
 		}
-
 		this.question = question;
 		this.currentNode = currentNode;
 	}

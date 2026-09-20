@@ -24,6 +24,9 @@ public final class QuestionCorpusAudit {
 			throw new NullPointerException("question");
 		}
 		EnumSet<QuestionCorpusProblem> problems = EnumSet.noneOf(QuestionCorpusProblem.class);
+
+		// Assess stored capture evidence here; this does not open or validate the
+		// source PDF.
 		boolean questionSourceCaptured = !question.getRegions().isEmpty();
 		if (!questionSourceCaptured) {
 			problems.add(QuestionCorpusProblem.MISSING_QUESTION_SOURCE);
@@ -36,10 +39,9 @@ public final class QuestionCorpusAudit {
 		boolean answerComplete = false;
 		if (!responseTypeResolved) {
 			problems.add(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE);
-			/*
-			 * UNKNOWN response type is itself the actionable problem. Do not also report
-			 * MISSING_ANSWER because the required Answer representation is not yet known.
-			 */
+
+			// UNKNOWN response type is itself the actionable problem. Do not also report
+			// MISSING_ANSWER because the required Answer representation is not yet known.
 		} else {
 			answerComplete = switch (question.getResponseType()) {
 			case MULTIPLE_CHOICE -> hasCompleteMultipleChoiceAnswer(question);
@@ -62,12 +64,17 @@ public final class QuestionCorpusAudit {
 		if (answerText == null) {
 			return false;
 		}
+
+		// Accept a single A-D choice regardless of casing or surrounding whitespace.
 		String answer = answerText.trim();
 		return answer.equalsIgnoreCase("A") || answer.equalsIgnoreCase("B") || answer.equalsIgnoreCase("C")
 				|| answer.equalsIgnoreCase("D");
 	}
 
 	private static boolean hasCompleteWrittenAnswer(Question question) {
+
+		// Written answers require captured regions; supplementary text alone is
+		// insufficient.
 		return question.hasAnswer() && !question.getAnswer().getRegions().isEmpty();
 	}
 }

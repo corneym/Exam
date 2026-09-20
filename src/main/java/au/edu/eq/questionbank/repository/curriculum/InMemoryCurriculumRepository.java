@@ -126,6 +126,8 @@ public class InMemoryCurriculumRepository implements CurriculumRepository {
 	}
 
 	private Comparator<CurriculumNode> nodeOrder() {
+
+		// Break display-order ties by code, matching the SQLite hierarchy ordering.
 		return Comparator.comparingInt(CurriculumNode::getDisplayOrder).thenComparing(CurriculumNode::getCode);
 	}
 

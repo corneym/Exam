@@ -34,13 +34,13 @@ public final class CurriculumDraftLoader {
 	 * Loads persisted nodes into a fresh draft with session-local IDs bound to
 	 * their existing database IDs. Retains codes, wording, parent relationships,
 	 * sibling order and optional source pages without renumbering the curriculum.
-	 * Records the complete persisted node snapshot for stale-save detection.
-	 * The supplied syllabus snapshot is retained; loading a final curriculum does
-	 * not reopen it or authorise saving it.
+	 * Records the complete persisted node snapshot for stale-save detection. The
+	 * supplied syllabus snapshot is retained; loading a final curriculum does not
+	 * reopen it or authorise saving it.
 	 *
 	 * @param syllabusVersion syllabus snapshot whose persisted nodes are loaded
 	 * @return fresh session, possibly containing an empty draft
-	 * @throws NullPointerException if {@code syllabusVersion} is {@code null}
+	 * @throws NullPointerException  if {@code syllabusVersion} is {@code null}
 	 * @throws IllegalStateException if reading fails or the stored hierarchy has
 	 *                               duplicate identities, orphans or cycles
 	 */
@@ -67,8 +67,13 @@ public final class CurriculumDraftLoader {
 			loadNode(root, null, childrenByParent, draft, session, loadedPersistentIds);
 		}
 		if (loadedPersistentIds.size() != persistedNodes.size()) {
+
+			// Root traversal cannot reach orphaned nodes or a disconnected cycle.
 			throw new IllegalStateException("Persisted curriculum contains an orphaned or cyclic hierarchy");
 		}
+
+		// Save uses this stored baseline to detect edits made by another authoring
+		// session.
 		session.recordPersistedSnapshot(persistedNodes);
 		return session;
 	}
@@ -80,6 +85,8 @@ public final class CurriculumDraftLoader {
 			throw new IllegalStateException(
 					"Cyclic curriculum hierarchy at persistent node " + persistedNode.persistentId());
 		}
+
+		// Load parents first so child links use new draft IDs, never database IDs.
 		CurriculumDraftNode draftNode = draft.addNode(persistedNode.level(), persistedNode.code(), persistedNode.name(),
 				parentDraftId, persistedNode.sourcePageNumber());
 		session.bindPersistentId(draftNode.draftId(), persistedNode.persistentId());

@@ -45,7 +45,7 @@ public final class SqliteExamImporter {
 	 * @param providerName the non-blank issuing organisation name
 	 * @param year         the positive assessment year
 	 * @param examName     the non-blank assessment name
-	 * @param bookletName the non-blank booklet name
+	 * @param bookletName  the non-blank booklet name
 	 * @param relativePath the non-blank data-root-relative source path
 	 * @return the existing or newly stored booklet
 	 * @throws SQLException             if the transaction cannot be completed
@@ -60,6 +60,9 @@ public final class SqliteExamImporter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Reuse or create the metadata chain on one connection, then commit the
+				// complete booklet.
 				ExamProvider provider = writer.findExamProviderByName(connection, providerName);
 				if (provider == null) {
 					provider = writer.insertExamProvider(connection, providerName);

@@ -5,7 +5,8 @@ package au.edu.eq.questionbank.service.curriculum;
  * against a target syllabus version.
  *
  * @param reviewedDescriptorCount descriptors with a persisted review outcome
- * @param totalDescriptorCount    direct descriptors belonging to the source subtopic
+ * @param totalDescriptorCount    direct descriptors belonging to the source
+ *                                subtopic
  * @param noMatchDescriptorCount  reviewed descriptors whose outcome is
  *                                {@code NO_MATCH}
  */

@@ -31,6 +31,7 @@ class SqliteDatabaseInspectionTest {
 		Path databasePath = tempDir.resolve("empty.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection _ = database.openConnection()) {
+
 			// Opening the connection creates the empty SQLite file.
 		}
 		assertEquals(0, database.schemaVersion());

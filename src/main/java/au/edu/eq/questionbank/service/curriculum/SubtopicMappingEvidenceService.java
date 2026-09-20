@@ -21,7 +21,8 @@ public final class SubtopicMappingEvidenceService {
 	private final CurriculumMappingReviewRepository reviewRepository;
 
 	/**
-	 * Creates an evidence service using direct descriptors and their target-specific reviews.
+	 * Creates an evidence service using direct descriptors and their
+	 * target-specific reviews.
 	 *
 	 * @param curriculumRepository hierarchy lookup used to find direct descriptors
 	 * @param reviewRepository     target-specific descriptor review lookup
@@ -47,11 +48,11 @@ public final class SubtopicMappingEvidenceService {
 	 * @param targetVersion the current syllabus version against which descriptor
 	 *                      reviews were completed
 	 * @return immutable descriptor review evidence
-	 * @throws NullPointerException if either argument is {@code null}
-	 * @throws IllegalArgumentException if the source is not a subtopic, the versions
-	 *                                  belong to different subjects or are not
-	 *                                  directed from non-current to current
-	 * @throws IllegalStateException if persisted review state cannot be read
+	 * @throws NullPointerException     if either argument is {@code null}
+	 * @throws IllegalArgumentException if the source is not a subtopic, the
+	 *                                  versions belong to different subjects or are
+	 *                                  not directed from non-current to current
+	 * @throws IllegalStateException    if persisted review state cannot be read
 	 */
 	public SubtopicMappingEvidence summarise(CurriculumNode source, SyllabusVersion targetVersion) {
 		validateRequest(source, targetVersion);
@@ -68,6 +69,8 @@ public final class SubtopicMappingEvidenceService {
 			if (outcome.isEmpty()) {
 				continue;
 			}
+
+			// An explicit no-match is still a deliberate review decision.
 			reviewedDescriptorCount++;
 			if (outcome.get() == CurriculumMappingReviewOutcome.NO_MATCH) {
 				noMatchDescriptorCount++;

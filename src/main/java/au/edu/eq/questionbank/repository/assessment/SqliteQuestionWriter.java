@@ -150,12 +150,15 @@ public final class SqliteQuestionWriter {
 	 * @param classification          the question's syllabus subtopic or descriptor
 	 * @param preambleCaptureRequired whether shared or introductory material must
 	 *                                be included during later capture
-	 * @param sourceQuestion optional persisted source identity for related parts
-	 * @param sharedContext optional reusable preamble belonging to the same booklet
+	 * @param sourceQuestion          optional persisted source identity for related
+	 *                                parts
+	 * @param sharedContext           optional reusable preamble belonging to the
+	 *                                same booklet
 	 * @return the stored question with its generated identifier
 	 * @throws SQLException             if the transaction cannot be completed
 	 * @throws NullPointerException     if a required object is {@code null}
-	 * @throws IllegalArgumentException if the question metadata or relationships are invalid
+	 * @throws IllegalArgumentException if the question metadata or relationships
+	 *                                  are invalid
 	 */
 	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
@@ -286,6 +289,8 @@ public final class SqliteQuestionWriter {
 		}
 		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
 		verifySharedContextRelationship(connection, booklet, sharedContext);
+
+		// Reject conflicting sibling links before filling any missing links.
 		verifySourceQuestionSharedContextConsistency(connection, sourceQuestion, sharedContext);
 		return updateSourceQuestionSharedContexts(connection, sourceQuestion, sharedContext);
 	}
@@ -336,6 +341,8 @@ public final class SqliteQuestionWriter {
 		}
 		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
 		verifySharedContextRelationship(connection, booklet, sharedContext);
+
+		// Use the caller transaction for the row, regions and domain validation below.
 		long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks, classification,
 				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
 		insertRegions(connection, questionId, regions);
@@ -414,6 +421,8 @@ public final class SqliteQuestionWriter {
 		verifySharedContextRelationship(connection, booklet, sharedContext);
 		updateQuestionEditableDetails(connection, questionId, questionCode, marks, classification, sourceQuestion,
 				sharedContext);
+
+		// Replace region order within the same transaction as the metadata update.
 		deleteQuestionRegions(connection, questionId);
 		insertRegions(connection, questionId, regions);
 	}
@@ -483,6 +492,9 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
+
+		// Attaching is allowed only for an empty capture; it must never replace
+		// existing regions.
 		verifyQuestionCanAcceptRegions(connection, questionId, booklet);
 		if (updateRelationships) {
 			verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
@@ -584,6 +596,8 @@ public final class SqliteQuestionWriter {
 				     height)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 				""")) {
+
+			// Store assembly order separately from the unchanged one-based PDF page number.
 			for (int i = 0; i < regions.size(); i++) {
 				QuestionRegion region = regions.get(i);
 				statement.setLong(1, questionId);

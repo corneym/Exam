@@ -133,6 +133,9 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes) {
 		Map<Long, CurriculumNode> requestedNodesById = validateRetrievalNodes(currentNodes);
 		String requestedNodeValues = createRequestedNodeValues(requestedNodesById.size());
+
+		// Match direct current classifications or confirmed historical-to-current
+		// mappings.
 		String sql = """
 				WITH requested_nodes(node_id) AS (
 				    VALUES %s
@@ -196,22 +199,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not retrieve questions by curriculum applicability", e);
 		}
-		Map<Long, Question> questionsById = new LinkedHashMap<Long, Question>();
-		List<QuestionApplicabilityMatch> matches = new ArrayList<QuestionApplicabilityMatch>();
-		for (ApplicabilityRow row : rows) {
-			Question question = questionsById.get(row.questionId());
-			if (question == null) {
-				question = findById(row.questionId()).orElseThrow(() -> new IllegalStateException(
-						"Question disappeared while retrieving applicability: " + row.questionId()));
-				questionsById.put(row.questionId(), question);
-			}
-			CurriculumNode currentNode = requestedNodesById.get(row.currentNodeId());
-			if (currentNode == null) {
-				throw new IllegalStateException("Retrieval query returned an unrequested current node");
-			}
-			matches.add(new QuestionApplicabilityMatch(question, currentNode));
-		}
-		return List.copyOf(matches);
+		return reconstructApplicabilityMatches(rows, requestedNodesById);
 	}
 
 	@Override
@@ -331,6 +319,29 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not update question", e);
 		}
+	}
+
+	private List<QuestionApplicabilityMatch> reconstructApplicabilityMatches(List<ApplicabilityRow> rows,
+			Map<Long, CurriculumNode> requestedNodesById) {
+
+		// Load each question once while retaining a separate match for every applicable
+		// node.
+		Map<Long, Question> questionsById = new LinkedHashMap<Long, Question>();
+		List<QuestionApplicabilityMatch> matches = new ArrayList<QuestionApplicabilityMatch>();
+		for (ApplicabilityRow row : rows) {
+			Question question = questionsById.get(row.questionId());
+			if (question == null) {
+				question = findById(row.questionId()).orElseThrow(() -> new IllegalStateException(
+						"Question disappeared while retrieving applicability: " + row.questionId()));
+				questionsById.put(row.questionId(), question);
+			}
+			CurriculumNode currentNode = requestedNodesById.get(row.currentNodeId());
+			if (currentNode == null) {
+				throw new IllegalStateException("Retrieval query returned an unrequested current node");
+			}
+			matches.add(new QuestionApplicabilityMatch(question, currentNode));
+		}
+		return List.copyOf(matches);
 	}
 
 	private String createRequestedNodeValues(int nodeCount) {
@@ -519,6 +530,9 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				result.getString("relative_path"));
 		ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
 				sourceDocument);
+
+		// Reconstruct the original classification even when retrieval matched a newer
+		// syllabus.
 		long syllabusVersionId = result.getLong("syllabus_version_id");
 		SyllabusVersion syllabusVersion = curriculumRepository.findVersionById(syllabusVersionId)
 				.orElseThrow(() -> new IllegalStateException("Missing syllabus version " + syllabusVersionId));

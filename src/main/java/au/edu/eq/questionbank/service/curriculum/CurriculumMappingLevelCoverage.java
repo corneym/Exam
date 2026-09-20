@@ -20,7 +20,8 @@ public record CurriculumMappingLevelCoverage(CurriculumLevel level, int total, i
 		int inconsistent, int uncoveredTargetCount) {
 
 	/**
-	 * Creates level coverage with non-negative counts that partition the source total.
+	 * Creates level coverage with non-negative counts that partition the source
+	 * total.
 	 *
 	 * @param level                DESCRIPTOR or SUBTOPIC
 	 * @param total                total historical source nodes at this level
@@ -60,7 +61,8 @@ public record CurriculumMappingLevelCoverage(CurriculumLevel level, int total, i
 	/**
 	 * Calculates the share of historical nodes with deliberate review decisions.
 	 *
-	 * @return reviewed percentage from 0 to 100, or zero when there are no source nodes
+	 * @return reviewed percentage from 0 to 100, or zero when there are no source
+	 *         nodes
 	 */
 	public double reviewedPercentage() {
 		if (total == 0) {
@@ -72,9 +74,13 @@ public record CurriculumMappingLevelCoverage(CurriculumLevel level, int total, i
 	/**
 	 * Summarises review completeness for this curriculum level.
 	 *
-	 * @return not applicable for no sources, complete for fully reviewed sources, otherwise incomplete
+	 * @return not applicable for no sources, complete for fully reviewed sources,
+	 *         otherwise incomplete
 	 */
 	public CurriculumMappingCoverageStatus status() {
+
+		// Completion measures source review decisions, not coverage of newly introduced
+		// target content.
 		if (total == 0) {
 			return CurriculumMappingCoverageStatus.NOT_APPLICABLE;
 		}

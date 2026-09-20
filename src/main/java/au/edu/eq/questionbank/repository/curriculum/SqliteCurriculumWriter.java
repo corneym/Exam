@@ -44,13 +44,13 @@ public final class SqliteCurriculumWriter {
 	/**
 	 * Inserts a descriptor beneath a subtopic.
 	 *
-	 * @param parent the descriptor's subtopic parent
-	 * @param code the non-blank curriculum code
-	 * @param name the non-blank descriptor text
+	 * @param parent       the descriptor's subtopic parent
+	 * @param code         the non-blank curriculum code
+	 * @param name         the non-blank descriptor text
 	 * @param displayOrder the non-negative order among siblings
 	 * @return the stored descriptor
-	 * @throws SQLException if the insert fails
-	 * @throws NullPointerException if {@code parent} is {@code null}
+	 * @throws SQLException             if the insert fails
+	 * @throws NullPointerException     if {@code parent} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
 	 */
@@ -64,13 +64,13 @@ public final class SqliteCurriculumWriter {
 	/**
 	 * Inserts a descriptor directly beneath a topic.
 	 *
-	 * @param parent the descriptor's topic parent
-	 * @param code the non-blank curriculum code
-	 * @param name the non-blank descriptor text
+	 * @param parent       the descriptor's topic parent
+	 * @param code         the non-blank curriculum code
+	 * @param name         the non-blank descriptor text
 	 * @param displayOrder the non-negative order among siblings
 	 * @return the stored descriptor
-	 * @throws SQLException if the insert fails
-	 * @throws NullPointerException if {@code parent} is {@code null}
+	 * @throws SQLException             if the insert fails
+	 * @throws NullPointerException     if {@code parent} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
 	 */
@@ -85,7 +85,8 @@ public final class SqliteCurriculumWriter {
 	 *
 	 * @param subjectName the non-blank subject name
 	 * @return the stored subject
-	 * @throws SQLException if the insert fails, including a uniqueness violation
+	 * @throws SQLException             if the insert fails, including a uniqueness
+	 *                                  violation
 	 * @throws IllegalArgumentException if {@code subjectName} is null or blank
 	 */
 	public Subject insertSubject(String subjectName) throws SQLException {
@@ -97,13 +98,13 @@ public final class SqliteCurriculumWriter {
 	/**
 	 * Inserts a subtopic beneath a topic.
 	 *
-	 * @param parent the subtopic's topic parent
-	 * @param code the non-blank curriculum code
-	 * @param name the non-blank subtopic name
+	 * @param parent       the subtopic's topic parent
+	 * @param code         the non-blank curriculum code
+	 * @param name         the non-blank subtopic name
 	 * @param displayOrder the non-negative order among siblings
 	 * @return the stored subtopic
-	 * @throws SQLException if the insert fails
-	 * @throws NullPointerException if {@code parent} is {@code null}
+	 * @throws SQLException             if the insert fails
+	 * @throws NullPointerException     if {@code parent} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
 	 */
@@ -116,12 +117,12 @@ public final class SqliteCurriculumWriter {
 	/**
 	 * Inserts a named syllabus version for a subject.
 	 *
-	 * @param subject the owning subject
+	 * @param subject      the owning subject
 	 * @param syllabusName the non-blank version name
-	 * @param current whether the version is current
+	 * @param current      whether the version is current
 	 * @return the stored syllabus version
-	 * @throws SQLException if the insert fails
-	 * @throws NullPointerException if {@code subject} is {@code null}
+	 * @throws SQLException             if the insert fails
+	 * @throws NullPointerException     if {@code subject} is {@code null}
 	 * @throws IllegalArgumentException if {@code syllabusName} is null or blank
 	 */
 	public SyllabusVersion insertSyllabusVersion(Subject subject, String syllabusName, boolean current)
@@ -134,13 +135,13 @@ public final class SqliteCurriculumWriter {
 	/**
 	 * Inserts a topic beneath a unit.
 	 *
-	 * @param parent the topic's unit parent
-	 * @param code the non-blank curriculum code
-	 * @param name the non-blank topic name
+	 * @param parent       the topic's unit parent
+	 * @param code         the non-blank curriculum code
+	 * @param name         the non-blank topic name
 	 * @param displayOrder the non-negative order among siblings
 	 * @return the stored topic
-	 * @throws SQLException if the insert fails
-	 * @throws NullPointerException if {@code parent} is {@code null}
+	 * @throws SQLException             if the insert fails
+	 * @throws NullPointerException     if {@code parent} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
 	 */
@@ -154,12 +155,12 @@ public final class SqliteCurriculumWriter {
 	 * Inserts a root unit in a syllabus version.
 	 *
 	 * @param syllabusVersion the containing syllabus version
-	 * @param code the non-blank curriculum code
-	 * @param name the non-blank unit name
-	 * @param displayOrder the non-negative order among root units
+	 * @param code            the non-blank curriculum code
+	 * @param name            the non-blank unit name
+	 * @param displayOrder    the non-negative order among root units
 	 * @return the stored unit
-	 * @throws SQLException if the insert fails
-	 * @throws NullPointerException if {@code syllabusVersion} is {@code null}
+	 * @throws SQLException             if the insert fails
+	 * @throws NullPointerException     if {@code syllabusVersion} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
 	 */
@@ -172,7 +173,6 @@ public final class SqliteCurriculumWriter {
 
 	private long insertChild(Connection connection, CurriculumNode parent, CurriculumLevel level, String code,
 			String name, int displayOrder) throws SQLException {
-
 		if (connection == null) {
 			throw new NullPointerException("connection");
 		}
@@ -188,7 +188,6 @@ public final class SqliteCurriculumWriter {
 		if (displayOrder < 0) {
 			throw new IllegalArgumentException("displayOrder must not be negative");
 		}
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO curriculum_nodes
 					(syllabus_version_id, parent_id,
@@ -198,20 +197,18 @@ public final class SqliteCurriculumWriter {
 				RETURNING id
 				""")) {
 
+			// Children inherit the parent syllabus and retain the supplied text and display
+			// order.
 			statement.setLong(1, parent.getSyllabusVersion().getId());
-
 			statement.setLong(2, parent.getId());
-
 			statement.setString(3, code);
 			statement.setString(4, name);
 			statement.setString(5, level.name());
 			statement.setInt(6, displayOrder);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Curriculum node insert did not return an id");
 				}
-
 				return result.getLong("id");
 			}
 		}
@@ -258,20 +255,16 @@ public final class SqliteCurriculumWriter {
 		if (subjectName == null || subjectName.isBlank()) {
 			throw new IllegalArgumentException("subjectName must not be blank");
 		}
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO subjects (subject_name)
 				VALUES (?)
 				RETURNING id
 				""")) {
-
 			statement.setString(1, subjectName);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Subject insert did not return an id");
 				}
-
 				return new Subject(result.getLong("id"), subjectName);
 			}
 		}
@@ -285,7 +278,6 @@ public final class SqliteCurriculumWriter {
 
 	SyllabusVersion insertSyllabusVersion(Connection connection, Subject subject, String syllabusName, boolean current)
 			throws SQLException {
-
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
@@ -298,16 +290,13 @@ public final class SqliteCurriculumWriter {
 				VALUES (?, ?, ?)
 				RETURNING id
 				""")) {
-
 			statement.setLong(1, subject.getId());
 			statement.setString(2, syllabusName);
 			statement.setInt(3, current ? 1 : 0);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Syllabus version insert did not return an id");
 				}
-
 				return new SyllabusVersion(result.getLong("id"), subject, syllabusName, current);
 			}
 		}
@@ -333,7 +322,6 @@ public final class SqliteCurriculumWriter {
 		if (displayOrder < 0) {
 			throw new IllegalArgumentException("displayOrder must not be negative");
 		}
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO curriculum_nodes
 					(syllabus_version_id, parent_id,
@@ -342,17 +330,14 @@ public final class SqliteCurriculumWriter {
 				VALUES (?, NULL, ?, ?, 'UNIT', ?)
 				RETURNING id
 				""")) {
-
 			statement.setLong(1, syllabusVersion.getId());
 			statement.setString(2, code);
 			statement.setString(3, name);
 			statement.setInt(4, displayOrder);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Curriculum unit insert did not return an id");
 				}
-
 				return new Unit(result.getLong("id"), syllabusVersion, code, name, displayOrder);
 			}
 		}

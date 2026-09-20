@@ -18,6 +18,9 @@ final class RestoreFiles {
 		}
 		List<Path> paths;
 		try (Stream<Path> stream = Files.walk(root)) {
+
+			// Order children before parents and close the directory walk before deletion
+			// begins.
 			paths = stream.sorted(Comparator.reverseOrder()).toList();
 		}
 		for (Path path : paths) {

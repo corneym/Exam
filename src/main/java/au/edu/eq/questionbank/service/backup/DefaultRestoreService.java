@@ -46,6 +46,9 @@ public final class DefaultRestoreService implements RestoreService {
 			BackupManifest manifest = archiveValidator.validate(normalisedBackupPath);
 			Files.createDirectories(config.dataRoot());
 			stagingRoot = Files.createTempDirectory(config.dataRoot(), ".question-bank-restore-");
+
+			// Prepare and validate disposable files before the executor touches any live
+			// data.
 			archiveStager.stage(normalisedBackupPath, stagingRoot);
 			validateStagedDatabase(stagingRoot, manifest);
 			validateStagedManagedRoots(stagingRoot, manifest);
@@ -78,6 +81,9 @@ public final class DefaultRestoreService implements RestoreService {
 			throw new BackupFormatException("Staged database schema version " + schemaVersion
 					+ " does not match manifest schema version " + manifest.databaseSchemaVersion());
 		}
+
+		// Check that older schemas can migrate without upgrading the staged restore
+		// database.
 		database.verifyMigrationCompatibility();
 	}
 

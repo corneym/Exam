@@ -26,7 +26,6 @@ public class Answer {
 	 *                                  {@code regions} is {@code null}
 	 */
 	public Answer(long id, String answerText, List<AnswerRegion> regions) {
-
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -39,14 +38,16 @@ public class Answer {
 			}
 		}
 
+		// Require some answer content here; response-type-specific completeness is
+		// assessed separately.
 		boolean hasText = answerText != null && !answerText.isBlank();
-
 		if (!hasText && regions.isEmpty()) {
 			throw new IllegalArgumentException("Answer must contain text, at least one region, or both");
 		}
-
 		this.id = id;
 		this.answerText = answerText;
+
+		// Freeze presentation order without sorting regions by page or position.
 		this.regions = List.copyOf(regions);
 	}
 

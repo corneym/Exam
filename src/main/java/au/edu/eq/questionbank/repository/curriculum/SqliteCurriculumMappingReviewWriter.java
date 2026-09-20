@@ -22,6 +22,7 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  * and target syllabus-version pair.
  */
 public final class SqliteCurriculumMappingReviewWriter {
+
 	private final SqliteDatabase database;
 
 	/**
@@ -53,10 +54,10 @@ public final class SqliteCurriculumMappingReviewWriter {
 	}
 
 	/**
-	 * Confirms one or more directional descriptor or subtopic mappings and records a
-	 * {@link CurriculumMappingReviewOutcome#MATCHED} review atomically. A selected
-	 * source-target pair already stored as {@code SUGGESTED} is promoted to
-	 * {@code CONFIRMED}; unselected suggestions are not changed.
+	 * Confirms one or more directional descriptor or subtopic mappings and records
+	 * a {@link CurriculumMappingReviewOutcome#MATCHED} review atomically. A
+	 * selected source-target pair already stored as {@code SUGGESTED} is promoted
+	 * to {@code CONFIRMED}; unselected suggestions are not changed.
 	 *
 	 * @param source        the persisted descriptor or subtopic being mapped from
 	 * @param targetVersion the persisted current syllabus version being mapped to
@@ -65,8 +66,9 @@ public final class SqliteCurriculumMappingReviewWriter {
 	 * @throws NullPointerException     if an argument or target is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
 	 *                                  persisted state, is directed other than from
-	 *                                  a non-current version to the current version,
-	 *                                  or violates another review invariant
+	 *                                  a non-current version to the current
+	 *                                  version, or violates another review
+	 *                                  invariant
 	 * @throws SQLException             if the review already exists or the
 	 *                                  transaction cannot be completed
 	 */
@@ -88,6 +90,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 					validatePersistentTarget(connection, source, targetVersion, target);
 					confirmMapping(connection, source, target);
 				}
+
+				// Commit the confirmed links and the human review decision together.
 				insertReview(connection, source, targetVersion, CurriculumMappingReviewOutcome.MATCHED);
 				connection.commit();
 			} catch (SQLException | RuntimeException e) {
@@ -98,17 +102,19 @@ public final class SqliteCurriculumMappingReviewWriter {
 	}
 
 	/**
-	 * Records atomically that the source has no equivalent node at the same level in
-	 * the current target syllabus. Existing confirmed mappings in this review scope
-	 * prevent the new review from being recorded.
+	 * Records atomically that the source has no equivalent node at the same level
+	 * in the current target syllabus. Existing confirmed mappings in this review
+	 * scope prevent the new review from being recorded.
 	 *
 	 * @param source        the persisted descriptor or subtopic being reviewed
-	 * @param targetVersion the persisted current syllabus version being reviewed against
+	 * @param targetVersion the persisted current syllabus version being reviewed
+	 *                      against
 	 * @throws NullPointerException     if an argument is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
 	 *                                  persisted state, is directed other than from
-	 *                                  a non-current version to the current version,
-	 *                                  or violates another review invariant
+	 *                                  a non-current version to the current
+	 *                                  version, or violates another review
+	 *                                  invariant
 	 * @throws IllegalStateException    if confirmed mappings already exist in this
 	 *                                  review scope
 	 * @throws SQLException             if the review already exists or the
@@ -120,6 +126,9 @@ public final class SqliteCurriculumMappingReviewWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
+
+				// A first NO_MATCH review cannot coexist with confirmed links to this target
+				// syllabus.
 				if (hasConfirmedMappings(connection, source, targetVersion)) {
 					throw new IllegalStateException(
 							"source curriculum node already has confirmed mappings for the target syllabus");
@@ -135,6 +144,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 
 	private void deleteMappings(Connection connection, CurriculumNode source, SyllabusVersion targetVersion)
 			throws SQLException {
+
+		// Keep mappings to other target versions untouched.
 		try (PreparedStatement statement = connection.prepareStatement("""
 				DELETE FROM curriculum_mappings
 				WHERE source_node_id = ?
@@ -190,14 +201,16 @@ public final class SqliteCurriculumMappingReviewWriter {
 	 * versions are not changed.
 	 *
 	 * @param source        the persisted descriptor or subtopic being mapped from
-	 * @param targetVersion the persisted current syllabus version whose review is edited
+	 * @param targetVersion the persisted current syllabus version whose review is
+	 *                      edited
 	 * @param targets       one or more distinct persisted target nodes at the same
 	 *                      level as {@code source}
 	 * @throws NullPointerException     if an argument or target is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
 	 *                                  persisted state, is directed other than from
-	 *                                  a non-current version to the current version,
-	 *                                  or violates another review invariant
+	 *                                  a non-current version to the current
+	 *                                  version, or violates another review
+	 *                                  invariant
 	 * @throws IllegalStateException    if this review does not yet exist
 	 * @throws SQLException             if the replacement transaction fails
 	 */
@@ -216,6 +229,9 @@ public final class SqliteCurriculumMappingReviewWriter {
 			try {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
 				requireExistingReview(connection, source, targetVersion);
+
+				// Replace links only for this target version; a later failure restores the
+				// previous review.
 				deleteMappings(connection, source, targetVersion);
 				for (CurriculumNode target : targets) {
 					validatePersistentTarget(connection, source, targetVersion, target);
@@ -235,13 +251,15 @@ public final class SqliteCurriculumMappingReviewWriter {
 	 * and changes its outcome to {@link CurriculumMappingReviewOutcome#NO_MATCH}.
 	 * Mappings to other syllabus versions are not changed.
 	 *
-	 * @param source        the persisted descriptor or subtopic whose review is edited
+	 * @param source        the persisted descriptor or subtopic whose review is
+	 *                      edited
 	 * @param targetVersion the persisted current target syllabus version
 	 * @throws NullPointerException     if an argument is {@code null}
 	 * @throws IllegalArgumentException if an endpoint is missing, misrepresents
 	 *                                  persisted state, is directed other than from
-	 *                                  a non-current version to the current version,
-	 *                                  or violates another review invariant
+	 *                                  a non-current version to the current
+	 *                                  version, or violates another review
+	 *                                  invariant
 	 * @throws IllegalStateException    if this review does not yet exist
 	 * @throws SQLException             if the replacement transaction fails
 	 */
@@ -306,6 +324,8 @@ public final class SqliteCurriculumMappingReviewWriter {
 		}
 	}
 
+	// Recheck stored ownership and current flags because the supplied objects may
+	// be stale.
 	private void validatePersistentSourceAndTargetVersion(Connection connection, CurriculumNode source,
 			SyllabusVersion targetVersion) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""

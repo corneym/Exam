@@ -273,7 +273,8 @@ public final class RevisionHtmlRenderer {
 	}
 
 	/**
-	 * Writes the subject, unit and topic pages and shared stylesheet.
+	 * Writes the subject, unit, topic and optional subtopic pages and shared
+	 * stylesheet.
 	 *
 	 * @param corpus     the current-curriculum revision corpus
 	 * @param outputRoot the destination for generated files
@@ -372,6 +373,9 @@ public final class RevisionHtmlRenderer {
 					""".formatted(escapeText(answerText)));
 		}
 		List<RevisionAnswerAsset> answerAssets = answerAssetsByQuestionId.getOrDefault(question.getId(), List.of());
+
+		// Refuse to emit an answer with missing images, even when some answer text is
+		// available.
 		if (answerAssets.size() != answer.getRegions().size()) {
 			throw new IllegalStateException("Expected " + answer.getRegions().size() + " answer assets for question "
 					+ question.getId() + " but found " + answerAssets.size());
@@ -410,6 +414,9 @@ public final class RevisionHtmlRenderer {
 
 	private void appendPresentationAnswer(StringBuilder html, RevisionQuestionPresentation presentation,
 			Path outputRoot, Path outputFile) {
+
+		// A multipart card has one reveal control, but retains an unavailable message
+		// for each unanswered part.
 		boolean anyAnswer = false;
 		for (Question member : presentation.getMembers()) {
 			if (member.hasAnswer()) {
@@ -486,6 +493,9 @@ public final class RevisionHtmlRenderer {
 				    </div>
 				""".formatted(presentation.getRevisionNumber(), presentation.getRevisionNumber(),
 				escapeText(markLabel)));
+
+		// Emit common source material once before the group's ordered question bodies
+		// and answers.
 		appendSharedContext(html, presentation, outputRoot, outputFile);
 		for (Question member : presentation.getMembers()) {
 			appendQuestionMember(html, presentation, member, outputRoot, outputFile);
@@ -522,6 +532,9 @@ public final class RevisionHtmlRenderer {
 	}
 
 	private int countPresentations(RevisionCorpusNode node) {
+
+		// Navigation counts student-facing cards; a multipart group contributes one
+		// card.
 		int count = requirePresentationNode(node).getPresentations().size();
 		for (RevisionCorpusNode child : node.getChildren()) {
 			count += countPresentations(child);
@@ -556,6 +569,9 @@ public final class RevisionHtmlRenderer {
 			questionAssets.add(asset);
 		}
 		for (List<RevisionAnswerAsset> questionAssets : indexed.values()) {
+
+			// Restore persisted region order and reject both gaps and duplicate sequence
+			// numbers.
 			questionAssets.sort(Comparator.comparingInt(RevisionAnswerAsset::getRegionNumber));
 			for (int index = 0; index < questionAssets.size(); index++) {
 				int expectedRegionNumber = index + 1;
@@ -636,6 +652,9 @@ public final class RevisionHtmlRenderer {
 		if (!target.startsWith(outputRoot)) {
 			throw new IllegalStateException("HTML asset reference escapes the export root");
 		}
+
+		// Rebase links for the current page depth, then escape them for an HTML
+		// attribute.
 		Path relative = outputFile.getParent().relativize(target);
 		return escapeAttribute(relative.toString().replace('\\', '/'));
 	}
@@ -797,6 +816,20 @@ public final class RevisionHtmlRenderer {
 				subjectHref, escapeText(corpus.getSubject().getName()), unitHref, escapeText(nodeLabel(unit)),
 				escapeText(nodeLabel(topic)), escapeText(corpus.getSubject().getName()),
 				escapeText(corpus.getSyllabusVersion().getName()), escapeText(nodeLabel(topic))));
+		appendTopicContent(html, unitNode, topicNode, outputRoot, outputFile);
+		html.append("""
+				</main>
+				</body>
+				</html>
+				""");
+		Files.writeString(outputFile, html.toString());
+	}
+
+	private void appendTopicContent(StringBuilder html, RevisionCorpusNode unitNode, RevisionCorpusNode topicNode,
+			Path outputRoot, Path outputFile) {
+
+		// Three-level topics contain descriptor cards; four-level topics link to
+		// separate subtopic pages.
 		List<RevisionCorpusNode> children = topicNode.getChildren();
 		if (children.isEmpty()) {
 			html.append("""
@@ -804,6 +837,9 @@ public final class RevisionHtmlRenderer {
 					""");
 		} else {
 			CurriculumLevel childLevel = children.getFirst().getCurriculumNode().getLevel();
+
+			// Use the first child to select the layout, then verify every sibling has that
+			// same shape.
 			if (childLevel == CurriculumLevel.SUBTOPIC) {
 				html.append("""
 						   <h2>Subtopics</h2>
@@ -845,12 +881,6 @@ public final class RevisionHtmlRenderer {
 				throw new IllegalStateException("Topic corpus children must be Subtopic or Descriptor nodes");
 			}
 		}
-		html.append("""
-				</main>
-				</body>
-				</html>
-				""");
-		Files.writeString(outputFile, html.toString());
 	}
 
 	private void renderUnitPage(RevisionCorpus corpus, RevisionCorpusNode unitNode, Path outputRoot, Path outputFile)

@@ -24,7 +24,6 @@ class InMemoryCurriculumRepositoryTest {
 	private Unit unit3;
 	private Topic topic31;
 	private Subtopic subtopic311;
-
 	private CurriculumRepository repository;
 
 	@Test
@@ -46,7 +45,6 @@ class InMemoryCurriculumRepositoryTest {
 	@Test
 	void findsRootNodesForVersion() {
 		List<CurriculumNode> roots = repository.findRootNodes(syllabus2025);
-
 		assertEquals(List.of(unit3), roots);
 	}
 
@@ -60,7 +58,6 @@ class InMemoryCurriculumRepositoryTest {
 	@Test
 	void findsVersionsForSubject() {
 		List<SyllabusVersion> versions = repository.findVersionsForSubject(chemistry);
-
 		assertEquals(2, versions.size());
 	}
 
@@ -82,7 +79,6 @@ class InMemoryCurriculumRepositoryTest {
 	@Test
 	void rejectsDuplicateSyllabusVersionIds() {
 		SyllabusVersion duplicate = new SyllabusVersion(syllabus2025.getId(), chemistry, "2030", false);
-
 		assertThrows(IllegalArgumentException.class, () -> new InMemoryCurriculumRepository(List.of(chemistry),
 				List.of(syllabus2025, duplicate), List.of(unit3)));
 	}
@@ -94,7 +90,6 @@ class InMemoryCurriculumRepositoryTest {
 		Topic first = new Topic(6, syllabus2025, unit3, "3.3", "Topic 3.3", 1);
 		CurriculumRepository orderedRepository = new InMemoryCurriculumRepository(List.of(chemistry),
 				List.of(syllabus2025), List.of(unit3, laterCode, earlierCode, first));
-
 		assertEquals(List.of(first, earlierCode, laterCode), orderedRepository.findChildren(unit3));
 	}
 
@@ -115,9 +110,7 @@ class InMemoryCurriculumRepositoryTest {
 		List<Subject> subjects = new java.util.ArrayList<>(List.of(chemistry));
 		InMemoryCurriculumRepository snapshotRepository = new InMemoryCurriculumRepository(subjects,
 				List.of(syllabus2025), List.of(unit3));
-
 		subjects.clear();
-
 		assertEquals(List.of(chemistry), snapshotRepository.findAllSubjects());
 		assertThrows(UnsupportedOperationException.class,
 				() -> snapshotRepository.findAllSubjects().add(new Subject(2, "Physics")));

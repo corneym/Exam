@@ -94,6 +94,9 @@ public final class QuestionRetrievalService {
 	}
 
 	private List<QuestionRetrievalResult> retrieveForCurrentNodes(List<CurriculumNode> currentNodes) {
+
+		// Persistent-ID ordering keeps results stable regardless of repository match
+		// order.
 		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
 		Map<Long, Map<Long, CurriculumNode>> applicabilityByQuestionId = new TreeMap<Long, Map<Long, CurriculumNode>>();
 		Map<Long, CurriculumNode> requestedNodesById = new TreeMap<Long, CurriculumNode>();
@@ -110,9 +113,15 @@ public final class QuestionRetrievalService {
 			}
 			Question question = match.getQuestion();
 			CurriculumNode currentNode = match.getCurrentNode();
+
+			// Repository results must not broaden the curriculum scope selected by the
+			// caller.
 			if (!requestedNodesById.containsKey(currentNode.getId())) {
 				throw new IllegalStateException("Question retrieval repository returned an unrequested current node");
 			}
+
+			// Merge repeated matches into one question while retaining each distinct reason
+			// it matched.
 			questionsById.putIfAbsent(question.getId(), question);
 			Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(question.getId());
 			if (applicability == null) {

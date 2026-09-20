@@ -173,8 +173,7 @@ class RevisionCorpusBuilderTest {
 				List.of(firstCurrent, secondCurrent), List.of());
 		CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 				curriculumRepository);
-		QuestionRetrievalService retrievalService = new QuestionRetrievalService(_ -> List.of(),
-				expansionService);
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(_ -> List.of(), expansionService);
 		RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
 		assertThrows(IllegalStateException.class, () -> builder.build(chemistry));
 	}
@@ -187,8 +186,7 @@ class RevisionCorpusBuilderTest {
 				List.of(historicalVersion), List.of());
 		CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 				curriculumRepository);
-		QuestionRetrievalService retrievalService = new QuestionRetrievalService(_ -> List.of(),
-				expansionService);
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(_ -> List.of(), expansionService);
 		RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
 		assertThrows(IllegalStateException.class, () -> builder.build(chemistry));
 	}

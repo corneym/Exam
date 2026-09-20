@@ -19,16 +19,17 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
  * Diagnostic command that writes ranked Chemistry 2019-to-2025 descriptor
- * suggestions to a tab-separated file under {@code target}. This is a data probe,
- * not the subject-independent application workflow.
+ * suggestions to a tab-separated file under {@code target}. This is a data
+ * probe, not the subject-independent application workflow.
  */
 public final class CurriculumMappingSuggestionProbe {
+
 	private CurriculumMappingSuggestionProbe() {
 	}
 
 	/**
-	 * Runs the fixed-version diagnostic against the configured application database.
-	 * Failures are reported to standard error.
+	 * Runs the fixed-version diagnostic against the configured application
+	 * database. Failures are reported to standard error.
 	 *
 	 * @param args ignored command-line arguments
 	 */
@@ -75,6 +76,8 @@ public final class CurriculumMappingSuggestionProbe {
 	}
 
 	private static String clean(String text) {
+
+		// Authored tabs and line breaks must not create extra TSV columns or records.
 		return text.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ');
 	}
 

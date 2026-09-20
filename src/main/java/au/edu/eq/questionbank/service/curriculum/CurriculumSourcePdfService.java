@@ -19,7 +19,7 @@ public final class CurriculumSourcePdfService {
 	/**
 	 * Creates a service coordinating managed PDF files with syllabus metadata.
 	 *
-	 * @param store managed syllabus-PDF storage
+	 * @param store      managed syllabus-PDF storage
 	 * @param repository writer for the persisted relative PDF path
 	 */
 	public CurriculumSourcePdfService(CurriculumSourcePdfStore store, CurriculumSourcePdfRepository repository) {
@@ -58,11 +58,16 @@ public final class CurriculumSourcePdfService {
 		if (current.getCurriculumStatus() != CurriculumStatus.IN_PROGRESS) {
 			throw new IllegalStateException("Final curriculum must be reopened before changing its source PDF");
 		}
+
+		// Prepare a distinct copy before publishing its path; the current PDF stays
+		// intact.
 		String relativePath = store.managePdf(current, sourcePdf);
 		SyllabusVersion updated;
 		try {
 			updated = repository.updateSourcePdfPath(current, relativePath);
 		} catch (RuntimeException failure) {
+
+			// Only the unpublished copy belongs to this failed attachment attempt.
 			try {
 				store.deleteManagedPdf(relativePath);
 			} catch (IOException cleanupFailure) {
@@ -70,6 +75,8 @@ public final class CurriculumSourcePdfService {
 			}
 			throw failure;
 		}
+
+		// Reflect the replacement in memory only after its metadata has been persisted.
 		session.replaceSyllabusVersion(updated);
 		return store.resolveManagedPdf(relativePath);
 	}

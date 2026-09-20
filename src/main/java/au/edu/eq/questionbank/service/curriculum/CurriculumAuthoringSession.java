@@ -24,10 +24,11 @@ public final class CurriculumAuthoringSession {
 	private final Map<Long, Long> persistentIdByDraftId = new HashMap<>();
 
 	/**
-	 * Creates an authoring session with no persistent bindings and an empty stored baseline.
+	 * Creates an authoring session with no persistent bindings and an empty stored
+	 * baseline.
 	 *
 	 * @param syllabusVersion syllabus being authored
-	 * @param draft hierarchy to edit in this session
+	 * @param draft           hierarchy to edit in this session
 	 */
 	public CurriculumAuthoringSession(SyllabusVersion syllabusVersion, CurriculumDraft draft) {
 		if (syllabusVersion == null) {
@@ -54,6 +55,9 @@ public final class CurriculumAuthoringSession {
 			throw new IllegalArgumentException("persistentId must be positive");
 		}
 		Long existing = persistentIdByDraftId.get(draftId);
+
+		// A binding must remain one-to-one so saving cannot update the wrong stored
+		// node.
 		if (existing != null && existing.longValue() != persistentId) {
 			throw new IllegalStateException(
 					"Draft node " + draftId + " is already bound to persistent node " + existing);
@@ -72,6 +76,9 @@ public final class CurriculumAuthoringSession {
 	 * @return persistent curriculum-node IDs pending deletion
 	 */
 	public Set<Long> deletedPersistentIds() {
+
+		// Keep removed nodes' bindings until a successful save acknowledges their
+		// deletion.
 		Set<Long> currentDraftIds = new HashSet<>();
 		for (CurriculumDraftNode node : draft.nodes()) {
 			currentDraftIds.add(node.draftId());
@@ -111,15 +118,16 @@ public final class CurriculumAuthoringSession {
 	 * Returns the immutable node snapshot observed at load or the last successful
 	 * save. A newly constructed session expects an empty persisted curriculum.
 	 *
-	 * @return baseline including identities, text, codes, hierarchy, order and pages
+	 * @return baseline including identities, text, codes, hierarchy, order and
+	 *         pages
 	 */
 	public Set<PersistedCurriculumNode> persistedSnapshot() {
 		return persistedSnapshot;
 	}
 
 	/**
-	 * Records the baseline from a completed load or committed save. Draft edits
-	 * and failed saves must never advance this snapshot.
+	 * Records the baseline from a completed load or committed save. Draft edits and
+	 * failed saves must never advance this snapshot.
 	 *
 	 * @param nodes complete persisted node state observed by the loader or writer
 	 */
@@ -151,10 +159,12 @@ public final class CurriculumAuthoringSession {
 	}
 
 	/**
-	 * Refreshes syllabus metadata while retaining the session's persistent syllabus identity.
+	 * Refreshes syllabus metadata while retaining the session's persistent syllabus
+	 * identity.
 	 *
 	 * @param syllabusVersion replacement snapshot with the same persistent ID
-	 * @throws IllegalArgumentException if the replacement identifies another syllabus
+	 * @throws IllegalArgumentException if the replacement identifies another
+	 *                                  syllabus
 	 */
 	public void replaceSyllabusVersion(SyllabusVersion syllabusVersion) {
 		if (syllabusVersion == null) {

@@ -14,10 +14,11 @@ public final class CurriculumAuthoringCreationService {
 	private final CurriculumDraftLoader draftLoader;
 
 	/**
-	 * Creates a service that persists new syllabuses and loads their authoring drafts.
+	 * Creates a service that persists new syllabuses and loads their authoring
+	 * drafts.
 	 *
 	 * @param curriculumImporter transactional syllabus creator
-	 * @param draftLoader loader for the newly persisted hierarchy
+	 * @param draftLoader        loader for the newly persisted hierarchy
 	 */
 	public CurriculumAuthoringCreationService(SqliteCurriculumImporter curriculumImporter,
 			CurriculumDraftLoader draftLoader) {
@@ -36,11 +37,11 @@ public final class CurriculumAuthoringCreationService {
 	 * for it.
 	 * <p>
 	 * Names are stripped of surrounding whitespace. Creation commits immediately,
-	 * before any draft nodes are authored. The new curriculum is in progress;
-	 * if {@code current} is true, the previous current version of the same subject
+	 * before any draft nodes are authored. The new curriculum is in progress; if
+	 * {@code current} is true, the previous current version of the same subject
 	 * becomes historical in that transaction. Closing the session does not undo
-	 * creation. A subsequent draft-loading failure likewise does not roll back
-	 * the committed syllabus.
+	 * creation. A subsequent draft-loading failure likewise does not roll back the
+	 * committed syllabus.
 	 *
 	 * @param subjectName  existing or new subject name
 	 * @param syllabusName syllabus/version name
@@ -49,7 +50,7 @@ public final class CurriculumAuthoringCreationService {
 	 * @throws SQLException             if persistence fails
 	 * @throws IllegalArgumentException if either name is blank or the syllabus
 	 *                                  already exists
-	 * @throws IllegalStateException if loading the newly created draft fails
+	 * @throws IllegalStateException    if loading the newly created draft fails
 	 */
 	public CurriculumAuthoringSession create(String subjectName, String syllabusName, boolean current)
 			throws SQLException {
@@ -67,6 +68,9 @@ public final class CurriculumAuthoringCreationService {
 			throw new IllegalArgumentException(
 					normalisedSubjectName + " " + normalisedSyllabusName + " already exists");
 		}
+
+		// Creation has already committed; loading establishes bindings for later draft
+		// saves.
 		return draftLoader.load(result.syllabusVersion());
 	}
 }

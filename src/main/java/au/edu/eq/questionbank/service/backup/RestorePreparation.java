@@ -68,5 +68,4 @@ public final class RestorePreparation implements AutoCloseable {
 	Path stagingRoot() {
 		return stagingRoot;
 	}
-
 }

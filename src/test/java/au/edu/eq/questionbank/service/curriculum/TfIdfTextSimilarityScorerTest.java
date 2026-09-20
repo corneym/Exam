@@ -9,6 +9,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class TfIdfTextSimilarityScorerTest {
+
 	@Test
 	void identicalTextHasMaximumSimilarity() {
 		TfIdfTextSimilarityScorer scorer = new TfIdfTextSimilarityScorer(

@@ -68,6 +68,9 @@ public final class DefaultRestoreExecutor implements RestoreExecutor {
 		if (resources == null) {
 			throw new NullPointerException("resources");
 		}
+
+		// Capture all current data before closing resources or replacing any live
+		// paths.
 		BackupResult safetyBackup = createSafetyBackup();
 		try {
 			resources.close();
@@ -82,6 +85,9 @@ public final class DefaultRestoreExecutor implements RestoreExecutor {
 			verifyLiveData(preparation.manifest());
 			return new RestoreResult(preparation.manifest(), safetyBackup.backupPath());
 		} catch (IOException | SQLException | RuntimeException restoreFailure) {
+
+			// A partial replacement is recovered from the safety backup; closed resources
+			// still require exit.
 			boolean rollbackSucceeded = rollback(safetyBackup.backupPath(), restoreFailure);
 			String message;
 			if (rollbackSucceeded) {
@@ -143,6 +149,9 @@ public final class DefaultRestoreExecutor implements RestoreExecutor {
 			}
 			temporary.verifySchema();
 			temporary.verifyIntegrity();
+
+			// Discard journal sidecars from the previous database before installing the
+			// validated replacement.
 			deleteDatabaseSidecars();
 			try {
 				Files.move(temporaryDatabase, config.databasePath(), StandardCopyOption.ATOMIC_MOVE,
@@ -159,6 +168,9 @@ public final class DefaultRestoreExecutor implements RestoreExecutor {
 		if (!Files.isDirectory(stagedRoot)) {
 			throw new IOException("Staged managed data root is missing: " + stagedRoot);
 		}
+
+		// Replace the whole managed tree so files absent from the backup do not survive
+		// restoration.
 		RestoreFiles.deleteTree(liveRoot);
 		Path parent = liveRoot.getParent();
 		if (parent != null) {
@@ -168,6 +180,9 @@ public final class DefaultRestoreExecutor implements RestoreExecutor {
 	}
 
 	private void replaceLiveData(RestorePreparation preparation) throws IOException, SQLException {
+
+		// Database-only restores retain managed files; full restores publish managed
+		// trees before the database.
 		if (preparation.manifest().kind() == BackupKind.FULL) {
 			publishManagedRoot(preparation.pdfRoot(), config.pdfDataRoot());
 			publishManagedRoot(preparation.curriculumRoot(), config.curriculumDataRoot());
@@ -176,6 +191,9 @@ public final class DefaultRestoreExecutor implements RestoreExecutor {
 	}
 
 	private boolean rollback(Path safetyBackupPath, Throwable restoreFailure) {
+
+		// Revalidate and stage the safety archive through the same path used for an
+		// ordinary restore.
 		try (RestorePreparation rollbackPreparation = restoreService.prepareRestore(safetyBackupPath)) {
 			replaceLiveData(rollbackPreparation);
 			verifyLiveData(rollbackPreparation.manifest());

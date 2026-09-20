@@ -45,8 +45,10 @@ public final class QuestionRetrievalResult {
 				throw new IllegalArgumentException("currentApplicability must contain only current nodes");
 			}
 		}
-
 		this.question = question;
+
+		// Keep the search's applicability snapshot separate from the question's stored
+		// classification.
 		this.currentApplicability = List.copyOf(currentApplicability);
 	}
 

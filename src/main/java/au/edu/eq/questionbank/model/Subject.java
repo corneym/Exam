@@ -28,7 +28,6 @@ public class Subject {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
 		}
-
 		this.id = id;
 		this.name = name;
 	}
@@ -41,6 +40,9 @@ public class Subject {
 		if (!(object instanceof Subject other)) {
 			return false;
 		}
+
+		// Renaming a subject does not change its identity in curriculum and exam
+		// relationships.
 		return id == other.id;
 	}
 

@@ -22,11 +22,8 @@ class CurriculumMappingTest {
 	@Test
 	void equalityUsesMappingIdentity() {
 		CurriculumMapping first = new CurriculumMapping(7, unit2019, unit2025, MappingStatus.CONFIRMED);
-
 		CurriculumMapping sameId = new CurriculumMapping(7, subtopic2019, subtopic2025, MappingStatus.SUGGESTED);
-
 		CurriculumMapping differentId = new CurriculumMapping(8, unit2019, unit2025, MappingStatus.CONFIRMED);
-
 		assertEquals(first, sameId);
 		assertEquals(first.hashCode(), sameId.hashCode());
 		assertNotEquals(first, differentId);
@@ -35,7 +32,6 @@ class CurriculumMappingTest {
 	@Test
 	void mapsNodesAcrossSyllabusVersions() {
 		CurriculumMapping mapping = new CurriculumMapping(1, subtopic2019, subtopic2025, MappingStatus.CONFIRMED);
-
 		assertEquals(1, mapping.getId());
 		assertEquals(subtopic2019, mapping.getSource());
 		assertEquals(subtopic2025, mapping.getTarget());
@@ -51,11 +47,8 @@ class CurriculumMappingTest {
 	@Test
 	void rejectsMappingBetweenDifferentSubjects() {
 		Subject physics = new Subject(2, "Physics");
-
 		SyllabusVersion physics2025 = new SyllabusVersion(3, physics, "2025", true);
-
 		Unit physicsUnit = new Unit(7, physics2025, "3", "Unit 3", 1);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new CurriculumMapping(1, unit2019, physicsUnit, MappingStatus.CONFIRMED));
 	}
@@ -63,7 +56,6 @@ class CurriculumMappingTest {
 	@Test
 	void rejectsMappingWithinSameSyllabusVersion() {
 		Unit otherUnit2025 = new Unit(7, syllabus2025, "4", "Unit 4", 2);
-
 		assertThrows(IllegalArgumentException.class,
 				() -> new CurriculumMapping(1, unit2025, otherUnit2025, MappingStatus.CONFIRMED));
 	}

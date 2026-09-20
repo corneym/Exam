@@ -30,13 +30,11 @@ class DatabaseResetToolTest {
 		Path propertiesFile = tempDirectory.resolve("questionbank.properties");
 		Files.createDirectories(dataRoot);
 		Files.writeString(propertiesFile, "data.root=" + dataRoot.toString().replace('\\', '/') + "\n");
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("INSERT INTO subjects (subject_name) VALUES ('Chemistry')");
 		}
-
 		Path walPath = Path.of(databasePath.toString() + "-wal");
 		Path shmPath = Path.of(databasePath.toString() + "-shm");
 		Files.writeString(walPath, "stale wal");
@@ -47,16 +45,14 @@ class DatabaseResetToolTest {
 		Files.createDirectories(curriculum.getParent());
 		Files.writeString(pdf, "PDF");
 		Files.writeString(curriculum, "workbook");
-
 		ByteArrayOutputStream outputBytes = new ByteArrayOutputStream();
 		ByteArrayOutputStream errorBytes = new ByteArrayOutputStream();
 		int result;
 		try (PrintStream output = new PrintStream(outputBytes, true, StandardCharsets.UTF_8);
 				PrintStream error = new PrintStream(errorBytes, true, StandardCharsets.UTF_8)) {
-			result = DatabaseResetTool.run(new String[] { DatabaseResetTool.CONFIRMATION_FLAG }, propertiesFile,
-					output, error);
+			result = DatabaseResetTool.run(new String[] { DatabaseResetTool.CONFIRMATION_FLAG }, propertiesFile, output,
+					error);
 		}
-
 		assertEquals(0, result);
 		assertTrue(Files.exists(databasePath));
 		assertFalse(Files.exists(walPath));
@@ -66,7 +62,6 @@ class DatabaseResetToolTest {
 		assertTrue(Files.exists(propertiesFile));
 		assertTrue(errorBytes.toString(StandardCharsets.UTF_8).isEmpty());
 		assertTrue(outputBytes.toString(StandardCharsets.UTF_8).contains(databasePath.toAbsolutePath().toString()));
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet resultSet = statement.executeQuery("SELECT version FROM schema_version")) {
 				assertTrue(resultSet.next());
@@ -88,7 +83,6 @@ class DatabaseResetToolTest {
 		Files.writeString(databasePath, "do not delete");
 		Files.writeString(Path.of(databasePath.toString() + "-wal"), "do not delete wal");
 		Files.writeString(propertiesFile, "data.root=" + dataRoot.toString().replace('\\', '/') + "\n");
-
 		ByteArrayOutputStream outputBytes = new ByteArrayOutputStream();
 		ByteArrayOutputStream errorBytes = new ByteArrayOutputStream();
 		int result;
@@ -96,7 +90,6 @@ class DatabaseResetToolTest {
 				PrintStream error = new PrintStream(errorBytes, true, StandardCharsets.UTF_8)) {
 			result = DatabaseResetTool.run(new String[0], propertiesFile, output, error);
 		}
-
 		String output = outputBytes.toString(StandardCharsets.UTF_8);
 		assertEquals(2, result);
 		assertTrue(output.contains("Database reset NOT performed."));

@@ -50,6 +50,9 @@ public class QuestionExtractor {
 	 * @throws Exception if the PDF cannot be opened, rendered, closed, or written
 	 */
 	public void extractQuestion(Path pdfPath, Question question, File outputFile) throws Exception {
+
+		// This overload owns the session and closes it even if rendering or PNG output
+		// fails.
 		try (PdfSession session = PdfSession.open(pdfPath)) {
 			BufferedImage image = extractQuestion(session, question);
 			ImageIO.write(image, "png", outputFile);
@@ -74,6 +77,9 @@ public class QuestionExtractor {
 		}
 		List<BufferedImage> regionImages = new ArrayList<>();
 		Set<RegionKey> renderedRegions = new HashSet<>();
+
+		// Render context first; the shared key set also removes exact duplicates from
+		// the later question body.
 		if (question.hasSharedContext()) {
 			for (SharedQuestionContextRegion region : question.getSharedContext().getRegions()) {
 				RegionKey key = RegionKey.from(region);
@@ -123,6 +129,9 @@ public class QuestionExtractor {
 			throw new NoSuchElementException("No value present");
 		}
 		List<BufferedImage> regionImages = new ArrayList<>();
+
+		// Keep first-occurrence order in the image list; the set only tracks rectangles
+		// already rendered.
 		Set<RegionKey> renderedRegions = new HashSet<>();
 		for (QuestionRegion region : question.getRegions()) {
 			RegionKey key = RegionKey.from(region);
@@ -231,6 +240,8 @@ public class QuestionExtractor {
 	 */
 	public BufferedImage extractSharedContext(PdfSession session, SharedQuestionContext context) throws IOException {
 		List<BufferedImage> regionImages = new ArrayList<>();
+
+		// Deduplicate within this context while retaining its stored reading order.
 		Set<RegionKey> renderedRegions = new HashSet<>();
 		for (SharedQuestionContextRegion region : context.getRegions()) {
 			RegionKey key = RegionKey.from(region);
@@ -245,6 +256,9 @@ public class QuestionExtractor {
 		if (regionImages.isEmpty()) {
 			throw new NoSuchElementException("No value present");
 		}
+
+		// Stack at original scale: use the widest region and the sum of all region
+		// heights.
 		int outputWidth = 0;
 		int outputHeight = 0;
 		for (BufferedImage image : regionImages) {
@@ -254,6 +268,8 @@ public class QuestionExtractor {
 		BufferedImage combined = new BufferedImage(outputWidth, outputHeight, BufferedImage.TYPE_INT_RGB);
 		Graphics2D graphics = combined.createGraphics();
 		try {
+
+			// White fills the unused space beside narrower, left-aligned regions.
 			graphics.setColor(Color.WHITE);
 			graphics.fillRect(0, 0, outputWidth, outputHeight);
 			int y = 0;
@@ -268,10 +284,16 @@ public class QuestionExtractor {
 	}
 
 	private BufferedImage cropRegion(BufferedImage page, double x, double y, double width, double height) {
+
+		// Round the displayed-page endpoints outwards so partially covered pixels are
+		// retained.
 		int left = (int) Math.floor(x * page.getWidth());
 		int top = (int) Math.floor(y * page.getHeight());
 		int right = (int) Math.ceil((x + width) * page.getWidth());
 		int bottom = (int) Math.ceil((y + height) * page.getHeight());
+
+		// Clamp far edges to the raster, then derive dimensions from endpoints rather
+		// than rounding sizes.
 		right = Math.min(right, page.getWidth());
 		bottom = Math.min(bottom, page.getHeight());
 		int cropWidth = right - left;
@@ -283,6 +305,8 @@ public class QuestionExtractor {
 		return cropRegion(page, region.x(), region.y(), region.width(), region.height());
 	}
 
+	// All regions in one extraction use the same PDF; exact page and bounds
+	// identify duplicates.
 	private record RegionKey(int pageNumber, double x, double y, double width, double height) {
 
 		private static RegionKey from(QuestionRegion region) {

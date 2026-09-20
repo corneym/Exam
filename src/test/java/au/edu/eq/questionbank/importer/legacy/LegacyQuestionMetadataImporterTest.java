@@ -36,6 +36,52 @@ class LegacyQuestionMetadataImporterTest {
 	Path tempDirectory;
 
 	@Test
+	void conflictingExistingAnswerIsPreservedOnReimport() throws Exception {
+		Fixture fixture = createFixture("answer-conflict.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.executeUpdate("UPDATE answers SET answer_text = 'C'");
+		}
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
+		assertTrue(exception.getMessage().contains("Existing answer conflicts"));
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(2, countRows(statement, "questions"));
+			assertEquals(1, countRows(statement, "answers"));
+			try (ResultSet answer = statement.executeQuery("SELECT answer_text FROM answers")) {
+				assertTrue(answer.next());
+				assertEquals("C", answer.getString("answer_text"));
+			}
+		}
+	}
+
+	@Test
+	void repeatedImportAddsMissingAnswerToExistingQuestion() throws Exception {
+		Fixture fixture = createFixture("missing-answer.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.executeUpdate("DELETE FROM answers");
+		}
+		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		assertEquals(new LegacyQuestionImportResult(0, 2, 1), result);
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet answer = statement.executeQuery("""
+						SELECT q.question_code, a.answer_text
+						FROM answers a JOIN questions q ON q.id = a.question_id
+						""")) {
+			assertTrue(answer.next());
+			assertEquals("1", answer.getString("question_code"));
+			assertEquals("B", answer.getString("answer_text"));
+		}
+	}
+
+	@Test
 	void conflictingExistingQuestionPreventsAnyNewRows() throws Exception {
 		Fixture fixture = createFixture("existing-conflict.db", false);
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());

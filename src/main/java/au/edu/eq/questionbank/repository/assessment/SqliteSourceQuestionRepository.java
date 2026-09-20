@@ -115,6 +115,8 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		}
 	}
 
+	// The guarded delete retains source identities still used by another question
+	// part.
 	boolean deleteIfUnreferenced(Connection connection, SourceQuestion sourceQuestion) throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");

@@ -50,8 +50,8 @@ class RevisionAnswerAssetRendererTest {
 	void failsWhenAnswerRegionSourcePdfIsMissing() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
 		Files.delete(fixture.firstAnswerPdf);
-		RevisionCorpus corpus = fixture.createCorpus(_ -> List
-				.of(new QuestionApplicabilityMatch(fixture.regionAnswerQuestion, fixture.firstDescriptor)));
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.regionAnswerQuestion, fixture.firstDescriptor)));
 		RevisionAnswerAssetRenderer renderer = new RevisionAnswerAssetRenderer(fixture.pdfStore,
 				new QuestionExtractor());
 		IOException exception = assertThrows(IOException.class,
@@ -76,8 +76,8 @@ class RevisionAnswerAssetRendererTest {
 	@Test
 	void rendersAnswerRegionsInPersistedOrderWithDeterministicNames() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
-		RevisionCorpus corpus = fixture.createCorpus(_ -> List
-				.of(new QuestionApplicabilityMatch(fixture.regionAnswerQuestion, fixture.firstDescriptor)));
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.regionAnswerQuestion, fixture.firstDescriptor)));
 		RevisionAnswerAssetRenderer renderer = new RevisionAnswerAssetRenderer(fixture.pdfStore,
 				new QuestionExtractor());
 		Path outputRoot = tempDir.resolve("output");
@@ -95,8 +95,8 @@ class RevisionAnswerAssetRendererTest {
 	@Test
 	void textOnlyAnswerProducesNoImageAssets() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
-		RevisionCorpus corpus = fixture.createCorpus(_ -> List
-				.of(new QuestionApplicabilityMatch(fixture.textAnswerQuestion, fixture.firstDescriptor)));
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.textAnswerQuestion, fixture.firstDescriptor)));
 		RevisionAnswerAssetRenderer renderer = new RevisionAnswerAssetRenderer(fixture.pdfStore,
 				new QuestionExtractor());
 		List<RevisionAnswerAsset> assets = renderer.render(corpus, tempDir.resolve("output"));
