@@ -29,7 +29,6 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -245,11 +244,14 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
+		ListView<Object> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId()));
+
+		// Search now exposes a UI-facing wrapper rather than QuestionRetrievalResult.
+		// Select the wrapper containing the persistent Question being corrected.
+		Object selectedResult = results.getItems().stream()
+				.filter(result -> searchResultQuestion(result).getId() == question.getId()).findFirst().orElseThrow();
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
 		Button editExam = lookup(robot, "#question-search-edit-exam", Button.class);
 		assertFalse(editExam.isDisabled());
@@ -311,9 +313,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Search refresh must still contain the same Question after its owning Exam
 		// metadata changes.
-		ListView<QuestionRetrievalResult> refreshedResults = listView(robot, "#question-search-results");
+		ListView<Object> refreshedResults = listView(robot, "#question-search-results");
+
+		// After the Exam edit, Search should still contain the same persistent Question
+		// even though its owning Exam metadata has changed.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> refreshedResults.getItems().stream()
-				.anyMatch(result -> result.getQuestion().getId() == question.getId()));
+				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId()));
 		robot.clickOn("Close");
 		WaitForAsyncUtils.waitForFxEvents();
 	}
@@ -546,6 +551,17 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	private Question searchResultQuestion(Object result) {
+		try {
+
+			// Whole-application workflow tests do not depend on the package-private
+			// ui.search result wrapper. Read only its wrapped persisted Question.
+			return (Question) invoke(result, "question", new Class<?>[0]);
+		} catch (Exception exception) {
+			throw new RuntimeException(exception);
+		}
 	}
 
 	private void selectSubject(FxRobot robot, String subjectName) {

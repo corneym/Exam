@@ -1,5 +1,8 @@
 package au.edu.eq.questionbank.ui.search;
 
+import java.util.List;
+import java.util.function.Supplier;
+
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
@@ -20,17 +23,24 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private static final int DIALOG_HEIGHT = 700;
 	private final QuestionSearchPane searchPane;
 
+	// A Search edit temporarily hides and later reuses this same Dialog instance.
+	// Preserve teacher-adjusted dimensions across that hide/show cycle.
+	private double rememberedWidth = Double.NaN;
+	private double rememberedHeight = Double.NaN;
+
 	/**
 	 * Creates a question-search dialog owned by the supplied window.
 	 *
 	 * @param owner                dialog owner
 	 * @param curriculumRepository current curriculum hierarchy lookup
 	 * @param retrievalService     curriculum-aware question retrieval
+	 * @param allQuestionsSupplier complete stored Question retrieval
 	 * @param previewService       stored question image preview service
 	 * @throws NullPointerException if any argument is {@code null}
 	 */
 	public QuestionSearchDialog(Window owner, CurriculumRepository curriculumRepository,
-			QuestionRetrievalService retrievalService, QuestionPreviewService previewService) {
+			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionPreviewService previewService) {
 		if (owner == null) {
 			throw new NullPointerException("owner");
 		}
@@ -40,12 +50,15 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		if (retrievalService == null) {
 			throw new NullPointerException("retrievalService");
 		}
+		if (allQuestionsSupplier == null) {
+			throw new NullPointerException("allQuestionsSupplier");
+		}
 		if (previewService == null) {
 			throw new NullPointerException("previewService");
 		}
 		initOwner(owner);
 		setTitle("Search Questions");
-		setHeaderText("Find questions by current curriculum");
+		setHeaderText("Find questions across the bank or by current curriculum");
 		setResizable(true);
 		ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
 		ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
@@ -56,7 +69,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
 		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
 				editExamButtonType, recapturePreambleButtonType, editAnswerButtonType, ButtonType.CLOSE);
-		searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
+		searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, allQuestionsSupplier,
+				previewService);
 		getDialogPane().setContent(searchPane);
 		Node editQuestionButton = getDialogPane().lookupButton(editQuestionButtonType);
 		Node splitQuestionButton = getDialogPane().lookupButton(splitQuestionButtonType);
@@ -116,6 +130,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		});
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
+		configureSizePersistence();
 	}
 
 	/**
@@ -133,6 +148,31 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	 */
 	public void refreshAfterEdit(long questionId) {
 		searchPane.refreshAfterEdit(questionId);
+	}
+
+	private void configureSizePersistence() {
+		setOnHiding(_ -> {
+
+			// Capture the actual window dimensions immediately before an edit action
+			// hides Search. Preferred DialogPane dimensions are only the initial size.
+			if (Double.isFinite(getWidth()) && getWidth() > 0) {
+				rememberedWidth = getWidth();
+			}
+			if (Double.isFinite(getHeight()) && getHeight() > 0) {
+				rememberedHeight = getHeight();
+			}
+		});
+		setOnShown(_ -> {
+
+			// The first display uses the ordinary preferred dimensions. Subsequent
+			// displays restore the teacher's last resized dimensions.
+			if (Double.isFinite(rememberedWidth) && rememberedWidth > 0) {
+				setWidth(rememberedWidth);
+			}
+			if (Double.isFinite(rememberedHeight) && rememberedHeight > 0) {
+				setHeight(rememberedHeight);
+			}
+		});
 	}
 
 	public enum EditTarget {

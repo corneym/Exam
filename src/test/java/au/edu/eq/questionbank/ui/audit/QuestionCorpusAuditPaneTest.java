@@ -99,6 +99,15 @@ class QuestionCorpusAuditPaneTest {
 		stage.show();
 	}
 
+	@Test
+	void yearFilterIsChronologicalRegardlessOfQuestionInputOrder(FxRobot robot) {
+		ComboBox<Integer> year = robot.lookup("#corpus-filter-year").queryAs(ComboBox.class);
+
+		// The fixture supplies 2025 before 2024, so this proves filter ordering is
+		// independent of repository/input order.
+		assertEquals(List.of(2024, 2025), List.copyOf(year.getItems()));
+	}
+
 	private static final class Fixture {
 
 		private final Subject chemistry = new Subject(1, "Chemistry");
@@ -134,7 +143,10 @@ class QuestionCorpusAuditPaneTest {
 			Question missingAnswer = question(51, chemistryBooklet, chemistryClassification, "Q2",
 					QuestionResponseType.WRITTEN_RESPONSE);
 			Question unknown = question(52, physicsBooklet, physicsClassification, "Q3", QuestionResponseType.UNKNOWN);
-			return List.of(complete, missingAnswer, unknown);
+
+			// Deliberately return the later year first. Corpus Audit must not inherit
+			// repository/input order when presenting the Year filter.
+			return List.of(unknown, complete, missingAnswer);
 		}
 	}
 }

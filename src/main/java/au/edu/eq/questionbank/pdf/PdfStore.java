@@ -50,21 +50,12 @@ public class PdfStore {
 		if (sourcePath == null) {
 			throw new NullPointerException("sourcePath");
 		}
-		String subjectDirectory = validateDirectoryName(subjectName, "subjectName");
-		String providerDirectory = validateDirectoryName(providerName, "providerName");
-		if (year < 1) {
-			throw new IllegalArgumentException("year must be positive");
-		}
 		Path source = sourcePath.toAbsolutePath().normalize();
 		if (!Files.isRegularFile(source)) {
 			throw new IOException("Exam PDF source is not a regular file: " + source);
 		}
-		Path destinationDirectory = pdfRoot.resolve(subjectDirectory).resolve(providerDirectory)
-				.resolve(Integer.toString(year)).normalize();
-		if (!destinationDirectory.startsWith(pdfRoot)) {
-			throw new IllegalArgumentException("PDF destination must remain within the configured data root");
-		}
-		Path destination = destinationDirectory.resolve(source.getFileName()).normalize();
+		Path destination = managedDestination(source, subjectName, providerName, year);
+		Path destinationDirectory = destination.getParent();
 
 		// A file already at its managed destination needs no copy.
 		if (source.equals(destination)) {
@@ -88,6 +79,39 @@ public class PdfStore {
 		}
 		throw new FileAlreadyExistsException(destination.toString(), source.toString(),
 				"A different PDF with the same filename already exists in the exam directory");
+	}
+
+	/**
+	 * Calculates the standard managed destination for a source PDF without copying
+	 * or moving the file.
+	 *
+	 * @param sourcePath   source whose filename will be retained
+	 * @param subjectName  owning subject
+	 * @param providerName examination provider
+	 * @param year         examination year
+	 * @return normalized absolute destination beneath this store
+	 * @throws NullPointerException     if {@code sourcePath} is {@code null}
+	 * @throws IllegalArgumentException if a directory component or year is invalid
+	 */
+	public Path managedDestination(Path sourcePath, String subjectName, String providerName, int year) {
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		String subjectDirectory = validateDirectoryName(subjectName, "subjectName");
+		String providerDirectory = validateDirectoryName(providerName, "providerName");
+		if (year < 1) {
+			throw new IllegalArgumentException("year must be positive");
+		}
+		Path filename = sourcePath.toAbsolutePath().normalize().getFileName();
+		if (filename == null) {
+			throw new IllegalArgumentException("sourcePath must identify a file");
+		}
+		Path destination = pdfRoot.resolve(subjectDirectory).resolve(providerDirectory).resolve(Integer.toString(year))
+				.resolve(filename).normalize();
+		if (!destination.startsWith(pdfRoot)) {
+			throw new IllegalArgumentException("PDF destination must remain within the configured data root");
+		}
+		return destination;
 	}
 
 	/**

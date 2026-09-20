@@ -302,6 +302,9 @@ final class QuestionCorpusAuditPane extends VBox {
 			ExamProvider provider = question.getExam().getProvider();
 			int year = question.getExam().getYear();
 			ExamBooklet booklet = question.getBooklet();
+
+			// Preserve one entry for each persisted filter identity while scanning the
+			// current corpus snapshot.
 			subjects.putIfAbsent(subject.getId(), subject);
 			providers.putIfAbsent(provider.getId(), provider);
 			years.putIfAbsent(year, year);
@@ -309,7 +312,11 @@ final class QuestionCorpusAuditPane extends VBox {
 		}
 		subjectBox.getItems().setAll(subjects.values());
 		providerBox.getItems().setAll(providers.values());
-		yearBox.getItems().setAll(years.values());
+
+		// Years are a numeric domain value rather than a persistence/insertion order.
+		// Sort them explicitly so the "All years" filter always presents a predictable
+		// chronological sequence regardless of repository or corpus iteration order.
+		yearBox.getItems().setAll(years.values().stream().sorted().toList());
 		bookletBox.getItems().setAll(booklets.values());
 	}
 

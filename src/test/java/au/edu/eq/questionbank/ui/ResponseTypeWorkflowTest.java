@@ -34,14 +34,8 @@ import javafx.stage.Stage;
 @Tag("workflow-ui")
 class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 
-	@Override
-	@Start
-	void start(Stage stage) throws Exception {
-		super.start(stage);
-	}
-
 	@Test
-	void multipleChoiceUsesChoicesWithoutPdfOrAnswerRegions(FxRobot robot) throws Exception {
+	void multipleChoiceUsesChoicesAndAnswerPdfWithoutAnswerRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 
@@ -53,12 +47,20 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> questions.getSelectionModel().select(question));
 		Node multipleChoiceControls = lookup(robot, "#multiple-choice-answer-controls", Node.class);
 		Node pdfControls = lookup(robot, "#answer-pdf-controls", Node.class);
+		Button choosePdf = lookup(robot, "#choose-answer-pdf", Button.class);
 		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
 		Button save = lookup(robot, "#save-answer", Button.class);
+
+		// MCQ capture still uses answer-letter controls, but the answer booklet must
+		// also be available because that is where the authoritative letter is read.
 		assertTrue(multipleChoiceControls.isVisible());
 		assertTrue(multipleChoiceControls.isManaged());
-		assertFalse(pdfControls.isVisible());
-		assertFalse(pdfControls.isManaged());
+		assertTrue(pdfControls.isVisible());
+		assertTrue(pdfControls.isManaged());
+		assertFalse(choosePdf.isDisabled());
+
+		// MCQs never capture rectangular Answer regions even though they can display
+		// and register an Answer PDF.
 		assertFalse(addRegion.isVisible());
 		assertFalse(addRegion.isManaged());
 		assertTrue(save.isDisabled());
@@ -72,6 +74,9 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
 				.orElseThrow();
+
+		// The PDF supports answer lookup only. Persisted MCQ completeness remains the
+		// selected answer letter with no AnswerRegion rows.
 		assertTrue(stored.hasAnswer());
 		assertEquals("A", stored.getAnswer().getAnswerText());
 		assertTrue(stored.getAnswer().getRegions().isEmpty());
@@ -109,6 +114,12 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Completing a new Question must reset both radio buttons.
 		assertFalse(multipleChoice.isSelected());
 		assertFalse(writtenResponse.isSelected());
+	}
+
+	@Override
+	@Start
+	void start(Stage stage) throws Exception {
+		super.start(stage);
 	}
 
 	@Test

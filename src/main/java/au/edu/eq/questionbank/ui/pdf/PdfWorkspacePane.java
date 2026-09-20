@@ -99,6 +99,16 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		getChildren().addAll(createScrollPane(), createPageControls());
 	}
 
+	/**
+	 * Removes the visible pending selection rectangle.
+	 */
+	public void clearSelection() {
+		clearAnchoredSelectionState();
+		selectionRectangle.setVisible(false);
+		selectionRectangle.setWidth(0);
+		selectionRectangle.setHeight(0);
+	}
+
 	@Override
 	public void close() throws Exception {
 		closed = true;
@@ -125,13 +135,36 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
-	 * Removes the visible pending selection rectangle.
+	 * Closes the managed Exam and Answer PDF sessions without closing the workspace
+	 * itself.
+	 * <p>
+	 * Exam metadata correction uses this before relocating managed files so no open
+	 * PDFBox document can retain an operating-system file handle on a source that
+	 * must be moved.
 	 */
-	public void clearSelection() {
-		clearAnchoredSelectionState();
-		selectionRectangle.setVisible(false);
-		selectionRectangle.setWidth(0);
-		selectionRectangle.setHeight(0);
+	public void closeManagedPdfSessions() {
+		documentRequest++;
+		boolean managedDocumentDisplayed = displayedDocument == DocumentMode.EXAM
+				|| displayedDocument == DocumentMode.ANSWER;
+		Exception failure = null;
+		try {
+			failure = closeSession(examPdfSession, failure);
+		} finally {
+			examPdfSession = null;
+		}
+		try {
+			failure = closeSession(answerPdfSession, failure);
+		} finally {
+			answerPdfSession = null;
+			answerPdfPath = null;
+		}
+		clearSelection();
+		if (managedDocumentDisplayed) {
+			clearDisplayedPage();
+		}
+		if (failure != null) {
+			throw new IllegalStateException("Unable to close managed PDF documents before relocation", failure);
+		}
 	}
 
 	/**

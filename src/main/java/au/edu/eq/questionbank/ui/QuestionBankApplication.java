@@ -45,6 +45,7 @@ import au.edu.eq.questionbank.output.scorm.ScormZipWriter;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
+import au.edu.eq.questionbank.repository.assessment.ExamMetadataCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataUpdateResult;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService;
@@ -567,6 +568,36 @@ public class QuestionBankApplication extends Application {
 		return result.isPresent() && result.get() == restoreButton;
 	}
 
+	private Exam correctExamMetadataAndReloadCapture(Exam exam, String providerName, int year, String assessmentName)
+			throws SQLException, IOException {
+		PdfWorkspacePane.DocumentMode displayedBeforeCorrection = pdfWorkspace.getDisplayedDocument();
+		int pageBeforeCorrection = pdfWorkspace.getCurrentPageNumber();
+		try {
+
+			// PDFBox sessions must release their file handles before managed files are
+			// renamed, particularly on Windows.
+			pdfWorkspace.closeManagedPdfSessions();
+			Exam corrected = examMetadataPane.correctExamMetadata(exam, providerName, year, assessmentName);
+
+			// Replace Question instances that still contain the old Exam metadata before
+			// asking either capture pane to reopen a managed document.
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			restoreManagedPdfSessions(displayedBeforeCorrection, pageBeforeCorrection);
+			return corrected;
+		} catch (SQLException | IOException | RuntimeException failure) {
+
+			// Filesystem rollback restores the old paths when correction fails. Reopen
+			// whichever capture documents were active before the attempt.
+			try {
+				restoreManagedPdfSessions(displayedBeforeCorrection, pageBeforeCorrection);
+			} catch (RuntimeException restoreFailure) {
+				failure.addSuppressed(restoreFailure);
+			}
+			throw failure;
+		}
+	}
+
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
 		MenuItem authorItem = createMenuItem("_Author / Edit...", () -> showCurriculumAuthoring(primaryStage, config));
@@ -815,6 +846,20 @@ public class QuestionBankApplication extends Application {
 
 	private void editExamMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
+		if (blockWhileCaptureSaveInProgress(primaryStage, "editing Exam metadata")) {
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		if (captureSelectionState.hasPendingSelection() || questionCapturePane.hasAcceptedRegions()
+				|| answerCapturePane.hasAcceptedRegions() || questionCapturePane.isCapturingSharedContext()) {
+
+			// Relocation closes managed PDF sessions. Never do that while transient capture
+			// state still depends on the currently open document.
+			showAlert(Alert.AlertType.WARNING, "Edit Exam Metadata", "Capture work is in progress",
+					"Save or cancel the current Question, shared-context or Answer capture before editing Exam metadata.");
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
 		ExamMetadataCorrectionDialog correctionDialog = new ExamMetadataCorrectionDialog(primaryStage,
 				question.getExam());
 		Optional<ExamMetadataCorrectionDialog.Result> result = correctionDialog.showAndWait();
@@ -824,17 +869,12 @@ public class QuestionBankApplication extends Application {
 		}
 		ExamMetadataCorrectionDialog.Result replacement = result.get();
 		try {
-			examMetadataPane.correctExamMetadata(question.getExam(), replacement.providerName(), replacement.year(),
+			correctExamMetadataAndReloadCapture(question.getExam(), replacement.providerName(), replacement.year(),
 					replacement.assessmentName());
-
-			// Reload every capture queue that may currently contain Question objects
-			// carrying the old Exam metadata.
-			questionCapturePane.refreshImportedQuestions();
-			answerCapturePane.refreshQuestions();
 			resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository, metadataService);
-		} catch (SQLException | IllegalArgumentException exception) {
-			showAlert(Alert.AlertType.ERROR, "Edit Exam Metadata", "The exam metadata could not be saved.",
-					exception.getMessage());
+		} catch (SQLException | IOException | IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Edit Exam Metadata",
+					"The Exam metadata correction could not be completed.", failureMessage(exception));
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
 		}
 	}
@@ -1156,9 +1196,15 @@ public class QuestionBankApplication extends Application {
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+
+		// Exam correction owns both filesystem relocation and the atomic Exam /
+		// SourceDocument database update.
+		ExamMetadataCorrectionService examMetadataCorrectionService = new ExamMetadataCorrectionService(
+				config.pdfDataRoot(), examWriter, answerWriter);
 		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
-				new ExamMetadataOptionsRepository(), examImporter, examWriter, this::allowExamImportConfirmation,
-				this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled, this::activateExamSubject);
+				new ExamMetadataOptionsRepository(), examImporter, examWriter, examMetadataCorrectionService,
+				this::allowExamImportConfirmation, this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled,
+				this::activateExamSubject);
 		curriculumSelectorPane = createCurriculumSelectorPane();
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
@@ -1394,6 +1440,30 @@ public class QuestionBankApplication extends Application {
 				The application will now close. Restart Exam Question Bank to use the restored data.
 				""".formatted(restoreResult.safetyBackupPath()));
 		applicationExitAction.run();
+	}
+
+	private void restoreManagedPdfSessions(PdfWorkspacePane.DocumentMode displayedBeforeCorrection,
+			int pageBeforeCorrection) {
+		examMetadataPane.reopenActiveExamPdf();
+		answerCapturePane.reopenSelectedAnswerDocument();
+
+		// Reopening both documents can change which one is visible. Restore the
+		// teacher's previous document and page after all file handles are current.
+		if (displayedBeforeCorrection == PdfWorkspacePane.DocumentMode.EXAM
+				&& pdfWorkspace.getExamPdfSession() != null) {
+			pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageBeforeCorrection);
+			return;
+		}
+		if (displayedBeforeCorrection == PdfWorkspacePane.DocumentMode.ANSWER
+				&& pdfWorkspace.getAnswerPdfSession() != null) {
+			pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.ANSWER, pageBeforeCorrection);
+			return;
+		}
+		if (displayedBeforeCorrection == PdfWorkspacePane.DocumentMode.VIEWER) {
+
+			// The standalone viewer is not a managed capture session and was not closed.
+			pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.VIEWER, pageBeforeCorrection);
+		}
 	}
 
 	private void resumeSearchAfterEdit(Stage primaryStage, QuestionSearchDialog dialog, long questionId,
@@ -1670,8 +1740,11 @@ public class QuestionBankApplication extends Application {
 		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(config.pdfDataRoot()),
 				questionExtractor);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
+
+		// Search receives complete-bank retrieval separately from curriculum-aware
+		// retrieval so All Questions never fabricates current applicability.
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
-				previewService);
+				questionRepository::findAll, previewService);
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 

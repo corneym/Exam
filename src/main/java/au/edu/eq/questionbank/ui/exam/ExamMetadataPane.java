@@ -10,9 +10,11 @@ import java.util.function.Consumer;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
+import au.edu.eq.questionbank.repository.assessment.ExamMetadataCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -70,13 +72,15 @@ public final class ExamMetadataPane extends VBox {
 	private Path pendingPdfPath;
 	private ExamBooklet booklet;
 	private ExamBooklet pendingKnownBooklet;
+	private final ExamMetadataCorrectionService examMetadataCorrectionService;
 
 	/**
 	 * Creates the exam metadata workflow controls and persistence integration.
 	 */
 	public ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
 			ExamMetadataOptionsRepository optionsRepository, SqliteExamImporter examImporter,
-			SqliteExamWriter examWriter, BooleanSupplier examChangeAllowed, Consumer<SelectedPdf> examPdfHandler,
+			SqliteExamWriter examWriter, ExamMetadataCorrectionService examMetadataCorrectionService,
+			BooleanSupplier examChangeAllowed, Consumer<SelectedPdf> examPdfHandler,
 			Consumer<Boolean> selectionCursorHandler, Consumer<Subject> examSubjectHandler) {
 		if (pdfDataRoot == null) {
 			throw new NullPointerException("pdfDataRoot");
@@ -90,6 +94,12 @@ public final class ExamMetadataPane extends VBox {
 		if (examImporter == null) {
 			throw new NullPointerException("examImporter");
 		}
+		if (examWriter == null) {
+			throw new NullPointerException("examWriter");
+		}
+		if (examMetadataCorrectionService == null) {
+			throw new NullPointerException("examMetadataCorrectionService");
+		}
 		if (examChangeAllowed == null) {
 			throw new NullPointerException("examPdfAvailable");
 		}
@@ -102,9 +112,6 @@ public final class ExamMetadataPane extends VBox {
 		if (examSubjectHandler == null) {
 			throw new NullPointerException("examSubjectHandler");
 		}
-		if (examWriter == null) {
-			throw new NullPointerException("examWriter");
-		}
 		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
 		this.curriculumSelectionModel = curriculumSelectionModel;
 		this.optionsRepository = optionsRepository;
@@ -112,6 +119,7 @@ public final class ExamMetadataPane extends VBox {
 		this.examPdfHandler = examPdfHandler;
 		this.examImporter = examImporter;
 		this.examWriter = examWriter;
+		this.examMetadataCorrectionService = examMetadataCorrectionService;
 		this.selectionCursorHandler = selectionCursorHandler;
 		this.examSubjectHandler = examSubjectHandler;
 		pdfFilePicker = new PdfFilePicker(this.pdfDataRoot);
@@ -161,6 +169,125 @@ public final class ExamMetadataPane extends VBox {
 		assessmentField.getEditor().clear();
 		bookletField.getSelectionModel().clearSelection();
 		bookletField.getEditor().clear();
+	}
+
+	/**
+	 * Corrects an existing Exam, including relocation of managed booklet and answer
+	 * PDFs when provider or year changes the authoritative storage directory.
+	 *
+	 * @param exam           persisted Exam being corrected
+	 * @param providerName   corrected provider name
+	 * @param year           corrected assessment year
+	 * @param assessmentName corrected assessment name
+	 * @return corrected Exam with the same persistent identity
+	 * @throws SQLException if persistence fails
+	 * @throws IOException  if managed source files cannot be relocated
+	 */
+	public Exam correctExamMetadata(Exam exam, String providerName, int year, String assessmentName)
+			throws SQLException, IOException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		String previousProviderName = exam.getProvider().getName();
+
+		// The correction service relocates every booklet/answer source and updates all
+		// corresponding SourceDocument paths before this pane changes its in-memory
+		// capture state.
+		ExamMetadataCorrectionService.Result correction = examMetadataCorrectionService.correct(exam, providerName,
+				year, assessmentName);
+		Exam corrected = correction.exam();
+		if (!previousProviderName.equals(corrected.getProvider().getName())
+				&& !examWriter.examProviderExists(previousProviderName)) {
+			optionsRepository.removeProvider(previousProviderName);
+		}
+		optionsRepository.addProvider(corrected.getProvider().getName());
+		optionsRepository.addAssessment(corrected.getName());
+		loadOptions();
+		if (booklet != null && booklet.getExam().getId() == corrected.getId()) {
+			long sourceDocumentId = booklet.getSourceDocument().getId();
+			String correctedRelativePath = correction.sourceDocumentPaths().get(sourceDocumentId);
+
+			// Every booklet source belonging to the corrected Exam was included in the
+			// relocation plan. Missing it here would leave the active capture object stale.
+			if (correctedRelativePath == null) {
+				throw new IllegalStateException(
+						"Corrected Exam did not return the active booklet's SourceDocument path");
+			}
+			SourceDocument correctedSourceDocument = new SourceDocument(sourceDocumentId, correctedRelativePath);
+			booklet = new ExamBooklet(booklet.getId(), corrected, booklet.getName(), correctedSourceDocument);
+			currentPdfPath = pdfStore.resolve(correctedRelativePath);
+			providerField.setValue(corrected.getProvider().getName());
+			yearField.setValue(corrected.getYear());
+			assessmentField.setValue(corrected.getName());
+			selectedPdfLabel.setText(currentPdfPath.getFileName().toString());
+		}
+		return corrected;
+	}
+
+	/**
+	 * Returns the persisted booklet currently used for question regions.
+	 *
+	 * @return the current booklet, or {@code null} before exam metadata is set
+	 */
+	public ExamBooklet getBooklet() {
+		return booklet;
+	}
+
+	/**
+	 * Invalidates the active exam when classification moves to a different subject.
+	 *
+	 * @param subject the newly selected classification subject, or {@code null}
+	 */
+	public void invalidateForSubjectChange(Subject subject) {
+		if (booklet == null) {
+			return;
+		}
+		Subject examSubject = booklet.getExam().getSubject();
+		if (subject == null || examSubject.getId() != subject.getId()) {
+			booklet = null;
+			selectionCursorHandler.accept(false);
+		}
+	}
+
+	public void refreshSubjects() {
+		Subject selectedSubject = subjectField.getValue();
+		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
+		if (selectedSubject != null) {
+			for (Subject subject : subjectField.getItems()) {
+				if (subject.getId() == selectedSubject.getId()) {
+					subjectField.setValue(subject);
+					return;
+				}
+			}
+		}
+		Subject currentSubject = curriculumSelectionModel.getSubject();
+		if (currentSubject != null) {
+			for (Subject subject : subjectField.getItems()) {
+				if (subject.getId() == currentSubject.getId()) {
+					subjectField.setValue(subject);
+					return;
+				}
+			}
+		}
+		subjectField.setValue(null);
+	}
+
+	/**
+	 * Reopens the active persisted Exam PDF after managed files have been
+	 * relocated. Does nothing when no Exam booklet is currently active.
+	 */
+	public void reopenActiveExamPdf() {
+		if (booklet == null || currentPdfPath == null) {
+			return;
+		}
+		if (!Files.isRegularFile(currentPdfPath)) {
+			throw new IllegalStateException("The active Exam PDF is unavailable: " + currentPdfPath);
+		}
+
+		// currentPdfPath is updated during successful metadata correction, and remains
+		// the old authoritative path when correction fails and filesystem rollback
+		// runs.
+		examPdfHandler.accept(new SelectedPdf(currentPdfPath.toFile(), currentPdfPath, pdfDataRoot));
 	}
 
 	/**
@@ -222,108 +349,6 @@ public final class ExamMetadataPane extends VBox {
 			showFileError(e.getMessage());
 			return false;
 		}
-	}
-
-	/**
-	 * Corrects an existing Exam and refreshes the active capture metadata when that
-	 * Exam is currently open.
-	 *
-	 * @param exam           persisted Exam being corrected
-	 * @param providerName   corrected provider name
-	 * @param year           corrected assessment year
-	 * @param assessmentName corrected assessment name
-	 * @return corrected Exam with the same persistent identity
-	 * @throws SQLException if the correction cannot be persisted
-	 */
-	/**
-	 * Corrects an existing Exam and refreshes the active capture metadata when that
-	 * Exam is currently open.
-	 *
-	 * @param exam           persisted Exam being corrected
-	 * @param providerName   corrected provider name
-	 * @param year           corrected assessment year
-	 * @param assessmentName corrected assessment name
-	 * @return corrected Exam with the same persistent identity
-	 * @throws SQLException if the correction cannot be persisted
-	 */
-	public Exam correctExamMetadata(Exam exam, String providerName, int year, String assessmentName)
-			throws SQLException {
-		if (exam == null) {
-			throw new NullPointerException("exam");
-		}
-		String previousProviderName = exam.getProvider().getName();
-		Exam corrected = examWriter.correctExamMetadata(exam, providerName, year, assessmentName);
-
-		// Remove a corrected typo from the reusable Provider suggestions only when
-		// persistence confirms that no remaining Exam still uses that provider.
-		if (!previousProviderName.equals(corrected.getProvider().getName())
-				&& !examWriter.examProviderExists(previousProviderName)) {
-			optionsRepository.removeProvider(previousProviderName);
-		}
-		optionsRepository.addProvider(corrected.getProvider().getName());
-		optionsRepository.addAssessment(corrected.getName());
-
-		// Rebuild the suggestion lists immediately so the Import Exam controls do
-		// not continue showing a provider label that has just been corrected.
-		loadOptions();
-
-		// If this Exam is currently active, replace only the in-memory Exam object.
-		// Booklet and source-document identities remain unchanged.
-		if (booklet != null && booklet.getExam().getId() == corrected.getId()) {
-			booklet = new ExamBooklet(booklet.getId(), corrected, booklet.getName(), booklet.getSourceDocument());
-			providerField.setValue(corrected.getProvider().getName());
-			yearField.setValue(corrected.getYear());
-			assessmentField.setValue(corrected.getName());
-		}
-		return corrected;
-	}
-
-	/**
-	 * Returns the persisted booklet currently used for question regions.
-	 *
-	 * @return the current booklet, or {@code null} before exam metadata is set
-	 */
-	public ExamBooklet getBooklet() {
-		return booklet;
-	}
-
-	/**
-	 * Invalidates the active exam when classification moves to a different subject.
-	 *
-	 * @param subject the newly selected classification subject, or {@code null}
-	 */
-	public void invalidateForSubjectChange(Subject subject) {
-		if (booklet == null) {
-			return;
-		}
-		Subject examSubject = booklet.getExam().getSubject();
-		if (subject == null || examSubject.getId() != subject.getId()) {
-			booklet = null;
-			selectionCursorHandler.accept(false);
-		}
-	}
-
-	public void refreshSubjects() {
-		Subject selectedSubject = subjectField.getValue();
-		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());
-		if (selectedSubject != null) {
-			for (Subject subject : subjectField.getItems()) {
-				if (subject.getId() == selectedSubject.getId()) {
-					subjectField.setValue(subject);
-					return;
-				}
-			}
-		}
-		Subject currentSubject = curriculumSelectionModel.getSubject();
-		if (currentSubject != null) {
-			for (Subject subject : subjectField.getItems()) {
-				if (subject.getId() == currentSubject.getId()) {
-					subjectField.setValue(subject);
-					return;
-				}
-			}
-		}
-		subjectField.setValue(null);
 	}
 
 	/**

@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -18,20 +20,22 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
+import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -45,6 +49,84 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	@Test
+	void examMetadataCorrectionRelocatesOpenExamAndAnswerPdfsAndReopensWorkspace(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "2022 QCAA", 2022, "2022", "Paper 1");
+		Question question = captureQuestion(robot, "1");
+		ComboBox<Question> unanswered = unansweredQuestions(robot);
+		robot.interact(() -> unanswered.getSelectionModel().select(question));
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+		PdfStore pdfStore = new PdfStore(pdfDataRoot);
+		Path originalExamPdf = pdfStore.resolve(originalBooklet.getSourceDocument().getRelativePath());
+		assertTrue(Files.isRegularFile(originalExamPdf));
+
+		// Give the same Exam a distinct managed Answer PDF so both PDFBox sessions hold
+		// files that must be relocated.
+		Path answerSource = pdfDataRoot.resolve("answer-source.pdf");
+		Files.copy(examPdf, answerSource);
+		Path originalAnswerPdf = pdfStore.importExamPdf(answerSource, "Chemistry", "2022 QCAA", 2022);
+		SelectedPdf selectedAnswerPdf = new SelectedPdf(originalAnswerPdf.toFile(), originalAnswerPdf, pdfDataRoot);
+		WaitForAsyncUtils.asyncFx(() -> {
+			try {
+				invoke(answerCapturePane(), "selectAnswerPdf", new Class<?>[] { Question.class, SelectedPdf.class },
+						question, selectedAnswerPdf);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		}).get();
+		assertNotNull(pdfWorkspace().getExamPdfSession());
+		assertNotNull(pdfWorkspace().getAnswerPdfSession());
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
+		Exam corrected = (Exam) WaitForAsyncUtils.asyncFx(() -> {
+			try {
+				return invoke(application, "correctExamMetadataAndReloadCapture",
+						new Class<?>[] { Exam.class, String.class, int.class, String.class }, originalBooklet.getExam(),
+						"QCAA", 2022, "External Assessment");
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		}).get();
+		Path correctedDirectory = pdfDataRoot.resolve("Chemistry").resolve("QCAA").resolve("2022");
+		Path correctedExamPdf = correctedDirectory.resolve(originalExamPdf.getFileName());
+		Path correctedAnswerPdf = correctedDirectory.resolve(originalAnswerPdf.getFileName());
+		assertFalse(Files.exists(originalExamPdf));
+		assertFalse(Files.exists(originalAnswerPdf));
+		assertTrue(Files.isRegularFile(correctedExamPdf));
+		assertTrue(Files.isRegularFile(correctedAnswerPdf));
+		assertEquals("QCAA", corrected.getProvider().getName());
+		assertEquals("External Assessment", corrected.getName());
+
+		// The active capture booklet must carry the same persistent identities but the
+		// newly authoritative SourceDocument path.
+		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
+		assertEquals(originalBooklet.getId(), activeBooklet.getId());
+		assertEquals(originalBooklet.getSourceDocument().getId(), activeBooklet.getSourceDocument().getId());
+		assertEquals(pdfDataRoot.relativize(correctedExamPdf).toString(),
+				activeBooklet.getSourceDocument().getRelativePath());
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		ExamBooklet persistedBooklet = examWriter.findAllExamBooklets().stream()
+				.filter(candidate -> candidate.getId() == originalBooklet.getId()).findFirst().orElseThrow();
+		assertEquals(pdfDataRoot.relativize(correctedExamPdf).toString(),
+				persistedBooklet.getSourceDocument().getRelativePath());
+		assertEquals(pdfDataRoot.relativize(correctedAnswerPdf).toString(),
+				answerWriter.findAnswerFiles(corrected).getFirst().getSourceDocument().getRelativePath());
+
+		// Both documents were closed before relocation and successfully reopened from
+		// their corrected locations. The document visible before correction is
+		// restored.
+		assertNotNull(pdfWorkspace().getExamPdfSession());
+		assertNotNull(pdfWorkspace().getAnswerPdfSession());
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
+
+		// Both reopened sessions remain operational.
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 1));
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 1));
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
+	}
 
 	@Test
 	void questionEditCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
@@ -190,11 +272,14 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
+		ListView<Object> results = listView(robot, "#question-search-results");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
-				.anyMatch(result -> result.getQuestion().getId() == metadataOnlyQuestion.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == metadataOnlyQuestion.getId()).findFirst()
+				.anyMatch(result -> searchResultQuestion(result).getId() == metadataOnlyQuestion.getId()));
+
+		// The workflow cares about selecting the persisted Question, not the Search
+		// package's internal result representation.
+		Object selectedResult = results.getItems().stream()
+				.filter(result -> searchResultQuestion(result).getId() == metadataOnlyQuestion.getId()).findFirst()
 				.orElseThrow();
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
 		Button editMetadata = lookup(robot, "#question-search-edit-metadata", Button.class);
@@ -264,12 +349,16 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == original.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == original.getId()).findFirst().orElseThrow();
-		assertTrue(selectedResult.getQuestion().hasAnswer());
+		ListView<Object> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == original.getId()));
+		Object selectedResult = results.getItems().stream()
+				.filter(result -> searchResultQuestion(result).getId() == original.getId()).findFirst().orElseThrow();
+
+		// Search must expose the fully reloaded persisted Question, including its
+		// Answer
+		// relationship, regardless of the package-private result wrapper.
+		assertTrue(searchResultQuestion(selectedResult).hasAnswer());
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
 		robot.clickOn("#question-search-split-question");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
@@ -355,11 +444,11 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == original.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == original.getId()).findFirst().orElseThrow();
+		ListView<Object> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == original.getId()));
+		Object selectedResult = results.getItems().stream()
+				.filter(result -> searchResultQuestion(result).getId() == original.getId()).findFirst().orElseThrow();
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
 		Button splitButton = lookup(robot, "#question-search-split-question", Button.class);
 		assertFalse(splitButton.isDisabled());
@@ -474,5 +563,17 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	private Question searchResultQuestion(Object result) {
+		try {
+
+			// Whole-application workflow tests deliberately do not depend on the
+			// package-private ui.search result wrapper. Read only the persisted Question
+			// exposed by that wrapper through the existing reflection seam.
+			return (Question) invoke(result, "question", new Class<?>[0]);
+		} catch (Exception exception) {
+			throw new RuntimeException(exception);
+		}
 	}
 }

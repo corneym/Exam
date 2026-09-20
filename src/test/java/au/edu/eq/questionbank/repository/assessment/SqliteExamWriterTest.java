@@ -13,6 +13,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -29,6 +30,37 @@ class SqliteExamWriterTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void correctsExamMetadataAndBookletAndAnswerSourcePathsAtomically() throws Exception {
+		Path databasePath = tempDirectory.resolve("correct-exam-source-paths.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
+		ExamProvider malformedProvider = writer.insertExamProvider("2022 QCAA");
+		Exam original = writer.insertExam(chemistry, malformedProvider, 2022, "2022");
+		SourceDocument examSource = writer.insertSourceDocument("Chemistry/2022/paper1.pdf");
+		writer.insertExamBooklet(original, examSource, "Paper 1");
+		var answerFile = answerWriter.findOrCreateAnswerFile(original, "Answers", "Chemistry/2022/answers.pdf");
+		Exam corrected = writer.correctExamMetadataAndSourceDocumentPaths(original, "QCAA", 2022, "External Assessment",
+				Map.of(examSource.getId(), "Chemistry/QCAA/2022/paper1.pdf", answerFile.getSourceDocument().getId(),
+						"Chemistry/QCAA/2022/answers.pdf"));
+		assertEquals(original.getId(), corrected.getId());
+		assertEquals("QCAA", corrected.getProvider().getName());
+		assertEquals(2022, corrected.getYear());
+		assertEquals("External Assessment", corrected.getName());
+
+		// Both Exam-booklet and AnswerFile source references keep their identities but
+		// now point at the authoritative managed directory.
+		ExamBooklet correctedBooklet = writer.findAllExamBooklets().getFirst();
+		assertEquals(examSource.getId(), correctedBooklet.getSourceDocument().getId());
+		assertEquals("Chemistry/QCAA/2022/paper1.pdf", correctedBooklet.getSourceDocument().getRelativePath());
+		var correctedAnswerFile = answerWriter.findAnswerFiles(corrected).getFirst();
+		assertEquals(answerFile.getSourceDocument().getId(), correctedAnswerFile.getSourceDocument().getId());
+		assertEquals("Chemistry/QCAA/2022/answers.pdf", correctedAnswerFile.getSourceDocument().getRelativePath());
+	}
 
 	@Test
 	void correctsExamMetadataWithoutChangingIdentityOrBookletLinks() throws Exception {
@@ -304,6 +336,37 @@ class SqliteExamWriterTest {
 
 		// Because another Exam still refers to the old provider, correction of only
 		// one Exam must not remove that provider.
+		assertTrue(writer.examProviderExists("2022 QCAA"));
+	}
+
+	@Test
+	void sourcePathCollisionRollsBackExamMetadataCorrection() throws Exception {
+		Path databasePath = tempDirectory.resolve("correct-exam-source-collision.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider malformedProvider = writer.insertExamProvider("2022 QCAA");
+		Exam original = writer.insertExam(chemistry, malformedProvider, 2022, "2022");
+		SourceDocument originalSource = writer.insertSourceDocument("Chemistry/2022/paper1.pdf");
+		writer.insertExamBooklet(original, originalSource, "Paper 1");
+
+		// Occupy the proposed corrected path with a different persisted source. The
+		// source_documents unique constraint must reject the correction.
+		writer.insertSourceDocument("Chemistry/QCAA/2022/paper1.pdf");
+		assertThrows(SQLException.class, () -> writer.correctExamMetadataAndSourceDocumentPaths(original, "QCAA", 2022,
+				"External Assessment", Map.of(originalSource.getId(), "Chemistry/QCAA/2022/paper1.pdf")));
+
+		// The source-path failure occurs in the same transaction, so Exam metadata must
+		// also remain exactly as it was before the attempted correction.
+		Exam unchanged = writer.findExamByProviderAndYear(chemistry, "2022 QCAA", 2022);
+		assertNotNull(unchanged);
+		assertEquals(original.getId(), unchanged.getId());
+		assertEquals("2022", unchanged.getName());
+		ExamBooklet unchangedBooklet = writer.findAllExamBooklets().stream()
+				.filter(candidate -> candidate.getExam().getId() == original.getId()).findFirst().orElseThrow();
+		assertEquals("Chemistry/2022/paper1.pdf", unchangedBooklet.getSourceDocument().getRelativePath());
+		assertFalse(writer.examProviderExists("QCAA"));
 		assertTrue(writer.examProviderExists("2022 QCAA"));
 	}
 }

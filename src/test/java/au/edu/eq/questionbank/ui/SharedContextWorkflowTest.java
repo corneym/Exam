@@ -29,7 +29,6 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -75,12 +74,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == original.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == original.getId()).findFirst().orElseThrow();
-		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		// Select the Search UI result by its wrapped persistent Question identity.
+		selectSearchResult(robot, original.getId());
 		robot.clickOn("#question-search-split-question");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-split-preamble-choice").tryQuery().isPresent());
@@ -252,12 +248,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
-		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		// Select the Search UI result by its wrapped persistent Question identity.
+		selectSearchResult(robot, question.getId());
 		robot.clickOn("#question-search-edit-metadata");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
@@ -330,12 +323,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
-		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		// Select the Search UI result by its wrapped persistent Question identity.
+		selectSearchResult(robot, question.getId());
 		robot.clickOn("#question-search-edit-metadata");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
@@ -442,12 +432,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == original.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == original.getId()).findFirst().orElseThrow();
-		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		// Select the Search UI result by its wrapped persistent Question identity.
+		selectSearchResult(robot, original.getId());
 		robot.clickOn("#question-search-split-question");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-split-part-0-marks").tryQuery().isPresent());
@@ -574,12 +561,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == original.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == original.getId()).findFirst().orElseThrow();
-		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		// Select the Search UI result by its wrapped persistent Question identity.
+		selectSearchResult(robot, original.getId());
 		Button splitButton = lookup(robot, "#question-search-split-question", Button.class);
 		assertFalse(splitButton.isDisabled());
 		robot.clickOn(splitButton);
@@ -689,12 +673,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<QuestionRetrievalResult> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> results.getItems().stream().anyMatch(result -> result.getQuestion().getId() == question.getId()));
-		QuestionRetrievalResult selectedResult = results.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == question.getId()).findFirst().orElseThrow();
-		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		// Select the Search UI result by its wrapped persistent Question identity.
+		selectSearchResult(robot, question.getId());
 		Button recapture = lookup(robot, "#question-search-recapture-preamble", Button.class);
 		assertFalse(recapture.isDisabled());
 		robot.clickOn(recapture);
@@ -759,5 +740,29 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	private Question searchResultQuestion(Object result) {
+		try {
+
+			// Whole-application workflow tests deliberately do not depend on the
+			// package-private ui.search result wrapper. Read only the persisted Question
+			// exposed through its existing package-private accessor.
+			return (Question) invoke(result, "question", new Class<?>[0]);
+		} catch (Exception exception) {
+			throw new RuntimeException(exception);
+		}
+	}
+
+	private void selectSearchResult(FxRobot robot, long questionId) throws Exception {
+		ListView<Object> results = listView(robot, "#question-search-results");
+
+		// Search results are UI-facing wrappers rather than retrieval-service DTOs.
+		// Select by the wrapped Question's persistent identity.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == questionId));
+		Object selectedResult = results.getItems().stream()
+				.filter(result -> searchResultQuestion(result).getId() == questionId).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
 	}
 }

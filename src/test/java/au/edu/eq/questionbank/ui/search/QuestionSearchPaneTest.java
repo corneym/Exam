@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -44,7 +46,6 @@ import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
-import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.scene.Scene;
 import javafx.scene.control.ComboBox;
@@ -75,12 +76,38 @@ public class QuestionSearchPaneTest {
 	private Stage stage;
 
 	@Test
+	public void allQuestionsScopeShowsCompleteBankWithoutCurriculumApplicability(FxRobot robot)
+			throws TimeoutException {
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+
+		// All Questions is independent of curriculum navigation and therefore disables
+		// controls that would otherwise imply those values are filtering the result.
+		assertTrue(subjectBox.isDisable());
+		assertTrue(unitBox.isDisable());
+		QuestionSearchResult result = resultsList.getItems().getFirst();
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, result.scope());
+		assertEquals(historicalQuestion.getId(), result.question().getId());
+		assertTrue(result.currentApplicability().isEmpty());
+		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
+
+		// Empty applicability here means it was not evaluated, not that the Question
+		// failed current-curriculum mapping.
+		assertTrue(detailsArea.getText().contains("Not evaluated in All Questions scope."));
+	}
+
+	@Test
 	public void broadeningFromDescriptorToSubjectRestoresSubjectScope(FxRobot robot) throws TimeoutException {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		robot.interact(() -> unitBox.setValue(currentUnit));
@@ -93,7 +120,7 @@ public class QuestionSearchPaneTest {
 				&& "Select unit".equals(unitBox.getButtonCell().getText()) && resultsList.getItems().size() == 1);
 		assertEquals(null, unitBox.getValue());
 		assertEquals("Select unit", unitBox.getButtonCell().getText());
-		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).getQuestion().getId());
+		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).question().getId());
 	}
 
 	@Test
@@ -121,7 +148,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		robot.interact(() -> unitBox.setValue(currentUnit));
@@ -130,10 +157,13 @@ public class QuestionSearchPaneTest {
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		assertEquals(1, resultsList.getItems().size());
-		QuestionRetrievalResult result = resultsList.getItems().get(0);
-		assertEquals(historicalQuestion.getId(), result.getQuestion().getId());
-		assertEquals(historicalDescriptor, result.getOriginalClassification());
-		assertEquals(List.of(currentDescriptor), result.getCurrentApplicability());
+		QuestionSearchResult result = resultsList.getItems().get(0);
+		assertEquals(historicalQuestion.getId(), result.question().getId());
+
+		// The Search wrapper preserves the Question's original stored classification
+		// and the retrieval service's current-applicability explanation separately.
+		assertEquals(historicalDescriptor, result.question().getClassification());
+		assertEquals(List.of(currentDescriptor), result.currentApplicability());
 		robot.interact(() -> resultsList.getSelectionModel().select(0));
 		assertTrue(detailsArea.getText().contains("2019 1.1.1 Historical descriptor"));
 		assertTrue(detailsArea.getText().contains("2025 1.1.1.1 Current descriptor"));
@@ -146,7 +176,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
@@ -186,7 +216,7 @@ public class QuestionSearchPaneTest {
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
 		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
@@ -216,7 +246,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
@@ -243,7 +273,7 @@ public class QuestionSearchPaneTest {
 		QuestionSearchPane[] paneHolder = new QuestionSearchPane[1];
 		robot.interact(() -> {
 			QuestionSearchDialog dialog = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
-					previewService);
+					() -> List.of(historicalQuestion), previewService);
 			QuestionSearchPane pane = (QuestionSearchPane) dialog.getDialogPane().getContent();
 			dialogHolder[0] = dialog;
 			paneHolder[0] = pane;
@@ -263,7 +293,7 @@ public class QuestionSearchPaneTest {
 	public void hierarchyFailureClearsExistingSearchState(FxRobot robot) throws TimeoutException {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
@@ -308,16 +338,16 @@ public class QuestionSearchPaneTest {
 				new QuestionExtractor());
 		replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
-		QuestionRetrievalResult missingResult = resultsList.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == missingQuestion.getId()).findFirst().orElseThrow();
-		QuestionRetrievalResult corruptResult = resultsList.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == corruptQuestion.getId()).findFirst().orElseThrow();
+		QuestionSearchResult missingResult = resultsList.getItems().stream()
+				.filter(result -> result.question().getId() == missingQuestion.getId()).findFirst().orElseThrow();
+		QuestionSearchResult corruptResult = resultsList.getItems().stream()
+				.filter(result -> result.question().getId() == corruptQuestion.getId()).findFirst().orElseThrow();
 		robot.interact(() -> resultsList.getSelectionModel().select(missingResult));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> previewStatus.getText().startsWith("Question preview unavailable:"));
@@ -341,7 +371,7 @@ public class QuestionSearchPaneTest {
 		replaceSearchPane(robot, repository, service);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(physics));
 		robot.interact(() -> subjectBox.setValue(physics));
@@ -350,6 +380,119 @@ public class QuestionSearchPaneTest {
 		assertTrue(unitBox.getItems().isEmpty());
 		assertTrue(unitBox.isDisable());
 		assertTrue(resultsList.getItems().isEmpty());
+	}
+
+	@Test
+	public void refreshAfterEditRetainsAllQuestionsScopeAndReselectsUpdatedQuestion(FxRobot robot)
+			throws TimeoutException {
+		AtomicReference<List<Question>> allQuestions = new AtomicReference<>(List.of(historicalQuestion));
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService, allQuestions::get);
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
+		Question editedQuestion = new Question(historicalQuestion.getId(), historicalQuestion.getBooklet(), "21b",
+				historicalQuestion.getQuestionText(), historicalQuestion.getMarks(), historicalQuestion.getRegions(),
+				historicalQuestion.getClassification(), historicalQuestion.isPreambleCaptureRequired(),
+				historicalQuestion.getSourceQuestion(), historicalQuestion.getSharedContext(),
+				historicalQuestion.getResponseType());
+
+		// Simulate the repository returning the corrected Question after an edit.
+		allQuestions.set(List.of(editedQuestion));
+		robot.interact(() -> pane.refreshAfterEdit(editedQuestion.getId()));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> pane.getSelectedQuestion() != null && "21b".equals(pane.getSelectedQuestion().getQuestionCode()));
+
+		// Refresh must preserve the scope the teacher was viewing rather than silently
+		// reverting to curriculum-aware Search.
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scopeBox.getValue());
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, resultsList.getSelectionModel().getSelectedItem().scope());
+		assertEquals(editedQuestion.getId(), pane.getSelectedQuestion().getId());
+	}
+
+	@Test
+	public void returningFromAllQuestionsRestartsCancelledInitialSubjectLoad(FxRobot robot) throws TimeoutException {
+		SyllabusVersion historicalVersion = historicalDescriptor.getSyllabusVersion();
+		SyllabusVersion currentVersion = currentUnit.getSyllabusVersion();
+		DelayedCurriculumRepository delayedRepository = new DelayedCurriculumRepository(List.of(chemistry),
+				List.of(historicalVersion, currentVersion),
+				List.of(currentUnit, currentTopic, currentSubtopic, currentDescriptor));
+
+		// Delay the constructor's initial Subject lookup so switching scope can cancel
+		// it before any Subject reaches the UI.
+		delayedRepository.delaySubjects();
+		QuestionSearchPane pane = replaceSearchPane(robot, delayedRepository, retrievalService);
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, delayedRepository::hasSubjectDelayStarted);
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+
+		// Allow the cancelled old request to finish. Its stale completion must not
+		// populate the disabled Current-syllabus navigation.
+		delayedRepository.releaseDelayedSubjects();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, delayedRepository::hasSubjectDelayFinished);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(subjectBox.getItems().isEmpty());
+		assertTrue(subjectBox.isDisable());
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
+
+		// Returning to Current syllabus must notice that the initial load never
+		// completed and start a fresh Subject lookup.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
+		assertFalse(subjectBox.isDisable());
+		assertTrue(subjectBox.getItems().contains(chemistry));
+
+		// Keep the local variable used so the pane is clearly the replacement under
+		// test rather than the disposed constructor fixture.
+		assertFalse(pane.isDisabled());
+	}
+
+	@Test
+	public void returningFromAllQuestionsRestoresCurrentSyllabusSearch(FxRobot robot) throws TimeoutException {
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
+		assertEquals(chemistry, subjectBox.getValue());
+		assertFalse(subjectBox.isDisable());
+	}
+
+	@Test
+	public void staleAllQuestionsCompletionCannotOverwriteNewerCurrentSyllabusSearch(FxRobot robot)
+			throws TimeoutException {
+		DelayedAllQuestionsSupplier allQuestions = new DelayedAllQuestionsSupplier(List.of(historicalQuestion));
+		replaceSearchPane(robot, curriculumRepository, retrievalService, allQuestions);
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, allQuestions::hasDelayStarted);
+
+		// Supersede the still-running all-bank request with a normal current-syllabus
+		// Subject search.
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
+
+		// Allow the cancelled All Questions task to complete late. Generation and task
+		// identity checks must prevent it from replacing the newer result.
+		allQuestions.release();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, allQuestions::hasDelayFinished);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(QuestionSearchScope.CURRENT_SYLLABUS, scopeBox.getValue());
+		assertEquals(1, resultsList.getItems().size());
+		assertEquals(QuestionSearchScope.CURRENT_SYLLABUS, resultsList.getItems().getFirst().scope());
+		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
 	}
 
 	@Test
@@ -398,15 +541,15 @@ public class QuestionSearchPaneTest {
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
 		replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
-		QuestionRetrievalResult firstResult = resultsList.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == first.getId()).findFirst().orElseThrow();
-		QuestionRetrievalResult secondResult = resultsList.getItems().stream()
-				.filter(result -> result.getQuestion().getId() == second.getId()).findFirst().orElseThrow();
+		QuestionSearchResult firstResult = resultsList.getItems().stream()
+				.filter(result -> result.question().getId() == first.getId()).findFirst().orElseThrow();
+		QuestionSearchResult secondResult = resultsList.getItems().stream()
+				.filter(result -> result.question().getId() == second.getId()).findFirst().orElseThrow();
 		robot.interact(() -> resultsList.getSelectionModel().select(firstResult));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayStarted);
 		robot.interact(() -> resultsList.getSelectionModel().select(secondResult));
@@ -425,7 +568,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
@@ -481,7 +624,8 @@ public class QuestionSearchPaneTest {
 		retrievalService = new QuestionRetrievalService(retrievalRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
 		previewService = new QuestionPreviewService(new PdfStore(Path.of(".")), new QuestionExtractor());
-		QuestionSearchPane pane = new QuestionSearchPane(curriculumRepository, retrievalService, previewService);
+		QuestionSearchPane pane = new QuestionSearchPane(curriculumRepository, retrievalService,
+				() -> List.of(historicalQuestion), previewService);
 		stage.setScene(new Scene(pane, 700, 600));
 		stage.show();
 	}
@@ -489,10 +633,10 @@ public class QuestionSearchPaneTest {
 	@Test
 	public void subjectSelectionTriggersSearchAutomatically(FxRobot robot) throws TimeoutException {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
-		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).getQuestion().getId());
+		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).question().getId());
 	}
 
 	@Test
@@ -519,7 +663,7 @@ public class QuestionSearchPaneTest {
 		replaceSearchPane(robot, repository, service);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(historyOnly));
 		robot.interact(() -> subjectBox.setValue(historyOnly));
@@ -554,17 +698,17 @@ public class QuestionSearchPaneTest {
 	public void unitSelectionTriggersSearchAutomatically(FxRobot robot) throws TimeoutException {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
-		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).getQuestion().getId());
+		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).question().getId());
 	}
 
 	@Test
 	public void zeroRegionLegacyQuestionReportsNoStoredImage(FxRobot robot) throws TimeoutException {
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ListView<QuestionRetrievalResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 		robot.interact(() -> subjectBox.setValue(chemistry));
@@ -589,7 +733,10 @@ public class QuestionSearchPaneTest {
 		robot.interact(() -> {
 			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
 			existing.dispose();
-			pane[0] = new QuestionSearchPane(repository, service, previewService);
+
+			// Replacement panes use the fixture Question as their complete-bank source;
+			// specialised tests can still replace curriculum retrieval independently.
+			pane[0] = new QuestionSearchPane(repository, service, () -> List.of(historicalQuestion), previewService);
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];
@@ -601,10 +748,71 @@ public class QuestionSearchPaneTest {
 		robot.interact(() -> {
 			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
 			existing.dispose();
-			pane[0] = new QuestionSearchPane(repository, service, replacementPreviewService);
+
+			// Keep complete-bank retrieval stable while this overload varies only the
+			// preview service under test.
+			pane[0] = new QuestionSearchPane(repository, service, () -> List.of(historicalQuestion),
+					replacementPreviewService);
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];
+	}
+
+	private QuestionSearchPane replaceSearchPane(FxRobot robot, InMemoryCurriculumRepository repository,
+			QuestionRetrievalService service, Supplier<List<Question>> allQuestionsSupplier) {
+		QuestionSearchPane[] pane = new QuestionSearchPane[1];
+		robot.interact(() -> {
+			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
+			existing.dispose();
+
+			// This overload varies the complete-bank source while keeping curriculum
+			// retrieval and preview behaviour unchanged.
+			pane[0] = new QuestionSearchPane(repository, service, allQuestionsSupplier, previewService);
+			stage.setScene(new Scene(pane[0], 700, 600));
+		});
+		return pane[0];
+	}
+
+	private static final class DelayedAllQuestionsSupplier implements Supplier<List<Question>> {
+
+		private final List<Question> questions;
+		private final CountDownLatch delayStarted = new CountDownLatch(1);
+		private final CountDownLatch delayRelease = new CountDownLatch(1);
+		private final CountDownLatch delayFinished = new CountDownLatch(1);
+
+		private DelayedAllQuestionsSupplier(List<Question> questions) {
+			this.questions = List.copyOf(questions);
+		}
+
+		@Override
+		public List<Question> get() {
+			delayStarted.countDown();
+			boolean released = false;
+			while (!released) {
+				try {
+					delayRelease.await();
+					released = true;
+				} catch (InterruptedException exception) {
+
+					// Ignore task cancellation deliberately so the obsolete all-bank request
+					// can finish after a newer current-syllabus search has already completed.
+				}
+			}
+			delayFinished.countDown();
+			return questions;
+		}
+
+		private boolean hasDelayFinished() {
+			return delayFinished.getCount() == 0;
+		}
+
+		private boolean hasDelayStarted() {
+			return delayStarted.getCount() == 0;
+		}
+
+		private void release() {
+			delayRelease.countDown();
+		}
 	}
 
 	private static final class DelayedCurriculumRepository extends InMemoryCurriculumRepository {
@@ -614,10 +822,39 @@ public class QuestionSearchPaneTest {
 		private volatile CountDownLatch delayStarted = new CountDownLatch(0);
 		private volatile CountDownLatch delayRelease = new CountDownLatch(0);
 		private volatile CountDownLatch delayFinished = new CountDownLatch(0);
+		private volatile boolean delaySubjectLoading;
+		private volatile CountDownLatch subjectDelayStarted = new CountDownLatch(0);
+		private volatile CountDownLatch subjectDelayRelease = new CountDownLatch(0);
+		private volatile CountDownLatch subjectDelayFinished = new CountDownLatch(0);
 
 		private DelayedCurriculumRepository(List<Subject> subjects, List<SyllabusVersion> syllabusVersions,
 				List<CurriculumNode> curriculumNodes) {
 			super(subjects, syllabusVersions, curriculumNodes);
+		}
+
+		@Override
+		public List<Subject> findAllSubjects() {
+			if (!delaySubjectLoading) {
+				return super.findAllSubjects();
+			}
+			CountDownLatch release = subjectDelayRelease;
+			subjectDelayStarted.countDown();
+			boolean released = false;
+			while (!released) {
+				try {
+					release.await();
+					released = true;
+				} catch (InterruptedException exception) {
+
+					// Ignore cancellation deliberately so this test can prove that a completed
+					// stale Subject load is discarded after Search scope changes.
+				}
+			}
+			try {
+				return super.findAllSubjects();
+			} finally {
+				subjectDelayFinished.countDown();
+			}
 		}
 
 		@Override
@@ -658,6 +895,13 @@ public class QuestionSearchPaneTest {
 			delayedParent = parent;
 		}
 
+		private void delaySubjects() {
+			delaySubjectLoading = true;
+			subjectDelayStarted = new CountDownLatch(1);
+			subjectDelayRelease = new CountDownLatch(1);
+			subjectDelayFinished = new CountDownLatch(1);
+		}
+
 		private void failChildrenFor(CurriculumNode parent) {
 			failingParent = parent;
 		}
@@ -670,9 +914,25 @@ public class QuestionSearchPaneTest {
 			return delayStarted.getCount() == 0;
 		}
 
+		private boolean hasSubjectDelayFinished() {
+			return subjectDelayFinished.getCount() == 0;
+		}
+
+		private boolean hasSubjectDelayStarted() {
+			return subjectDelayStarted.getCount() == 0;
+		}
+
 		private void releaseDelayedChildren() {
 			delayedParent = null;
 			delayRelease.countDown();
+		}
+
+		private void releaseDelayedSubjects() {
+
+			// Future Subject loads should complete normally; only the already-running load
+			// remains blocked on this latch.
+			delaySubjectLoading = false;
+			subjectDelayRelease.countDown();
 		}
 	}
 

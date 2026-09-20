@@ -376,14 +376,6 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
-	 * @return whether an answer PDF has been selected or restored for the current
-	 *         question
-	 */
-	boolean hasAnswerFile() {
-		return answerFile != null;
-	}
-
-	/**
 	 * @return whether answer persistence is currently running
 	 */
 	public boolean isSaveInProgress() {
@@ -426,6 +418,35 @@ public final class AnswerCapturePane extends VBox {
 		} finally {
 			restoringUnansweredQuestionSelection = false;
 		}
+	}
+
+	/**
+	 * Reopens the current Question's registered Answer PDF after managed source
+	 * paths may have changed.
+	 */
+	public void reopenSelectedAnswerDocument() {
+		Question question = unansweredQuestionField.getValue();
+		if (answerSaveInProgress || !pendingAnswerRegions.isEmpty() || currentAnswerSelection != null) {
+			throw new IllegalStateException("Cannot reopen the Answer document while Answer capture is in progress");
+		}
+
+		// The old AnswerFile object contains the pre-correction SourceDocument path.
+		// Force a fresh database lookup rather than reusing that stale object.
+		answerFile = null;
+		selectedAnswerPdfLabel.setText("No PDF selected");
+		if (question == null || !usesAnswerDocument(question)) {
+			updateAnswerPdfControlsVisibility(question);
+			return;
+		}
+		applyUnansweredQuestionChange(question);
+	}
+
+	/**
+	 * @return whether an answer PDF has been selected or restored for the current
+	 *         question
+	 */
+	boolean hasAnswerFile() {
+		return answerFile != null;
 	}
 
 	/**
@@ -507,6 +528,7 @@ public final class AnswerCapturePane extends VBox {
 			selectedAnswerPdfLabel.setText("No PDF selected");
 		}
 		boolean writtenResponse = isWrittenResponseQuestion(question);
+		boolean usesAnswerDocument = usesAnswerDocument(question);
 		boolean openedAnswerPdf = false;
 		if (question.hasAnswer()) {
 			Answer answer = question.getAnswer();
@@ -515,23 +537,27 @@ public final class AnswerCapturePane extends VBox {
 			// Preserve any historical regions regardless of response type. MCQ mode simply
 			// does not display or require them.
 			pendingAnswerRegions.addAll(answer.getRegions());
-			if (writtenResponse) {
-				if (!answer.getRegions().isEmpty()) {
-					AnswerFile storedAnswerFile = answer.getRegions().getFirst().answerFile();
-					Path pdfPath = resolveRegisteredAnswerFile(storedAnswerFile);
-					if (pdfPath != null) {
-						openedAnswerPdf = openRegisteredAnswerFile(storedAnswerFile, pdfPath);
-					}
-				} else if (answerFile == null) {
-					openedAnswerPdf = loadRegisteredAnswerFile(question);
+			if (writtenResponse && !answer.getRegions().isEmpty()) {
+				AnswerFile storedAnswerFile = answer.getRegions().getFirst().answerFile();
+				Path pdfPath = resolveRegisteredAnswerFile(storedAnswerFile);
+				if (pdfPath != null) {
+					openedAnswerPdf = openRegisteredAnswerFile(storedAnswerFile, pdfPath);
 				}
+			} else if (usesAnswerDocument && loadDocument && answerFile == null) {
+
+				// MCQs still need the registered answer booklet visible so the teacher can
+				// read the authoritative answer letter.
+				openedAnswerPdf = loadRegisteredAnswerFile(question);
 			}
 			refreshAnswerRegionList();
 			showAcceptedRegionStatus();
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — answer stored");
 			saveAnswerButton.setText("Update Answer");
 		} else {
-			if (writtenResponse && loadDocument && answerFile == null) {
+			if (usesAnswerDocument && loadDocument && answerFile == null) {
+
+				// Open a uniquely registered answer document for either supported response
+				// type. Region capture remains controlled separately below.
 				openedAnswerPdf = loadRegisteredAnswerFile(question);
 			}
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
@@ -541,14 +567,20 @@ public final class AnswerCapturePane extends VBox {
 		}
 		updateMultipleChoiceAnswerVisibility(question);
 		updateAnswerRegionControlsVisibility(question);
-		chooseAnswerPdfButton.setDisable(!writtenResponse);
+
+		// UNKNOWN questions cannot be answered until their response type is resolved.
+		// MCQ and written-response Questions may both choose an answer PDF.
+		chooseAnswerPdfButton.setDisable(!usesAnswerDocument);
 		updateAnswerPdfControlsVisibility(question);
 		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — response type unresolved; "
 					+ "use Edit Metadata before capturing an answer.");
 		}
 		refreshSaveButtonState();
-		if (loadDocument && writtenResponse && answerFile != null && !openedAnswerPdf) {
+		if (loadDocument && usesAnswerDocument && answerFile != null && !openedAnswerPdf) {
+
+			// Reuse the already-known answer document when moving between Questions from
+			// the same Exam instead of requiring the teacher to reopen it.
 			answerDocumentHandler.run();
 		}
 	}
@@ -566,7 +598,9 @@ public final class AnswerCapturePane extends VBox {
 			showError("Select a question first.");
 			return;
 		}
-		if (!isWrittenResponseQuestion(question)) {
+		if (!usesAnswerDocument(question)) {
+
+			// UNKNOWN response types must be resolved before an answer source is attached.
 			return;
 		}
 		Path sourcePath = pdfFilePicker.chooseAnyPdf(stage, "Choose answer PDF");
@@ -910,12 +944,15 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void loadNextAnswerDocument(Question question) {
-		if (question == null || !isWrittenResponseQuestion(question)) {
+		if (question == null || !usesAnswerDocument(question)) {
 			finishAnswerSaveTransition(null);
 			return;
 		}
 		answerRegionStatusLabel.setText("Answer saved — loading next question...");
 		if (answerFile != null) {
+
+			// The next Question belongs to the same Exam when answerFile survives the
+			// selection change. Reopen that document for MCQ or written-response work.
 			openNextAnswerDocument(answerFile);
 			return;
 		}
@@ -970,6 +1007,9 @@ public final class AnswerCapturePane extends VBox {
 		try {
 			Path path = new PdfStore(pdfFilePicker.dataRoot()).resolve(file.getSourceDocument().getRelativePath());
 			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfFilePicker.dataRoot());
+
+			// Load asynchronously because this path is used immediately after an Answer
+			// save. The save transition remains active until PDF loading completes.
 			answerPdfLoader.accept(selected, failure -> {
 				if (failure == null) {
 					answerFile = file;
@@ -981,6 +1021,9 @@ public final class AnswerCapturePane extends VBox {
 				finishAnswerSaveTransition(failure);
 			});
 		} catch (RuntimeException e) {
+
+			// A bad persisted path must finish the save transition cleanly rather than
+			// leaving Answer capture permanently disabled.
 			answerFile = null;
 			finishAnswerSaveTransition(e);
 		}
@@ -1247,10 +1290,13 @@ public final class AnswerCapturePane extends VBox {
 
 	private void showSelectedAnswerDocument() {
 		Question question = unansweredQuestionField.getValue();
-		if (question == null || answerSaveInProgress || !isWrittenResponseQuestion(question)) {
+		if (question == null || answerSaveInProgress || !usesAnswerDocument(question)) {
 			return;
 		}
 		if (answerFile != null && answerFile.getExam().getId() == question.getExam().getId()) {
+
+			// MCQ and written-response work may both reuse the currently registered
+			// answer document for this Exam.
 			answerDocumentHandler.run();
 			return;
 		}
@@ -1258,10 +1304,13 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void updateAnswerPdfControlsVisibility(Question question) {
-		boolean writtenResponse = isWrittenResponseQuestion(question);
-		boolean answerPdfKnown = writtenResponse && answerFile != null
+		boolean usesAnswerDocument = usesAnswerDocument(question);
+		boolean answerPdfKnown = usesAnswerDocument && answerFile != null
 				&& answerFile.getExam().getId() == question.getExam().getId();
-		boolean visible = writtenResponse && !answerPdfKnown;
+
+		// The PDF chooser is needed for both MCQ and written-response Questions when
+		// this Exam does not yet have one unambiguous AnswerFile selected.
+		boolean visible = usesAnswerDocument && !answerPdfKnown;
 		answerPdfControls.setVisible(visible);
 		answerPdfControls.setManaged(visible);
 	}
@@ -1289,6 +1338,13 @@ public final class AnswerCapturePane extends VBox {
 		multipleChoiceAnswerControls.setVisible(visible);
 		multipleChoiceAnswerControls.setManaged(visible);
 		setMultipleChoiceAnswerEnabled(visible);
+	}
+
+	private boolean usesAnswerDocument(Question question) {
+
+		// Both supported response types require access to the examination's answer
+		// material. Only written responses subsequently capture Answer regions.
+		return isMultipleChoiceQuestion(question) || isWrittenResponseQuestion(question);
 	}
 
 	private void validateAnswerForSave() {
