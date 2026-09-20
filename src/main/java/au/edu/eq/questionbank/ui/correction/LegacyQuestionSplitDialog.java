@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.correction;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +30,7 @@ import javafx.stage.Window;
  * Collects the explicit metadata decisions required before a legacy Question is
  * split into separately captured multipart Questions.
  */
-final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog<LegacyQuestionSplitDialog.Result> {
+public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog<LegacyQuestionSplitDialog.Result> {
 
 	private static final int DIALOG_WIDTH = 850;
 	private static final int FORM_SPACING = 8;
@@ -56,7 +56,7 @@ final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog<Legacy
 	 * @param existingSharedContext established destination context that may be
 	 *                              reused, or {@code null}
 	 */
-	LegacyQuestionSplitDialog(Window owner, Question originalQuestion, CurriculumRepository curriculumRepository,
+	public LegacyQuestionSplitDialog(Window owner, Question originalQuestion, CurriculumRepository curriculumRepository,
 			SharedQuestionContext existingSharedContext) {
 		if (owner == null) {
 			throw new NullPointerException("owner");
@@ -368,7 +368,7 @@ final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog<Legacy
 		throw new IllegalStateException("Selected Answer part is no longer present");
 	}
 
-	enum PreambleChoice {
+	public enum PreambleChoice {
 
 		NO_SHARED_PREAMBLE("No shared preamble"), CAPTURE_NEW_SHARED_PREAMBLE("Capture new shared preamble"),
 		REUSE_EXISTING_SHARED_PREAMBLE("Reuse existing shared preamble");
@@ -384,10 +384,10 @@ final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog<Legacy
 		}
 	}
 
-	record PartDefinition(String questionCode, int marks, CurriculumNode classification,
+	public record PartDefinition(String questionCode, int marks, CurriculumNode classification,
 			QuestionResponseType responseType) {
 
-		PartDefinition {
+		public PartDefinition {
 			if (questionCode == null || questionCode.isBlank()) {
 				throw new IllegalArgumentException("questionCode must not be blank");
 			}
@@ -404,10 +404,10 @@ final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog<Legacy
 		}
 	}
 
-	record Result(String sourceQuestionCode, List<PartDefinition> parts, int retainedPartIndex,
+	public record Result(String sourceQuestionCode, List<PartDefinition> parts, int retainedPartIndex,
 			PreambleChoice preambleChoice, SharedQuestionContext existingSharedContext) {
 
-		Result {
+		public Result {
 			if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
 				throw new IllegalArgumentException("sourceQuestionCode must not be blank");
 			}
