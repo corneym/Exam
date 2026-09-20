@@ -1,35 +1,38 @@
 # Sprint 09 — Capture Workflow and Corpus Correction
 
+> **Status at 20 September 2026:** implementation complete on
+> `feature/capture-workflow`; final documentation/merge closeout follows.
+>
+> Current implementation head: `11acb24` (`complete sprint 09 capture workflow`).
+
 ## Purpose
 
-Sprint 09 is driven by sustained use of the application while completing real
+Sprint 09 was driven by sustained use of the application while completing real
 Question-bank data.
 
-Sprint 08 established the required curriculum-authoring, mapping-coverage,
-metadata-correction and corpus-audit foundations. The next problem is not a new
-persistence architecture: it is that several ordinary capture and correction
-workflows are still slower, less predictable or less legible than they need to
-be for sustained corpus work.
+Sprint 08 established curriculum-authoring, mapping-coverage,
+metadata-correction and corpus-audit foundations. Sprint 09 addressed the next
+set of practical problems: capture controls that were difficult to use for long
+sessions, persistence-order lists that did not match exam source order, and
+correction operations needed by real legacy data.
 
-Sprint 09 therefore has three connected goals:
+The sprint therefore had three connected goals:
 
-1. make Question and Answer capture controls remain usable across the supported
-   workspace width and selection states;
+1. make Question and Answer capture controls remain usable across supported
+   workspace widths and selection states;
 2. make queues, Search and Corpus Audit follow source/natural Question order
    rather than persistence/capture order; and
-3. add the correction operations now required by real legacy data: shared
-   preamble replacement, exam-level metadata correction and deliberate splitting
-   of one imported Question into multipart parts.
+3. add correction operations for shared preamble replacement, Exam-level
+   metadata correction and deliberate splitting of one imported Question into
+   multipart parts.
 
-Revision HTML presentation redesign is not part of this sprint. Those related
-requirements remain together in `backlog.md` as a later output-focused design
-pass.
+Revision HTML presentation redesign remained outside this sprint.
 
 ## Starting point
 
-Sprint 08 is complete and merged to `main`.
+Sprint 08 was complete and merged to `main`.
 
-The existing architecture already provides:
+The architecture already provided:
 
 - explicit `SourceQuestion` multipart identity;
 - explicit `SharedQuestionContext` and ordered context regions;
@@ -37,32 +40,28 @@ The existing architecture already provides:
 - legacy metadata correction;
 - response-type-aware Question/Answer semantics;
 - explicit capture-selection ownership;
-- asynchronous Question Search and background Question/Answer save work;
-- corpus audit filters and routing into existing correction workflows.
+- asynchronous Question Search and background save work;
+- Corpus Audit filters and routing into existing correction workflows.
 
-Sprint 09 must reuse those concepts rather than create parallel capture,
-metadata or queue systems.
+Sprint 09 reused these concepts rather than creating parallel systems.
 
-## Design principles
+## Design principles retained
 
-### User-visible state should match logical capture ownership
+### User-visible state matches logical capture ownership
 
-If Answer capture owns the active selection, Question controls that cannot safely
-act on it should be disabled. If no pending region exists, Add Region/Clear
-controls that require one should not appear actionable.
+If Answer capture owns the active selection, Question actions that cannot safely
+act on it are disabled. Region actions are enabled only when a compatible
+pending selection exists.
 
-### Responsive layout is functional, not merely cosmetic
+### Responsive layout is functional
 
-A narrow but supported capture pane must not hide the meaning of field labels or
-button actions. Controls may reflow or use compact sizing, but important labels
-must not collapse into ambiguous `...` text.
+Supported narrow capture widths must not hide the meaning of important labels or
+actions.
 
 ### Source order is distinct from database identity
 
-Insertion IDs remain persistence identities. They must not define user-facing
-exam order.
-
-Where a source-order queue is required, use deterministic ordering by:
+Insertion IDs remain persistence identities. User-facing source order is
+deterministic by:
 
 ```text
 provider / authority
@@ -71,309 +70,213 @@ provider / authority
 -> natural Question code
 ```
 
-Natural Question ordering must handle numeric question numbers and alphabetic
-parts correctly.
+### Corrections change the authoritative entity
 
-### Corrections preserve authoritative relationships
+- wrong Exam metadata -> correct the Exam/provider relationship;
+- wrong shared preamble -> replace the SharedQuestionContext regions;
+- legacy `3` that is really `3a` + `3b` -> create explicit multipart identity.
 
-A correction should change the smallest authoritative entity that is wrong:
+Sprint 09 additionally established that provider/year correction must keep the
+managed PDF filesystem location and persisted `SourceDocument` path consistent.
 
-- wrong Exam metadata -> correct the Exam/provider relationship, not every
-  linked Question display string;
-- wrong shared preamble source -> replace the SharedQuestionContext source
-  regions, not independent copies on each part;
-- a legacy `3` that is really `3a` + `3b` -> create explicit multipart identity
-  and separate Question rows, not encode two parts into one region list.
+### Slow UI transitions are measured before optimisation
 
-### Slow UI transitions should be measured before optimised
+Imported Questions activation was measured and avoidable synchronous work was
+removed rather than hidden behind cosmetic progress.
 
-Entering Imported Questions currently performs several reconciliation/refresh
-operations. Determine which work is expensive and whether it needs to run on
-every activation before changing threading or adding progress UI.
+### No silent inference
 
-### No silent inference from filenames or legacy patterns
+Known-PDF metadata reuse is based on persisted document relationships, not
+filename guesses. Legacy split/preamble operations require explicit structure.
 
-Known-PDF metadata reuse must be based on persisted identity/content rules, not a
-similar filename. Legacy split/preamble operations must require explicit user
-confirmation of the intended structure.
+## Slice 1 — Baseline, source ordering and UI-state regressions
 
-## Work slices
+**COMPLETE**
 
-### Slice 1 — Baseline, source ordering and UI-state regressions
+Delivered:
 
-Before changing layouts or correction workflows, establish reusable behaviour
-and tests for the rules Sprint 09 depends on.
-
-Add/confirm regression coverage for:
-
-- natural Question-code ordering (`3`, `3a`, `3b`, `10`, etc.);
+- natural Question-code ordering;
 - provider/year/booklet/question source ordering;
-- current capture-selection ownership exposed to pane enablement;
+- reusable ordering behaviour;
+- capture-selection ownership exposed to UI enablement;
 - Add Region/Clear disabled when no compatible pending selection exists;
-- representative narrow preview-pane widths without loss of essential control
-  labels.
+- narrow-width regressions for important capture controls.
 
-Prefer one reusable ordering component rather than independent comparators in
-Answer capture, Corpus Audit and any Search list that needs source ordering.
+## Slice 2 — Answer capture usability and ownership
 
-**Outcome:** later UI and queue slices have explicit behavioural rules instead of
-ad-hoc local sorting/disable logic.
+**COMPLETE**
 
-### Slice 2 — Answer capture usability and ownership
+Delivered:
 
-Fix the Answer pane for sustained capture use.
+- readable Answer action controls at supported narrow widths;
+- removal of excessive blank pane growth after accepted regions;
+- stable region/page status placement;
+- compact Answer-region preview behaviour;
+- unanswered queue source/natural ordering;
+- pending-selection-aware Add Region/Clear enablement;
+- Question-region actions disabled while Answer capture owns the selection.
 
-Required behaviour:
+Answer completeness semantics were not changed.
 
-- button text remains visible when the left workspace pane is narrowed within
-  the supported range;
-- adding an accepted Answer region does not cause excessive blank vertical
-  growth;
-- region/page status is placed where it cannot compress the button row, with the
-  preferred design being a right-aligned status in the row above;
-- Answer-region previews consume only required space;
-- the unanswered queue uses source/natural ordering, not capture-time/database
-  insertion order;
-- Add Region and Clear are enabled only when their actions are valid;
-- while Answer capture owns the active selection, incompatible Question-pane
-  region actions are disabled.
+## Slice 3 — Question capture and metadata-dialog usability
 
-Do not change persisted Answer-completeness semantics in this slice.
+**COMPLETE**
 
-**Outcome:** ordinary Answer capture remains legible and predictable while the
-workspace is resized and while selections move between panes.
+Delivered:
 
-### Slice 3 — Question capture and metadata-dialog usability
+- readable Question labels at supported narrow widths;
+- compact Question-number entry;
+- explicit Multiple Choice / Written Response radio buttons;
+- readable metadata-dialog labels;
+- pending-selection-aware Question region actions;
+- deliberate removal of the redundant
+  `Questions -> Capture New Questions` menu action.
 
-Refine the Question-side controls without altering the persisted response-type
-model.
+## Slice 4 — Imported Questions activation performance
 
-Required behaviour:
+**COMPLETE**
 
-- Question field labels remain readable at supported narrow pane widths;
-- Question number entry is compact rather than consuming unnecessary width;
-- normal Question capture chooses Multiple Choice versus Written Response using
-  explicit radio buttons rather than a combo box;
-- Edit Question Metadata labels no longer truncate to ambiguous `...`;
-- Question Add Region/Clear enablement follows pending-selection state;
-- review the `Questions -> Capture New Questions` menu action and remove it if it
-  has no distinct safe function beyond the already visible mode control.
+The imported-question transition was profiled and avoidable repeated work was
+removed/repositioned. Entering Imported Questions no longer performs the
+pathologically slow activation observed at sprint start.
 
-If the menu action is retained, its distinct purpose must be evident and tested.
+Asynchronous/stale-result rules remain consistent with Search/PDF precedents.
 
-**Outcome:** Question capture and metadata correction remain readable and expose
-only meaningful actions.
+## Slice 5 — Shared-preamble replacement / recapture
 
-### Slice 4 — Imported Questions activation performance
+**COMPLETE**
 
-Measure the delay observed when switching to Imported Questions.
+An existing persisted `SharedQuestionContext` can be recaptured deliberately.
 
-Profile/measure at least:
+The workflow:
 
-- source-question backfill;
-- shared-context reconciliation;
-- `questionRepository.findAll()` or equivalent reconstruction;
-- imported queue filtering/sorting;
-- PDF/booklet activation;
-- JavaFX control population.
+- retains the same shared-context identity;
+- preserves links from all legitimate Questions;
+- stages replacement content before commit;
+- leaves old persisted regions untouched on cancel/failure;
+- reloads correctly;
+- feeds Search/revision presentation after replacement.
 
-Then change only the work shown to be responsible.
+Persistence remains capable of multiple ordered context regions even though the
+automatic imported-preamble workflow remains single-region.
 
-Possible valid outcomes include:
+## Slice 6 — Exam metadata correction and known-PDF recognition
 
-- moving safe persistence/reconstruction work off the FX thread;
-- performing one-time reconciliation at a better lifecycle boundary;
-- avoiding repeated full-bank reconstruction;
-- refreshing only data that can actually have changed;
-- adding explicit progress only when real unavoidable work remains.
+**COMPLETE**
 
-All asynchronous changes require stale/lifecycle protection consistent with
-Question Search and PDF-load precedent.
+### Exam metadata correction
 
-**Outcome:** entering Imported Questions no longer causes unexplained avoidable
-UI delay, and the reason for any remaining wait is explicit.
+A supported Exam-level correction workflow changes the owning Exam/provider/year
+data while preserving linked Booklets, Questions, Answers, SourceQuestions and
+SharedQuestionContexts.
 
-### Slice 5 — Shared-preamble replacement / recapture
+Sprint-end hardening added filesystem consistency:
 
-Add a first-class edit workflow for an existing `SharedQuestionContext`.
+- managed booklet/answer PDFs are relocated when corrected provider/year changes
+  their authoritative managed directory;
+- persisted `SourceDocument.relativePath` values are updated in the same
+  correction operation;
+- destination collisions and shared-source conflicts are rejected;
+- completed file moves are reversed if later database persistence fails;
+- assessment-name-only edits do not move files because the assessment name is
+  not part of the managed path.
 
-The user must be able to select a stored shared preamble and replace its source
-region(s).
+### Known-PDF recognition
 
-Persistence requirements:
+Selecting a source PDF already known to persistence reuses stored metadata and
+does not create duplicate Exam/Booklet records merely because the user reopened
+the source.
 
-- replacement is transactional;
-- all existing Questions linked to the same SharedQuestionContext continue to
-  share that one context after success;
-- source-question shared-context consistency remains valid;
-- old persisted regions remain intact until the replacement commit succeeds;
-- cancellation or failure leaves the old regions untouched;
-- linked Questions do not need to be rewritten as independent copies;
-- reload reconstructs the new context correctly;
-- revision/Search presentation uses the replacement context after reload.
+## Slice 7 — Dedicated legacy Question split workflow
 
-This slice does not have to implement the separate multi-page automatic
-preamble-capture workflow, but it must not introduce persistence assumptions
-that would prevent multiple ordered context regions.
+**COMPLETE — 19 September 2026**
 
-**Outcome:** an incorrectly captured shared preamble can be corrected without
-breaking multipart/shared-context identity.
+Delivered:
 
-### Slice 6 — Exam metadata correction and known-PDF recognition
+- Search Questions exposes `Split Question...` for eligible legacy single
+  Questions;
+- destination part codes, marks, classification and response type are confirmed;
+- Question regions for all parts are staged before persistence;
+- original Question identity is retained as one resulting part where safe;
+- an existing Answer is retained only on an explicitly selected part;
+- no shared preamble, newly captured shared preamble and compatible existing
+  shared-context reuse are supported;
+- SourceQuestion/Question/context relationships are persisted atomically;
+- duplicate/incompatible destinations are rejected;
+- cancellation leaves the original persisted Question unchanged;
+- reload preserves multipart/shared-context identities;
+- Corpus Audit and revision-presentation regressions cover the result.
 
-Add supported correction at the entity that actually owns the incorrect data.
+## Slice 8 — Search Questions and Corpus Audit usability
 
-#### Exam metadata correction
+**COMPLETE — 20 September 2026**
 
-Provide an Exam-level correction workflow suitable for cases such as a legacy
-import where provider/year naming produced display like `2022 QCAA 2022`.
+### Search Questions
 
-Design and validate editable fields, including at least the currently observed
-exam/provider naming problem. The workflow must preserve linked:
-
-- ExamBooklets;
-- SourceDocuments;
-- Questions;
-- Answers;
-- SourceQuestions;
-- SharedQuestionContexts.
-
-Natural-identity collisions or attempts to merge incompatible existing Exam
-records must be rejected explicitly rather than silently reassigning data.
-
-#### Import Exam dialog
-
-- fix truncated left-side labels;
-- when a selected source PDF is already known to persistence, populate the
-  associated stored metadata rather than making the user re-enter it;
-- matching must use authoritative persisted document/relationship rules and
-  existing byte/path identity behaviour where appropriate, not filename guesswork;
-- do not create duplicate Exam/Booklet records when the user is actually opening
-  an already-known source.
-
-**Outcome:** incorrect Exam-level metadata is corrected once, and known source
-PDFs reuse stored metadata safely.
-
-### Slice 7 — Dedicated legacy Question split workflow
-
-Add a deliberate conversion workflow for a legacy imported Question that was
-stored as one Question but is actually multipart.
-
-Representative case:
+Search now has explicit scope:
 
 ```text
-Before
-    Question 3
-
-After
-    SourceQuestion 3
-        SharedQuestionContext (optional/required by source)
-        Question 3a
-        Question 3b
-```
-
-The workflow should collect/confirm at least:
-
-- destination part codes;
-- marks per part;
-- classification per part;
-- response type per part;
-- whether a shared preamble is required and which stored/new context is used;
-- Question region capture/recapture for each part.
-
-Persistence rules:
-
-- reuse the original Question row as one resulting part where safe;
-- create additional part rows transactionally;
-- create or reuse the intended SourceQuestion identity;
-- reject duplicate Question natural identities;
-- reject joining an incompatible existing multipart group;
-- shared context must be consistent across the source group;
-- do not guess how an existing single Question Answer should be divided between
-  parts; preserve/transfer only where ownership is unambiguous and otherwise
-  require explicit correction;
-- failure/cancel must not leave a half-created multipart group;
-- reload must preserve the resulting identities and relationships.
-
-Regression coverage should include:
-
-- split without shared context;
-- split with newly captured shared context;
-- split joining/reusing a compatible existing source identity where allowed;
-- duplicate/incompatible destination rejection with rollback;
-- Corpus Audit reconstruction;
-- RevisionPresentationPlanner grouping after reload.
-
-**Outcome:** real legacy source structure can be corrected explicitly rather than
-worked around through several fragile manual operations.
-
-**Implementation status — COMPLETE, 19 September 2026**
-
-Implemented behaviour:
-
-- Search Questions exposes a dedicated `Split Question...` correction workflow
-  for eligible legacy single Questions.
-- Split metadata is confirmed before region capture, including destination part
-  codes, marks, classification, response type and shared-preamble strategy.
-- Question regions for all resulting parts are staged in memory before any
-  persistence occurs.
-- the original Question row is retained as the explicitly nominated resulting
-  part where safe;
-- an existing Answer is retained only on the explicitly selected resulting part;
-- a split may use no shared preamble, capture one new shared preamble, or reuse
-  the compatible shared preamble of an existing SourceQuestion group;
-- new SourceQuestion, Question and SharedQuestionContext relationships are
-  persisted atomically;
-- compatible existing SourceQuestion/shared-context identity can be reused;
-- duplicate destination identities and incompatible existing groups are rejected;
-- cancellation after staging a preamble and one or more parts leaves the
-  original persisted Question unchanged;
-- reload preserves resulting multipart and shared-context identities;
-- Corpus Audit reconstruction and RevisionPresentationPlanner multipart grouping
-  are covered after reload.
-
-Verification completed:
-
-- `LegacyQuestionSplitServiceTest` green;
-- focused Corpus Audit reload regression green;
-- focused RevisionPresentationPlanner reload/grouping regression green;
-- Search split workflow regressions green for no preamble, newly captured
-  preamble, reused existing preamble and explicit Answer ownership;
-- split cancellation regression green;
-- `QuestionEditingWorkflowTest` and `SharedContextWorkflowTest` green together;
-- complete non-UI suite green with `./mvnw test`;
-- complete UI suite green with `./mvnw -Pui-tests test`;
-- `./mvnw spotless:check` green.
-
-### Slice 8 — Search Questions and Corpus Audit usability
-
-#### Search Questions
-
-Add explicit search scope capable of showing:
-
-```text
+Current syllabus
 All Questions
-Current syllabus / selected curriculum scope
 ```
 
-All-bank display must not alter or imply current applicability. Existing
-curriculum retrieval semantics remain authoritative for syllabus-scoped search.
+Current-syllabus scope retains the established applicability/retrieval semantics.
 
-Determine whether all-bank search also needs provider/year/booklet filters in
-this sprint or whether explicit All versus curriculum scope is sufficient.
+All Questions displays the complete stored bank without claiming that historical
+Questions are currently applicable merely because they are visible.
 
-#### Corpus Audit
+Both modes use deterministic source ordering. Stale background all-bank results
+cannot overwrite a newer scope/search request.
 
-Sort displayed work by provider/authority, year, booklet and natural Question
-code. Existing scope filters and summary totals must remain semantically
-unchanged.
+### Corpus Audit
 
-**Outcome:** bank-management views follow the source organisation a teacher
-expects instead of persistence insertion order.
+Displayed work follows provider/year/booklet/natural Question order while
+existing filters and totals retain their semantics.
 
-### Slice 9 — Regression, acceptance and documentation closeout
+Year filter values are explicitly numerically sorted.
 
-Run focused tests throughout, then complete:
+## Additional Sprint 09 sustained-use corrections
+
+The following issues were discovered during the same real-use pass and were
+completed before closeout.
+
+### Search dialog size persistence
+
+The Search dialog remembers user-resized width/height when a correction action
+temporarily hides and then redisplays the same dialog.
+
+### MCQ Answer-PDF visibility
+
+MCQ completeness remains letter based; MCQs do not require Answer regions.
+
+However, selecting an MCQ can now display/reuse the registered exam answer PDF
+because that document is often where the correct option is read. If no answer
+PDF is registered, one may be chosen. Region controls remain response-type
+appropriate.
+
+### Exam correction moves managed files
+
+Provider/year correction now relocates managed exam/answer PDFs and updates
+persisted source paths with rollback protection.
+
+### UI package refactor and CI hardening
+
+The JavaFX UI was reorganised into focused feature packages without changing
+domain semantics.
+
+GitHub Actions CI was hardened into separate jobs:
+
+- Non-UI tests;
+- remaining UI tests;
+- workflow UI matrix: capture;
+- workflow UI matrix: state-editing;
+- workflow UI matrix: application.
+
+## Slice 9 — Regression, acceptance and documentation closeout
+
+**IMPLEMENTATION COMPLETE; FINAL REPOSITORY CLOSEOUT IN PROGRESS**
+
+Formal closeout commands remain:
 
 ```bash
 ./mvnw test
@@ -382,52 +285,45 @@ Run focused tests throughout, then complete:
 git diff --check
 ```
 
-Manual acceptance should exercise at least:
+Verified at feature-branch head `11acb24`:
 
-- narrowed left workspace pane during Question and Answer capture;
-- Question/Answer selection ownership and disabled action controls;
-- natural Answer queue ordering on a real booklet;
-- Imported Questions activation responsiveness;
-- replacement of a stored shared preamble;
-- correction of the known malformed legacy Exam metadata case;
-- reopening a database-known exam PDF;
-- splitting one real legacy Question into multipart parts with shared preamble;
-- Search Questions All versus syllabus scope;
-- Corpus Audit source ordering.
+- GitHub Actions run `35491556692` completed successfully;
+- Non-UI tests green;
+- workflow UI capture green;
+- workflow UI state-editing green;
+- workflow UI application green;
+- remaining UI tests green;
+- headless UI tests reported green under JUnit in Eclipse.
 
-Update current status, roadmap and backlog only to describe behaviour actually
-implemented and verified.
+Javadoc and whitespace validation should be rerun after the final documentation
+commit before merge.
 
-## Sprint acceptance criteria
+## Sprint acceptance status
 
-Sprint 09 is complete when all of the following are true:
+The implementation acceptance criteria are satisfied for:
 
-- Answer-pane button labels and essential Question-pane labels remain readable
-  at the supported narrow workspace width;
-- adding Answer regions does not create excessive blank pane growth;
-- Answer status text no longer destabilises the action-button row;
-- Answer capture and Corpus Audit use deterministic source/natural ordering;
-- Add Region/Clear controls accurately reflect whether a compatible pending
-  selection exists;
-- Answer selection ownership disables incompatible Question-region actions;
-- Question response type uses the agreed radio-button capture UI without
-  changing persisted semantics;
-- Edit Question Metadata and Import Exam labels remain readable;
-- Imported Questions activation has been measured and avoidable delay removed;
-- an existing shared preamble can be replaced safely and survives reload;
-- Exam-level metadata can be corrected without rewriting linked Questions;
-- a database-known exam PDF can reuse stored metadata safely;
-- a legacy single Question can be split into multipart Questions transactionally
-  and, where required, share one explicit preamble;
-- Search Questions can deliberately show all-bank versus current-syllabus scope;
-- Corpus Audit display ordering follows provider/authority, year, booklet and
-  natural Question number;
-- the redundant Capture New Questions menu action has been resolved deliberately;
-- standard tests, headless UI tests, Javadoc and whitespace validation are clean.
+- readable Answer/Question controls at supported narrow width;
+- stable Answer-region layout/status;
+- deterministic Answer and Corpus Audit source ordering;
+- correct pending-selection enablement and capture ownership;
+- explicit response-type radio-button UI;
+- readable metadata/import controls;
+- improved Imported Questions activation;
+- shared-preamble replacement surviving reload;
+- supported Exam-level metadata correction;
+- known-PDF metadata reuse;
+- transactional legacy multipart split;
+- Search all-bank versus current-syllabus scope;
+- deliberate resolution of redundant capture-menu navigation;
+- MCQ answer-document visibility;
+- managed-PDF relocation after provider/year correction.
 
-## Explicitly outside Sprint 09
+Final merge readiness additionally requires the closeout commands above to remain
+clean after documentation changes.
 
-The following remain backlog/future work unless deliberately rescheduled:
+## Explicitly outside Sprint 09 / transferred to backlog
+
+The following are not Sprint 09 completion requirements:
 
 - revision HTML Descriptor-versus-Subtopic grouping selection;
 - multipart provenance decoration redesign;
@@ -441,14 +337,21 @@ The following remain backlog/future work unless deliberately rescheduled:
 - clipboard/image-attachment Questions;
 - packaging/deployment.
 
+Two real-use issues discovered late in the sprint are also deliberately retained
+as backlog rather than misreported as implemented:
+
+- a general shared-context capture/reuse workflow for independent Questions,
+  including successive MCQs sharing one stimulus;
+- curriculum-code entry can leave hierarchy ComboBox display visually out of
+  sync even when the underlying selection model is correct.
+
 ## Documentation relationship
 
-Every requirement originating in the 17 September application-use review remains
-listed in `docs/design/backlog.md`, including those intentionally deferred from
-Sprint 09.
+This file is the canonical Sprint 09 design/final-state record.
 
-This sprint document defines the implementation scope. The backlog remains the
-inventory of all known work.
+Current application capability belongs in `docs/current-status.md`.
+Forward sequencing belongs in `docs/DEVELOPMENT_ROADMAP.md`.
+Unimplemented work belongs in `docs/design/backlog.md`.
 
 ## Branch
 
