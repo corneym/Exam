@@ -1,21 +1,20 @@
 # Exam Question Bank — Development Roadmap
 
 > **Reference date:** 20 September 2026  
-> **Version:** 14  
+> **Version:** 15  
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 >
-> This is the single canonical project roadmap. The former `docs/roadmap.md`
-> is retired.
+> This is the single canonical project roadmap.
 
 ## 1. Project goal
 
 Build a desktop Exam Question Bank for school science subjects that preserves
 authoritative examination content, historical curriculum provenance and reusable
-marking material, then turns that bank into useful outputs for teachers and
-students.
+marking material, then turns that bank into useful resources for students and
+teachers.
 
-Chemistry remains the first full development dataset, while core model,
-repository, service, persistence and output logic remain subject-neutral.
+Chemistry remains the first full development dataset. Core model, repository,
+service, persistence and output logic remain subject-neutral.
 
 Long-term purposes are:
 
@@ -29,21 +28,21 @@ Long-term purposes are:
 ```text
 Completed data safety
         ↓
-Completed deterministic revision HTML
+Completed deterministic revision HTML foundation
         ↓
 Completed SCORM 1.2 / QLearn validation
         ↓
-Completed Sprint 07 shared-context/capture/edit/output work
+Completed shared-context/capture/edit foundations
         ↓
-Completed Sprint 08 curriculum/corpus tooling and hardening
+Completed curriculum/corpus tooling
         ↓
-Sprint 09 capture workflow + corpus correction implementation complete
+Completed Sprint 09 sustained-use capture/correction work
         ↓
-Final Sprint 09 merge + main-branch protection/CI governance
+Completed protected-main / CI-governance validation
         ↓
-Complete real Question data + application-authoritative mapping review
+Sprint 10 capture hardening + revision-output refinement
         ↓
-Revision-output presentation refinement
+Continue real corpus and mapping completion
         ↓
 Resolve remaining Question semantics / richer bank management
         ↓
@@ -52,12 +51,7 @@ Exam Builder + printable output
 Packaging / deployment / assisted automation
 ```
 
-The immediate product priority remains completing and correcting the real corpus
-with the now-supported capture/correction workflows. The immediate repository
-priority is Sprint 09 merge closeout followed by protection of `main`.
-
-Application SQLite review state remains authoritative for curriculum mapping;
-external mapping workbooks remain reference artefacts only.
+Current implementation work is on `feature/capture-output`.
 
 ## 3. Current architecture constraints
 
@@ -76,10 +70,6 @@ integrity and sequential migrations. The current latest schema version is 8.
 Persist portable relationships and relative paths beneath `data.root`. Rendered
 images are derived assets, not source-of-truth Question content.
 
-Managed exam/answer PDF directories are derived from subject/provider/year.
-Authoritative Exam correction must therefore keep filesystem locations and
-persisted `SourceDocument` paths consistent when provider/year changes.
-
 ### Ordered normalised regions
 
 Question, Answer and SharedQuestionContext source material may use ordered
@@ -91,9 +81,9 @@ of render DPI.
 `SourceQuestion` represents original multipart identity.
 `SharedQuestionContext` represents reusable source material.
 
-Shared context is not conceptually restricted to multipart Questions or written
-response. However the current normal capture UI does not yet provide a general
-new/reuse shared-context workflow for otherwise independent Questions.
+Shared context does not imply multipart identity and is not restricted to one
+response type or one curriculum classification. Sprint 10 will expose this
+existing domain capability for otherwise independent Questions, including MCQs.
 
 ### Historical provenance is preserved
 
@@ -101,7 +91,7 @@ Historical classification is not rewritten to current classification. Confirmed
 historical -> current mappings derive applicability.
 
 A Question currently stores one best-fit original classification. Whether direct
-multiple original classifications are required remains a future design decision.
+multiple original classifications are required remains a future decision.
 
 ### Response type belongs to Question
 
@@ -114,8 +104,15 @@ WRITTEN_RESPONSE -> one or more Answer regions required
 UNKNOWN -> response type unresolved; ordinary Answer capture blocked
 ```
 
-MCQ work may still display/reuse the registered Answer PDF because document
-visibility is independent of whether Answer regions are required.
+Sprint 10 response-type inference is a capture convenience, not a new persisted
+semantic rule.
+
+### Presentation choices do not rewrite curriculum data
+
+Revision-output grouping depth, response-type ordering, selected Units, page
+numbering and generated-site status are presentation decisions. They must not
+rewrite Question classification, applicability mappings, SourceQuestion identity
+or SharedQuestionContext identity.
 
 ### Long-running UI work must not block JavaFX
 
@@ -140,8 +137,8 @@ applicability.
 ### Sprint 03 — Question Retrieval
 
 Complete: current-curriculum retrieval across hierarchy scopes, confirmed mapped
-historical results, SQLite service/repository retrieval, asynchronous Search and
-stored Question preview.
+historical results, SQLite retrieval, asynchronous Search and stored Question
+preview.
 
 ### Sprint 04 — Backup, Restore and Data Safety
 
@@ -162,131 +159,92 @@ validation and successful real QLearn import/launch.
 
 ### Sprint 07 — Preamble-aware Question Capture and UI Redesign
 
-Complete and merged. Persisted SourceQuestion/shared-context semantics,
-preamble-aware capture, correction, syllabus-sensitive classification,
-Question/Answer editing, multipart/shared-context revision presentation and
-asynchronous persistence/PDF transitions are established.
-
-Canonical record:
-
-`docs/design/sprint-07-preamble-aware-question-capture-ui-redesign.md`
+Complete: persisted SourceQuestion/shared-context semantics, preamble-aware
+capture, correction, syllabus-sensitive classification, Question/Answer editing,
+multipart/shared-context revision presentation and asynchronous persistence/PDF
+transitions.
 
 ### Sprint 08 — Curriculum and Corpus Completion
 
-Complete and merged to `main` on 17 September 2026.
-
-Delivered subject-neutral curriculum authoring, mapping coverage/review,
-legacy-metadata correction, Question response type, mixed-response booklet
-support, response-type-aware completeness, Corpus Audit and closeout hardening.
-
-Canonical record:
-
-`docs/design/sprint-08-Curriculum-and-Corpus-Completion.md`
+Complete and merged 17 September 2026: subject-neutral curriculum authoring,
+mapping coverage/review, legacy-metadata correction, Question response type,
+mixed-response booklet support, response-type-aware completeness and Corpus
+Audit.
 
 ### Sprint 09 — Capture Workflow and Corpus Correction
 
-**IMPLEMENTATION COMPLETE — FINAL REPOSITORY CLOSEOUT / MERGE NEXT**
+Complete and merged to `main` on 20 September 2026. Delivered sustained-use
+capture controls, deterministic source ordering, shared-preamble recapture, Exam
+correction with managed-file relocation, known-PDF reuse, legacy Question split,
+Search scope, Corpus Audit ordering, MCQ Answer-PDF visibility, UI package
+refactoring and CI hardening.
 
-Current implementation head:
+Merge commit: `2533586`.
 
-`11acb24 complete sprint 09 capture workflow`
+Protected-main workflow was subsequently exercised by pull request #1; Sprint 10
+starts from `main` commit `5a1e5a9`.
 
-Delivered:
+## 5. Sprint 10 — Capture Hardening and Revision Output Refinement
 
-- deterministic natural/source ordering shared by capture/management views;
-- Answer-pane and Question-pane responsive/control-state improvements;
-- Question response-type radio-button capture UI;
-- Imported Questions activation performance correction;
-- first-class shared-preamble replacement/recapture;
-- supported Exam-level metadata correction;
-- relocation of managed PDFs and persisted source paths when provider/year
-  changes;
-- safe metadata reuse when reopening a database-known exam PDF;
-- transactional conversion of a legacy single Question into multipart parts;
-- explicit Answer ownership during split;
-- Search Questions `Current syllabus` versus `All Questions` scope;
-- deterministic Corpus Audit source ordering and numeric year ordering;
-- removal of the redundant Capture New Questions menu action;
-- Search dialog size persistence across action/hide/redisplay cycles;
-- MCQ Answer-PDF visibility/reuse without changing MCQ letter-only completeness
-  semantics;
-- JavaFX UI package refactoring into focused feature packages;
-- GitHub Actions CI hardening with separate non-UI, remaining-UI and workflow-UI
-  matrix jobs.
+**ACTIVE DESIGN / IMPLEMENTATION BRANCH:** `feature/capture-output`
 
-Verification at `11acb24`:
+Canonical design:
 
-- GitHub Actions run `35491556692` is green across all configured jobs;
-- headless UI tests are green under JUnit in Eclipse;
-- formal closeout still includes Javadoc and `git diff --check` after the final
-  documentation update.
+`docs/design/sprint-10-capture-output.md`
 
-Canonical record:
+Planned slices:
 
-`docs/design/sprint-09-capture-workflow-and-corpus-correction.md`
+1. repair stale pending PDF-selection state;
+2. repair curriculum-code / hierarchy ComboBox synchronisation;
+3. add a capture-workspace Working Subject filter;
+4. add Written Response capture defaults from part-letter and marks evidence;
+5. expose shared-context capture/reuse for independently classified Questions,
+   including MCQs;
+6. choose revision HTML grouping at Subtopic or Descriptor level;
+7. order MCQ presentations before written-response presentations;
+8. restart displayed Question numbering at 1 on every generated question page;
+9. suppress empty navigation branches and support all-non-empty versus selected
+   Unit export;
+10. replace internal capture-count status on the student site with useful export
+    metadata such as subject, syllabus, generation timestamp and generated
+    revision-question count.
 
-## 5. Immediate repository closeout
-
-Before beginning another product sprint:
-
-1. commit the final Sprint 09 documentation state;
-2. run the formal closeout checks;
-3. push and confirm GitHub Actions remains green;
-4. merge `feature/capture-workflow` to `main`;
-5. push `main`;
-6. configure/enforce the intended `main` branch protection/ruleset and required
-   CI checks.
-
-Branch protection is repository governance, not unfinished Sprint 09 product
-scope.
+Sprint 10 does not change historical classification merely for output, and does
+not invent SourceQuestion relationships to share a preamble.
 
 ## 6. Real corpus and mapping completion
 
 **ONGOING DATA WORK / HIGH PRODUCT VALUE**
 
-Continue systematic work through:
+Continue systematic work through mapping review, response-type resolution,
+Question source capture, shared-context resolution, Answer completion, metadata
+correction and legacy split correction.
 
-- mapping coverage and explicit no-match decisions;
-- response-type resolution;
-- Question source capture;
-- shared-context resolution;
-- Answer completion;
-- metadata correction;
-- legacy split correction where original multipart structure was lost;
-- application-authoritative review of current applicability.
+Application SQLite review state remains authoritative. The standalone Chemistry
+2019 -> 2025 mapping workbook remains reference material.
 
-The standalone Chemistry 2019 -> 2025 mapping workbook remains reference
-material. SQLite review state is authoritative.
+## 7. Remaining capture/content refinements after Sprint 10
 
-## 7. Revision-output presentation refinement
+Deferred capture work includes:
 
-**NEXT COHERENT PRODUCT-DESIGN CANDIDATE**
-
-Real use has identified a coherent revision-output pass:
-
-- allow output grouping at Descriptor or Subtopic level where Descriptors exist;
-- when Subtopic grouping is selected, flatten Descriptor-classified Questions
-  into the parent Subtopic while retaining deterministic Descriptor order;
-- remove repeated per-part source decoration for multipart Questions;
-- present source/original-classification provenance once for a multipart group;
-- place multiple-choice Questions before written-response Questions;
-- decide whether explicit MCQ and Written Response sections are useful.
-
-These are presentation semantics, not capture/correction fixes, and should be
-designed together.
-
-## 8. Remaining capture/content refinements
-
-Current deferred capture work includes:
-
-- a general shared-context workflow for independent Questions, including
-  successive MCQs sharing one stimulus;
+- Search Questions dialog position persistence across correction hide/show cycles;
+- cleanup of empty managed provider/year directories after successful Exam relocation;
 - multi-page automatic shared-preamble capture;
 - optional MCQ explanation regions;
-- curriculum-code entry / hierarchy ComboBox visual synchronisation;
 - assisted Question-boundary suggestions;
 - assisted multipart/dependency suggestions;
 - curriculum PDF text/maths/image authoring assistance.
+
+## 8. Remaining revision-output refinements after Sprint 10
+
+Deferred output work includes:
+
+- multipart provenance/decorative simplification;
+- deciding whether explicit `Multiple Choice` and `Written Response` subheadings
+  add value after ordering is implemented;
+- SCORM-dialog parity for any Sprint 10 export option that is initially exposed
+  only through Revision HTML;
+- later print-oriented/vector-preserving output.
 
 ## 9. Remaining Question-model decisions
 
@@ -298,9 +256,9 @@ applicability, retrieval duplicate semantics, provenance and output placement.
 
 ### Question-level applicability exceptions
 
-A curriculum mapping can be valid while a particular historical Question tests
-only content that did not carry forward. Future work may support explicit
-Question-level exclusions without rewriting provenance or the mapping itself.
+A mapping can be valid while a particular historical Question tests content that
+did not carry forward. Future work may support explicit Question-level
+exclusions without rewriting provenance or the mapping itself.
 
 ### Out-of-scope source Questions
 
@@ -368,27 +326,17 @@ import/merge or an IT-supported central database.
 
 ## 15. Assisted automation — future
 
-Possible assistance:
-
-- PDF text extraction;
-- descriptor ranking;
-- Question-boundary suggestions;
-- part/dependency suggestions;
-- OCR for image attachments;
-- duplicate detection;
-- coverage analytics;
-- difficulty/blueprint suggestions.
+Possible assistance includes PDF text extraction, descriptor ranking, Question
+boundary suggestions, part/dependency suggestions, OCR, duplicate detection,
+coverage analytics and assessment-blueprint suggestions.
 
 Automation proposes; teachers confirm authoritative classifications and mappings.
 
 ## 16. Backlog authority
 
-The authoritative inventory of deferred and unresolved work is:
+The authoritative inventory of deferred and unresolved work not in Sprint 10 is:
 
 `docs/design/backlog.md`
-
-Completed sprint work should not remain listed as future work merely because it
-originated in a backlog review.
 
 ## 17. Development discipline
 
@@ -396,15 +344,14 @@ For self-contained changes:
 
 1. start from current repository state;
 2. design substantial changes before implementation;
-3. make focused changes with behaviour-focused tests;
+3. work in small behaviour-focused slices;
 4. add SQLite/repository/service integration tests where boundaries justify it;
-5. update API documentation where contracts change;
-6. run focused tests during implementation;
-7. run the complete non-UI and UI suites at major checkpoints;
-8. keep long-running UI work off the JavaFX thread;
+5. add UI regressions for actual user-observed UI failures;
+6. update API documentation where contracts change;
+7. run focused tests during implementation and broader suites at checkpoints;
+8. keep slow work off the JavaFX thread;
 9. use stale/lifecycle protection for asynchronous UI work;
-10. keep commits and feature branches coherent;
-11. push before repository-wide review;
-12. require CI before merge once `main` protection is enabled;
-13. update current status, roadmap, backlog and canonical sprint records when
-    state materially changes.
+10. keep commits and the Sprint 10 feature branch coherent;
+11. require CI before protected-main merge;
+12. update current status, roadmap, backlog and the canonical sprint record when
+    implementation state materially changes.

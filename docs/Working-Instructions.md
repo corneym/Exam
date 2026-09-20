@@ -61,6 +61,8 @@ between the outer test class and the nested class.
 
 Work in small, testable slices.
 
+When producing code, ensure it contains Javadoc if necessary, i.e. public API; algorithmic style comments using // and never /* comment */ style.
+
 Do not give me a large batch of unrelated implementation changes at once unless
 I explicitly ask for that.
 
