@@ -7,6 +7,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.pdfbox.Loader;
@@ -28,6 +29,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -238,7 +240,22 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	void openAnswerPdfForTest(Question question) throws Exception {
 		SelectedPdf selectedPdf = new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot);
-		WaitForAsyncUtils.asyncFx(() -> answerCapturePane().selectAnswerPdf(question, selectedPdf)).get();
+		WaitForAsyncUtils.asyncFx(() -> {
+			try {
+				invoke(answerCapturePane(), "selectAnswerPdf", new Class<?>[] { Question.class, SelectedPdf.class },
+						question, selectedPdf);
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+		}).get();
+	}
+
+	void refreshAnswerQuestionsForTest(List<Question> questions) {
+		try {
+			invoke(answerCapturePane(), "refreshQuestions", new Class<?>[] { List.class }, questions);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	private void openExamPdfForTest() throws Exception {

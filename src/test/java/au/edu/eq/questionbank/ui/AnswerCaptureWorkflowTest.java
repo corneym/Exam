@@ -27,6 +27,7 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
@@ -312,7 +313,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
 		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
 		List<Question> refreshedQuestions = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll();
-		robot.interact(() -> answerCapturePane().refreshQuestions(refreshedQuestions));
+		robot.interact(() -> refreshAnswerQuestionsForTest(refreshedQuestions));
 		assertNotNull(questions.getValue(),
 				"Refreshing the unanswered queue must not clear the active Answer-edit target");
 		assertEquals(question.getId(), questions.getValue().getId());
@@ -347,7 +348,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		});
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answers.isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
-		robot.interact(() -> answers.refreshQuestions(oldSnapshot));
+		robot.interact(() -> refreshAnswerQuestionsForTest(oldSnapshot));
 		assertTrue(unansweredQuestions(robot).getItems().isEmpty());
 	}
 

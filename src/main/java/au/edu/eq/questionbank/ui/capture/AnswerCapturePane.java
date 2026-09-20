@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.capture;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -60,7 +60,7 @@ import javafx.util.StringConverter;
  * answers, validation, and creation or editing of persisted answers. All
  * control and capture-state access belongs on the JavaFX application thread.
  */
-final class AnswerCapturePane extends VBox {
+public final class AnswerCapturePane extends VBox {
 
 	private static final double REGION_VIEWPORT_EXTRA_HEIGHT = 4.0;
 	private static final double ANSWER_REGIONS_VIEWPORT_HEIGHT = 300.0;
@@ -152,7 +152,7 @@ final class AnswerCapturePane extends VBox {
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
 	 */
-	AnswerCapturePane(Stage stage, QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
+	public AnswerCapturePane(Stage stage, QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
 			PdfFilePicker pdfFilePicker, Consumer<SelectedPdf> answerPdfHandler, Runnable answerDocumentHandler,
 			BooleanSupplier answerTransitionAllowed, Runnable selectionClearHandler,
 			QuestionExtractor questionExtractor, Supplier<PdfSession> answerPdfSessionSupplier,
@@ -242,7 +242,7 @@ final class AnswerCapturePane extends VBox {
 	 *
 	 * @param selection the selected answer-page rectangle
 	 */
-	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
+	public void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (!canCaptureRegions()) {
 			currentAnswerSelection = null;
 			selectionClearHandler.run();
@@ -258,12 +258,12 @@ final class AnswerCapturePane extends VBox {
 		refreshSaveButtonState();
 	}
 
-	boolean canCaptureRegions() {
+	public boolean canCaptureRegions() {
 		return !answerSaveInProgress && answerFile != null
 				&& isWrittenResponseQuestion(unansweredQuestionField.getValue());
 	}
 
-	boolean captureAnswer(Question question) {
+	public boolean captureAnswer(Question question) {
 		if (answerSaveInProgress) {
 			return false;
 		}
@@ -298,7 +298,7 @@ final class AnswerCapturePane extends VBox {
 	/**
 	 * Discards an unaccepted region when the displayed page changes.
 	 */
-	void clearCurrentSelectionForPageChange() {
+	public void clearCurrentSelectionForPageChange() {
 		currentAnswerSelection = null;
 		answerRegionStatusLabel.setText("");
 		setSelectionActionsEnabled(false);
@@ -308,7 +308,7 @@ final class AnswerCapturePane extends VBox {
 	 * Discards only the unaccepted Answer selection after another capture workflow
 	 * takes ownership of the single PDF selection.
 	 */
-	void discardCurrentSelectionForOwnershipLoss() {
+	public void discardCurrentSelectionForOwnershipLoss() {
 
 		// The new workflow already owns the visible PDF rectangle, so clear only this
 		// pane's stale local state and never call selectionClearHandler here.
@@ -330,7 +330,7 @@ final class AnswerCapturePane extends VBox {
 	 * @throws IllegalArgumentException if the question has no answer
 	 * @throws NullPointerException     if either argument is null
 	 */
-	boolean editAnswer(Question question, Runnable editCompletedHandler) {
+	public boolean editAnswer(Question question, Runnable editCompletedHandler) {
 		if (answerSaveInProgress) {
 			return false;
 		}
@@ -371,7 +371,7 @@ final class AnswerCapturePane extends VBox {
 	 * @return whether accepted answer regions are loaded in the current capture or
 	 *         edit
 	 */
-	boolean hasAcceptedRegions() {
+	public boolean hasAcceptedRegions() {
 		return !pendingAnswerRegions.isEmpty();
 	}
 
@@ -386,18 +386,18 @@ final class AnswerCapturePane extends VBox {
 	/**
 	 * @return whether answer persistence is currently running
 	 */
-	boolean isSaveInProgress() {
+	public boolean isSaveInProgress() {
 		return answerSaveInProgress;
 	}
 
 	/**
 	 * Reloads persisted questions that do not yet have an answer.
 	 */
-	void refreshQuestions() {
+	public void refreshQuestions() {
 		refreshQuestions(questionRepository.findAll());
 	}
 
-	void refreshQuestions(List<Question> questions) {
+	public void refreshQuestions(List<Question> questions) {
 		Question editTarget = editingAnswerQuestion;
 		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;
 

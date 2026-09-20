@@ -49,7 +49,6 @@ import javafx.stage.Stage;
 class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
-	@SuppressWarnings("unchecked")
 	void cancellingSplitAfterStagingPreambleAndFirstPartLeavesOriginalUnchanged(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question original = captureQuestion(robot, "70");
@@ -418,7 +417,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
 	void searchSplitQuestionCapturesOneSharedPreambleForAllParts(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question original = captureQuestion(robot, "67");

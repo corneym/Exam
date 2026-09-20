@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.capture;
 
 import au.edu.eq.questionbank.model.QuestionResponseType;
 

@@ -235,7 +235,6 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
 	void searchSplitQuestionRequiresExplicitAnswerOwnerAndRetainsAnswerOnThatPart(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question original = captureQuestion(robot, "69");
@@ -333,7 +332,6 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
 	void searchSplitQuestionStartsStagedCaptureWithoutChangingOriginal(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question original = captureQuestion(robot, "66");
