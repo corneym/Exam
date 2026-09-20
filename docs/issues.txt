@@ -1,8 +1,6 @@
-when Questions -> Search is invoked and the dialog is resized and an action is chosen from the buttons at the bottom, the Search Questions dialog comes back with its original size not its resized size.
+when Questions -> Search is invoked and the dialog is resized and an action is chosen from the buttons at the bottom, the Search Questions dialog does nto come back to its original location
 ----------------
 
-In the Question Corpus Audit dialog,  the All Years is not logically sorted.  at the moment it goes 2020, 2021, 2022, 2023, 2025, 2024
------------------------
 Curriculum code entry can leave hierarchy ComboBox visually out of sync. Entering a valid code such as 3.1/3.1.1 correctly updates the underlying curriculum model, but the Topic ComboBox may display blank even while a Subtopic beneath that Topic is selected. Add UI-level assertions for displayed ComboBox values, not only model state.
 
 ------------------------
@@ -87,29 +85,10 @@ That wording describes one particular capture technique, not the underlying conc
 So I would record this as a genuine Sprint 9 capture-UI gap, not something to fix by storing duplicate regions. Your two-region workaround is safe for the questions you're capturing now, but the proper design is to allow a shared context across otherwise independent questions, including MCQs.
 
 -----------
-another fix from ux perspective.  if an mcq question needs an answer, the answer file for the exam should be opened in the pdf pane.  the letters are in the exam answer booklets and this will save time opening the pdf externally.
 
-Yes. That should be treated as a Sprint 09 Answer-capture usability fix.
-
-The current code explicitly prevents it in several places: MCQ selection does not load the registered answer PDF, showSelectedAnswerDocument() ignores MCQs, loadNextAnswerDocument() stops unless the next question is written-response, and the “Choose PDF…” control is disabled for MCQs. So the behaviour you are seeing is deliberate in the current implementation, but it is too restrictive for actual use.
-
-The better rule is:
-
-MCQ answer = letter only; no answer regions.
-But the exam’s registered answer PDF should still be available and displayed because that is where the correct letter is read from.
-If exactly one answer PDF is already registered for that exam, selecting an MCQ should open/reuse it automatically in the Answer PDF pane.
-If none is registered, the user should be able to choose one even for an MCQ.
-If multiple answer PDFs are registered, keep the current explicit choice behaviour rather than guessing.
-Region controls remain hidden/disabled for MCQs, so opening the PDF does not change MCQ persistence semantics.
-When advancing from one answered question to the next, the Answer PDF should remain/open appropriately whether the next question is MCQ or written response.
-
-That means this is mostly a separation-of-concerns correction: “does this question need answer regions?” should remain response-type-specific, but “does the user need the answer document visible?” should not be limited to written responses.
-
-I would put this immediately after Search Slice 8 and before Sprint 09 closeout. It is contained and directly supports sustained capture work.
-
-For now, continue with the Search scope work we just designed; then we can do this MCQ answer-PDF slice before the final acceptance pass.
-------
 when i renamed the exam from 2022 QCAA 2022, the metadata changed but the files for the exam stayed in the same location.  that does not make sense.  the exam was mistakenly named.  it now has an authoritative name.  the lcoation must change as well.  i am going to change the metadata back in the application so the proper behaviour can then be implemented and the exam ends up in the correct location.
+
+RENAMING the exam NOW results in the file being moved but the old path still exists.
 
 That makes sense, with one important detail from the current code.
 
