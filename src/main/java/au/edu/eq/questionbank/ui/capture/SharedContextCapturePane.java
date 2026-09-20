@@ -86,9 +86,10 @@ public final class SharedContextCapturePane extends VBox {
 	 * transition callback prevents this pane from taking selection ownership while
 	 * incompatible question capture is pending.
 	 */
-	public SharedContextCapturePane(SharedQuestionContextRepository contextRepository, Supplier<ExamBooklet> bookletSupplier,
-			QuestionExtractor questionExtractor, Supplier<PdfSession> examPdfSessionSupplier,
-			Runnable selectionClearHandler, BooleanSupplier captureStartAllowed) {
+	public SharedContextCapturePane(SharedQuestionContextRepository contextRepository,
+			Supplier<ExamBooklet> bookletSupplier, QuestionExtractor questionExtractor,
+			Supplier<PdfSession> examPdfSessionSupplier, Runnable selectionClearHandler,
+			BooleanSupplier captureStartAllowed) {
 		validateDependencies(contextRepository, bookletSupplier, questionExtractor, examPdfSessionSupplier,
 				selectionClearHandler, captureStartAllowed);
 		this.contextRepository = contextRepository;

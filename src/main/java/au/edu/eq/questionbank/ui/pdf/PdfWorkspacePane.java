@@ -905,7 +905,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * @param width        the proportional width
 	 * @param height       the proportional height
 	 */
-	public record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width, double height) {
+	public record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width,
+			double height) {
 	}
 
 	private record LoadedAnswerPage(PdfSession session, Image image, int pageNumber) {

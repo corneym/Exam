@@ -100,9 +100,9 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 	private boolean changingTree;
 	private final Label lifecycleLabel = new Label();
 
-	public CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot, CurriculumAuthoringSession authoringSession,
-			CurriculumAuthoringWriter authoringWriter, CurriculumSourcePdfService sourcePdfService,
-			CurriculumLifecycleService lifecycleService) {
+	public CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot,
+			CurriculumAuthoringSession authoringSession, CurriculumAuthoringWriter authoringWriter,
+			CurriculumSourcePdfService sourcePdfService, CurriculumLifecycleService lifecycleService) {
 		this(ownerStage, curriculumDataRoot, requireDraft(authoringSession), authoringSession, authoringWriter,
 				sourcePdfService, lifecycleService);
 	}

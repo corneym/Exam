@@ -246,7 +246,8 @@ public final class ExamMetadataPane extends VBox {
 	 * @return corrected Exam with the same persistent identity
 	 * @throws SQLException if the correction cannot be persisted
 	 */
-	public Exam correctExamMetadata(Exam exam, String providerName, int year, String assessmentName) throws SQLException {
+	public Exam correctExamMetadata(Exam exam, String providerName, int year, String assessmentName)
+			throws SQLException {
 		if (exam == null) {
 			throw new NullPointerException("exam");
 		}
