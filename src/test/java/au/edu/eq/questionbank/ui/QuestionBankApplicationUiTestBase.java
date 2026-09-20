@@ -30,6 +30,7 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
+import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -248,6 +249,14 @@ abstract class QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(e);
 			}
 		}).get();
+	}
+
+	void showImportedQuestionCaptureForTest(QuestionCapturePane pane) {
+		try {
+			invoke(pane, "showImportedQuestionCapture", new Class<?>[0]);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	void refreshAnswerQuestionsForTest(List<Question> questions) {

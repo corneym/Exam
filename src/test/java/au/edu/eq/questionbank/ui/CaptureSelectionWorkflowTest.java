@@ -14,6 +14,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.ui.capture.SharedContextCapturePane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -157,13 +158,13 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SharedContextCapturePane sharedContextPane = field(questionCapturePane(), "sharedContextCapturePane",
 				SharedContextCapturePane.class);
 		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.SHARED_CONTEXT));
-		assertTrue(sharedContextPane.hasCurrentSelection());
+		assertTrue((boolean) invoke(sharedContextPane, "hasCurrentSelection", new Class<?>[0]));
 		CheckBox fullWidth = field(pdfWorkspace(), "fullWidthSelectionCheckBox", CheckBox.class);
 		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
 		assertTrue(selectionRectangle.isVisible());
 		robot.interact(fullWidth::fire);
 		assertFalse(selectionState.hasPendingSelection());
-		assertFalse(sharedContextPane.hasCurrentSelection());
+		assertFalse((boolean) invoke(sharedContextPane, "hasCurrentSelection", new Class<?>[0]));
 		assertFalse(selectionRectangle.isVisible());
 	}
 

@@ -22,6 +22,7 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -187,7 +188,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question second = stored.save(booklet, "42", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
-		robot.interact(pane::showImportedQuestionCapture);
+		robot.interact(() -> showImportedQuestionCaptureForTest(pane));
 		ComboBox<Question> imported = comboBox(robot, "#imported-question");
 		robot.interact(() -> imported.getSelectionModel().selectFirst());
 		dragRegionOnDisplayedPage(robot);

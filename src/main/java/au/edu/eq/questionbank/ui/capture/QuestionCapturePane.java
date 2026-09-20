@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.capture;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -64,7 +64,7 @@ import javafx.util.StringConverter;
  * are captured separately from ordinary question regions. All control and
  * capture-state access belongs on the JavaFX application thread.
  */
-final class QuestionCapturePane extends VBox {
+public final class QuestionCapturePane extends VBox {
 
 	private static final double REGION_VIEWPORT_EXTRA_HEIGHT = 4.0;
 	private static final double COMPACT_SPACING = 4.0;
@@ -156,7 +156,7 @@ final class QuestionCapturePane extends VBox {
 	 * coordinate selection ownership, imported-question activation and downstream
 	 * question refreshes with the containing application.
 	 */
-	QuestionCapturePane(QuestionRepository questionRepository, SourceQuestionRepository sourceQuestionRepository,
+	public QuestionCapturePane(QuestionRepository questionRepository, SourceQuestionRepository sourceQuestionRepository,
 			SqliteQuestionCaptureService questionCaptureService, LegacyQuestionSplitService legacyQuestionSplitService,
 			SharedContextCapturePane sharedContextCapturePane, QuestionExtractor questionExtractor,
 			CurriculumSelectionModel curriculumSelectionModel, CurriculumSelectorPane curriculumSelectorPane,
@@ -196,7 +196,7 @@ final class QuestionCapturePane extends VBox {
 	 *
 	 * @param selection the selected exam-page rectangle
 	 */
-	void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
+	public void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (importedQuestion != null && !importedQuestion.getRegions().isEmpty()) {
 			clearCurrentSelection();
 			showAlert(Alert.AlertType.INFORMATION, "Question regions already captured.",
@@ -222,7 +222,7 @@ final class QuestionCapturePane extends VBox {
 	 *
 	 * @param selection the selected exam-page rectangle
 	 */
-	void acceptSharedContextSelection(PdfWorkspacePane.RegionSelection selection) {
+	public void acceptSharedContextSelection(PdfWorkspacePane.RegionSelection selection) {
 		sharedContextCapturePane.acceptSelection(selection);
 		saveStatusLabel.setText("Shared preamble selection pending — click Add Region or Clear");
 		refreshSaveButtonState();
@@ -237,7 +237,7 @@ final class QuestionCapturePane extends VBox {
 	 * @param completedHandler callback after save or cancellation
 	 * @return whether split capture started
 	 */
-	boolean beginLegacyQuestionSplit(Question question, LegacyQuestionSplitDialog.Result definition,
+	public boolean beginLegacyQuestionSplit(Question question, LegacyQuestionSplitDialog.Result definition,
 			Runnable completedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -300,7 +300,7 @@ final class QuestionCapturePane extends VBox {
 	 * @param question persisted question requiring source/context work
 	 * @return whether the requested question became the active capture target
 	 */
-	boolean captureImportedQuestion(Question question) {
+	public boolean captureImportedQuestion(Question question) {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
@@ -326,7 +326,7 @@ final class QuestionCapturePane extends VBox {
 	/**
 	 * Discards the current unaccepted region selection.
 	 */
-	void clearCurrentSelection() {
+	public void clearCurrentSelection() {
 		if (sharedContextCapturePane.isCaptureMode() && sharedContextCapturePane.hasCurrentSelection()) {
 			sharedContextCapturePane.clearCurrentSelection();
 			refreshSaveButtonState();
@@ -340,7 +340,7 @@ final class QuestionCapturePane extends VBox {
 	/**
 	 * Clears all transient question regions when the exam PDF changes.
 	 */
-	void clearForNewPdf() {
+	public void clearForNewPdf() {
 		importedQuestion = null;
 		importedCaptureMode = false;
 		editingQuestion = null;
@@ -357,14 +357,14 @@ final class QuestionCapturePane extends VBox {
 	/**
 	 * Clears the transient question save/update status.
 	 */
-	void clearSaveStatus() {
+	public void clearSaveStatus() {
 		saveStatusLabel.setText("");
 	}
 
 	/**
 	 * Clears the current unaccepted shared-context selection.
 	 */
-	void clearSharedContextCurrentSelection() {
+	public void clearSharedContextCurrentSelection() {
 		sharedContextCapturePane.clearCurrentSelection();
 		refreshSaveButtonState();
 	}
@@ -373,7 +373,7 @@ final class QuestionCapturePane extends VBox {
 	 * Discards local unaccepted Question or shared-context selection state after a
 	 * different workflow takes ownership of the single PDF selection.
 	 */
-	void discardCurrentSelectionForOwnershipLoss() {
+	public void discardCurrentSelectionForOwnershipLoss() {
 
 		// Do not invoke the normal clear handler here. The PDF workspace already
 		// contains the replacement selection belonging to another workflow.
@@ -412,7 +412,7 @@ final class QuestionCapturePane extends VBox {
 	 * @return whether the edit was started
 	 * @throws NullPointerException if either argument is null
 	 */
-	boolean editQuestion(Question question, Runnable editCompletedHandler) {
+	public boolean editQuestion(Question question, Runnable editCompletedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
@@ -470,7 +470,7 @@ final class QuestionCapturePane extends VBox {
 	 *
 	 * @return {@code true} when accepted transient regions exist
 	 */
-	boolean hasAcceptedRegions() {
+	public boolean hasAcceptedRegions() {
 		boolean splitPartsStaged = legacySplitCaptureState != null && !legacySplitCaptureState.completedParts.isEmpty();
 		return !pendingRegions.isEmpty() || sharedContextCapturePane.hasPendingAutomaticRegion() || splitPartsStaged;
 	}
@@ -478,14 +478,14 @@ final class QuestionCapturePane extends VBox {
 	/**
 	 * @return {@code true} while the shared-context pane owns PDF selections
 	 */
-	boolean isCapturingSharedContext() {
+	public boolean isCapturingSharedContext() {
 		return sharedContextCapturePane.isCaptureMode();
 	}
 
 	/**
 	 * @return whether a question save transaction is currently running
 	 */
-	boolean isSaveInProgress() {
+	public boolean isSaveInProgress() {
 		return questionSaveInProgress;
 	}
 
@@ -499,7 +499,7 @@ final class QuestionCapturePane extends VBox {
 	 * @param editCompletedHandler callback when recapture is saved or cancelled
 	 * @return whether recapture was started
 	 */
-	boolean recaptureQuestion(Question question, Runnable editCompletedHandler) {
+	public boolean recaptureQuestion(Question question, Runnable editCompletedHandler) {
 		if (!editQuestion(question, editCompletedHandler)) {
 			return false;
 		}
@@ -526,7 +526,7 @@ final class QuestionCapturePane extends VBox {
 	 * @throws NullPointerException     if either argument is {@code null}
 	 * @throws IllegalArgumentException if the Question has no shared context
 	 */
-	boolean recaptureSharedContext(Question question, Runnable completedHandler) {
+	public boolean recaptureSharedContext(Question question, Runnable completedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
@@ -580,7 +580,7 @@ final class QuestionCapturePane extends VBox {
 	 * Reloads persisted questions that still require question-region capture while
 	 * retaining the selected item when it remains available.
 	 */
-	void refreshImportedQuestions() {
+	public void refreshImportedQuestions() {
 		refreshImportedQuestions(currentQuestions());
 	}
 
@@ -625,7 +625,7 @@ final class QuestionCapturePane extends VBox {
 	/**
 	 * Makes imported-question capture controls available and refreshes their data.
 	 */
-	void showLegacyCaptureControls() {
+	public void showLegacyCaptureControls() {
 		showImportedQuestionCapture();
 	}
 

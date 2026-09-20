@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.capture;
 
 /**
  * Applies save-time validation to the transient question-capture state.

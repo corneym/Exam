@@ -16,6 +16,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
+import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import javafx.application.Platform;
 import javafx.event.Event;
 import javafx.scene.control.Button;

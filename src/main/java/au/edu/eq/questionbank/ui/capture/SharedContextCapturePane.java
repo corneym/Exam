@@ -1,4 +1,4 @@
-package au.edu.eq.questionbank.ui;
+package au.edu.eq.questionbank.ui.capture;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -33,7 +33,7 @@ import javafx.util.StringConverter;
 /**
  * Captures and selects reusable shared question context for the active booklet.
  */
-final class SharedContextCapturePane extends VBox {
+public final class SharedContextCapturePane extends VBox {
 
 	private static final double REGION_VIEWPORT_EXTRA_HEIGHT = 4.0;
 	private static final double CONTEXT_SELECTOR_WIDTH = 260.0;
@@ -86,7 +86,7 @@ final class SharedContextCapturePane extends VBox {
 	 * transition callback prevents this pane from taking selection ownership while
 	 * incompatible question capture is pending.
 	 */
-	SharedContextCapturePane(SharedQuestionContextRepository contextRepository, Supplier<ExamBooklet> bookletSupplier,
+	public SharedContextCapturePane(SharedQuestionContextRepository contextRepository, Supplier<ExamBooklet> bookletSupplier,
 			QuestionExtractor questionExtractor, Supplier<PdfSession> examPdfSessionSupplier,
 			Runnable selectionClearHandler, BooleanSupplier captureStartAllowed) {
 		validateDependencies(contextRepository, bookletSupplier, questionExtractor, examPdfSessionSupplier,
