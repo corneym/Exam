@@ -78,7 +78,7 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void multipleChoiceBookletDefaultsResponseTypeAndMarks(FxRobot robot) throws Exception {
+	void multipleChoiceBookletLocksResponseTypeAndMarks(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
 
@@ -86,24 +86,32 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 
-		// Opening a Multiple Choice booklet immediately prepares a one-mark MCQ.
+		// An MCQ-only booklet fixes the response type and the one-mark invariant for
+		// every genuinely new Question.
+		assertTrue(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+		assertTrue(multipleChoice.isDisabled());
+		assertTrue(writtenResponse.isDisabled());
+		assertEquals("1", marks.getText());
+		assertTrue(marks.isDisabled());
+
+		robot.interact(writtenResponse::fire);
+
+		// Even a programmatic fire of the disabled alternative must not change the
+		// booklet-constrained response type.
 		assertTrue(multipleChoice.isSelected());
 		assertFalse(writtenResponse.isSelected());
 		assertEquals("1", marks.getText());
 		assertTrue(marks.isDisabled());
+		Question saved = captureQuestion(robot, "MC1");
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, saved.getResponseType());
 
-		robot.clickOn(writtenResponse);
-
-		// Manual override remains possible, and a one-mark Written Response is valid.
-		assertFalse(multipleChoice.isSelected());
-		assertTrue(writtenResponse.isSelected());
-		assertEquals("1", marks.getText());
-		assertFalse(marks.isDisabled());
-
-		robot.clickOn(multipleChoice);
-
-		// Returning to MCQ immediately restores and locks the one-mark invariant.
+		// Saving one MCQ starts the next blank Question immediately. The booklet-level
+		// constraint must already be active before another question number is entered.
 		assertTrue(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+		assertTrue(multipleChoice.isDisabled());
+		assertTrue(writtenResponse.isDisabled());
 		assertEquals("1", marks.getText());
 		assertTrue(marks.isDisabled());
 	}
@@ -191,19 +199,24 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void reopeningMultipleChoiceBookletAppliesDefaultOnlyToNewQuestions(FxRobot robot) throws Exception {
+	void reopeningMultipleChoiceBookletAppliesFormatOnlyToNewQuestions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
 
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 
-		// Deliberately override the booklet default for one existing Question.
-		robot.clickOn(writtenResponse);
-		Question existing = captureQuestion(robot, "WR1");
-		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, existing.getResponseType());
-
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Simulate historical persisted data that predates the booklet-format rule.
+		// Reopening the booklet must not rewrite an existing Question's stored type.
+		Question existing = repository.save(originalBooklet, "WR1", "", 1,
+				List.of(new QuestionRegion(originalBooklet, 1, 0.10, 0.10, 0.70, 0.20)), classification, false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE);
+
 		Path storedPdf = new PdfStore(pdfDataRoot).resolve(originalBooklet.getSourceDocument().getRelativePath());
 
 		// Reopen the already-persisted booklet through the normal Open Exam workflow.
@@ -219,14 +232,16 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 
-		// The reopened booklet supplies the default for the next new Question.
+		// The persisted MCQ-only booklet fixes the next genuinely new Question.
 		assertTrue(multipleChoice.isSelected());
 		assertFalse(writtenResponse.isSelected());
+		assertTrue(multipleChoice.isDisabled());
+		assertTrue(writtenResponse.isDisabled());
 		assertEquals("1", marks.getText());
 		assertTrue(marks.isDisabled());
-		// Reopening an Exam starts a fresh Question entry. Booklet-level response
-		// defaults are retained, but per-Question curriculum classification must be
-		// selected again rather than inherited from the previous Question.
+
+		// A newly opened Exam does not inherit the preceding Question's curriculum
+		// classification, so select it again before capturing the new Question.
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
@@ -234,11 +249,11 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question newlyCaptured = captureQuestion(robot, "MC2");
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, newlyCaptured.getResponseType());
 
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		Question reloadedExisting = repository.findById(existing.getId()).orElseThrow();
 
-		// Reopening the booklet and applying its default must not rewrite the response
-		// type of any Question that already existed.
+		// Booklet format constrains new capture only; historical persisted Question
+		// data
+		// remains authoritative until explicitly corrected.
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedExisting.getResponseType());
 	}
 
@@ -274,6 +289,31 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(addRegion.isVisible());
 		assertTrue(save.isDisabled());
 		assertFalse(answerCapturePane().canCaptureRegions());
+	}
+
+	@Test
+	void writtenResponseBookletLocksResponseTypeButLeavesMarksEditable(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Written Paper",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+
+		// A Written-Response-only booklet fixes the response type but does not impose
+		// any automatic mark value.
+		assertFalse(multipleChoice.isSelected());
+		assertTrue(writtenResponse.isSelected());
+		assertTrue(multipleChoice.isDisabled());
+		assertTrue(writtenResponse.isDisabled());
+		assertFalse(marks.isDisabled());
+
+		robot.interact(multipleChoice::fire);
+
+		// The disabled MCQ alternative cannot override the booklet's declared format.
+		assertFalse(multipleChoice.isSelected());
+		assertTrue(writtenResponse.isSelected());
+		assertFalse(marks.isDisabled());
 	}
 
 	@Test

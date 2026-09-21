@@ -702,7 +702,13 @@ public final class SqliteDatabase {
 			verifyVersion07CurriculumAuthoringSchema(connection);
 		}
 		if (version >= 8) {
-			verifyVersion07QuestionResponseTypeSchema(connection);
+			// Schema version 8 introduced the persisted Question response type.
+			verifyVersion08QuestionResponseTypeSchema(connection);
+		}
+		if (version >= 9) {
+
+			// Schema version 9 introduced the persisted booklet-level Question format.
+			verifyVersion09BookletQuestionFormatSchema(connection);
 		}
 	}
 
@@ -969,7 +975,7 @@ public final class SqliteDatabase {
 				List.of(List.of("syllabus_version_id", "curriculum_code")));
 	}
 
-	private void verifyVersion07QuestionResponseTypeSchema(Connection connection) throws SQLException {
+	private void verifyVersion08QuestionResponseTypeSchema(Connection connection) throws SQLException {
 		boolean hasResponseType = false;
 		try (Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
@@ -978,6 +984,9 @@ public final class SqliteDatabase {
 					continue;
 				}
 				hasResponseType = true;
+
+				// Version 8 requires every persisted Question to carry a response-type
+				// value, using UNKNOWN for unresolved legacy Questions.
 				if (result.getInt("notnull") == 0) {
 					throw new SQLException("questions column must be NOT NULL: response_type");
 				}

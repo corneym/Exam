@@ -807,9 +807,9 @@ public final class QuestionCapturePane extends VBox {
 
 	private void applyAutomaticResponseType() {
 
-		// Imported and edited Questions retain their persisted response type. Automatic
-		// booklet defaults apply only while constructing a genuinely new Question.
-		if (responseTypeManuallySelected || importedCaptureMode || importedQuestion != null || editingQuestion != null
+		// Imported, edited and legacy-split Questions retain their persisted response
+		// type. Booklet format controls only genuinely new Question capture.
+		if (importedCaptureMode || importedQuestion != null || editingQuestion != null
 				|| legacySplitCaptureState != null) {
 			return;
 		}
@@ -817,21 +817,47 @@ public final class QuestionCapturePane extends VBox {
 		ExamBooklet booklet = bookletSupplier.get();
 		if (booklet == null) {
 
-			// Before a booklet is active there is no safe response-type default.
+			// Without an active booklet there is no format constraint or safe default.
+			setResponseTypeDisabled(false);
 			selectResponseType(null);
+			updateMarksFieldForResponseType();
 			return;
 		}
 
 		switch (booklet.getQuestionFormat()) {
-		case MULTIPLE_CHOICE -> selectResponseType(QuestionResponseType.MULTIPLE_CHOICE);
-		case WRITTEN_RESPONSE -> selectResponseType(QuestionResponseType.WRITTEN_RESPONSE);
+		case MULTIPLE_CHOICE -> {
+
+			// An MCQ-only booklet fixes every new Question as Multiple Choice.
+			responseTypeManuallySelected = false;
+			selectResponseType(QuestionResponseType.MULTIPLE_CHOICE);
+			setResponseTypeDisabled(true);
+		}
+		case WRITTEN_RESPONSE -> {
+
+			// A Written-Response-only booklet fixes every new Question as Written
+			// Response while leaving its mark value editable.
+			responseTypeManuallySelected = false;
+			selectResponseType(QuestionResponseType.WRITTEN_RESPONSE);
+			setResponseTypeDisabled(true);
+		}
 		case MIXED, UNSPECIFIED -> {
 
-			// Mixed and legacy-unspecified booklets use only safe Written Response
-			// inference. A one-mark Question never implies Multiple Choice.
+			// Only Mixed or unresolved legacy booklets allow a per-Question response-type
+			// choice. An explicit user choice takes precedence over later inference.
+			setResponseTypeDisabled(false);
+			if (responseTypeManuallySelected) {
+				return;
+			}
+
+			// Conservative inference may identify Written Response, but one mark alone
+			// must never be treated as evidence of Multiple Choice.
 			selectResponseType(shouldInferWrittenResponse() ? QuestionResponseType.WRITTEN_RESPONSE : null);
 		}
 		}
+
+		// Apply the one-mark MCQ invariant, or restore editable marks for Written
+		// Response, after the booklet policy has selected the response type.
+		updateMarksFieldForResponseType();
 	}
 
 	private void backfillDerivedSourceQuestions() {
@@ -2146,11 +2172,11 @@ public final class QuestionCapturePane extends VBox {
 
 	private void showNewQuestionMode() {
 		questionCodeField.setDisable(false);
-		marksField.setDisable(false);
-		setResponseTypeDisabled(false);
 
-		// Reapply MCQ marks locking after generic new-question enablement.
-		updateMarksFieldForResponseType();
+		// Reapply the active booklet's response-type policy whenever ordinary new
+		// Question capture becomes visible. Single-format booklets remain locked;
+		// Mixed booklets retain editable response-type controls.
+		applyAutomaticResponseType();
 
 		curriculumSelectorPane.setDisable(false);
 		curriculumSelectorPane.setSyllabusContextLocked(false);

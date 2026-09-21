@@ -1211,6 +1211,123 @@ class SqliteConnectionTest {
 	}
 
 	@Test
+	void rejectsVersion05DatabaseWithoutSharedQuestionSchema() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-five-missing-shared-question-schema.db"));
+
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Build a genuine version-four database, then falsely claim version five
+			// without applying the migration that introduces shared-question structure.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 5");
+			}
+			connection.commit();
+		}
+
+		// A database claiming version five must contain the source-question and shared
+		// context structures introduced by the v4-to-v5 migration.
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		// The version-five verifier reaches the absent source_questions structure
+		// through its required-column checks rather than a separate table-exists check.
+		assertTrue(exception.getMessage().contains("source_questions is missing required column"));
+		assertEquals(5, database.schemaVersion());
+	}
+
+	@Test
+	void rejectsVersion07DatabaseWithoutCurriculumAuthoringSchema() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-seven-missing-authoring-schema.db"));
+
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Build a genuine version-six database, then falsely claim version seven
+			// without applying the curriculum-authoring migration.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
+
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 7");
+			}
+			connection.commit();
+		}
+
+		// Version seven requires the curriculum-authoring columns added to
+		// syllabus_versions and curriculum_nodes.
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		// Several version-seven columns are absent from the deliberately falsified
+		// version-six schema, so do not depend on HashSet iteration choosing one name.
+		assertTrue(exception.getMessage().contains("syllabus_versions is missing required column"));
+		assertEquals(7, database.schemaVersion());
+	}
+
+	@Test
+	void rejectsVersion08DatabaseWithoutQuestionResponseType() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-eight-missing-response-type.db"));
+
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Build a genuine version-seven database, then falsely claim version eight
+			// without applying the response-type migration.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
+
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 8");
+			}
+			connection.commit();
+		}
+
+		// Version eight requires every Question table to contain the persisted
+		// response_type column introduced by the v7-to-v8 migration.
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains("questions is missing required column response_type"));
+		assertEquals(8, database.schemaVersion());
+	}
+
+	@Test
+	void rejectsVersion09DatabaseWithoutBookletQuestionFormat() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("booklet-missing-question-format.db"));
+		database.initialiseSchema();
+
+		// Preserve the older valid ExamBooklet structure while deliberately removing
+		// only the column introduced by schema version 9.
+		replaceTable(database, "exam_booklets", """
+				CREATE TABLE exam_booklets (
+				    id INTEGER PRIMARY KEY,
+				    exam_id INTEGER NOT NULL,
+				    source_document_id INTEGER NOT NULL,
+				    booklet_name TEXT NOT NULL,
+				    FOREIGN KEY (exam_id)
+				        REFERENCES exams(id),
+				    FOREIGN KEY (source_document_id)
+				        REFERENCES source_documents(id),
+				    UNIQUE (exam_id, booklet_name)
+				)
+				""");
+
+		// A database declaring version 9 must be rejected when its version-9
+		// booklet-format structure is absent.
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains("exam_booklets is missing required column question_format"));
+	}
+
+	@Test
 	void rollsBackStructuralMigrationWhenVersionUpdateFails() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("migration-rollback.db"));
 		try (Connection connection = database.openConnection()) {

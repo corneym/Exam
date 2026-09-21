@@ -234,7 +234,7 @@ abstract class QuestionBankApplicationUiTestBase {
 
 		// Preserve the historical Written Response fixture default for tests that are
 		// not specifically exercising response-type defaults.
-		robot.interact(() -> writtenResponse.setSelected(true));
+		robot.clickOn(writtenResponse);
 	}
 
 	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
