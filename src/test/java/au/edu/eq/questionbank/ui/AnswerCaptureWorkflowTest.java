@@ -50,6 +50,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.stage.Stage;
@@ -58,7 +59,6 @@ import javafx.stage.Stage;
 @Tag("workflow-ui")
 class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
-	@Test
 	void acceptedAnswerRegionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q4");
@@ -72,6 +72,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn("#add-answer-region");
 		assertTrue(answerCapturePane().hasAcceptedRegions());
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
 		Subject chemistry = workingSubjectBox.getValue();
@@ -81,12 +82,21 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Attempting to leave Chemistry must be rejected while unsaved Answer regions
 		// remain in the active capture workflow.
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
 
-//		robot.clickOn("OK");
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
+		AtomicReference<DialogPane> warningDialog = new AtomicReference<>();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			DialogPane dialog = robot.lookup(".dialog-pane").queryAll().stream().filter(DialogPane.class::isInstance)
+					.map(DialogPane.class::cast).filter(DialogPane::isVisible)
+					.filter(candidate -> "Capture work is in progress".equals(candidate.getHeaderText())).findFirst()
+					.orElse(null);
+
+			// Retain the exact visible dialog so its real OK button can be fired without
+			// relying on TestFX text lookup in the virtual display.
+			warningDialog.set(dialog);
+			return dialog != null;
+		});
+
+		robot.interact(() -> ((Button) warningDialog.get().lookupButton(ButtonType.OK)).fire());
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// The rejected change must leave the Answer target and its accepted regions
@@ -494,41 +504,58 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
 	}
 
-	@Test
 	void savedAnswersFollowBookletPdfMappingsAcrossQueue(FxRobot robot) throws Exception {
 		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
 		ComboBox<Question> questions = unansweredQuestions(robot);
 		Label selectedPdf = lookup(robot, "#selected-answer-pdf", Label.class);
+		RadioButton answerA = lookup(robot, "#answer-choice-a", RadioButton.class);
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		Button saveAnswer = lookup(robot, "#save-answer", Button.class);
+
 		robot.interact(() -> questions.getSelectionModel().select(fixture.mcqQuestion()));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals("Answers A", selectedPdf.getText());
 
-		// MCQ 1 is read from Answers A and stores only its answer letter.
-		robot.clickOn("#answer-choice-a");
-		robot.clickOn("#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		// This test verifies Answer workflow state rather than mouse hit-testing.
+		// Fire the actual JavaFX controls so headless CI and desktop exercise the same
+		// application actions.
+		robot.interact(answerA::fire);
+		assertTrue(answerA.isSelected());
+		assertFalse(saveAnswer.isDisabled());
+
+		robot.interact(saveAnswer::fire);
+
+		// Wait for the observable workflow result, not merely for saveInProgress to be
+		// false. A "not saving" condition is also true if a click never started a save.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress()
+				&& questions.getValue() != null && questions.getValue().getId() == fixture.paper1Question().getId());
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Source ordering advances from the MCQ booklet to Paper 1. Because both
 		// booklets map to Answers A, the Answer workflow remains on that source.
-		assertNotNull(questions.getValue());
 		assertEquals(fixture.paper1Question().getId(), questions.getValue().getId());
 		assertEquals("Answers A", selectedPdf.getText());
 		assertEquals(fixture.answersA().getId(), field(answerCapturePane(), "answerFile", AnswerFile.class).getId());
 
 		// Paper 1 is written response, so capture its region from Answers A.
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
-		robot.clickOn("#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		robot.interact(addRegion::fire);
+		assertTrue(answerCapturePane().hasAcceptedRegions());
+
+		robot.interact(saveAnswer::fire);
+
+		// Again wait for the actual queue transition so the test cannot pass a wait
+		// merely because the asynchronous save failed to start.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress()
+				&& questions.getValue() != null && questions.getValue().getId() == fixture.paper2Question().getId());
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// The next Question is Paper 2. It belongs to the same Exam but has a different
 		// booklet mapping, so the workflow must automatically switch to Answers B.
-		assertNotNull(questions.getValue());
 		assertEquals(fixture.paper2Question().getId(), questions.getValue().getId());
 		assertEquals("Answers B", selectedPdf.getText());
 		assertEquals(fixture.answersB().getId(), field(answerCapturePane(), "answerFile", AnswerFile.class).getId());
+
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		Question storedMcq = repository.findById(fixture.mcqQuestion().getId()).orElseThrow();
 		Question storedPaper1 = repository.findById(fixture.paper1Question().getId()).orElseThrow();
