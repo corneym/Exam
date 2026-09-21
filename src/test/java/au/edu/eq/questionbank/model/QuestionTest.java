@@ -174,6 +174,16 @@ class QuestionTest {
 	}
 
 	@Test
+	void rejectsMultipleChoiceWithMoreThanOneMark() {
+		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+				() -> new Question(33, booklet, "Q1", "", 2, List.of(), createClassification(), false, null, null,
+						QuestionResponseType.MULTIPLE_CHOICE));
+
+		// The invariant belongs to Question itself, not only to JavaFX validation.
+		assertEquals("Multiple-choice questions must be worth exactly 1 mark", error.getMessage());
+	}
+
+	@Test
 	void rejectsNonPositiveMarks() {
 		assertThrows(IllegalArgumentException.class,
 				() -> new Question(1, booklet, "Q1", "", 0, List.of(), createClassification(), false));

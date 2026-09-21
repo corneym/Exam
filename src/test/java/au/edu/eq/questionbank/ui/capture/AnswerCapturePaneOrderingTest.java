@@ -58,6 +58,32 @@ class AnswerCapturePaneOrderingTest {
 		assertEquals(List.of("3", "3a", "3b", "10"), result.stream().map(Question::getQuestionCode).toList());
 	}
 
+	@Test
+	void workingSubjectExcludesUnansweredQuestionsFromOtherSubjects() {
+		Question chemistryQuestion = question(10, "4");
+
+		// Build one otherwise valid unanswered Question belonging to a different
+		// Subject. Its capture state is deliberately equivalent to the Chemistry
+		// Question so Subject alone determines whether it belongs in the work queue.
+		Subject engineering = new Subject(30, "Engineering");
+		SyllabusVersion engineeringSyllabus = new SyllabusVersion(31, engineering, "2025", true);
+		Unit engineeringUnit = new Unit(32, engineeringSyllabus, "1", "Unit 1", 1);
+		Topic engineeringTopic = new Topic(33, engineeringSyllabus, engineeringUnit, "1.1", "Topic 1", 1);
+		Descriptor engineeringDescriptor = new Descriptor(34, engineeringSyllabus, engineeringTopic, "1.1.1",
+				"Descriptor 1", 1);
+		Exam engineeringExam = new Exam(35, engineering, provider, 2024, "External Assessment");
+		ExamBooklet engineeringBooklet = new ExamBooklet(36, engineeringExam, "Paper 1",
+				new SourceDocument(37, "Engineering/2024/paper1.pdf"));
+		Question engineeringQuestion = new Question(38, engineeringBooklet, "1", "", 1, List.of(),
+				engineeringDescriptor, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+
+		// The Working Subject is a transient queue filter. Questions belonging to
+		// other Subjects remain stored but are omitted from the active Answer queue.
+		List<Question> result = AnswerCapturePane
+				.unansweredQuestionsInSourceOrder(List.of(engineeringQuestion, chemistryQuestion), Set.of(), chemistry);
+		assertEquals(List.of(chemistryQuestion), result);
+	}
+
 	private Question question(long id, String questionCode) {
 		/*
 		 * Answer-queue ordering depends only on Question metadata, so source regions

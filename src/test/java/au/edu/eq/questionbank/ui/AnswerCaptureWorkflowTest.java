@@ -24,6 +24,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -44,6 +45,44 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	@Test
+	void acceptedAnswerRegionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "Q4");
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+
+		// Accept one Answer region without saving it. This state must remain attached
+		// to the current Working Subject until the Answer is saved or cancelled.
+		dragRegionOnDisplayedPage(robot);
+		robot.clickOn("#add-answer-region");
+		assertTrue(answerCapturePane().hasAcceptedRegions());
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject chemistry = workingSubjectBox.getValue();
+		Subject physics = workingSubjectBox.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+
+		// Attempting to leave Chemistry must be rejected while unsaved Answer regions
+		// remain in the active capture workflow.
+		Platform.runLater(() -> workingSubjectBox.setValue(physics));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
+		robot.clickOn("OK");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The rejected change must leave the Answer target and its accepted regions
+		// intact as well as restoring the visible Working Subject.
+		assertEquals(chemistry, workingSubjectBox.getValue());
+		assertTrue(answerCapturePane().hasAcceptedRegions());
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		assertNotNull(unansweredQuestions.getValue());
+		assertEquals(question.getId(), unansweredQuestions.getValue().getId());
+		assertEquals(chemistry, field(answerCapturePane(), "workingSubject", Subject.class));
+	}
 
 	@Test
 	void answerEditCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {

@@ -42,14 +42,17 @@ class SqliteQuestionCaptureServiceTest {
 				false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
 
-		// Deliberately use the old constructor without a response-type argument.
+		// The compatibility request still preserves the existing response type, while
+		// retaining the mandatory one-mark value for an MCQ.
 		Question edited = service.save(
 				new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.EDIT, fixture.booklet(),
-						original, "Q3", 2, original.getRegions(), fixture.classification(), null, null));
+						original, "Q3", 1, original.getRegions(), fixture.classification(), null, null));
+
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, edited.getResponseType());
+
 		Question reloaded = repository.findById(original.getId()).orElseThrow();
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
-		assertEquals(2, reloaded.getMarks());
+		assertEquals(1, reloaded.getMarks());
 	}
 
 	@Test
@@ -220,6 +223,21 @@ class SqliteQuestionCaptureServiceTest {
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, saved.getResponseType());
 		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(saved.getId()).orElseThrow();
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
+	}
+
+	@Test
+	void rejectsMultipleChoiceCaptureWithMoreThanOneMark() throws Exception {
+		Fixture fixture = createFixture("reject-multi-mark-mcq.db");
+
+		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+				() -> new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW,
+						fixture.booklet(), null, "Q1", 2,
+						List.of(new QuestionRegion(fixture.booklet(), 1, 0.10, 0.10, 0.70, 0.20)),
+						fixture.classification(), QuestionResponseType.MULTIPLE_CHOICE, null, null));
+
+		// Capture metadata cannot represent an MCQ with a mark value other than one.
+		assertEquals("Multiple-choice questions must be worth exactly 1 mark", error.getMessage());
+		assertTrue(new SqliteQuestionRepository(fixture.database()).findAll().isEmpty());
 	}
 
 	private Fixture createFixture(String databaseName) throws Exception {

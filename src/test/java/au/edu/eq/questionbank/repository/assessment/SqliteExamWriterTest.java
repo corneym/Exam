@@ -20,6 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
@@ -132,17 +133,27 @@ class SqliteExamWriterTest {
 		Path databasePath = tempDirectory.resolve("all-exam-booklets.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+
 		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		ExamProvider provider = writer.insertExamProvider("QCAA");
 		Exam exam = writer.insertExam(chemistry, provider, 2024, "External Assessment");
+
 		SourceDocument paperOneSource = writer.insertSourceDocument("Chemistry/QCAA/2024/paper1.pdf");
 		SourceDocument paperTwoSource = writer.insertSourceDocument("Chemistry/QCAA/2024/paper2.pdf");
-		ExamBooklet paperOne = writer.insertExamBooklet(exam, paperOneSource, "Paper 1");
-		ExamBooklet paperTwo = writer.insertExamBooklet(exam, paperTwoSource, "Paper 2");
+
+		// Use different explicit formats so retrieval proves the value belongs to each
+		// individual booklet rather than to the Exam as a whole.
+		ExamBooklet paperOne = writer.insertExamBooklet(exam, paperOneSource, "Paper 1",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		ExamBooklet paperTwo = writer.insertExamBooklet(exam, paperTwoSource, "Paper 2",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+
 		List<ExamBooklet> found = writer.findAllExamBooklets();
+
 		assertEquals(2, found.size());
 		assertEquals(List.of(paperOne.getId(), paperTwo.getId()), found.stream().map(ExamBooklet::getId).toList());
+
 		ExamBooklet first = found.getFirst();
 		assertEquals(exam.getId(), first.getExam().getId());
 		assertEquals("QCAA", first.getExam().getProvider().getName());
@@ -150,6 +161,10 @@ class SqliteExamWriterTest {
 		assertEquals("External Assessment", first.getExam().getName());
 		assertEquals(paperOneSource.getId(), first.getSourceDocument().getId());
 		assertEquals("Chemistry/QCAA/2024/paper1.pdf", first.getSourceDocument().getRelativePath());
+
+		// Each reconstructed booklet must carry its own persisted Question format.
+		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, found.get(0).getQuestionFormat());
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, found.get(1).getQuestionFormat());
 	}
 
 	@Test
@@ -265,6 +280,33 @@ class SqliteExamWriterTest {
 				assertFalse(result.next());
 			}
 		}
+	}
+
+	@Test
+	void persistsAndReloadsExplicitBookletQuestionFormat() throws Exception {
+		Path databasePath = tempDirectory.resolve("booklet-question-format.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		SourceDocument sourceDocument = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+
+		// New booklet creation must persist the explicit format rather than relying
+		// on the schema default used only for legacy/unspecified callers.
+		ExamBooklet stored = writer.insertExamBooklet(exam, sourceDocument, "Paper 1",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+
+		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, stored.getQuestionFormat());
+
+		// Reload through the normal source-document lookup to prove the value survives
+		// reconstruction from SQLite rather than only existing on the returned object.
+		ExamBooklet restored = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
+
+		assertNotNull(restored);
+		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, restored.getQuestionFormat());
 	}
 
 	@Test

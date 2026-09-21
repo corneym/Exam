@@ -14,19 +14,43 @@ public class ExamBooklet {
 	private final String name;
 	private final SourceDocument sourceDocument;
 
+	// Question format belongs to the booklet because separate booklets from one
+	// Exam may contain different styles of Question.
+	private final ExamBookletQuestionFormat questionFormat;
+
 	/**
-	 * Creates a booklet belonging to an exam.
+	 * Creates a booklet whose question format has not been explicitly recorded.
+	 * <p>
+	 * This constructor preserves compatibility with existing persisted and test
+	 * data created before booklet question-format metadata was introduced.
 	 *
 	 * @param id             the positive persistent booklet identifier
 	 * @param exam           the exam to which the booklet belongs
 	 * @param name           the non-blank booklet name
 	 * @param sourceDocument the source file containing the booklet
-	 * @throws IllegalArgumentException if {@code id} is not positive or
-	 *                                  {@code name} is blank
-	 * @throws NullPointerException     if {@code exam} or {@code sourceDocument} is
-	 *                                  {@code null}
 	 */
 	public ExamBooklet(long id, Exam exam, String name, SourceDocument sourceDocument) {
+
+		// Existing callers cannot supply information that was never previously
+		// recorded, so retain that distinction rather than guessing a format.
+		this(id, exam, name, sourceDocument, ExamBookletQuestionFormat.UNSPECIFIED);
+	}
+
+	/**
+	 * Creates a booklet belonging to an exam with an explicit question format.
+	 *
+	 * @param id             the positive persistent booklet identifier
+	 * @param exam           the exam to which the booklet belongs
+	 * @param name           the non-blank booklet name
+	 * @param sourceDocument the source file containing the booklet
+	 * @param questionFormat the kinds of Questions expected in this booklet
+	 * @throws IllegalArgumentException if {@code id} is not positive or
+	 *                                  {@code name} is blank
+	 * @throws NullPointerException     if {@code exam}, {@code sourceDocument} or
+	 *                                  {@code questionFormat} is {@code null}
+	 */
+	public ExamBooklet(long id, Exam exam, String name, SourceDocument sourceDocument,
+			ExamBookletQuestionFormat questionFormat) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -39,10 +63,17 @@ public class ExamBooklet {
 		if (sourceDocument == null) {
 			throw new NullPointerException("sourceDocument");
 		}
+		if (questionFormat == null) {
+			throw new NullPointerException("questionFormat");
+		}
 		this.id = id;
 		this.exam = exam;
 		this.name = name;
 		this.sourceDocument = sourceDocument;
+
+		// Store the booklet-level capture hint independently from any individual
+		// Question response type.
+		this.questionFormat = questionFormat;
 	}
 
 	/**
@@ -70,6 +101,15 @@ public class ExamBooklet {
 	 */
 	public String getName() {
 		return name;
+	}
+
+	/**
+	 * Returns the kinds of Questions expected in this booklet.
+	 *
+	 * @return persisted booklet question format
+	 */
+	public ExamBookletQuestionFormat getQuestionFormat() {
+		return questionFormat;
 	}
 
 	/**

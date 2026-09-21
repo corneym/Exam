@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -15,9 +16,11 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
@@ -33,6 +36,77 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	@Test
+	void mixedBookletInfersOnlyWrittenResponse(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Mixed Paper",
+				ExamBookletQuestionFormat.MIXED);
+
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+
+		// One mark alone is ambiguous and must never be used to infer MCQ.
+		robot.interact(() -> marks.setText("1"));
+		assertFalse(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+
+		// A conservative part-letter code safely identifies Written Response.
+		robot.interact(() -> questionCode.setText("21a"));
+		assertFalse(multipleChoice.isSelected());
+		assertTrue(writtenResponse.isSelected());
+
+		// Removing the evidence returns a non-manual inference to unresolved.
+		robot.interact(() -> questionCode.setText("21"));
+		assertFalse(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+
+		// More than one mark also safely identifies Written Response.
+		robot.interact(() -> marks.setText("2"));
+		assertFalse(multipleChoice.isSelected());
+		assertTrue(writtenResponse.isSelected());
+
+		robot.clickOn(multipleChoice);
+		robot.interact(() -> questionCode.setText("21a"));
+
+		// An explicit per-question choice overrides subsequent automatic inference.
+		assertTrue(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+		assertEquals("1", marks.getText());
+		assertTrue(marks.isDisabled());
+	}
+
+	@Test
+	void multipleChoiceBookletDefaultsResponseTypeAndMarks(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+
+		// Opening a Multiple Choice booklet immediately prepares a one-mark MCQ.
+		assertTrue(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+		assertEquals("1", marks.getText());
+		assertTrue(marks.isDisabled());
+
+		robot.clickOn(writtenResponse);
+
+		// Manual override remains possible, and a one-mark Written Response is valid.
+		assertFalse(multipleChoice.isSelected());
+		assertTrue(writtenResponse.isSelected());
+		assertEquals("1", marks.getText());
+		assertFalse(marks.isDisabled());
+
+		robot.clickOn(multipleChoice);
+
+		// Returning to MCQ immediately restores and locks the one-mark invariant.
+		assertTrue(multipleChoice.isSelected());
+		assertEquals("1", marks.getText());
+		assertTrue(marks.isDisabled());
+	}
 
 	@Test
 	void multipleChoiceUsesChoicesAndAnswerPdfWithoutAnswerRegions(FxRobot robot) throws Exception {
@@ -95,7 +169,7 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Clear that selection to exercise the explicit-response-type requirement.
 		robot.interact(() -> writtenResponse.getToggleGroup().selectToggle(null));
 		robot.clickOn(questionCode).write("R1");
-		robot.clickOn(marks).write("2");
+		robot.clickOn(marks).write("1");
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
 		assertTrue(save.isDisabled(), "Question capture must require an explicit response type");
@@ -114,6 +188,58 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Completing a new Question must reset both radio buttons.
 		assertFalse(multipleChoice.isSelected());
 		assertFalse(writtenResponse.isSelected());
+	}
+
+	@Test
+	void reopeningMultipleChoiceBookletAppliesDefaultOnlyToNewQuestions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+
+		// Deliberately override the booklet default for one existing Question.
+		robot.clickOn(writtenResponse);
+		Question existing = captureQuestion(robot, "WR1");
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, existing.getResponseType());
+
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		Path storedPdf = new PdfStore(pdfDataRoot).resolve(originalBooklet.getSourceDocument().getRelativePath());
+
+		// Reopen the already-persisted booklet through the normal Open Exam workflow.
+		WaitForAsyncUtils.asyncFx(() -> {
+			examMetadataPane().beginImport();
+			examImportDialog().show();
+		}).get();
+
+		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
+
+		robot.clickOn("#confirm-exam-details");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+
+		// The reopened booklet supplies the default for the next new Question.
+		assertTrue(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+		assertEquals("1", marks.getText());
+		assertTrue(marks.isDisabled());
+		// Reopening an Exam starts a fresh Question entry. Booklet-level response
+		// defaults are retained, but per-Question curriculum classification must be
+		// selected again rather than inherited from the previous Question.
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+
+		Question newlyCaptured = captureQuestion(robot, "MC2");
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, newlyCaptured.getResponseType());
+
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question reloadedExisting = repository.findById(existing.getId()).orElseThrow();
+
+		// Reopening the booklet and applying its default must not rewrite the response
+		// type of any Question that already existed.
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedExisting.getResponseType());
 	}
 
 	@Override

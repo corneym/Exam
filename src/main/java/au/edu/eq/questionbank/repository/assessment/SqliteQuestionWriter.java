@@ -333,6 +333,12 @@ public final class SqliteQuestionWriter {
 		if (responseType == null) {
 			throw new NullPointerException("responseType");
 		}
+		if (responseType == QuestionResponseType.MULTIPLE_CHOICE && marks != 1) {
+
+			// Reject inconsistent capture metadata before any persistence transaction can
+			// begin, including edit and imported-question workflows.
+			throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
+		}
 		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Source question must belong to the question's booklet");
 		}

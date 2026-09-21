@@ -53,7 +53,6 @@ class QuestionSearchResultTest {
 
 	@Test
 	void scopeInvariantsRejectMisrepresentedApplicability() {
-		Fixture fixture = new Fixture();
 
 		// The public factories are deliberately asymmetric: callers cannot manufacture
 		// an All Questions result that pretends curriculum applicability was evaluated.

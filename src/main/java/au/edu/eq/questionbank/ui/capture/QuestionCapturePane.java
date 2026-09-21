@@ -12,6 +12,7 @@ import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -19,6 +20,7 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService;
@@ -92,6 +94,9 @@ public final class QuestionCapturePane extends VBox {
 	private final Runnable selectionClearHandler;
 	private final Consumer<List<Question>> questionsChangedHandler;
 	private final IntConsumer examPageNavigationHandler;
+	// Legacy booklets must acquire explicit format metadata before a genuinely new
+	// Question can be persisted.
+	private final BooleanSupplier questionFormatReadyHandler;
 
 	// Reuse the worker's snapshot throughout synchronous listeners fired by save
 	// completion.
@@ -150,6 +155,16 @@ public final class QuestionCapturePane extends VBox {
 	};
 	private LegacySplitCaptureState legacySplitCaptureState;
 
+	// Working Subject is transient workspace state. A null value preserves the
+	// existing all-subject behaviour until the workspace selector is applied.
+	private Subject workingSubject;
+	// Automatic defaults may be replaced by an explicit response-type choice.
+	private boolean responseTypeManuallySelected;
+
+	// Suppress inference while a response-type change itself updates the marks
+	// field.
+	private boolean updatingResponseTypeSelection;
+
 	/**
 	 * Creates the question-capture workflow and its repository integration.
 	 * Suppliers provide the active booklet and PDF session, while the callbacks
@@ -163,12 +178,13 @@ public final class QuestionCapturePane extends VBox {
 			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
 			Predicate<Question> importedQuestionActivationHandler, IntConsumer examPageNavigationHandler,
 			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
-			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler) {
+			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler,
+			BooleanSupplier questionFormatReadyHandler) {
 		validateDependencies(questionRepository, sourceQuestionRepository, questionCaptureService,
 				legacyQuestionSplitService, sharedContextCapturePane, questionExtractor, curriculumSelectionModel,
 				curriculumSelectorPane, bookletSupplier, examPdfSessionSupplier, importedQuestionActivationHandler,
 				examPageNavigationHandler, questionTargetChangeAllowed, questionSelectionTransferHandler,
-				selectionClearHandler, questionsChangedHandler);
+				selectionClearHandler, questionsChangedHandler, questionFormatReadyHandler);
 		this.questionRepository = questionRepository;
 		this.questionExtractor = questionExtractor;
 		this.curriculumSelectionModel = curriculumSelectionModel;
@@ -185,10 +201,42 @@ public final class QuestionCapturePane extends VBox {
 		this.questionSelectionTransferHandler = questionSelectionTransferHandler;
 		this.questionCaptureService = questionCaptureService;
 		this.legacyQuestionSplitService = legacyQuestionSplitService;
+		this.questionFormatReadyHandler = questionFormatReadyHandler;
 		configureControls();
 		configureActions();
 		buildContent();
 		configurePane();
+	}
+
+	/**
+	 * Returns imported Questions still requiring Question-region or shared-context
+	 * capture, optionally restricted to one Working Subject.
+	 *
+	 * @param questions      current Question snapshot
+	 * @param workingSubject active Working Subject, or {@code null} for all
+	 *                       Subjects
+	 * @return Questions awaiting Question-side capture
+	 */
+	static List<Question> awaitingCaptureForWorkingSubject(List<Question> questions, Subject workingSubject) {
+		if (questions == null) {
+			throw new NullPointerException("questions");
+		}
+		List<Question> awaitingCapture = new ArrayList<>();
+		for (Question question : questions) {
+
+			// Working Subject is a transient workspace filter. Questions belonging to
+			// another Subject remain persisted but are excluded from the active queue.
+			if (workingSubject != null && !question.getExam().getSubject().equals(workingSubject)) {
+				continue;
+			}
+
+			// Imported Questions remain in this queue until ordinary regions are captured
+			// and any unresolved shared-context requirement has also been resolved.
+			if (question.getRegions().isEmpty() || question.isSharedContextUnresolved()) {
+				awaitingCapture.add(question);
+			}
+		}
+		return List.copyOf(awaitingCapture);
 	}
 
 	/**
@@ -394,16 +442,6 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
-	 * Attempts to edit a question without a completion callback.
-	 *
-	 * @param question the persisted question to load
-	 */
-	void editQuestion(Question question) {
-		editQuestion(question, () -> {
-		});
-	}
-
-	/**
 	 * Loads a question and its ordered regions for editing after capture-transition
 	 * guards and booklet activation succeed. The existing syllabus is locked.
 	 *
@@ -449,6 +487,8 @@ public final class QuestionCapturePane extends VBox {
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
 		setResponseTypeDisabled(false);
+		// Editing an existing MCQ still enforces its one-mark UI invariant.
+		updateMarksFieldForResponseType();
 		curriculumSelectorPane.setDisable(false);
 		curriculumSelectorPane.setSyllabusContextLocked(true);
 		hideImportedClassification();
@@ -577,11 +617,63 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Reapplies the active booklet's response-type default after a booklet has been
+	 * opened or reactivated.
+	 */
+	public void refreshForActiveBooklet() {
+
+		// Persisted imported/edit Questions remain authoritative. Booklet defaults are
+		// only relevant to the ordinary new-question capture state.
+		if (importedCaptureMode || importedQuestion != null || editingQuestion != null
+				|| legacySplitCaptureState != null) {
+			return;
+		}
+
+		// Opening another booklet starts a fresh automatic/default decision rather than
+		// carrying a manual response-type choice across booklets.
+		responseTypeManuallySelected = false;
+		applyAutomaticResponseType();
+		refreshSaveButtonState();
+	}
+
+	/**
 	 * Reloads persisted questions that still require question-region capture while
 	 * retaining the selected item when it remains available.
 	 */
 	public void refreshImportedQuestions() {
 		refreshImportedQuestions(currentQuestions());
+	}
+
+	/**
+	 * Changes the transient Subject used to filter the imported Question-capture
+	 * queue.
+	 *
+	 * @param workingSubject Subject to display, or {@code null} to display all
+	 *                       Subjects
+	 */
+	public void setWorkingSubject(Subject workingSubject) {
+		this.workingSubject = workingSubject;
+
+		// Re-read the current corpus so a Working Subject change immediately updates
+		// the imported Question queue without modifying persisted Questions.
+		refreshImportedQuestions();
+	}
+
+	/**
+	 * Makes imported-question capture controls available and refreshes their data.
+	 */
+	public void showLegacyCaptureControls() {
+		showImportedQuestionCapture();
+	}
+
+	/**
+	 * Attempts to edit a question without a completion callback.
+	 *
+	 * @param question the persisted question to load
+	 */
+	void editQuestion(Question question) {
+		editQuestion(question, () -> {
+		});
 	}
 
 	/**
@@ -620,13 +712,6 @@ public final class QuestionCapturePane extends VBox {
 		if (importedQuestion == null) {
 			showImportedQueueMode();
 		}
-	}
-
-	/**
-	 * Makes imported-question capture controls available and refreshes their data.
-	 */
-	public void showLegacyCaptureControls() {
-		showImportedQuestionCapture();
 	}
 
 	/**
@@ -724,6 +809,35 @@ public final class QuestionCapturePane extends VBox {
 		completeParts.add(capturedPart);
 		SplitRequest request = createLegacySplitRequest(state, completeParts);
 		persistLegacyQuestionSplit(request);
+	}
+
+	private void applyAutomaticResponseType() {
+
+		// Imported and edited Questions retain their persisted response type. Automatic
+		// booklet defaults apply only while constructing a genuinely new Question.
+		if (responseTypeManuallySelected || importedCaptureMode || importedQuestion != null || editingQuestion != null
+				|| legacySplitCaptureState != null) {
+			return;
+		}
+
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null) {
+
+			// Before a booklet is active there is no safe response-type default.
+			selectResponseType(null);
+			return;
+		}
+
+		switch (booklet.getQuestionFormat()) {
+		case MULTIPLE_CHOICE -> selectResponseType(QuestionResponseType.MULTIPLE_CHOICE);
+		case WRITTEN_RESPONSE -> selectResponseType(QuestionResponseType.WRITTEN_RESPONSE);
+		case MIXED, UNSPECIFIED -> {
+
+			// Mixed and legacy-unspecified booklets use only safe Written Response
+			// inference. A one-mark Question never implies Multiple Choice.
+			selectResponseType(shouldInferWrittenResponse() ? QuestionResponseType.WRITTEN_RESPONSE : null);
+		}
+		}
 	}
 
 	private void backfillDerivedSourceQuestions() {
@@ -916,9 +1030,26 @@ public final class QuestionCapturePane extends VBox {
 		clearRegionsButton.setOnAction(_ -> clearQuestionRegions());
 		removeCurrentSelectionButton.setOnAction(_ -> clearPendingSelection());
 		saveQuestionButton.setOnAction(_ -> validateQuestionForSave());
+
 		questionCodeField.textProperty().addListener((_, _, newCode) -> handleQuestionCodeChanged(newCode));
-		marksField.textProperty().addListener((_, _, _) -> refreshSaveButtonState());
-		responseTypeGroup.selectedToggleProperty().addListener((_, _, _) -> refreshSaveButtonState());
+
+		marksField.textProperty().addListener((_, _, _) -> {
+
+			// Mixed-book inference may become decisive when marks change, but marks
+			// changes caused by selecting MCQ must not recursively change the selection.
+			if (!updatingResponseTypeSelection) {
+				applyAutomaticResponseType();
+			}
+			refreshSaveButtonState();
+		});
+
+		responseTypeGroup.selectedToggleProperty().addListener((_, _, _) -> handleResponseTypeChanged());
+
+		// Action events represent an explicit user override. Programmatic defaults and
+		// inference use selectResponseType() and therefore do not set this flag.
+		multipleChoiceResponseButton.setOnAction(_ -> responseTypeManuallySelected = true);
+		writtenResponseButton.setOnAction(_ -> responseTypeManuallySelected = true);
+
 		curriculumSelectorPane.selectedClassificationProperty().addListener((_, _, _) -> refreshSaveButtonState());
 		firstRegionPreambleCheckBox.selectedProperty()
 				.addListener((_, _, selected) -> handlePreambleOptionChanged(selected.booleanValue()));
@@ -1181,7 +1312,16 @@ public final class QuestionCapturePane extends VBox {
 			return validationError;
 		}
 		if (selectedResponseType() == null) {
-			return "Select whether this question is multiple choice or written response.";
+			ExamBooklet booklet = bookletSupplier.get();
+
+			// An old UNSPECIFIED booklet gets one opportunity at Save to acquire its
+			// explicit format. That choice may itself establish the response-type default.
+			boolean legacyFormatPending = isOrdinaryNewQuestionCapture() && booklet != null
+					&& booklet.getQuestionFormat() == ExamBookletQuestionFormat.UNSPECIFIED;
+
+			if (!legacyFormatPending) {
+				return "Select whether this question is multiple choice or written response.";
+			}
 		}
 		return null;
 	}
@@ -1349,10 +1489,30 @@ public final class QuestionCapturePane extends VBox {
 			refreshSaveButtonState();
 			return;
 		}
+
 		if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
 			sharedContextCapturePane.selectContext(null);
 		}
+
 		refreshPreambleControls();
+
+		// A new multipart code can safely imply Written Response in Mixed or
+		// legacy-unspecified booklets.
+		applyAutomaticResponseType();
+
+		refreshSaveButtonState();
+	}
+
+	private void handleResponseTypeChanged() {
+		updatingResponseTypeSelection = true;
+		try {
+
+			// Response type controls the editable marks state immediately.
+			updateMarksFieldForResponseType();
+		} finally {
+			updatingResponseTypeSelection = false;
+		}
+
 		refreshSaveButtonState();
 	}
 
@@ -1379,6 +1539,14 @@ public final class QuestionCapturePane extends VBox {
 		preambleStatusLabel.setStyle("");
 		preambleStatusLabel.setVisible(false);
 		preambleStatusLabel.setManaged(false);
+	}
+
+	private boolean isOrdinaryNewQuestionCapture() {
+
+		// Imported capture, edits and legacy split correction all operate on existing
+		// persisted Questions and must never force legacy booklet classification.
+		return !importedCaptureMode && importedQuestion == null && editingQuestion == null
+				&& legacySplitCaptureState == null;
 	}
 
 	private void loadActiveLegacySplitPart() {
@@ -1561,18 +1729,19 @@ public final class QuestionCapturePane extends VBox {
 
 	private void refreshImportedQuestions(List<Question> questions) {
 		Question selected = importedQuestion;
-		List<Question> awaitingCapture = new ArrayList<>();
-		for (Question question : questions) {
-			if (question.getRegions().isEmpty() || question.isSharedContextUnresolved()) {
-				awaitingCapture.add(question);
-			}
-		}
+
+		// Build the visible imported-question queue from the transient Working Subject
+		// without changing any persisted Question data.
+		List<Question> awaitingCapture = awaitingCaptureForWorkingSubject(questions, workingSubject);
 		refreshingImportedQuestions = true;
 		try {
 			importedQuestionBox.getItems().setAll(awaitingCapture);
 			Question matchingSelection = null;
 			if (selected != null) {
 				for (Question question : awaitingCapture) {
+
+					// Preserve the current imported Question only when it still belongs to
+					// the filtered queue.
 					if (question.getId() == selected.getId()) {
 						matchingSelection = question;
 						break;
@@ -1692,11 +1861,19 @@ public final class QuestionCapturePane extends VBox {
 	private void resetQuestionEntry() {
 		sharedContextCapturePane.clearForQuestion();
 		hidePreambleControls();
+
 		questionCodeField.clear();
 		questionCodeField.setDisable(false);
+
 		marksField.clear();
+
+		// Every new Question starts with fresh automatic/default state rather than
+		// inheriting a manual override from the preceding Question.
+		responseTypeManuallySelected = false;
 		selectResponseType(null);
 		setResponseTypeDisabled(false);
+		applyAutomaticResponseType();
+
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
 		refreshSaveButtonState();
@@ -1859,6 +2036,31 @@ public final class QuestionCapturePane extends VBox {
 		return null;
 	}
 
+	private boolean shouldInferWrittenResponse() {
+
+		// A conservative part-letter code such as 21a identifies Written Response.
+		if (SourceQuestionCodeParser.derive(questionCodeField.getText()) != null) {
+			return true;
+		}
+
+		String marksText = marksField.getText().trim();
+		if (marksText.isEmpty()) {
+			return false;
+		}
+
+		try {
+
+			// MCQs are always one mark, so more than one mark safely identifies Written
+			// Response without making the inverse assumption for a one-mark Question.
+			return Integer.parseInt(marksText) > 1;
+		} catch (NumberFormatException exception) {
+
+			// Invalid partial input remains unresolved and is handled by normal form
+			// validation rather than response-type inference.
+			return false;
+		}
+	}
+
 	private void showAlert(Alert.AlertType type, String header, String message) {
 		Alert alert = new Alert(type);
 		alert.setHeaderText(header);
@@ -1966,6 +2168,10 @@ public final class QuestionCapturePane extends VBox {
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
 		setResponseTypeDisabled(false);
+
+		// Reapply MCQ marks locking after generic new-question enablement.
+		updateMarksFieldForResponseType();
+
 		curriculumSelectorPane.setDisable(false);
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		cancelQuestionEditButton.setVisible(false);
@@ -2070,6 +2276,29 @@ public final class QuestionCapturePane extends VBox {
 		return false;
 	}
 
+	private void updateMarksFieldForResponseType() {
+		QuestionResponseType responseType = selectedResponseType();
+
+		if (responseType == QuestionResponseType.MULTIPLE_CHOICE && importedQuestion == null
+				&& legacySplitCaptureState == null) {
+
+			// Every MCQ is one mark. Replace any previous Written Response mark value as
+			// soon as MCQ is selected and prevent inconsistent manual editing.
+			if (!"1".equals(marksField.getText().trim())) {
+				marksField.setText("1");
+			}
+			marksField.setDisable(true);
+			return;
+		}
+
+		if (!importedCaptureMode && importedQuestion == null && legacySplitCaptureState == null) {
+
+			// Written Response and unresolved new/edit Questions allow marks to be
+			// entered normally.
+			marksField.setDisable(false);
+		}
+	}
+
 	private void updateQuestionCodeLock() {
 		if (legacySplitCaptureState != null) {
 
@@ -2104,7 +2333,7 @@ public final class QuestionCapturePane extends VBox {
 			Supplier<PdfSession> examPdfSessionSupplier, Predicate<Question> importedQuestionActivationHandler,
 			IntConsumer examPageNavigationHandler, BooleanSupplier questionTargetChangeAllowed,
 			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
-			Consumer<List<Question>> questionsChangedHandler) {
+			Consumer<List<Question>> questionsChangedHandler, BooleanSupplier questionFormatReadyHandler) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -2153,12 +2382,31 @@ public final class QuestionCapturePane extends VBox {
 		if (questionsChangedHandler == null) {
 			throw new NullPointerException("questionsChangedHandler");
 		}
+		if (questionFormatReadyHandler == null) {
+			throw new NullPointerException("questionFormatReadyHandler");
+		}
 	}
 
 	private void validateQuestionForSave() {
 		if (questionSaveInProgress) {
 			return;
 		}
+
+		ExamBooklet booklet = bookletSupplier.get();
+		if (isOrdinaryNewQuestionCapture() && booklet != null
+				&& booklet.getQuestionFormat() == ExamBookletQuestionFormat.UNSPECIFIED) {
+
+			// Existing legacy Questions remain untouched. Only an attempt to persist a
+			// genuinely new Question requires the booklet to be classified.
+			if (!questionFormatReadyHandler.getAsBoolean()) {
+				return;
+			}
+
+			// The newly persisted booklet format can now supply the ordinary new-Question
+			// default. A deliberate per-Question override is still retained.
+			applyAutomaticResponseType();
+		}
+
 		String validationError = findQuestionDetailsValidationError();
 		if (validationError == null && sharedContextCapturePane.isCaptureMode()) {
 			validationError = "Capture the shared preamble region and click Add Region before continuing.";

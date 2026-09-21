@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.PreambleStatus;
@@ -197,6 +198,11 @@ public class QuestionBankApplication extends Application {
 	private boolean scormExportRunning;
 	private SplitPane workspaceSplitPane;
 
+	// Track the accepted workspace Subject separately so a rejected ComboBox change
+	// can restore the previous value without changing either capture queue.
+	private Subject workingSubject;
+	private boolean restoringWorkingSubject;
+
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
 	 */
@@ -257,6 +263,20 @@ public class QuestionBankApplication extends Application {
 		}
 		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
 			pdfWorkspace.close();
+		}
+	}
+
+	private void activateExamBookletSubject(Subject subject) {
+
+		// Activate the booklet's Subject before deriving any Question-capture defaults
+		// from the newly active booklet.
+		activateExamSubject(subject);
+
+		if (questionCapturePane != null) {
+
+			// Reopening an existing booklet must reapply its format only to the fresh
+			// new-question entry state.
+			questionCapturePane.refreshForActiveBooklet();
 		}
 	}
 
@@ -338,6 +358,23 @@ public class QuestionBankApplication extends Application {
 		}
 		showAlert(Alert.AlertType.WARNING, "Selection pending", "Selection pending",
 				"Add or clear the current selection before changing PDF pages.");
+		return false;
+	}
+
+	private boolean allowWorkingSubjectChange() {
+		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
+				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
+				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
+				|| answerCapturePane.isSaveInProgress();
+		if (!captureWorkInProgress) {
+			return true;
+		}
+
+		// Subject changes rebuild capture queues and can invalidate the active Exam.
+		// Never permit that transition while unsaved capture state still depends on
+		// the current Subject or PDF.
+		showAlert(Alert.AlertType.WARNING, "Working Subject", "Capture work is in progress",
+				"Add, clear, save or cancel the current Question, shared-context or Answer capture before changing Working Subject.");
 		return false;
 	}
 
@@ -472,7 +509,11 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
 		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
-		pdfWorkspace.setSelectionModeChangedHandler(this::handleSelectionModeChanged);
+
+		// A selection becomes invalid either because the selection mode changed or
+		// because the user clicked away from an existing pending rectangle.
+		pdfWorkspace.setSelectionModeChangedHandler(this::handlePdfSelectionInvalidated);
+		pdfWorkspace.setSelectionCancelledHandler(this::handlePdfSelectionInvalidated);
 	}
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
@@ -1017,6 +1058,27 @@ public class QuestionBankApplication extends Application {
 		requestApplicationExit(primaryStage);
 	}
 
+	private void handlePdfSelectionInvalidated() {
+		CaptureSelectionOwner owner = captureSelectionState.getOwner();
+		if (owner == null) {
+			return;
+		}
+
+		// Route cancellation back through the workflow that owns the logical
+		// selection. Its ordinary clear path also clears CaptureSelectionState.
+		//
+		// PdfWorkspacePane.clearSelection() itself never invokes the cancellation
+		// callback, so these programmatic clear operations cannot recurse.
+		switch (owner) {
+		case QUESTION -> questionCapturePane.clearCurrentSelection();
+		case SHARED_CONTEXT -> questionCapturePane.clearSharedContextCurrentSelection();
+		case ANSWER -> {
+			answerCapturePane.clearCurrentSelectionForPageChange();
+			clearCaptureSelection(CaptureSelectionOwner.ANSWER);
+		}
+		}
+	}
+
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.ANSWER) {
 
@@ -1043,22 +1105,44 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void handleSelectionModeChanged() {
-		CaptureSelectionOwner owner = captureSelectionState.getOwner();
-		if (owner == null) {
+	private void handleSubjectChanged(Subject newSubject) {
+		if (restoringWorkingSubject) {
 			return;
 		}
-		switch (owner) {
-		case QUESTION -> questionCapturePane.clearCurrentSelection();
-		case SHARED_CONTEXT -> questionCapturePane.clearSharedContextCurrentSelection();
-		case ANSWER -> {
-			answerCapturePane.clearCurrentSelectionForPageChange();
-			clearCaptureSelection(CaptureSelectionOwner.ANSWER);
-		}
-		}
-	}
+		boolean subjectActuallyChanged = workingSubject != null && !workingSubject.equals(newSubject);
+		if (subjectActuallyChanged && !allowWorkingSubjectChange()) {
 
-	private void handleSubjectChanged(Subject newSubject) {
+			// The value-property listener runs before the ComboBox's own action handler.
+			// Preserve the accepted classification now, but restore it only after the
+			// rejected Subject change has finished clearing its dependent controls.
+			CurriculumNode previousClassification = curriculumSelectionModel.getClassification();
+			Platform.runLater(() -> {
+				restoringWorkingSubject = true;
+				try {
+
+					// Re-establish the accepted Working Subject first, then reconstruct
+					// the complete classification path that existed before the rejected
+					// transition.
+					curriculumSelectorPane.selectSubject(workingSubject);
+					if (previousClassification != null) {
+						curriculumSelectorPane.selectClassificationPath(previousClassification);
+					}
+				} finally {
+					restoringWorkingSubject = false;
+				}
+			});
+			return;
+		}
+
+		// Once accepted, one workspace Subject drives classification plus both
+		// Question and Answer work queues.
+		workingSubject = newSubject;
+		if (questionCapturePane != null) {
+			questionCapturePane.setWorkingSubject(newSubject);
+		}
+		if (answerCapturePane != null) {
+			answerCapturePane.setWorkingSubject(newSubject);
+		}
 		examMetadataPane.invalidateForSubjectChange(newSubject);
 	}
 
@@ -1204,7 +1288,7 @@ public class QuestionBankApplication extends Application {
 		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
 				new ExamMetadataOptionsRepository(), examImporter, examWriter, examMetadataCorrectionService,
 				this::allowExamImportConfirmation, this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled,
-				this::activateExamSubject);
+				this::activateExamBookletSubject);
 		curriculumSelectorPane = createCurriculumSelectorPane();
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
@@ -1223,7 +1307,8 @@ public class QuestionBankApplication extends Application {
 				pdfWorkspace::getExamPdfSession, question -> activateImportedQuestion(question, config),
 				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
 				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
-				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
+				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions,
+				examMetadataPane::ensureQuestionFormatForNewCapture);
 		questionCapturePane.refreshImportedQuestions();
 	}
 

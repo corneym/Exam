@@ -30,7 +30,8 @@ import javafx.scene.layout.VBox;
  */
 public class CurriculumSelectorPane extends VBox {
 
-	private static final int LABEL_COLUMN_WIDTH = 75;
+	// Allow the workspace-level Working Subject label to remain readable.
+	private static final int LABEL_COLUMN_WIDTH = 105;
 	private static final double ROW_GAP = 4.0;
 	private static final double COLUMN_GAP = 8.0;
 	private static final Insets PANEL_PADDING = new Insets(8);
@@ -291,6 +292,15 @@ public class CurriculumSelectorPane extends VBox {
 		};
 	}
 
+	private <T> void clearComboBoxValue(ComboBox<T> box) {
+
+		// JavaFX can retain ComboBox.value after the selection model is cleared.
+		// Clear both representations so a stale displayed value cannot be read back
+		// into CurriculumSelectionModel during programmatic hierarchy changes.
+		box.getSelectionModel().clearSelection();
+		box.setValue(null);
+	}
+
 	private void clearHierarchySelection() {
 		unitBox.getSelectionModel().clearSelection();
 		topicBox.getSelectionModel().clearSelection();
@@ -389,7 +399,10 @@ public class CurriculumSelectorPane extends VBox {
 		controlColumn.setFillWidth(true);
 		grid.getColumnConstraints().addAll(labelColumn, controlColumn);
 		grid.addRow(0, new Label("Code"), codeField);
-		grid.addRow(1, new Label("Subject"), subjectBox);
+
+		// Subject selection applies to the whole capture workspace, including Question
+		// and Answer work queues, rather than only to curriculum classification.
+		grid.addRow(1, new Label("Working Subject"), subjectBox);
 		grid.addRow(2, new Label("Syllabus"), syllabusBox);
 		grid.addRow(3, new Label("Unit"), unitBox);
 		grid.addRow(4, new Label("Topic"), topicBox);
@@ -618,13 +631,19 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void hideDescriptorRow() {
-		descriptorBox.getSelectionModel().clearSelection();
+
+		// A hidden Descriptor must not remain as the ComboBox value after its
+		// classification path has been shortened.
+		clearComboBoxValue(descriptorBox);
 		descriptorBox.getItems().clear();
 		setDescriptorRowVisible(false);
 	}
 
 	private void hideSubtopicRow() {
-		subtopicBox.getSelectionModel().clearSelection();
+
+		// A hidden hierarchy level must not retain a value from the previously
+		// displayed path.
+		clearComboBoxValue(subtopicBox);
 		subtopicBox.getItems().clear();
 		subtopicLabel.setVisible(false);
 		subtopicLabel.setManaged(false);
@@ -733,12 +752,18 @@ public class CurriculumSelectorPane extends VBox {
 		if (selectedValue != null) {
 			for (T item : box.getItems()) {
 				if (item.equals(selectedValue)) {
+
+					// Select the actual item held by this ComboBox so its displayed value and
+					// selection model refer to the same hierarchy object.
 					box.getSelectionModel().select(item);
 					return;
 				}
 			}
 		}
-		box.getSelectionModel().clearSelection();
+
+		// A missing requested value means this hierarchy level is deliberately empty.
+		// Clear both JavaFX selection state and the independently retained value.
+		clearComboBoxValue(box);
 	}
 
 	private void setCodeText(String text) {

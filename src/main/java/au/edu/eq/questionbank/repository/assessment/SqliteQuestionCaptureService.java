@@ -374,6 +374,12 @@ public final class SqliteQuestionCaptureService {
 			if (responseType == null) {
 				throw new NullPointerException("responseType");
 			}
+			if (responseType == QuestionResponseType.MULTIPLE_CHOICE && marks != 1) {
+
+				// Reject inconsistent capture metadata before any persistence transaction can
+				// begin, including edit and imported-question workflows.
+				throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
+			}
 			regions = List.copyOf(regions);
 			if (operation == Operation.NEW && existingQuestion != null) {
 				throw new IllegalArgumentException("New capture must not have an existing question");

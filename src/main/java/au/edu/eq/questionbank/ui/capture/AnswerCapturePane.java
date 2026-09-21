@@ -26,6 +26,7 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
@@ -140,6 +141,10 @@ public final class AnswerCapturePane extends VBox {
 	private AnswerRegion currentAnswerSelection;
 	private boolean restoringUnansweredQuestionSelection;
 
+	// Working Subject is transient workspace state. A null value retains the
+	// existing all-subject behaviour until the workspace selector is introduced.
+	private Subject workingSubject;
+
 	// A question-save snapshot may predate an answer committed while it was
 	// loading.
 	private final Set<Long> locallyAnsweredQuestionIds = new HashSet<>();
@@ -208,23 +213,34 @@ public final class AnswerCapturePane extends VBox {
 		setStyle(BORDER_STYLE);
 	}
 
+	static List<Question> unansweredQuestionsInSourceOrder(List<Question> questions,
+			Set<Long> locallyAnsweredQuestionIds) {
+
+		// Preserve the existing bank-wide behaviour for callers that do not yet supply
+		// a Working Subject.
+		return unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds, null);
+	}
+
 	/**
-	 * Returns Questions still awaiting Answers in deterministic source order.
+	 * Returns Questions still awaiting Answers in deterministic source order,
+	 * optionally restricted to one Working Subject.
 	 *
 	 * @param questions                  current Question snapshot
 	 * @param locallyAnsweredQuestionIds Questions answered after an older snapshot
 	 *                                   was loaded
+	 * @param workingSubject             active Working Subject, or {@code null} for
+	 *                                   all Subjects
 	 * @return unanswered Questions in provider/year/booklet/natural-code order
 	 */
 	static List<Question> unansweredQuestionsInSourceOrder(List<Question> questions,
-			Set<Long> locallyAnsweredQuestionIds) {
+			Set<Long> locallyAnsweredQuestionIds, Subject workingSubject) {
 		Objects.requireNonNull(questions, "questions");
 		Objects.requireNonNull(locallyAnsweredQuestionIds, "locallyAnsweredQuestionIds");
 
-		// Exclude both persisted Answers and Questions known to have been answered
-		// locally since the supplied snapshot was obtained, then apply the common
-		// source-order policy used by other corpus work queues.
+		// Subject filtering is transient workspace state. It removes unrelated
+		// Questions from the active queue without altering any persisted Question.
 		return questions.stream()
+				.filter(question -> workingSubject == null || question.getExam().getSubject().equals(workingSubject))
 				.filter(question -> !question.hasAnswer() && !locallyAnsweredQuestionIds.contains(question.getId()))
 				.sorted(QuestionSourceOrder.comparator()).toList();
 	}
@@ -395,7 +411,10 @@ public final class AnswerCapturePane extends VBox {
 
 		// Build the Answer work queue independently of repository insertion order so
 		// that sustained Answer capture follows the examination's natural source order.
-		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds);
+		// Apply the transient Working Subject while constructing the visible Answer
+		// queue. No persisted Question or Answer data is changed by this filter.
+		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds,
+				workingSubject);
 		Question matching = editTarget;
 		if (matching == null && selected != null) {
 			for (Question question : unansweredQuestions) {
@@ -439,6 +458,28 @@ public final class AnswerCapturePane extends VBox {
 			return;
 		}
 		applyUnansweredQuestionChange(question);
+	}
+
+	/**
+	 * Changes the transient Subject used to filter the Answer-capture work queue.
+	 *
+	 * @param workingSubject Subject to display, or {@code null} to display all
+	 *                       Subjects
+	 */
+	public void setWorkingSubject(Subject workingSubject) {
+		Question previouslySelected = unansweredQuestionField.getValue();
+		this.workingSubject = workingSubject;
+
+		// Rebuild the queue from persistence so changing workspace focus cannot alter
+		// Question or Answer data.
+		refreshQuestions();
+		if (previouslySelected != null && unansweredQuestionField.getValue() == null) {
+
+			// The previous target is no longer part of the active Subject queue. Reset
+			// its presentation state as well as the ComboBox so the pane cannot continue
+			// to look as though that Question is active.
+			applyUnansweredQuestionChange(null, false);
+		}
 	}
 
 	/**

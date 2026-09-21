@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 8;
+	private static final int LATEST_SCHEMA_VERSION = 9;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -484,7 +484,7 @@ public final class SqliteDatabase {
 		// The v4 question redesign has no lossless migration for populated development
 		// databases.
 		if (version == 3) {
-			verifyVersionThreeCanBeMigrated(connection);
+			verifyVersion03CanBeMigrated(connection);
 			executeMigration(connection, "/db/migration-v3-to-v4.sql", 4);
 			return 4;
 		}
@@ -503,6 +503,12 @@ public final class SqliteDatabase {
 		if (version == 7) {
 			executeMigration(connection, "/db/migration-v7-to-v8.sql", 8);
 			return 8;
+		}
+		if (version == 8) {
+
+			// Version nine records the expected Question format at booklet level.
+			executeMigration(connection, "/db/migration-v8-to-v9.sql", 9);
+			return 9;
 		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
@@ -668,7 +674,7 @@ public final class SqliteDatabase {
 
 		// Apply the checks introduced by each version, retaining earlier structural
 		// requirements.
-		verifyVersionOneRelationalSchema(connection, version);
+		verifyVersion01RelationalSchema(connection, version);
 		if (version >= 2) {
 			if (!tableExists(connection, "curriculum_mappings")) {
 				throw new SQLException(
@@ -684,19 +690,19 @@ public final class SqliteDatabase {
 			verifyCurriculumMappingReviewSchema(connection);
 		}
 		if (version >= 4) {
-			verifyVersionFourQuestionSchema(connection);
+			verifyVersion04QuestionSchema(connection);
 		}
 		if (version >= 5) {
-			verifyVersionFiveSharedQuestionSchema(connection);
+			verifyVersion05SharedQuestionSchema(connection);
 		}
 		if (version >= 6) {
-			verifyVersionSixSourceQuestionSchema(connection);
+			verifyVersion06SourceQuestionSchema(connection);
 		}
 		if (version >= 7) {
-			verifyVersionSevenCurriculumAuthoringSchema(connection);
+			verifyVersion07CurriculumAuthoringSchema(connection);
 		}
 		if (version >= 8) {
-			verifyVersionEightQuestionResponseTypeSchema(connection);
+			verifyVersion07QuestionResponseTypeSchema(connection);
 		}
 	}
 
@@ -765,7 +771,29 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersionEightQuestionResponseTypeSchema(Connection connection) throws SQLException {
+	private void verifyVersion09BookletQuestionFormatSchema(Connection connection) throws SQLException {
+		boolean hasQuestionFormat = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"question_format".equals(result.getString("name"))) {
+					continue;
+				}
+				hasQuestionFormat = true;
+
+				// Every persisted booklet must carry an explicit stored value. Legacy
+				// booklets use UNSPECIFIED rather than SQL NULL.
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("exam_booklets column must be NOT NULL: question_format");
+				}
+			}
+		}
+		if (!hasQuestionFormat) {
+			throw new SQLException("exam_booklets is missing required column question_format");
+		}
+	}
+
+	private void verifyVersion07QuestionResponseTypeSchema(Connection connection) throws SQLException {
 		boolean hasResponseType = false;
 		try (Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
@@ -784,7 +812,7 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersionFiveSharedQuestionSchema(Connection connection) throws SQLException {
+	private void verifyVersion05SharedQuestionSchema(Connection connection) throws SQLException {
 		verifyTableSchema(connection, "source_questions",
 				List.of(column("id", false, 1), column("booklet_id", true, 0), column("source_question_code", true, 0)),
 				List.of(foreignKey("booklet_id", "exam_booklets", "id")),
@@ -832,7 +860,7 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersionFourQuestionSchema(Connection connection) throws SQLException {
+	private void verifyVersion04QuestionSchema(Connection connection) throws SQLException {
 		Set<String> requiredColumns = new HashSet<>(List.of("id", "booklet_id", "classification_node_id",
 				"question_code", "question_text", "marks", "preamble_capture_required"));
 		int primaryKeyColumnCount = 0;
@@ -875,7 +903,7 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersionOneRelationalSchema(Connection connection, int version) throws SQLException {
+	private void verifyVersion01RelationalSchema(Connection connection, int version) throws SQLException {
 		verifyTableSchema(connection, "schema_version", List.of(column("version", true, 0)), List.of(), List.of());
 		verifyTableSchema(connection, "subjects", List.of(column("id", false, 1), column("subject_name", true, 0)),
 				List.of(), List.of(List.of("subject_name")));
@@ -936,7 +964,7 @@ public final class SqliteDatabase {
 				List.of());
 	}
 
-	private void verifyVersionSevenCurriculumAuthoringSchema(Connection connection) throws SQLException {
+	private void verifyVersion07CurriculumAuthoringSchema(Connection connection) throws SQLException {
 		verifyTableSchema(connection, "syllabus_versions",
 				List.of(column("id", false, 1), column("subject_id", true, 0), column("syllabus_name", true, 0),
 						column("is_current", true, 0), column("curriculum_status", true, 0),
@@ -952,7 +980,7 @@ public final class SqliteDatabase {
 				List.of(List.of("syllabus_version_id", "curriculum_code")));
 	}
 
-	private void verifyVersionSixSourceQuestionSchema(Connection connection) throws SQLException {
+	private void verifyVersion06SourceQuestionSchema(Connection connection) throws SQLException {
 		boolean hasPreambleStatus = false;
 		try (Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("PRAGMA table_info(source_questions)")) {
@@ -971,7 +999,7 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersionThreeCanBeMigrated(Connection connection) throws SQLException {
+	private void verifyVersion03CanBeMigrated(Connection connection) throws SQLException {
 		try (Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM questions")) {
 			result.next();

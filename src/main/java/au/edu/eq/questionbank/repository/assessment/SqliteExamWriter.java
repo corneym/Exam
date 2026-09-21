@@ -10,6 +10,7 @@ import java.util.Map;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
@@ -36,6 +37,53 @@ public final class SqliteExamWriter {
 			throw new NullPointerException("database");
 		}
 		this.database = database;
+	}
+
+	/**
+	 * Assigns an explicit question format to a legacy booklet whose format has not
+	 * previously been recorded.
+	 *
+	 * @param booklet        legacy booklet to classify
+	 * @param questionFormat explicit format to persist
+	 * @return the same booklet identity with the explicit format
+	 * @throws SQLException if persistence fails
+	 */
+	public ExamBooklet classifyLegacyBookletQuestionFormat(ExamBooklet booklet,
+			ExamBookletQuestionFormat questionFormat) throws SQLException {
+
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (questionFormat == null) {
+			throw new NullPointerException("questionFormat");
+		}
+		if (booklet.getQuestionFormat() != ExamBookletQuestionFormat.UNSPECIFIED) {
+			throw new IllegalArgumentException("Booklet question format is already recorded");
+		}
+		if (questionFormat == ExamBookletQuestionFormat.UNSPECIFIED) {
+			throw new IllegalArgumentException("A legacy booklet must be assigned an explicit question format");
+		}
+
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE exam_booklets
+						SET question_format = ?
+						WHERE id = ?
+						  AND question_format = 'UNSPECIFIED'
+						""")) {
+
+			statement.setString(1, questionFormat.name());
+			statement.setLong(2, booklet.getId());
+
+			// Only an existing legacy row may be classified by this operation.
+			if (statement.executeUpdate() != 1) {
+				throw new IllegalStateException(
+						"Legacy booklet question format could not be updated: " + booklet.getId());
+			}
+		}
+
+		return new ExamBooklet(booklet.getId(), booklet.getExam(), booklet.getName(), booklet.getSourceDocument(),
+				questionFormat);
 	}
 
 	/**
@@ -139,6 +187,7 @@ public final class SqliteExamWriter {
 						SELECT
 						    eb.id AS booklet_id,
 						    eb.booklet_name,
+						    eb.question_format,
 						    sd.id AS source_document_id,
 						    sd.relative_path,
 						    e.id AS exam_id,
@@ -160,7 +209,9 @@ public final class SqliteExamWriter {
 						ORDER BY eb.id
 						""");
 				ResultSet result = statement.executeQuery()) {
+
 			List<ExamBooklet> booklets = new ArrayList<>();
+
 			while (result.next()) {
 				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
 				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
@@ -169,9 +220,16 @@ public final class SqliteExamWriter {
 						result.getString("exam_name"));
 				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 						result.getString("relative_path"));
+
+				// Reconstruct the persisted booklet format rather than falling back to
+				// UNSPECIFIED through the legacy ExamBooklet constructor.
+				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
+						.valueOf(result.getString("question_format"));
+
 				booklets.add(new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
-						sourceDocument));
+						sourceDocument, questionFormat));
 			}
+
 			return List.copyOf(booklets);
 		}
 	}
@@ -190,11 +248,13 @@ public final class SqliteExamWriter {
 		if (relativePath == null || relativePath.isBlank()) {
 			throw new IllegalArgumentException("relativePath must not be blank");
 		}
+
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						SELECT
 						    eb.id AS booklet_id,
 						    eb.booklet_name,
+						    eb.question_format,
 						    sd.id AS source_document_id,
 						    sd.relative_path,
 						    e.id AS exam_id,
@@ -217,10 +277,12 @@ public final class SqliteExamWriter {
 						ORDER BY eb.id
 						""")) {
 			statement.setString(1, relativePath);
+
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					return null;
 				}
+
 				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
 				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
 						result.getString("provider_name"));
@@ -228,8 +290,13 @@ public final class SqliteExamWriter {
 						result.getString("exam_name"));
 				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 						result.getString("relative_path"));
+
+				// Schema validation guarantees one of the supported enum names is stored.
+				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
+						.valueOf(result.getString("question_format"));
+
 				ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam,
-						result.getString("booklet_name"), sourceDocument);
+						result.getString("booklet_name"), sourceDocument, questionFormat);
 
 				// A source document should identify one capture booklet. If legacy or
 				// corrupted data makes that relationship ambiguous, do not guess.
@@ -335,8 +402,32 @@ public final class SqliteExamWriter {
 	 * @throws IllegalArgumentException if {@code name} is null or blank
 	 */
 	public ExamBooklet insertExamBooklet(Exam exam, SourceDocument sourceDocument, String name) throws SQLException {
+
+		// Existing callers predate booklet-format metadata, so preserve their
+		// behaviour without inventing a Question format.
+		return insertExamBooklet(exam, sourceDocument, name, ExamBookletQuestionFormat.UNSPECIFIED);
+	}
+
+	/**
+	 * Inserts a booklet backed by an existing source document with an explicit
+	 * Question format.
+	 *
+	 * @param exam           the exam containing the booklet
+	 * @param sourceDocument the booklet's source PDF reference
+	 * @param name           the non-blank booklet name
+	 * @param questionFormat expected Question format for the booklet
+	 * @return the stored booklet
+	 * @throws SQLException         if persistence fails
+	 * @throws NullPointerException if {@code exam}, {@code sourceDocument} or
+	 *                              {@code questionFormat} is {@code null}
+	 */
+	public ExamBooklet insertExamBooklet(Exam exam, SourceDocument sourceDocument, String name,
+			ExamBookletQuestionFormat questionFormat) throws SQLException {
 		try (Connection connection = database.openConnection()) {
-			return insertExamBooklet(connection, exam, sourceDocument, name);
+
+			// Use the same transaction-aware implementation as internal import workflows
+			// so every booklet creation path stores the format consistently.
+			return insertExamBooklet(connection, exam, sourceDocument, name, questionFormat);
 		}
 	}
 
@@ -461,25 +552,36 @@ public final class SqliteExamWriter {
 		if (sourceDocument == null) {
 			throw new NullPointerException("sourceDocument");
 		}
+
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT id, source_document_id
+				SELECT
+				    id,
+				    source_document_id,
+				    question_format
 				FROM exam_booklets
 				WHERE exam_id = ?
 				  AND booklet_name = ?
 				""")) {
 			statement.setLong(1, exam.getId());
 			statement.setString(2, name);
+
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					return null;
 				}
 
-				// Reusing a booklet name must not silently redirect its existing PDF reference.
+				// Reusing a booklet name must not silently redirect its existing PDF
+				// reference.
 				long storedSourceDocumentId = result.getLong("source_document_id");
 				if (storedSourceDocumentId != sourceDocument.getId()) {
 					throw new SQLException("Existing exam booklet refers to a different source document");
 				}
-				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument);
+
+				// Existing persisted metadata is authoritative when reopening a booklet.
+				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
+						.valueOf(result.getString("question_format"));
+
+				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument, questionFormat);
 			}
 		}
 	}
@@ -569,6 +671,14 @@ public final class SqliteExamWriter {
 
 	ExamBooklet insertExamBooklet(Connection connection, Exam exam, SourceDocument sourceDocument, String name)
 			throws SQLException {
+
+		// Transactional callers that have not yet supplied booklet-format metadata
+		// must remain compatible and explicitly persist UNSPECIFIED.
+		return insertExamBooklet(connection, exam, sourceDocument, name, ExamBookletQuestionFormat.UNSPECIFIED);
+	}
+
+	ExamBooklet insertExamBooklet(Connection connection, Exam exam, SourceDocument sourceDocument, String name,
+			ExamBookletQuestionFormat questionFormat) throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");
 		}
@@ -581,22 +691,32 @@ public final class SqliteExamWriter {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
 		}
+		if (questionFormat == null) {
+			throw new NullPointerException("questionFormat");
+		}
+
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO exam_booklets
 				    (exam_id,
 				     source_document_id,
-				     booklet_name)
-				VALUES (?, ?, ?)
+				     booklet_name,
+				     question_format)
+				VALUES (?, ?, ?, ?)
 				RETURNING id
 				""")) {
 			statement.setLong(1, exam.getId());
 			statement.setLong(2, sourceDocument.getId());
 			statement.setString(3, name);
+
+			// Persist the enum name directly because the schema constrains the column to
+			// exactly the supported domain values.
+			statement.setString(4, questionFormat.name());
+
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Exam booklet insert did not return an id");
 				}
-				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument);
+				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument, questionFormat);
 			}
 		}
 	}

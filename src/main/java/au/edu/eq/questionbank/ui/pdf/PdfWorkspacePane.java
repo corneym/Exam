@@ -88,6 +88,12 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private DocumentMode anchoredSelectionDocument;
 	private boolean anchoredSelectionFullWidth;
 
+	// Report user-driven cancellation separately from programmatic clearSelection()
+	// so the application can clear the logical owner without creating a callback
+	// loop.
+	private Runnable selectionCancelledHandler = () -> {
+	};
+
 	/**
 	 * Creates an empty PDF workspace with navigation and region-selection controls.
 	 */
@@ -435,6 +441,23 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 			throw new NullPointerException("selectionAvailable");
 		}
 		this.selectionAvailable = selectionAvailable;
+	}
+
+	/**
+	 * Sets the callback invoked when a user gesture removes the visible pending
+	 * selection without publishing a replacement region.
+	 *
+	 * @param selectionCancelledHandler callback used to clear the corresponding
+	 *                                  logical capture selection
+	 */
+	public void setSelectionCancelledHandler(Runnable selectionCancelledHandler) {
+		if (selectionCancelledHandler == null) {
+			throw new NullPointerException("selectionCancelledHandler");
+		}
+
+		// Programmatic clearSelection() deliberately does not invoke this callback.
+		// Only a user gesture that abandons the visible rectangle reports cancellation.
+		this.selectionCancelledHandler = selectionCancelledHandler;
 	}
 
 	/**
@@ -830,10 +853,18 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 		if (selectionRectangle.getWidth() < MIN_SELECTION_SIZE || selectionRectangle.getHeight() < MIN_SELECTION_SIZE) {
 			if (!anchoredSelectionActive) {
-				selectionRectangle.setVisible(false);
+
+				// A click or undersized drag means the user has abandoned the visible
+				// pending selection. Clear its visual state and tell the application to
+				// discard the corresponding logical capture selection as well.
+				clearSelection();
+				selectionCancelledHandler.run();
 			}
 			return;
 		}
+
+		// A valid completed region replaces any anchored-selection state and is
+		// published normally to the owning capture workflow.
 		clearAnchoredSelectionState();
 		publishSelection();
 	}

@@ -48,6 +48,54 @@ import javafx.stage.Stage;
 class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
+	void activeSharedContextCaptureBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject chemistry = workingSubjectBox.getValue();
+		Subject physics = workingSubjectBox.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		CurriculumNode originalClassification = field(application, "curriculumSelectionModel",
+				CurriculumSelectionModel.class).getClassification();
+		TextField curriculumCode = lookup(robot, "#curriculum-code", TextField.class);
+		String originalCode = curriculumCode.getText();
+
+		// Start automatic shared-preamble capture without yet drawing a PDF region.
+		// This isolates the shared-context transition guard from pending-selection
+		// state.
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(questionCode).write("24a");
+		robot.clickOn(marks).write("2");
+		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		robot.clickOn(preamble);
+		assertTrue(preamble.isSelected());
+		assertTrue(questionCapturePane().isCapturingSharedContext());
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertFalse(selectionState.hasPendingSelection());
+
+		// Changing Working Subject would invalidate the booklet and curriculum context
+		// needed by the active shared-preamble workflow, so reject the transition.
+		Platform.runLater(() -> workingSubjectBox.setValue(physics));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
+		robot.clickOn("OK");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The rejected transition must preserve the complete shared-context capture
+		// state and its existing Chemistry classification.
+		assertEquals(chemistry, workingSubjectBox.getValue());
+		assertTrue(preamble.isSelected());
+		assertTrue(questionCapturePane().isCapturingSharedContext());
+		assertEquals("24a", questionCode.getText());
+		assertEquals("2", marks.getText());
+		assertEquals(originalCode, curriculumCode.getText());
+		assertEquals(originalClassification,
+				field(application, "curriculumSelectionModel", CurriculumSelectionModel.class).getClassification());
+		assertClassificationControlShows(robot, originalClassification);
+	}
+
+	@Test
 	void cancellingSplitAfterStagingPreambleAndFirstPartLeavesOriginalUnchanged(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question original = captureQuestion(robot, "70");

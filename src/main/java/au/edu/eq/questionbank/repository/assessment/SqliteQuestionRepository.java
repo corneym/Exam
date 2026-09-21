@@ -18,6 +18,7 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
@@ -218,6 +219,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 							q.classification_node_id,
 							eb.id AS booklet_id,
 							eb.booklet_name,
+							eb.question_format,
 							sd.id AS source_document_id,
 							sd.relative_path,
 							e.id AS exam_id,
@@ -319,29 +321,6 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not update question", e);
 		}
-	}
-
-	private List<QuestionApplicabilityMatch> reconstructApplicabilityMatches(List<ApplicabilityRow> rows,
-			Map<Long, CurriculumNode> requestedNodesById) {
-
-		// Load each question once while retaining a separate match for every applicable
-		// node.
-		Map<Long, Question> questionsById = new LinkedHashMap<Long, Question>();
-		List<QuestionApplicabilityMatch> matches = new ArrayList<QuestionApplicabilityMatch>();
-		for (ApplicabilityRow row : rows) {
-			Question question = questionsById.get(row.questionId());
-			if (question == null) {
-				question = findById(row.questionId()).orElseThrow(() -> new IllegalStateException(
-						"Question disappeared while retrieving applicability: " + row.questionId()));
-				questionsById.put(row.questionId(), question);
-			}
-			CurriculumNode currentNode = requestedNodesById.get(row.currentNodeId());
-			if (currentNode == null) {
-				throw new IllegalStateException("Retrieval query returned an unrequested current node");
-			}
-			matches.add(new QuestionApplicabilityMatch(question, currentNode));
-		}
-		return List.copyOf(matches);
 	}
 
 	private String createRequestedNodeValues(int nodeCount) {
@@ -528,8 +507,13 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				result.getString("exam_name"));
 		SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 				result.getString("relative_path"));
+		// Reconstruct the booklet with its persisted format so Question retrieval does
+		// not silently turn explicit booklet metadata back into UNSPECIFIED.
+		ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
+				.valueOf(result.getString("question_format"));
+
 		ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
-				sourceDocument);
+				sourceDocument, questionFormat);
 
 		// Reconstruct the original classification even when retrieval matched a newer
 		// syllabus.
@@ -555,6 +539,29 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 			question.setAnswer(answer);
 		}
 		return question;
+	}
+
+	private List<QuestionApplicabilityMatch> reconstructApplicabilityMatches(List<ApplicabilityRow> rows,
+			Map<Long, CurriculumNode> requestedNodesById) {
+
+		// Load each question once while retaining a separate match for every applicable
+		// node.
+		Map<Long, Question> questionsById = new LinkedHashMap<Long, Question>();
+		List<QuestionApplicabilityMatch> matches = new ArrayList<QuestionApplicabilityMatch>();
+		for (ApplicabilityRow row : rows) {
+			Question question = questionsById.get(row.questionId());
+			if (question == null) {
+				question = findById(row.questionId()).orElseThrow(() -> new IllegalStateException(
+						"Question disappeared while retrieving applicability: " + row.questionId()));
+				questionsById.put(row.questionId(), question);
+			}
+			CurriculumNode currentNode = requestedNodesById.get(row.currentNodeId());
+			if (currentNode == null) {
+				throw new IllegalStateException("Retrieval query returned an unrequested current node");
+			}
+			matches.add(new QuestionApplicabilityMatch(question, currentNode));
+		}
+		return List.copyOf(matches);
 	}
 
 	private Map<Long, CurriculumNode> validateRetrievalNodes(List<CurriculumNode> currentNodes) {

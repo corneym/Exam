@@ -186,6 +186,8 @@ For **new Question capture**:
 The existing conservative SourceQuestionCodeParser should be reused for the
 part-letter rule where appropriate rather than creating a competing parser.
 
+When a new exam booklet is opened, the option to mark it as MCQ, short answer or both should be presented.
+
 ### Behaviour boundary
 
 - The automatic selection is a default and remains manually overridable.

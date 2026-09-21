@@ -143,7 +143,12 @@ public class Question {
 		if (responseType == null) {
 			throw new NullPointerException("responseType");
 		}
+		if (responseType == QuestionResponseType.MULTIPLE_CHOICE && marks != 1) {
 
+			// Multiple-choice Questions are always worth exactly one mark. Enforce the
+			// invariant in the domain model rather than relying only on the capture UI.
+			throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
+		}
 		// Check classification and source ownership before retaining the supplied
 		// relationships.
 		validateClassification(booklet, classification);
@@ -161,6 +166,30 @@ public class Question {
 		this.sourceQuestion = sourceQuestion;
 		this.sharedContext = sharedContext;
 		this.responseType = responseType;
+	}
+
+	private static ExamBooklet bookletFromRegions(Exam exam, List<QuestionRegion> regions) {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		if (regions.isEmpty()) {
+			throw new IllegalArgumentException("Question must contain at least one region");
+		}
+		QuestionRegion firstRegion = regions.get(0);
+		if (firstRegion == null) {
+			throw new NullPointerException("regions contains null");
+		}
+
+		// The capture constructor derives ownership here; the common constructor checks
+		// remaining regions.
+		ExamBooklet booklet = firstRegion.booklet();
+		if (booklet.getExam().getId() != exam.getId()) {
+			throw new IllegalArgumentException("Question region booklet must belong to the question's exam");
+		}
+		return booklet;
 	}
 
 	private static void validateClassification(ExamBooklet booklet, CurriculumNode classification) {
@@ -195,30 +224,6 @@ public class Question {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's exam booklet");
 		}
-	}
-
-	private static ExamBooklet bookletFromRegions(Exam exam, List<QuestionRegion> regions) {
-		if (exam == null) {
-			throw new NullPointerException("exam");
-		}
-		if (regions == null) {
-			throw new NullPointerException("regions");
-		}
-		if (regions.isEmpty()) {
-			throw new IllegalArgumentException("Question must contain at least one region");
-		}
-		QuestionRegion firstRegion = regions.get(0);
-		if (firstRegion == null) {
-			throw new NullPointerException("regions contains null");
-		}
-
-		// The capture constructor derives ownership here; the common constructor checks
-		// remaining regions.
-		ExamBooklet booklet = firstRegion.booklet();
-		if (booklet.getExam().getId() != exam.getId()) {
-			throw new IllegalArgumentException("Question region booklet must belong to the question's exam");
-		}
-		return booklet;
 	}
 
 	/**

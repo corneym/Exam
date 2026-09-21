@@ -22,6 +22,7 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -68,12 +69,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		return type.cast(field.get(owner));
 	}
 
-	private static void fireMouseEvent(ImageView pageView, javafx.event.EventType<MouseEvent> eventType, double x,
-			double y, boolean primaryButtonDown) {
-		Event.fireEvent(pageView, new MouseEvent(eventType, x, y, x, y, MouseButton.PRIMARY, 1, false, false, false,
-				false, primaryButtonDown, false, false, false, false, false, null));
-	}
-
 	static Object invoke(Object owner, String methodName, Class<?>[] parameterTypes, Object... arguments)
 			throws Exception {
 		Method method = owner.getClass().getDeclaredMethod(methodName, parameterTypes);
@@ -96,26 +91,10 @@ abstract class QuestionBankApplicationUiTestBase {
 		field.set(owner, value);
 	}
 
-	// TestFX 4.0.18 discovers only declared @Start methods. Each concrete class
-	// supplies a thin forwarding method so the actual setup remains shared here.
-	void start(Stage stage) throws Exception {
-		Path testRoot = Files.createTempDirectory("question-bank-ui-");
-		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
-		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
-		databasePath = testRoot.resolve("questionbank.db");
-		createCurriculumDatabase(databasePath);
-		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
-		applicationConfig = new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
-		primaryStage = stage;
-		application = new QuestionBankApplication();
-		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
-				applicationConfig);
-		openExamPdfForTest();
-	}
-
-	@AfterEach
-	void stopApplication() throws Exception {
-		application.stop();
+	private static void fireMouseEvent(ImageView pageView, javafx.event.EventType<MouseEvent> eventType, double x,
+			double y, boolean primaryButtonDown) {
+		Event.fireEvent(pageView, new MouseEvent(eventType, x, y, x, y, MouseButton.PRIMARY, 1, false, false, false,
+				false, primaryButtonDown, false, false, false, false, false, null));
 	}
 
 	AnswerCapturePane answerCapturePane() {
@@ -142,23 +121,34 @@ abstract class QuestionBankApplicationUiTestBase {
 	Question captureQuestion(FxRobot robot, String questionCode) throws Exception {
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		robot.clickOn(questionCodeField).write(questionCode);
+
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
-		robot.clickOn(marksField).write("1");
+
+		// MCQ capture supplies and locks the one-mark value automatically. Other
+		// response types still receive the ordinary one-mark test fixture value here.
+		if (marksField.isDisabled()) {
+			assertEquals("1", marksField.getText());
+		} else {
+			robot.interact(() -> marksField.setText("1"));
+		}
+
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 
-		// Most workflow tests exercise written-response capture. Supply that fixture
-		// default only when the test has not deliberately selected either response
-		// type.
+		// Most workflow tests exercise Written Response. Supply that fixture default
+		// only when booklet defaults or inference have not selected a response type.
 		if (!multipleChoice.isSelected() && !writtenResponse.isSelected()) {
 			robot.interact(() -> writtenResponse.setSelected(true));
 		}
+
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
 		robot.clickOn("#save-question");
+
 		QuestionCapturePane questionCapturePane = field(application, "questionCapturePane", QuestionCapturePane.class);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !questionCapturePane.isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
+
 		Question savedQuestion = null;
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		for (Question question : unansweredQuestions.getItems()) {
@@ -167,6 +157,7 @@ abstract class QuestionBankApplicationUiTestBase {
 				break;
 			}
 		}
+
 		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
 		assertNotNull(savedQuestion, "Question save status: " + saveStatus.getText());
 		return savedQuestion;
@@ -175,42 +166,6 @@ abstract class QuestionBankApplicationUiTestBase {
 	@SuppressWarnings("unchecked")
 	<T> ComboBox<T> comboBox(FxRobot robot, String selector) {
 		return robot.lookup(selector).queryAs(ComboBox.class);
-	}
-
-	private void createCurriculumDatabase(Path databasePath) throws Exception {
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		database.initialiseSchema();
-		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
-		Subject chemistry = writer.insertSubject("Chemistry");
-		SyllabusVersion syllabus2025 = writer.insertSyllabusVersion(chemistry, "2025", true);
-		Unit unit = writer.insertUnit(syllabus2025, "1", "Unit one", 1);
-		Topic topic = writer.insertTopic(unit, "1.1", "Topic one", 1);
-		writer.insertDescriptor(topic, "1.1.1", "Descriptor one", 1);
-		SyllabusVersion syllabus2019 = writer.insertSyllabusVersion(chemistry, "2019", false);
-		Unit historicalUnit = writer.insertUnit(syllabus2019, "3", "Historical unit", 1);
-		Topic historicalTopic = writer.insertTopic(historicalUnit, "3.1", "Historical topic", 1);
-		writer.insertDescriptor(historicalTopic, "3.1.1", "Historical descriptor", 1);
-		Subject physics = writer.insertSubject("Physics");
-		SyllabusVersion physicsSyllabus = writer.insertSyllabusVersion(physics, "2025", true);
-		Unit physicsUnit = writer.insertUnit(physicsSyllabus, "1", "Unit one", 1);
-		Topic physicsTopic = writer.insertTopic(physicsUnit, "1.1", "Topic one", 1);
-		writer.insertSubtopic(physicsTopic, "1.1.1", "Subtopic one", 1);
-		Subject biology = writer.insertSubject("Biology");
-		SyllabusVersion biology2019 = writer.insertSyllabusVersion(biology, "2019", false);
-		Unit biologyUnit = writer.insertUnit(biology2019, "2", "Biology historical unit", 1);
-		Topic biologyTopic = writer.insertTopic(biologyUnit, "2.1", "Biology historical topic", 1);
-		writer.insertDescriptor(biologyTopic, "2.1.1", "Biology historical descriptor", 1);
-	}
-
-	private Path createTwoPagePdf(Path path) throws Exception {
-		try (PDDocument document = new PDDocument()) {
-			document.addPage(new PDPage());
-			document.addPage(new PDPage());
-			document.save(path.toFile());
-		}
-		try (PDDocument _ = Loader.loadPDF(path.toFile())) {
-			return path;
-		}
 	}
 
 	void dragRegionOnDisplayedPage(FxRobot robot) throws Exception {
@@ -251,35 +206,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		}).get();
 	}
 
-	void showImportedQuestionCaptureForTest(QuestionCapturePane pane) {
-		try {
-			invoke(pane, "showImportedQuestionCapture", new Class<?>[0]);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	void refreshAnswerQuestionsForTest(List<Question> questions) {
-		try {
-			invoke(answerCapturePane(), "refreshQuestions", new Class<?>[] { List.class }, questions);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	private void openExamPdfForTest() throws Exception {
-		invoke(examMetadataPane(), "selectExamPdf", new Class<?>[] { SelectedPdf.class },
-				new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot));
-	}
-
-	void stageExamPdfForTest(Path sourcePath) {
-		try {
-			invoke(examMetadataPane(), "stageExamPdf", new Class<?>[] { Path.class }, sourcePath);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
 	PdfWorkspacePane pdfWorkspace() {
 		try {
 			return field(application, "pdfWorkspace", PdfWorkspacePane.class);
@@ -298,34 +224,65 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
 			String assessmentName, String bookletName) throws Exception {
+
+		// Existing workflow tests use a Mixed booklet unless they explicitly request a
+		// different booklet format.
+		prepareExamAndClassification(robot, subjectName, providerName, yearValue, assessmentName, bookletName,
+				ExamBookletQuestionFormat.MIXED);
+
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+
+		// Preserve the historical Written Response fixture default for tests that are
+		// not specifically exercising response-type defaults.
+		robot.interact(() -> writtenResponse.setSelected(true));
+	}
+
+	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
+			String assessmentName, String bookletName, ExamBookletQuestionFormat questionFormat) throws Exception {
 		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
 		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(examPdf)).get();
+
 		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
 		Subject selectedSubject = examSubject.getItems().stream()
 				.filter(subject -> subjectName.equals(subject.getName())).findFirst().orElseThrow();
+
 		ComboBox<String> provider = comboBox(robot, "#exam-provider");
 		ComboBox<Integer> year = comboBox(robot, "#exam-year");
 		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
 		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
+		ComboBox<ExamBookletQuestionFormat> format = comboBox(robot, "#exam-question-format");
+
 		robot.interact(() -> {
 			examSubject.setValue(selectedSubject);
 			provider.getEditor().setText(providerName);
 			year.getSelectionModel().select(Integer.valueOf(yearValue));
 			assessment.getEditor().setText(assessmentName);
 			booklet.getEditor().setText(bookletName);
+
+			// Exercise the same explicit booklet-format selection required from the user.
+			format.setValue(questionFormat);
 		});
+
 		robot.clickOn("#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
+
+		// Classification remains independent of booklet Question format.
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
-		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
-		robot.interact(() -> writtenResponse.setSelected(true));
 	}
 
 	QuestionCapturePane questionCapturePane() {
 		try {
 			return field(application, "questionCapturePane", QuestionCapturePane.class);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	void refreshAnswerQuestionsForTest(List<Question> questions) {
+		try {
+			invoke(answerCapturePane(), "refreshQuestions", new Class<?>[] { List.class }, questions);
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}
@@ -349,7 +306,86 @@ abstract class QuestionBankApplicationUiTestBase {
 		}
 	}
 
+	void showImportedQuestionCaptureForTest(QuestionCapturePane pane) {
+		try {
+			invoke(pane, "showImportedQuestionCapture", new Class<?>[0]);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	void stageExamPdfForTest(Path sourcePath) {
+		try {
+			invoke(examMetadataPane(), "stageExamPdf", new Class<?>[] { Path.class }, sourcePath);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	// TestFX 4.0.18 discovers only declared @Start methods. Each concrete class
+	// supplies a thin forwarding method so the actual setup remains shared here.
+	void start(Stage stage) throws Exception {
+		Path testRoot = Files.createTempDirectory("question-bank-ui-");
+		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
+		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
+		databasePath = testRoot.resolve("questionbank.db");
+		createCurriculumDatabase(databasePath);
+		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
+		applicationConfig = new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
+		primaryStage = stage;
+		application = new QuestionBankApplication();
+		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
+				applicationConfig);
+		openExamPdfForTest();
+	}
+
+	@AfterEach
+	void stopApplication() throws Exception {
+		application.stop();
+	}
+
 	ComboBox<Question> unansweredQuestions(FxRobot robot) {
 		return comboBox(robot, "#unanswered-question");
+	}
+
+	private void createCurriculumDatabase(Path databasePath) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SyllabusVersion syllabus2025 = writer.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = writer.insertUnit(syllabus2025, "1", "Unit one", 1);
+		Topic topic = writer.insertTopic(unit, "1.1", "Topic one", 1);
+		writer.insertDescriptor(topic, "1.1.1", "Descriptor one", 1);
+		SyllabusVersion syllabus2019 = writer.insertSyllabusVersion(chemistry, "2019", false);
+		Unit historicalUnit = writer.insertUnit(syllabus2019, "3", "Historical unit", 1);
+		Topic historicalTopic = writer.insertTopic(historicalUnit, "3.1", "Historical topic", 1);
+		writer.insertDescriptor(historicalTopic, "3.1.1", "Historical descriptor", 1);
+		Subject physics = writer.insertSubject("Physics");
+		SyllabusVersion physicsSyllabus = writer.insertSyllabusVersion(physics, "2025", true);
+		Unit physicsUnit = writer.insertUnit(physicsSyllabus, "1", "Unit one", 1);
+		Topic physicsTopic = writer.insertTopic(physicsUnit, "1.1", "Topic one", 1);
+		writer.insertSubtopic(physicsTopic, "1.1.1", "Subtopic one", 1);
+		Subject biology = writer.insertSubject("Biology");
+		SyllabusVersion biology2019 = writer.insertSyllabusVersion(biology, "2019", false);
+		Unit biologyUnit = writer.insertUnit(biology2019, "2", "Biology historical unit", 1);
+		Topic biologyTopic = writer.insertTopic(biologyUnit, "2.1", "Biology historical topic", 1);
+		writer.insertDescriptor(biologyTopic, "2.1.1", "Biology historical descriptor", 1);
+	}
+
+	private Path createTwoPagePdf(Path path) throws Exception {
+		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage());
+			document.addPage(new PDPage());
+			document.save(path.toFile());
+		}
+		try (PDDocument _ = Loader.loadPDF(path.toFile())) {
+			return path;
+		}
+	}
+
+	private void openExamPdfForTest() throws Exception {
+		invoke(examMetadataPane(), "selectExamPdf", new Class<?>[] { SelectedPdf.class },
+				new SelectedPdf(examPdf.toFile(), examPdf, pdfDataRoot));
 	}
 }
