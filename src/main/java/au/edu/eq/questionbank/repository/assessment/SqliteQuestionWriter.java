@@ -255,9 +255,15 @@ public final class SqliteQuestionWriter {
 	public void updateQuestion(long questionId, ExamBooklet booklet, String questionCode, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
+
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// This public update preserves the stored response type. Reject a marks
+				// change that would therefore turn an existing MCQ into invalid data.
+				verifyUpdatedMarksCompatibleWithStoredResponseType(connection, questionId, marks);
+
 				updateQuestion(connection, questionId, booklet, questionCode, marks, regions, classification,
 						sourceQuestion, sharedContext);
 				connection.commit();
@@ -448,6 +454,12 @@ public final class SqliteQuestionWriter {
 			throw new NullPointerException("responseType");
 		}
 		verifyQuestionBooklet(connection, questionId, booklet);
+		if (responseType == QuestionResponseType.MULTIPLE_CHOICE) {
+
+			// Response-type changes occur after any marks edit in the same transaction.
+			// Refuse to commit MCQ metadata unless the stored final mark value is one.
+			verifyStoredQuestionHasOneMark(connection, questionId);
+		}
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE questions
 				SET response_type = ?
@@ -864,6 +876,56 @@ public final class SqliteQuestionWriter {
 						throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()
 								+ " has inconsistent shared preamble links");
 					}
+				}
+			}
+		}
+	}
+
+	private void verifyStoredQuestionHasOneMark(Connection connection, long questionId) throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT marks
+				FROM questions
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, questionId);
+
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Question does not exist: " + questionId);
+				}
+
+				// A Question may become MULTIPLE_CHOICE only when its final persisted mark
+				// value already satisfies the MCQ invariant.
+				if (result.getInt("marks") != 1) {
+					throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
+				}
+			}
+		}
+	}
+
+	private void verifyUpdatedMarksCompatibleWithStoredResponseType(Connection connection, long questionId, int marks)
+			throws SQLException {
+
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT response_type
+				FROM questions
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, questionId);
+
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Question does not exist: " + questionId);
+				}
+
+				QuestionResponseType storedResponseType = QuestionResponseType
+						.valueOf(result.getString("response_type"));
+
+				// A marks-only update preserves response_type, so an existing MCQ may
+				// never be changed away from its mandatory one-mark value.
+				if (storedResponseType == QuestionResponseType.MULTIPLE_CHOICE && marks != 1) {
+					throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
 				}
 			}
 		}

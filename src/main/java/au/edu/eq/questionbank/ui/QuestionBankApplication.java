@@ -1307,8 +1307,7 @@ public class QuestionBankApplication extends Application {
 				pdfWorkspace::getExamPdfSession, question -> activateImportedQuestion(question, config),
 				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
 				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
-				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions,
-				examMetadataPane::ensureQuestionFormatForNewCapture);
+				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
 		questionCapturePane.refreshImportedQuestions();
 	}
 

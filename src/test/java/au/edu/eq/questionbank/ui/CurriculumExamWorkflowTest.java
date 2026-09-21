@@ -518,83 +518,20 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void legacyUnspecifiedBookletReopensWithoutFormatSelection(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-
-		ExamBooklet original = examMetadataPane().getBooklet();
-		assertNotNull(original);
-
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-
-		// Simulate a booklet migrated from a database that predates explicit
-		// question-format metadata.
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						UPDATE exam_booklets
-						SET question_format = 'UNSPECIFIED'
-						WHERE id = ?
-						""")) {
-			statement.setLong(1, original.getId());
-			assertEquals(1, statement.executeUpdate());
-		}
-
-		SqliteExamWriter writer = new SqliteExamWriter(database);
-		ExamBooklet legacyBooklet = writer
-				.findExamBookletBySourceDocumentPath(original.getSourceDocument().getRelativePath());
-
-		assertNotNull(legacyBooklet);
-		assertEquals(ExamBookletQuestionFormat.UNSPECIFIED, legacyBooklet.getQuestionFormat());
-
-		Path storedPdf = new PdfStore(pdfDataRoot).resolve(legacyBooklet.getSourceDocument().getRelativePath());
-
-		// Reopen the persisted source through the normal Open Exam workflow.
-		WaitForAsyncUtils.asyncFx(() -> {
-			examMetadataPane().beginImport();
-			examImportDialog().show();
-		}).get();
-
-		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
-
-		ComboBox<ExamBookletQuestionFormat> format = comboBox(robot, "#exam-question-format");
-
-		// UNSPECIFIED is an internal legacy state, not a normal selectable option.
-		assertFalse(format.getItems().contains(ExamBookletQuestionFormat.UNSPECIFIED));
-		assertNull(format.getValue());
-		assertTrue(format.isDisabled());
-
-		// Confirmation must use the known-booklet path rather than demanding a new
-		// format selection from the user.
-		robot.clickOn("#confirm-exam-details");
-		WaitForAsyncUtils.waitForFxEvents();
-
-		ExamBooklet reopened = examMetadataPane().getBooklet();
-		assertNotNull(reopened);
-		assertEquals(original.getId(), reopened.getId());
-		assertEquals(ExamBookletQuestionFormat.UNSPECIFIED, reopened.getQuestionFormat());
-
-		// Simply opening an old booklet must not silently classify or modify it.
-		ExamBooklet persisted = writer
-				.findExamBookletBySourceDocumentPath(original.getSourceDocument().getRelativePath());
-		assertNotNull(persisted);
-		assertEquals(ExamBookletQuestionFormat.UNSPECIFIED, persisted.getQuestionFormat());
-	}
-
-	@Test
-	void newCaptureInLegacyUnspecifiedBookletRequiresAndPersistsFormat(FxRobot robot) throws Exception {
+	void legacyUnspecifiedBookletRequiresFormatWhenOpened(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
 
-		// Persist an existing Question before simulating a migrated legacy booklet.
-		// Its own response type must remain authoritative throughout the later format
-		// classification.
+		// Existing Questions must retain their own persisted response type when the
+		// booklet itself later acquires format metadata.
 		Question existingQuestion = captureQuestion(robot, "OLD1");
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, existingQuestion.getResponseType());
 
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 
-		// Simulate a booklet migrated from before question-format metadata existed.
+		// Simulate a booklet migrated from a schema that had no question-format field.
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						UPDATE exam_booklets
@@ -605,9 +542,15 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			assertEquals(1, statement.executeUpdate());
 		}
 
-		Path storedPdf = new PdfStore(pdfDataRoot).resolve(originalBooklet.getSourceDocument().getRelativePath());
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamBooklet legacyBooklet = writer
+				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
 
-		// Reopening the legacy booklet itself must still require no format decision.
+		assertNotNull(legacyBooklet);
+		assertEquals(ExamBookletQuestionFormat.UNSPECIFIED, legacyBooklet.getQuestionFormat());
+
+		Path storedPdf = new PdfStore(pdfDataRoot).resolve(legacyBooklet.getSourceDocument().getRelativePath());
+
 		WaitForAsyncUtils.asyncFx(() -> {
 			examMetadataPane().beginImport();
 			examImportDialog().show();
@@ -615,67 +558,52 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
 
-		robot.clickOn("#confirm-exam-details");
-		WaitForAsyncUtils.waitForFxEvents();
+		ComboBox<ExamBookletQuestionFormat> format = comboBox(robot, "#exam-question-format");
 
-		assertEquals(ExamBookletQuestionFormat.UNSPECIFIED, examMetadataPane().getBooklet().getQuestionFormat());
+		// Migration-only UNSPECIFIED state is visible only as missing metadata, never
+		// as
+		// a normal user-selectable format.
+		assertFalse(format.getItems().contains(ExamBookletQuestionFormat.UNSPECIFIED));
+		assertNull(format.getValue());
+		assertTrue(format.isDisabled());
 
-		// Reopening clears the previous per-Question classification, so explicitly
-		// classify the new Question rather than inheriting the old one.
-		selectFirst(robot, "#curriculum-unit");
-		selectFirst(robot, "#curriculum-topic");
-		selectFirstFinalClassification(robot);
+		Button confirm = lookup(robot, "#confirm-exam-details", Button.class);
 
-		TextField questionCode = lookup(robot, "#question-code", TextField.class);
-		TextField marks = lookup(robot, "#question-marks", TextField.class);
-
-		robot.clickOn(questionCode).write("NEW1");
-		robot.clickOn(marks).write("2");
-		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
-
-		Button save = lookup(robot, "#save-question", Button.class);
-		assertFalse(save.isDisabled());
-
-		// Saving the first genuinely new Question is the point at which the legacy
-		// booklet must acquire an explicit format. Fire asynchronously because the
-		// production handler opens a modal ChoiceDialog.
-		Platform.runLater(save::fire);
+		// Confirmation opens the modal format decision before the booklet becomes
+		// active.
+		Platform.runLater(confirm::fire);
 
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("Choose a question format before capturing new questions.").tryQuery().isPresent());
+				() -> robot.lookup("Question format has not been recorded for this booklet.").tryQuery().isPresent());
 
-		// MIXED/Both is deliberately the default choice in the legacy-format prompt.
+		// The current dialog defaults to Both/Mixed; accepting it is sufficient to
+		// prove
+		// the decision is persisted during opening rather than during Question save.
 		Button okButton = robot.lookup("OK").queryButton();
 		robot.interact(okButton::fire);
-
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !questionCapturePane().isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
 
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		ExamBooklet persistedBooklet = examWriter
+		ExamBooklet reopened = examMetadataPane().getBooklet();
+		assertNotNull(reopened);
+		assertEquals(originalBooklet.getId(), reopened.getId());
+		assertEquals(ExamBookletQuestionFormat.MIXED, reopened.getQuestionFormat());
+
+		// The resolved booklet format is shown as authoritative metadata after opening.
+		assertEquals(ExamBookletQuestionFormat.MIXED, format.getValue());
+		assertTrue(format.isDisabled());
+
+		ExamBooklet persisted = writer
 				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
 
-		// The choice is stored once at booklet level rather than merely retained in
-		// the current JavaFX controls.
-		assertNotNull(persistedBooklet);
-		assertEquals(ExamBookletQuestionFormat.MIXED, persistedBooklet.getQuestionFormat());
-		assertEquals(ExamBookletQuestionFormat.MIXED, examMetadataPane().getBooklet().getQuestionFormat());
+		// Re-reading SQLite proves the format was persisted during Open Exam.
+		assertNotNull(persisted);
+		assertEquals(ExamBookletQuestionFormat.MIXED, persisted.getQuestionFormat());
 
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question reloadedExisting = new SqliteQuestionRepository(database).findById(existingQuestion.getId())
+				.orElseThrow();
 
-		Question reloadedExisting = repository.findById(existingQuestion.getId()).orElseThrow();
-
-		// Classifying the booklet must never rewrite an already-persisted Question.
+		// Booklet classification must never rewrite existing Question response types.
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedExisting.getResponseType());
-
-		Question newQuestion = repository.findAll().stream()
-				.filter(question -> "NEW1".equals(question.getQuestionCode())).findFirst().orElseThrow();
-
-		// The newly captured Question uses the newly established Mixed-booklet rules;
-		// two marks safely infer Written Response.
-		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, newQuestion.getResponseType());
-		assertEquals(2, newQuestion.getMarks());
 	}
 
 	@Test

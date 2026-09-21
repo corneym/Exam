@@ -102,9 +102,15 @@ class QuestionCorpusQueueTest {
 
 		private Question question(long id, ExamBooklet booklet, Descriptor classification, String code,
 				QuestionResponseType responseType, boolean withRegion, boolean preambleRequired) {
+
 			List<QuestionRegion> regions = withRegion ? List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20))
 					: List.of();
-			return new Question(id, booklet, code, "", 2, regions, classification, preambleRequired, null, null,
+
+			// Multiple-choice fixture Questions must obey the production one-mark
+			// invariant. Other fixture Questions retain the existing two-mark value.
+			int marks = responseType == QuestionResponseType.MULTIPLE_CHOICE ? 1 : 2;
+
+			return new Question(id, booklet, code, "", marks, regions, classification, preambleRequired, null, null,
 					responseType);
 		}
 

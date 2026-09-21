@@ -68,7 +68,9 @@ class LegacyQuestionSplitServiceTest {
 		}
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
-		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.MULTIPLE_CHOICE,
+		// Keep the second part valid so this regression reaches the deliberately
+		// failing SQLite trigger that is meant to test transaction rollback.
+		SplitPart partB = new SplitPart("3b", 1, subtopicTwo, QuestionResponseType.MULTIPLE_CHOICE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
 		assertThrows(IllegalStateException.class,
 				() -> splitService.split(new SplitRequest(original, "3", List.of(partA, partB), 0)));
@@ -230,7 +232,9 @@ class LegacyQuestionSplitServiceTest {
 		// persistent identity must remain attached to whichever split part reuses the
 		// original Question row.
 		var originalAnswer = answerWriter.insertAnswer(original, "Original combined answer", List.of());
-		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.MULTIPLE_CHOICE,
+		// MCQ metadata is incidental to this Answer-ownership test and must satisfy the
+		// production one-mark invariant.
+		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.20, 0.80, 0.20)));
 		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
@@ -285,6 +289,7 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
 		var originalAnswer = answerWriter.insertAnswer(original, "Original combined answer", List.of());
+		// The rejection being tested is the existing Answer, not invalid MCQ marks.
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne,
 
 				// This part is nominated to retain the original Question row, but
@@ -376,7 +381,9 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
-		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.MULTIPLE_CHOICE,
+		// Keep the destination metadata valid so unresolved preamble status remains the
+		// reason this split is rejected.
+		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
 		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
 				() -> splitService.split(new SplitRequest(original, "3", List.of(partA, partB), 0)));
@@ -415,7 +422,9 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
-		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.MULTIPLE_CHOICE,
+		// Keep the requested MCQ valid so the inconsistent shared-context relationship
+		// remains the behaviour under test.
+		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
 		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
 				() -> splitService.split(new SplitRequest(original, "3", List.of(partA, partB), 0)));
@@ -451,7 +460,9 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
-		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.MULTIPLE_CHOICE,
+		// A reused multipart source can contain an MCQ part, but that part is
+		// necessarily worth exactly one mark.
+		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
 		SplitResult result = splitService.split(new SplitRequest(original, "3", List.of(partA, partB), 0));
 		assertEquals(existingSourceQuestion.getId(), result.sourceQuestion().getId());
@@ -525,7 +536,8 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
-		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.MULTIPLE_CHOICE,
+		// The multiple-choice split part must satisfy the one-mark invariant.
+		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
 		SplitResult result = splitService.split(new SplitRequest(original, "3", List.of(partA, partB), 0));
 		assertEquals(2, result.questions().size());
@@ -543,7 +555,7 @@ class LegacyQuestionSplitServiceTest {
 		assertEquals(subtopicOne.getId(), resultingA.getClassification().getId());
 		assertEquals(subtopicTwo.getId(), resultingB.getClassification().getId());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, resultingA.getResponseType());
-		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, resultingB.getResponseType());
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, resultingB.getResponseType());
 		assertEquals(1, resultingA.getRegions().size());
 		assertEquals(1, resultingA.getRegions().getFirst().pageNumber());
 		assertEquals(1, resultingB.getRegions().size());

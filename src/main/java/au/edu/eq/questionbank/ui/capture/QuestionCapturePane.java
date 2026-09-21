@@ -12,7 +12,6 @@ import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -94,9 +93,6 @@ public final class QuestionCapturePane extends VBox {
 	private final Runnable selectionClearHandler;
 	private final Consumer<List<Question>> questionsChangedHandler;
 	private final IntConsumer examPageNavigationHandler;
-	// Legacy booklets must acquire explicit format metadata before a genuinely new
-	// Question can be persisted.
-	private final BooleanSupplier questionFormatReadyHandler;
 
 	// Reuse the worker's snapshot throughout synchronous listeners fired by save
 	// completion.
@@ -178,13 +174,12 @@ public final class QuestionCapturePane extends VBox {
 			Supplier<ExamBooklet> bookletSupplier, Supplier<PdfSession> examPdfSessionSupplier,
 			Predicate<Question> importedQuestionActivationHandler, IntConsumer examPageNavigationHandler,
 			BooleanSupplier questionTargetChangeAllowed, BooleanSupplier questionSelectionTransferHandler,
-			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler,
-			BooleanSupplier questionFormatReadyHandler) {
+			Runnable selectionClearHandler, Consumer<List<Question>> questionsChangedHandler) {
 		validateDependencies(questionRepository, sourceQuestionRepository, questionCaptureService,
 				legacyQuestionSplitService, sharedContextCapturePane, questionExtractor, curriculumSelectionModel,
 				curriculumSelectorPane, bookletSupplier, examPdfSessionSupplier, importedQuestionActivationHandler,
 				examPageNavigationHandler, questionTargetChangeAllowed, questionSelectionTransferHandler,
-				selectionClearHandler, questionsChangedHandler, questionFormatReadyHandler);
+				selectionClearHandler, questionsChangedHandler);
 		this.questionRepository = questionRepository;
 		this.questionExtractor = questionExtractor;
 		this.curriculumSelectionModel = curriculumSelectionModel;
@@ -201,7 +196,6 @@ public final class QuestionCapturePane extends VBox {
 		this.questionSelectionTransferHandler = questionSelectionTransferHandler;
 		this.questionCaptureService = questionCaptureService;
 		this.legacyQuestionSplitService = legacyQuestionSplitService;
-		this.questionFormatReadyHandler = questionFormatReadyHandler;
 		configureControls();
 		configureActions();
 		buildContent();
@@ -1312,16 +1306,10 @@ public final class QuestionCapturePane extends VBox {
 			return validationError;
 		}
 		if (selectedResponseType() == null) {
-			ExamBooklet booklet = bookletSupplier.get();
 
-			// An old UNSPECIFIED booklet gets one opportunity at Save to acquire its
-			// explicit format. That choice may itself establish the response-type default.
-			boolean legacyFormatPending = isOrdinaryNewQuestionCapture() && booklet != null
-					&& booklet.getQuestionFormat() == ExamBookletQuestionFormat.UNSPECIFIED;
-
-			if (!legacyFormatPending) {
-				return "Select whether this question is multiple choice or written response.";
-			}
+			// By the time ordinary capture is available, the active booklet has already
+			// supplied its default or the user must explicitly select a response type.
+			return "Select whether this question is multiple choice or written response.";
 		}
 		return null;
 	}
@@ -1539,14 +1527,6 @@ public final class QuestionCapturePane extends VBox {
 		preambleStatusLabel.setStyle("");
 		preambleStatusLabel.setVisible(false);
 		preambleStatusLabel.setManaged(false);
-	}
-
-	private boolean isOrdinaryNewQuestionCapture() {
-
-		// Imported capture, edits and legacy split correction all operate on existing
-		// persisted Questions and must never force legacy booklet classification.
-		return !importedCaptureMode && importedQuestion == null && editingQuestion == null
-				&& legacySplitCaptureState == null;
 	}
 
 	private void loadActiveLegacySplitPart() {
@@ -2333,7 +2313,7 @@ public final class QuestionCapturePane extends VBox {
 			Supplier<PdfSession> examPdfSessionSupplier, Predicate<Question> importedQuestionActivationHandler,
 			IntConsumer examPageNavigationHandler, BooleanSupplier questionTargetChangeAllowed,
 			BooleanSupplier questionSelectionTransferHandler, Runnable selectionClearHandler,
-			Consumer<List<Question>> questionsChangedHandler, BooleanSupplier questionFormatReadyHandler) {
+			Consumer<List<Question>> questionsChangedHandler) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
@@ -2382,29 +2362,11 @@ public final class QuestionCapturePane extends VBox {
 		if (questionsChangedHandler == null) {
 			throw new NullPointerException("questionsChangedHandler");
 		}
-		if (questionFormatReadyHandler == null) {
-			throw new NullPointerException("questionFormatReadyHandler");
-		}
 	}
 
 	private void validateQuestionForSave() {
 		if (questionSaveInProgress) {
 			return;
-		}
-
-		ExamBooklet booklet = bookletSupplier.get();
-		if (isOrdinaryNewQuestionCapture() && booklet != null
-				&& booklet.getQuestionFormat() == ExamBookletQuestionFormat.UNSPECIFIED) {
-
-			// Existing legacy Questions remain untouched. Only an attempt to persist a
-			// genuinely new Question requires the booklet to be classified.
-			if (!questionFormatReadyHandler.getAsBoolean()) {
-				return;
-			}
-
-			// The newly persisted booklet format can now supply the ordinary new-Question
-			// default. A deliberate per-Question override is still retained.
-			applyAutomaticResponseType();
 		}
 
 		String validationError = findQuestionDetailsValidationError();
@@ -2417,14 +2379,19 @@ public final class QuestionCapturePane extends VBox {
 				&& !sharedContextCapturePane.hasPendingAutomaticRegion()) {
 			validationError = "Capture the shared preamble before continuing with the split.";
 		}
+
 		if (validationError != null) {
 			showAlert(Alert.AlertType.WARNING, "Question is incomplete.", validationError);
 			return;
 		}
+
 		if (legacySplitCaptureState != null) {
 			advanceLegacyQuestionSplit();
 			return;
 		}
+
+		// Booklet-format resolution now occurs when a known booklet is opened, so Save
+		// deals only with Question-level validation and persistence.
 		saveQuestion();
 	}
 

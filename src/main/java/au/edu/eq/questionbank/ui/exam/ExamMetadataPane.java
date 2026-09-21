@@ -234,51 +234,6 @@ public final class ExamMetadataPane extends VBox {
 	}
 
 	/**
-	 * Ensures that a legacy active booklet has an explicit format before new
-	 * Questions are persisted.
-	 *
-	 * @return {@code true} when capture may continue; {@code false} when cancelled
-	 */
-	public boolean ensureQuestionFormatForNewCapture() {
-		if (booklet == null) {
-			return false;
-		}
-
-		if (booklet.getQuestionFormat() != ExamBookletQuestionFormat.UNSPECIFIED) {
-			return true;
-		}
-
-		ChoiceDialog<ExamBookletQuestionFormat> dialog = new ChoiceDialog<>(ExamBookletQuestionFormat.MIXED,
-				ExamBookletQuestionFormat.MULTIPLE_CHOICE, ExamBookletQuestionFormat.WRITTEN_RESPONSE,
-				ExamBookletQuestionFormat.MIXED);
-
-		// This prompt appears only when new capture is attempted against a migrated
-		// booklet whose format was never historically recorded.
-		if (getScene() != null && getScene().getWindow() != null) {
-			dialog.initOwner(getScene().getWindow());
-		}
-		dialog.setTitle("Question Format");
-		dialog.setHeaderText("Choose a question format before capturing new questions.");
-		dialog.setContentText("Question format:");
-
-		ExamBookletQuestionFormat selectedFormat = dialog.showAndWait().orElse(null);
-		if (selectedFormat == null) {
-			return false;
-		}
-
-		try {
-
-			// Persist the format once. Existing Questions are not modified.
-			booklet = examWriter.classifyLegacyBookletQuestionFormat(booklet, selectedFormat);
-			questionFormatField.setValue(selectedFormat);
-			return true;
-		} catch (SQLException | RuntimeException exception) {
-			showDatabaseError(exception.getMessage());
-			return false;
-		}
-	}
-
-	/**
 	 * Returns the persisted booklet currently used for question regions.
 	 *
 	 * @return the current booklet, or {@code null} before exam metadata is set
@@ -472,6 +427,17 @@ public final class ExamMetadataPane extends VBox {
 		yearField.setValue(exam.getYear());
 		assessmentField.setValue(exam.getName());
 		bookletField.setValue(existingBooklet.getName());
+
+		if (existingBooklet.getQuestionFormat() == ExamBookletQuestionFormat.UNSPECIFIED) {
+
+			// UNSPECIFIED is migration-only state and must never appear as a
+			// user-selectable question format.
+			clearQuestionFormatField();
+		} else {
+
+			// Existing explicit booklet metadata is authoritative when the PDF is reopened.
+			questionFormatField.setValue(existingBooklet.getQuestionFormat());
+		}
 	}
 
 	private void applyInputToControls(ExamMetadataInput input) {
@@ -560,28 +526,44 @@ public final class ExamMetadataPane extends VBox {
 		if (!examChangeAllowed.getAsBoolean()) {
 			return false;
 		}
+
 		ExamBooklet existingBooklet = pendingKnownBooklet;
 		Path storedPath;
 		try {
 
-			// Always reopen the authoritative managed PDF, even when later recognition
-			// is extended to external byte-identical copies.
+			// Always reopen the authoritative managed PDF, even when recognition began
+			// from an external byte-identical copy.
 			storedPath = pdfStore.resolve(existingBooklet.getSourceDocument().getRelativePath());
 		} catch (IllegalArgumentException exception) {
 			showFileError(exception.getMessage());
 			return false;
 		}
+
 		if (!Files.isRegularFile(storedPath)) {
 			showFileError("Stored exam PDF is unavailable: " + storedPath);
 			return false;
 		}
+
+		ExamBooklet resolvedBooklet = resolveKnownBookletQuestionFormat(existingBooklet);
+		if (resolvedBooklet == null) {
+
+			// Cancellation keeps the recognised booklet staged so the user may confirm it
+			// again or close the Open Exam workflow.
+			return false;
+		}
+
+		// Retain the newly classified object if PDF activation subsequently fails so a
+		// retry does not attempt to classify the same persisted booklet twice.
+		pendingKnownBooklet = resolvedBooklet;
+
 		try {
 			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfDataRoot);
 
-			// Open the authoritative persisted document first. Only after that succeeds
-			// should the in-memory active booklet be changed.
+			// Format resolution is complete before the capture workspace is reset and the
+			// booklet becomes authoritative.
 			examPdfHandler.accept(selectedPdf);
-			activateExistingBooklet(existingBooklet, storedPath);
+			activateExistingBooklet(resolvedBooklet, storedPath);
+
 			pendingPdfPath = null;
 			pendingKnownBooklet = null;
 			return true;
@@ -734,6 +716,56 @@ public final class ExamMetadataPane extends VBox {
 		optionsRepository.addAssessment(input.assessmentName());
 		optionsRepository.addBooklet(input.bookletName());
 		loadOptions();
+	}
+
+	/**
+	 * Resolves missing booklet-format metadata before an existing booklet becomes
+	 * active in the capture workspace.
+	 *
+	 * @param existingBooklet persisted booklet being opened
+	 * @return the booklet with an explicit format, or {@code null} when the user
+	 *         cancels or persistence fails
+	 */
+	private ExamBooklet resolveKnownBookletQuestionFormat(ExamBooklet existingBooklet) {
+		if (existingBooklet == null) {
+			throw new NullPointerException("existingBooklet");
+		}
+
+		if (existingBooklet.getQuestionFormat() != ExamBookletQuestionFormat.UNSPECIFIED) {
+
+			// Modern booklets already contain authoritative format metadata.
+			return existingBooklet;
+		}
+
+		ChoiceDialog<ExamBookletQuestionFormat> dialog = new ChoiceDialog<>(ExamBookletQuestionFormat.MIXED,
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE, ExamBookletQuestionFormat.WRITTEN_RESPONSE,
+				ExamBookletQuestionFormat.MIXED);
+
+		// Legacy booklets are classified when they are explicitly opened for capture,
+		// before any new Question entry can begin.
+		if (getScene() != null && getScene().getWindow() != null) {
+			dialog.initOwner(getScene().getWindow());
+		}
+		dialog.setTitle("Question Format");
+		dialog.setHeaderText("Question format has not been recorded for this booklet.");
+		dialog.setContentText("Question format:");
+
+		ExamBookletQuestionFormat selectedFormat = dialog.showAndWait().orElse(null);
+		if (selectedFormat == null) {
+
+			// Cancelling leaves both persistence and the active capture booklet unchanged.
+			return null;
+		}
+
+		try {
+
+			// Persist the booklet-level classification once. Existing Questions retain
+			// their own persisted response types.
+			return examWriter.classifyLegacyBookletQuestionFormat(existingBooklet, selectedFormat);
+		} catch (SQLException | RuntimeException exception) {
+			showDatabaseError(exception.getMessage());
+			return null;
+		}
 	}
 
 	private void setKnownPdfMetadataMode(boolean knownPdf) {
