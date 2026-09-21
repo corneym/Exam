@@ -47,9 +47,7 @@ class SqliteQuestionCaptureServiceTest {
 		Question edited = service.save(
 				new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.EDIT, fixture.booklet(),
 						original, "Q3", 1, original.getRegions(), fixture.classification(), null, null));
-
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, edited.getResponseType());
-
 		Question reloaded = repository.findById(original.getId()).orElseThrow();
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
 		assertEquals(1, reloaded.getMarks());
@@ -228,7 +226,6 @@ class SqliteQuestionCaptureServiceTest {
 	@Test
 	void rejectsMultipleChoiceCaptureWithMoreThanOneMark() throws Exception {
 		Fixture fixture = createFixture("reject-multi-mark-mcq.db");
-
 		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
 				() -> new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW,
 						fixture.booklet(), null, "Q1", 2,

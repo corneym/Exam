@@ -235,6 +235,7 @@ class SqliteSchemaV5Test {
 		}
 		assertEquals(5, database.schemaVersion());
 		database.initialiseSchema();
+
 		// initialiseSchema() migrates the database all the way to the application's
 		// current supported schema.
 		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());

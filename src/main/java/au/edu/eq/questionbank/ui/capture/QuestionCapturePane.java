@@ -154,6 +154,7 @@ public final class QuestionCapturePane extends VBox {
 	// Working Subject is transient workspace state. A null value preserves the
 	// existing all-subject behaviour until the workspace selector is applied.
 	private Subject workingSubject;
+
 	// Automatic defaults may be replaced by an explicit response-type choice.
 	private boolean responseTypeManuallySelected;
 
@@ -481,6 +482,7 @@ public final class QuestionCapturePane extends VBox {
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
 		setResponseTypeDisabled(false);
+
 		// Editing an existing MCQ still enforces its one-mark UI invariant.
 		updateMarksFieldForResponseType();
 		curriculumSelectorPane.setDisable(false);
@@ -813,7 +815,6 @@ public final class QuestionCapturePane extends VBox {
 				|| legacySplitCaptureState != null) {
 			return;
 		}
-
 		ExamBooklet booklet = bookletSupplier.get();
 		if (booklet == null) {
 
@@ -823,7 +824,6 @@ public final class QuestionCapturePane extends VBox {
 			updateMarksFieldForResponseType();
 			return;
 		}
-
 		switch (booklet.getQuestionFormat()) {
 		case MULTIPLE_CHOICE -> {
 
@@ -1050,9 +1050,7 @@ public final class QuestionCapturePane extends VBox {
 		clearRegionsButton.setOnAction(_ -> clearQuestionRegions());
 		removeCurrentSelectionButton.setOnAction(_ -> clearPendingSelection());
 		saveQuestionButton.setOnAction(_ -> validateQuestionForSave());
-
 		questionCodeField.textProperty().addListener((_, _, newCode) -> handleQuestionCodeChanged(newCode));
-
 		marksField.textProperty().addListener((_, _, _) -> {
 
 			// Mixed-book inference may become decisive when marks change, but marks
@@ -1062,14 +1060,12 @@ public final class QuestionCapturePane extends VBox {
 			}
 			refreshSaveButtonState();
 		});
-
 		responseTypeGroup.selectedToggleProperty().addListener((_, _, _) -> handleResponseTypeChanged());
 
 		// Action events represent an explicit user override. Programmatic defaults and
 		// inference use selectResponseType() and therefore do not set this flag.
 		multipleChoiceResponseButton.setOnAction(_ -> responseTypeManuallySelected = true);
 		writtenResponseButton.setOnAction(_ -> responseTypeManuallySelected = true);
-
 		curriculumSelectorPane.selectedClassificationProperty().addListener((_, _, _) -> refreshSaveButtonState());
 		firstRegionPreambleCheckBox.selectedProperty()
 				.addListener((_, _, selected) -> handlePreambleOptionChanged(selected.booleanValue()));
@@ -1503,17 +1499,14 @@ public final class QuestionCapturePane extends VBox {
 			refreshSaveButtonState();
 			return;
 		}
-
 		if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
 			sharedContextCapturePane.selectContext(null);
 		}
-
 		refreshPreambleControls();
 
 		// A new multipart code can safely imply Written Response in Mixed or
 		// legacy-unspecified booklets.
 		applyAutomaticResponseType();
-
 		refreshSaveButtonState();
 	}
 
@@ -1526,7 +1519,6 @@ public final class QuestionCapturePane extends VBox {
 		} finally {
 			updatingResponseTypeSelection = false;
 		}
-
 		refreshSaveButtonState();
 	}
 
@@ -1867,10 +1859,8 @@ public final class QuestionCapturePane extends VBox {
 	private void resetQuestionEntry() {
 		sharedContextCapturePane.clearForQuestion();
 		hidePreambleControls();
-
 		questionCodeField.clear();
 		questionCodeField.setDisable(false);
-
 		marksField.clear();
 
 		// Every new Question starts with fresh automatic/default state rather than
@@ -1879,7 +1869,6 @@ public final class QuestionCapturePane extends VBox {
 		selectResponseType(null);
 		setResponseTypeDisabled(false);
 		applyAutomaticResponseType();
-
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
 		refreshSaveButtonState();
@@ -2048,12 +2037,10 @@ public final class QuestionCapturePane extends VBox {
 		if (SourceQuestionCodeParser.derive(questionCodeField.getText()) != null) {
 			return true;
 		}
-
 		String marksText = marksField.getText().trim();
 		if (marksText.isEmpty()) {
 			return false;
 		}
-
 		try {
 
 			// MCQs are always one mark, so more than one mark safely identifies Written
@@ -2177,7 +2164,6 @@ public final class QuestionCapturePane extends VBox {
 		// Question capture becomes visible. Single-format booklets remain locked;
 		// Mixed booklets retain editable response-type controls.
 		applyAutomaticResponseType();
-
 		curriculumSelectorPane.setDisable(false);
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		cancelQuestionEditButton.setVisible(false);
@@ -2284,7 +2270,6 @@ public final class QuestionCapturePane extends VBox {
 
 	private void updateMarksFieldForResponseType() {
 		QuestionResponseType responseType = selectedResponseType();
-
 		if (responseType == QuestionResponseType.MULTIPLE_CHOICE && importedQuestion == null
 				&& legacySplitCaptureState == null) {
 
@@ -2296,7 +2281,6 @@ public final class QuestionCapturePane extends VBox {
 			marksField.setDisable(true);
 			return;
 		}
-
 		if (!importedCaptureMode && importedQuestion == null && legacySplitCaptureState == null) {
 
 			// Written Response and unresolved new/edit Questions allow marks to be
@@ -2394,7 +2378,6 @@ public final class QuestionCapturePane extends VBox {
 		if (questionSaveInProgress) {
 			return;
 		}
-
 		String validationError = findQuestionDetailsValidationError();
 		if (validationError == null && sharedContextCapturePane.isCaptureMode()) {
 			validationError = "Capture the shared preamble region and click Add Region before continuing.";
@@ -2405,12 +2388,10 @@ public final class QuestionCapturePane extends VBox {
 				&& !sharedContextCapturePane.hasPendingAutomaticRegion()) {
 			validationError = "Capture the shared preamble before continuing with the split.";
 		}
-
 		if (validationError != null) {
 			showAlert(Alert.AlertType.WARNING, "Question is incomplete.", validationError);
 			return;
 		}
-
 		if (legacySplitCaptureState != null) {
 			advanceLegacyQuestionSplit();
 			return;

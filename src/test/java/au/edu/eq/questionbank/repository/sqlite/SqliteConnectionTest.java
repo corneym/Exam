@@ -23,6 +23,23 @@ class SqliteConnectionTest {
 	Path tempDir;
 
 	@Test
+	void configuresBusyTimeout() throws Exception {
+		Path databasePath = tempDir.resolve("busy-timeout.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA busy_timeout")) {
+
+			// UI reads and asynchronous persistence may briefly overlap. Every
+			// application connection must therefore wait for ordinary short-lived SQLite
+			// locks rather than failing immediately with SQLITE_BUSY.
+			assertTrue(result.next());
+			assertEquals(5000, result.getInt(1));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
 	void createsNewDatabaseAtLatestSchemaVersion() throws Exception {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -557,6 +574,143 @@ class SqliteConnectionTest {
 						""")) {
 			assertTrue(result.next());
 			assertEquals("UNSPECIFIED", result.getString("question_format"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
+	void migratesVersion09BookletAnswerFilesConservatively() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-nine-answer-files.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Construct a genuine version-nine database so only the new booklet-answer
+			// relationship is exercised by this migration test.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v7-to-v8.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v8-to-v9.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
+				statement.execute("""
+						INSERT INTO syllabus_versions
+						    (id, subject_id, syllabus_name, is_current)
+						VALUES
+						    (1, 1, '2025', 1)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_nodes
+						    (id, syllabus_version_id, parent_id,
+						     curriculum_code, curriculum_name,
+						     curriculum_level, display_order)
+						VALUES
+						    (1, 1, NULL, '1', 'Unit 1', 'UNIT', 0),
+						    (2, 1, 1, '1.1', 'Topic 1', 'TOPIC', 0),
+						    (3, 1, 2, '1.1.1', 'Subtopic 1', 'SUBTOPIC', 0)
+						""");
+				statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
+				statement.execute("""
+						INSERT INTO source_documents
+						    (id, relative_path)
+						VALUES
+						    (1, 'mcq.pdf'),
+						    (2, 'paper1.pdf'),
+						    (3, 'paper2.pdf'),
+						    (4, 'legacy-ambiguous.pdf'),
+						    (10, 'answers-a.pdf'),
+						    (11, 'answers-b.pdf')
+						""");
+				statement.execute("""
+						INSERT INTO exams
+						    (id, subject_id, provider_id, exam_year, exam_name)
+						VALUES
+						    (1, 1, 1, 2025, 'External Assessment')
+						""");
+				statement.execute("""
+						INSERT INTO exam_booklets
+						    (id, exam_id, source_document_id, booklet_name, question_format)
+						VALUES
+						    (1, 1, 1, 'MCQ booklet', 'MULTIPLE_CHOICE'),
+						    (2, 1, 2, 'Paper 1', 'WRITTEN_RESPONSE'),
+						    (3, 1, 3, 'Paper 2', 'WRITTEN_RESPONSE'),
+						    (4, 1, 4, 'Legacy ambiguous', 'WRITTEN_RESPONSE')
+						""");
+				statement.execute("""
+						INSERT INTO answer_files
+						    (id, exam_id, source_document_id, answer_file_name)
+						VALUES
+						    (10, 1, 10, 'Answers A'),
+						    (11, 1, 11, 'Answers B')
+						""");
+				statement.execute("""
+						INSERT INTO questions
+						    (id, booklet_id, classification_node_id,
+						     question_code, question_text, marks,
+						     preamble_capture_required, response_type)
+						VALUES
+						    (100, 2, 3, '1', '', 2, 0, 'WRITTEN_RESPONSE'),
+						    (101, 3, 3, '2', '', 2, 0, 'WRITTEN_RESPONSE'),
+						    (102, 4, 3, '3', '', 2, 0, 'WRITTEN_RESPONSE'),
+						    (103, 4, 3, '4', '', 2, 0, 'WRITTEN_RESPONSE')
+						""");
+				statement.execute("""
+						INSERT INTO answers
+						    (id, question_id, answer_text)
+						VALUES
+						    (200, 100, NULL),
+						    (201, 101, NULL),
+						    (202, 102, NULL),
+						    (203, 103, NULL)
+						""");
+				statement.execute("""
+						INSERT INTO answer_regions
+						    (answer_id, region_order, answer_file_id,
+						     page_number, x, y, width, height)
+						VALUES
+						    (200, 0, 10, 1, 0.10, 0.10, 0.50, 0.20),
+						    (201, 0, 11, 1, 0.10, 0.10, 0.50, 0.20),
+						    (202, 0, 10, 1, 0.10, 0.10, 0.50, 0.20),
+						    (203, 0, 11, 1, 0.10, 0.10, 0.50, 0.20)
+						""");
+			}
+			connection.commit();
+		}
+		assertEquals(9, database.schemaVersion());
+		database.initialiseSchema();
+		assertEquals(10, database.schemaVersion());
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT id, answer_file_id
+						FROM exam_booklets
+						ORDER BY id
+						""")) {
+
+			// The MCQ booklet has no region evidence, so migration must not guess that it
+			// shares Answers A with Paper 1.
+			assertTrue(result.next());
+			assertEquals(1, result.getLong("id"));
+			assertNull(result.getObject("answer_file_id"));
+
+			// Paper 1 has one unambiguous historical source.
+			assertTrue(result.next());
+			assertEquals(2, result.getLong("id"));
+			assertEquals(10, result.getLong("answer_file_id"));
+
+			// Paper 2 independently resolves to the second answer document.
+			assertTrue(result.next());
+			assertEquals(3, result.getLong("id"));
+			assertEquals(11, result.getLong("answer_file_id"));
+
+			// Conflicting legacy evidence is preserved as unresolved rather than guessed.
+			assertTrue(result.next());
+			assertEquals(4, result.getLong("id"));
+			assertNull(result.getObject("answer_file_id"));
 			assertFalse(result.next());
 		}
 	}
@@ -1213,7 +1367,6 @@ class SqliteConnectionTest {
 	@Test
 	void rejectsVersion05DatabaseWithoutSharedQuestionSchema() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-five-missing-shared-question-schema.db"));
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 
@@ -1223,7 +1376,6 @@ class SqliteConnectionTest {
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 5");
 			}
@@ -1233,6 +1385,7 @@ class SqliteConnectionTest {
 		// A database claiming version five must contain the source-question and shared
 		// context structures introduced by the v4-to-v5 migration.
 		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+
 		// The version-five verifier reaches the absent source_questions structure
 		// through its required-column checks rather than a separate table-exists check.
 		assertTrue(exception.getMessage().contains("source_questions is missing required column"));
@@ -1242,7 +1395,6 @@ class SqliteConnectionTest {
 	@Test
 	void rejectsVersion07DatabaseWithoutCurriculumAuthoringSchema() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-seven-missing-authoring-schema.db"));
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 
@@ -1254,7 +1406,6 @@ class SqliteConnectionTest {
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
-
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 7");
 			}
@@ -1264,6 +1415,7 @@ class SqliteConnectionTest {
 		// Version seven requires the curriculum-authoring columns added to
 		// syllabus_versions and curriculum_nodes.
 		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+
 		// Several version-seven columns are absent from the deliberately falsified
 		// version-six schema, so do not depend on HashSet iteration choosing one name.
 		assertTrue(exception.getMessage().contains("syllabus_versions is missing required column"));
@@ -1273,7 +1425,6 @@ class SqliteConnectionTest {
 	@Test
 	void rejectsVersion08DatabaseWithoutQuestionResponseType() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-eight-missing-response-type.db"));
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 
@@ -1286,7 +1437,6 @@ class SqliteConnectionTest {
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
 			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
-
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 8");
 			}
@@ -1325,6 +1475,58 @@ class SqliteConnectionTest {
 		// booklet-format structure is absent.
 		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
 		assertTrue(exception.getMessage().contains("exam_booklets is missing required column question_format"));
+	}
+
+	@Test
+	void rejectsVersion10DatabaseWithoutBookletAnswerFileColumn() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("booklet-missing-answer-file.db"));
+		database.initialiseSchema();
+
+		// Preserve all booklet structure through version nine while deliberately
+		// omitting only the relationship introduced by version ten.
+		replaceTable(database, "exam_booklets", """
+				CREATE TABLE exam_booklets (
+				    id INTEGER PRIMARY KEY,
+				    exam_id INTEGER NOT NULL,
+				    source_document_id INTEGER NOT NULL,
+				    booklet_name TEXT NOT NULL,
+				    question_format TEXT NOT NULL DEFAULT 'UNSPECIFIED',
+				    FOREIGN KEY (exam_id)
+				        REFERENCES exams(id),
+				    FOREIGN KEY (source_document_id)
+				        REFERENCES source_documents(id),
+				    UNIQUE (exam_id, booklet_name)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains("exam_booklets is missing required column answer_file_id"));
+	}
+
+	@Test
+	void rejectsVersion10DatabaseWithoutBookletAnswerFileForeignKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("booklet-answer-file-missing-foreign-key.db"));
+		database.initialiseSchema();
+
+		// Include the version-ten column but remove only its required relationship to
+		// answer_files.
+		replaceTable(database, "exam_booklets", """
+				CREATE TABLE exam_booklets (
+				    id INTEGER PRIMARY KEY,
+				    exam_id INTEGER NOT NULL,
+				    source_document_id INTEGER NOT NULL,
+				    booklet_name TEXT NOT NULL,
+				    question_format TEXT NOT NULL DEFAULT 'UNSPECIFIED',
+				    answer_file_id INTEGER,
+				    FOREIGN KEY (exam_id)
+				        REFERENCES exams(id),
+				    FOREIGN KEY (source_document_id)
+				        REFERENCES source_documents(id),
+				    UNIQUE (exam_id, booklet_name)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage()
+				.contains("exam_booklets is missing exact foreign key answer_file_id -> answer_files(id)"));
 	}
 
 	@Test

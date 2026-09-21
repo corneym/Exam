@@ -79,26 +79,21 @@ class SqliteQuestionWriterTest {
 		Path databasePath = tempDirectory.resolve("reject-multi-mark-mcq.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
 		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
 		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
 		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
 				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
-
 		List<QuestionRegion> regions = List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20));
-
 		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
 
 		// A persistence caller cannot bypass the JavaFX one-mark MCQ rule.
 		assertThrows(IllegalArgumentException.class, () -> writer.insertQuestion(booklet, "Q1", "", 2, regions,
 				subtopic, false, null, null, QuestionResponseType.MULTIPLE_CHOICE));
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM questions")) {

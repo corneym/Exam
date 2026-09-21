@@ -507,11 +507,11 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				result.getString("exam_name"));
 		SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 				result.getString("relative_path"));
+
 		// Reconstruct the booklet with its persisted format so Question retrieval does
 		// not silently turn explicit booklet metadata back into UNSPECIFIED.
 		ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 				.valueOf(result.getString("question_format"));
-
 		ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
 				sourceDocument, questionFormat);
 

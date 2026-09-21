@@ -255,7 +255,6 @@ public final class SqliteQuestionWriter {
 	public void updateQuestion(long questionId, ExamBooklet booklet, String questionCode, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
@@ -263,7 +262,6 @@ public final class SqliteQuestionWriter {
 				// This public update preserves the stored response type. Reject a marks
 				// change that would therefore turn an existing MCQ into invalid data.
 				verifyUpdatedMarksCompatibleWithStoredResponseType(connection, questionId, marks);
-
 				updateQuestion(connection, questionId, booklet, questionCode, marks, regions, classification,
 						sourceQuestion, sharedContext);
 				connection.commit();
@@ -882,14 +880,12 @@ public final class SqliteQuestionWriter {
 	}
 
 	private void verifyStoredQuestionHasOneMark(Connection connection, long questionId) throws SQLException {
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT marks
 				FROM questions
 				WHERE id = ?
 				""")) {
 			statement.setLong(1, questionId);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new IllegalArgumentException("Question does not exist: " + questionId);
@@ -906,19 +902,16 @@ public final class SqliteQuestionWriter {
 
 	private void verifyUpdatedMarksCompatibleWithStoredResponseType(Connection connection, long questionId, int marks)
 			throws SQLException {
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT response_type
 				FROM questions
 				WHERE id = ?
 				""")) {
 			statement.setLong(1, questionId);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new IllegalArgumentException("Question does not exist: " + questionId);
 				}
-
 				QuestionResponseType storedResponseType = QuestionResponseType
 						.valueOf(result.getString("response_type"));
 

@@ -133,12 +133,10 @@ class SqliteExamWriterTest {
 		Path databasePath = tempDirectory.resolve("all-exam-booklets.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		ExamProvider provider = writer.insertExamProvider("QCAA");
 		Exam exam = writer.insertExam(chemistry, provider, 2024, "External Assessment");
-
 		SourceDocument paperOneSource = writer.insertSourceDocument("Chemistry/QCAA/2024/paper1.pdf");
 		SourceDocument paperTwoSource = writer.insertSourceDocument("Chemistry/QCAA/2024/paper2.pdf");
 
@@ -148,12 +146,9 @@ class SqliteExamWriterTest {
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
 		ExamBooklet paperTwo = writer.insertExamBooklet(exam, paperTwoSource, "Paper 2",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
-
 		List<ExamBooklet> found = writer.findAllExamBooklets();
-
 		assertEquals(2, found.size());
 		assertEquals(List.of(paperOne.getId(), paperTwo.getId()), found.stream().map(ExamBooklet::getId).toList());
-
 		ExamBooklet first = found.getFirst();
 		assertEquals(exam.getId(), first.getExam().getId());
 		assertEquals("QCAA", first.getExam().getProvider().getName());
@@ -287,7 +282,6 @@ class SqliteExamWriterTest {
 		Path databasePath = tempDirectory.resolve("booklet-question-format.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		ExamProvider provider = writer.insertExamProvider("QCAA");
@@ -298,13 +292,11 @@ class SqliteExamWriterTest {
 		// on the schema default used only for legacy/unspecified callers.
 		ExamBooklet stored = writer.insertExamBooklet(exam, sourceDocument, "Paper 1",
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
-
 		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, stored.getQuestionFormat());
 
 		// Reload through the normal source-document lookup to prove the value survives
 		// reconstruction from SQLite rather than only existing on the returned object.
 		ExamBooklet restored = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
-
 		assertNotNull(restored);
 		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, restored.getQuestionFormat());
 	}

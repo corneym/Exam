@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	static final int LATEST_SCHEMA_VERSION = 9;
+	static final int LATEST_SCHEMA_VERSION = 10;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -183,6 +183,12 @@ public final class SqliteDatabase {
 		Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
 		try {
 			try (Statement statement = connection.createStatement()) {
+
+				// Wait briefly for another short-lived SQLite transaction rather than
+				// failing immediately with SQLITE_BUSY. The application performs
+				// persistence work off the JavaFX thread while UI reads may occur
+				// concurrently on another connection.
+				statement.execute("PRAGMA busy_timeout = 5000");
 
 				// Foreign-key enforcement is connection-local, so enable it for every caller.
 				statement.execute("PRAGMA foreign_keys = ON");
@@ -510,6 +516,12 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v8-to-v9.sql", 9);
 			return 9;
 		}
+		if (version == 9) {
+
+			// Version ten records which AnswerFile supplies answers for each ExamBooklet.
+			executeMigration(connection, "/db/migration-v9-to-v10.sql", 10);
+			return 10;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -702,6 +714,7 @@ public final class SqliteDatabase {
 			verifyVersion07CurriculumAuthoringSchema(connection);
 		}
 		if (version >= 8) {
+
 			// Schema version 8 introduced the persisted Question response type.
 			verifyVersion08QuestionResponseTypeSchema(connection);
 		}
@@ -709,6 +722,12 @@ public final class SqliteDatabase {
 
 			// Schema version 9 introduced the persisted booklet-level Question format.
 			verifyVersion09BookletQuestionFormatSchema(connection);
+		}
+		if (version >= 10) {
+
+			// Schema version 10 introduced the nullable booklet-to-answer-file
+			// relationship used to select the correct answer document.
+			verifyVersion10BookletAnswerFileSchema(connection);
 		}
 	}
 
@@ -1016,6 +1035,34 @@ public final class SqliteDatabase {
 		}
 		if (!hasQuestionFormat) {
 			throw new SQLException("exam_booklets is missing required column question_format");
+		}
+	}
+
+	private void verifyVersion10BookletAnswerFileSchema(Connection connection) throws SQLException {
+		boolean hasAnswerFileId = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"answer_file_id".equals(result.getString("name"))) {
+					continue;
+				}
+				hasAnswerFileId = true;
+
+				// Existing and unresolved booklets must be allowed to remain unassigned
+				// until the correct AnswerFile is established explicitly.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("exam_booklets column must be nullable: answer_file_id");
+				}
+			}
+		}
+		if (!hasAnswerFileId) {
+			throw new SQLException("exam_booklets is missing required column answer_file_id");
+		}
+
+		// The stored mapping must always reference a real AnswerFile. Same-Exam
+		// ownership is enforced by the persistence writer when the mapping is changed.
+		if (!hasExactSingleColumnForeignKey(connection, "exam_booklets", "answer_file_id", "answer_files", "id")) {
+			throw new SQLException("exam_booklets is missing exact foreign key answer_file_id -> answer_files(id)");
 		}
 	}
 

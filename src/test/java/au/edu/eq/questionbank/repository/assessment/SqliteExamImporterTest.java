@@ -23,7 +23,6 @@ class SqliteExamImporterTest {
 		Path databasePath = tempDirectory.resolve("booklet-format.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
@@ -31,14 +30,12 @@ class SqliteExamImporterTest {
 		// New imports must persist the format explicitly selected for this booklet.
 		ExamBooklet first = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
 				"Chemistry/QCAA/2025/paper1.pdf", ExamBookletQuestionFormat.MIXED);
-
 		assertEquals(ExamBookletQuestionFormat.MIXED, first.getQuestionFormat());
 
 		// Reopening the same persisted booklet must recover its stored format rather
 		// than replacing it with UNSPECIFIED or the caller's current selection.
 		ExamBooklet second = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
 				"Chemistry/QCAA/2025/paper1.pdf", ExamBookletQuestionFormat.WRITTEN_RESPONSE);
-
 		assertEquals(first.getId(), second.getId());
 		assertEquals(ExamBookletQuestionFormat.MIXED, second.getQuestionFormat());
 	}

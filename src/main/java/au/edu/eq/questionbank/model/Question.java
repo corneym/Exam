@@ -149,6 +149,7 @@ public class Question {
 			// invariant in the domain model rather than relying only on the capture UI.
 			throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
 		}
+
 		// Check classification and source ownership before retaining the supplied
 		// relationships.
 		validateClassification(booklet, classification);

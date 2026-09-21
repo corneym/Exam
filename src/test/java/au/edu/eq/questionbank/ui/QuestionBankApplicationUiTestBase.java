@@ -121,7 +121,6 @@ abstract class QuestionBankApplicationUiTestBase {
 	Question captureQuestion(FxRobot robot, String questionCode) throws Exception {
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		robot.clickOn(questionCodeField).write(questionCode);
-
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
 
 		// MCQ capture supplies and locks the one-mark value automatically. Other
@@ -131,7 +130,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		} else {
 			robot.interact(() -> marksField.setText("1"));
 		}
-
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 
@@ -140,15 +138,12 @@ abstract class QuestionBankApplicationUiTestBase {
 		if (!multipleChoice.isSelected() && !writtenResponse.isSelected()) {
 			robot.interact(() -> writtenResponse.setSelected(true));
 		}
-
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
 		robot.clickOn("#save-question");
-
 		QuestionCapturePane questionCapturePane = field(application, "questionCapturePane", QuestionCapturePane.class);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !questionCapturePane.isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question savedQuestion = null;
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		for (Question question : unansweredQuestions.getItems()) {
@@ -157,7 +152,6 @@ abstract class QuestionBankApplicationUiTestBase {
 				break;
 			}
 		}
-
 		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
 		assertNotNull(savedQuestion, "Question save status: " + saveStatus.getText());
 		return savedQuestion;
@@ -229,7 +223,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		// different booklet format.
 		prepareExamAndClassification(robot, subjectName, providerName, yearValue, assessmentName, bookletName,
 				ExamBookletQuestionFormat.MIXED);
-
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 
 		// Preserve the historical Written Response fixture default for tests that are
@@ -241,17 +234,14 @@ abstract class QuestionBankApplicationUiTestBase {
 			String assessmentName, String bookletName, ExamBookletQuestionFormat questionFormat) throws Exception {
 		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
 		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(examPdf)).get();
-
 		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
 		Subject selectedSubject = examSubject.getItems().stream()
 				.filter(subject -> subjectName.equals(subject.getName())).findFirst().orElseThrow();
-
 		ComboBox<String> provider = comboBox(robot, "#exam-provider");
 		ComboBox<Integer> year = comboBox(robot, "#exam-year");
 		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
 		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
 		ComboBox<ExamBookletQuestionFormat> format = comboBox(robot, "#exam-question-format");
-
 		robot.interact(() -> {
 			examSubject.setValue(selectedSubject);
 			provider.getEditor().setText(providerName);
@@ -262,7 +252,6 @@ abstract class QuestionBankApplicationUiTestBase {
 			// Exercise the same explicit booklet-format selection required from the user.
 			format.setValue(questionFormat);
 		});
-
 		robot.clickOn("#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
 

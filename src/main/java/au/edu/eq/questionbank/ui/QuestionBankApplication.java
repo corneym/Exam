@@ -271,7 +271,6 @@ public class QuestionBankApplication extends Application {
 		// Activate the booklet's Subject before deriving any Question-capture defaults
 		// from the newly active booklet.
 		activateExamSubject(subject);
-
 		if (questionCapturePane != null) {
 
 			// Reopening an existing booklet must reapply its format only to the fresh

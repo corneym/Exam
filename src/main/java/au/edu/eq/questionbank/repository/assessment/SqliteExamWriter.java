@@ -50,7 +50,6 @@ public final class SqliteExamWriter {
 	 */
 	public ExamBooklet classifyLegacyBookletQuestionFormat(ExamBooklet booklet,
 			ExamBookletQuestionFormat questionFormat) throws SQLException {
-
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
@@ -63,7 +62,6 @@ public final class SqliteExamWriter {
 		if (questionFormat == ExamBookletQuestionFormat.UNSPECIFIED) {
 			throw new IllegalArgumentException("A legacy booklet must be assigned an explicit question format");
 		}
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						UPDATE exam_booklets
@@ -71,7 +69,6 @@ public final class SqliteExamWriter {
 						WHERE id = ?
 						  AND question_format = 'UNSPECIFIED'
 						""")) {
-
 			statement.setString(1, questionFormat.name());
 			statement.setLong(2, booklet.getId());
 
@@ -81,7 +78,6 @@ public final class SqliteExamWriter {
 						"Legacy booklet question format could not be updated: " + booklet.getId());
 			}
 		}
-
 		return new ExamBooklet(booklet.getId(), booklet.getExam(), booklet.getName(), booklet.getSourceDocument(),
 				questionFormat);
 	}
@@ -209,9 +205,7 @@ public final class SqliteExamWriter {
 						ORDER BY eb.id
 						""");
 				ResultSet result = statement.executeQuery()) {
-
 			List<ExamBooklet> booklets = new ArrayList<>();
-
 			while (result.next()) {
 				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
 				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
@@ -225,11 +219,9 @@ public final class SqliteExamWriter {
 				// UNSPECIFIED through the legacy ExamBooklet constructor.
 				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 						.valueOf(result.getString("question_format"));
-
 				booklets.add(new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
 						sourceDocument, questionFormat));
 			}
-
 			return List.copyOf(booklets);
 		}
 	}
@@ -248,7 +240,6 @@ public final class SqliteExamWriter {
 		if (relativePath == null || relativePath.isBlank()) {
 			throw new IllegalArgumentException("relativePath must not be blank");
 		}
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						SELECT
@@ -277,12 +268,10 @@ public final class SqliteExamWriter {
 						ORDER BY eb.id
 						""")) {
 			statement.setString(1, relativePath);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					return null;
 				}
-
 				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
 				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
 						result.getString("provider_name"));
@@ -294,7 +283,6 @@ public final class SqliteExamWriter {
 				// Schema validation guarantees one of the supported enum names is stored.
 				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 						.valueOf(result.getString("question_format"));
-
 				ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam,
 						result.getString("booklet_name"), sourceDocument, questionFormat);
 
@@ -552,7 +540,6 @@ public final class SqliteExamWriter {
 		if (sourceDocument == null) {
 			throw new NullPointerException("sourceDocument");
 		}
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
 				    id,
@@ -564,7 +551,6 @@ public final class SqliteExamWriter {
 				""")) {
 			statement.setLong(1, exam.getId());
 			statement.setString(2, name);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					return null;
@@ -580,7 +566,6 @@ public final class SqliteExamWriter {
 				// Existing persisted metadata is authoritative when reopening a booklet.
 				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 						.valueOf(result.getString("question_format"));
-
 				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument, questionFormat);
 			}
 		}
@@ -694,7 +679,6 @@ public final class SqliteExamWriter {
 		if (questionFormat == null) {
 			throw new NullPointerException("questionFormat");
 		}
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO exam_booklets
 				    (exam_id,
@@ -711,7 +695,6 @@ public final class SqliteExamWriter {
 			// Persist the enum name directly because the schema constrains the column to
 			// exactly the supported domain values.
 			statement.setString(4, questionFormat.name());
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Exam booklet insert did not return an id");

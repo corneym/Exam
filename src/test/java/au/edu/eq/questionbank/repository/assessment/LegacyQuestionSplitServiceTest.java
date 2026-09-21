@@ -68,6 +68,7 @@ class LegacyQuestionSplitServiceTest {
 		}
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
+
 		// Keep the second part valid so this regression reaches the deliberately
 		// failing SQLite trigger that is meant to test transaction rollback.
 		// Keep the split definition valid so the deliberately failing SQLite trigger
@@ -234,6 +235,7 @@ class LegacyQuestionSplitServiceTest {
 		// persistent identity must remain attached to whichever split part reuses the
 		// original Question row.
 		var originalAnswer = answerWriter.insertAnswer(original, "Original combined answer", List.of());
+
 		// MCQ metadata is incidental to this Answer-ownership test and must satisfy the
 		// production one-mark invariant.
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
@@ -291,7 +293,6 @@ class LegacyQuestionSplitServiceTest {
 		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
 				() -> new SplitPart("3a", 1, subtopicOne, QuestionResponseType.MULTIPLE_CHOICE,
 						List.of(new QuestionRegion(booklet, 1, 0.10, 0.20, 0.80, 0.20))));
-
 		assertTrue(failure.getMessage().contains("must be written response"));
 	}
 
@@ -350,6 +351,7 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
+
 		// Keep the destination metadata valid so unresolved preamble status remains the
 		// reason this split is rejected.
 		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
@@ -391,6 +393,7 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
+
 		// Keep the requested MCQ valid so the inconsistent shared-context relationship
 		// remains the behaviour under test.
 		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
@@ -429,6 +432,7 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
+
 		// A reused multipart source can contain an MCQ part, but that part is
 		// necessarily worth exactly one mark.
 		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
@@ -505,6 +509,7 @@ class LegacyQuestionSplitServiceTest {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
+
 		// The multiple-choice split part must satisfy the one-mark invariant.
 		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));

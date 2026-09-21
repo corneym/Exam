@@ -113,35 +113,31 @@ public final class SqliteExamImporter {
 		if (questionFormat == null) {
 			throw new NullPointerException("questionFormat");
 		}
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try {
+
 				// Reuse or create the metadata chain on one connection so the complete
 				// booklet import either commits or rolls back atomically.
 				ExamProvider provider = writer.findExamProviderByName(connection, providerName);
 				if (provider == null) {
 					provider = writer.insertExamProvider(connection, providerName);
 				}
-
 				SourceDocument sourceDocument = writer.findSourceDocumentByPath(connection, relativePath);
 				if (sourceDocument == null) {
 					sourceDocument = writer.insertSourceDocument(connection, relativePath);
 				}
-
 				Exam exam = writer.findExam(connection, subject, provider, year, examName);
 				if (exam == null) {
 					exam = writer.insertExam(connection, subject, provider, year, examName);
 				}
-
 				ExamBooklet booklet = writer.findExamBooklet(connection, exam, bookletName, sourceDocument);
 				if (booklet == null) {
+
 					// Only a newly created booklet takes the caller's selected format.
 					// Existing persisted booklet metadata remains authoritative.
 					booklet = writer.insertExamBooklet(connection, exam, sourceDocument, bookletName, questionFormat);
 				}
-
 				connection.commit();
 				return booklet;
 			} catch (SQLException | RuntimeException exception) {

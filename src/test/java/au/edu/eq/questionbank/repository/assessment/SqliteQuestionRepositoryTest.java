@@ -117,27 +117,21 @@ class SqliteQuestionRepositoryTest {
 	void rejectsMultiMarkEditWithoutCorruptingPersistedMultipleChoiceQuestion() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("response-type.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
 		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
 		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
 		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
 				"External Assessment", "Mixed booklet", "Chemistry/2025/questions.pdf");
-
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
 		Question saved = repository.save(booklet, "Q1", "", 1,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false, null, null,
 				QuestionResponseType.MULTIPLE_CHOICE);
-
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, saved.getResponseType());
-
 		Question reloaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
-
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
 		assertEquals(1, reloaded.getMarks());
 
@@ -146,9 +140,7 @@ class SqliteQuestionRepositoryTest {
 		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
 				() -> repository.updateQuestion(saved.getId(), "Q1", 2,
 						List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.50, 0.20)), subtopic, null, null));
-
 		assertTrue(failure.getMessage().contains("Multiple-choice questions must be worth exactly 1 mark"));
-
 		Question afterRejectedEdit = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
 
 		// Reopening proves the rejected edit did not leave an invalid row behind.

@@ -304,7 +304,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
 		Button okButton = robot.lookup("OK").queryButton();
 		robot.interact(okButton::fire);
-
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// The rejected transition must preserve the complete workspace context, not

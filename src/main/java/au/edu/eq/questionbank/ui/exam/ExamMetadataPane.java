@@ -173,6 +173,7 @@ public final class ExamMetadataPane extends VBox {
 		assessmentField.getEditor().clear();
 		bookletField.getSelectionModel().clearSelection();
 		bookletField.getEditor().clear();
+
 		// A genuinely new booklet must receive an explicit format selection.
 		clearQuestionFormatField();
 	}
@@ -220,6 +221,7 @@ public final class ExamMetadataPane extends VBox {
 						"Corrected Exam did not return the active booklet's SourceDocument path");
 			}
 			SourceDocument correctedSourceDocument = new SourceDocument(sourceDocumentId, correctedRelativePath);
+
 			// Exam correction changes Exam metadata only. Preserve the booklet's separate
 			// persisted Question-format classification in the refreshed in-memory object.
 			booklet = new ExamBooklet(booklet.getId(), corrected, booklet.getName(), correctedSourceDocument,
@@ -310,6 +312,7 @@ public final class ExamMetadataPane extends VBox {
 		assessmentField.getEditor().clear();
 		bookletField.getSelectionModel().clearSelection();
 		bookletField.getEditor().clear();
+
 		// A newly selected PDF must not inherit the previous booklet's format.
 		clearQuestionFormatField();
 		booklet = null;
@@ -427,7 +430,6 @@ public final class ExamMetadataPane extends VBox {
 		yearField.setValue(exam.getYear());
 		assessmentField.setValue(exam.getName());
 		bookletField.setValue(existingBooklet.getName());
-
 		if (existingBooklet.getQuestionFormat() == ExamBookletQuestionFormat.UNSPECIFIED) {
 
 			// UNSPECIFIED is migration-only state and must never appear as a
@@ -444,6 +446,7 @@ public final class ExamMetadataPane extends VBox {
 		providerField.setValue(input.providerName());
 		assessmentField.setValue(input.assessmentName());
 		bookletField.setValue(input.bookletName());
+
 		// Show the persisted format that was just used to create the booklet.
 		questionFormatField.setValue(input.questionFormat());
 	}
@@ -464,6 +467,7 @@ public final class ExamMetadataPane extends VBox {
 		assessmentField.getEditor().clear();
 		bookletField.getSelectionModel().clearSelection();
 		bookletField.getEditor().clear();
+
 		// Format belongs to the selected booklet, so clear it with the other staged
 		// booklet metadata.
 		clearQuestionFormatField();
@@ -510,7 +514,6 @@ public final class ExamMetadataPane extends VBox {
 		// three explicit formats presented to the user.
 		questionFormatField.getItems().setAll(ExamBookletQuestionFormat.MULTIPLE_CHOICE,
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, ExamBookletQuestionFormat.MIXED);
-
 		subjectField.setId("exam-subject");
 		subjectField.setPromptText("Select subject");
 		subjectField.setPrefWidth(SUBJECT_FIELD_WIDTH);
@@ -526,7 +529,6 @@ public final class ExamMetadataPane extends VBox {
 		if (!examChangeAllowed.getAsBoolean()) {
 			return false;
 		}
-
 		ExamBooklet existingBooklet = pendingKnownBooklet;
 		Path storedPath;
 		try {
@@ -538,12 +540,10 @@ public final class ExamMetadataPane extends VBox {
 			showFileError(exception.getMessage());
 			return false;
 		}
-
 		if (!Files.isRegularFile(storedPath)) {
 			showFileError("Stored exam PDF is unavailable: " + storedPath);
 			return false;
 		}
-
 		ExamBooklet resolvedBooklet = resolveKnownBookletQuestionFormat(existingBooklet);
 		if (resolvedBooklet == null) {
 
@@ -555,7 +555,6 @@ public final class ExamMetadataPane extends VBox {
 		// Retain the newly classified object if PDF activation subsequently fails so a
 		// retry does not attempt to classify the same persisted booklet twice.
 		pendingKnownBooklet = resolvedBooklet;
-
 		try {
 			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfDataRoot);
 
@@ -563,7 +562,6 @@ public final class ExamMetadataPane extends VBox {
 			// booklet becomes authoritative.
 			examPdfHandler.accept(selectedPdf);
 			activateExistingBooklet(resolvedBooklet, storedPath);
-
 			pendingPdfPath = null;
 			pendingKnownBooklet = null;
 			return true;
@@ -590,6 +588,7 @@ public final class ExamMetadataPane extends VBox {
 		grid.add(assessmentField, 1, 4);
 		grid.add(createFieldLabel("Booklet:"), 0, 5);
 		grid.add(bookletField, 1, 5);
+
 		// Question format belongs to the booklet because separate booklets from one
 		// Exam may contain different kinds of Questions.
 		grid.add(createFieldLabel("Question format:"), 0, 6);
@@ -730,13 +729,11 @@ public final class ExamMetadataPane extends VBox {
 		if (existingBooklet == null) {
 			throw new NullPointerException("existingBooklet");
 		}
-
 		if (existingBooklet.getQuestionFormat() != ExamBookletQuestionFormat.UNSPECIFIED) {
 
 			// Modern booklets already contain authoritative format metadata.
 			return existingBooklet;
 		}
-
 		ChoiceDialog<ExamBookletQuestionFormat> dialog = new ChoiceDialog<>(ExamBookletQuestionFormat.MIXED,
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE, ExamBookletQuestionFormat.WRITTEN_RESPONSE,
 				ExamBookletQuestionFormat.MIXED);
@@ -749,14 +746,12 @@ public final class ExamMetadataPane extends VBox {
 		dialog.setTitle("Question Format");
 		dialog.setHeaderText("Question format has not been recorded for this booklet.");
 		dialog.setContentText("Question format:");
-
 		ExamBookletQuestionFormat selectedFormat = dialog.showAndWait().orElse(null);
 		if (selectedFormat == null) {
 
 			// Cancelling leaves both persistence and the active capture booklet unchanged.
 			return null;
 		}
-
 		try {
 
 			// Persist the booklet-level classification once. Existing Questions retain
@@ -778,6 +773,7 @@ public final class ExamMetadataPane extends VBox {
 		yearField.setDisable(knownPdf);
 		assessmentField.setDisable(knownPdf);
 		bookletField.setDisable(knownPdf);
+
 		// Question format is also persisted booklet metadata. Reopening a known
 		// booklet must not silently permit it to be reclassified.
 		questionFormatField.setDisable(knownPdf);
