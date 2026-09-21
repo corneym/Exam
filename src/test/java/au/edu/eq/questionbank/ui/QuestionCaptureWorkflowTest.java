@@ -72,7 +72,8 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
-		robot.clickOn("OK");
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Rejection must preserve both the accepted region and the complete
@@ -301,7 +302,9 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
-		robot.clickOn("OK");
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
+
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// The rejected transition must preserve the complete workspace context, not
