@@ -70,7 +70,9 @@ class LegacyQuestionSplitServiceTest {
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
 		// Keep the second part valid so this regression reaches the deliberately
 		// failing SQLite trigger that is meant to test transaction rollback.
-		SplitPart partB = new SplitPart("3b", 1, subtopicTwo, QuestionResponseType.MULTIPLE_CHOICE,
+		// Keep the split definition valid so the deliberately failing SQLite trigger
+		// remains the condition that exercises transaction-wide rollback.
+		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
 		assertThrows(IllegalStateException.class,
 				() -> splitService.split(new SplitRequest(original, "3", List.of(partA, partB), 0)));
@@ -283,47 +285,14 @@ class LegacyQuestionSplitServiceTest {
 	}
 
 	@Test
-	void splitRejectsAnsweredQuestionWhenRetainedPartChangesResponseType() throws Exception {
-		Question original = questionRepository.save(booklet, "3", "", 5,
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.80, 0.60)), subtopicOne, true, null, null,
-				QuestionResponseType.WRITTEN_RESPONSE);
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
-		var originalAnswer = answerWriter.insertAnswer(original, "Original combined answer", List.of());
-		// The rejection being tested is the existing Answer, not invalid MCQ marks.
-		SplitPart partA = new SplitPart("3a", 2, subtopicOne,
+	void splitPartRejectsMultipleChoiceResponseType() {
 
-				// This part is nominated to retain the original Question row, but
-				// changing its response type would reinterpret the existing Answer.
-				QuestionResponseType.MULTIPLE_CHOICE, List.of(new QuestionRegion(booklet, 1, 0.10, 0.20, 0.80, 0.20)));
-		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
-				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
+		// Legacy splitting reconstructs multipart written-response Questions only.
 		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
-				() -> splitService.split(new SplitRequest(original, "3", List.of(partA, partB),
+				() -> new SplitPart("3a", 1, subtopicOne, QuestionResponseType.MULTIPLE_CHOICE,
+						List.of(new QuestionRegion(booklet, 1, 0.10, 0.20, 0.80, 0.20))));
 
-						// Part 3a would retain the row containing the
-						// existing Answer.
-						0)));
-		assertTrue(failure.getMessage().contains("existing Answer"));
-		Question reloadedOriginal = new SqliteQuestionRepository(database).findById(original.getId()).orElseThrow();
-
-		// Validation must reject the operation before changing the original Question.
-		assertEquals("3", reloadedOriginal.getQuestionCode());
-		assertEquals(5, reloadedOriginal.getMarks());
-		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedOriginal.getResponseType());
-		assertTrue(reloadedOriginal.isPreambleCaptureRequired());
-		assertFalse(reloadedOriginal.hasSourceQuestion());
-		assertFalse(reloadedOriginal.hasSharedContext());
-
-		// The existing Answer must remain attached to the original unsplit Question
-		// with exactly the same persistent identity and content.
-		assertTrue(reloadedOriginal.hasAnswer());
-		assertEquals(originalAnswer.getId(), reloadedOriginal.getAnswer().getId());
-		assertEquals("Original combined answer", reloadedOriginal.getAnswer().getAnswerText());
-
-		// No destination part or SourceQuestion may have been created.
-		assertEquals(1, questionRepository.findAll().size());
-		assertTrue(new SqliteSourceQuestionRepository(database).findByBooklet(booklet).isEmpty());
-		assertTrue(new SqliteSharedQuestionContextRepository(database).findByBooklet(booklet).isEmpty());
+		assertTrue(failure.getMessage().contains("must be written response"));
 	}
 
 	@Test

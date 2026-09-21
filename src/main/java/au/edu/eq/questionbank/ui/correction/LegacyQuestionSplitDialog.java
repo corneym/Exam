@@ -84,8 +84,9 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 	}
 
 	private void addPart() {
-		PartEditor editor = createPartEditor("", "", originalQuestion.getClassification(),
-				explicitInitialResponseType());
+
+		// Every resulting legacy split part is a written-response Question.
+		PartEditor editor = createPartEditor("", "", originalQuestion.getClassification());
 		partEditors.add(editor);
 		refreshParts();
 	}
@@ -199,10 +200,10 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 
 	private void createInitialParts() {
 		String sourceCode = originalQuestion.getQuestionCode();
-		partEditors.add(createPartEditor(sourceCode + "a", "", originalQuestion.getClassification(),
-				explicitInitialResponseType()));
-		partEditors.add(createPartEditor(sourceCode + "b", "", originalQuestion.getClassification(),
-				explicitInitialResponseType()));
+
+		// Legacy multipart correction creates written-response parts only.
+		partEditors.add(createPartEditor(sourceCode + "a", "", originalQuestion.getClassification()));
+		partEditors.add(createPartEditor(sourceCode + "b", "", originalQuestion.getClassification()));
 		refreshParts();
 	}
 
@@ -212,16 +213,14 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		return buttons;
 	}
 
-	private PartEditor createPartEditor(String questionCode, String marks, CurriculumNode classification,
-			QuestionResponseType responseType) {
-		PartEditor editor = new PartEditor(questionCode, marks, classification, responseType);
+	private PartEditor createPartEditor(String questionCode, String marks, CurriculumNode classification) {
+		PartEditor editor = new PartEditor(questionCode, marks, classification);
 		editor.questionCodeField().textProperty().addListener((_, _, _) -> {
 			refreshAnswerPartChoices();
 			refreshContinueState();
 		});
 		editor.marksField().textProperty().addListener((_, _, _) -> refreshContinueState());
 		editor.classificationBox().valueProperty().addListener((_, _, _) -> refreshContinueState());
-		editor.responseTypeBox().valueProperty().addListener((_, _, _) -> refreshContinueState());
 		return editor;
 	}
 
@@ -244,28 +243,6 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 				setText(choice.displayText());
 			}
 		};
-	}
-
-	private ListCell<QuestionResponseType> createResponseTypeCell() {
-		return new ListCell<>() {
-
-			@Override
-			protected void updateItem(QuestionResponseType responseType, boolean empty) {
-				super.updateItem(responseType, empty);
-				if (empty || responseType == null) {
-					setText(null);
-					return;
-				}
-				setText(responseTypeLabel(responseType));
-			}
-		};
-	}
-
-	private QuestionResponseType explicitInitialResponseType() {
-		if (originalQuestion.getResponseType() == QuestionResponseType.UNKNOWN) {
-			return null;
-		}
-		return originalQuestion.getResponseType();
 	}
 
 	private List<CurriculumNode> findClassificationChoices(SyllabusVersion syllabusVersion) {
@@ -344,14 +321,6 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		refreshParts();
 	}
 
-	private String responseTypeLabel(QuestionResponseType responseType) {
-		return switch (responseType) {
-		case MULTIPLE_CHOICE -> "Multiple choice";
-		case WRITTEN_RESPONSE -> "Written response";
-		case UNKNOWN -> "Unknown";
-		};
-	}
-
 	private int retainedPartIndex(List<PartDefinition> parts) {
 		if (!originalQuestion.hasAnswer()) {
 
@@ -397,8 +366,11 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 			if (classification == null) {
 				throw new NullPointerException("classification");
 			}
-			if (responseType == null || responseType == QuestionResponseType.UNKNOWN) {
-				throw new IllegalArgumentException("responseType must be explicit");
+			if (responseType != QuestionResponseType.WRITTEN_RESPONSE) {
+
+				// The dialog definition mirrors the legacy split domain rule rather than
+				// exposing response types that cannot occur in this workflow.
+				throw new IllegalArgumentException("Legacy split parts must be written response");
 			}
 			questionCode = questionCode.trim();
 		}
@@ -433,33 +405,25 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		private final TextField questionCodeField = new TextField();
 		private final TextField marksField = new TextField();
 		private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
-		private final ComboBox<QuestionResponseType> responseTypeBox = new ComboBox<>();
 		private final GridPane node = new GridPane();
 
-		private PartEditor(String questionCode, String marks, CurriculumNode classification,
-				QuestionResponseType responseType) {
+		private PartEditor(String questionCode, String marks, CurriculumNode classification) {
 			questionCodeField.setText(questionCode);
 			marksField.setText(marks);
 			classificationBox.getItems()
 					.setAll(findClassificationChoices(originalQuestion.getClassification().getSyllabusVersion()));
 			classificationBox.setValue(classification);
-			responseTypeBox.getItems().setAll(QuestionResponseType.MULTIPLE_CHOICE,
-					QuestionResponseType.WRITTEN_RESPONSE);
-			responseTypeBox.setValue(responseType);
-			responseTypeBox.setCellFactory(_ -> createResponseTypeCell());
-			responseTypeBox.setButtonCell(createResponseTypeCell());
 			classificationBox.setMaxWidth(Double.MAX_VALUE);
-			responseTypeBox.setMaxWidth(Double.MAX_VALUE);
+
+			// Response type is intentionally absent: this workflow can only create
+			// written-response parts.
 			node.setHgap(FORM_SPACING);
 			node.setVgap(4);
 			node.addRow(0, new Label("Question"), questionCodeField, new Label("Marks"), marksField);
 			node.addRow(1, new Label("Classification"), classificationBox);
-			node.addRow(2, new Label("Response type"), responseTypeBox);
 			GridPane.setColumnSpan(classificationBox, 3);
-			GridPane.setColumnSpan(responseTypeBox, 3);
 			GridPane.setHgrow(questionCodeField, Priority.ALWAYS);
 			GridPane.setHgrow(classificationBox, Priority.ALWAYS);
-			GridPane.setHgrow(responseTypeBox, Priority.ALWAYS);
 			node.setPadding(new Insets(8));
 			node.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
 		}
@@ -475,10 +439,9 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 			if (classificationBox.getValue() == null) {
 				return false;
 			}
-			if (responseTypeBox.getValue() == null) {
-				return false;
-			}
 			try {
+
+				// Split marks remain explicit positive written-response marks.
 				return Integer.parseInt(marksField.getText().trim()) > 0;
 			} catch (NumberFormatException exception) {
 				return false;
@@ -497,20 +460,18 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 			return questionCodeField;
 		}
 
-		private ComboBox<QuestionResponseType> responseTypeBox() {
-			return responseTypeBox;
-		}
-
 		private void setControlIds(int index) {
 			questionCodeField.setId("legacy-split-part-" + index + "-code");
 			marksField.setId("legacy-split-part-" + index + "-marks");
 			classificationBox.setId("legacy-split-part-" + index + "-classification");
-			responseTypeBox.setId("legacy-split-part-" + index + "-response-type");
 		}
 
 		private PartDefinition toDefinition() {
+
+			// The response type is fixed by the split workflow rather than entered by
+			// the user.
 			return new PartDefinition(questionCodeField.getText().trim(), Integer.parseInt(marksField.getText().trim()),
-					classificationBox.getValue(), responseTypeBox.getValue());
+					classificationBox.getValue(), QuestionResponseType.WRITTEN_RESPONSE);
 		}
 	}
 }

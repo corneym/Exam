@@ -440,8 +440,11 @@ public final class LegacyQuestionSplitService {
 			if (responseType == null) {
 				throw new NullPointerException("responseType");
 			}
-			if (responseType == QuestionResponseType.UNKNOWN) {
-				throw new IllegalArgumentException("Split parts require an explicit response type");
+			if (responseType != QuestionResponseType.WRITTEN_RESPONSE) {
+
+				// Legacy splitting exists only to reconstruct multipart written-response
+				// Questions. Multiple-choice Questions are never valid split destinations.
+				throw new IllegalArgumentException("Legacy split parts must be written response");
 			}
 			if (regions == null) {
 				throw new NullPointerException("regions");
