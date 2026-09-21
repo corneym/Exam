@@ -59,6 +59,7 @@ import javafx.stage.Stage;
 @Tag("workflow-ui")
 class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
+	@Test
 	void acceptedAnswerRegionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q4");
@@ -504,6 +505,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
 	}
 
+	@Test
 	void savedAnswersFollowBookletPdfMappingsAcrossQueue(FxRobot robot) throws Exception {
 		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
 		ComboBox<Question> questions = unansweredQuestions(robot);
