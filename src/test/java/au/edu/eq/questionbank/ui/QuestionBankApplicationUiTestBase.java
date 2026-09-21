@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -36,9 +38,13 @@ import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
+import javafx.application.Platform;
 import javafx.event.Event;
 import javafx.scene.Node;
+import javafx.scene.control.ButtonBase;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
@@ -67,6 +73,81 @@ abstract class QuestionBankApplicationUiTestBase {
 		Field field = owner.getClass().getDeclaredField(fieldName);
 		field.setAccessible(true);
 		return type.cast(field.get(owner));
+	}
+
+	static void fireControl(FxRobot robot, ButtonBase control) {
+		if (control == null) {
+			throw new AssertionError("Expected a JavaFX control to fire");
+		}
+
+		// Run the real control action on the JavaFX thread so desktop and headless
+		// TestFX execute the same semantic interaction.
+		robot.interact(control::fire);
+	}
+
+	static void fireControl(FxRobot robot, String selector) {
+		ButtonBase control = robot.lookup(selector).queryAs(ButtonBase.class);
+
+		// Workflow tests exercise the JavaFX control action directly when pointer
+		// hit-testing is not part of the behaviour under test.
+		fireControl(robot, control);
+	}
+
+	static void fireControlLater(ButtonBase control) {
+		if (control == null) {
+			throw new AssertionError("Expected a JavaFX control to fire");
+		}
+
+		// Queue modal-producing actions on the JavaFX thread so the test thread remains
+		// available to inspect and close the resulting dialog.
+		Platform.runLater(control::fire);
+	}
+
+	static void fireControlLater(FxRobot robot, String selector) {
+		ButtonBase control = robot.lookup(selector).queryAs(ButtonBase.class);
+
+		// Modal actions must be scheduled rather than invoked synchronously because
+		// showAndWait() keeps the action handler active until the test closes the
+		// dialog.
+		fireControlLater(control);
+	}
+
+	static void fireDialogButton(FxRobot robot, String buttonText) {
+		AtomicReference<DialogPane> matchingDialog = new AtomicReference<>();
+
+		try {
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+				DialogPane dialog = robot.lookup(".dialog-pane").queryAll().stream()
+						.filter(DialogPane.class::isInstance).map(DialogPane.class::cast).filter(DialogPane::isVisible)
+						.filter(candidate -> candidate.getButtonTypes().stream()
+								.anyMatch(buttonType -> buttonText.equals(buttonType.getText())))
+						.findFirst().orElse(null);
+
+				// Retain the actual visible DialogPane rather than locating its rendered
+				// button by screen text, which is unreliable under Xvfb.
+				matchingDialog.set(dialog);
+				return dialog != null;
+			});
+		} catch (TimeoutException e) {
+			// A missing dialog action is a test failure, not an infrastructure exception
+			// that every workflow test should need to declare separately.
+			throw new AssertionError("Timed out waiting for dialog button: " + buttonText, e);
+		}
+
+		DialogPane dialog = matchingDialog.get();
+		ButtonType buttonType = dialog.getButtonTypes().stream()
+				.filter(candidate -> buttonText.equals(candidate.getText())).findFirst()
+				.orElseThrow(() -> new AssertionError("Dialog button not found: " + buttonText));
+		Node buttonNode = dialog.lookupButton(buttonType);
+
+		if (!(buttonNode instanceof ButtonBase button)) {
+			throw new AssertionError("Dialog button is not a ButtonBase: " + buttonText);
+		}
+
+		// Fire the DialogPane-owned button directly so no pointer hit-testing or text
+		// lookup is involved.
+		robot.interact(button::fire);
+		WaitForAsyncUtils.waitForFxEvents();
 	}
 
 	static Object invoke(Object owner, String methodName, Class<?>[] parameterTypes, Object... arguments)
@@ -130,28 +211,31 @@ abstract class QuestionBankApplicationUiTestBase {
 		} else {
 			robot.interact(() -> marksField.setText("1"));
 		}
+
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 
-		// Most workflow tests exercise Written Response. Supply that fixture default
-		// only when booklet defaults or inference have not selected a response type.
+		// Most workflow tests exercise Written Response. Fire the real control so this
+		// fixture records the same manual response-type choice as the production UI.
 		if (!multipleChoice.isSelected() && !writtenResponse.isSelected()) {
-			robot.interact(() -> writtenResponse.setSelected(true));
+			fireControl(robot, writtenResponse);
 		}
+
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
-		robot.clickOn("#save-question");
-		QuestionCapturePane questionCapturePane = field(application, "questionCapturePane", QuestionCapturePane.class);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !questionCapturePane.isSaveInProgress());
-		WaitForAsyncUtils.waitForFxEvents();
-		Question savedQuestion = null;
+		fireControl(robot, "#add-question-region");
+
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-		for (Question question : unansweredQuestions.getItems()) {
-			if (questionCode.equals(question.getQuestionCode())) {
-				savedQuestion = question;
-				break;
-			}
-		}
+		fireControl(robot, "#save-question");
+
+		// Wait for the durable workflow result rather than merely waiting for a
+		// transient save-in-progress flag to be false.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> unansweredQuestions.getItems().stream()
+				.anyMatch(question -> questionCode.equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		Question savedQuestion = unansweredQuestions.getItems().stream()
+				.filter(question -> questionCode.equals(question.getQuestionCode())).findFirst().orElse(null);
+
 		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
 		assertNotNull(savedQuestion, "Question save status: " + saveStatus.getText());
 		return savedQuestion;
@@ -227,7 +311,9 @@ abstract class QuestionBankApplicationUiTestBase {
 
 		// Preserve the historical Written Response fixture default for tests that are
 		// not specifically exercising response-type defaults.
-		robot.clickOn(writtenResponse);
+		// Fire the response-type control so the fixture records a genuine manual
+		// choice.
+		fireControl(robot, writtenResponse);
 	}
 
 	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
@@ -252,7 +338,9 @@ abstract class QuestionBankApplicationUiTestBase {
 			// Exercise the same explicit booklet-format selection required from the user.
 			format.setValue(questionFormat);
 		});
-		robot.clickOn("#confirm-exam-details");
+		// Confirm through the real JavaFX action without depending on pointer
+		// hit-testing.
+		fireControl(robot, "#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Classification remains independent of booklet Question format.

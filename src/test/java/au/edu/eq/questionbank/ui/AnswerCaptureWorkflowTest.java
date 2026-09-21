@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -70,7 +71,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Accept one Answer region without saving it. This state must remain attached
 		// to the current Working Subject until the Answer is saved or cancelled.
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		assertTrue(answerCapturePane().hasAcceptedRegions());
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
 
@@ -219,7 +220,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> questions.getSelectionModel().select(first));
 		openAnswerPdfForTest(first);
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		CountDownLatch loading = new CountDownLatch(1);
 		AtomicReference<Consumer<Throwable>> completeLoad = new AtomicReference<>();
 		setField(answerCapturePane(), "answerPdfLoader",
@@ -227,7 +228,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 					completeLoad.set(callback);
 					loading.countDown();
 				});
-		robot.clickOn("#save-answer");
+		fireControl(robot, "#save-answer");
 		assertTrue(loading.await(10, TimeUnit.SECONDS));
 		CountDownLatch pulse = new CountDownLatch(1);
 		Platform.runLater(pulse::countDown);
@@ -264,16 +265,16 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
 		openAnswerPdfForTest(question);
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-answer-region");
 		assertEquals("Regions: 2", lookup(robot, "#answer-region-count", Label.class).getText());
 		Button firstRemoveButton = robot.lookup("Remove").queryButton();
-		robot.clickOn(firstRemoveButton);
+		fireControl(robot, firstRemoveButton);
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
 		Button remainingRemoveButton = robot.lookup("Remove").queryButton();
-		robot.clickOn(remainingRemoveButton);
+		fireControl(robot, remainingRemoveButton);
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
 	}
 
@@ -297,7 +298,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertAnswerEntryControlsEnabled(robot);
 		openAnswerPdfForTest(savedQuestion);
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		setField(answerCapturePane(), "questionRepository", new InMemoryQuestionRepository() {
 
 			@Override
@@ -305,7 +306,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new AssertionError("Saving an answer must not reload the bank");
 			}
 		});
-		robot.clickOn("#save-answer");
+		fireControl(robot, "#save-answer");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(savedQuestion.hasAnswer());
@@ -352,19 +353,17 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> questions.getSelectionModel().select(question));
 		openAnswerPdfForTest(question);
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		try (var connection = new SqliteDatabase(databasePath).openConnection();
 				var statement = connection.createStatement()) {
 			statement.execute(
 					"CREATE TRIGGER reject_answer BEFORE INSERT ON answers BEGIN SELECT RAISE(ABORT, 'Test write failure'); END");
 		}
-		robot.clickOn("#save-answer");
+		fireControl(robot, "#save-answer");
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> robot.lookup("Answer could not be saved.").tryQuery().isPresent());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+		// Resolve the action through the actual DialogPane rather than rendered text.
+		fireDialogButton(robot, "OK");
 		assertFalse(answerCapturePane().isSaveInProgress());
 		assertEquals(question.getId(), questions.getValue().getId());
 		assertEquals(1, questions.getItems().size());
@@ -406,15 +405,19 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> questions.getSelectionModel().select(question));
 		openAnswerPdfForTest(question);
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
-		robot.clickOn("#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		fireControl(robot, "#add-answer-region");
+		fireControl(robot, "#save-answer");
+
+		// The Question receives its Answer after the initial save completes.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, question::hasAnswer);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(question.hasAnswer());
 		assertEquals(1, question.getAnswer().getRegions().size());
 		long answerId = question.getAnswer().getId();
-		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, () -> {
-		})));
+		AtomicInteger editCompleted = new AtomicInteger();
+
+		// Completion gives the test an observable end-state for the later edit save.
+		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, editCompleted::incrementAndGet)));
 		assertNotNull(questions.getValue());
 		assertEquals(question.getId(), questions.getValue().getId());
 		assertTrue(questions.isDisable());
@@ -431,8 +434,10 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText(),
 				"Refreshing Questions must not discard loaded Answer regions");
 		assertFalse(lookup(robot, "#save-answer", Button.class).isDisabled());
-		robot.clickOn("#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		fireControl(robot, "#save-answer");
+
+		// Do not use !isSaveInProgress() as the sole completion condition.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> editCompleted.get() == 1);
 		WaitForAsyncUtils.waitForFxEvents();
 		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
 				.orElseThrow();
@@ -474,7 +479,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(selectedQuestion.getText().contains("1 mark"));
 		openAnswerPdfForTest(first);
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		javafx.scene.image.Image previousImage = lookup(robot, "#pdf-page-view", ImageView.class).getImage();
 		AtomicInteger transitions = new AtomicInteger();
 		setField(answerCapturePane(), "answerTransitionAllowed", (java.util.function.BooleanSupplier) () -> {
@@ -488,8 +493,12 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new AssertionError("Saving an answer must not reload the bank");
 			}
 		});
-		robot.clickOn("#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		fireControl(robot, "#save-answer");
+
+		// Queue advancement proves that the save actually started and completed.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> questions.getValue() != null && questions.getValue().getId() == second.getId()
+						&& questions.getItems().stream().noneMatch(question -> question.getId() == first.getId()));
 		WaitForAsyncUtils.waitForFxEvents();
 		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(first.getId())
 				.orElseThrow();
@@ -498,8 +507,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertNotNull(questions.getValue());
 		assertEquals(second.getId(), questions.getValue().getId());
 		assertEquals(0, transitions.get(), "Programmatic queue removal must not fire the selection transition");
-		org.junit.jupiter.api.Assertions.assertSame(previousImage,
-				lookup(robot, "#pdf-page-view", ImageView.class).getImage(),
+		assertSame(previousImage, lookup(robot, "#pdf-page-view", ImageView.class).getImage(),
 				"The displayed answer PDF must not be re-rendered");
 		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
