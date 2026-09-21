@@ -1,9 +1,8 @@
 # Architecture Evolution
 
-> Updated 20 September 2026.  
+> Updated 21 September 2026.  
 > This document records why major design directions changed. It distinguishes
-> implemented architecture from Sprint 10 decisions that are planned but not yet
-> implemented.
+> implemented architecture from Sprint 10 decisions that remain planned.
 
 ## 1. Legacy workbook/filesystem application -> relational Question bank
 
@@ -125,17 +124,39 @@ Question, Answer and SharedQuestionContext content can use ordered region lists.
 Ordinary multi-region Questions remain distinct from shared context and
 multipart identity.
 
-## 10. Booklet-level response assumptions -> Question response type
+## 10. Booklet-name assumptions -> explicit booklet format plus Question response type
 
 **IMPLEMENTED / CURRENT**
 
-`QuestionResponseType` is persisted on each Question. Mixed-response booklets are
-supported and Answer completeness depends on Question type rather than booklet
-name.
+`QuestionResponseType` remains persisted on each Question because mixed-response
+booklets require per-Question semantics and Answer completeness depends on the
+actual Question type.
 
-Sprint 10 will add capture defaults from strong metadata cues. Those defaults do
-not become hard domain constraints and do not override persisted response type
-while editing/importing an existing Question.
+Sprint 10 additionally introduced persisted `ExamBookletQuestionFormat`:
+
+```text
+MULTIPLE_CHOICE
+WRITTEN_RESPONSE
+MIXED
+UNSPECIFIED
+```
+
+This metadata controls genuinely new Question capture without replacing
+Question-level response type.
+
+The resulting rules are:
+
+- MCQ-only booklets fix new Questions to Multiple Choice and exactly one mark;
+- Written-Response-only booklets fix new Questions to Written Response while
+  marks remain editable;
+- Mixed booklets permit manual response-type selection and conservative Written
+  Response inference;
+- one mark alone never implies Multiple Choice;
+- existing/imported/editing Questions retain their persisted response type;
+- `UNSPECIFIED` is retained for unresolved legacy booklet metadata.
+
+Reason: booklet format is a real source-document property, but it must not be
+used to rewrite the identity of existing individual Questions.
 
 ## 11. Blocking UI operations -> asynchronous persistence and stale-request protection
 
@@ -144,6 +165,11 @@ while editing/importing an existing Question.
 Search, Question/Answer persistence and relevant PDF transitions use background
 work with JavaFX completion handling. Stale/lifecycle protection prevents older
 work from overwriting newer UI state.
+
+SQLite connections now also use a bounded busy timeout. JavaFX reads and
+background persistence can legitimately overlap briefly; ordinary short-lived
+write locks should therefore wait rather than immediately surface as
+`SQLITE_BUSY`.
 
 ## 12. Shared PDF rectangle -> explicit capture-selection ownership
 
@@ -156,18 +182,18 @@ one workflow does not silently clear another workflow's pending selection.
 
 ### Sprint 10 hardening
 
-**DECIDED / PLANNED**
+**IMPLEMENTED / CURRENT**
 
-Visible rectangle state and logical pending-selection state must be one coherent
-interaction state. A user action that visibly cancels a pending rectangle must
-also clear the owning workflow's logical selection. Programmatic visual cleanup
-must not create callback loops.
+Visible rectangle state and logical pending-selection state are treated as one
+coherent interaction state. A user action that visually cancels a pending
+rectangle also clears the owning workflow's logical selection. Programmatic
+visual cleanup does not create callback loops.
 
 ## 13. Independent per-pane subject context -> workspace Working Subject
 
-**DECIDED / SPRINT 10 PLANNED**
+**IMPLEMENTED / CURRENT**
 
-Question and Answer capture need one working Subject context so sustained
+Question and Answer capture use one working Subject context so sustained
 Chemistry capture does not surface unrelated Engineering work.
 
 The Working Subject is a transient UI filter/default. It does not rewrite stored
@@ -292,3 +318,49 @@ database and `jpackage` self-contained deployment.
 Some future Questions may originate from transient web/doc content captured via
 Windows Snipping Tool. A future extension may allow text plus managed image
 attachments, but it must extend rather than weaken PDF provenance.
+
+## 22. Exam-wide Answer PDF reuse -> booklet-specific AnswerFile assignment
+
+**IMPLEMENTED / SPRINT 10**
+
+Real examinations may contain several question booklets and several answer
+documents. The relationship is not one AnswerFile per Exam and is not multiple
+AnswerFiles per individual booklet.
+
+The persisted relationship is:
+
+```text
+ExamBooklet -> zero or one AnswerFile
+AnswerFile  -> zero or many ExamBooklets
+```
+
+For example:
+
+```text
+MCQ booklet ──┐
+              ├── Answers A
+Paper 1 ──────┘
+
+Paper 2 ───────── Answers B
+```
+
+Schema version 10 adds nullable `exam_booklets.answer_file_id`. Null represents
+an unresolved legacy or not-yet-selected relationship rather than an inferred
+default.
+
+Answer Capture resolves the PDF from the active Question's ExamBooklet. A mapped
+booklet automatically restores its AnswerFile. An unmapped booklet clears any
+previous booklet's file and presents `Choose PDF...`; selecting a PDF persists
+the mapping.
+
+The persistence layer enforces the corresponding domain rules:
+
+- several booklets may share one AnswerFile;
+- an AnswerFile assigned to a booklet must belong to the same Exam;
+- one Answer cannot contain regions from multiple AnswerFiles;
+- Answer regions cannot contradict the booklet's assigned AnswerFile;
+- legacy mappings are backfilled only when existing regions establish one
+  unambiguous AnswerFile.
+
+This supersedes the earlier exam-wide heuristic that reused a registered answer
+PDF whenever the next Question belonged to the same Exam.

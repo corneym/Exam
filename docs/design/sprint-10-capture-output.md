@@ -1,6 +1,6 @@
 # Sprint 10 — Capture Hardening and Revision Output Refinement
 
-> **Status:** DESIGN AGREED — IMPLEMENTATION NOT YET COMPLETE  
+> **Status:** IMPLEMENTATION IN PROGRESS  
 > **Start date:** 20 September 2026  
 > **Branch:** `feature/capture-output`  
 > **Starting `main`:** `5a1e5a9`
@@ -32,9 +32,17 @@ At Sprint 10 start:
 - QuestionResponseType is persisted on each Question;
 - Question and Answer capture already share explicit PDF-selection ownership.
 
-No schema migration is expected for the agreed Sprint 10 scope. A migration must
-not be introduced unless implementation proves an existing persisted relation is
-actually insufficient.
+The sprint began with no expected schema migration. Implementation subsequently
+proved that two persisted relationships were insufficient.
+
+Schema version 9 added booklet-level Question format so MCQ-only,
+Written-Response-only and Mixed booklets can drive new-Question capture without
+guessing from individual Questions.
+
+Schema version 10 added nullable booklet-to-AnswerFile assignment. This supports
+exams where several question booklets may share one answer PDF while another
+booklet uses a different answer PDF. Existing data is migrated conservatively;
+relationships are not invented where legacy evidence is ambiguous.
 
 ## 3. Sprint goals
 
@@ -43,8 +51,10 @@ Sprint 10 must:
 - make pending PDF-selection state internally consistent;
 - make curriculum code entry and hierarchy controls display the same path;
 - allow capture work to be focused on one working Subject;
-- remove repetitive response-type selection where Question metadata makes the
-  normal answer type clear;
+- remove repetitive response-type selection where Question metadata or booklet
+  format makes the normal answer type clear;
+- support correct answer-PDF selection across exams containing multiple question
+  booklets and multiple answer documents;
 - expose existing shared-context semantics for independent Questions/MCQs;
 - make revision HTML grouping, ordering, numbering and navigation match the
   intended student resource;
@@ -76,11 +86,16 @@ the same generated page/group.
 If the PDF no longer displays a pending rectangle because the user cancelled it,
 the owning capture workflow must not continue to report a pending selection.
 
-### Automatic response type is a default, not a persisted law
+### Booklet format and Question response type have different roles
 
-Strong code/marks evidence may select Written Response for a new capture. The
-user may still override the default. Existing/imported/editing Question response
-type must be restored from persistence rather than silently re-inferred.
+Booklet format constrains/defaults genuinely new capture. Persisted
+QuestionResponseType remains authoritative for existing/imported/editing
+Questions.
+
+### AnswerFile assignment belongs to the ExamBooklet
+
+A question uses the AnswerFile assigned to its ExamBooklet. Several booklets may
+share one AnswerFile, but one booklet does not span several answer documents.
 
 ### Export configuration is transient
 
@@ -89,46 +104,48 @@ properties of one export, not Question-bank persistence.
 
 ## 5. Slice 1 — capture-selection state regression
 
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
 ### Problem
 
-After selecting a valid PDF region, an ordinary click can make the visible
-selection rectangle disappear because the new rectangle is below the minimum
+After selecting a valid PDF region, an ordinary click could make the visible
+selection rectangle disappear because the new rectangle was below the minimum
 size. The application-level CaptureSelectionState and Question/Answer capture
-pane can nevertheless retain the old pending selection.
+pane could nevertheless retain the old pending selection.
 
-### Required behaviour
+### Implemented behaviour
 
 - A user action that visually cancels the current pending PDF selection also
   clears its logical owner and pane-local pending selection.
 - Add/Clear controls become disabled when no compatible selection exists.
-- Programmatic clearing initiated by the owning workflow must not recurse through
+- Programmatic clearing initiated by the owning workflow does not recurse through
   the cancellation callback.
-- Anchored/double-click shared-context selection behaviour must remain intact.
+- Anchored/double-click shared-context selection behaviour remains intact.
 
-### Acceptance
-
-Regression coverage must reproduce: valid region -> ordinary PDF click -> visible
+Regression coverage reproduces valid region -> ordinary PDF click -> visible
 rectangle gone -> no logical pending selection.
 
 ## 6. Slice 2 — curriculum selector synchronisation
 
-### Problems
+### Status
 
-Real use has demonstrated both:
+**IMPLEMENTED / VERIFIED**
 
-- a complete code can resolve Unit/Topic/Subtopic/Descriptor while the visible
-  Topic ComboBox appears blank; and
-- after entering a complete code, replacing it with only the Unit can select or
+### Problem
+
+Real use demonstrated both:
+
+- a complete code could resolve Unit/Topic/Subtopic/Descriptor while the visible
+  Topic ComboBox appeared blank; and
+- after entering a complete code, replacing it with only the Unit could select or
   redisplay the previous Topic.
 
-These occur without requiring PDF-region interaction and are therefore a
-CurriculumSelectorPane synchronisation defect, not merely a capture-selection
-side effect.
+### Implemented behaviour
 
-### Required behaviour
-
-For every code-driven hierarchy transition, visible ComboBox values and the
-CurriculumSelectionModel must agree.
+For code-driven hierarchy transitions, visible ComboBox values and the
+CurriculumSelectionModel now agree.
 
 Examples:
 
@@ -137,65 +154,139 @@ Examples:
 3       -> Unit 3 / Topic empty / Subtopic empty / Descriptor empty
 ```
 
-Programmatic clearing must clear both JavaFX selection state and displayed/value
-state where required.
-
-### Acceptance
-
-UI tests must assert actual ComboBox values, not only model fields, for full-code
-paste/typing, progressive editing, shortening back to Unit and restoring an
-existing Question classification.
+UI regression tests assert actual ComboBox values for complete-code entry,
+progressive editing, shortening back to Unit and restoring existing Question
+classification.
 
 ## 7. Slice 3 — Working Subject capture filter
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
 
 ### Purpose
 
 Allow sustained work on Chemistry without unrelated Engineering Questions or
 Answers appearing in capture queues.
 
-### Design
+### Implemented design
 
-Add one workspace-level **Working Subject** selector in the left/capture pane.
-It is a transient UI filter/default, not persisted metadata.
+One workspace-level **Working Subject** selector is used in the capture
+workspace. It is transient UI state, not persisted metadata.
 
 The selected Subject filters at least:
 
 - imported/pending Question capture choices; and
 - unanswered Answer capture choices.
 
-New Question classification remains consistent with the active working Subject.
-Changing the Working Subject must respect pending-selection/accepted-region
+New Question classification remains consistent with the active Working Subject.
+Changing the Working Subject respects pending-selection/accepted-region
 transition guards so data is not silently discarded.
 
 Search Questions, Corpus Audit and other bank-wide administrative tools retain
 their own explicit Subject/scope controls and are not silently restricted by the
 Working Subject.
 
-## 8. Slice 4 — response-type defaults
+## 8. Slice 4 — response-type defaults and booklet format
 
-### Required inference
+### Status
 
-For **new Question capture**:
+**IMPLEMENTED / VERIFIED**
 
-- if the Question code has a recognised part-letter suffix, default to
-  `WRITTEN_RESPONSE`;
-- if the Question code is a whole-number Question and marks > 1, default to
-  `WRITTEN_RESPONSE`;
-- otherwise do not force Written Response merely from code/marks.
+The original response-type-default design was refined during implementation
+because response format is also a real booklet-level property.
 
-The existing conservative SourceQuestionCodeParser should be reused for the
-part-letter rule where appropriate rather than creating a competing parser.
+Each new ExamBooklet records one of:
 
-When a new exam booklet is opened, the option to mark it as MCQ, short answer or both should be presented.
+```text
+MULTIPLE_CHOICE
+WRITTEN_RESPONSE
+MIXED
+UNSPECIFIED
+```
 
-### Behaviour boundary
+`UNSPECIFIED` exists only for unresolved legacy data.
 
-- The automatic selection is a default and remains manually overridable.
-- Do not auto-select Multiple Choice from the inverse condition.
-- Do not override persisted response type when loading imported Questions or
-  editing existing Questions.
+For genuinely new Question capture:
+
+- an MCQ booklet fixes response type to Multiple Choice and marks to exactly 1;
+- a Written Response booklet fixes response type to Written Response while marks
+  remain editable;
+- a Mixed booklet permits manual response-type selection and conservative
+  Written Response inference;
+- a recognised part-letter suffix may infer Written Response in a Mixed booklet;
+- a whole-number Question worth more than one mark may infer Written Response in
+  a Mixed booklet;
+- one mark alone never implies Multiple Choice;
+- imported, edited and legacy-split Questions retain their persisted response
+  type.
+
+Schema version 9 persists the booklet format. Existing rows migrate to
+`UNSPECIFIED`, not `MIXED`, because legacy data does not justify inventing a
+format.
+
+The MCQ invariant is enforced below the UI: an explicitly Multiple Choice
+Question must have exactly one mark.
+
+## 8A. Additional capture hardening — multiple answer PDFs
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+Real use established the following AnswerFile cardinality:
+
+```text
+one ExamBooklet -> zero or one assigned AnswerFile
+one AnswerFile  -> zero or many ExamBooklets
+```
+
+A Question therefore obtains its answer document from its ExamBooklet.
+
+A valid real-world arrangement is:
+
+```text
+MCQ booklet ──┐
+              ├── Answers A
+Paper 1 ──────┘
+
+Paper 2 ───────── Answers B
+```
+
+Answer Capture behaviour is:
+
+- when the current booklet has an assigned AnswerFile, restore it automatically;
+- when two booklets share an AnswerFile, reuse that file;
+- when the next booklet has a different assigned AnswerFile, switch
+  automatically;
+- when the next booklet has no assignment, clear the previous file and show
+  `Choose PDF...`;
+- selecting a PDF persists that booklet assignment for future Questions and
+  later application sessions.
+
+One Answer may never span multiple answer documents.
+
+Schema version 10 persists this relationship in
+`exam_booklets.answer_file_id`. Existing region data is used for migration only
+when it establishes one unambiguous mapping.
+
+Persistence also rejects:
+
+- an AnswerFile assignment from another Exam;
+- regions from a different file than the booklet assignment;
+- one Answer containing regions from more than one AnswerFile.
+
+The complete non-UI suite is green for the persistence changes. Focused
+Answer-capture workflow tests are green after adding a bounded SQLite busy
+timeout for short concurrent UI-read/background-write overlap. The MCQ/Paper 1
+shared-answer plus Paper 2 separate-answer workflow has also been verified
+manually in the real application, including restart persistence.
 
 ## 9. Slice 5 — shared context for independent Questions and MCQs
+
+### Status
+
+**PLANNED**
 
 ### Requirement
 
@@ -244,6 +335,10 @@ once for that adjacent sequence where doing so remains unambiguous.
 
 ## 10. Slice 6 — revision HTML grouping choice
 
+### Status
+
+**PLANNED**
+
 ### Requirement
 
 At export time choose how the student resource groups Questions where Descriptor
@@ -276,6 +371,10 @@ Grouping mode never changes stored classification or mapping relationships.
 
 ## 11. Slice 7 — MCQ before written-response output
 
+### Status
+
+**PLANNED**
+
 Within each final output bucket, order student-facing presentations by response
 category:
 
@@ -291,6 +390,10 @@ Explicit `Multiple Choice` / `Written Response` section headings are not require
 in Sprint 10; that remains backlog polish after the ordering is exercised.
 
 ## 12. Slice 8 — page-local Question numbering
+
+### Status
+
+**PLANNED**
 
 ### Requirement
 
@@ -312,6 +415,10 @@ global RevisionPresentationPlanner sequence. Anchors, alternative text and
 answer references must use the same page-local displayed number.
 
 ## 13. Slice 9 — empty navigation pruning and Unit selection
+
+### Status
+
+**PLANNED**
 
 ### Default export
 
@@ -335,6 +442,10 @@ Selecting Units is an output scope choice only. It does not alter corpus
 classification/applicability.
 
 ## 14. Slice 10 — generated-site status information
+
+### Status
+
+**PLANNED**
 
 ### Student-facing status
 
@@ -387,13 +498,22 @@ The following remain backlog/future work:
 
 Implementation should proceed slice by slice with focused tests.
 
-At minimum Sprint 10 requires regression coverage for:
+Completed capture work currently has regression coverage for:
 
 - visual PDF cancellation clearing logical selection ownership;
 - full-code visible curriculum hierarchy population;
 - shortening a full code to Unit without stale Topic;
 - Working Subject queue filtering and safe subject transitions;
-- response-type default inference and manual override;
+- booklet-format and response-type defaults;
+- MCQ one-mark persistence invariants;
+- booklet-to-AnswerFile persistence;
+- shared AnswerFile use across several booklets;
+- distinct AnswerFiles across booklets in the same Exam;
+- unresolved booklet behaviour;
+- rejection of cross-Exam or cross-file Answer relationships.
+
+Remaining Sprint 10 work requires regression coverage for:
+
 - independent MCQs sharing one context while retaining different
   classifications;
 - context rendering across different output buckets/pages;

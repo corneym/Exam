@@ -1,11 +1,11 @@
 # Current Status
 
-> **Authoritative status date:** 20 September 2026.  
+> **Authoritative status date:** 21 September 2026.  
 > Sprints 01 through 09 are complete and merged.  
 > Current `main` at Sprint 10 start: `5a1e5a9`.  
 > Active branch: `feature/capture-output`.  
-> Sprint 10 is designed but its planned features must not be described as
-> implemented until repository/test evidence exists.
+> Sprint 10 implementation is in progress; only behaviour supported by repository,
+> test or explicit manual-verification evidence is described as implemented below.
 
 ## Status summary
 
@@ -33,7 +33,12 @@ ordering, MCQ Answer-PDF visibility, UI package refactoring and CI hardening.
 Protected-main workflow was then exercised through pull request #1. GitHub
 reports `main` as protected.
 
-The latest supported SQLite schema version is **8**.
+Sprint 10 implementation to date includes capture-selection state correction,
+curriculum selector synchronisation, Working Subject filtering, persisted
+booklet-level Question format, response-type capture rules and booklet-specific
+AnswerFile assignment.
+
+The latest supported SQLite schema version is **10**.
 
 ## Implemented and current
 
@@ -44,6 +49,8 @@ The latest supported SQLite schema version is **8**.
 - JavaFX desktop UI.
 - Apache PDFBox for PDF loading, rendering and region extraction.
 - SQLite persistence with foreign-key enforcement and sequential migrations.
+- SQLite connections use a bounded busy timeout so short asynchronous writes do
+  not cause concurrent JavaFX reads to fail immediately with `SQLITE_BUSY`.
 - JUnit and TestFX regression coverage.
 - Repository/service/importer/PDF/output/UI package separation.
 - GitHub Actions with separate non-UI, remaining-UI and workflow-UI jobs.
@@ -64,18 +71,28 @@ is not part of the managed path.
 
 ### Database and assessment model
 
-Schema version 8 supports Subjects, SyllabusVersions, curriculum hierarchy,
-providers, Exams, Booklets, managed source documents, Questions, ordered Question
-regions, persisted Question response type, Answers, ordered Answer regions,
+Schema version 10 supports Subjects, SyllabusVersions, curriculum hierarchy,
+providers, Exams, Booklets, managed source documents, booklet-level Question
+format, booklet-to-AnswerFile assignment, Questions, ordered Question regions,
+persisted Question response type, Answers, ordered Answer regions,
 historical-to-current mappings, SourceQuestion identity, SharedQuestionContext
 and ordered shared-context regions.
+
+Schema version 9 added persisted `ExamBookletQuestionFormat`. Schema version 10
+added the nullable `ExamBooklet -> AnswerFile` relationship. Several booklets may
+share one AnswerFile, but each resolved booklet has at most one assigned
+AnswerFile. Legacy data is migrated conservatively and unresolved relationships
+are not guessed.
 
 Conceptually:
 
 ```text
 Subject
   -> Exam
+       -> AnswerFile
        -> ExamBooklet
+            -> ExamBookletQuestionFormat
+            -> optional assigned AnswerFile
             -> SourceQuestion (optional multipart identity)
             -> Question
                  -> QuestionResponseType
@@ -105,20 +122,45 @@ Curriculum authoring can create and edit Subjects/syllabuses, author hierarchy
 nodes, preserve managed syllabus-PDF provenance and use `IN_PROGRESS` / `FINAL`
 lifecycle state.
 
-One current user-observed defect is open: curriculum-code entry can leave visible
-hierarchy ComboBox state inconsistent with the resolved model. A complete code
-may populate Subtopic and Descriptor while Topic appears blank; after a complete
-code, shortening to only the Unit can incorrectly restore the previous Topic.
-This is Sprint 10 Slice 2 and is not yet fixed.
+Sprint 10 corrected code-driven hierarchy synchronisation so visible
+Unit/Topic/Subtopic/Descriptor controls and the `CurriculumSelectionModel`
+remain consistent when a complete code is entered or shortened.
 
 ### Question capture and correction
 
 Current Question capture supports rendered PDF selection, multiple ordered
-ordinary regions, question code/marks, explicit Multiple Choice/Written Response
-radio buttons, Subtopic/Descriptor classification, imported metadata-only
-Questions, editing/correction, persisted SourceQuestion identity, multipart
-shared-preamble capture/reuse, shared-context recapture and asynchronous save
-work.
+ordinary regions, question code/marks, Subtopic/Descriptor classification,
+imported metadata-only Questions, editing/correction, persisted SourceQuestion
+identity, multipart shared-preamble capture/reuse, shared-context recapture and
+asynchronous save work.
+
+Sprint 10 corrected the pending-selection invariant so a visually cancelled PDF
+selection no longer remains logically owned by Question or Answer capture.
+
+A workspace-level Working Subject now filters Question and Answer capture queues
+without rewriting persisted Subject, classification or Exam ownership.
+
+Each ExamBooklet now records a Question format:
+
+```text
+MULTIPLE_CHOICE
+WRITTEN_RESPONSE
+MIXED
+UNSPECIFIED
+```
+
+`UNSPECIFIED` is reserved for unresolved legacy data.
+
+For genuinely new Question capture:
+
+- MCQ-only booklets fix response type to Multiple Choice and marks to 1;
+- Written-Response-only booklets fix response type to Written Response while
+  marks remain editable;
+- Mixed booklets permit manual response-type choice and conservative Written
+  Response inference;
+- one mark alone never implies Multiple Choice;
+- imported, edited and legacy-split Questions retain their persisted response
+  type.
 
 The current general shared-context UI remains primarily tied to multipart or
 legacy preamble workflows. Independent MCQs that share a stimulus cannot yet be
@@ -126,17 +168,29 @@ captured naturally as separate Questions sharing one context. Sprint 10 plans to
 expose this already-supported domain relationship without inventing multipart
 identity.
 
-A second current user-observed defect is open: after a valid PDF region is
-selected, a later ordinary click can make the visible rectangle disappear while
-the logical pending selection remains owned by the capture workflow. Sprint 10
-Slice 1 will restore the invariant that visual and logical pending-selection
-state agree.
-
 ### Answer capture and correction
 
 Answer capture supports deterministic source-order unanswered queues, Question
-marks, multiple ordered written-response regions, MCQ answer letters, registered
-marking-PDF reuse, persisted Answer correction and asynchronous persistence.
+marks, multiple ordered written-response regions, MCQ answer letters, persisted
+Answer correction and asynchronous persistence.
+
+Answer PDFs are resolved at ExamBooklet level rather than merely at Exam level.
+Each booklet may have one assigned AnswerFile, while one AnswerFile may serve
+several booklets. For example, an MCQ booklet and Paper 1 may share one marking
+PDF while Paper 2 uses another.
+
+When Answer capture moves to a booklet whose AnswerFile is already known, the
+correct PDF is restored automatically. If the booklet has no assignment, the
+previous booklet's PDF is cleared and `Choose PDF...` is shown again. Selecting
+a PDF persists that mapping for later Questions and later application sessions.
+
+Answer persistence rejects one Answer whose regions span multiple AnswerFiles,
+rejects AnswerFiles belonging to another Exam and rejects regions that conflict
+with the AnswerFile assigned to the Question's booklet.
+
+The MCQ/Paper 1 shared-answer-file plus Paper 2 separate-answer-file workflow has
+been manually verified in the real application, including persistence across
+application restart.
 
 Completeness remains response-type aware:
 
@@ -194,27 +248,45 @@ starting point `5a1e5a9`. GitHub reports `main` as protected.
 This supersedes earlier documentation that described Sprint 09 merge and main
 protection as future closeout work.
 
-## Sprint 10 planned scope — not yet implemented
+## Sprint 10 implementation status
 
 Sprint 10 — Capture Hardening and Revision Output Refinement — is documented in
 `docs/design/sprint-10-capture-output.md` and uses branch
 `feature/capture-output`.
 
-Planned work is:
+Implemented work includes:
 
 1. pending PDF-selection state correction;
 2. curriculum selector synchronisation correction;
 3. Working Subject filtering for Question and Answer capture;
-4. Written Response capture defaults for part-letter Questions and whole-number
-   Questions worth more than one mark;
-5. shared-context capture/reuse for independently classified Questions,
-   including MCQs;
-6. Subtopic-versus-Descriptor revision-output grouping;
-7. MCQ-before-written ordering;
-8. page-local numbering beginning at 1;
-9. empty-branch pruning and selected-Unit export;
-10. useful generated-site status including generation date/time rather than
-    internal captured-part statistics.
+4. persisted booklet-level Question format and response-type capture rules;
+5. booklet-specific AnswerFile persistence and automatic Answer-PDF switching.
+
+Still-planned Sprint 10 work includes:
+
+- shared-context capture/reuse for independently classified Questions, including
+  MCQs;
+- Subtopic-versus-Descriptor revision-output grouping;
+- MCQ-before-written ordering;
+- page-local numbering beginning at 1;
+- empty-branch pruning and selected-Unit export;
+- useful generated-site status including generation date/time rather than
+  internal captured-part statistics.
+
+## Verification evidence
+
+Current Sprint 10 verification includes:
+
+- complete non-UI test suite green after schema/persistence changes;
+- focused response-type workflow tests green;
+- capture workflow suite green before the later Answer-PDF mapping extension;
+- focused Answer Capture workflow tests green after the booklet-specific
+  AnswerFile changes and SQLite busy-timeout hardening;
+- manual real-application verification of shared and separate answer PDFs across
+  multiple exam booklets.
+
+A final complete workflow-suite run remains appropriate before Sprint 10
+closeout.
 
 ## Active limitations and backlog themes
 
@@ -233,8 +305,6 @@ output and packaging.
 
 Do **not** describe the following as current application capabilities:
 
-- Sprint 10 Working Subject filtering;
-- automatic Written Response defaults from code/marks;
 - general independent-Question shared-context capture through normal capture;
 - selectable Subtopic/Descriptor revision grouping;
 - selected-Unit revision export;
