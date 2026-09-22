@@ -329,6 +329,11 @@ public final class RevisionHtmlRenderer {
 			if (unitNode.getCurriculumNode().getLevel() != CurriculumLevel.UNIT) {
 				throw new IllegalStateException("Corpus root nodes must be Unit nodes");
 			}
+
+			// Empty curriculum branches remain in the corpus but are not student-facing.
+			if (countPresentations(unitNode) == 0) {
+				continue;
+			}
 			Path unitIndex = normalizedOutputRoot.resolve(unitRelativePath(unitNode));
 			renderUnitPage(corpus, unitNode, normalizedOutputRoot, unitIndex);
 			htmlFiles.add(unitIndex);
@@ -336,11 +341,17 @@ public final class RevisionHtmlRenderer {
 				if (topicNode.getCurriculumNode().getLevel() != CurriculumLevel.TOPIC) {
 					throw new IllegalStateException("Unit corpus children must be Topic nodes");
 				}
+				if (countPresentations(topicNode) == 0) {
+					continue;
+				}
 				Path topicFile = normalizedOutputRoot.resolve(topicRelativePath(unitNode, topicNode));
 				renderTopicPage(corpus, unitNode, topicNode, normalizedOutputRoot, topicFile);
 				htmlFiles.add(topicFile);
 				for (RevisionCorpusNode child : topicNode.getChildren()) {
 					if (child.getCurriculumNode().getLevel() != CurriculumLevel.SUBTOPIC) {
+						continue;
+					}
+					if (countPresentations(child) == 0) {
 						continue;
 					}
 					Path subtopicFile = normalizedOutputRoot.resolve(subtopicRelativePath(unitNode, topicNode, child));
@@ -363,33 +374,55 @@ public final class RevisionHtmlRenderer {
 	 * @throws IllegalStateException if a required rendered asset is missing
 	 */
 	public List<Path> renderTopicPages(RevisionCorpus corpus, Path outputRoot) throws IOException {
+
 		if (corpus == null) {
 			throw new NullPointerException("corpus");
 		}
 		if (outputRoot == null) {
 			throw new NullPointerException("outputRoot");
 		}
+
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
 		writeStylesheet(normalizedOutputRoot);
+
 		List<Path> topicFiles = new ArrayList<Path>();
+
 		for (RevisionCorpusNode unitNode : corpus.getRootNodes()) {
 			for (RevisionCorpusNode topicNode : unitNode.getChildren()) {
 				if (topicNode.getCurriculumNode().getLevel() != CurriculumLevel.TOPIC) {
+
 					throw new IllegalStateException("Unit corpus children must be Topic nodes");
 				}
+
+				// Do not generate diagnostic empty pages.
+				if (countPresentations(topicNode) == 0) {
+					continue;
+				}
+
 				Path outputFile = normalizedOutputRoot.resolve(topicRelativePath(unitNode, topicNode));
+
 				renderTopicPage(corpus, unitNode, topicNode, normalizedOutputRoot, outputFile);
+
 				topicFiles.add(outputFile);
+
 				for (RevisionCorpusNode child : topicNode.getChildren()) {
 					if (child.getCurriculumNode().getLevel() != CurriculumLevel.SUBTOPIC) {
 						continue;
 					}
+
+					if (countPresentations(child) == 0) {
+						continue;
+					}
+
 					Path subtopicFile = normalizedOutputRoot.resolve(subtopicRelativePath(unitNode, topicNode, child));
+
 					renderSubtopicPage(corpus, unitNode, topicNode, child, normalizedOutputRoot, subtopicFile);
+
 					topicFiles.add(subtopicFile);
 				}
 			}
 		}
+
 		return List.copyOf(topicFiles);
 	}
 
@@ -645,9 +678,16 @@ public final class RevisionHtmlRenderer {
 					   <ul class="navigation-list">
 					""");
 			for (RevisionCorpusNode subtopicNode : children) {
+				int questionCount = countPresentations(subtopicNode);
+
+				// Suppress empty Subtopics from student navigation.
+				if (questionCount == 0) {
+					continue;
+				}
+
 				String href = relativeUrl(outputFile, outputRoot,
 						subtopicRelativePath(unitNode, topicNode, subtopicNode));
-				int questionCount = countPresentations(subtopicNode);
+
 				html.append("""
 						      <li>
 						          <a href="%s">%s</a>
@@ -926,8 +966,15 @@ public final class RevisionHtmlRenderer {
 				corpus.getStatistics().getUniqueApplicableQuestions(), corpus.getStatistics().getRenderableQuestions(),
 				corpus.getStatistics().getMissingQuestionRegionQuestions()));
 		for (RevisionCorpusNode unitNode : corpus.getRootNodes()) {
-			String href = relativeUrl(outputFile, outputRoot, unitRelativePath(unitNode));
 			int questionCount = countPresentations(unitNode);
+
+			// The student navigation exposes only Units containing revision material.
+			if (questionCount == 0) {
+				continue;
+			}
+
+			String href = relativeUrl(outputFile, outputRoot, unitRelativePath(unitNode));
+
 			html.append("""
 					       <li>
 					           <a href="%s">%s</a>
@@ -1092,10 +1139,19 @@ public final class RevisionHtmlRenderer {
 				escapeText(nodeLabel(unit))));
 		for (RevisionCorpusNode topicNode : unitNode.getChildren()) {
 			if (topicNode.getCurriculumNode().getLevel() != CurriculumLevel.TOPIC) {
+
 				throw new IllegalStateException("Unit corpus children must be Topic nodes");
 			}
-			String href = relativeUrl(outputFile, outputRoot, topicRelativePath(unitNode, topicNode));
+
 			int questionCount = countPresentations(topicNode);
+
+			// Empty Topics are neither linked nor generated.
+			if (questionCount == 0) {
+				continue;
+			}
+
+			String href = relativeUrl(outputFile, outputRoot, topicRelativePath(unitNode, topicNode));
+
 			html.append("""
 					       <li>
 					           <a href="%s">%s</a>

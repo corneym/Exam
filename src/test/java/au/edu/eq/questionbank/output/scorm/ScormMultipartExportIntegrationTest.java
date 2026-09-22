@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.output.scorm;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,9 +26,9 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -119,8 +120,9 @@ class ScormMultipartExportIntegrationTest {
 			assertEquals(1, countOccurrences(topicHtml, "<summary>Reveal answer</summary>"));
 			assertTrue(topicHtml.contains("Question 1"));
 			assertTrue(topicHtml.contains("5 marks"));
-			assertTrue(topicHtml.contains("Source part 24a"));
-			assertTrue(topicHtml.contains("Source part 24b"));
+			assertFalse(topicHtml.contains("Source part 24a"));
+			assertFalse(topicHtml.contains("Source part 24b"));
+			assertTrue(topicHtml.contains("Questions 24a, 24b"));
 			assertTrue(topicHtml.contains("Answer A"));
 			assertTrue(topicHtml.contains("Answer B"));
 			ZipEntry manifestEntry = zip.getEntry("imsmanifest.xml");

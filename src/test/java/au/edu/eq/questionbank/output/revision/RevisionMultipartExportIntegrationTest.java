@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.output.revision;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
@@ -21,9 +22,9 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -108,8 +109,9 @@ class RevisionMultipartExportIntegrationTest {
 		assertEquals(1, countOccurrences(html, "<summary>Reveal answer</summary>"));
 		assertTrue(html.contains("Question 1"));
 		assertTrue(html.contains("5 marks"));
-		assertTrue(html.contains("Source part 24a"));
-		assertTrue(html.contains("Source part 24b"));
+		assertFalse(html.contains("Source part 24a"));
+		assertFalse(html.contains("Source part 24b"));
+		assertTrue(html.contains("Questions 24a, 24b"));
 		assertTrue(html.contains("question-4.png"));
 		assertTrue(html.contains("question-5.png"));
 		assertTrue(html.contains("Answer A"));
