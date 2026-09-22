@@ -5,9 +5,9 @@ import java.util.List;
 /**
  * Reusable introductory source material required by one or more questions.
  * <p>
- * Examples include a preamble, common stem, graph, table or diagram. A shared
- * context belongs to one examination booklet and contains one or more ordered
- * source regions.
+ * Examples include a shared context, common stem, graph, table or diagram. A
+ * shared context belongs to one examination booklet and contains one or more
+ * ordered source regions.
  */
 public final class SharedQuestionContext {
 
@@ -62,7 +62,7 @@ public final class SharedQuestionContext {
 	}
 
 	/**
-	 * Returns the booklet containing this reusable preamble.
+	 * Returns the booklet containing this reusable shared context.
 	 *
 	 * @return the booklet that owns this shared context
 	 */
@@ -80,7 +80,7 @@ public final class SharedQuestionContext {
 	}
 
 	/**
-	 * Returns the label used to identify this preamble during capture.
+	 * Returns the label used to identify this shared context during capture.
 	 *
 	 * @return the display label
 	 */

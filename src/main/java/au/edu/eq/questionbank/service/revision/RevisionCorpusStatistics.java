@@ -64,7 +64,7 @@ public final class RevisionCorpusStatistics {
 	 *
 	 * @return the number of questions with legacy preamble evidence
 	 */
-	public int getPreambleReviewQuestions() {
+	public int getSharedContextReviewQuestions() {
 		return preambleReviewQuestions;
 	}
 

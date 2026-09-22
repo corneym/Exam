@@ -309,7 +309,7 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question updated = repository.findById(metadataOnlyQuestion.getId()).orElseThrow();
 		assertEquals("61a", updated.getQuestionCode());
 		assertEquals(4, updated.getMarks());
-		assertFalse(updated.isPreambleCaptureRequired());
+		assertFalse(updated.isSharedContextCaptureRequired());
 		assertTrue(updated.getRegions().isEmpty());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.getResponseType());
 		assertEquals(classification.getId(), updated.getClassification().getId());
@@ -371,14 +371,14 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#legacy-split-answer-part").tryQuery().isPresent());
 		TextField partAMarks = lookup(robot, "#legacy-split-part-0-marks", TextField.class);
 		TextField partBMarks = lookup(robot, "#legacy-split-part-1-marks", TextField.class);
-		ComboBox<LegacyQuestionSplitDialog.PreambleChoice> preambleChoice = comboBox(robot,
+		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> preambleChoice = comboBox(robot,
 				"#legacy-split-preamble-choice");
 		ComboBox<String> answerPart = comboBox(robot, "#legacy-split-answer-part");
 		Button continueButton = lookup(robot, "#legacy-split-continue", Button.class);
 		robot.interact(() -> {
 			partAMarks.setText("2");
 			partBMarks.setText("3");
-			preambleChoice.setValue(LegacyQuestionSplitDialog.PreambleChoice.NO_SHARED_PREAMBLE);
+			preambleChoice.setValue(LegacyQuestionSplitDialog.SharedContextChoice.NO_SHARED_CONTEXT);
 		});
 
 		// An answered legacy Question cannot proceed until one resulting part is
@@ -459,7 +459,7 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 						QuestionResponseType.WRITTEN_RESPONSE),
 						new LegacyQuestionSplitDialog.PartDefinition("3b", 3, classification,
 								QuestionResponseType.WRITTEN_RESPONSE)),
-				0, LegacyQuestionSplitDialog.PreambleChoice.NO_SHARED_PREAMBLE, null);
+				0, LegacyQuestionSplitDialog.SharedContextChoice.NO_SHARED_CONTEXT, null);
 		QuestionCapturePane pane = questionCapturePane();
 		AtomicInteger completed = new AtomicInteger();
 		robot.interact(

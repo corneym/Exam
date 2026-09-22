@@ -20,7 +20,7 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -295,7 +295,7 @@ class RevisionPresentationPlannerTest {
 		}
 
 		private SourceQuestion sourceQuestion(long id) {
-			return new SourceQuestion(id, booklet, Long.toString(id), PreambleStatus.PRESENT);
+			return new SourceQuestion(id, booklet, Long.toString(id), SharedContextStatus.PRESENT);
 		}
 	}
 }

@@ -14,7 +14,7 @@ import java.sql.Statement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 
@@ -256,7 +256,7 @@ class SqliteSchemaV5Test {
 		assertTrue(reloaded.hasSourceQuestion());
 		assertEquals(20, reloaded.getSourceQuestion().getId());
 		assertEquals("24", reloaded.getSourceQuestion().getSourceQuestionCode());
-		assertEquals(PreambleStatus.UNKNOWN, reloaded.getSourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.UNKNOWN, reloaded.getSourceQuestion().getSharedContextStatus());
 		assertTrue(reloaded.hasSharedContext());
 		assertEquals(30, reloaded.getSharedContext().getId());
 		assertEquals("Question 24 preamble", reloaded.getSharedContext().getLabel());

@@ -23,8 +23,8 @@ import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
@@ -1020,14 +1020,14 @@ public class QuestionBankApplication extends Application {
 			// No existing multipart group is available for reuse.
 			return null;
 		}
-		if (matchingSource.getPreambleStatus() == PreambleStatus.UNKNOWN) {
+		if (matchingSource.getSharedContextStatus() == SharedContextStatus.UNKNOWN) {
 			throw new IllegalArgumentException("Existing source Question " + originalQuestion.getQuestionCode()
-					+ " still has unresolved preamble status");
+					+ " still has unresolved shared context status");
 		}
-		if (matchingSource.getPreambleStatus() == PreambleStatus.NONE) {
+		if (matchingSource.getSharedContextStatus() == SharedContextStatus.NONE) {
 			if (matchingContext != null) {
 				throw new IllegalStateException(
-						"Existing no-preamble source Question unexpectedly uses shared context");
+						"Existing no-shared-context source Question unexpectedly uses shared context");
 			}
 			return null;
 		}
@@ -1332,8 +1332,8 @@ public class QuestionBankApplication extends Application {
 		ButtonType keepButton = new ButtonType("Keep converted regions", ButtonBar.ButtonData.CANCEL_CLOSE);
 		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
 		alert.initOwner(primaryStage);
-		alert.setTitle("Question Preamble Converted");
-		alert.setHeaderText("The captured preamble has been converted to ordinary question regions.");
+		alert.setTitle("Question Shared Context Converted");
+		alert.setHeaderText("The captured shared context has been converted to ordinary question regions.");
 		alert.setContentText(
 				"""
 						The converted material has already been saved safely.
@@ -1853,7 +1853,7 @@ public class QuestionBankApplication extends Application {
 			startQuestionSplitFromSearch(primaryStage, dialog, question, curriculumRepository, metadataService);
 			return;
 		}
-		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_PREAMBLE) {
+		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_CONTEXT) {
 			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question,
 					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
 							metadataService));
@@ -1920,12 +1920,12 @@ public class QuestionBankApplication extends Application {
 				Exportable questions: %d
 				Awaiting question capture: %d
 				Questions without answers: %d
-				Preamble review flags: %d
+				Shared context review flags: %d
 				""".formatted(result.getDestination(), result.getStatistics().getUniqueApplicableQuestions(),
 				result.getStatistics().getRenderableQuestions(),
 				result.getStatistics().getMissingQuestionRegionQuestions(),
 				result.getStatistics().getQuestionsWithoutAnswers(),
-				result.getStatistics().getPreambleReviewQuestions());
+				result.getStatistics().getSharedContextReviewQuestions());
 		showAlert(Alert.AlertType.INFORMATION, "Export Revision HTML", "Revision website exported successfully.",
 				message);
 	}
@@ -1958,12 +1958,12 @@ public class QuestionBankApplication extends Application {
 				Exportable questions: %d
 				Awaiting question capture: %d
 				Questions without answers: %d
-				Preamble review flags: %d
+				Shared context review flags: %d
 				""".formatted(result.getDestination(), result.getStatistics().getUniqueApplicableQuestions(),
 				result.getStatistics().getRenderableQuestions(),
 				result.getStatistics().getMissingQuestionRegionQuestions(),
 				result.getStatistics().getQuestionsWithoutAnswers(),
-				result.getStatistics().getPreambleReviewQuestions());
+				result.getStatistics().getSharedContextReviewQuestions());
 		showAlert(Alert.AlertType.INFORMATION, "Export Revision SCORM", "SCORM package exported successfully.",
 				message);
 	}

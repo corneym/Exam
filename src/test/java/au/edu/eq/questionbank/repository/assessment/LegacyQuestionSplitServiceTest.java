@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -85,7 +85,7 @@ class LegacyQuestionSplitServiceTest {
 		assertEquals(5, reloadedOriginal.getMarks());
 		assertEquals(subtopicOne.getId(), reloadedOriginal.getClassification().getId());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedOriginal.getResponseType());
-		assertTrue(reloadedOriginal.isPreambleCaptureRequired());
+		assertTrue(reloadedOriginal.isSharedContextCaptureRequired());
 		assertFalse(reloadedOriginal.hasSourceQuestion());
 		assertFalse(reloadedOriginal.hasSharedContext());
 
@@ -136,7 +136,7 @@ class LegacyQuestionSplitServiceTest {
 		// The retained original row must be completely restored.
 		assertEquals("3", reloadedOriginal.getQuestionCode());
 		assertEquals(5, reloadedOriginal.getMarks());
-		assertTrue(reloadedOriginal.isPreambleCaptureRequired());
+		assertTrue(reloadedOriginal.isSharedContextCaptureRequired());
 		assertFalse(reloadedOriginal.hasSourceQuestion());
 		assertFalse(reloadedOriginal.hasSharedContext());
 		assertEquals(1, reloadedOriginal.getRegions().size());
@@ -192,7 +192,7 @@ class LegacyQuestionSplitServiceTest {
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));
 		SplitResult result = splitService
 				.split(new SplitRequest(original, "3", List.of(partA, partB), 0, newSharedContext));
-		assertEquals(PreambleStatus.PRESENT, result.sourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.PRESENT, result.sourceQuestion().getSharedContextStatus());
 		assertNotNull(result.sharedContext());
 		assertEquals("Question 3 preamble", result.sharedContext().getLabel());
 		assertEquals(1, result.sharedContext().getRegions().size());
@@ -210,14 +210,14 @@ class LegacyQuestionSplitServiceTest {
 
 		// The old legacy hint is no longer the authority after an explicit split. The
 		// SourceQuestion and SharedQuestionContext now represent preamble semantics.
-		assertFalse(resultingA.isPreambleCaptureRequired());
-		assertFalse(resultingB.isPreambleCaptureRequired());
+		assertFalse(resultingA.isSharedContextCaptureRequired());
+		assertFalse(resultingB.isSharedContextCaptureRequired());
 		Question reloadedA = new SqliteQuestionRepository(database).findById(resultingA.getId()).orElseThrow();
 		Question reloadedB = new SqliteQuestionRepository(database).findById(resultingB.getId()).orElseThrow();
 
 		// Reload proves the shared identity and preamble are persisted rather than
 		// merely attached to the returned objects.
-		assertEquals(PreambleStatus.PRESENT, reloadedA.getSourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.PRESENT, reloadedA.getSourceQuestion().getSharedContextStatus());
 		assertEquals(reloadedA.getSourceQuestion().getId(), reloadedB.getSourceQuestion().getId());
 		assertEquals(reloadedA.getSharedContext().getId(), reloadedB.getSharedContext().getId());
 		assertEquals(1, new SqliteSharedQuestionContextRepository(database).findByBooklet(booklet).size());
@@ -321,7 +321,7 @@ class LegacyQuestionSplitServiceTest {
 		// Collision detection must occur without converting the legacy Question.
 		assertEquals("3", reloadedOriginal.getQuestionCode());
 		assertEquals(5, reloadedOriginal.getMarks());
-		assertTrue(reloadedOriginal.isPreambleCaptureRequired());
+		assertTrue(reloadedOriginal.isSharedContextCaptureRequired());
 		assertFalse(reloadedOriginal.hasSourceQuestion());
 		assertEquals(1, reloadedOriginal.getRegions().size());
 
@@ -366,10 +366,10 @@ class LegacyQuestionSplitServiceTest {
 		// unresolved existing source group.
 		assertEquals("3", reloadedOriginal.getQuestionCode());
 		assertFalse(reloadedOriginal.hasSourceQuestion());
-		assertTrue(reloadedOriginal.isPreambleCaptureRequired());
+		assertTrue(reloadedOriginal.isSharedContextCaptureRequired());
 		assertEquals(existingSourceQuestion.getId(), reloadedSibling.getSourceQuestion().getId());
-		assertEquals(PreambleStatus.UNKNOWN,
-				sourceRepository.findByBookletAndCode(booklet, "3").orElseThrow().getPreambleStatus());
+		assertEquals(SharedContextStatus.UNKNOWN,
+				sourceRepository.findByBookletAndCode(booklet, "3").orElseThrow().getSharedContextStatus());
 		assertEquals(2, questionRepository.findAll().size());
 	}
 
@@ -377,7 +377,7 @@ class LegacyQuestionSplitServiceTest {
 	void splitRejectsNoPreambleSourceGroupWhoseMembersUseSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
-		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion, PreambleStatus.NONE);
+		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion, SharedContextStatus.NONE);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
 		SharedQuestionContext sharedContext = contextRepository.save(booklet, "Existing shared material",
 				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
@@ -408,7 +408,7 @@ class LegacyQuestionSplitServiceTest {
 		// inconsistent group exactly as they were.
 		assertEquals("3", reloadedOriginal.getQuestionCode());
 		assertFalse(reloadedOriginal.hasSourceQuestion());
-		assertTrue(reloadedOriginal.isPreambleCaptureRequired());
+		assertTrue(reloadedOriginal.isSharedContextCaptureRequired());
 		assertEquals(existingSourceQuestion.getId(), reloadedSibling.getSourceQuestion().getId());
 		assertTrue(reloadedSibling.hasSharedContext());
 		assertEquals(sharedContext.getId(), reloadedSibling.getSharedContext().getId());
@@ -420,7 +420,7 @@ class LegacyQuestionSplitServiceTest {
 	void splitReusesCompatibleExistingSourceQuestion() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
-		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion, PreambleStatus.NONE);
+		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion, SharedContextStatus.NONE);
 
 		// An existing sibling establishes that SourceQuestion 3 is already a real
 		// multipart group. It deliberately has no shared context.
@@ -439,7 +439,7 @@ class LegacyQuestionSplitServiceTest {
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
 		SplitResult result = splitService.split(new SplitRequest(original, "3", List.of(partA, partB), 0));
 		assertEquals(existingSourceQuestion.getId(), result.sourceQuestion().getId());
-		assertEquals(PreambleStatus.NONE, result.sourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.NONE, result.sourceQuestion().getSharedContextStatus());
 		Question resultingA = questionRepository.findById(result.questions().get(0).getId()).orElseThrow();
 		Question resultingB = questionRepository.findById(result.questions().get(1).getId()).orElseThrow();
 		Question reloadedSibling = questionRepository.findById(existingSibling.getId()).orElseThrow();
@@ -463,7 +463,7 @@ class LegacyQuestionSplitServiceTest {
 	void splitReusesExistingSourceQuestionAndSharedPreamble() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSource = sourceRepository.save(booklet, "3");
-		existingSource = sourceRepository.updatePreambleStatus(existingSource, PreambleStatus.PRESENT);
+		existingSource = sourceRepository.updatePreambleStatus(existingSource, SharedContextStatus.PRESENT);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
 		SharedQuestionContext existingContext = contextRepository.save(booklet, "Question 3 preamble",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));
@@ -496,7 +496,7 @@ class LegacyQuestionSplitServiceTest {
 		assertEquals(existingContext.getId(), resultingA.getSharedContext().getId());
 		assertEquals(existingContext.getId(), resultingB.getSharedContext().getId());
 		assertEquals(existingContext.getId(), reloadedSibling.getSharedContext().getId());
-		assertEquals(PreambleStatus.PRESENT, resultingA.getSourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.PRESENT, resultingA.getSourceQuestion().getSharedContextStatus());
 		assertEquals(1, contextRepository.findByBooklet(booklet).size());
 		assertEquals(List.of("3a", "3b", "3c"),
 				questionRepository.findAll().stream().map(Question::getQuestionCode).sorted().toList());
@@ -542,14 +542,14 @@ class LegacyQuestionSplitServiceTest {
 		assertEquals(resultingA.getSourceQuestion().getId(), resultingB.getSourceQuestion().getId());
 		assertEquals(result.sourceQuestion().getId(), resultingA.getSourceQuestion().getId());
 		assertEquals("3", result.sourceQuestion().getSourceQuestionCode());
-		assertEquals(PreambleStatus.NONE, result.sourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.NONE, result.sourceQuestion().getSharedContextStatus());
 		assertFalse(resultingA.hasSharedContext());
 		assertFalse(resultingB.hasSharedContext());
 
 		// The old legacy preamble hint must not survive a confirmed no-preamble
 		// split, otherwise Corpus Audit would still report unresolved context.
-		assertFalse(resultingA.isPreambleCaptureRequired());
-		assertFalse(resultingB.isPreambleCaptureRequired());
+		assertFalse(resultingA.isSharedContextCaptureRequired());
+		assertFalse(resultingB.isSharedContextCaptureRequired());
 		SqliteQuestionRepository reloadedRepository = new SqliteQuestionRepository(database);
 		Question reloadedA = reloadedRepository.findById(resultingA.getId()).orElseThrow();
 		Question reloadedB = reloadedRepository.findById(resultingB.getId()).orElseThrow();
@@ -561,7 +561,7 @@ class LegacyQuestionSplitServiceTest {
 		assertTrue(reloadedA.hasSourceQuestion());
 		assertTrue(reloadedB.hasSourceQuestion());
 		assertEquals(reloadedA.getSourceQuestion().getId(), reloadedB.getSourceQuestion().getId());
-		assertEquals(PreambleStatus.NONE, reloadedA.getSourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.NONE, reloadedA.getSourceQuestion().getSharedContextStatus());
 		assertFalse(reloadedA.hasSharedContext());
 		assertFalse(reloadedB.hasSharedContext());
 		List<Question> allQuestions = reloadedRepository.findAll();

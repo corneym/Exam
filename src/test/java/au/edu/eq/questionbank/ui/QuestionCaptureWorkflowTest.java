@@ -109,6 +109,54 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void activatingAnotherBookletClearsPreviousQuestionCaptureState(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		Label regionCount = lookup(robot, "#question-region-count", Label.class);
+		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+
+		robot.clickOn(questionCode).write("31");
+		robot.clickOn(marks).write("2");
+
+		// Accept one region so the Question pane contains unsaved capture belonging to
+		// the currently active booklet.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertEquals("Regions: 1", regionCount.getText());
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+
+		// Leave a second rectangle unaccepted as well. This proves that booklet
+		// activation clears both accepted Question state and the single pending PDF
+		// selection.
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		assertFalse(saveStatus.getText().isBlank());
+
+		ExamBooklet firstBooklet = examMetadataPane().getBooklet();
+
+		// A distinct booklet identity is sufficient because this test exercises the
+		// successful activation boundary rather than booklet persistence.
+		ExamBooklet secondBooklet = new ExamBooklet(firstBooklet.getId() + 1000, firstBooklet.getExam(), "Paper 2",
+				firstBooklet.getSourceDocument(), firstBooklet.getQuestionFormat());
+
+		robot.interact(() -> examMetadataPane().activateExistingBooklet(secondBooklet, examPdf));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertEquals(secondBooklet.getId(), examMetadataPane().getBooklet().getId());
+		assertEquals("", questionCode.getText());
+		assertEquals("", marks.getText());
+		assertEquals("Regions: 0", regionCount.getText());
+		assertFalse(questionCapturePane().hasAcceptedRegions());
+		assertFalse(selectionState.hasPendingSelection());
+		assertEquals("", saveStatus.getText());
+		assertTrue(save.isDisabled());
+	}
+
+	@Test
 	void captureEntryPointsUseTaskBasedLabels(FxRobot robot) throws Exception {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 
@@ -206,34 +254,88 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void duplicateQuestionCodeIsRejectedWithoutLosingAcceptedRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		captureQuestion(robot, "Q7");
+
+		// Prepare another otherwise valid Question and accept a region before changing
+		// its code to a duplicate. This proves duplicate detection does not discard
+		// work
+		// already completed for the current capture.
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
+
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
-		robot.clickOn(questionCodeField).write("Q7");
-		robot.clickOn(marksField).write("1");
+		Label duplicateStatus = lookup(robot, "#question-code-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
 
-		// Saving the first Q7 resets the response type, so explicitly select Written
-		// response again for the duplicate capture attempt.
+		robot.clickOn(questionCodeField).write("Q8");
+		robot.clickOn(marksField).write("1");
 		fireControl(robot, writtenResponse);
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
 
-		// Duplicate validation eventually opens a modal warning after background
-		// validation completes, so schedule Save without blocking the test thread.
-		fireControlLater(robot, "#save-question");
-		fireDialogButton(robot, "OK");
+		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertFalse(save.isDisabled());
+
+		// Changing only the Question number to an already-persisted code now produces
+		// immediate non-modal feedback. Save is disabled before any persistence
+		// attempt, so no warning dialog is expected.
+		robot.interact(() -> questionCodeField.setText("Q7"));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertTrue(duplicateStatus.isVisible());
+		assertTrue(duplicateStatus.isManaged());
+		assertEquals("Question Q7 has already been captured in this booklet.", duplicateStatus.getText());
+		assertTrue(save.isDisabled());
+
+		// Duplicate detection must not discard the accepted region or other metadata.
 		assertEquals("Q7", questionCodeField.getText());
 		assertEquals("1", marksField.getText());
 		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
-		assertFalse(lookup(robot, "#save-question", Button.class).isDisabled());
+
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		long matchingQuestions = repository.findAll().stream()
 				.filter(question -> question.getQuestionCode().equals("Q7")).count();
 		assertEquals(1, matchingQuestions);
+
+		// Correcting the number removes the warning and makes the intact capture
+		// saveable again.
+		robot.interact(() -> questionCodeField.setText("Q8"));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertFalse(duplicateStatus.isVisible());
+		assertFalse(duplicateStatus.isManaged());
+		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertFalse(save.isDisabled());
+	}
+
+	@Test
+	void duplicateQuestionCodeIsReportedBeforeClassificationOrCapture(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		captureQuestion(robot, "29");
+
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		Label duplicateStatus = lookup(robot, "#question-code-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+
+		// The previous save resets classification below Subject. Typing the duplicate
+		// code must therefore detect the problem before the teacher repeats any
+		// classification or region work.
+		robot.clickOn(questionCode).write("29");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertTrue(duplicateStatus.isVisible());
+		assertTrue(duplicateStatus.isManaged());
+		assertEquals("Question 29 has already been captured in this booklet.", duplicateStatus.getText());
+		assertTrue(save.isDisabled());
+
+		// Correcting the Question number removes the warning immediately.
+		robot.interact(() -> questionCode.setText("30"));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertFalse(duplicateStatus.isVisible());
+		assertFalse(duplicateStatus.isManaged());
 	}
 
 	@Test

@@ -19,7 +19,7 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -87,7 +87,7 @@ class RevisionHtmlRendererTest {
 	@Test
 	void rendersMultipartPresentationWithSharedContextOnceAndCombinedMarks() throws Exception {
 		Fixture fixture = new Fixture();
-		SourceQuestion sourceQuestion = new SourceQuestion(24, fixture.booklet, "24", PreambleStatus.PRESENT);
+		SourceQuestion sourceQuestion = new SourceQuestion(24, fixture.booklet, "24", SharedContextStatus.PRESENT);
 		SharedQuestionContext sharedContext = new SharedQuestionContext(50, fixture.booklet, "Question 24 preamble",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.25)));
 		Question partA = new Question(4, fixture.booklet, "24a", "", 2,

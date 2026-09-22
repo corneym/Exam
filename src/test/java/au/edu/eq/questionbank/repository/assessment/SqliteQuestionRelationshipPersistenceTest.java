@@ -228,7 +228,7 @@ class SqliteQuestionRelationshipPersistenceTest {
 		assertEquals(2, loaded.getSharedContext().getRegions().size());
 		assertEquals(3, loaded.getSharedContext().getRegions().get(0).pageNumber());
 		assertEquals(4, loaded.getSharedContext().getRegions().get(1).pageNumber());
-		assertTrue(loaded.isPreambleCaptureRequired());
+		assertTrue(loaded.isSharedContextCaptureRequired());
 		assertFalse(loaded.isSharedContextUnresolved());
 	}
 
@@ -257,7 +257,7 @@ class SqliteQuestionRelationshipPersistenceTest {
 		assertEquals(5, updated.getRegions().getFirst().pageNumber());
 		assertEquals(sourceQuestion.getId(), updated.getSourceQuestion().getId());
 		assertEquals(sharedContext.getId(), updated.getSharedContext().getId());
-		assertTrue(updated.isPreambleCaptureRequired());
+		assertTrue(updated.isSharedContextCaptureRequired());
 		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(original.getId()).orElseThrow();
 		assertEquals("21b", reloaded.getQuestionCode());
 		assertEquals(4, reloaded.getMarks());

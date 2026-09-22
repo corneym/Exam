@@ -55,12 +55,12 @@ class SqliteQuestionRepositoryTest {
 		assertEquals(imported.getId(), updated.getId());
 		assertEquals("21a", updated.getQuestionCode());
 		assertEquals(3, updated.getMarks());
-		assertTrue(updated.isPreambleCaptureRequired());
+		assertTrue(updated.isSharedContextCaptureRequired());
 		assertEquals(2, updated.getRegions().size());
 		assertEquals(4, updated.getRegions().get(0).pageNumber());
 		Question reloaded = new SqliteQuestionRepository(database).findById(imported.getId()).orElseThrow();
 		assertEquals(2, reloaded.getRegions().size());
-		assertTrue(reloaded.isPreambleCaptureRequired());
+		assertTrue(reloaded.isSharedContextCaptureRequired());
 		assertThrows(IllegalArgumentException.class, () -> repository.attachRegions(imported.getId(),
 				List.of(new QuestionRegion(booklet, 5, 0.10, 0.10, 0.50, 0.20))));
 		Question afterRejectedSecondAttachment = new SqliteQuestionRepository(database).findById(imported.getId())
@@ -262,7 +262,7 @@ class SqliteQuestionRepositoryTest {
 		assertEquals(booklet.getId(), loaded.getBooklet().getId());
 		assertEquals(3, loaded.getMarks());
 		assertTrue(loaded.getRegions().isEmpty());
-		assertTrue(loaded.isPreambleCaptureRequired());
+		assertTrue(loaded.isSharedContextCaptureRequired());
 	}
 
 	@Test

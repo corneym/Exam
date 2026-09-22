@@ -39,7 +39,7 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 	private final CurriculumRepository curriculumRepository;
 	private final SharedQuestionContext existingSharedContext;
 	private final TextField sourceQuestionCodeField = new TextField();
-	private final ComboBox<PreambleChoice> preambleChoiceBox = new ComboBox<>();
+	private final ComboBox<SharedContextChoice> sharedContextChoiceBox = new ComboBox<>();
 	private final ComboBox<String> retainedAnswerPartBox = new ComboBox<>();
 	private final VBox partsBox = new VBox(FORM_SPACING);
 	private final Button addPartButton = new Button("Add Part");
@@ -113,16 +113,16 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		// The source identity is confirmed here rather than derived from entered
 		// part codes. Correct an incorrect legacy Question code before splitting.
 		sourceQuestionCodeField.setEditable(false);
-		preambleChoiceBox.setId("legacy-split-preamble-choice");
-		preambleChoiceBox.getItems().add(PreambleChoice.NO_SHARED_PREAMBLE);
-		preambleChoiceBox.getItems().add(PreambleChoice.CAPTURE_NEW_SHARED_PREAMBLE);
+		sharedContextChoiceBox.setId("legacy-split-preamble-choice");
+		sharedContextChoiceBox.getItems().add(SharedContextChoice.NO_SHARED_CONTEXT);
+		sharedContextChoiceBox.getItems().add(SharedContextChoice.CAPTURE_NEW_SHARED_CONTEXT);
 		if (existingSharedContext != null) {
-			preambleChoiceBox.getItems().add(PreambleChoice.REUSE_EXISTING_SHARED_PREAMBLE);
+			sharedContextChoiceBox.getItems().add(SharedContextChoice.REUSE_EXISTING_SHARED_CONTEXT);
 		}
-		preambleChoiceBox.setCellFactory(_ -> createPreambleChoiceCell());
-		preambleChoiceBox.setButtonCell(createPreambleChoiceCell());
-		preambleChoiceBox.setMaxWidth(Double.MAX_VALUE);
-		preambleChoiceBox.valueProperty().addListener((_, _, _) -> refreshContinueState());
+		sharedContextChoiceBox.setCellFactory(_ -> createSharedContextChoiceCell());
+		sharedContextChoiceBox.setButtonCell(createSharedContextChoiceCell());
+		sharedContextChoiceBox.setMaxWidth(Double.MAX_VALUE);
+		sharedContextChoiceBox.valueProperty().addListener((_, _, _) -> refreshContinueState());
 		retainedAnswerPartBox.setId("legacy-split-answer-part");
 		retainedAnswerPartBox.setMaxWidth(Double.MAX_VALUE);
 		retainedAnswerPartBox.valueProperty().addListener((_, _, _) -> refreshContinueState());
@@ -139,10 +139,10 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 			}
 			List<PartDefinition> parts = partEditors.stream().map(PartEditor::toDefinition).toList();
 			int retainedPartIndex = retainedPartIndex(parts);
-			SharedQuestionContext reusedContext = preambleChoiceBox
-					.getValue() == PreambleChoice.REUSE_EXISTING_SHARED_PREAMBLE ? existingSharedContext : null;
+			SharedQuestionContext reusedContext = sharedContextChoiceBox
+					.getValue() == SharedContextChoice.REUSE_EXISTING_SHARED_CONTEXT ? existingSharedContext : null;
 			return new Result(sourceQuestionCodeField.getText().trim(), parts, retainedPartIndex,
-					preambleChoiceBox.getValue(), reusedContext);
+					sharedContextChoiceBox.getValue(), reusedContext);
 		});
 	}
 
@@ -169,13 +169,13 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		summary.setHgap(FORM_SPACING);
 		summary.setVgap(FORM_SPACING);
 		Label sourceLabel = createFieldLabel("Source Question", "legacy-split-source-code-label");
-		Label preambleLabel = createFieldLabel("Shared preamble", "legacy-split-preamble-label");
+		Label sharedContextLabel = createFieldLabel("Shared context", "legacy-split-preamble-label");
 		summary.add(sourceLabel, 0, 0);
 		summary.add(sourceQuestionCodeField, 1, 0);
-		summary.add(preambleLabel, 0, 1);
-		summary.add(preambleChoiceBox, 1, 1);
+		summary.add(sharedContextLabel, 0, 1);
+		summary.add(sharedContextChoiceBox, 1, 1);
 		GridPane.setHgrow(sourceQuestionCodeField, Priority.ALWAYS);
-		GridPane.setHgrow(preambleChoiceBox, Priority.ALWAYS);
+		GridPane.setHgrow(sharedContextChoiceBox, Priority.ALWAYS);
 		content.getChildren().addAll(explanation, summary, createPartsHeading(), partsBox, createPartButtons());
 		if (originalQuestion.hasAnswer()) {
 			content.getChildren().add(createAnswerOwnershipControls());
@@ -230,11 +230,11 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		return label;
 	}
 
-	private ListCell<PreambleChoice> createPreambleChoiceCell() {
+	private ListCell<SharedContextChoice> createSharedContextChoiceCell() {
 		return new ListCell<>() {
 
 			@Override
-			protected void updateItem(PreambleChoice choice, boolean empty) {
+			protected void updateItem(SharedContextChoice choice, boolean empty) {
 				super.updateItem(choice, empty);
 				if (empty || choice == null) {
 					setText(null);
@@ -257,7 +257,7 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		if (partEditors.size() < 2) {
 			return false;
 		}
-		if (preambleChoiceBox.getValue() == null) {
+		if (sharedContextChoiceBox.getValue() == null) {
 			return false;
 		}
 		List<String> codes = new ArrayList<>();
@@ -337,14 +337,14 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		throw new IllegalStateException("Selected Answer part is no longer present");
 	}
 
-	public enum PreambleChoice {
+	public enum SharedContextChoice {
 
-		NO_SHARED_PREAMBLE("No shared preamble"), CAPTURE_NEW_SHARED_PREAMBLE("Capture new shared preamble"),
-		REUSE_EXISTING_SHARED_PREAMBLE("Reuse existing shared preamble");
+		NO_SHARED_CONTEXT("No shared context"), CAPTURE_NEW_SHARED_CONTEXT("Capture new shared context"),
+		REUSE_EXISTING_SHARED_CONTEXT("Reuse existing shared context");
 
 		private final String displayText;
 
-		PreambleChoice(String displayText) {
+		SharedContextChoice(String displayText) {
 			this.displayText = displayText;
 		}
 
@@ -377,7 +377,7 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 	}
 
 	public record Result(String sourceQuestionCode, List<PartDefinition> parts, int retainedPartIndex,
-			PreambleChoice preambleChoice, SharedQuestionContext existingSharedContext) {
+			SharedContextChoice sharedContextChoice, SharedQuestionContext existingSharedContext) {
 
 		public Result {
 			if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
@@ -389,10 +389,11 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 			if (retainedPartIndex < 0 || retainedPartIndex >= parts.size()) {
 				throw new IllegalArgumentException("retainedPartIndex is outside the part list");
 			}
-			if (preambleChoice == null) {
-				throw new NullPointerException("preambleChoice");
+			if (sharedContextChoice == null) {
+				throw new NullPointerException("sharedContextChoice");
 			}
-			if (preambleChoice == PreambleChoice.REUSE_EXISTING_SHARED_PREAMBLE && existingSharedContext == null) {
+			if (sharedContextChoice == SharedContextChoice.REUSE_EXISTING_SHARED_CONTEXT
+					&& existingSharedContext == null) {
 				throw new IllegalArgumentException("Existing shared context is required for reuse");
 			}
 			sourceQuestionCode = sourceQuestionCode.trim();

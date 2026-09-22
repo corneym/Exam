@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
@@ -57,7 +57,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				while (result.next()) {
 					sourceQuestions.add(
 							new SourceQuestion(result.getLong("id"), booklet, result.getString("source_question_code"),
-									PreambleStatus.valueOf(result.getString("preamble_status"))));
+									SharedContextStatus.valueOf(result.getString("preamble_status"))));
 				}
 			}
 		} catch (SQLException e) {
@@ -107,7 +107,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 	 *                               update fails
 	 */
 	@Override
-	public SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, PreambleStatus preambleStatus) {
+	public SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, SharedContextStatus preambleStatus) {
 		try (Connection connection = database.openConnection()) {
 			return updatePreambleStatus(connection, sourceQuestion, preambleStatus);
 		} catch (SQLException e) {
@@ -165,7 +165,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				}
 				return Optional
 						.of(new SourceQuestion(result.getLong("id"), booklet, result.getString("source_question_code"),
-								PreambleStatus.valueOf(result.getString("preamble_status"))));
+								SharedContextStatus.valueOf(result.getString("preamble_status"))));
 			}
 		}
 	}
@@ -196,13 +196,13 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 					throw new SQLException("Source question insert did not return an id");
 				}
 				return new SourceQuestion(result.getLong("id"), booklet, sourceQuestionCode,
-						PreambleStatus.valueOf(result.getString("preamble_status")));
+						SharedContextStatus.valueOf(result.getString("preamble_status")));
 			}
 		}
 	}
 
 	SourceQuestion updatePreambleStatus(Connection connection, SourceQuestion sourceQuestion,
-			PreambleStatus preambleStatus) throws SQLException {
+			SharedContextStatus preambleStatus) throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");
 		}

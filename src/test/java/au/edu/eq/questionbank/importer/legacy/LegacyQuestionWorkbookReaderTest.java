@@ -72,12 +72,12 @@ class LegacyQuestionWorkbookReaderTest {
 		assertEquals(1, first.marks());
 		assertEquals("1.1.1", first.classificationCode());
 		assertEquals("B", first.answer());
-		assertFalse(first.preambleCaptureRequired());
+		assertFalse(first.sharedContextCaptureRequired());
 		LegacyQuestionRow second = sheet.questions().get(1);
 		assertEquals("21a", second.questionCode());
 		assertEquals(3, second.marks());
 		assertNull(second.answer());
-		assertTrue(second.preambleCaptureRequired());
+		assertTrue(second.sharedContextCaptureRequired());
 	}
 
 	@Test

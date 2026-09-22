@@ -101,7 +101,7 @@ class RevisionCorpusBuilderTest {
 		assertEquals(0, statistics.getMissingQuestionRegionQuestions());
 		assertEquals(0, statistics.getQuestionsWithAnswers());
 		assertEquals(0, statistics.getQuestionsWithoutAnswers());
-		assertEquals(0, statistics.getPreambleReviewQuestions());
+		assertEquals(0, statistics.getSharedContextReviewQuestions());
 	}
 
 	@Test
@@ -232,7 +232,7 @@ class RevisionCorpusBuilderTest {
 		assertEquals(1, statistics.getMissingQuestionRegionQuestions());
 		assertEquals(1, statistics.getQuestionsWithAnswers());
 		assertEquals(2, statistics.getQuestionsWithoutAnswers());
-		assertEquals(1, statistics.getPreambleReviewQuestions());
+		assertEquals(1, statistics.getSharedContextReviewQuestions());
 	}
 
 	private static final class Fixture {

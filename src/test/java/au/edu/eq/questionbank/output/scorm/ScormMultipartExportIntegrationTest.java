@@ -25,7 +25,7 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -75,7 +75,7 @@ class ScormMultipartExportIntegrationTest {
 		Exam exam = new Exam(1, chemistry, provider, 2022, "Chemistry examination");
 		SourceDocument sourceDocument = new SourceDocument(1, "question.pdf");
 		ExamBooklet booklet = new ExamBooklet(1, exam, "Paper 1", sourceDocument);
-		SourceQuestion sourceQuestion = new SourceQuestion(24, booklet, "24", PreambleStatus.PRESENT);
+		SourceQuestion sourceQuestion = new SourceQuestion(24, booklet, "24", SharedContextStatus.PRESENT);
 		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Question 24 preamble",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.25)));
 		Question partA = new Question(4, booklet, "24a", "", 2,

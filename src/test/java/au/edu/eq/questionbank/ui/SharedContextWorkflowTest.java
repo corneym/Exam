@@ -17,14 +17,16 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
@@ -62,22 +64,22 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField curriculumCode = lookup(robot, "#curriculum-code", TextField.class);
 		String originalCode = curriculumCode.getText();
 
-		// Start automatic shared-preamble capture without yet drawing a PDF region.
+		// Start automatic shared-context capture without yet drawing a PDF region.
 		// This isolates the shared-context transition guard from pending-selection
 		// state.
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(questionCode).write("24a");
 		robot.clickOn(marks).write("2");
-		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
-		fireControl(robot, preamble);
-		assertTrue(preamble.isSelected());
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		fireControl(robot, sharedContext);
+		assertTrue(sharedContext.isSelected());
 		assertTrue(questionCapturePane().isCapturingSharedContext());
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 		assertFalse(selectionState.hasPendingSelection());
 
 		// Changing Working Subject would invalidate the booklet and curriculum context
-		// needed by the active shared-preamble workflow, so reject the transition.
+		// needed by the active shared-context workflow, so reject the transition.
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
@@ -86,7 +88,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// The rejected transition must preserve the complete shared-context capture
 		// state and its existing Chemistry classification.
 		assertEquals(chemistry, workingSubjectBox.getValue());
-		assertTrue(preamble.isSelected());
+		assertTrue(sharedContext.isSelected());
 		assertTrue(questionCapturePane().isCapturingSharedContext());
 		assertEquals("24a", questionCode.getText());
 		assertEquals("2", marks.getText());
@@ -131,21 +133,21 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#legacy-split-preamble-choice").tryQuery().isPresent());
 		TextField partAMarks = lookup(robot, "#legacy-split-part-0-marks", TextField.class);
 		TextField partBMarks = lookup(robot, "#legacy-split-part-1-marks", TextField.class);
-		ComboBox<LegacyQuestionSplitDialog.PreambleChoice> preambleChoice = comboBox(robot,
+		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> sharedContextChoice = comboBox(robot,
 				"#legacy-split-preamble-choice");
 		robot.interact(() -> {
 			partAMarks.setText("2");
 			partBMarks.setText("3");
-			preambleChoice.setValue(LegacyQuestionSplitDialog.PreambleChoice.CAPTURE_NEW_SHARED_PREAMBLE);
+			sharedContextChoice.setValue(LegacyQuestionSplitDialog.SharedContextChoice.CAPTURE_NEW_SHARED_CONTEXT);
 		});
 		fireControl(robot, "#legacy-split-continue");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> !robot.lookup("#question-search-results").tryQuery().isPresent());
 		Button save = lookup(robot, "#save-question", Button.class);
 
-		// Stage the shared preamble first.
+		// Stage the shared context first.
 		dragRegionOnDisplayedPage(robot);
-		assertEquals("Add Preamble", lookup(robot, "#add-question-region", Button.class).getText());
+		assertEquals("Add Context", lookup(robot, "#add-question-region", Button.class).getText());
 		fireControl(robot, "#add-question-region");
 		assertTrue(contextRepository.findByBooklet(original.getBooklet()).isEmpty());
 
@@ -159,7 +161,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("70b", lookup(robot, "#question-code", TextField.class).getText());
 		assertEquals("Save Split", save.getText());
 
-		// Both the preamble and 70a now exist only in transient split state.
+		// Both the shared context and 70a now exist only in transient split state.
 		assertEquals(1, questionRepository.findAll().size());
 		assertTrue(sourceQuestionRepository.findByBooklet(original.getBooklet()).isEmpty());
 		assertTrue(contextRepository.findByBooklet(original.getBooklet()).isEmpty());
@@ -210,20 +212,20 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button save = lookup(robot, "#save-question", Button.class);
 
 		// Deliberately draw first. The eventual multipart intent must be allowed to
-		// reinterpret this pending rectangle as the preamble.
+		// reinterpret this pending rectangle as the shared context.
 		dragRegionOnDisplayedPage(robot);
 		assertTrue(save.isDisabled());
 		robot.clickOn(questionCode).write("24a");
 		robot.clickOn(marks).write("2");
-		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
-		assertTrue(preamble.isVisible());
-		assertFalse(preamble.isSelected());
-		robot.clickOn(preamble);
-		assertTrue(preamble.isSelected());
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		assertTrue(sharedContext.isVisible());
+		assertFalse(sharedContext.isSelected());
+		robot.clickOn(sharedContext);
+		assertTrue(sharedContext.isSelected());
 		assertTrue(save.isDisabled());
 		/*
-		 * The already-drawn rectangle is now accepted as the shared preamble rather
-		 * than as an ordinary question region.
+		 * The already-drawn rectangle is now accepted as the shared context rather than
+		 * as an ordinary question region.
 		 */
 		robot.clickOn("#add-question-region");
 		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
@@ -242,7 +244,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.filter(question -> "24a".equals(question.getQuestionCode())).findFirst().orElseThrow();
 		assertTrue(restored.hasSourceQuestion());
 		assertEquals("24", restored.getSourceQuestion().getSourceQuestionCode());
-		assertEquals(PreambleStatus.PRESENT, restored.getSourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.PRESENT, restored.getSourceQuestion().getSharedContextStatus());
 		assertTrue(restored.hasSharedContext());
 		assertEquals(1, restored.getSharedContext().getRegions().size());
 		assertEquals(1, restored.getRegions().size());
@@ -261,6 +263,112 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void independentMcqsAutomaticallyReuseAndMayExtendSharedContext(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Paper 1 MCQ",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		SqliteQuestionCaptureService captureService = new SqliteQuestionCaptureService(database);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+
+		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		Button addRegion = lookup(robot, "#add-question-region", Button.class);
+
+		// An MCQ-only booklet knows the response type before a Question number is
+		// entered, so the continuation control must already be available.
+		assertTrue(multipleChoice.isSelected());
+		assertTrue(sharedContext.isVisible());
+		assertEquals("Shared context with next question", sharedContext.getText());
+		assertFalse(sharedContext.isSelected());
+
+		robot.clickOn(questionCode).write("Q5");
+		fireControl(robot, sharedContext);
+		assertTrue(sharedContext.isSelected());
+		assertTrue(questionCapturePane().isCapturingSharedContext());
+
+		// Q5 creates the context exactly once. The first rectangle is context rather
+		// than an ordinary Question region.
+		dragRegionOnDisplayedPage(robot);
+		assertEquals("Add Context", addRegion.getText());
+		fireControl(robot, addRegion);
+		assertFalse(questionCapturePane().isCapturingSharedContext());
+		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, addRegion);
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "Q5".equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		Question questionFive = repository.findAll().stream()
+				.filter(question -> "Q5".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		assertFalse(questionFive.hasSourceQuestion());
+		assertTrue(questionFive.hasSharedContext());
+		assertTrue(questionFive.getSharedContext().getLabel().startsWith("CTX-"));
+		long contextId = questionFive.getSharedContext().getId();
+		assertEquals(contextId, captureService.findPendingMcqSharedContext(booklet).orElseThrow().getId());
+
+		// Q6 receives Q5's context automatically. Its unchecked checkbox means that
+		// the context stops after Q6 unless the teacher explicitly extends it.
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+		robot.clickOn(questionCode).write("Q6");
+		assertTrue(sharedContext.isVisible());
+		assertFalse(sharedContext.isSelected());
+		assertTrue(lookup(robot, "#shared-preamble-status", Label.class).getText()
+				.contains("Using shared context from the previous question"));
+
+		// Extend the existing context to Q7. This must not start another context
+		// capture because Q6 already inherited the stored one.
+		fireControl(robot, sharedContext);
+		assertTrue(sharedContext.isSelected());
+		assertFalse(questionCapturePane().isCapturingSharedContext());
+		dragRegionOnDisplayedPage(robot);
+		assertEquals("Add Region", addRegion.getText());
+		fireControl(robot, addRegion);
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "Q6".equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		Question questionSix = repository.findAll().stream().filter(question -> "Q6".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
+		assertFalse(questionSix.hasSourceQuestion());
+		assertTrue(questionSix.hasSharedContext());
+		assertEquals(contextId, questionSix.getSharedContext().getId());
+		assertEquals(contextId, captureService.findPendingMcqSharedContext(booklet).orElseThrow().getId());
+
+		// Q7 again inherits automatically. Leaving its checkbox unchecked consumes the
+		// persisted continuation after Q7 is saved.
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+		robot.clickOn(questionCode).write("Q7");
+		assertFalse(sharedContext.isSelected());
+		assertTrue(lookup(robot, "#shared-preamble-status", Label.class).getText()
+				.contains("Using shared context from the previous question"));
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, addRegion);
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "Q7".equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		Question questionSeven = repository.findAll().stream()
+				.filter(question -> "Q7".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		assertFalse(questionSeven.hasSourceQuestion());
+		assertTrue(questionSeven.hasSharedContext());
+		assertEquals(contextId, questionSeven.getSharedContext().getId());
+		assertTrue(captureService.findPendingMcqSharedContext(booklet).isEmpty());
+	}
+
+	@Test
 	void metadataPreambleConversionMayKeepConvertedQuestionRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -275,7 +383,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.20)));
 		Question question = questionRepository.save(booklet, "62", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.40, 0.80, 0.30)), classification, true, null, context);
-		assertTrue(question.isPreambleCaptureRequired());
+		assertTrue(question.isSharedContextCaptureRequired());
 		assertTrue(question.hasSharedContext());
 		assertEquals(1, question.getRegions().size());
 
@@ -303,9 +411,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControlLater(robot, "#question-search-edit-metadata");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
-		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
-		assertTrue(preamble.isSelected());
-		robot.interact(() -> preamble.setSelected(false));
+		CheckBox sharedContext = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		assertTrue(sharedContext.isSelected());
+		robot.interact(() -> sharedContext.setSelected(false));
 
 		// Saving metadata commits the conversion and then opens the follow-up
 		// Question Preamble Converted dialog synchronously.
@@ -313,9 +421,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Do not inspect SQLite until the scheduled save has actually reached the
 		// conversion-decision dialog.
-		waitForDialogShowing(robot, "Question Preamble Converted");
+		waitForDialogShowing(robot, "Question Shared Context Converted");
 		Question converted = questionRepository.findById(question.getId()).orElseThrow();
-		assertFalse(converted.isPreambleCaptureRequired());
+		assertFalse(converted.isSharedContextCaptureRequired());
 		assertFalse(converted.hasSharedContext());
 		assertEquals(2, converted.getRegions().size());
 		assertEquals(0.10, converted.getRegions().get(0).y(), 0.000001);
@@ -376,17 +484,23 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControlLater(robot, "#question-search-edit-metadata");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
-		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
-		assertTrue(preamble.isSelected());
-		robot.interact(() -> preamble.setSelected(false));
+		CheckBox sharedContext = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		assertTrue(sharedContext.isSelected());
+		robot.interact(() -> sharedContext.setSelected(false));
 		fireControlLater(robot, "#legacy-metadata-save");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("Recapture complete question").tryQuery().isPresent());
+
+		// Wait for the actual modal conversion decision rather than locating a
+		// particular button node in the scene graph.
+		waitForDialogShowing(robot, "Question Shared Context Converted");
+
+		/*
+		 * Conversion has already committed before recapture is offered.
+		 */
 		/*
 		 * Conversion has already committed before recapture is offered.
 		 */
 		Question converted = questionRepository.findById(question.getId()).orElseThrow();
-		assertFalse(converted.isPreambleCaptureRequired());
+		assertFalse(converted.isSharedContextCaptureRequired());
 		assertFalse(converted.hasSharedContext());
 		assertEquals(2, converted.getRegions().size());
 		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
@@ -416,7 +530,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question afterCancel = questionRepository.findById(question.getId()).orElseThrow();
 		assertEquals(2, afterCancel.getRegions().size());
 		assertFalse(afterCancel.hasSharedContext());
-		assertFalse(afterCancel.isPreambleCaptureRequired());
+		assertFalse(afterCancel.isSharedContextCaptureRequired());
 		fireDialogButton(robot, "Close");
 		WaitForAsyncUtils.waitForFxEvents();
 	}
@@ -438,9 +552,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(questionCode).write("25a");
 		robot.clickOn(marks).write("1");
-		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
-		assertTrue(preamble.isVisible());
-		assertFalse(preamble.isSelected());
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
+		assertTrue(sharedContext.isVisible());
+		assertFalse(sharedContext.isSelected());
 		dragRegionOnDisplayedPage(robot);
 		robot.clickOn("#add-question-region");
 		robot.clickOn("#save-question");
@@ -448,8 +562,45 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
 				.filter(question -> "25a".equals(question.getQuestionCode())).findFirst().orElseThrow();
 		assertTrue(restored.hasSourceQuestion());
-		assertEquals(PreambleStatus.NONE, restored.getSourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.NONE, restored.getSourceQuestion().getSharedContextStatus());
 		assertFalse(restored.hasSharedContext());
+	}
+
+	@Test
+	void pendingMcqContextAppearsOnlyForImmediateSuccessor(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Paper 1 MCQ",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		assertNotNull(booklet);
+		assertNotNull(classification);
+
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(new SqliteDatabase(databasePath));
+		service.save(new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, booklet, null,
+				"Q5", 1, List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.12)), classification,
+				QuestionResponseType.MULTIPLE_CHOICE, null, new SqliteQuestionCaptureService.PendingSharedContext(
+						"CTX-Q5", List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15))),
+				true));
+
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		Label contextStatus = lookup(robot, "#shared-preamble-status", Label.class);
+
+		// Q7 is not Q5's immediate successor, so the pending Q5 context must remain
+		// invisible and unapplied.
+		robot.clickOn(questionCode).write("Q7");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(contextStatus.isVisible());
+
+		// The pending continuation is still waiting. Entering Q6 now exposes the
+		// inherited context immediately.
+		robot.interact(questionCode::clear);
+		robot.clickOn(questionCode).write("Q6");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertTrue(contextStatus.isVisible());
+		assertTrue(contextStatus.getText().contains("Using shared context from the previous question"));
 	}
 
 	@Test
@@ -486,13 +637,13 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#legacy-split-part-0-marks").tryQuery().isPresent());
 		TextField partAMarks = lookup(robot, "#legacy-split-part-0-marks", TextField.class);
 		TextField partBMarks = lookup(robot, "#legacy-split-part-1-marks", TextField.class);
-		ComboBox<LegacyQuestionSplitDialog.PreambleChoice> preambleChoice = comboBox(robot,
+		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> sharedContextChoice = comboBox(robot,
 				"#legacy-split-preamble-choice");
 		Button continueButton = lookup(robot, "#legacy-split-continue", Button.class);
 		robot.interact(() -> {
 			partAMarks.setText("2");
 			partBMarks.setText("3");
-			preambleChoice.setValue(LegacyQuestionSplitDialog.PreambleChoice.CAPTURE_NEW_SHARED_PREAMBLE);
+			sharedContextChoice.setValue(LegacyQuestionSplitDialog.SharedContextChoice.CAPTURE_NEW_SHARED_CONTEXT);
 		});
 		assertFalse(continueButton.isDisabled());
 		fireControl(robot, continueButton);
@@ -503,15 +654,15 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("67a", questionCode.getText());
 		assertEquals("Next Part", save.getText());
 
-		// The first PDF rectangle belongs to the shared preamble. Accepting it must not
+		// The first PDF rectangle belongs to the shared context. Accepting it must not
 		// create a Question region.
 		dragRegionOnDisplayedPage(robot);
-		assertEquals("Add Preamble", lookup(robot, "#add-question-region", Button.class).getText());
+		assertEquals("Add Context", lookup(robot, "#add-question-region", Button.class).getText());
 		robot.clickOn("#add-question-region");
 		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(save.isDisabled());
 
-		// The preamble is still transient. Nothing has been added to SQLite.
+		// The shared context is still transient. Nothing has been added to SQLite.
 		assertTrue(contextRepository.findByBooklet(original.getBooklet()).isEmpty());
 		assertEquals("67", repository.findById(original.getId()).orElseThrow().getQuestionCode());
 
@@ -526,7 +677,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("67b", questionCode.getText());
 		assertEquals("Save Split", save.getText());
 
-		// Completing 67a still must not persist either the split or its preamble.
+		// Completing 67a still must not persist either the split or its shared context.
 		assertEquals(1, repository.findAll().size());
 		assertTrue(contextRepository.findByBooklet(original.getBooklet()).isEmpty());
 
@@ -547,7 +698,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(partB.hasSourceQuestion());
 		assertEquals(partA.getSourceQuestion().getId(), partB.getSourceQuestion().getId());
 		assertEquals("67", partA.getSourceQuestion().getSourceQuestionCode());
-		assertEquals(PreambleStatus.PRESENT, partA.getSourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.PRESENT, partA.getSourceQuestion().getSharedContextStatus());
 		assertTrue(partA.hasSharedContext());
 		assertTrue(partB.hasSharedContext());
 		assertEquals(partA.getSharedContext().getId(), partB.getSharedContext().getId());
@@ -583,9 +734,9 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				QuestionResponseType.WRITTEN_RESPONSE);
 
 		// An existing correct sibling establishes the SourceQuestion and shared
-		// preamble that the split workflow must reuse.
+		// context that the split workflow must reuse.
 		SourceQuestion sourceQuestion = sourceQuestionRepository.save(booklet, "68");
-		sourceQuestion = sourceQuestionRepository.updatePreambleStatus(sourceQuestion, PreambleStatus.PRESENT);
+		sourceQuestion = sourceQuestionRepository.updatePreambleStatus(sourceQuestion, SharedContextStatus.PRESENT);
 		SharedQuestionContext existingContext = contextRepository.save(booklet, "Question 68 preamble",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));
 		Question existingPartC = questionRepository.save(booklet, "68c", "", 1,
@@ -616,19 +767,19 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControlLater(splitButton);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-split-preamble-choice").tryQuery().isPresent());
-		ComboBox<LegacyQuestionSplitDialog.PreambleChoice> preambleChoice = comboBox(robot,
+		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> sharedContextChoice = comboBox(robot,
 				"#legacy-split-preamble-choice");
 
 		// Reuse is available because an established SourceQuestion already uses the
 		// persisted shared context.
-		assertTrue(preambleChoice.getItems()
-				.contains(LegacyQuestionSplitDialog.PreambleChoice.REUSE_EXISTING_SHARED_PREAMBLE));
+		assertTrue(sharedContextChoice.getItems()
+				.contains(LegacyQuestionSplitDialog.SharedContextChoice.REUSE_EXISTING_SHARED_CONTEXT));
 		TextField partAMarks = lookup(robot, "#legacy-split-part-0-marks", TextField.class);
 		TextField partBMarks = lookup(robot, "#legacy-split-part-1-marks", TextField.class);
 		robot.interact(() -> {
 			partAMarks.setText("2");
 			partBMarks.setText("3");
-			preambleChoice.setValue(LegacyQuestionSplitDialog.PreambleChoice.REUSE_EXISTING_SHARED_PREAMBLE);
+			sharedContextChoice.setValue(LegacyQuestionSplitDialog.SharedContextChoice.REUSE_EXISTING_SHARED_CONTEXT);
 		});
 		Button continueButton = lookup(robot, "#legacy-split-continue", Button.class);
 		assertFalse(continueButton.isDisabled());
@@ -678,7 +829,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(existingContext.getId(), partA.getSharedContext().getId());
 		assertEquals(existingContext.getId(), partB.getSharedContext().getId());
 		assertEquals(existingContext.getId(), reloadedPartC.getSharedContext().getId());
-		assertEquals(PreambleStatus.PRESENT, partA.getSourceQuestion().getPreambleStatus());
+		assertEquals(SharedContextStatus.PRESENT, partA.getSourceQuestion().getSharedContextStatus());
 
 		// Reuse must not create a duplicate shared-context entity.
 		assertEquals(1, contextRepository.findByBooklet(booklet).size());
@@ -726,11 +877,11 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button recapture = lookup(robot, "#question-search-recapture-preamble", Button.class);
 		assertFalse(recapture.isDisabled());
 
-		// This closes Search and transfers control to shared-preamble recapture.
+		// This closes Search and transfers control to shared-context recapture.
 		fireControl(robot, recapture);
 		waitForDialogHidden(robot, "Search Questions");
 
-		// Recapture opens the exam at the stored shared-preamble page.
+		// Recapture opens the exam at the stored shared-context page.
 		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
 		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
 		Button saveReplacement = lookup(robot, "#save-shared-context", Button.class);
@@ -759,7 +910,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertClassificationControlShows(robot, classification);
 		assertTrue(classificationPane.isDisabled());
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText()
-				.contains("Recapturing shared preamble used by Question 64a"));
+				.contains("Recapturing shared context used by Question 64a"));
 
 		// Beginning recapture must not alter the persisted original.
 		SharedQuestionContext beforeReplacement = contextRepository.findByBooklet(booklet).stream()

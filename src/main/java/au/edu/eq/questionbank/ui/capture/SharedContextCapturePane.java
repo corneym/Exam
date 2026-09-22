@@ -105,8 +105,8 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	/**
-	 * Accepts the pending selection as the single region of an automatic preamble
-	 * capture and returns to normal question-region capture.
+	 * Accepts the pending selection as the single region of an automatic shared
+	 * context capture and returns to normal question-region capture.
 	 *
 	 * @return {@code true} when a pending automatic selection was accepted
 	 */
@@ -115,7 +115,7 @@ public final class SharedContextCapturePane extends VBox {
 			return false;
 		}
 		if (!pendingRegions.isEmpty()) {
-			throw new IllegalStateException("Automatic shared preamble already has a region");
+			throw new IllegalStateException("Automatic shared context already has a region");
 		}
 		addCurrentRegion();
 		leaveCaptureMode();
@@ -140,8 +140,8 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	/**
-	 * Starts automatic capture for a preamble that will be persisted with the next
-	 * question save.
+	 * Starts automatic capture for a shared context that will be persisted with the
+	 * next question save.
 	 *
 	 * @param label the generated context label
 	 * @return {@code true} when capture started
@@ -151,8 +151,8 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	/**
-	 * Starts automatic preamble capture, optionally taking ownership of an existing
-	 * question selection without clearing it from the PDF workspace.
+	 * Starts automatic shared context capture, optionally taking ownership of an
+	 * existing question selection without clearing it from the PDF workspace.
 	 *
 	 * @param label                the generated context label
 	 * @param transferredSelection an existing question region to reinterpret, or
@@ -197,7 +197,7 @@ public final class SharedContextCapturePane extends VBox {
 		refreshRegionPreviews();
 		setNewContextBoxVisible(false);
 		if (transferredSelection != null) {
-			statusLabel.setText("Shared preamble selection pending " + "— click Add or Clear");
+			statusLabel.setText("Shared context selection pending " + "— click Add or Clear");
 		}
 		return true;
 	}
@@ -259,18 +259,18 @@ public final class SharedContextCapturePane extends VBox {
 
 	String getPendingAutomaticContextLabel() {
 		if (!hasPendingAutomaticRegion()) {
-			throw new IllegalStateException("No automatic shared preamble is pending");
+			throw new IllegalStateException("No automatic shared context is pending");
 		}
 		String label = contextLabelField.getText().trim();
 		if (label.isBlank()) {
-			throw new IllegalStateException("Automatic shared preamble has no label");
+			throw new IllegalStateException("Automatic shared context has no label");
 		}
 		return label;
 	}
 
 	List<SharedQuestionContextRegion> getPendingAutomaticContextRegions() {
 		if (!hasPendingAutomaticRegion()) {
-			throw new IllegalStateException("No automatic shared preamble is pending");
+			throw new IllegalStateException("No automatic shared context is pending");
 		}
 		return List.copyOf(pendingRegions);
 	}
@@ -319,7 +319,7 @@ public final class SharedContextCapturePane extends VBox {
 	 * <p>
 	 * The persisted context remains unchanged until the replacement is saved.
 	 * Saving preserves the existing context identifier so all linked Questions
-	 * continue to share the corrected preamble.
+	 * continue to share the corrected shared context.
 	 * </p>
 	 *
 	 * @param context          the persisted shared context to replace
@@ -359,8 +359,10 @@ public final class SharedContextCapturePane extends VBox {
 		contextLabelField.setManaged(false);
 		pendingRegions.clear();
 		refreshRegionPreviews();
-		contextCaptureHeadingLabel.setText("Recapture shared preamble");
+		contextCaptureHeadingLabel.setText("Recapture shared context");
 		saveContextButton.setText("Save Replacement");
+		// Stored labels are implementation metadata and may be opaque for automatically
+		// captured MCQ contexts, so do not expose them as the edit description.
 		statusLabel.setText("Recapturing: " + context.getLabel());
 		setNewContextBoxVisible(true);
 		return true;
@@ -511,7 +513,7 @@ public final class SharedContextCapturePane extends VBox {
 
 	private void configureCaptureControls() {
 		contextLabelField.setId("shared-context-label");
-		contextLabelField.setPromptText("Context label, e.g. Question 24 preamble");
+		contextLabelField.setPromptText("Context label, e.g. Question 24 context");
 		addRegionButton.setId("add-shared-context-region");
 		clearSelectionButton.setId("clear-shared-context-selection");
 		clearRegionsButton.setId("clear-shared-context-regions");

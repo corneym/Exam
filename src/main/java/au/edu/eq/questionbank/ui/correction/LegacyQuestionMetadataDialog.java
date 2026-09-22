@@ -41,7 +41,7 @@ public final class LegacyQuestionMetadataDialog
 	private final TextField marksField = new TextField();
 	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
 	private final ComboBox<QuestionResponseType> responseTypeBox = new ComboBox<>();
-	private final CheckBox preambleRequiredCheckBox = new CheckBox("Legacy preamble/shared-context capture required");
+	private final CheckBox preambleRequiredCheckBox = new CheckBox("Legacy shared-context capture required");
 	private final ButtonType saveButtonType = new ButtonType("Save Metadata", ButtonBar.ButtonData.OK_DONE);
 
 	/**
@@ -108,7 +108,7 @@ public final class LegacyQuestionMetadataDialog
 		responseTypeBox.setMaxWidth(Double.MAX_VALUE);
 		responseTypeBox.setCellFactory(_ -> createResponseTypeCell());
 		responseTypeBox.setButtonCell(createResponseTypeCell());
-		preambleRequiredCheckBox.setSelected(question.isPreambleCaptureRequired());
+		preambleRequiredCheckBox.setSelected(question.isSharedContextCaptureRequired());
 	}
 
 	private void configureSaveButton() {
@@ -132,10 +132,10 @@ public final class LegacyQuestionMetadataDialog
 				This is historical capture evidence and may be corrected.
 
 				For a single-part question, changing this from required to not required \
-				converts any captured preamble into ordinary question regions. You will \
+				converts any captured shared context into ordinary question regions. You will \
 				then be offered the option to recapture the complete question.
 
-				A captured shared preamble cannot be removed from only one part of a \
+				A captured shared context cannot be removed from only one part of a \
 				multipart question.
 				""");
 		hintExplanation.setWrapText(true);
@@ -225,7 +225,7 @@ public final class LegacyQuestionMetadataDialog
 	 * @param questionCode            corrected question code
 	 * @param marks                   corrected positive mark value
 	 * @param classification          corrected classification
-	 * @param preambleCaptureRequired corrected historical preamble hint
+	 * @param preambleCaptureRequired corrected historical shared context hint
 	 * @param responseType            corrected Question response type
 	 */
 	public record Result(String questionCode, int marks, CurriculumNode classification, boolean preambleCaptureRequired,
@@ -237,7 +237,7 @@ public final class LegacyQuestionMetadataDialog
 		 * @param questionCode            corrected question code
 		 * @param marks                   corrected positive mark value
 		 * @param classification          corrected classification
-		 * @param preambleCaptureRequired corrected historical preamble hint
+		 * @param preambleCaptureRequired corrected historical shared context hint
 		 * @param responseType            corrected Question response type
 		 */
 		public Result {

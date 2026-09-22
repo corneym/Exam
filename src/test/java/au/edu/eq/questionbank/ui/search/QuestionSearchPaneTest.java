@@ -394,7 +394,7 @@ public class QuestionSearchPaneTest {
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 		Question editedQuestion = new Question(historicalQuestion.getId(), historicalQuestion.getBooklet(), "21b",
 				historicalQuestion.getQuestionText(), historicalQuestion.getMarks(), historicalQuestion.getRegions(),
-				historicalQuestion.getClassification(), historicalQuestion.isPreambleCaptureRequired(),
+				historicalQuestion.getClassification(), historicalQuestion.isSharedContextCaptureRequired(),
 				historicalQuestion.getSourceQuestion(), historicalQuestion.getSharedContext(),
 				historicalQuestion.getResponseType());
 

@@ -91,7 +91,7 @@ public final class ExamMetadataCorrectionDialog
 				"""
 						This correction applies to the Exam itself.
 
-						All booklets, questions, answers, source questions and shared preambles linked to this Exam keep their existing identities.
+						All booklets, questions, answers, source questions and shared contexts linked to this Exam keep their existing identities.
 						""");
 		explanation.setWrapText(true);
 		grid.add(createFieldLabel("Subject", "exam-correction-subject-label"), 0, 0);

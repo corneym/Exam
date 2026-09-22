@@ -168,8 +168,8 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 		assertTrue(mcq.hasAnswer());
 		assertEquals("B", mcq.getAnswer().getAnswerText());
 		assertFalse(paper1.hasAnswer());
-		assertFalse(paper1.isPreambleCaptureRequired());
-		assertTrue(paper2.isPreambleCaptureRequired());
+		assertFalse(paper1.isSharedContextCaptureRequired());
+		assertTrue(paper2.isSharedContextCaptureRequired());
 		ExamBooklet booklet = paper1.getBooklet();
 		Question captured = repository.attachRegions(paper1.getId(),
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.70, 0.15)));

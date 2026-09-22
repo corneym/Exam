@@ -102,7 +102,7 @@ public final class RevisionQuestionPlacement {
 	 * @return whether legacy metadata requested preamble capture
 	 */
 	public boolean isPreambleCaptureRequired() {
-		return question.isPreambleCaptureRequired();
+		return question.isSharedContextCaptureRequired();
 	}
 
 	/**

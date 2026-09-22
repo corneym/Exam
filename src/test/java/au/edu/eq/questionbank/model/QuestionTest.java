@@ -54,7 +54,7 @@ class QuestionTest {
 		Question question = new Question(33, booklet, "21a", "", 1, List.of(), classification, true);
 		assertAll(() -> assertSame(booklet, question.getBooklet()), () -> assertSame(exam, question.getExam()),
 				() -> assertTrue(question.getRegions().isEmpty()),
-				() -> assertTrue(question.isPreambleCaptureRequired()),
+				() -> assertTrue(question.isSharedContextCaptureRequired()),
 				() -> assertSame(classification, question.getClassification()));
 	}
 
@@ -82,14 +82,14 @@ class QuestionTest {
 	@Test
 	void importedQuestionCanHaveNoPreambleCaptureRequirement() {
 		Question question = new Question(33, booklet, "7", "", 1, List.of(), createClassification(), false);
-		assertFalse(question.isPreambleCaptureRequired());
+		assertFalse(question.isSharedContextCaptureRequired());
 	}
 
 	@Test
 	void questionWithoutLegacyRequirementIsNotUnresolved() {
 		CurriculumNode classification = createClassification();
 		Question question = new Question(1, booklet, "Q1", "", 1, List.of(), classification, false);
-		assertFalse(question.isPreambleCaptureRequired());
+		assertFalse(question.isSharedContextCaptureRequired());
 		assertFalse(question.isSharedContextUnresolved());
 	}
 
@@ -248,7 +248,7 @@ class QuestionTest {
 	void reportsLegacySharedContextRequirementAsUnresolved() {
 		CurriculumNode classification = createClassification();
 		Question question = new Question(1, booklet, "21a", "", 2, List.of(), classification, true);
-		assertTrue(question.isPreambleCaptureRequired());
+		assertTrue(question.isSharedContextCaptureRequired());
 		assertTrue(question.isSharedContextUnresolved());
 		assertFalse(question.hasSharedContext());
 	}
@@ -263,7 +263,7 @@ class QuestionTest {
 				() -> assertEquals("Calculate the result.", question.getQuestionText()),
 				() -> assertEquals(List.of(region), question.getRegions()),
 				() -> assertSame(booklet, question.getBooklet()),
-				() -> assertFalse(question.isPreambleCaptureRequired()),
+				() -> assertFalse(question.isSharedContextCaptureRequired()),
 				() -> assertSame(classification, question.getClassification()));
 	}
 
@@ -311,7 +311,7 @@ class QuestionTest {
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20)));
 		Question question = new Question(1, booklet, "21a", "", 2, List.of(), classification, true, null,
 				sharedContext);
-		assertTrue(question.isPreambleCaptureRequired());
+		assertTrue(question.isSharedContextCaptureRequired());
 		assertTrue(question.hasSharedContext());
 		assertFalse(question.isSharedContextUnresolved());
 	}

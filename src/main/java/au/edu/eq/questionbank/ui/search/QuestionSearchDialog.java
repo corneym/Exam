@@ -64,11 +64,11 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
 		ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
 		ButtonType editExamButtonType = new ButtonType("Edit Exam", ButtonBar.ButtonData.OTHER);
-		ButtonType recapturePreambleButtonType = new ButtonType("Recapture Shared Preamble",
+		ButtonType recaptureSharedContextButtonType = new ButtonType("Recapture Shared Context",
 				ButtonBar.ButtonData.OTHER);
 		ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
 		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
-				editExamButtonType, recapturePreambleButtonType, editAnswerButtonType, ButtonType.CLOSE);
+				editExamButtonType, recaptureSharedContextButtonType, editAnswerButtonType, ButtonType.CLOSE);
 		searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, allQuestionsSupplier,
 				previewService);
 		getDialogPane().setContent(searchPane);
@@ -76,13 +76,13 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		Node splitQuestionButton = getDialogPane().lookupButton(splitQuestionButtonType);
 		Node editMetadataButton = getDialogPane().lookupButton(editMetadataButtonType);
 		Node editExamButton = getDialogPane().lookupButton(editExamButtonType);
-		Node recapturePreambleButton = getDialogPane().lookupButton(recapturePreambleButtonType);
+		Node recaptureSharedContextButton = getDialogPane().lookupButton(recaptureSharedContextButtonType);
 		Node editAnswerButton = getDialogPane().lookupButton(editAnswerButtonType);
 		editQuestionButton.setId("question-search-edit-question");
 		splitQuestionButton.setId("question-search-split-question");
 		editMetadataButton.setId("question-search-edit-metadata");
 		editExamButton.setId("question-search-edit-exam");
-		recapturePreambleButton.setId("question-search-recapture-preamble");
+		recaptureSharedContextButton.setId("question-search-recapture-preamble");
 		editAnswerButton.setId("question-search-edit-answer");
 		editQuestionButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
 
@@ -95,7 +95,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		}, searchPane.selectedResultProperty()));
 		editMetadataButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
 		editExamButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
-		recapturePreambleButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
+		recaptureSharedContextButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
 			return selected == null || !selected.hasSharedContext();
 		}, searchPane.selectedResultProperty()));
@@ -120,8 +120,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			if (buttonType == editExamButtonType) {
 				return new EditRequest(selected, EditTarget.EXAM);
 			}
-			if (buttonType == recapturePreambleButtonType) {
-				return new EditRequest(selected, EditTarget.SHARED_PREAMBLE);
+			if (buttonType == recaptureSharedContextButtonType) {
+				return new EditRequest(selected, EditTarget.SHARED_CONTEXT);
 			}
 			if (buttonType == editAnswerButtonType) {
 				return new EditRequest(selected, EditTarget.ANSWER);
@@ -176,7 +176,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	public enum EditTarget {
-		QUESTION, SPLIT, METADATA, EXAM, SHARED_PREAMBLE, ANSWER
+		QUESTION, SPLIT, METADATA, EXAM, SHARED_CONTEXT, ANSWER
 	}
 
 	public record EditRequest(Question question, EditTarget target) {

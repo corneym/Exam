@@ -11,12 +11,12 @@ public final class SourceQuestion {
 
 	private final long id;
 	private final ExamBooklet booklet;
-	private final PreambleStatus preambleStatus;
+	private final SharedContextStatus sharedContextStatus;
 	private final String sourceQuestionCode;
 
 	/**
-	 * Creates a persisted source-question identity whose preamble state has not yet
-	 * been resolved.
+	 * Creates a persisted source-question identity whose shared context state has
+	 * not yet been resolved.
 	 *
 	 * @param id                 the positive persistent identifier
 	 * @param booklet            the examination booklet containing the question
@@ -28,24 +28,25 @@ public final class SourceQuestion {
 	 * @throws NullPointerException     if {@code booklet} is {@code null}
 	 */
 	public SourceQuestion(long id, ExamBooklet booklet, String sourceQuestionCode) {
-		this(id, booklet, sourceQuestionCode, PreambleStatus.UNKNOWN);
+		this(id, booklet, sourceQuestionCode, SharedContextStatus.UNKNOWN);
 	}
 
 	/**
-	 * Creates a persisted source-question identity with an explicit preamble state.
+	 * Creates a persisted source-question identity with an explicit context state.
 	 *
-	 * @param id                 the positive persistent identifier
-	 * @param booklet            the examination booklet containing the question
-	 *                           parts
-	 * @param sourceQuestionCode the common source code
-	 * @param preambleStatus     whether shared preamble content is unresolved,
-	 *                           absent or present
+	 * @param id                  the positive persistent identifier
+	 * @param booklet             the examination booklet containing the question
+	 *                            parts
+	 * @param sourceQuestionCode  the common source code
+	 * @param sharedContextStatus whether shared context content is unresolved,
+	 *                            absent or present
 	 * @throws IllegalArgumentException if {@code id} is not positive or the source
 	 *                                  code is blank
-	 * @throws NullPointerException     if {@code booklet} or {@code preambleStatus}
-	 *                                  is {@code null}
+	 * @throws NullPointerException     if {@code booklet} or
+	 *                                  {@code sharedContextStatus} is {@code null}
 	 */
-	public SourceQuestion(long id, ExamBooklet booklet, String sourceQuestionCode, PreambleStatus preambleStatus) {
+	public SourceQuestion(long id, ExamBooklet booklet, String sourceQuestionCode,
+			SharedContextStatus sharedContextStatus) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -55,13 +56,13 @@ public final class SourceQuestion {
 		if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
 			throw new IllegalArgumentException("sourceQuestionCode must not be blank");
 		}
-		if (preambleStatus == null) {
-			throw new NullPointerException("preambleStatus");
+		if (sharedContextStatus == null) {
+			throw new NullPointerException("sharedContextStatus");
 		}
 		this.id = id;
 		this.booklet = booklet;
 		this.sourceQuestionCode = sourceQuestionCode;
-		this.preambleStatus = preambleStatus;
+		this.sharedContextStatus = sharedContextStatus;
 	}
 
 	/**
@@ -84,12 +85,12 @@ public final class SourceQuestion {
 	}
 
 	/**
-	 * Returns the recorded presence or absence of a shared preamble.
+	 * Returns the recorded presence or absence of a shared context.
 	 *
-	 * @return the persisted shared-preamble state
+	 * @return the persisted shared-context state
 	 */
-	public PreambleStatus getPreambleStatus() {
-		return preambleStatus;
+	public SharedContextStatus getSharedContextStatus() {
+		return sharedContextStatus;
 	}
 
 	/**

@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	static final int LATEST_SCHEMA_VERSION = 10;
+	static final int LATEST_SCHEMA_VERSION = 11;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -522,6 +522,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v9-to-v10.sql", 10);
 			return 10;
 		}
+		if (version == 10) {
+
+			// Version eleven records a restart-safe independent-MCQ shared-context
+			// continuation for each booklet.
+			executeMigration(connection, "/db/migration-v10-to-v11.sql", 11);
+			return 11;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -728,6 +735,12 @@ public final class SqliteDatabase {
 			// Schema version 10 introduced the nullable booklet-to-answer-file
 			// relationship used to select the correct answer document.
 			verifyVersion10BookletAnswerFileSchema(connection);
+		}
+		if (version >= 11) {
+
+			// Schema version 11 introduced restart-safe continuation of shared context
+			// between otherwise independent MCQs.
+			verifyVersion11PendingMcqSharedContextSchema(connection);
 		}
 	}
 
@@ -1063,6 +1076,37 @@ public final class SqliteDatabase {
 		// ownership is enforced by the persistence writer when the mapping is changed.
 		if (!hasExactSingleColumnForeignKey(connection, "exam_booklets", "answer_file_id", "answer_files", "id")) {
 			throw new SQLException("exam_booklets is missing exact foreign key answer_file_id -> answer_files(id)");
+		}
+	}
+
+	private void verifyVersion11PendingMcqSharedContextSchema(Connection connection) throws SQLException {
+		boolean hasPendingSharedContextId = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"pending_mcq_shared_context_id".equals(result.getString("name"))) {
+					continue;
+				}
+				hasPendingSharedContextId = true;
+
+				// Most booklets have no pending MCQ continuation. NULL is therefore the
+				// normal persisted state rather than an exceptional placeholder value.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("exam_booklets column must be nullable: pending_mcq_shared_context_id");
+				}
+			}
+		}
+		if (!hasPendingSharedContextId) {
+			throw new SQLException("exam_booklets is missing required column pending_mcq_shared_context_id");
+		}
+
+		// A pending continuation must always identify a real persisted context. The
+		// capture service additionally verifies that the context belongs to this
+		// particular booklet before it is used.
+		if (!hasExactSingleColumnForeignKey(connection, "exam_booklets", "pending_mcq_shared_context_id",
+				"shared_question_contexts", "id")) {
+			throw new SQLException(
+					"exam_booklets is missing exact foreign key pending_mcq_shared_context_id -> shared_question_contexts(id)");
 		}
 	}
 

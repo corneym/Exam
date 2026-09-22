@@ -12,11 +12,11 @@ package au.edu.eq.questionbank.importer.legacy;
  * @param marks                   the positive mark value
  * @param classificationCode      the source syllabus classification code
  * @param answer                  optional answer text supplied by the workbook
- * @param preambleCaptureRequired whether shared or introductory material should
+ * @param sharedContextCaptureRequired whether shared or introductory material should
  *                                be included during region capture
  */
 public record LegacyQuestionRow(int year, String paperCode, String questionCode, int marks, String classificationCode,
-		String answer, boolean preambleCaptureRequired) {
+		String answer, boolean sharedContextCaptureRequired) {
 
 	/**
 	 * Validates a legacy question row and converts blank answer text to null.
@@ -27,7 +27,7 @@ public record LegacyQuestionRow(int year, String paperCode, String questionCode,
 	 * @param marks                   the positive mark value
 	 * @param classificationCode      the source syllabus classification code
 	 * @param answer                  optional answer text supplied by the workbook
-	 * @param preambleCaptureRequired whether shared or introductory material should
+	 * @param sharedContextCaptureRequired whether shared or introductory material should
 	 *                                be included during region capture
 	 */
 	public LegacyQuestionRow {

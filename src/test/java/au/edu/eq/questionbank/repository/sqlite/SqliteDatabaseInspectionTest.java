@@ -19,6 +19,45 @@ class SqliteDatabaseInspectionTest {
 	Path tempDir;
 
 	@Test
+	void latestSchemaContainsNullablePendingMcqSharedContextReference() throws SQLException {
+		Path databasePath = tempDir.resolve("pending-mcq-context.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		boolean columnFound = false;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"pending_mcq_shared_context_id".equals(result.getString("name"))) {
+					continue;
+				}
+				columnFound = true;
+
+				// A booklet normally has no unfinished MCQ continuation, so the column
+				// must permit NULL.
+				assertEquals(0, result.getInt("notnull"));
+			}
+		}
+		assertTrue(columnFound);
+		boolean foreignKeyFound = false;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("PRAGMA foreign_key_list(exam_booklets)")) {
+			while (result.next()) {
+				if ("pending_mcq_shared_context_id".equals(result.getString("from"))
+						&& "shared_question_contexts".equals(result.getString("table"))
+						&& "id".equals(result.getString("to"))) {
+					foreignKeyFound = true;
+				}
+			}
+		}
+
+		// The workflow state must never reference a context row that does not exist.
+		assertTrue(foreignKeyFound);
+		assertEquals(11, database.schemaVersion());
+	}
+
+	@Test
 	void schemaVersionReturnsLatestVersionForInitialisedDatabase() throws SQLException {
 		Path databasePath = tempDir.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);

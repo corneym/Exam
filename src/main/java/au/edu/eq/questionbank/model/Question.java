@@ -25,7 +25,7 @@ public class Question {
 	private final List<QuestionRegion> regions;
 	private final CurriculumNode classification;
 	private final int marks;
-	private final boolean preambleCaptureRequired;
+	private final boolean sharedContextCaptureRequired;
 	private final SourceQuestion sourceQuestion;
 	private final SharedQuestionContext sharedContext;
 	private Answer answer;
@@ -35,8 +35,8 @@ public class Question {
 	 * Creates a question through the normal capture workflow.
 	 * <p>
 	 * The booklet is derived from the first region, so this constructor requires at
-	 * least one region. Questions created this way do not carry the legacy preamble
-	 * capture hint.
+	 * least one region. Questions created this way do not carry the legacy shared
+	 * context capture hint.
 	 *
 	 * @param id             the persistent question identifier
 	 * @param exam           the exam containing every supplied region
@@ -58,20 +58,23 @@ public class Question {
 	 * This form supports legacy-imported questions for which metadata is known but
 	 * PDF regions have not yet been captured.
 	 *
-	 * @param id                      the persistent question identifier
-	 * @param booklet                 the booklet containing the question
-	 * @param questionCode            the question or part-question identifier
-	 * @param questionText            supplementary searchable or transcribed text
-	 * @param marks                   the positive mark value
-	 * @param regions                 zero or more source regions in assembly order
-	 * @param classification          the syllabus subtopic or descriptor
-	 * @param preambleCaptureRequired whether legacy metadata indicates that shared
-	 *                                introductory material should be captured
+	 * @param id                           the persistent question identifier
+	 * @param booklet                      the booklet containing the question
+	 * @param questionCode                 the question or part-question identifier
+	 * @param questionText                 supplementary searchable or transcribed
+	 *                                     text
+	 * @param marks                        the positive mark value
+	 * @param regions                      zero or more source regions in assembly
+	 *                                     order
+	 * @param classification               the syllabus subtopic or descriptor
+	 * @param sharedContextCaptureRequired whether legacy metadata indicates that
+	 *                                     shared introductory material should be
+	 *                                     captured
 	 */
 	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
-		this(id, booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired, null,
-				null);
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired) {
+		this(id, booklet, questionCode, questionText, marks, regions, classification, sharedContextCaptureRequired,
+				null, null);
 	}
 
 	/**
@@ -82,21 +85,24 @@ public class Question {
 	 * {@link QuestionResponseType#UNKNOWN}. Callers that know the authoritative
 	 * response type should use the overload accepting {@link QuestionResponseType}.
 	 *
-	 * @param id                      the persistent question identifier
-	 * @param booklet                 the booklet containing the question
-	 * @param questionCode            the question or part-question identifier
-	 * @param questionText            supplementary searchable or transcribed text
-	 * @param marks                   the positive mark value
-	 * @param regions                 zero or more source regions in assembly order
-	 * @param classification          the syllabus subtopic or descriptor
-	 * @param preambleCaptureRequired historical legacy preamble-capture evidence
-	 * @param sourceQuestion          common source-question identity, or null
-	 * @param sharedContext           reusable shared question context, or null
+	 * @param id                           the persistent question identifier
+	 * @param booklet                      the booklet containing the question
+	 * @param questionCode                 the question or part-question identifier
+	 * @param questionText                 supplementary searchable or transcribed
+	 *                                     text
+	 * @param marks                        the positive mark value
+	 * @param regions                      zero or more source regions in assembly
+	 *                                     order
+	 * @param classification               the syllabus subtopic or descriptor
+	 * @param sharedContextCaptureRequired historical legacy preamble-capture
+	 *                                     evidence
+	 * @param sourceQuestion               common source-question identity, or null
+	 * @param sharedContext                reusable shared question context, or null
 	 */
 	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
-		this(id, booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired,
+		this(id, booklet, questionCode, questionText, marks, regions, classification, sharedContextCaptureRequired,
 				sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
 	}
 
@@ -104,20 +110,23 @@ public class Question {
 	 * Creates a question with its persisted response type and optional capture
 	 * relationships.
 	 *
-	 * @param id                      the persistent question identifier
-	 * @param booklet                 the booklet containing the question
-	 * @param questionCode            the question or part-question identifier
-	 * @param questionText            supplementary searchable or transcribed text
-	 * @param marks                   the positive mark value
-	 * @param regions                 zero or more source regions in assembly order
-	 * @param classification          the syllabus subtopic or descriptor
-	 * @param preambleCaptureRequired historical legacy preamble-capture evidence
-	 * @param sourceQuestion          common source-question identity, or null
-	 * @param sharedContext           reusable shared question context, or null
-	 * @param responseType            authoritative Question response type
+	 * @param id                           the persistent question identifier
+	 * @param booklet                      the booklet containing the question
+	 * @param questionCode                 the question or part-question identifier
+	 * @param questionText                 supplementary searchable or transcribed
+	 *                                     text
+	 * @param marks                        the positive mark value
+	 * @param regions                      zero or more source regions in assembly
+	 *                                     order
+	 * @param classification               the syllabus subtopic or descriptor
+	 * @param sharedContextCaptureRequired historical legacy shared context-capture
+	 *                                     evidence
+	 * @param sourceQuestion               common source-question identity, or null
+	 * @param sharedContext                reusable shared question context, or null
+	 * @param responseType                 authoritative Question response type
 	 */
 	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
@@ -163,7 +172,7 @@ public class Question {
 		this.regions = List.copyOf(regions);
 		this.marks = marks;
 		this.classification = classification;
-		this.preambleCaptureRequired = preambleCaptureRequired;
+		this.sharedContextCaptureRequired = sharedContextCaptureRequired;
 		this.sourceQuestion = sourceQuestion;
 		this.sharedContext = sharedContext;
 		this.responseType = responseType;
@@ -323,9 +332,9 @@ public class Question {
 	}
 
 	/**
-	 * Returns the shared preamble linked to this question.
+	 * Returns the shared context linked to this question.
 	 *
-	 * @return the reusable preamble context, or {@code null} when unlinked
+	 * @return the reusable shared context, or {@code null} when unlinked
 	 */
 	public SharedQuestionContext getSharedContext() {
 		return sharedContext;
@@ -350,7 +359,7 @@ public class Question {
 	}
 
 	/**
-	 * Indicates whether reusable preamble material is linked.
+	 * Indicates whether reusable shared context material is linked.
 	 *
 	 * @return whether reusable source context is linked
 	 */
@@ -373,18 +382,18 @@ public class Question {
 	 *
 	 * @return {@code true} when the capture hint is present
 	 */
-	public boolean isPreambleCaptureRequired() {
-		return preambleCaptureRequired;
+	public boolean isSharedContextCaptureRequired() {
+		return sharedContextCaptureRequired;
 	}
 
 	/**
 	 * Returns whether the historical legacy hint requires shared context and none
-	 * is linked. This does not consult the source question's preamble status.
+	 * is linked. This does not consult the source question's shared context status.
 	 *
 	 * @return {@code true} when shared context still requires resolution
 	 */
 	public boolean isSharedContextUnresolved() {
-		return preambleCaptureRequired && sharedContext == null;
+		return sharedContextCaptureRequired && sharedContext == null;
 	}
 
 	/**

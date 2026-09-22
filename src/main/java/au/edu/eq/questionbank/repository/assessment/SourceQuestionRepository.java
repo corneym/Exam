@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SourceQuestion;
 
 /**
@@ -48,5 +48,5 @@ public interface SourceQuestionRepository {
 	 * @return the source question with the persisted replacement state
 	 * @throws IllegalStateException if the identified row cannot be updated
 	 */
-	SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, PreambleStatus preambleStatus);
+	SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, SharedContextStatus preambleStatus);
 }

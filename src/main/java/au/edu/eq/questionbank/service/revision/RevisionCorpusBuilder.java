@@ -113,7 +113,7 @@ public final class RevisionCorpusBuilder {
 
 			// Preserve the legacy review signal even when shared context has since been
 			// captured.
-			if (question.isPreambleCaptureRequired()) {
+			if (question.isSharedContextCaptureRequired()) {
 				accumulator.preambleReviewQuestionIds.add(questionId);
 			}
 		}

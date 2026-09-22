@@ -125,7 +125,7 @@ public class LegacyQuestionWorkbookReader {
 		}
 	}
 
-	private boolean preamble(Sheet sheet, Row row, int columnIndex, FormulaEvaluator evaluator) {
+	private boolean sharedContext(Sheet sheet, Row row, int columnIndex, FormulaEvaluator evaluator) {
 
 		// The legacy format uses blank and 1 only; other values must not silently
 		// become false.
@@ -149,9 +149,9 @@ public class LegacyQuestionWorkbookReader {
 			int marks = positiveInteger(sheet, row, columns.get(MARKS), MARKS, evaluator);
 			String classificationCode = requiredText(sheet, row, columns.get(TOPIC), TOPIC, evaluator);
 			String answer = optionalText(row, columns.get(ANSWER), evaluator);
-			boolean preambleCaptureRequired = preamble(sheet, row, columns.get(PREAMBLE), evaluator);
+			boolean sharedContextCaptureRequired = sharedContext(sheet, row, columns.get(PREAMBLE), evaluator);
 			return new LegacyQuestionRow(year, paperCode, questionCode, marks, classificationCode, answer,
-					preambleCaptureRequired);
+					sharedContextCaptureRequired);
 		} catch (IllegalArgumentException e) {
 
 			// Report the worksheet and one-based Excel row for both parsing and

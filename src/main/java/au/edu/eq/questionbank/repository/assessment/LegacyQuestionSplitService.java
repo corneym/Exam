@@ -11,7 +11,7 @@ import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -201,7 +201,7 @@ public final class LegacyQuestionSplitService {
 			SharedQuestionContext sharedContext = sharedContextRepository.save(connection,
 					request.originalQuestion().getBooklet(), contextLabel, request.newSharedContext().regions());
 			SourceQuestion resolvedSourceQuestion = sourceQuestionRepository.updatePreambleStatus(connection,
-					createdSourceQuestion, PreambleStatus.PRESENT);
+					createdSourceQuestion, SharedContextStatus.PRESENT);
 			return new SplitRelationships(resolvedSourceQuestion, sharedContext);
 		}
 		if (request.existingSharedContext() != null) {
@@ -236,13 +236,13 @@ public final class LegacyQuestionSplitService {
 		SourceQuestion createdSourceQuestion = sourceQuestionRepository.save(connection,
 				request.originalQuestion().getBooklet(), request.sourceQuestionCode());
 		SourceQuestion resolvedSourceQuestion = sourceQuestionRepository.updatePreambleStatus(connection,
-				createdSourceQuestion, PreambleStatus.NONE);
+				createdSourceQuestion, SharedContextStatus.NONE);
 		return new SplitRelationships(resolvedSourceQuestion, null);
 	}
 
 	private void validateCompatibleExistingSharedContextGroup(Connection connection, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
-		if (sourceQuestion.getPreambleStatus() != PreambleStatus.PRESENT) {
+		if (sourceQuestion.getSharedContextStatus() != SharedContextStatus.PRESENT) {
 
 			// Reusing a persisted preamble is valid only when the SourceQuestion
 			// already declares that shared introductory material is present.
@@ -287,7 +287,7 @@ public final class LegacyQuestionSplitService {
 
 	private void validateCompatibleNoPreambleSourceGroup(Connection connection, SourceQuestion sourceQuestion)
 			throws SQLException {
-		if (sourceQuestion.getPreambleStatus() != PreambleStatus.NONE) {
+		if (sourceQuestion.getSharedContextStatus() != SharedContextStatus.NONE) {
 
 			// UNKNOWN and PRESENT both require an explicit preamble decision rather
 			// than being silently converted by a no-preamble split.

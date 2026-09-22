@@ -65,7 +65,7 @@ class LegacyQuestionSplitDialogTest {
 		TextField partBMarks = robot.lookup("#legacy-split-part-1-marks").queryAs(TextField.class);
 		ComboBox<CurriculumNode> partBClassification = robot.lookup("#legacy-split-part-1-classification")
 				.queryAs(ComboBox.class);
-		ComboBox<LegacyQuestionSplitDialog.PreambleChoice> preamble = robot.lookup("#legacy-split-preamble-choice")
+		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> preamble = robot.lookup("#legacy-split-preamble-choice")
 				.queryAs(ComboBox.class);
 		Button continueButton = robot.lookup("#legacy-split-continue").queryAs(Button.class);
 		assertEquals("3", sourceCode.getText());
@@ -82,7 +82,7 @@ class LegacyQuestionSplitDialogTest {
 			partAMarks.setText("2");
 			partBMarks.setText("3");
 			partBClassification.setValue(secondSubtopic);
-			preamble.setValue(LegacyQuestionSplitDialog.PreambleChoice.NO_SHARED_PREAMBLE);
+			preamble.setValue(LegacyQuestionSplitDialog.SharedContextChoice.NO_SHARED_CONTEXT);
 		});
 		assertFalse(continueButton.isDisabled());
 		robot.interact(continueButton::fire);
@@ -98,7 +98,7 @@ class LegacyQuestionSplitDialogTest {
 		assertEquals(3, result.parts().get(1).marks());
 		assertEquals(secondSubtopic, result.parts().get(1).classification());
 		assertEquals(0, result.retainedPartIndex());
-		assertEquals(LegacyQuestionSplitDialog.PreambleChoice.NO_SHARED_PREAMBLE, result.preambleChoice());
+		assertEquals(LegacyQuestionSplitDialog.SharedContextChoice.NO_SHARED_CONTEXT, result.sharedContextChoice());
 	}
 
 	@Start

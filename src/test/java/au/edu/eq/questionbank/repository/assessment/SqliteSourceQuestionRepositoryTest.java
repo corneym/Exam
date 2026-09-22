@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
@@ -29,7 +29,7 @@ class SqliteSourceQuestionRepositoryTest {
 		SqliteSourceQuestionRepository repository = fixture.repository();
 		SourceQuestion first = repository.save(fixture.firstBooklet(), "21");
 		SourceQuestion second = repository.save(fixture.secondBooklet(), "21");
-		assertEquals(PreambleStatus.UNKNOWN, first.getPreambleStatus());
+		assertEquals(SharedContextStatus.UNKNOWN, first.getSharedContextStatus());
 		assertEquals("21", first.getSourceQuestionCode());
 		assertEquals(fixture.firstBooklet().getId(), first.getBooklet().getId());
 		assertTrue(first.getId() > 0);
@@ -39,10 +39,10 @@ class SqliteSourceQuestionRepositoryTest {
 		assertEquals(second.getId(),
 				repository.findByBookletAndCode(fixture.secondBooklet(), "21").orElseThrow().getId());
 		assertThrows(IllegalArgumentException.class, () -> repository.save(fixture.firstBooklet(), "21"));
-		SourceQuestion updated = repository.updatePreambleStatus(first, PreambleStatus.PRESENT);
-		assertEquals(PreambleStatus.PRESENT, updated.getPreambleStatus());
+		SourceQuestion updated = repository.updatePreambleStatus(first, SharedContextStatus.PRESENT);
+		assertEquals(SharedContextStatus.PRESENT, updated.getSharedContextStatus());
 		SourceQuestion reloaded = repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow();
-		assertEquals(PreambleStatus.PRESENT, reloaded.getPreambleStatus());
+		assertEquals(SharedContextStatus.PRESENT, reloaded.getSharedContextStatus());
 	}
 
 	@Test
@@ -58,10 +58,10 @@ class SqliteSourceQuestionRepositoryTest {
 				() -> assertThrows(NullPointerException.class, () -> repository.save(null, "21")),
 				() -> assertThrows(IllegalArgumentException.class, () -> repository.save(fixture.firstBooklet(), " ")),
 				() -> assertThrows(NullPointerException.class,
-						() -> repository.updatePreambleStatus(null, PreambleStatus.NONE)),
+						() -> repository.updatePreambleStatus(null, SharedContextStatus.NONE)),
 				() -> assertThrows(NullPointerException.class, () -> repository.updatePreambleStatus(missing, null)),
 				() -> assertThrows(IllegalStateException.class,
-						() -> repository.updatePreambleStatus(missing, PreambleStatus.PRESENT)));
+						() -> repository.updatePreambleStatus(missing, SharedContextStatus.PRESENT)));
 	}
 
 	@Test
@@ -80,12 +80,12 @@ class SqliteSourceQuestionRepositoryTest {
 		RepositoryFixture fixture = createFixture("preamble-states.db");
 		SqliteSourceQuestionRepository repository = fixture.repository();
 		SourceQuestion sourceQuestion = repository.save(fixture.firstBooklet(), "21");
-		sourceQuestion = repository.updatePreambleStatus(sourceQuestion, PreambleStatus.NONE);
-		assertEquals(PreambleStatus.NONE,
-				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getPreambleStatus());
-		repository.updatePreambleStatus(sourceQuestion, PreambleStatus.PRESENT);
-		assertEquals(PreambleStatus.PRESENT,
-				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getPreambleStatus());
+		sourceQuestion = repository.updatePreambleStatus(sourceQuestion, SharedContextStatus.NONE);
+		assertEquals(SharedContextStatus.NONE,
+				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getSharedContextStatus());
+		repository.updatePreambleStatus(sourceQuestion, SharedContextStatus.PRESENT);
+		assertEquals(SharedContextStatus.PRESENT,
+				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getSharedContextStatus());
 	}
 
 	private RepositoryFixture createFixture(String databaseName) throws Exception {

@@ -20,7 +20,7 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.PreambleStatus;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -495,7 +495,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 					throw new IllegalStateException("Source question belongs to a different booklet");
 				}
 				return new SourceQuestion(sourceQuestionId, questionBooklet, result.getString("source_question_code"),
-						PreambleStatus.valueOf(result.getString("preamble_status")));
+						SharedContextStatus.valueOf(result.getString("preamble_status")));
 			}
 		}
 	}
