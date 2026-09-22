@@ -72,10 +72,8 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	static void closeDialog(FxRobot robot, String dialogTitle) {
 		waitForDialogShowing(robot, dialogTitle);
-
 		DialogPane dialog = showingDialogPane(robot, dialogTitle);
 		Node buttonNode = dialog.lookupButton(ButtonType.CLOSE);
-
 		if (!(buttonNode instanceof ButtonBase closeButton)) {
 			throw new AssertionError("Dialog has no Close button: " + dialogTitle);
 		}
@@ -130,7 +128,6 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	static void fireDialogButton(FxRobot robot, String buttonText) {
 		AtomicReference<DialogPane> matchingDialog = new AtomicReference<>();
-
 		try {
 			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 
@@ -143,7 +140,6 @@ abstract class QuestionBankApplicationUiTestBase {
 						if (!window.isShowing() || window.getScene() == null) {
 							continue;
 						}
-
 						Node root = window.getScene().getRoot();
 						DialogPane dialog = null;
 
@@ -158,21 +154,17 @@ abstract class QuestionBankApplicationUiTestBase {
 								dialog = pane;
 							}
 						}
-
 						if (dialog == null || !dialog.isVisible()) {
 							continue;
 						}
-
 						boolean hasRequestedButton = dialog.getButtonTypes().stream()
 								.anyMatch(buttonType -> buttonText.equals(buttonType.getText()));
-
 						if (hasRequestedButton) {
 							matchingDialog.set(dialog);
 							break;
 						}
 					}
 				});
-
 				return matchingDialog.get() != null;
 			});
 		} catch (TimeoutException e) {
@@ -181,12 +173,10 @@ abstract class QuestionBankApplicationUiTestBase {
 			// TestFX lookup exception.
 			throw new AssertionError("Timed out waiting for dialog button: " + buttonText, e);
 		}
-
 		DialogPane dialog = matchingDialog.get();
 		ButtonType buttonType = dialog.getButtonTypes().stream()
 				.filter(candidate -> buttonText.equals(candidate.getText())).findFirst()
 				.orElseThrow(() -> new AssertionError("Dialog button not found: " + buttonText));
-
 		Node buttonNode = dialog.lookupButton(buttonType);
 		if (!(buttonNode instanceof ButtonBase button)) {
 			throw new AssertionError("Dialog button is not a ButtonBase: " + buttonText);
@@ -233,7 +223,6 @@ abstract class QuestionBankApplicationUiTestBase {
 				if (!(window instanceof Stage stage) || !dialogTitle.equals(stage.getTitle())) {
 					continue;
 				}
-
 				Node root = window.getScene().getRoot();
 				if (root instanceof DialogPane dialogPane) {
 					matchingDialog.set(dialogPane);
@@ -249,7 +238,6 @@ abstract class QuestionBankApplicationUiTestBase {
 				}
 			}
 		});
-
 		return matchingDialog.get();
 	}
 

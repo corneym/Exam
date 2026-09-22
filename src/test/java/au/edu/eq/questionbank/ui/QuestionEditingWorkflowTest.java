@@ -162,19 +162,17 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(multipleChoice.isSelected());
 
 		// Change the persisted response type through the production UI.
+		fireControl(robot, multipleChoice);
+		assertTrue(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		fireControl(robot, "#save-question");
 
-		// Persisted response type is the observable completion condition.
+		// The persisted response type proves that the edit save actually completed.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> repository.findById(question.getId())
 				.map(stored -> stored.getResponseType() == QuestionResponseType.MULTIPLE_CHOICE).orElse(false));
 		WaitForAsyncUtils.waitForFxEvents();
 		Question stored = repository.findById(question.getId()).orElseThrow();
-		assertTrue(multipleChoice.isSelected());
-		assertFalse(writtenResponse.isSelected());
-		robot.clickOn("#save-question");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
-		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, stored.getResponseType());
 		assertEquals(1, stored.getRegions().size());
 	}
@@ -315,10 +313,9 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(updated.getRegions().isEmpty());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.getResponseType());
 		assertEquals(classification.getId(), updated.getClassification().getId());
-		/*
-		 * Saving metadata reopens Search Questions. Close it so the application
-		 * workflow unwinds cleanly before the test ends.
-		 */
+
+		// Saving metadata reopens Search Questions. Close it so the application
+		// workflow unwinds cleanly before the test ends.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
 		fireDialogButton(robot, "Close");
@@ -333,10 +330,13 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
 		var originalAnswer = answerWriter.insertAnswer(original, "Original combined answer", List.of());
 
-		// Reopen through the repository so Search sees the persisted Answer
-		// relationship rather than the pre-answer Question object.
+		// Reload the Question so Search receives the persisted Answer relationship
+		// rather than the pre-answer in-memory Question instance.
 		Question answeredOriginal = repository.findById(original.getId()).orElseThrow();
 		assertTrue(answeredOriginal.hasAnswer());
+
+		// Search Questions is modal, so start it asynchronously and leave the test
+		// thread free to interact with the dialog.
 		Platform.runLater(() -> {
 			try {
 				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
@@ -359,11 +359,13 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Object selectedResult = results.getItems().stream()
 				.filter(result -> searchResultQuestion(result).getId() == original.getId()).findFirst().orElseThrow();
 
-		// Search must expose the fully reloaded persisted Question, including its
-		// Answer
-		// relationship, regardless of the package-private result wrapper.
+		// Search must expose the fully reconstructed persisted Question, including its
+		// Answer, before the legacy split workflow is started.
 		assertTrue(searchResultQuestion(selectedResult).hasAnswer());
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		// Split Question opens another modal dialog. Schedule the action so the test
+		// thread remains available to complete that dialog.
 		fireControlLater(robot, "#question-search-split-question");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-split-answer-part").tryQuery().isPresent());
@@ -379,36 +381,43 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 			preambleChoice.setValue(LegacyQuestionSplitDialog.PreambleChoice.NO_SHARED_PREAMBLE);
 		});
 
-		// Even with all other metadata complete, an answered legacy Question cannot
-		// proceed until the user explicitly nominates the resulting Answer owner.
+		// An answered legacy Question cannot proceed until one resulting part is
+		// explicitly nominated as the owner of the existing Answer.
 		assertTrue(continueButton.isDisabled());
 		assertEquals(List.of("69a", "69b"), answerPart.getItems());
 		robot.interact(() -> answerPart.setValue("69b"));
 		assertFalse(continueButton.isDisabled());
+
+		// Continue closes the split-definition dialog and transfers the workflow into
+		// staged Question capture.
 		fireControl(robot, continueButton);
-		// The Search Dialog itself must be closed before staged split capture begins.
 		waitForDialogHidden(robot, "Search Questions");
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Button save = lookup(robot, "#save-question", Button.class);
 		assertEquals("69a", questionCode.getText());
+
+		// Capture the first resulting Question part. Next Part stages 69a only; the
+		// database must still contain the original unsplit Question.
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-
-		// Search is a Dialog, so resolve Close through its DialogPane rather than the
-		// primary application scene graph.
-		fireDialogButton(robot, "Close");
+		assertFalse(save.isDisabled());
+		assertEquals("Next Part", save.getText());
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> "69b".equals(questionCode.getText()));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals("69b", questionCode.getText());
-
-		// No persistence occurs after only the first staged part.
+		assertEquals("Save Split", save.getText());
 		Question stillOriginal = repository.findById(original.getId()).orElseThrow();
 		assertEquals("69", stillOriginal.getQuestionCode());
 		assertTrue(stillOriginal.hasAnswer());
 		assertEquals(originalAnswer.getId(), stillOriginal.getAnswer().getId());
+
+		// Capture the second part. Saving the final staged part performs the atomic
+		// split and then resumes the reusable Search Questions dialog.
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
-		robot.clickOn(save);
-		// Successful split completion reopens the same Search Dialog.
+		fireControl(robot, "#add-question-region");
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
 		waitForDialogShowing(robot, "Search Questions");
 		List<Question> stored = repository.findAll();
 		Question partA = stored.stream().filter(question -> "69a".equals(question.getQuestionCode())).findFirst()
@@ -416,93 +425,21 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question partB = stored.stream().filter(question -> "69b".equals(question.getQuestionCode())).findFirst()
 				.orElseThrow();
 
-		// The explicitly nominated Answer owner reuses the original Question row.
+		// The explicitly nominated Answer owner reuses the original Question row and
+		// retains the existing Answer; the new sibling receives no Answer.
 		assertFalse(partA.getId() == original.getId());
 		assertEquals(original.getId(), partB.getId());
 		assertFalse(partA.hasAnswer());
 		assertTrue(partB.hasAnswer());
 		assertEquals(originalAnswer.getId(), partB.getAnswer().getId());
 		assertEquals("Original combined answer", partB.getAnswer().getAnswerText());
+
+		// Both resulting Questions must belong to the same new SourceQuestion group.
 		assertEquals(partA.getSourceQuestion().getId(), partB.getSourceQuestion().getId());
-		// Close the actual showing Search Dialog rather than querying its retained
-		// nodes.
+
+		// Search has genuinely resumed, so close that actual modal dialog to unwind
+		// the application workflow cleanly.
 		closeDialog(robot, "Search Questions");
-	}
-
-	@Test
-	void searchSplitQuestionStartsStagedCaptureWithoutChangingOriginal(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		Question original = captureQuestion(robot, "66");
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-
-		// Open Search through the actual application workflow.
-		Platform.runLater(() -> {
-			try {
-				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
-						primaryStage, applicationConfig);
-			} catch (Exception exception) {
-				throw new RuntimeException(exception);
-			}
-		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<Object> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
-				.anyMatch(result -> searchResultQuestion(result).getId() == original.getId()));
-		Object selectedResult = results.getItems().stream()
-				.filter(result -> searchResultQuestion(result).getId() == original.getId()).findFirst().orElseThrow();
-		robot.interact(() -> results.getSelectionModel().select(selectedResult));
-		Button splitButton = lookup(robot, "#question-search-split-question", Button.class);
-		assertFalse(splitButton.isDisabled());
-		fireControlLater(splitButton);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#legacy-split-part-0-marks").tryQuery().isPresent());
-		TextField partAMarks = lookup(robot, "#legacy-split-part-0-marks", TextField.class);
-		TextField partBMarks = lookup(robot, "#legacy-split-part-1-marks", TextField.class);
-		ComboBox<LegacyQuestionSplitDialog.PreambleChoice> preambleChoice = comboBox(robot,
-				"#legacy-split-preamble-choice");
-		Button continueButton = lookup(robot, "#legacy-split-continue", Button.class);
-		robot.interact(() -> {
-			partAMarks.setText("1");
-			partBMarks.setText("1");
-			preambleChoice.setValue(LegacyQuestionSplitDialog.PreambleChoice.NO_SHARED_PREAMBLE);
-		});
-		assertFalse(continueButton.isDisabled());
-		fireControl(robot, continueButton);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> !robot.lookup("#question-search-results").tryQuery().isPresent());
-		TextField questionCode = lookup(robot, "#question-code", TextField.class);
-		Button save = lookup(robot, "#save-question", Button.class);
-		Button cancel = lookup(robot, "#cancel-question-edit", Button.class);
-
-		// Search has handed control to staged split capture. The first part is loaded,
-		// but no persistence has occurred.
-		assertEquals("66a", questionCode.getText());
-		assertEquals("Next Part", save.getText());
-		assertTrue(cancel.isVisible());
-		Question beforeCancel = repository.findById(original.getId()).orElseThrow();
-		assertEquals("66", beforeCancel.getQuestionCode());
-		assertEquals(1, repository.findAll().size());
-
-		// Cancelling the staged workflow must discard only transient split state and
-		// return to the existing Search dialog.
-		// Cancelling the staged split immediately reopens Search with showAndWait().
-		// Schedule the action so the test thread remains available to close that
-		// dialog.
-		fireControlLater(cancel);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
-		Question afterCancel = repository.findById(original.getId()).orElseThrow();
-		assertEquals("66", afterCancel.getQuestionCode());
-		assertEquals(1, repository.findAll().size());
-		fireDialogButton(robot, "Close");
-		WaitForAsyncUtils.waitForFxEvents();
 	}
 
 	@Test

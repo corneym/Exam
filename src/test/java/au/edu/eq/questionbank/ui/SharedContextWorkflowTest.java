@@ -34,9 +34,11 @@ import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
@@ -276,9 +278,8 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(question.isPreambleCaptureRequired());
 		assertTrue(question.hasSharedContext());
 		assertEquals(1, question.getRegions().size());
-		/*
-		 * Open Search Questions through the real application workflow.
-		 */
+
+		// Open Search through the real modal application workflow.
 		Platform.runLater(() -> {
 			try {
 				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
@@ -287,8 +288,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		waitForDialogShowing(robot, "Search Questions");
 		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
@@ -296,8 +296,10 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
 
-		// Select the Search UI result by its wrapped persistent Question identity.
+		// Select the persisted Question in the currently showing Search dialog.
 		selectSearchResult(robot, question.getId());
+
+		// Edit Metadata opens another modal dialog, so schedule the action.
 		fireControlLater(robot, "#question-search-edit-metadata");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-metadata-preamble-required").tryQuery().isPresent());
@@ -305,11 +307,13 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(preamble.isSelected());
 		robot.interact(() -> preamble.setSelected(false));
 
-		// Saving metadata deliberately opens the follow-up conversion decision dialog.
+		// Saving metadata commits the conversion and then opens the follow-up
+		// Question Preamble Converted dialog synchronously.
 		fireControlLater(robot, "#legacy-metadata-save");
 
-		// The metadata transaction has already converted and
-		// persisted the regions before this decision is requested.
+		// Do not inspect SQLite until the scheduled save has actually reached the
+		// conversion-decision dialog.
+		waitForDialogShowing(robot, "Question Preamble Converted");
 		Question converted = questionRepository.findById(question.getId()).orElseThrow();
 		assertFalse(converted.isPreambleCaptureRequired());
 		assertFalse(converted.hasSharedContext());
@@ -317,22 +321,19 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(0.10, converted.getRegions().get(0).y(), 0.000001);
 		assertEquals(0.40, converted.getRegions().get(1).y(), 0.000001);
 		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
+
+		// Retain the safely converted ordinary Question regions.
 		fireDialogButton(robot, "Keep converted regions");
-		/*
-		 * Keeping the converted regions returns to Search rather than entering question
-		 * recapture.
-		 */
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+
+		// The completion callback must return to the real Search dialog.
+		waitForDialogShowing(robot, "Search Questions");
 		assertFalse(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
 		Question retained = questionRepository.findById(question.getId()).orElseThrow();
 		assertEquals(2, retained.getRegions().size());
 		assertFalse(retained.hasSharedContext());
-		/*
-		 * Close Search Questions so its nested event loop unwinds.
-		 */
-		fireDialogButton(robot, "Close");
-		WaitForAsyncUtils.waitForFxEvents();
+
+		// Close the actual showing Search dialog so its nested event loop unwinds.
+		closeDialog(robot, "Search Questions");
 	}
 
 	@Test
@@ -575,14 +576,14 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SqliteSourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
 
-		// The legacy single Question is still independent and is the Question that
-		// will be corrected into 68a and 68b.
+		// The legacy single Question is the item that will be corrected into 68a and
+		// 68b.
 		Question original = questionRepository.save(booklet, "68", "", 5,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.80, 0.30)), classification, true, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
 
-		// An already-correct multipart sibling establishes the destination
-		// SourceQuestion and its authoritative shared preamble.
+		// An existing correct sibling establishes the SourceQuestion and shared
+		// preamble that the split workflow must reuse.
 		SourceQuestion sourceQuestion = sourceQuestionRepository.save(booklet, "68");
 		sourceQuestion = sourceQuestionRepository.updatePreambleStatus(sourceQuestion, PreambleStatus.PRESENT);
 		SharedQuestionContext existingContext = contextRepository.save(booklet, "Question 68 preamble",
@@ -598,8 +599,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		waitForDialogShowing(robot, "Search Questions");
 		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
@@ -607,18 +607,20 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
 
-		// Select the Search UI result by its wrapped persistent Question identity.
+		// Selection is scoped to the currently showing Search dialog.
 		selectSearchResult(robot, original.getId());
 		Button splitButton = lookup(robot, "#question-search-split-question", Button.class);
 		assertFalse(splitButton.isDisabled());
+
+		// Split opens the definition dialog synchronously.
 		fireControlLater(splitButton);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-split-preamble-choice").tryQuery().isPresent());
 		ComboBox<LegacyQuestionSplitDialog.PreambleChoice> preambleChoice = comboBox(robot,
 				"#legacy-split-preamble-choice");
 
-		// Reuse is offered only because Search found an established SourceQuestion
-		// whose members consistently use this persisted shared context.
+		// Reuse is available because an established SourceQuestion already uses the
+		// persisted shared context.
 		assertTrue(preambleChoice.getItems()
 				.contains(LegacyQuestionSplitDialog.PreambleChoice.REUSE_EXISTING_SHARED_PREAMBLE));
 		TextField partAMarks = lookup(robot, "#legacy-split-part-0-marks", TextField.class);
@@ -631,33 +633,35 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button continueButton = lookup(robot, "#legacy-split-continue", Button.class);
 		assertFalse(continueButton.isDisabled());
 		fireControl(robot, continueButton);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> !robot.lookup("#question-search-results").tryQuery().isPresent());
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Button save = lookup(robot, "#save-question", Button.class);
 
-		// Reuse requires no preamble recapture. Region selection begins immediately
-		// with the first resulting Question part.
-		assertEquals("68a", questionCode.getText());
+		// Wait for the actual staged capture state rather than for retained Search
+		// nodes to disappear.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> "68a".equals(questionCode.getText()));
 		assertEquals("Next Part", save.getText());
 		assertEquals("Add Region", lookup(robot, "#add-question-region", Button.class).getText());
+
+		// Capture and stage 68a.
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
 		assertFalse(save.isDisabled());
 		fireControl(robot, save);
-		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals("68b", questionCode.getText());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> "68b".equals(questionCode.getText()));
 		assertEquals("Save Split", save.getText());
 
-		// Staging the first resulting part must not create another context or change
-		// the persisted legacy Question.
+		// Staging 68a must not persist the split or duplicate the shared context.
 		assertEquals(1, contextRepository.findByBooklet(booklet).size());
 		assertEquals("68", questionRepository.findById(original.getId()).orElseThrow().getQuestionCode());
+
+		// Capture the final part and commit the complete split.
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
+		assertFalse(save.isDisabled());
 		fireControl(robot, save);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+
+		// Successful split completion returns to the actual Search dialog.
+		waitForDialogShowing(robot, "Search Questions");
 		List<Question> storedQuestions = questionRepository.findAll();
 		Question partA = storedQuestions.stream().filter(question -> "68a".equals(question.getQuestionCode()))
 				.findFirst().orElseThrow();
@@ -665,23 +669,22 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findFirst().orElseThrow();
 		Question reloadedPartC = questionRepository.findById(existingPartC.getId()).orElseThrow();
 
-		// All three parts must reconstruct as one SourceQuestion group.
+		// All three Questions belong to the same SourceQuestion group.
 		assertEquals(sourceQuestion.getId(), partA.getSourceQuestion().getId());
 		assertEquals(sourceQuestion.getId(), partB.getSourceQuestion().getId());
 		assertEquals(sourceQuestion.getId(), reloadedPartC.getSourceQuestion().getId());
 
-		// The exact existing context identity is reused by every member.
+		// Every member must reuse the exact existing shared context.
 		assertEquals(existingContext.getId(), partA.getSharedContext().getId());
 		assertEquals(existingContext.getId(), partB.getSharedContext().getId());
 		assertEquals(existingContext.getId(), reloadedPartC.getSharedContext().getId());
 		assertEquals(PreambleStatus.PRESENT, partA.getSourceQuestion().getPreambleStatus());
 
-		// Reusing the context must not insert a duplicate shared-context entity.
+		// Reuse must not create a duplicate shared-context entity.
 		assertEquals(1, contextRepository.findByBooklet(booklet).size());
 		assertEquals(List.of("68a", "68b", "68c"),
 				storedQuestions.stream().map(Question::getQuestionCode).sorted().toList());
-		fireDialogButton(robot, "Close");
-		WaitForAsyncUtils.waitForFxEvents();
+		closeDialog(robot, "Search Questions");
 	}
 
 	@Test
@@ -701,7 +704,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.35, 0.70, 0.20)), classification, true, null,
 				originalContext, QuestionResponseType.WRITTEN_RESPONSE);
 
-		// Open Search Questions through the real application workflow.
+		// Open Search through the real application workflow.
 		Platform.runLater(() -> {
 			try {
 				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
@@ -710,8 +713,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		waitForDialogShowing(robot, "Search Questions");
 		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
@@ -719,16 +721,16 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findFirst().orElseThrow();
 		robot.interact(() -> subjectBox.setValue(chemistry));
 
-		// Select the Search UI result by its wrapped persistent Question identity.
+		// Select the required Question in the showing Search dialog.
 		selectSearchResult(robot, question.getId());
 		Button recapture = lookup(robot, "#question-search-recapture-preamble", Button.class);
 		assertFalse(recapture.isDisabled());
-		fireControl(robot, recapture);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> !robot.lookup("#question-search-results").tryQuery().isPresent());
 
-		// Recapture should reopen the exam on the page containing the first stored
-		// shared-preamble region rather than leaving the user at page 1.
+		// This closes Search and transfers control to shared-preamble recapture.
+		fireControl(robot, recapture);
+		waitForDialogHidden(robot, "Search Questions");
+
+		// Recapture opens the exam at the stored shared-preamble page.
 		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
 		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
 		Button saveReplacement = lookup(robot, "#save-shared-context", Button.class);
@@ -736,8 +738,8 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("Save Replacement", saveReplacement.getText());
 		TextField sharedContextLabel = lookup(robot, "#shared-context-label", TextField.class);
 
-		// Existing context identity and naming are not editable during source-region
-		// recapture.
+		// Existing context identity and naming remain read-only during region
+		// replacement.
 		assertFalse(sharedContextLabel.isVisible());
 		assertFalse(sharedContextLabel.isManaged());
 		assertEquals("Question 64 preamble", sharedContextLabel.getText());
@@ -747,8 +749,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		CurriculumSelectorPane classificationPane = field(application, "curriculumSelectorPane",
 				CurriculumSelectorPane.class);
 
-		// The Question remains visible as read-only context while only its shared
-		// preamble is being replaced.
+		// The linked Question remains visible as read-only context.
 		assertEquals("64a", questionCode.getText());
 		assertEquals("2", marks.getText());
 		assertTrue(writtenResponse.isSelected());
@@ -760,25 +761,26 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText()
 				.contains("Recapturing shared preamble used by Question 64a"));
 
-		// Starting recapture must leave the persisted original unchanged.
+		// Beginning recapture must not alter the persisted original.
 		SharedQuestionContext beforeReplacement = contextRepository.findByBooklet(booklet).stream()
 				.filter(context -> context.getId() == originalContext.getId()).findFirst().orElseThrow();
 		assertEquals(originalContext.getRegions(), beforeReplacement.getRegions());
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-shared-context-region");
-		fireControl(robot, "#save-shared-context");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+
+		// Saving invokes the completion callback, which immediately reopens the modal
+		// Search dialog. Schedule it so the test thread remains free.
+		fireControlLater(robot, "#save-shared-context");
+		waitForDialogShowing(robot, "Search Questions");
 		SharedQuestionContext replaced = contextRepository.findByBooklet(booklet).stream()
 				.filter(context -> context.getId() == originalContext.getId()).findFirst().orElseThrow();
 		assertEquals(originalContext.getId(), replaced.getId());
 		assertFalse(originalContext.getRegions().equals(replaced.getRegions()));
 		Question reloaded = questionRepository.findById(question.getId()).orElseThrow();
 
-		// The Question must still reference the same shared entity after replacement.
+		// The Question continues to reference the same shared-context identity.
 		assertEquals(originalContext.getId(), reloaded.getSharedContext().getId());
-		fireDialogButton(robot, "Close");
-		WaitForAsyncUtils.waitForFxEvents();
+		closeDialog(robot, "Search Questions");
 	}
 
 	@Override
@@ -800,10 +802,20 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	private void selectSearchResult(FxRobot robot, long questionId) throws Exception {
-		ListView<Object> results = listView(robot, "#question-search-results");
 
-		// Search results are UI-facing wrappers rather than retrieval-service DTOs.
-		// Select by the wrapped Question's persistent identity.
+		// Search Questions is a reusable Dialog. Wait for the actual dialog window
+		// rather than accepting retained nodes from an earlier hidden instance.
+		waitForDialogShowing(robot, "Search Questions");
+		DialogPane searchDialog = showingDialogPane(robot, "Search Questions");
+		Node resultsNode = searchDialog.lookup("#question-search-results");
+		if (!(resultsNode instanceof ListView<?> rawResults)) {
+			throw new AssertionError("Showing Search Questions dialog has no results list");
+		}
+		@SuppressWarnings("unchecked")
+		ListView<Object> results = (ListView<Object>) rawResults;
+
+		// Wait until the showing Search dialog contains the requested persistent
+		// Question, then select that exact result.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == questionId));
 		Object selectedResult = results.getItems().stream()
