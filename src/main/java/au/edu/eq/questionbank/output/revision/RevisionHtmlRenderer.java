@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -14,11 +15,14 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.service.revision.RevisionCorpus;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusNode;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationNode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlan;
+import au.edu.eq.questionbank.service.revision.RevisionQuestionPlacement;
 import au.edu.eq.questionbank.service.revision.RevisionQuestionPresentation;
 
 /**
@@ -77,6 +81,36 @@ public final class RevisionHtmlRenderer {
 			    margin: 2rem 0;
 			}
 
+			.question-type-nav {
+			    display: flex;
+			    flex-wrap: wrap;
+			    gap: 0.75rem;
+			    margin: 1rem 0 2rem;
+			}
+
+			.question-type-nav a {
+			    padding: 0.5rem 0.75rem;
+			    border: 1px solid #c7c9cc;
+			    border-radius: 0.35rem;
+			    background: #ffffff;
+			    font-weight: 700;
+			}
+
+			.question-type-section {
+			    margin: 2rem 0;
+			    scroll-margin-top: 1rem;
+			}
+
+			.question-type-section > h2 {
+			    margin-bottom: 1.25rem;
+			}
+
+			.question-metadata {
+			    margin-top: 1rem;
+			    padding-top: 0.75rem;
+			    border-top: 1px solid #eceff1;
+			}
+
 			.descriptor {
 			    margin-top: 1.5rem;
 			}
@@ -100,12 +134,6 @@ public final class RevisionHtmlRenderer {
 			.question-number {
 			    margin: 0;
 			    font-size: 1.1rem;
-			    font-weight: 700;
-			}
-
-			.question-part,
-			.answer-part {
-			    margin: 1rem 0 0.5rem;
 			    font-weight: 700;
 			}
 
@@ -241,6 +269,7 @@ public final class RevisionHtmlRenderer {
 	private final Map<Long, List<RevisionAnswerAsset>> answerAssetsByQuestionId;
 	private final Map<Long, RevisionSharedContextAsset> sharedContextAssetsByContextId;
 	private final Map<Long, RevisionPresentationNode> presentationNodesByCurriculumNodeId;
+	private final Map<Long, List<CurriculumNode>> currentDescriptorsByQuestionId;
 
 	/**
 	 * Indexes the presentation plan and rendered assets for subsequent HTML
@@ -270,6 +299,7 @@ public final class RevisionHtmlRenderer {
 		answerAssetsByQuestionId = indexAnswerAssets(answerAssets);
 		sharedContextAssetsByContextId = indexSharedContextAssets(sharedContextAssets);
 		presentationNodesByCurriculumNodeId = indexPresentationNodes(presentationPlan);
+		currentDescriptorsByQuestionId = indexCurrentDescriptors(presentationPlan.getSourceCorpus());
 	}
 
 	/**
@@ -364,7 +394,7 @@ public final class RevisionHtmlRenderer {
 	}
 
 	private void appendAnswerContent(StringBuilder html, RevisionQuestionPresentation presentation, Question question,
-			Path outputRoot, Path outputFile) {
+			int displayNumber, Path outputRoot, Path outputFile) {
 		Answer answer = question.getAnswer();
 		String answerText = answer.getAnswerText();
 		if (answerText != null && !answerText.isBlank()) {
@@ -374,8 +404,7 @@ public final class RevisionHtmlRenderer {
 		}
 		List<RevisionAnswerAsset> answerAssets = answerAssetsByQuestionId.getOrDefault(question.getId(), List.of());
 
-		// Refuse to emit an answer with missing images, even when some answer text is
-		// available.
+		// Refuse to emit an incomplete Answer when persisted regions require images.
 		if (answerAssets.size() != answer.getRegions().size()) {
 			throw new IllegalStateException("Expected " + answer.getRegions().size() + " answer assets for question "
 					+ question.getId() + " but found " + answerAssets.size());
@@ -384,11 +413,10 @@ public final class RevisionHtmlRenderer {
 			String source = relativeUrl(outputFile, outputRoot, answerAsset.getRelativePath());
 			String alt;
 			if (presentation.isMultipart()) {
-				alt = "Answer for Question " + presentation.getRevisionNumber() + ", source part "
-						+ question.getQuestionCode() + ", region " + answerAsset.getRegionNumber();
+				alt = "Answer for Question " + displayNumber + ", original Question " + question.getQuestionCode()
+						+ ", region " + answerAsset.getRegionNumber();
 			} else {
-				alt = "Answer for Question " + presentation.getRevisionNumber() + ", part "
-						+ answerAsset.getRegionNumber();
+				alt = "Answer for Question " + displayNumber + ", region " + answerAsset.getRegionNumber();
 			}
 			html.append("""
 					    <img class="answer-image" src="%s" alt="%s">
@@ -396,27 +424,26 @@ public final class RevisionHtmlRenderer {
 		}
 	}
 
-	private void appendDescriptorSection(StringBuilder html, RevisionCorpusNode descriptorNode, int headingLevel,
-			Path outputRoot, Path outputFile) {
-		if (!hasPresentations(descriptorNode)) {
+	private void appendDescriptorPresentationsOfType(StringBuilder html, RevisionCorpusNode descriptorNode,
+			QuestionResponseType responseType, PageQuestionNumberSequence numbers, Path outputRoot, Path outputFile) {
+		List<RevisionQuestionPresentation> matching = presentationsOfType(descriptorNode, responseType);
+		if (matching.isEmpty()) {
 			return;
 		}
-		CurriculumNode descriptor = descriptorNode.getCurriculumNode();
 		html.append("""
 				<section class="curriculum-section descriptor">
-				    <h%d>%s</h%d>
-				""".formatted(headingLevel, escapeText(nodeLabel(descriptor)), headingLevel));
-		appendQuestionPresentations(html, descriptorNode, outputRoot, outputFile);
+				    <h3>%s</h3>
+				""".formatted(escapeText(nodeLabel(descriptorNode.getCurriculumNode()))));
+		for (RevisionQuestionPresentation presentation : matching) {
+			appendQuestionPresentation(html, presentation, numbers.next(), outputRoot, outputFile);
+		}
 		html.append("""
 				</section>
 				""");
 	}
 
 	private void appendPresentationAnswer(StringBuilder html, RevisionQuestionPresentation presentation,
-			Path outputRoot, Path outputFile) {
-
-		// A multipart card has one reveal control, but retains an unavailable message
-		// for each unanswered part.
+			int displayNumber, Path outputRoot, Path outputFile) {
 		boolean anyAnswer = false;
 		for (Question member : presentation.getMembers()) {
 			if (member.hasAnswer()) {
@@ -436,18 +463,13 @@ public final class RevisionHtmlRenderer {
 				    <div class="answer-content">
 				""");
 		for (Question member : presentation.getMembers()) {
-			if (presentation.isMultipart()) {
-				html.append("""
-						    <p class="answer-part">Source part %s</p>
-						""".formatted(escapeText(member.getQuestionCode())));
-			}
 			if (!member.hasAnswer()) {
 				html.append("""
 						    <p class="answer-unavailable">Answer not yet available.</p>
 						""");
 				continue;
 			}
-			appendAnswerContent(html, presentation, member, outputRoot, outputFile);
+			appendAnswerContent(html, presentation, member, displayNumber, outputRoot, outputFile);
 		}
 		html.append("""
 				    </div>
@@ -455,8 +477,45 @@ public final class RevisionHtmlRenderer {
 				""");
 	}
 
+	private void appendPresentationMetadata(StringBuilder html, RevisionQuestionPresentation presentation) {
+		html.append("""
+				<div class="question-metadata">
+				    <p class="source">%s</p>
+				""".formatted(escapeText(sourceText(presentation))));
+		LinkedHashMap<Long, CurriculumNode> descriptors = new LinkedHashMap<>();
+		for (Question member : presentation.getMembers()) {
+			for (CurriculumNode descriptor : currentDescriptorsByQuestionId.getOrDefault(member.getId(), List.of())) {
+				descriptors.putIfAbsent(descriptor.getId(), descriptor);
+			}
+		}
+		if (descriptors.size() == 1) {
+			CurriculumNode descriptor = descriptors.values().iterator().next();
+			html.append("""
+					    <p class="provenance">Current descriptor: %s</p>
+					""".formatted(escapeText(nodeLabel(descriptor))));
+		} else if (descriptors.size() > 1) {
+			List<String> labels = new ArrayList<>();
+			for (CurriculumNode descriptor : descriptors.values()) {
+				labels.add(nodeLabel(descriptor));
+			}
+			html.append("""
+					    <p class="provenance">Current descriptors: %s</p>
+					""".formatted(escapeText(String.join("; ", labels))));
+		}
+		html.append("""
+				</div>
+				""");
+	}
+
+	private void appendPresentationsOfType(StringBuilder html, RevisionCorpusNode node,
+			QuestionResponseType responseType, PageQuestionNumberSequence numbers, Path outputRoot, Path outputFile) {
+		for (RevisionQuestionPresentation presentation : presentationsOfType(node, responseType)) {
+			appendQuestionPresentation(html, presentation, numbers.next(), outputRoot, outputFile);
+		}
+	}
+
 	private void appendQuestionMember(StringBuilder html, RevisionQuestionPresentation presentation, Question question,
-			Path outputRoot, Path outputFile) {
+			int displayNumber, Path outputRoot, Path outputFile) {
 		RevisionQuestionAsset questionAsset = questionAssetsByQuestionId.get(question.getId());
 		if (questionAsset == null) {
 			throw new IllegalStateException(
@@ -466,15 +525,11 @@ public final class RevisionHtmlRenderer {
 		if (presentation.isMultipart()) {
 			html.append("""
 					<section class="question-member">
-					    <p class="question-part">Source part %s</p>
-					""".formatted(escapeText(question.getQuestionCode())));
+					""");
 		}
 		html.append("""
 				    <img class="question-image" src="%s" alt="Question %d">
-				    <p class="source">%s</p>
-				    <p class="provenance">%s</p>
-				""".formatted(questionImageSource, presentation.getRevisionNumber(), escapeText(sourceText(question)),
-				escapeText(provenanceText(question))));
+				""".formatted(questionImageSource, displayNumber));
 		if (presentation.isMultipart()) {
 			html.append("""
 					</section>
@@ -483,7 +538,7 @@ public final class RevisionHtmlRenderer {
 	}
 
 	private void appendQuestionPresentation(StringBuilder html, RevisionQuestionPresentation presentation,
-			Path outputRoot, Path outputFile) {
+			int displayNumber, Path outputRoot, Path outputFile) {
 		String markLabel = presentation.getTotalMarks() == 1 ? "1 mark" : presentation.getTotalMarks() + " marks";
 		html.append("""
 				<article class="question-card" id="question-%d">
@@ -491,32 +546,70 @@ public final class RevisionHtmlRenderer {
 				        <p class="question-number">Question %d</p>
 				        <span class="marks">%s</span>
 				    </div>
-				""".formatted(presentation.getRevisionNumber(), presentation.getRevisionNumber(),
-				escapeText(markLabel)));
+				""".formatted(displayNumber, displayNumber, escapeText(markLabel)));
 
-		// Emit common source material once before the group's ordered question bodies
-		// and answers.
-		appendSharedContext(html, presentation, outputRoot, outputFile);
+		// Shared context remains immediately before the Question material it supports.
+		appendSharedContext(html, presentation, displayNumber, outputRoot, outputFile);
 		for (Question member : presentation.getMembers()) {
-			appendQuestionMember(html, presentation, member, outputRoot, outputFile);
+			appendQuestionMember(html, presentation, member, displayNumber, outputRoot, outputFile);
 		}
-		appendPresentationAnswer(html, presentation, outputRoot, outputFile);
+		appendPresentationAnswer(html, presentation, displayNumber, outputRoot, outputFile);
+
+		// Source and current-curriculum attribution belong after the Question and
+		// Answer presentation rather than interrupting multipart material.
+		appendPresentationMetadata(html, presentation);
 		html.append("""
 				</article>
 				""");
 	}
 
-	private int appendQuestionPresentations(StringBuilder html, RevisionCorpusNode node, Path outputRoot,
-			Path outputFile) {
-		RevisionPresentationNode presentationNode = requirePresentationNode(node);
-		for (RevisionQuestionPresentation presentation : presentationNode.getPresentations()) {
-			appendQuestionPresentation(html, presentation, outputRoot, outputFile);
+	private int appendQuestionTypeSections(StringBuilder html, List<RevisionCorpusNode> bucketNodes,
+			boolean showDescriptorHeadings, Path outputRoot, Path outputFile) {
+		List<QuestionResponseType> visibleTypes = new ArrayList<>();
+		for (QuestionResponseType responseType : List.of(QuestionResponseType.MULTIPLE_CHOICE,
+				QuestionResponseType.WRITTEN_RESPONSE, QuestionResponseType.UNKNOWN)) {
+			if (hasPresentationsOfType(bucketNodes, responseType)) {
+				visibleTypes.add(responseType);
+			}
 		}
-		return presentationNode.getPresentations().size();
+		if (visibleTypes.size() > 1) {
+			html.append("""
+					<nav class="question-type-nav" aria-label="Question types">
+					""");
+			for (QuestionResponseType responseType : visibleTypes) {
+				html.append("""
+						    <a href="#%s">%s</a>
+						""".formatted(questionTypeAnchor(responseType), escapeText(questionTypeLabel(responseType))));
+			}
+			html.append("""
+					</nav>
+					""");
+		}
+		PageQuestionNumberSequence numbers = new PageQuestionNumberSequence();
+		for (QuestionResponseType responseType : visibleTypes) {
+			html.append("""
+					<section class="question-type-section">
+					    <h2 id="%s">%s</h2>
+					""".formatted(questionTypeAnchor(responseType), escapeText(questionTypeLabel(responseType))));
+			if (showDescriptorHeadings) {
+				for (RevisionCorpusNode descriptorNode : bucketNodes) {
+					appendDescriptorPresentationsOfType(html, descriptorNode, responseType, numbers, outputRoot,
+							outputFile);
+				}
+			} else {
+				for (RevisionCorpusNode bucketNode : bucketNodes) {
+					appendPresentationsOfType(html, bucketNode, responseType, numbers, outputRoot, outputFile);
+				}
+			}
+			html.append("""
+					</section>
+					""");
+		}
+		return numbers.count();
 	}
 
-	private void appendSharedContext(StringBuilder html, RevisionQuestionPresentation presentation, Path outputRoot,
-			Path outputFile) {
+	private void appendSharedContext(StringBuilder html, RevisionQuestionPresentation presentation, int displayNumber,
+			Path outputRoot, Path outputFile) {
 		if (!presentation.shouldRenderSharedContext()) {
 			return;
 		}
@@ -528,7 +621,62 @@ public final class RevisionHtmlRenderer {
 		String source = relativeUrl(outputFile, outputRoot, contextAsset.getRelativePath());
 		html.append("""
 				    <img class="shared-context-image" src="%s" alt="Shared context for Question %d">
-				""".formatted(source, presentation.getRevisionNumber()));
+				""".formatted(source, displayNumber));
+	}
+
+	private void appendTopicContent(StringBuilder html, RevisionCorpusNode unitNode, RevisionCorpusNode topicNode,
+			Path outputRoot, Path outputFile) {
+		List<RevisionCorpusNode> children = topicNode.getChildren();
+		if (children.isEmpty()) {
+			html.append("""
+					   <p class="empty-state">No revision questions available for this topic yet.</p>
+					""");
+			return;
+		}
+		CurriculumLevel childLevel = children.getFirst().getCurriculumNode().getLevel();
+		for (RevisionCorpusNode child : children) {
+			if (child.getCurriculumNode().getLevel() != childLevel) {
+				throw new IllegalStateException("Topic corpus children must not mix Subtopic and Descriptor nodes");
+			}
+		}
+		if (childLevel == CurriculumLevel.SUBTOPIC) {
+			html.append("""
+					   <h2>Subtopics</h2>
+					   <ul class="navigation-list">
+					""");
+			for (RevisionCorpusNode subtopicNode : children) {
+				String href = relativeUrl(outputFile, outputRoot,
+						subtopicRelativePath(unitNode, topicNode, subtopicNode));
+				int questionCount = countPresentations(subtopicNode);
+				html.append("""
+						      <li>
+						          <a href="%s">%s</a>
+						          <span class="resource-count">%s</span>
+						      </li>
+						""".formatted(href, escapeText(nodeLabel(subtopicNode.getCurriculumNode())),
+						escapeText(questionCountLabel(questionCount))));
+			}
+			html.append("""
+					   </ul>
+					""");
+			return;
+		}
+		if (childLevel != CurriculumLevel.DESCRIPTOR) {
+			throw new IllegalStateException("Topic corpus children must be Subtopic or Descriptor nodes");
+		}
+		int renderedQuestions;
+		if (presentationPlan.getGroupingMode() == RevisionGroupingMode.SUBTOPIC) {
+
+			// Three-level curricula use the Topic as the practical roll-up page.
+			renderedQuestions = appendQuestionTypeSections(html, List.of(topicNode), false, outputRoot, outputFile);
+		} else {
+			renderedQuestions = appendQuestionTypeSections(html, children, true, outputRoot, outputFile);
+		}
+		if (renderedQuestions == 0) {
+			html.append("""
+					   <p class="empty-state">No revision questions available for this topic yet.</p>
+					""");
+		}
 	}
 
 	private int countPresentations(RevisionCorpusNode node) {
@@ -552,6 +700,15 @@ public final class RevisionHtmlRenderer {
 
 	private boolean hasPresentations(RevisionCorpusNode node) {
 		return !requirePresentationNode(node).getPresentations().isEmpty();
+	}
+
+	private boolean hasPresentationsOfType(List<RevisionCorpusNode> nodes, QuestionResponseType responseType) {
+		for (RevisionCorpusNode node : nodes) {
+			if (!presentationsOfType(node, responseType).isEmpty()) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private Map<Long, List<RevisionAnswerAsset>> indexAnswerAssets(List<RevisionAnswerAsset> assets) {
@@ -582,6 +739,32 @@ public final class RevisionHtmlRenderer {
 			}
 		}
 		return indexed;
+	}
+
+	private Map<Long, List<CurriculumNode>> indexCurrentDescriptors(RevisionCorpus corpus) {
+		Map<Long, LinkedHashMap<Long, CurriculumNode>> mutableIndex = new LinkedHashMap<>();
+		for (RevisionCorpusNode root : corpus.getRootNodes()) {
+			indexCurrentDescriptors(root, mutableIndex);
+		}
+		Map<Long, List<CurriculumNode>> result = new LinkedHashMap<>();
+		for (Map.Entry<Long, LinkedHashMap<Long, CurriculumNode>> entry : mutableIndex.entrySet()) {
+			result.put(entry.getKey(), List.copyOf(entry.getValue().values()));
+		}
+		return Map.copyOf(result);
+	}
+
+	private void indexCurrentDescriptors(RevisionCorpusNode node,
+			Map<Long, LinkedHashMap<Long, CurriculumNode>> index) {
+		if (node.getCurriculumNode().getLevel() == CurriculumLevel.DESCRIPTOR) {
+			CurriculumNode descriptor = node.getCurriculumNode();
+			for (RevisionQuestionPlacement placement : node.getQuestionPlacements()) {
+				index.computeIfAbsent(placement.getQuestion().getId(), _ -> new LinkedHashMap<>())
+						.putIfAbsent(descriptor.getId(), descriptor);
+			}
+		}
+		for (RevisionCorpusNode child : node.getChildren()) {
+			indexCurrentDescriptors(child, index);
+		}
 	}
 
 	private void indexPresentationNode(RevisionPresentationNode node, Map<Long, RevisionPresentationNode> indexed) {
@@ -634,10 +817,36 @@ public final class RevisionHtmlRenderer {
 		return node.getCode() + " " + node.getName();
 	}
 
-	private String provenanceText(Question question) {
-		CurriculumNode originalClassification = question.getClassification();
-		return "Original classification: " + originalClassification.getSyllabusVersion().getName() + " — "
-				+ originalClassification.getCode() + " " + originalClassification.getName();
+	private QuestionResponseType presentationResponseType(RevisionQuestionPresentation presentation) {
+		boolean allMultipleChoice = true;
+		boolean hasWrittenResponse = false;
+		for (Question question : presentation.getMembers()) {
+			QuestionResponseType responseType = question.getResponseType();
+			if (responseType != QuestionResponseType.MULTIPLE_CHOICE) {
+				allMultipleChoice = false;
+			}
+			if (responseType == QuestionResponseType.WRITTEN_RESPONSE) {
+				hasWrittenResponse = true;
+			}
+		}
+		if (allMultipleChoice) {
+			return QuestionResponseType.MULTIPLE_CHOICE;
+		}
+		if (hasWrittenResponse) {
+			return QuestionResponseType.WRITTEN_RESPONSE;
+		}
+		return QuestionResponseType.UNKNOWN;
+	}
+
+	private List<RevisionQuestionPresentation> presentationsOfType(RevisionCorpusNode node,
+			QuestionResponseType responseType) {
+		List<RevisionQuestionPresentation> result = new ArrayList<>();
+		for (RevisionQuestionPresentation presentation : requirePresentationNode(node).getPresentations()) {
+			if (presentationResponseType(presentation) == responseType) {
+				result.add(presentation);
+			}
+		}
+		return List.copyOf(result);
 	}
 
 	private String questionCountLabel(int count) {
@@ -645,6 +854,22 @@ public final class RevisionHtmlRenderer {
 			return "1 revision question";
 		}
 		return count + " revision questions";
+	}
+
+	private String questionTypeAnchor(QuestionResponseType responseType) {
+		return switch (responseType) {
+		case MULTIPLE_CHOICE -> "multiple-choice";
+		case WRITTEN_RESPONSE -> "written-response";
+		case UNKNOWN -> "other-questions";
+		};
+	}
+
+	private String questionTypeLabel(QuestionResponseType responseType) {
+		return switch (responseType) {
+		case MULTIPLE_CHOICE -> "Multiple choice";
+		case WRITTEN_RESPONSE -> "Written response";
+		case UNKNOWN -> "Other questions";
+		};
 	}
 
 	private String relativeUrl(Path outputFile, Path outputRoot, Path targetRelativePath) {
@@ -761,14 +986,19 @@ public final class RevisionHtmlRenderer {
 				escapeText(nodeLabel(unit)), topicHref, escapeText(nodeLabel(topic)), escapeText(nodeLabel(subtopic)),
 				escapeText(corpus.getSubject().getName()), escapeText(corpus.getSyllabusVersion().getName()),
 				escapeText(nodeLabel(subtopic))));
-		appendQuestionPresentations(html, subtopicNode, outputRoot, outputFile);
-		for (RevisionCorpusNode descriptorNode : subtopicNode.getChildren()) {
-			if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
-				throw new IllegalStateException("Subtopic corpus children must be Descriptor nodes");
+		int renderedQuestions;
+		if (presentationPlan.getGroupingMode() == RevisionGroupingMode.SUBTOPIC) {
+			renderedQuestions = appendQuestionTypeSections(html, List.of(subtopicNode), false, outputRoot, outputFile);
+		} else {
+			for (RevisionCorpusNode descriptorNode : subtopicNode.getChildren()) {
+				if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
+					throw new IllegalStateException("Subtopic corpus children must be Descriptor nodes");
+				}
 			}
-			appendDescriptorSection(html, descriptorNode, 2, outputRoot, outputFile);
+			renderedQuestions = appendQuestionTypeSections(html, subtopicNode.getChildren(), true, outputRoot,
+					outputFile);
 		}
-		if (countPresentations(subtopicNode) == 0) {
+		if (renderedQuestions == 0) {
 			html.append("""
 					   <p class="empty-state">No revision questions available for this subtopic yet.</p>
 					""");
@@ -823,64 +1053,6 @@ public final class RevisionHtmlRenderer {
 				</html>
 				""");
 		Files.writeString(outputFile, html.toString());
-	}
-
-	private void appendTopicContent(StringBuilder html, RevisionCorpusNode unitNode, RevisionCorpusNode topicNode,
-			Path outputRoot, Path outputFile) {
-
-		// Three-level topics contain descriptor cards; four-level topics link to
-		// separate subtopic pages.
-		List<RevisionCorpusNode> children = topicNode.getChildren();
-		if (children.isEmpty()) {
-			html.append("""
-					   <p class="empty-state">No revision questions available for this topic yet.</p>
-					""");
-		} else {
-			CurriculumLevel childLevel = children.getFirst().getCurriculumNode().getLevel();
-
-			// Use the first child to select the layout, then verify every sibling has that
-			// same shape.
-			if (childLevel == CurriculumLevel.SUBTOPIC) {
-				html.append("""
-						   <h2>Subtopics</h2>
-						   <ul class="navigation-list">
-						""");
-				for (RevisionCorpusNode subtopicNode : children) {
-					if (subtopicNode.getCurriculumNode().getLevel() != CurriculumLevel.SUBTOPIC) {
-						throw new IllegalStateException(
-								"Topic corpus children must not mix Subtopic and Descriptor nodes");
-					}
-					String href = relativeUrl(outputFile, outputRoot,
-							subtopicRelativePath(unitNode, topicNode, subtopicNode));
-					int questionCount = countPresentations(subtopicNode);
-					html.append("""
-							      <li>
-							          <a href="%s">%s</a>
-							          <span class="resource-count">%s</span>
-							      </li>
-							""".formatted(href, escapeText(nodeLabel(subtopicNode.getCurriculumNode())),
-							escapeText(questionCountLabel(questionCount))));
-				}
-				html.append("""
-						   </ul>
-						""");
-			} else if (childLevel == CurriculumLevel.DESCRIPTOR) {
-				for (RevisionCorpusNode descriptorNode : children) {
-					if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
-						throw new IllegalStateException(
-								"Topic corpus children must not mix Subtopic and Descriptor nodes");
-					}
-					appendDescriptorSection(html, descriptorNode, 2, outputRoot, outputFile);
-				}
-				if (countPresentations(topicNode) == 0) {
-					html.append("""
-							   <p class="empty-state">No revision questions available for this topic yet.</p>
-							""");
-				}
-			} else {
-				throw new IllegalStateException("Topic corpus children must be Subtopic or Descriptor nodes");
-			}
-		}
 	}
 
 	private void renderUnitPage(RevisionCorpus corpus, RevisionCorpusNode unitNode, Path outputRoot, Path outputFile)
@@ -950,10 +1122,21 @@ public final class RevisionHtmlRenderer {
 		return node;
 	}
 
-	private String sourceText(Question question) {
-		Exam exam = question.getExam();
+	private String sourceText(RevisionQuestionPresentation presentation) {
+		Question first = presentation.getMembers().getFirst();
+		Exam exam = first.getExam();
+		List<String> questionCodes = new ArrayList<>();
+		for (Question member : presentation.getMembers()) {
+			questionCodes.add(member.getQuestionCode());
+		}
+		String questionLabel;
+		if (questionCodes.size() == 1) {
+			questionLabel = "Question " + questionCodes.getFirst();
+		} else {
+			questionLabel = "Questions " + String.join(", ", questionCodes);
+		}
 		return "Source: " + exam.getProvider().getName() + ", " + exam.getYear() + ", " + exam.getName() + ", "
-				+ question.getBooklet().getName() + ", Question " + question.getQuestionCode();
+				+ first.getBooklet().getName() + ", " + questionLabel;
 	}
 
 	private Path subtopicRelativePath(RevisionCorpusNode unitNode, RevisionCorpusNode topicNode,
@@ -985,5 +1168,18 @@ public final class RevisionHtmlRenderer {
 		Path stylesheet = outputRoot.resolve(Path.of("assets", "revision.css"));
 		Files.createDirectories(stylesheet.getParent());
 		Files.writeString(stylesheet, STYLESHEET);
+	}
+
+	private static final class PageQuestionNumberSequence {
+
+		private int nextNumber = 1;
+
+		private int count() {
+			return nextNumber - 1;
+		}
+
+		private int next() {
+			return nextNumber++;
+		}
 	}
 }

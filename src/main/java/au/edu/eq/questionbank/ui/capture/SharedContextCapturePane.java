@@ -361,6 +361,7 @@ public final class SharedContextCapturePane extends VBox {
 		refreshRegionPreviews();
 		contextCaptureHeadingLabel.setText("Recapture shared context");
 		saveContextButton.setText("Save Replacement");
+
 		// Stored labels are implementation metadata and may be opaque for automatically
 		// captured MCQ contexts, so do not expose them as the edit description.
 		statusLabel.setText("Recapturing: " + context.getLabel());

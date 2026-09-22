@@ -18,6 +18,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
@@ -60,6 +61,27 @@ class ScormExportDialogTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(destination, dialog.getDestinationParent());
 		assertFalse(exportButton.isDisabled());
+	}
+
+	@Test
+	void descriptorGroupingIsOfferedOnlyWhenSubjectHasCompleteCoverage() throws Exception {
+		Subject chemistry = new Subject(1, "Chemistry");
+		Subject physics = new Subject(2, "Physics");
+		ScormExportDialog[] holder = new ScormExportDialog[1];
+		org.testfx.api.FxToolkit.setupFixture(() -> holder[0] = new ScormExportDialog(stage,
+				List.of(chemistry, physics), chemistry, subject -> subject.equals(chemistry)));
+		ScormExportDialog dialog = holder[0];
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> subjectBox = (ComboBox<Subject>) dialog.getDialogPane().lookup("#scorm-export-subject");
+		@SuppressWarnings("unchecked")
+		ComboBox<RevisionGroupingMode> groupingBox = (ComboBox<RevisionGroupingMode>) dialog.getDialogPane()
+				.lookup("#scorm-export-grouping");
+		assertEquals(List.of(RevisionGroupingMode.DESCRIPTOR, RevisionGroupingMode.SUBTOPIC), groupingBox.getItems());
+		assertEquals(RevisionGroupingMode.DESCRIPTOR, dialog.getGroupingMode());
+		org.testfx.api.FxToolkit.setupFixture(() -> subjectBox.setValue(physics));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(List.of(RevisionGroupingMode.SUBTOPIC), groupingBox.getItems());
+		assertEquals(RevisionGroupingMode.SUBTOPIC, dialog.getGroupingMode());
 	}
 
 	@Start

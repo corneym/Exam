@@ -34,11 +34,12 @@ public final class RevisionPresentationNode {
 			}
 		}
 		CurriculumLevel level = curriculumNode.getLevel();
-
-		// Grouping must retain the same classification boundaries used by corpus
-		// placements.
-		if (level != CurriculumLevel.SUBTOPIC && level != CurriculumLevel.DESCRIPTOR && !presentations.isEmpty()) {
-			throw new IllegalArgumentException("Only Subtopic and Descriptor nodes may contain presentations");
+		/*
+		 * Descriptor mode uses Descriptor buckets. Subtopic mode uses Subtopic buckets,
+		 * except for three-level curricula where Topic is the practical roll-up bucket.
+		 */
+		if (level == CurriculumLevel.UNIT && !presentations.isEmpty()) {
+			throw new IllegalArgumentException("Unit nodes may not contain question presentations");
 		}
 		for (RevisionQuestionPresentation presentation : presentations) {
 			if (presentation == null) {
@@ -72,7 +73,7 @@ public final class RevisionPresentationNode {
 	}
 
 	/**
-	 * Returns student-facing questions assigned directly to this node.
+	 * Returns student-facing questions assigned to this final output bucket.
 	 *
 	 * @return immutable ordered presentations, excluding descendants
 	 */

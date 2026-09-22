@@ -13,13 +13,27 @@ public final class RevisionPresentationPlan {
 
 	private final RevisionCorpus sourceCorpus;
 	private final List<RevisionPresentationNode> rootNodes;
+	private final RevisionGroupingMode groupingMode;
 
+	/*
+	 * Retain the existing package-level constructor for tests or collaborators that
+	 * construct a presentation plan directly. Existing plans represented Descriptor
+	 * presentation semantics.
+	 */
 	RevisionPresentationPlan(RevisionCorpus sourceCorpus, List<RevisionPresentationNode> rootNodes) {
+		this(sourceCorpus, rootNodes, RevisionGroupingMode.DESCRIPTOR);
+	}
+
+	RevisionPresentationPlan(RevisionCorpus sourceCorpus, List<RevisionPresentationNode> rootNodes,
+			RevisionGroupingMode groupingMode) {
 		if (sourceCorpus == null) {
 			throw new NullPointerException("sourceCorpus");
 		}
 		if (rootNodes == null) {
 			throw new NullPointerException("rootNodes");
+		}
+		if (groupingMode == null) {
+			throw new NullPointerException("groupingMode");
 		}
 		for (RevisionPresentationNode rootNode : rootNodes) {
 			if (rootNode == null) {
@@ -34,6 +48,16 @@ public final class RevisionPresentationPlan {
 		}
 		this.sourceCorpus = sourceCorpus;
 		this.rootNodes = List.copyOf(rootNodes);
+		this.groupingMode = groupingMode;
+	}
+
+	/**
+	 * Returns the grouping mode used for this generated presentation plan.
+	 *
+	 * @return transient export grouping mode
+	 */
+	public RevisionGroupingMode getGroupingMode() {
+		return groupingMode;
 	}
 
 	/**
@@ -43,6 +67,10 @@ public final class RevisionPresentationPlan {
 	 */
 	public List<RevisionPresentationNode> getRootNodes() {
 		return rootNodes;
+	}
+
+	public RevisionCorpus getSourceCorpus() {
+		return sourceCorpus;
 	}
 
 	/**

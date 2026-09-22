@@ -55,9 +55,13 @@ public final class RevisionQuestionPresentation {
 	}
 
 	/**
-	 * Returns the current curriculum bucket containing this presentation.
+	 * Returns the current curriculum output bucket containing this presentation.
+	 * <p>
+	 * The bucket is normally a Subtopic or Descriptor. A Topic is used only when a
+	 * three-level curriculum has Descriptor children directly beneath the Topic and
+	 * Subtopic grouping is requested.
 	 *
-	 * @return current Subtopic or Descriptor
+	 * @return current Topic, Subtopic or Descriptor output bucket
 	 */
 	public CurriculumNode getCurrentNode() {
 		return currentNode;

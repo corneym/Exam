@@ -377,7 +377,8 @@ class LegacyQuestionSplitServiceTest {
 	void splitRejectsNoPreambleSourceGroupWhoseMembersUseSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
-		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion, SharedContextStatus.NONE);
+		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion,
+				SharedContextStatus.NONE);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
 		SharedQuestionContext sharedContext = contextRepository.save(booklet, "Existing shared material",
 				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
@@ -420,7 +421,8 @@ class LegacyQuestionSplitServiceTest {
 	void splitReusesCompatibleExistingSourceQuestion() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
-		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion, SharedContextStatus.NONE);
+		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion,
+				SharedContextStatus.NONE);
 
 		// An existing sibling establishes that SourceQuestion 3 is already a real
 		// multipart group. It deliberately has no shared context.

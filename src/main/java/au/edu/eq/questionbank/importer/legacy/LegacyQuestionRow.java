@@ -6,14 +6,15 @@ package au.edu.eq.questionbank.importer.legacy;
  * Subject, exam provider and syllabus version are import context and therefore
  * are not properties of an individual workbook row.
  *
- * @param year                    the positive examination year
- * @param paperCode               {@code MCQ}, {@code 1}, or {@code 2}
- * @param questionCode            the question identifier, retained as text
- * @param marks                   the positive mark value
- * @param classificationCode      the source syllabus classification code
- * @param answer                  optional answer text supplied by the workbook
- * @param sharedContextCaptureRequired whether shared or introductory material should
- *                                be included during region capture
+ * @param year                         the positive examination year
+ * @param paperCode                    {@code MCQ}, {@code 1}, or {@code 2}
+ * @param questionCode                 the question identifier, retained as text
+ * @param marks                        the positive mark value
+ * @param classificationCode           the source syllabus classification code
+ * @param answer                       optional answer text supplied by the
+ *                                     workbook
+ * @param sharedContextCaptureRequired whether shared or introductory material
+ *                                     should be included during region capture
  */
 public record LegacyQuestionRow(int year, String paperCode, String questionCode, int marks, String classificationCode,
 		String answer, boolean sharedContextCaptureRequired) {
@@ -21,14 +22,15 @@ public record LegacyQuestionRow(int year, String paperCode, String questionCode,
 	/**
 	 * Validates a legacy question row and converts blank answer text to null.
 	 *
-	 * @param year                    the positive examination year
-	 * @param paperCode               {@code MCQ}, {@code 1}, or {@code 2}
-	 * @param questionCode            the question identifier, retained as text
-	 * @param marks                   the positive mark value
-	 * @param classificationCode      the source syllabus classification code
-	 * @param answer                  optional answer text supplied by the workbook
-	 * @param sharedContextCaptureRequired whether shared or introductory material should
-	 *                                be included during region capture
+	 * @param year                         the positive examination year
+	 * @param paperCode                    {@code MCQ}, {@code 1}, or {@code 2}
+	 * @param questionCode                 the question identifier, retained as text
+	 * @param marks                        the positive mark value
+	 * @param classificationCode           the source syllabus classification code
+	 * @param answer                       optional answer text supplied by the
+	 *                                     workbook
+	 * @param sharedContextCaptureRequired whether shared or introductory material
+	 *                                     should be included during region capture
 	 */
 	public LegacyQuestionRow {
 		if (year < 1) {

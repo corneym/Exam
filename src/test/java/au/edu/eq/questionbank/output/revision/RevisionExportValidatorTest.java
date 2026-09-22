@@ -57,6 +57,29 @@ class RevisionExportValidatorTest {
 	}
 
 	@Test
+	void acceptsLocalFragmentReferenceWhenTargetExists() throws Exception {
+		Fixture fixture = new Fixture();
+		Path root = tempDir.resolve("export");
+		Files.createDirectories(root);
+		Path index = root.resolve("index.html");
+		Files.writeString(index, """
+				<!DOCTYPE html>
+				<html>
+				<body>
+				    <nav>
+				        <a href="#multiple-choice">Multiple choice</a>
+				    </nav>
+				    <section id="multiple-choice">
+				        <h2>Multiple choice</h2>
+				    </section>
+				</body>
+				</html>
+				""");
+		new RevisionExportValidator().validate(root, fixture.emptyCorpus, List.of(index), List.of(), List.of(),
+				List.of());
+	}
+
+	@Test
 	void rejectsAbsoluteReference() throws Exception {
 		Fixture fixture = new Fixture();
 		Path root = tempDir.resolve("export");

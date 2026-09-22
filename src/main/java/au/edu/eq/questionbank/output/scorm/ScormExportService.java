@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.output.revision.RevisionExportProgressListener;
 import au.edu.eq.questionbank.output.revision.RevisionExportRequest;
 import au.edu.eq.questionbank.output.revision.RevisionExportResult;
@@ -60,25 +61,6 @@ public final class ScormExportService {
 		this.zipWriter = zipWriter;
 	}
 
-	private List<Path> collectContentFiles(Path revisionRoot) throws IOException {
-		Path root = revisionRoot.toAbsolutePath().normalize();
-		try (Stream<Path> paths = Files.walk(root)) {
-			return paths.filter(Files::isRegularFile).map(root::relativize)
-					.sorted(Comparator.comparing(this::portablePath)).toList();
-		}
-	}
-
-	private void deleteRecursively(Path root) throws IOException {
-		if (!Files.exists(root)) {
-			return;
-		}
-		try (Stream<Path> paths = Files.walk(root)) {
-			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-				Files.deleteIfExists(path);
-			}
-		}
-	}
-
 	/**
 	 * Generates and publishes a SCORM package without progress notifications.
 	 *
@@ -124,8 +106,17 @@ public final class ScormExportService {
 		try {
 			Path revisionRoot = workspace.resolve("revision");
 			progress.update("Generating revision content...", 0, 0);
-			RevisionExportResult revisionResult = revisionExportService
-					.export(new RevisionExportRequest(request.getSubject(), revisionRoot), progress);
+
+			// SCORM must use exactly the same grouping semantics as the static HTML
+			// revision site it packages.
+			RevisionExportRequest revisionRequest;
+			if (request.hasGroupingMode()) {
+				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot,
+						request.getGroupingMode());
+			} else {
+				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot);
+			}
+			RevisionExportResult revisionResult = revisionExportService.export(revisionRequest, progress);
 
 			// Inventory learning content before adding schemas and the manifest, which are
 			// package infrastructure.
@@ -160,6 +151,36 @@ public final class ScormExportService {
 				} else {
 					throw cleanupException;
 				}
+			}
+		}
+	}
+
+	/**
+	 * Returns whether Descriptor grouping is available for the Subject's current
+	 * revision corpus.
+	 *
+	 * @param subject subject being considered for SCORM export
+	 * @return true when every renderable placement has Descriptor coverage
+	 */
+	public boolean isDescriptorGroupingAvailable(Subject subject) {
+		return revisionExportService.isDescriptorGroupingAvailable(subject);
+	}
+
+	private List<Path> collectContentFiles(Path revisionRoot) throws IOException {
+		Path root = revisionRoot.toAbsolutePath().normalize();
+		try (Stream<Path> paths = Files.walk(root)) {
+			return paths.filter(Files::isRegularFile).map(root::relativize)
+					.sorted(Comparator.comparing(this::portablePath)).toList();
+		}
+	}
+
+	private void deleteRecursively(Path root) throws IOException {
+		if (!Files.exists(root)) {
+			return;
+		}
+		try (Stream<Path> paths = Files.walk(root)) {
+			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+				Files.deleteIfExists(path);
 			}
 		}
 	}

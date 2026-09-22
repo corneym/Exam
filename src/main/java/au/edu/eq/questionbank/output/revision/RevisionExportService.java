@@ -9,6 +9,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.revision.RevisionCorpus;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlan;
@@ -119,7 +120,16 @@ public final class RevisionExportService {
 		progress.update("Building revision corpus...", 0, 0);
 		RevisionCorpus corpus = corpusBuilder.build(request.getSubject());
 		progress.update("Planning revision presentation...", 0, 0);
-		RevisionPresentationPlan presentationPlan = presentationPlanner.plan(corpus);
+		/*
+		 * Legacy/internal callers may still use automatic safe grouping. New UI exports
+		 * carry the user's explicit choice.
+		 */
+		RevisionPresentationPlan presentationPlan;
+		if (request.hasGroupingMode()) {
+			presentationPlan = presentationPlanner.plan(corpus, request.getGroupingMode());
+		} else {
+			presentationPlan = presentationPlanner.plan(corpus);
+		}
 		boolean promoted = false;
 		try {
 			Files.createDirectory(staging);
@@ -153,6 +163,24 @@ public final class RevisionExportService {
 				deleteRecursively(staging);
 			}
 		}
+	}
+
+	/**
+	 * Returns whether the Subject's current renderable revision corpus has complete
+	 * Descriptor-level coverage.
+	 * <p>
+	 * This is an export-time capability check. It does not alter classification or
+	 * mapping data.
+	 *
+	 * @param subject subject being considered for export
+	 * @return true when Descriptor grouping may safely be offered
+	 */
+	public boolean isDescriptorGroupingAvailable(Subject subject) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		RevisionCorpus corpus = corpusBuilder.build(subject);
+		return presentationPlanner.isDescriptorGroupingAvailable(corpus);
 	}
 
 	private void deleteRecursively(Path root) throws IOException {

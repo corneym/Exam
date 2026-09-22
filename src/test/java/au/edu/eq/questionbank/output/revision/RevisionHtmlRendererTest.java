@@ -19,9 +19,10 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -38,12 +39,58 @@ import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionSer
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpus;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
 class RevisionHtmlRendererTest {
 
 	@TempDir
 	Path tempDir;
+
+	@Test
+	void descriptorModeRendersDescriptorHeadingInsideSubtopicPage() throws Exception {
+		Fixture fixture = new Fixture();
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.nestedDescriptor)));
+		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
+				Path.of("assets", "questions", "question-2.png"));
+		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, RevisionGroupingMode.DESCRIPTOR,
+				List.of(questionAsset), List.of());
+		Path outputRoot = tempDir.resolve("descriptor-grouping-output");
+		renderer.render(corpus, outputRoot);
+		Path subtopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20", "subtopic-21.html"));
+		String html = Files.readString(subtopicFile);
+
+		// Descriptor grouping keeps the Descriptor as a visible student-facing section.
+		assertTrue(html.contains("2.1.1.1 Nested descriptor"));
+		assertTrue(html.contains("question-2.png"));
+	}
+
+	@Test
+	void displayedQuestionNumberingRestartsOnEachQuestionPage() throws Exception {
+		Fixture fixture = new Fixture();
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.answeredQuestion, fixture.directDescriptor),
+						new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.nestedDescriptor)));
+		RevisionQuestionAsset topicAsset = new RevisionQuestionAsset(fixture.answeredQuestion,
+				Path.of("assets", "questions", "question-1.png"));
+		RevisionQuestionAsset subtopicAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
+				Path.of("assets", "questions", "question-2.png"));
+		RevisionAnswerAsset answerAsset = new RevisionAnswerAsset(fixture.answeredQuestion, fixture.answerRegion, 1,
+				Path.of("assets", "answers", "question-1-answer-01.png"));
+		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, RevisionGroupingMode.SUBTOPIC,
+				List.of(topicAsset, subtopicAsset), List.of(answerAsset));
+		Path outputRoot = tempDir.resolve("page-numbering-output");
+		renderer.render(corpus, outputRoot);
+		Path topicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-11.html"));
+		Path subtopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20", "subtopic-21.html"));
+		String topicHtml = Files.readString(topicFile);
+		String subtopicHtml = Files.readString(subtopicFile);
+		assertTrue(topicHtml.contains("id=\"question-1\""));
+		assertFalse(topicHtml.contains("id=\"question-2\""));
+		assertTrue(subtopicHtml.contains("id=\"question-1\""));
+		assertFalse(subtopicHtml.contains("id=\"question-2\""));
+	}
 
 	@Test
 	void omitsDescriptorSectionWhenItHasNoRenderableQuestions() throws Exception {
@@ -60,7 +107,7 @@ class RevisionHtmlRendererTest {
 		String html = Files.readString(subtopicFile);
 		assertTrue(html.contains("2.1.1 Subtopic classification"));
 		assertTrue(html.contains("question-2.png"));
-		assertFalse(html.contains("2.1.1.1 Nested descriptor"));
+		assertFalse(html.contains("<h3>2.1.1.1 Nested descriptor</h3>"));
 		assertFalse(html.contains("No revision questions available yet."));
 	}
 
@@ -82,6 +129,43 @@ class RevisionHtmlRendererTest {
 				_ -> List.of(new QuestionApplicabilityMatch(fixture.answeredQuestion, fixture.directDescriptor)));
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, List.of(), List.of());
 		assertThrows(IllegalStateException.class, () -> renderer.renderTopicPages(corpus, tempDir.resolve("output")));
+	}
+
+	@Test
+	void rendersMcqBeforeWrittenResponseWithSelectableSections() throws Exception {
+		Fixture fixture = new Fixture();
+		QuestionRegion region = new QuestionRegion(fixture.booklet, 1, 0.0, 0.0, 1.0, 1.0);
+		Question written = new Question(40, fixture.booklet, "1", "", 2, List.of(region), fixture.historicalDescriptor,
+				false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+		Question multipleChoice = new Question(41, fixture.booklet, "9", "", 1, List.of(region),
+				fixture.historicalDescriptor, false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		RevisionCorpus corpus = fixture
+				.createCorpus(_ -> List.of(new QuestionApplicabilityMatch(written, fixture.nestedDescriptor),
+						new QuestionApplicabilityMatch(multipleChoice, fixture.nestedDescriptor)));
+		RevisionQuestionAsset writtenAsset = new RevisionQuestionAsset(written,
+				Path.of("assets", "questions", "question-40.png"));
+		RevisionQuestionAsset mcqAsset = new RevisionQuestionAsset(multipleChoice,
+				Path.of("assets", "questions", "question-41.png"));
+		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, RevisionGroupingMode.SUBTOPIC,
+				List.of(writtenAsset, mcqAsset), List.of());
+		Path outputRoot = tempDir.resolve("response-order-output");
+		renderer.render(corpus, outputRoot);
+		Path subtopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20", "subtopic-21.html"));
+		String html = Files.readString(subtopicFile);
+		int mcqHeading = html.indexOf("id=\"multiple-choice\"");
+		int mcqQuestion = html.indexOf("question-41.png");
+		int writtenHeading = html.indexOf("id=\"written-response\"");
+		int writtenQuestion = html.indexOf("question-40.png");
+		assertTrue(mcqHeading >= 0);
+		assertTrue(mcqQuestion > mcqHeading);
+		assertTrue(writtenHeading > mcqQuestion);
+		assertTrue(writtenQuestion > writtenHeading);
+		assertTrue(html.contains("href=\"#multiple-choice\""));
+		assertTrue(html.contains("href=\"#written-response\""));
+
+		// The MCQ is displayed first even though its original source code is later.
+		assertTrue(html.contains("id=\"question-1\""));
+		assertTrue(html.contains("id=\"question-2\""));
 	}
 
 	@Test
@@ -117,8 +201,9 @@ class RevisionHtmlRendererTest {
 		assertEquals(1, countOccurrences(html, "<summary>Reveal answer</summary>"));
 		assertTrue(html.contains("Question 1"));
 		assertTrue(html.contains("5 marks"));
-		assertTrue(html.contains("Source part 24a"));
-		assertTrue(html.contains("Source part 24b"));
+		assertFalse(html.contains("Source part 24a"));
+		assertFalse(html.contains("Source part 24b"));
+		assertTrue(html.contains("Questions 24a, 24b"));
 		assertTrue(html.contains("question-4.png"));
 		assertTrue(html.contains("question-5.png"));
 		assertTrue(html.contains("Answer A"));
@@ -213,10 +298,35 @@ class RevisionHtmlRendererTest {
 		assertTrue(html.contains("2 marks"));
 		assertTrue(html.contains("1 mark"));
 		assertTrue(html.contains("Answer not yet available."));
-		assertTrue(html.contains("Original classification: 2019"));
+		assertFalse(html.contains("Original classification"));
+		assertTrue(html.contains("Current descriptor: 1.1.1 Direct descriptor"));
 		assertFalse(html.contains("id=\"question-3\""));
 		assertFalse(html.contains("Question 9"));
 		assertTrue(Files.isRegularFile(outputRoot.resolve(Path.of("assets", "revision.css"))));
+	}
+
+	@Test
+	void subtopicModeSuppressesDescriptorHeadingAndRendersQuestionDirectly() throws Exception {
+		Fixture fixture = new Fixture();
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.nestedDescriptor)));
+		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
+				Path.of("assets", "questions", "question-2.png"));
+		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, RevisionGroupingMode.SUBTOPIC,
+				List.of(questionAsset), List.of());
+		Path outputRoot = tempDir.resolve("subtopic-grouping-output");
+		renderer.render(corpus, outputRoot);
+		Path subtopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20", "subtopic-21.html"));
+		String html = Files.readString(subtopicFile);
+
+		// Subtopic grouping rolls Descriptor Questions into the parent page.
+		assertTrue(html.contains("2.1.1 Subtopic classification"));
+		assertTrue(html.contains("question-2.png"));
+
+		// Subtopic grouping suppresses Descriptor sections, while still allowing the
+		// current Descriptor to appear as Question metadata.
+		assertFalse(html.contains("<h3>2.1.1.1 Nested descriptor</h3>"));
+		assertTrue(html.contains("Current descriptor: 2.1.1.1 Nested descriptor"));
 	}
 
 	private int countOccurrences(String text, String target) {
@@ -295,6 +405,13 @@ class RevisionHtmlRendererTest {
 				List<RevisionAnswerAsset> answerAssets, List<RevisionSharedContextAsset> sharedContextAssets) {
 			return new RevisionHtmlRenderer(new RevisionPresentationPlanner().plan(corpus), questionAssets,
 					answerAssets, sharedContextAssets);
+		}
+
+		private RevisionHtmlRenderer createRenderer(RevisionCorpus corpus, RevisionGroupingMode groupingMode,
+				List<RevisionQuestionAsset> questionAssets, List<RevisionAnswerAsset> answerAssets) {
+			RevisionPresentationPlanner planner = new RevisionPresentationPlanner();
+			return new RevisionHtmlRenderer(planner.plan(corpus, groupingMode), questionAssets, answerAssets,
+					List.of());
 		}
 	}
 }

@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.output.scorm;
 import java.nio.file.Path;
 
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 
 /**
  * Request to export one Subject's revision corpus as a SCORM ZIP.
@@ -11,15 +12,26 @@ public final class ScormExportRequest {
 
 	private final Subject subject;
 	private final Path destination;
+	private final RevisionGroupingMode groupingMode;
 
 	/**
-	 * Creates a request for one Subject and final ZIP destination.
+	 * Creates a request using automatic safe revision grouping.
 	 *
-	 * @param subject     the Subject whose current revision corpus will be exported
-	 * @param destination the final SCORM ZIP path
-	 * @throws NullPointerException if either argument is null
+	 * @param subject     Subject whose revision corpus will be exported
+	 * @param destination final SCORM ZIP path
 	 */
 	public ScormExportRequest(Subject subject, Path destination) {
+		this(subject, destination, null);
+	}
+
+	/**
+	 * Creates a request with an explicit student-facing grouping mode.
+	 *
+	 * @param subject      Subject whose revision corpus will be exported
+	 * @param destination  final SCORM ZIP path
+	 * @param groupingMode requested revision grouping mode
+	 */
+	public ScormExportRequest(Subject subject, Path destination, RevisionGroupingMode groupingMode) {
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
@@ -28,23 +40,25 @@ public final class ScormExportRequest {
 		}
 		this.subject = subject;
 		this.destination = destination;
+		this.groupingMode = groupingMode;
 	}
 
-	/**
-	 * Returns the requested final ZIP destination.
-	 *
-	 * @return the destination path
-	 */
 	public Path getDestination() {
 		return destination;
 	}
 
-	/**
-	 * Returns the Subject whose current revision corpus will be exported.
-	 *
-	 * @return the Subject to export
-	 */
+	public RevisionGroupingMode getGroupingMode() {
+		if (groupingMode == null) {
+			throw new IllegalStateException("SCORM export request does not specify a grouping mode");
+		}
+		return groupingMode;
+	}
+
 	public Subject getSubject() {
 		return subject;
+	}
+
+	public boolean hasGroupingMode() {
+		return groupingMode != null;
 	}
 }

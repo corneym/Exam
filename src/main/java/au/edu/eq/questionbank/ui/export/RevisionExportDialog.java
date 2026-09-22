@@ -3,8 +3,10 @@ package au.edu.eq.questionbank.ui.export;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Predicate;
 
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
@@ -19,8 +21,8 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
 
 /**
- * Collects the Subject and destination parent directory for a static revision
- * HTML export.
+ * Collects the Subject, grouping depth and destination for revision HTML
+ * export.
  */
 public final class RevisionExportDialog extends Dialog<ButtonType> {
 
@@ -28,27 +30,44 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 8;
 	private static final int FORM_PADDING = 10;
-	private final ComboBox<Subject> subjectBox = new ComboBox<Subject>();
+	private final ComboBox<Subject> subjectBox = new ComboBox<>();
+	private final ComboBox<RevisionGroupingMode> groupingBox = new ComboBox<>();
 	private final TextField destinationField = new TextField();
+	private final Predicate<Subject> descriptorGroupingAvailable;
 	private Path destinationParent;
 	private final Button exportButton;
 
 	/**
-	 * Creates the subject and destination chooser for a revision HTML export.
-	 *
-	 * @param owner          window owning the dialog
-	 * @param subjects       available export subjects
-	 * @param defaultSubject initial subject selection, or null
+	 * Creates a safe legacy-compatible dialog. Without an eligibility provider,
+	 * only Subtopic grouping is offered.
 	 */
 	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
+		this(owner, subjects, defaultSubject, _ -> false);
+	}
+
+	/**
+	 * Creates the revision export chooser.
+	 *
+	 * @param owner                       owning window
+	 * @param subjects                    available Subjects
+	 * @param defaultSubject              initially selected Subject
+	 * @param descriptorGroupingAvailable determines whether Descriptor grouping may
+	 *                                    be offered for a Subject
+	 */
+	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject,
+			Predicate<Subject> descriptorGroupingAvailable) {
 		if (subjects == null) {
 			throw new NullPointerException("subjects");
+		}
+		if (descriptorGroupingAvailable == null) {
+			throw new NullPointerException("descriptorGroupingAvailable");
 		}
 		for (Subject subject : subjects) {
 			if (subject == null) {
 				throw new NullPointerException("subjects contains null");
 			}
 		}
+		this.descriptorGroupingAvailable = descriptorGroupingAvailable;
 		setTitle("Export Revision HTML");
 		setHeaderText("Create a student revision website");
 		initOwner(owner);
@@ -58,9 +77,9 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		subjectBox.setPromptText("Select subject");
 		subjectBox.getItems().setAll(subjects);
 		subjectBox.setMaxWidth(Double.MAX_VALUE);
-		if (defaultSubject != null && subjectBox.getItems().contains(defaultSubject)) {
-			subjectBox.setValue(defaultSubject);
-		}
+		groupingBox.setId("revision-export-grouping");
+		groupingBox.setPromptText("Select grouping");
+		groupingBox.setMaxWidth(Double.MAX_VALUE);
 		destinationField.setId("revision-export-destination");
 		destinationField.setEditable(false);
 		destinationField.setPromptText("Choose destination folder");
@@ -74,30 +93,35 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
 		grid.add(subjectBox, 1, 0);
-		grid.add(new Label("Destination parent:"), 0, 1);
-		grid.add(destinationBox, 1, 1);
+		grid.add(new Label("Group questions by:"), 0, 1);
+		grid.add(groupingBox, 1, 1);
+		grid.add(new Label("Destination parent:"), 0, 2);
+		grid.add(destinationBox, 1, 2);
 		getDialogPane().setContent(grid);
 		exportButton = (Button) getDialogPane().lookupButton(exportButtonType);
 		exportButton.setId("revision-export-start");
 		exportButton.setDisable(true);
-		subjectBox.valueProperty().addListener((_, _, _) -> updateExportButton(exportButton));
-		updateExportButton(exportButton);
+		subjectBox.valueProperty().addListener((_, _, _) -> {
+			refreshGroupingModes();
+			updateExportButton();
+		});
+		groupingBox.valueProperty().addListener((_, _, _) -> updateExportButton());
+		if (defaultSubject != null && subjectBox.getItems().contains(defaultSubject)) {
+			subjectBox.setValue(defaultSubject);
+		} else {
+			refreshGroupingModes();
+		}
+		updateExportButton();
 	}
 
-	/**
-	 * Returns the parent directory chosen for the revision export.
-	 *
-	 * @return selected directory, or null before one is chosen
-	 */
 	public Path getDestinationParent() {
 		return destinationParent;
 	}
 
-	/**
-	 * Returns the subject selected for revision export.
-	 *
-	 * @return selected subject, or null if no subject is selected
-	 */
+	public RevisionGroupingMode getGroupingMode() {
+		return groupingBox.getValue();
+	}
+
 	public Subject getSelectedSubject() {
 		return subjectBox.getValue();
 	}
@@ -112,10 +136,38 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 			}
 		}
 		File selected = chooser.showDialog(owner);
-		if (selected == null) {
+		if (selected != null) {
+			setDestinationParent(selected.toPath());
+		}
+	}
+
+	private void refreshGroupingModes() {
+		Subject subject = subjectBox.getValue();
+		RevisionGroupingMode previous = groupingBox.getValue();
+		if (subject == null) {
+			groupingBox.getItems().clear();
+			groupingBox.setValue(null);
 			return;
 		}
-		setDestinationParent(selected.toPath());
+		boolean descriptorAvailable = descriptorGroupingAvailable.test(subject);
+		if (descriptorAvailable) {
+			groupingBox.getItems().setAll(RevisionGroupingMode.DESCRIPTOR, RevisionGroupingMode.SUBTOPIC);
+		} else {
+			/*
+			 * Descriptor is not merely disabled: it is not presented as an available output
+			 * choice when corpus coverage is incomplete.
+			 */
+			groupingBox.getItems().setAll(RevisionGroupingMode.SUBTOPIC);
+		}
+		if (previous != null && groupingBox.getItems().contains(previous)) {
+			groupingBox.setValue(previous);
+		} else if (descriptorAvailable) {
+
+			// Preserve existing Descriptor-style output when the complete corpus allows it.
+			groupingBox.setValue(RevisionGroupingMode.DESCRIPTOR);
+		} else {
+			groupingBox.setValue(RevisionGroupingMode.SUBTOPIC);
+		}
 	}
 
 	private void setDestinationParent(Path destinationParent) {
@@ -125,10 +177,11 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		Path normalized = destinationParent.toAbsolutePath().normalize();
 		this.destinationParent = normalized;
 		destinationField.setText(normalized.toString());
-		updateExportButton(exportButton);
+		updateExportButton();
 	}
 
-	private void updateExportButton(Button exportButton) {
-		exportButton.setDisable(subjectBox.getValue() == null || destinationParent == null);
+	private void updateExportButton() {
+		exportButton.setDisable(
+				subjectBox.getValue() == null || groupingBox.getValue() == null || destinationParent == null);
 	}
 }

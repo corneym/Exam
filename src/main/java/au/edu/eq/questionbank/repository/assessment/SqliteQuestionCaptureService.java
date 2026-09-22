@@ -138,7 +138,6 @@ public final class SqliteQuestionCaptureService {
 				// persisted Question id is supplied so successor detection can ignore the
 				// Question that has just been inserted.
 				updatePendingMcqSharedContext(connection, request, sourceQuestion, sharedContext, question);
-
 				deletePreviousSourceQuestionIfUnreferenced(connection, request, sourceQuestion);
 				connection.commit();
 				return question;
@@ -311,7 +310,6 @@ public final class SqliteQuestionCaptureService {
 				return null;
 			}
 		}
-
 		String prefix = code.substring(0, digitStart);
 		String digits = code.substring(digitStart);
 		long number;
@@ -323,7 +321,6 @@ public final class SqliteQuestionCaptureService {
 		if (number == Long.MAX_VALUE) {
 			return null;
 		}
-
 		String nextDigits = Long.toString(number + 1);
 		if (nextDigits.length() < digits.length()) {
 
@@ -439,7 +436,6 @@ public final class SqliteQuestionCaptureService {
 				return pendingContext.get();
 			}
 		}
-
 		return null;
 	}
 
@@ -485,7 +481,6 @@ public final class SqliteQuestionCaptureService {
 		if (request.operation() != Operation.NEW) {
 			return;
 		}
-
 		Optional<SharedQuestionContext> pendingBeforeUpdate = findPendingMcqSharedContext(connection,
 				request.booklet());
 
@@ -495,7 +490,6 @@ public final class SqliteQuestionCaptureService {
 		boolean currentQuestionIsExpectedSuccessor = pendingBeforeUpdate.isPresent()
 				&& pendingMcqAppliesToQuestion(connection, request.booklet(), pendingBeforeUpdate.get(),
 						request.questionCode(), persistedQuestion.getId());
-
 		if (request.continueSharedContextToNextMcq()) {
 			if (sharedContext == null) {
 
@@ -510,7 +504,6 @@ public final class SqliteQuestionCaptureService {
 			setPendingMcqSharedContext(connection, request.booklet(), sharedContext);
 			return;
 		}
-
 		if (currentQuestionIsExpectedSuccessor) {
 
 			// Reaching the intended next Question consumes the one-shot continuation

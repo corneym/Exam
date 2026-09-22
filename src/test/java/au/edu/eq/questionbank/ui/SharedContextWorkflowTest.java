@@ -266,13 +266,11 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void independentMcqsAutomaticallyReuseAndMayExtendSharedContext(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Paper 1 MCQ",
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
 		SqliteQuestionCaptureService captureService = new SqliteQuestionCaptureService(database);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		assertNotNull(booklet);
-
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 		CheckBox sharedContext = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
@@ -284,7 +282,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(sharedContext.isVisible());
 		assertEquals("Shared context with next question", sharedContext.getText());
 		assertFalse(sharedContext.isSelected());
-
 		robot.clickOn(questionCode).write("Q5");
 		fireControl(robot, sharedContext);
 		assertTrue(sharedContext.isSelected());
@@ -297,14 +294,12 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, addRegion);
 		assertFalse(questionCapturePane().isCapturingSharedContext());
 		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, addRegion);
 		fireControl(robot, "#save-question");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> repository.findAll().stream().anyMatch(question -> "Q5".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question questionFive = repository.findAll().stream()
 				.filter(question -> "Q5".equals(question.getQuestionCode())).findFirst().orElseThrow();
 		assertFalse(questionFive.hasSourceQuestion());
@@ -336,7 +331,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> repository.findAll().stream().anyMatch(question -> "Q6".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question questionSix = repository.findAll().stream().filter(question -> "Q6".equals(question.getQuestionCode()))
 				.findFirst().orElseThrow();
 		assertFalse(questionSix.hasSourceQuestion());
@@ -359,7 +353,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> repository.findAll().stream().anyMatch(question -> "Q7".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question questionSeven = repository.findAll().stream()
 				.filter(question -> "Q7".equals(question.getQuestionCode())).findFirst().orElseThrow();
 		assertFalse(questionSeven.hasSourceQuestion());
@@ -492,7 +485,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Wait for the actual modal conversion decision rather than locating a
 		// particular button node in the scene graph.
 		waitForDialogShowing(robot, "Question Shared Context Converted");
-
 		/*
 		 * Conversion has already committed before recapture is offered.
 		 */
@@ -570,20 +562,17 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void pendingMcqContextAppearsOnlyForImmediateSuccessor(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Paper 1 MCQ",
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
-
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
 		assertNotNull(booklet);
 		assertNotNull(classification);
-
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(new SqliteDatabase(databasePath));
 		service.save(new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, booklet, null,
 				"Q5", 1, List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.12)), classification,
 				QuestionResponseType.MULTIPLE_CHOICE, null, new SqliteQuestionCaptureService.PendingSharedContext(
 						"CTX-Q5", List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15))),
 				true));
-
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Label contextStatus = lookup(robot, "#shared-preamble-status", Label.class);
 
@@ -598,7 +587,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(questionCode::clear);
 		robot.clickOn(questionCode).write("Q6");
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertTrue(contextStatus.isVisible());
 		assertTrue(contextStatus.getText().contains("Using shared context from the previous question"));
 	}

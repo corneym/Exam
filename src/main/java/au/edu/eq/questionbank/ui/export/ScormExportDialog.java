@@ -3,8 +3,10 @@ package au.edu.eq.questionbank.ui.export;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Predicate;
 
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
@@ -19,7 +21,7 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
 
 /**
- * Collects the Subject and destination parent directory for a SCORM revision
+ * Collects the Subject, grouping depth and destination for a SCORM revision
  * export.
  */
 public final class ScormExportDialog extends Dialog<ButtonType> {
@@ -28,30 +30,31 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 8;
 	private static final int FORM_PADDING = 10;
-	private final ComboBox<Subject> subjectBox = new ComboBox<Subject>();
+	private final ComboBox<Subject> subjectBox = new ComboBox<>();
+	private final ComboBox<RevisionGroupingMode> groupingBox = new ComboBox<>();
 	private final TextField destinationField = new TextField();
+	private final Predicate<Subject> descriptorGroupingAvailable;
 	private Path destinationParent;
 	private final Button exportButton;
 
-	/**
-	 * Creates a SCORM export dialog for the available Subjects.
-	 *
-	 * @param owner          owner for this dialog and its directory chooser
-	 * @param subjects       Subjects available for export
-	 * @param defaultSubject Subject initially selected when it is in
-	 *                       {@code subjects}; otherwise no Subject is selected
-	 * @throws NullPointerException if {@code subjects} or one of its elements is
-	 *                              null
-	 */
 	public ScormExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
+		this(owner, subjects, defaultSubject, _ -> false);
+	}
+
+	public ScormExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject,
+			Predicate<Subject> descriptorGroupingAvailable) {
 		if (subjects == null) {
 			throw new NullPointerException("subjects");
+		}
+		if (descriptorGroupingAvailable == null) {
+			throw new NullPointerException("descriptorGroupingAvailable");
 		}
 		for (Subject subject : subjects) {
 			if (subject == null) {
 				throw new NullPointerException("subjects contains null");
 			}
 		}
+		this.descriptorGroupingAvailable = descriptorGroupingAvailable;
 		setTitle("Export Revision SCORM");
 		setHeaderText("Create a SCORM 1.2 revision package for QLearn");
 		initOwner(owner);
@@ -61,9 +64,9 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		subjectBox.setPromptText("Select subject");
 		subjectBox.getItems().setAll(subjects);
 		subjectBox.setMaxWidth(Double.MAX_VALUE);
-		if (defaultSubject != null && subjectBox.getItems().contains(defaultSubject)) {
-			subjectBox.setValue(defaultSubject);
-		}
+		groupingBox.setId("scorm-export-grouping");
+		groupingBox.setPromptText("Select grouping");
+		groupingBox.setMaxWidth(Double.MAX_VALUE);
 		destinationField.setId("scorm-export-destination");
 		destinationField.setEditable(false);
 		destinationField.setPromptText("Choose destination folder");
@@ -77,30 +80,35 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
 		grid.add(subjectBox, 1, 0);
-		grid.add(new Label("Destination parent:"), 0, 1);
-		grid.add(destinationBox, 1, 1);
+		grid.add(new Label("Group questions by:"), 0, 1);
+		grid.add(groupingBox, 1, 1);
+		grid.add(new Label("Destination parent:"), 0, 2);
+		grid.add(destinationBox, 1, 2);
 		getDialogPane().setContent(grid);
 		exportButton = (Button) getDialogPane().lookupButton(exportButtonType);
 		exportButton.setId("scorm-export-start");
 		exportButton.setDisable(true);
-		subjectBox.valueProperty().addListener((_, _, _) -> updateExportButton());
+		subjectBox.valueProperty().addListener((_, _, _) -> {
+			refreshGroupingModes();
+			updateExportButton();
+		});
+		groupingBox.valueProperty().addListener((_, _, _) -> updateExportButton());
+		if (defaultSubject != null && subjectBox.getItems().contains(defaultSubject)) {
+			subjectBox.setValue(defaultSubject);
+		} else {
+			refreshGroupingModes();
+		}
 		updateExportButton();
 	}
 
-	/**
-	 * Returns the selected directory in which the application will name the ZIP.
-	 *
-	 * @return the absolute normalised directory, or {@code null} until selected
-	 */
 	public Path getDestinationParent() {
 		return destinationParent;
 	}
 
-	/**
-	 * Returns the Subject selected for export.
-	 *
-	 * @return the selected Subject, or {@code null} when none is selected
-	 */
+	public RevisionGroupingMode getGroupingMode() {
+		return groupingBox.getValue();
+	}
+
 	public Subject getSelectedSubject() {
 		return subjectBox.getValue();
 	}
@@ -115,10 +123,32 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 			}
 		}
 		File selected = chooser.showDialog(owner);
-		if (selected == null) {
+		if (selected != null) {
+			setDestinationParent(selected.toPath());
+		}
+	}
+
+	private void refreshGroupingModes() {
+		Subject subject = subjectBox.getValue();
+		RevisionGroupingMode previous = groupingBox.getValue();
+		if (subject == null) {
+			groupingBox.getItems().clear();
+			groupingBox.setValue(null);
 			return;
 		}
-		setDestinationParent(selected.toPath());
+		boolean descriptorAvailable = descriptorGroupingAvailable.test(subject);
+		if (descriptorAvailable) {
+			groupingBox.getItems().setAll(RevisionGroupingMode.DESCRIPTOR, RevisionGroupingMode.SUBTOPIC);
+		} else {
+			groupingBox.getItems().setAll(RevisionGroupingMode.SUBTOPIC);
+		}
+		if (previous != null && groupingBox.getItems().contains(previous)) {
+			groupingBox.setValue(previous);
+		} else if (descriptorAvailable) {
+			groupingBox.setValue(RevisionGroupingMode.DESCRIPTOR);
+		} else {
+			groupingBox.setValue(RevisionGroupingMode.SUBTOPIC);
+		}
 	}
 
 	private void setDestinationParent(Path destinationParent) {
@@ -132,6 +162,7 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 	}
 
 	private void updateExportButton() {
-		exportButton.setDisable(subjectBox.getValue() == null || destinationParent == null);
+		exportButton.setDisable(
+				subjectBox.getValue() == null || groupingBox.getValue() == null || destinationParent == null);
 	}
 }

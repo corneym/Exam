@@ -347,7 +347,6 @@ class SqliteQuestionCaptureServiceTest {
 	void pendingMcqContextWaitsForImmediateSuccessorWhenCaptureIsOutOfSequence() throws Exception {
 		Fixture fixture = createFixture("mcq-context-sequence.db");
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
-
 		Question questionFive = service.save(
 				new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, fixture.booklet(),
 						null, "Q5", 1, List.of(new QuestionRegion(fixture.booklet(), 1, 0.10, 0.30, 0.70, 0.12)),
@@ -355,7 +354,6 @@ class SqliteQuestionCaptureServiceTest {
 						new SqliteQuestionCaptureService.PendingSharedContext("CTX-Q5",
 								List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15))),
 						true));
-
 		long contextId = questionFive.getSharedContext().getId();
 
 		// Q7 is not the immediate successor of Q5. It must neither inherit nor consume
@@ -364,7 +362,6 @@ class SqliteQuestionCaptureServiceTest {
 				new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, fixture.booklet(),
 						null, "Q7", 1, List.of(new QuestionRegion(fixture.booklet(), 1, 0.10, 0.60, 0.70, 0.12)),
 						fixture.classification(), QuestionResponseType.MULTIPLE_CHOICE, null, null, false));
-
 		assertFalse(questionSeven.hasSharedContext());
 		assertEquals(contextId, service.findPendingMcqSharedContext(fixture.booklet()).orElseThrow().getId());
 		assertTrue(service.findPendingMcqSharedContextForQuestion(fixture.booklet(), "Q7").isEmpty());
@@ -377,7 +374,6 @@ class SqliteQuestionCaptureServiceTest {
 				new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, fixture.booklet(),
 						null, "Q6", 1, List.of(new QuestionRegion(fixture.booklet(), 1, 0.10, 0.45, 0.70, 0.12)),
 						fixture.classification(), QuestionResponseType.MULTIPLE_CHOICE, null, null, false));
-
 		assertTrue(questionSix.hasSharedContext());
 		assertEquals(contextId, questionSix.getSharedContext().getId());
 		assertTrue(service.findPendingMcqSharedContext(fixture.booklet()).isEmpty());

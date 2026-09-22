@@ -65,8 +65,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), existing.getRegions(),
-					existing.getClassification(), existing.isSharedContextCaptureRequired(), existing.getSourceQuestion(),
-					sharedContext, existing.getResponseType());
+					existing.getClassification(), existing.isSharedContextCaptureRequired(),
+					existing.getSourceQuestion(), sharedContext, existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -94,8 +94,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, existing.getClassification(),
-					existing.isSharedContextCaptureRequired(), existing.getSourceQuestion(), existing.getSharedContext(),
-					existing.getResponseType());
+					existing.isSharedContextCaptureRequired(), existing.getSourceQuestion(),
+					existing.getSharedContext(), existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -132,7 +132,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, classification,
-					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
+					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext,
+					existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -161,7 +162,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, existing.getClassification(),
-					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
+					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext,
+					existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -229,7 +231,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), existing.getRegions(), classification,
-					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
+					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext,
+					existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -281,8 +284,9 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 				throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
-					existing.getQuestionText(), marks, regions, classification, existing.isSharedContextCaptureRequired(),
-					sourceQuestion, sharedContext, existing.getResponseType());
+					existing.getQuestionText(), marks, regions, classification,
+					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext,
+					existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}

@@ -916,7 +916,6 @@ public final class QuestionCapturePane extends VBox {
 			saveStatusLabel.setText("Shared context selection pending — click Add Context or Clear");
 			return true;
 		}
-
 		boolean started = sharedContextCapturePane.beginAutomaticContext(label);
 		if (started) {
 			saveStatusLabel.setText("Shared context capture active — select a region");
@@ -1127,13 +1126,11 @@ public final class QuestionCapturePane extends VBox {
 		questionCodeField.setId("question-code");
 		questionCodeField.setPromptText("Q1");
 		questionCodeField.setPrefWidth(QUESTION_CODE_FIELD_WIDTH);
-
 		questionCodeStatusLabel.setId("question-code-status");
 		questionCodeStatusLabel.setStyle(REQUIRED_STATUS_STYLE);
 		questionCodeStatusLabel.setWrapText(true);
 		questionCodeStatusLabel.setVisible(false);
 		questionCodeStatusLabel.setManaged(false);
-
 		marksField.setId("question-marks");
 		marksField.setPromptText("1");
 		marksField.setPrefWidth(MARKS_FIELD_WIDTH);
@@ -1193,13 +1190,11 @@ public final class QuestionCapturePane extends VBox {
 		importedQuestionsModeButton.setToggleGroup(captureModeGroup);
 		newQuestionsModeButton.setSelected(true);
 		legacyCaptureBox.setId("legacy-question-capture");
-
 		firstRegionPreambleCheckBox.setId("first-region-shared-preamble");
 		firstRegionPreambleCheckBox.setTooltip(
 				new Tooltip("Store the first captured region as shared context for all parts of this question."));
 		firstRegionPreambleCheckBox.setVisible(false);
 		firstRegionPreambleCheckBox.setManaged(false);
-
 		preambleStatusLabel.setId("shared-preamble-status");
 		preambleStatusLabel.setVisible(false);
 		preambleStatusLabel.setManaged(false);
@@ -1303,7 +1298,6 @@ public final class QuestionCapturePane extends VBox {
 				writtenResponseButton);
 		responseTypeControls.setId("question-response-type-controls");
 		responseTypeControls.setAlignment(Pos.CENTER_LEFT);
-
 		VBox controls = new VBox(COMPACT_SPACING, questionDetails, questionCodeStatusLabel, responseTypeControls);
 		controls.setFillWidth(true);
 		return controls;
@@ -1386,7 +1380,6 @@ public final class QuestionCapturePane extends VBox {
 				|| legacySplitCaptureState != null) {
 			return null;
 		}
-
 		for (Question question : questionSnapshot) {
 			if (question.getBooklet().getId() != booklet.getId()) {
 				continue;
@@ -1410,7 +1403,6 @@ public final class QuestionCapturePane extends VBox {
 		if (duplicate != null) {
 			return "Question " + duplicate.getQuestionCode() + " already exists for this booklet.";
 		}
-
 		int effectiveRegionCount = pendingRegions.size();
 		if (importedQuestion != null && !importedQuestion.getRegions().isEmpty()) {
 			effectiveRegionCount = importedQuestion.getRegions().size();
@@ -1544,7 +1536,6 @@ public final class QuestionCapturePane extends VBox {
 		try {
 			if (isNewIndependentMcqCapture()) {
 				mcqContinuationSelected = selected;
-
 				if (!selected) {
 					if (mcqSharedContextCaptureActive) {
 
@@ -1561,7 +1552,6 @@ public final class QuestionCapturePane extends VBox {
 					updateQuestionCodeLock();
 					return;
 				}
-
 				if (inheritedMcqSharedContext != null) {
 
 					// This MCQ already inherits the context. Selecting the checkbox means
@@ -1571,7 +1561,6 @@ public final class QuestionCapturePane extends VBox {
 					updateQuestionCodeLock();
 					return;
 				}
-
 				if (!beginAutomaticSharedContextCapture(newMcqSharedContextLabel())) {
 					mcqContinuationSelected = false;
 					setPreambleCheckBoxSelected(false);
@@ -1587,7 +1576,6 @@ public final class QuestionCapturePane extends VBox {
 			// semantics. MCQ continuation state must never leak into that workflow.
 			mcqContinuationSelected = false;
 			inheritedMcqSharedContext = null;
-
 			String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 			if (!selected) {
 				sharedContextCapturePane.cancelAutomaticContext();
@@ -1876,7 +1864,6 @@ public final class QuestionCapturePane extends VBox {
 		// Retain the complete refreshed corpus for synchronous duplicate-code
 		// validation while the teacher types.
 		questionSnapshot = List.copyOf(questions);
-
 		Question selected = importedQuestion;
 
 		// Build the visible imported-question queue from the transient Working Subject
@@ -1915,7 +1902,6 @@ public final class QuestionCapturePane extends VBox {
 			showMcqSharedContextOption();
 			return;
 		}
-
 		if (mcqSharedContextCaptureActive) {
 			sharedContextCapturePane.cancelAutomaticContext();
 		}
@@ -1964,7 +1950,6 @@ public final class QuestionCapturePane extends VBox {
 			questionCodeStatusLabel.setManaged(false);
 			return;
 		}
-
 		questionCodeStatusLabel
 				.setText("Question " + duplicate.getQuestionCode() + " has already been captured in this booklet.");
 		questionCodeStatusLabel.setVisible(true);
@@ -2095,14 +2080,12 @@ public final class QuestionCapturePane extends VBox {
 			previousImportedIndex = selectedImportedQuestionIndex();
 			hadStoredRegions = !importedQuestion.getRegions().isEmpty();
 		}
-
 		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(captureOperation(),
 				bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(),
 				Integer.parseInt(marksField.getText().trim()), List.copyOf(pendingRegions),
 				curriculumSelectionModel.getClassification(), selectedResponseType(),
 				sharedContextCapturePane.getSelectedContext(), pendingSharedContextForSave(),
 				continueSharedContextToNextMcq());
-
 		int savedPreviousImportedIndex = previousImportedIndex;
 		boolean savedHadStoredRegions = hadStoredRegions;
 		questionSaveInProgress = true;
@@ -2357,7 +2340,6 @@ public final class QuestionCapturePane extends VBox {
 				.setTooltip(new Tooltip("Select when this MCQ and the following MCQ use the same source context."));
 		firstRegionPreambleCheckBox.setDisable(false);
 		setPreambleCheckBoxVisible(true);
-
 		if (mcqSharedContextCaptureActive) {
 			inheritedMcqSharedContext = null;
 			setPreambleCheckBoxSelected(mcqContinuationSelected);
@@ -2368,12 +2350,10 @@ public final class QuestionCapturePane extends VBox {
 			}
 			return;
 		}
-
 		ExamBooklet booklet = bookletSupplier.get();
 		String questionCode = questionCodeField.getText().trim();
 		inheritedMcqSharedContext = booklet == null || questionCode.isBlank() ? null
 				: questionCaptureService.findPendingMcqSharedContextForQuestion(booklet, questionCode).orElse(null);
-
 		if (inheritedMcqSharedContext != null) {
 
 			// Only the immediate sequence successor inherits automatically. The checkbox
@@ -2387,7 +2367,6 @@ public final class QuestionCapturePane extends VBox {
 			}
 			return;
 		}
-
 		mcqContinuationSelected = false;
 		setPreambleCheckBoxSelected(false);
 		hidePreambleStatus();
