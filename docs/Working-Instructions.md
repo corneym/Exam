@@ -90,6 +90,12 @@ the JavaFX thread. Prefer `robot.interact(control::fire)` for buttons, radio
 buttons, check boxes and similar controls, and direct selection-model operations
 for ComboBox/ListView selection where pointer behaviour is not itself under test.
 
+If firing a control is expected to enter a modal `showAndWait()` loop, schedule
+the control with `Platform.runLater(control::fire)` and then wait for the
+expected dialog or state. Do not block the test thread inside
+`robot.interact(control::fire)` while a modal dialog still needs a later test
+action to close it.
+
 Do not use `robot.clickOn(...)` merely to trigger an ordinary semantic control
 action in a workflow test.
 

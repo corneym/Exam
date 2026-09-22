@@ -74,7 +74,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#add-answer-region");
 		assertTrue(answerCapturePane().hasAcceptedRegions());
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
 		Subject chemistry = workingSubjectBox.getValue();
@@ -84,7 +83,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Attempting to leave Chemistry must be rejected while unsaved Answer regions
 		// remain in the active capture workflow.
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
-
 		AtomicReference<DialogPane> warningDialog = new AtomicReference<>();
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
 			DialogPane dialog = robot.lookup(".dialog-pane").queryAll().stream().filter(DialogPane.class::isInstance)
@@ -97,7 +95,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			warningDialog.set(dialog);
 			return dialog != null;
 		});
-
 		robot.interact(() -> ((Button) warningDialog.get().lookupButton(ButtonType.OK)).fire());
 		WaitForAsyncUtils.waitForFxEvents();
 
@@ -362,6 +359,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#save-answer");
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> robot.lookup("Answer could not be saved.").tryQuery().isPresent());
+
 		// Resolve the action through the actual DialogPane rather than rendered text.
 		fireDialogButton(robot, "OK");
 		assertFalse(answerCapturePane().isSaveInProgress());
@@ -521,7 +519,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		RadioButton answerA = lookup(robot, "#answer-choice-a", RadioButton.class);
 		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
 		Button saveAnswer = lookup(robot, "#save-answer", Button.class);
-
 		robot.interact(() -> questions.getSelectionModel().select(fixture.mcqQuestion()));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals("Answers A", selectedPdf.getText());
@@ -532,7 +529,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(answerA::fire);
 		assertTrue(answerA.isSelected());
 		assertFalse(saveAnswer.isDisabled());
-
 		robot.interact(saveAnswer::fire);
 
 		// Wait for the observable workflow result, not merely for saveInProgress to be
@@ -551,7 +547,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		dragRegionOnDisplayedPage(robot);
 		robot.interact(addRegion::fire);
 		assertTrue(answerCapturePane().hasAcceptedRegions());
-
 		robot.interact(saveAnswer::fire);
 
 		// Again wait for the actual queue transition so the test cannot pass a wait
@@ -565,7 +560,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(fixture.paper2Question().getId(), questions.getValue().getId());
 		assertEquals("Answers B", selectedPdf.getText());
 		assertEquals(fixture.answersB().getId(), field(answerCapturePane(), "answerFile", AnswerFile.class).getId());
-
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		Question storedMcq = repository.findById(fixture.mcqQuestion().getId()).orElseThrow();
 		Question storedPaper1 = repository.findById(fixture.paper1Question().getId()).orElseThrow();

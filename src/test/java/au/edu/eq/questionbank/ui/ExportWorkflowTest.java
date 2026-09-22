@@ -65,11 +65,10 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		assertTrue(disabledWhileStarting.get());
-		WaitForAsyncUtils.waitFor(10, java.util.concurrent.TimeUnit.SECONDS,
-				() -> robot.lookup("OK").tryQuery().isPresent());
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+
+		// The helper waits for the DialogPane-owned button, so rendered button text is
+		// never used as the TestFX target.
+		fireDialogButton(robot, "OK");
 		assertFalse(Files.exists(destination));
 		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
@@ -171,9 +170,7 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("OK").tryQuery().isPresent());
 		assertTrue(Files.isRegularFile(destination), "SCORM export did not complete");
 		assertTrue(Files.size(destination) > 0, "SCORM export produced an empty ZIP");
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+		fireDialogButton(robot, "OK");
 		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
 	}

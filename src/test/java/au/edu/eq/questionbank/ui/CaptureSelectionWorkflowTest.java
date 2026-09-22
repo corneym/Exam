@@ -40,11 +40,11 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
 		assertFalse(addAnswerRegion.isDisabled());
 		assertFalse(clearAnswerSelection.isDisabled());
-		robot.clickOn(clearAnswerSelection);
+		fireControl(robot, clearAnswerSelection);
 		assertTrue(addAnswerRegion.isDisabled());
 		assertTrue(clearAnswerSelection.isDisabled());
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn(addAnswerRegion);
+		fireControl(robot, addAnswerRegion);
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
 		assertTrue(addAnswerRegion.isDisabled());
 		assertTrue(clearAnswerSelection.isDisabled());
@@ -144,7 +144,7 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
 		assertTrue(preamble.isVisible());
 		assertFalse(preamble.isSelected());
-		robot.clickOn(preamble);
+		fireControl(robot, preamble);
 		assertTrue(preamble.isSelected());
 		assertTrue(questionCapturePane().isCapturingSharedContext());
 		dragRegionOnDisplayedPage(robot);
@@ -235,7 +235,7 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn(questionCode).write("24a");
 		robot.clickOn(marks).write("2");
 		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
-		robot.clickOn(preamble);
+		fireControl(robot, preamble);
 		assertTrue(questionCapturePane().isCapturingSharedContext());
 
 		// Create one valid unaccepted preamble region.
@@ -278,19 +278,17 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(clearAnswerSelection.isDisabled());
 		PdfWorkspacePane workspace = field(application, "pdfWorkspace", PdfWorkspacePane.class);
 		int originalPage = workspace.getCurrentPageNumber();
-		robot.clickOn("#next-pdf-page");
-		WaitForAsyncUtils.waitForFxEvents();
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.clickOn(okButton);
+		fireControlLater(robot, "#next-pdf-page");
+		fireDialogButton(robot, "OK");
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(originalPage, workspace.getCurrentPageNumber());
 		assertFalse(addAnswerRegion.isDisabled());
 		assertFalse(clearAnswerSelection.isDisabled());
-		robot.clickOn(addAnswerRegion);
+		fireControl(robot, addAnswerRegion);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(addAnswerRegion.isDisabled());
 		assertTrue(clearAnswerSelection.isDisabled());
-		robot.clickOn("#next-pdf-page");
+		fireControl(robot, "#next-pdf-page");
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(originalPage + 1, workspace.getCurrentPageNumber());
 	}

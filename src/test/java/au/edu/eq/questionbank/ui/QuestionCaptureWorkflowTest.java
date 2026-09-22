@@ -103,7 +103,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> repository.findAll().stream().anyMatch(question -> "27".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question restored = repository.findAll().stream().filter(question -> "27".equals(question.getQuestionCode()))
 				.findFirst().orElseThrow();
 		assertEquals(1, restored.getRegions().size());
@@ -222,6 +221,10 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
 		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// Duplicate validation eventually opens a modal warning after background
+		// validation completes, so schedule Save without blocking the test thread.
+		fireControlLater(robot, "#save-question");
 		fireDialogButton(robot, "OK");
 		assertEquals("Q7", questionCodeField.getText());
 		assertEquals("1", marksField.getText());
@@ -236,40 +239,33 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void importedCaptureAdvancesUsingTheBackgroundSnapshot(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		ExamBooklet booklet = field(application, "examMetadataPane", ExamMetadataPane.class).getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
-
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-
 		Question first = stored.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
 		Question second = stored.save(booklet, "42", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
 
 		// Enter imported-Question capture through the production pane workflow.
 		robot.interact(() -> showImportedQuestionCaptureForTest(pane));
-
 		ComboBox<Question> imported = comboBox(robot, "#imported-question");
 
 		// Select the first imported Question directly because pointer behaviour is not
 		// part of what this workflow test is verifying.
 		robot.interact(() -> imported.getSelectionModel().selectFirst());
-
 		dragRegionOnDisplayedPage(robot);
 
 		// Accept the selected PDF region through the real JavaFX control action.
 		fireControl(robot, "#add-question-region");
-
 		AtomicInteger reads = new AtomicInteger();
-
 		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
 
 			@Override
 			public List<Question> findAll() {
+
 				// Post-save queue refresh must remain off the JavaFX thread and reuse the
 				// loaded snapshot rather than performing an extra bank reload.
 				assertFalse(Platform.isFxApplicationThread(), "Advancing the queue must reuse the loaded questions");
@@ -286,9 +282,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// transient save-in-progress flag to become false.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> imported.getValue() != null && imported.getValue().getId() == second.getId());
-
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertEquals(second.getId(), imported.getValue().getId());
 		assertEquals(1, imported.getItems().size());
 		assertEquals(1, stored.findById(first.getId()).orElseThrow().getRegions().size());

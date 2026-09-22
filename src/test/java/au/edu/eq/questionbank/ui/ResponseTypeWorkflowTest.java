@@ -23,7 +23,6 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
@@ -65,7 +64,7 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> marks.setText("2"));
 		assertFalse(multipleChoice.isSelected());
 		assertTrue(writtenResponse.isSelected());
-		robot.clickOn(multipleChoice);
+		fireControl(robot, multipleChoice);
 		robot.interact(() -> questionCode.setText("21a"));
 
 		// An explicit per-question choice overrides subsequent automatic inference.
@@ -118,7 +117,7 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 
 		// Override the Written-response fixture default for this MCQ workflow.
-		robot.clickOn(multipleChoice);
+		fireControl(robot, multipleChoice);
 		Question question = captureQuestion(robot, "MC1");
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, question.getResponseType());
 		ComboBox<Question> questions = unansweredQuestions(robot);
@@ -147,11 +146,14 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(answerA.isSelected());
 		assertFalse(save.isDisabled());
-		robot.clickOn(save);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		fireControl(robot, save);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Persisted Answer existence proves that the MCQ save actually ran.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findById(question.getId()).map(Question::hasAnswer).orElse(false));
 		WaitForAsyncUtils.waitForFxEvents();
-		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
-				.orElseThrow();
+		Question stored = repository.findById(question.getId()).orElseThrow();
 
 		// The PDF supports answer lookup only. Persisted MCQ completeness remains the
 		// selected answer letter with no AnswerRegion rows.
@@ -175,18 +177,21 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn(questionCode).write("R1");
 		robot.clickOn(marks).write("1");
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertTrue(save.isDisabled(), "Question capture must require an explicit response type");
-		robot.clickOn(multipleChoice);
+		fireControl(robot, multipleChoice);
 		assertTrue(multipleChoice.isSelected());
 		assertFalse(writtenResponse.isSelected());
 		assertFalse(save.isDisabled());
-		robot.clickOn("#save-question");
-		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		fireControl(robot, "#save-question");
+
+		// The new persisted Question is the real completion condition for the workflow.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "R1".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
-				.filter(question -> "R1".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		Question stored = repository.findAll().stream().filter(question -> "R1".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, stored.getResponseType());
 
 		// Completing a new Question must reset both radio buttons.
@@ -218,7 +223,7 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 			examImportDialog().show();
 		}).get();
 		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
-		robot.clickOn("#confirm-exam-details");
+		fireControl(robot, "#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 

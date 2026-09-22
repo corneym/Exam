@@ -53,6 +53,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 /**
  * Per-test application fixture shared by the workflow suites. Each test
@@ -68,6 +69,21 @@ abstract class QuestionBankApplicationUiTestBase {
 	Path examPdf;
 	Path pdfDataRoot;
 	Path databasePath;
+
+	static void closeDialog(FxRobot robot, String dialogTitle) {
+		waitForDialogShowing(robot, dialogTitle);
+
+		DialogPane dialog = showingDialogPane(robot, dialogTitle);
+		Node buttonNode = dialog.lookupButton(ButtonType.CLOSE);
+
+		if (!(buttonNode instanceof ButtonBase closeButton)) {
+			throw new AssertionError("Dialog has no Close button: " + dialogTitle);
+		}
+
+		// Fire the real DialogPane-owned Close control without mouse hit-testing.
+		robot.interact(closeButton::fire);
+		waitForDialogHidden(robot, dialogTitle);
+	}
 
 	static <T> T field(Object owner, String fieldName, Class<T> type) throws Exception {
 		Field field = owner.getClass().getDeclaredField(fieldName);
@@ -116,21 +132,53 @@ abstract class QuestionBankApplicationUiTestBase {
 		AtomicReference<DialogPane> matchingDialog = new AtomicReference<>();
 
 		try {
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
-				DialogPane dialog = robot.lookup(".dialog-pane").queryAll().stream()
-						.filter(DialogPane.class::isInstance).map(DialogPane.class::cast).filter(DialogPane::isVisible)
-						.filter(candidate -> candidate.getButtonTypes().stream()
-								.anyMatch(buttonType -> buttonText.equals(buttonType.getText())))
-						.findFirst().orElse(null);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 
-				// Retain the actual visible DialogPane rather than locating its rendered
-				// button by screen text, which is unreliable under Xvfb.
-				matchingDialog.set(dialog);
-				return dialog != null;
+				// Dialogs live in their own JavaFX windows. TestFX lookup may currently be
+				// rooted at the primary application scene, so inspect all showing JavaFX
+				// windows on the FX thread instead.
+				matchingDialog.set(null);
+				robot.interact(() -> {
+					for (Window window : Window.getWindows()) {
+						if (!window.isShowing() || window.getScene() == null) {
+							continue;
+						}
+
+						Node root = window.getScene().getRoot();
+						DialogPane dialog = null;
+
+						// A JavaFX Dialog normally owns a scene whose root is the
+						// DialogPane, but retain the descendant lookup for platform
+						// implementations that wrap that root.
+						if (root instanceof DialogPane pane) {
+							dialog = pane;
+						} else {
+							Node candidate = root.lookup(".dialog-pane");
+							if (candidate instanceof DialogPane pane) {
+								dialog = pane;
+							}
+						}
+
+						if (dialog == null || !dialog.isVisible()) {
+							continue;
+						}
+
+						boolean hasRequestedButton = dialog.getButtonTypes().stream()
+								.anyMatch(buttonType -> buttonText.equals(buttonType.getText()));
+
+						if (hasRequestedButton) {
+							matchingDialog.set(dialog);
+							break;
+						}
+					}
+				});
+
+				return matchingDialog.get() != null;
 			});
 		} catch (TimeoutException e) {
-			// A missing dialog action is a test failure, not an infrastructure exception
-			// that every workflow test should need to declare separately.
+
+			// A missing dialog is a failed workflow expectation rather than a low-level
+			// TestFX lookup exception.
 			throw new AssertionError("Timed out waiting for dialog button: " + buttonText, e);
 		}
 
@@ -138,14 +186,14 @@ abstract class QuestionBankApplicationUiTestBase {
 		ButtonType buttonType = dialog.getButtonTypes().stream()
 				.filter(candidate -> buttonText.equals(candidate.getText())).findFirst()
 				.orElseThrow(() -> new AssertionError("Dialog button not found: " + buttonText));
-		Node buttonNode = dialog.lookupButton(buttonType);
 
+		Node buttonNode = dialog.lookupButton(buttonType);
 		if (!(buttonNode instanceof ButtonBase button)) {
 			throw new AssertionError("Dialog button is not a ButtonBase: " + buttonText);
 		}
 
-		// Fire the DialogPane-owned button directly so no pointer hit-testing or text
-		// lookup is involved.
+		// Fire the actual DialogPane-owned control. This avoids mouse hit-testing and
+		// behaves identically on the desktop and under the CI virtual display.
 		robot.interact(button::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 	}
@@ -170,6 +218,61 @@ abstract class QuestionBankApplicationUiTestBase {
 		Field field = owner.getClass().getDeclaredField(fieldName);
 		field.setAccessible(true);
 		field.set(owner, value);
+	}
+
+	static DialogPane showingDialogPane(FxRobot robot, String dialogTitle) {
+		AtomicReference<DialogPane> matchingDialog = new AtomicReference<>();
+
+		// Dialog lifecycle must be determined from actual showing JavaFX windows,
+		// not from TestFX nodes retained by a reusable hidden Dialog.
+		robot.interact(() -> {
+			for (Window window : Window.getWindows()) {
+				if (!window.isShowing() || window.getScene() == null) {
+					continue;
+				}
+				if (!(window instanceof Stage stage) || !dialogTitle.equals(stage.getTitle())) {
+					continue;
+				}
+
+				Node root = window.getScene().getRoot();
+				if (root instanceof DialogPane dialogPane) {
+					matchingDialog.set(dialogPane);
+					return;
+				}
+
+				// Retain compatibility with JavaFX implementations that wrap the
+				// DialogPane inside another scene root.
+				Node candidate = root.lookup(".dialog-pane");
+				if (candidate instanceof DialogPane dialogPane) {
+					matchingDialog.set(dialogPane);
+					return;
+				}
+			}
+		});
+
+		return matchingDialog.get();
+	}
+
+	static void waitForDialogHidden(FxRobot robot, String dialogTitle) {
+		try {
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> showingDialogPane(robot, dialogTitle) == null);
+		} catch (TimeoutException exception) {
+
+			// The workflow has not completed its modal transition if the old dialog
+			// window remains visible.
+			throw new AssertionError("Timed out waiting for dialog to close: " + dialogTitle, exception);
+		}
+	}
+
+	static void waitForDialogShowing(FxRobot robot, String dialogTitle) {
+		try {
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> showingDialogPane(robot, dialogTitle) != null);
+		} catch (TimeoutException exception) {
+
+			// A missing expected dialog is a workflow-test failure rather than a
+			// low-level TestFX query failure.
+			throw new AssertionError("Timed out waiting for dialog: " + dialogTitle, exception);
+		}
 	}
 
 	private static void fireMouseEvent(ImageView pageView, javafx.event.EventType<MouseEvent> eventType, double x,
@@ -211,7 +314,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		} else {
 			robot.interact(() -> marksField.setText("1"));
 		}
-
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
 
@@ -220,10 +322,8 @@ abstract class QuestionBankApplicationUiTestBase {
 		if (!multipleChoice.isSelected() && !writtenResponse.isSelected()) {
 			fireControl(robot, writtenResponse);
 		}
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		fireControl(robot, "#save-question");
 
@@ -232,10 +332,8 @@ abstract class QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> unansweredQuestions.getItems().stream()
 				.anyMatch(question -> questionCode.equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question savedQuestion = unansweredQuestions.getItems().stream()
 				.filter(question -> questionCode.equals(question.getQuestionCode())).findFirst().orElse(null);
-
 		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
 		assertNotNull(savedQuestion, "Question save status: " + saveStatus.getText());
 		return savedQuestion;
@@ -338,6 +436,7 @@ abstract class QuestionBankApplicationUiTestBase {
 			// Exercise the same explicit booklet-format selection required from the user.
 			format.setValue(questionFormat);
 		});
+
 		// Confirm through the real JavaFX action without depending on pointer
 		// hit-testing.
 		fireControl(robot, "#confirm-exam-details");

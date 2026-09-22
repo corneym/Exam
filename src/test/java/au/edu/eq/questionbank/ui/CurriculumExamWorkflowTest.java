@@ -263,7 +263,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
 		Button editExam = lookup(robot, "#question-search-edit-exam", Button.class);
 		assertFalse(editExam.isDisabled());
-		robot.clickOn(editExam);
+		fireControlLater(editExam);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-correction-provider").tryQuery().isPresent());
 		TextField provider = lookup(robot, "#exam-correction-provider", TextField.class);
@@ -280,7 +280,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			year.setText("2022");
 			assessment.setText("External Assessment");
 		});
-		robot.clickOn("#exam-correction-save");
+		fireControl(robot, "#exam-correction-save");
 
 		// Saving the correction should return to Search Questions.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
@@ -335,8 +335,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// even though its owning Exam metadata has changed.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> refreshedResults.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId()));
-		robot.clickOn("Close");
-		WaitForAsyncUtils.waitForFxEvents();
+		fireDialogButton(robot, "Close");
 	}
 
 	@Test
@@ -379,10 +378,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Ambiguity must be reported rather than resolved by filename, insertion
 		// order or any other arbitrary choice.
 		assertTrue(robot.lookup("Exam details could not be saved.").tryQuery().isPresent());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+		fireDialogButton(robot, "OK");
 
 		// Rejection must not create another ExamBooklet or alter either existing
 		// persisted relationship.
@@ -396,7 +392,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ExamBooklet pendingKnownBooklet = field(examMetadataPane(), "pendingKnownBooklet", ExamBooklet.class);
 		assertNull(pendingPdfPath);
 		assertNull(pendingKnownBooklet);
-		robot.clickOn("#cancel-exam-import");
+		fireControl(robot, "#cancel-exam-import");
 		WaitForAsyncUtils.waitForFxEvents();
 	}
 
@@ -436,7 +432,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(year.isDisabled());
 		assertTrue(assessment.isDisabled());
 		assertTrue(booklet.isDisabled());
-		robot.clickOn("#confirm-exam-details");
+		fireControl(robot, "#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
 		ExamBooklet reopened = examMetadataPane().getBooklet();
 		assertNotNull(reopened);
@@ -505,7 +501,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(year.isDisabled());
 		assertTrue(assessment.isDisabled());
 		assertTrue(booklet.isDisabled());
-		robot.clickOn("#confirm-exam-details");
+		fireControl(robot, "#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
 		ExamBooklet reopened = examMetadataPane().getBooklet();
 		assertNotNull(reopened);
@@ -572,9 +568,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// The current dialog defaults to Both/Mixed; accepting it is sufficient to
 		// prove
 		// the decision is persisted during opening rather than during Question save.
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+		fireDialogButton(robot, "OK");
 		ExamBooklet reopened = examMetadataPane().getBooklet();
 		assertNotNull(reopened);
 		assertEquals(originalBooklet.getId(), reopened.getId());
