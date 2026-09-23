@@ -310,10 +310,9 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void writtenResponseUsesPersistedTypeDespiteMcqBookletName(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-		/*
-		 * The fixture booklet is named "Paper 1 MCQ", but the Question itself is
-		 * explicitly WRITTEN_RESPONSE.
-		 */
+
+		// The fixture booklet is named "Paper 1 MCQ", but the Question itself is
+		// explicitly WRITTEN_RESPONSE.
 		Question question = captureQuestion(robot, "WR1");
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, question.getResponseType());
 		ComboBox<Question> questions = unansweredQuestions(robot);

@@ -27,10 +27,9 @@ public final class RevisionPresentationPlanner {
 
 	private static final Comparator<Question> MEMBER_ORDER = Comparator.comparing(Question::getQuestionCode)
 			.thenComparingLong(Question::getId);
-	/*
-	 * Revision output is chronological within one curriculum bucket. Once year is
-	 * equal, reuse the application's established deterministic source ordering.
-	 */
+
+	// Revision output is chronological within one curriculum bucket. Once year is
+	// equal, reuse the application's established deterministic source ordering.
 	private static final Comparator<RevisionQuestionPlacement> REVISION_SOURCE_ORDER = Comparator
 			.comparingInt((RevisionQuestionPlacement placement) -> placement.getQuestion().getExam().getYear())
 			.thenComparing(RevisionQuestionPlacement::getQuestion, QuestionSourceOrder.comparator());
@@ -117,11 +116,10 @@ public final class RevisionPresentationPlanner {
 	private void addOrderedPlacements(List<RevisionQuestionPlacement> source, List<RevisionQuestionPlacement> target,
 			Set<Long> emittedQuestionIds) {
 		for (RevisionQuestionPlacement placement : orderedPlacements(source)) {
-			/*
-			 * A Question may map to several Descriptors beneath one final Subtopic. The
-			 * rolled-up Subtopic presentation must show that Question once, at the first
-			 * Descriptor encountered in curriculum order.
-			 */
+
+			// A Question may map to several Descriptors beneath one final Subtopic. The
+			// rolled-up Subtopic presentation must show that Question once, at the first
+			// Descriptor encountered in curriculum order.
 			if (emittedQuestionIds.add(placement.getQuestion().getId())) {
 				target.add(placement);
 			}
@@ -196,10 +194,9 @@ public final class RevisionPresentationPlanner {
 	}
 
 	private boolean hasCompleteDescriptorCoverage(RevisionCorpusNode node) {
-		/*
-		 * Metadata-only placements do not affect an export choice because they cannot
-		 * appear in the generated student resource.
-		 */
+
+		// Metadata-only placements do not affect an export choice because they cannot
+		// appear in the generated student resource.
 		if (node.getCurriculumNode().getLevel() == CurriculumLevel.SUBTOPIC) {
 			for (RevisionQuestionPlacement placement : node.getQuestionPlacements()) {
 				if (placement.isRenderable()) {
@@ -239,10 +236,9 @@ public final class RevisionPresentationPlanner {
 		ContextKey previousContext = null;
 		for (PresentationDraft draft : drafts) {
 			ContextKey currentContext = ContextKey.from(draft.sharedContext());
-			/*
-			 * Shared context is emitted at the start of an adjacent sequence using that
-			 * context. A different context, including no context, starts a new sequence.
-			 */
+
+			// Shared context is emitted at the start of an adjacent sequence using that
+			// context. A different context, including no context, starts a new sequence.
 			boolean renderSharedContext = currentContext != null && !currentContext.equals(previousContext);
 			presentations.add(new RevisionQuestionPresentation(revisionNumbers.next(), outputBucket, draft.members(),
 					draft.sourceQuestion(), draft.sharedContext(), renderSharedContext));
@@ -255,10 +251,9 @@ public final class RevisionPresentationPlanner {
 			RevisionGroupingMode groupingMode, RevisionNumberSequence revisionNumbers) {
 		CurriculumLevel level = corpusNode.getCurriculumNode().getLevel();
 		if (groupingMode == RevisionGroupingMode.DESCRIPTOR) {
-			/*
-			 * Descriptor mode is all-or-nothing, so only Descriptor nodes are final
-			 * presentation buckets.
-			 */
+
+			// Descriptor mode is all-or-nothing, so only Descriptor nodes are final
+			// presentation buckets.
 			if (level != CurriculumLevel.DESCRIPTOR) {
 				return List.of();
 			}
@@ -270,11 +265,10 @@ public final class RevisionPresentationPlanner {
 					revisionNumbers);
 		}
 		if (level == CurriculumLevel.TOPIC && topicUsesDirectDescriptors(corpusNode)) {
-			/*
-			 * A three-level curriculum has no Subtopic node. In Subtopic mode the Topic
-			 * therefore becomes the practical roll-up bucket rather than inventing a
-			 * synthetic curriculum node.
-			 */
+
+			// A three-level curriculum has no Subtopic node. In Subtopic mode the Topic
+			// therefore becomes the practical roll-up bucket rather than inventing a
+			// synthetic curriculum node.
 			return planPresentations(corpusNode.getCurriculumNode(), rollUpDirectDescriptorTopicPlacements(corpusNode),
 					revisionNumbers);
 		}
@@ -323,10 +317,9 @@ public final class RevisionPresentationPlanner {
 	private List<RevisionQuestionPlacement> rollUpDirectDescriptorTopicPlacements(RevisionCorpusNode topicNode) {
 		List<RevisionQuestionPlacement> rolledUp = new ArrayList<>();
 		Set<Long> emittedQuestionIds = new HashSet<>();
-		/*
-		 * Descriptor child order is curriculum order. Within each Descriptor, Questions
-		 * are oldest-to-newest and ties use deterministic source order.
-		 */
+
+		// Descriptor child order is curriculum order. Within each Descriptor, Questions
+		// are oldest-to-newest and ties use deterministic source order.
 		for (RevisionCorpusNode descriptorNode : topicNode.getChildren()) {
 			if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
 				throw new IllegalStateException("Three-level Topic roll-up requires only Descriptor children");
@@ -339,10 +332,9 @@ public final class RevisionPresentationPlanner {
 	private List<RevisionQuestionPlacement> rollUpSubtopicPlacements(RevisionCorpusNode subtopicNode) {
 		List<RevisionQuestionPlacement> rolledUp = new ArrayList<>();
 		Set<Long> emittedQuestionIds = new HashSet<>();
-		/*
-		 * Questions classified directly to the broader Subtopic come first. These are
-		 * followed by Descriptor groups in curriculum order.
-		 */
+
+		// Questions classified directly to the broader Subtopic come first. These are
+		// followed by Descriptor groups in curriculum order.
 		addOrderedPlacements(subtopicNode.getQuestionPlacements(), rolledUp, emittedQuestionIds);
 		for (RevisionCorpusNode descriptorNode : subtopicNode.getChildren()) {
 			if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {

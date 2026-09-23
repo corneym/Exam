@@ -65,11 +65,10 @@ class RevisionPresentationGroupingTest {
 
 		// The default planner chooses the finest safe grouping automatically.
 		assertEquals(RevisionGroupingMode.SUBTOPIC, plan.getGroupingMode());
-		/*
-		 * Direct Subtopic Questions precede the Descriptor-derived groups. The year
-		 * ordering applies within each curriculum bucket, not across Descriptor
-		 * boundaries.
-		 */
+
+		// Direct Subtopic Questions precede the Descriptor-derived groups. The year
+		// ordering applies within each curriculum bucket, not across Descriptor
+		// boundaries.
 		assertEquals(List.of(1L, 2L), fixture.presentationQuestionIds(plan, fixture.subtopic));
 
 		// Child Descriptor presentations have been consumed by the Subtopic roll-up.
@@ -88,19 +87,17 @@ class RevisionPresentationGroupingTest {
 						fixture.placement(firstDescriptor2022Qcaa, fixture.firstDescriptor, 2),
 						fixture.placement(firstDescriptor2022Alpha, fixture.firstDescriptor, 3)),
 				List.of(fixture.placement(secondDescriptor2021, fixture.secondDescriptor, 4),
-						/*
-						 * The same Question may legitimately be applicable to more than one Descriptor.
-						 * Once those Descriptors are rolled into one Subtopic, emit the Question only
-						 * once.
-						 */
+
+						// The same Question may legitimately be applicable to more than one Descriptor.
+						// Once those Descriptors are rolled into one Subtopic, emit the Question only
+						// once.
 						fixture.placement(firstDescriptor2022Qcaa, fixture.secondDescriptor, 5)));
 		RevisionPresentationPlan plan = planner.plan(corpus, RevisionGroupingMode.SUBTOPIC);
 		assertEquals(RevisionGroupingMode.SUBTOPIC, plan.getGroupingMode());
-		/*
-		 * Descriptor 1 comes before Descriptor 2 even though Descriptor 2 contains an
-		 * older Question. Inside Descriptor 1, 2022 precedes 2024. The two 2022
-		 * Questions are then ordered by established source order, Alpha before QCAA.
-		 */
+
+		// Descriptor 1 comes before Descriptor 2 even though Descriptor 2 contains an
+		// older Question. Inside Descriptor 1, 2022 precedes 2024. The two 2022
+		// Questions are then ordered by established source order, Alpha before QCAA.
 		assertEquals(List.of(12L, 11L, 10L, 13L), fixture.presentationQuestionIds(plan, fixture.subtopic));
 		assertTrue(fixture.presentations(plan, fixture.firstDescriptor).isEmpty());
 		assertTrue(fixture.presentations(plan, fixture.secondDescriptor).isEmpty());
@@ -118,10 +115,9 @@ class RevisionPresentationGroupingTest {
 				List.of(fixture.placement(secondDescriptor2019, fixture.directSecondDescriptor, 3)));
 		RevisionPresentationPlan plan = planner.plan(corpus, RevisionGroupingMode.SUBTOPIC);
 		assertEquals(RevisionGroupingMode.SUBTOPIC, plan.getGroupingMode());
-		/*
-		 * With no real Subtopic node, the Topic is the practical final bucket.
-		 * Descriptor order still takes precedence over year across Descriptors.
-		 */
+
+		// With no real Subtopic node, the Topic is the practical final bucket.
+		// Descriptor order still takes precedence over year across Descriptors.
 		assertEquals(List.of(31L, 30L, 32L), fixture.presentationQuestionIds(plan, fixture.directDescriptorTopic));
 		assertTrue(fixture.presentations(plan, fixture.directFirstDescriptor).isEmpty());
 		assertTrue(fixture.presentations(plan, fixture.directSecondDescriptor).isEmpty());
@@ -160,10 +156,9 @@ class RevisionPresentationGroupingTest {
 				}
 			}
 			int uniqueQuestions = uniqueQuestionIds.size();
-			/*
-			 * Every Question created by this fixture has one source region and no Answer,
-			 * so all unique Questions are renderable.
-			 */
+
+			// Every Question created by this fixture has one source region and no Answer,
+			// so all unique Questions are renderable.
 			RevisionCorpusStatistics statistics = new RevisionCorpusStatistics(applicablePlacements, uniqueQuestions,
 					uniqueQuestions, 0, 0, uniqueQuestions, 0);
 			return new RevisionCorpus(chemistry, currentVersion, List.of(unitNode), statistics);
@@ -224,10 +219,9 @@ class RevisionPresentationGroupingTest {
 			SourceDocument sourceDocument = new SourceDocument(2000 + id, "revision-source-" + id + ".pdf");
 			ExamBooklet booklet = new ExamBooklet(3000 + id, exam, "Paper 1", sourceDocument);
 			QuestionRegion region = new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20);
-			/*
-			 * Original stored classification is deliberately independent of the current
-			 * applicability placement being tested.
-			 */
+
+			// Original stored classification is deliberately independent of the current
+			// applicability placement being tested.
 			return new Question(id, booklet, questionCode, "", 1, List.of(region), firstDescriptor, false);
 		}
 

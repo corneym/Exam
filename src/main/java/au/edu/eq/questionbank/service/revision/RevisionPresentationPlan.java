@@ -15,11 +15,9 @@ public final class RevisionPresentationPlan {
 	private final List<RevisionPresentationNode> rootNodes;
 	private final RevisionGroupingMode groupingMode;
 
-	/*
-	 * Retain the existing package-level constructor for tests or collaborators that
-	 * construct a presentation plan directly. Existing plans represented Descriptor
-	 * presentation semantics.
-	 */
+	// Retain the existing package-level constructor for tests or collaborators that
+	// construct a presentation plan directly. Existing plans represented Descriptor
+	// presentation semantics.
 	RevisionPresentationPlan(RevisionCorpus sourceCorpus, List<RevisionPresentationNode> rootNodes) {
 		this(sourceCorpus, rootNodes, RevisionGroupingMode.DESCRIPTOR);
 	}

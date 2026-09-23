@@ -27,42 +27,6 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumMappingRep
 @Disabled("Uses legacy multi-column curriculum workbooks; replace with two-column fixtures")
 class ChemistryCurriculumIntegrationTest {
 
-	private void assertUniqueCodes(List<CurriculumNode> nodes) {
-		Set<String> codes = new HashSet<>();
-		for (CurriculumNode node : nodes) {
-			if (!codes.add(node.getCode())) {
-				throw new AssertionError("Duplicate curriculum code: " + node.getCode());
-			}
-		}
-	}
-
-	private CurriculumNode find(List<CurriculumNode> nodes, String code) {
-		for (CurriculumNode node : nodes) {
-			if (node.getCode().equals(code)) {
-				return node;
-			}
-		}
-		throw new AssertionError("Curriculum node not found: " + code);
-	}
-
-	private Path resourcePath(String fileName) throws Exception {
-		URL resource = getClass().getResource("/curriculum/" + fileName);
-		if (resource == null) {
-			throw new IllegalStateException("Test resource not found: " + fileName);
-		}
-		return Path.of(resource.toURI());
-	}
-
-	private Set<String> rootCodes(List<CurriculumNode> nodes) {
-		Set<String> codes = new HashSet<>();
-		for (CurriculumNode node : nodes) {
-			if (node.getParent() == null) {
-				codes.add(node.getCode());
-			}
-		}
-		return codes;
-	}
-
 	@Test
 	void importsReal2019And2025ChemistryCurricula() throws Exception {
 		CurriculumExcelImporter importer = new CurriculumExcelImporter();
@@ -76,11 +40,10 @@ class ChemistryCurriculumIntegrationTest {
 		rows2025.addAll(importer.read(resourcePath("CHM Study Checklist - Unit 3 and 4 [2025 Syllabus].xlsx")));
 		assertFalse(rows2019.isEmpty());
 		assertFalse(rows2025.isEmpty());
-		/*
-		 * Use one ID sequence across both syllabus versions. CurriculumNode identity is
-		 * based on its ID, so IDs must remain unique even when different versions are
-		 * loaded.
-		 */
+
+		// Use one ID sequence across both syllabus versions. CurriculumNode identity is
+		// based on its ID, so IDs must remain unique even when different versions are
+		// loaded.
 		AtomicLong ids = new AtomicLong(1);
 		List<CurriculumNode> nodes2019 = builder.build(syllabus2019, rows2019, ids::getAndIncrement);
 		List<CurriculumNode> nodes2025 = builder.build(syllabus2025, rows2025, ids::getAndIncrement);
@@ -133,25 +96,59 @@ class ChemistryCurriculumIntegrationTest {
 				syllabus2025, mappingRows, mappingIds::getAndIncrement);
 		assertEquals(23, mappings.size());
 		CurriculumMappingRepository mappingRepository = new InMemoryCurriculumMappingRepository(mappings);
-		/*
-		 * The canonical mapping contains genuine one-to-many relationships. 2019 4.1.3
-		 * contributes content to two 2025 subtopics.
-		 */
+
+		// The canonical mapping contains genuine one-to-many relationships. 2019 4.1.3
+		// contributes content to two 2025 subtopics.
 		CurriculumNode source413 = curriculumRepository.findByCode(syllabus2019, "4.1.3").orElseThrow();
 		Set<String> targets413 = new HashSet<>();
 		for (CurriculumMapping mapping : mappingRepository.findTargets(source413)) {
 			targets413.add(mapping.getTarget().getCode());
 		}
 		assertEquals(Set.of("4.1.1", "4.1.3"), targets413);
-		/*
-		 * Another old subtopic also splits across two classifications in the 2025
-		 * taxonomy.
-		 */
+
+		// Another old subtopic also splits across two classifications in the 2025
+		// taxonomy.
 		CurriculumNode source423 = curriculumRepository.findByCode(syllabus2019, "4.2.3").orElseThrow();
 		Set<String> targets423 = new HashSet<>();
 		for (CurriculumMapping mapping : mappingRepository.findTargets(source423)) {
 			targets423.add(mapping.getTarget().getCode());
 		}
 		assertEquals(Set.of("4.1.4", "4.2.2"), targets423);
+	}
+
+	private void assertUniqueCodes(List<CurriculumNode> nodes) {
+		Set<String> codes = new HashSet<>();
+		for (CurriculumNode node : nodes) {
+			if (!codes.add(node.getCode())) {
+				throw new AssertionError("Duplicate curriculum code: " + node.getCode());
+			}
+		}
+	}
+
+	private CurriculumNode find(List<CurriculumNode> nodes, String code) {
+		for (CurriculumNode node : nodes) {
+			if (node.getCode().equals(code)) {
+				return node;
+			}
+		}
+		throw new AssertionError("Curriculum node not found: " + code);
+	}
+
+	private Path resourcePath(String fileName) throws Exception {
+		URL resource = getClass().getResource("/curriculum/" + fileName);
+		if (resource == null) {
+			throw new IllegalStateException("Test resource not found: " + fileName);
+		}
+		return Path.of(resource.toURI());
+	}
+
+	private Set<String> rootCodes(List<CurriculumNode> nodes) {
+		Set<String> codes = new HashSet<>();
+		for (CurriculumNode node : nodes) {
+			if (node.getParent() == null) {
+				codes.add(node.getCode());
+			}
+		}
+		return codes;
 	}
 }

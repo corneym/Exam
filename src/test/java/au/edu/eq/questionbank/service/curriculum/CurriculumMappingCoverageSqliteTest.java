@@ -86,11 +86,10 @@ class CurriculumMappingCoverageSqliteTest {
 		}
 		CurriculumMappingCoverage coverage = service().calculateCoverage(sourceVersion, targetVersion);
 		CurriculumMappingLevelCoverage descriptors = coverage.descriptorCoverage();
-		/*
-		 * 14: confirmed mapping but no review -> inconsistent 15: suggested mapping
-		 * only -> unreviewed 16: MATCHED review but no confirmed mapping ->
-		 * inconsistent
-		 */
+
+		// 14: confirmed mapping but no review -> inconsistent 15: suggested mapping
+		// only -> unreviewed 16: MATCHED review but no confirmed mapping ->
+		// inconsistent
 		assertEquals(3, descriptors.total());
 		assertEquals(0, descriptors.matched());
 		assertEquals(0, descriptors.noMatch());

@@ -374,23 +374,18 @@ public final class RevisionHtmlRenderer {
 	 * @throws IllegalStateException if a required rendered asset is missing
 	 */
 	public List<Path> renderTopicPages(RevisionCorpus corpus, Path outputRoot) throws IOException {
-
 		if (corpus == null) {
 			throw new NullPointerException("corpus");
 		}
 		if (outputRoot == null) {
 			throw new NullPointerException("outputRoot");
 		}
-
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
 		writeStylesheet(normalizedOutputRoot);
-
 		List<Path> topicFiles = new ArrayList<Path>();
-
 		for (RevisionCorpusNode unitNode : corpus.getRootNodes()) {
 			for (RevisionCorpusNode topicNode : unitNode.getChildren()) {
 				if (topicNode.getCurriculumNode().getLevel() != CurriculumLevel.TOPIC) {
-
 					throw new IllegalStateException("Unit corpus children must be Topic nodes");
 				}
 
@@ -398,31 +393,22 @@ public final class RevisionHtmlRenderer {
 				if (countPresentations(topicNode) == 0) {
 					continue;
 				}
-
 				Path outputFile = normalizedOutputRoot.resolve(topicRelativePath(unitNode, topicNode));
-
 				renderTopicPage(corpus, unitNode, topicNode, normalizedOutputRoot, outputFile);
-
 				topicFiles.add(outputFile);
-
 				for (RevisionCorpusNode child : topicNode.getChildren()) {
 					if (child.getCurriculumNode().getLevel() != CurriculumLevel.SUBTOPIC) {
 						continue;
 					}
-
 					if (countPresentations(child) == 0) {
 						continue;
 					}
-
 					Path subtopicFile = normalizedOutputRoot.resolve(subtopicRelativePath(unitNode, topicNode, child));
-
 					renderSubtopicPage(corpus, unitNode, topicNode, child, normalizedOutputRoot, subtopicFile);
-
 					topicFiles.add(subtopicFile);
 				}
 			}
 		}
-
 		return List.copyOf(topicFiles);
 	}
 
@@ -684,10 +670,8 @@ public final class RevisionHtmlRenderer {
 				if (questionCount == 0) {
 					continue;
 				}
-
 				String href = relativeUrl(outputFile, outputRoot,
 						subtopicRelativePath(unitNode, topicNode, subtopicNode));
-
 				html.append("""
 						      <li>
 						          <a href="%s">%s</a>
@@ -730,16 +714,20 @@ public final class RevisionHtmlRenderer {
 		return count;
 	}
 
+	private int countStudentFacingPresentations(RevisionCorpus corpus) {
+		int count = 0;
+		for (RevisionCorpusNode unitNode : corpus.getRootNodes()) {
+			count += countPresentations(unitNode);
+		}
+		return count;
+	}
+
 	private String escapeAttribute(String value) {
 		return escapeText(value).replace("\"", "&quot;").replace("'", "&#39;");
 	}
 
 	private String escapeText(String value) {
 		return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-	}
-
-	private boolean hasPresentations(RevisionCorpusNode node) {
-		return !requirePresentationNode(node).getPresentations().isEmpty();
 	}
 
 	private boolean hasPresentationsOfType(List<RevisionCorpusNode> nodes, QuestionResponseType responseType) {
@@ -927,6 +915,8 @@ public final class RevisionHtmlRenderer {
 	private void renderSubjectIndex(RevisionCorpus corpus, Path outputRoot, Path outputFile) throws IOException {
 		Files.createDirectories(outputFile.getParent());
 		String stylesheetSource = relativeUrl(outputFile, outputRoot, Path.of("assets", "revision.css"));
+		int revisionQuestionCount = countStudentFacingPresentations(corpus);
+		String revisionQuestionLabel = revisionQuestionCount == 1 ? "Revision question" : "Revision questions";
 		StringBuilder html = new StringBuilder();
 		html.append("""
 				<!DOCTYPE html>
@@ -944,18 +934,10 @@ public final class RevisionHtmlRenderer {
 				        <h1>%s Revision</h1>
 				    </header>
 
-				    <section class="statistics" aria-label="Revision corpus status">
+				    <section class="statistics" aria-label="Revision summary">
 				        <p class="statistic">
 				            <strong>%d</strong>
-				            Applicable questions
-				        </p>
-				        <p class="statistic">
-				            <strong>%d</strong>
-				            Exportable questions
-				        </p>
-				        <p class="statistic">
-				            <strong>%d</strong>
-				            Awaiting question capture
+				            %s
 				        </p>
 				    </section>
 
@@ -963,8 +945,7 @@ public final class RevisionHtmlRenderer {
 				    <ul class="navigation-list">
 				""".formatted(escapeText(corpus.getSubject().getName()), stylesheetSource,
 				escapeText(corpus.getSyllabusVersion().getName()), escapeText(corpus.getSubject().getName()),
-				corpus.getStatistics().getUniqueApplicableQuestions(), corpus.getStatistics().getRenderableQuestions(),
-				corpus.getStatistics().getMissingQuestionRegionQuestions()));
+				revisionQuestionCount, escapeText(revisionQuestionLabel)));
 		for (RevisionCorpusNode unitNode : corpus.getRootNodes()) {
 			int questionCount = countPresentations(unitNode);
 
@@ -972,9 +953,7 @@ public final class RevisionHtmlRenderer {
 			if (questionCount == 0) {
 				continue;
 			}
-
 			String href = relativeUrl(outputFile, outputRoot, unitRelativePath(unitNode));
-
 			html.append("""
 					       <li>
 					           <a href="%s">%s</a>
@@ -1139,19 +1118,15 @@ public final class RevisionHtmlRenderer {
 				escapeText(nodeLabel(unit))));
 		for (RevisionCorpusNode topicNode : unitNode.getChildren()) {
 			if (topicNode.getCurriculumNode().getLevel() != CurriculumLevel.TOPIC) {
-
 				throw new IllegalStateException("Unit corpus children must be Topic nodes");
 			}
-
 			int questionCount = countPresentations(topicNode);
 
 			// Empty Topics are neither linked nor generated.
 			if (questionCount == 0) {
 				continue;
 			}
-
 			String href = relativeUrl(outputFile, outputRoot, topicRelativePath(unitNode, topicNode));
-
 			html.append("""
 					       <li>
 					           <a href="%s">%s</a>

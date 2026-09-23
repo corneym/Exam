@@ -134,10 +134,9 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		}
 		assertTrue(Files.isRegularFile(destination.resolve("index.html")), "Revision export did not complete");
 		assertTrue(Files.isRegularFile(destination.resolve(Path.of("assets", "revision.css"))));
-		/*
-		 * The successful export displays its normal information alert. Close it so the
-		 * FX success handler can finish.
-		 */
+
+		// The successful export displays its normal information alert. Close it so the
+		// FX success handler can finish.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
 		Button okButton = robot.lookup("OK").queryButton();
 		robot.interact(okButton::fire);

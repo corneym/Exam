@@ -22,14 +22,10 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
 
 public class CurriculumMappingExcelImporter {
 
-	private record HeaderColumns(int headerRow, int target2025Column, int source2019Column) {
-	}
-
 	private static final int HEADER_SEARCH_LIMIT = 20;
-	/*
-	 * Accepts either a descriptor code such as 3.1.1.4 or a subtopic code such as
-	 * 3.1.1. Only the first three components are retained.
-	 */
+
+	// Accepts either a descriptor code such as 3.1.1.4 or a subtopic code such as
+	// 3.1.1. Only the first three components are retained.
 	private static final Pattern CURRICULUM_CODE = Pattern
 			.compile("(?<![\\d.])(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.\\d+)?(?![\\d.])");
 	private static final Pattern NEW_MARKER = Pattern.compile("\\b(NEW|NO)\\b", Pattern.CASE_INSENSITIVE);
@@ -126,10 +122,9 @@ public class CurriculumMappingExcelImporter {
 			}
 			String targetCode = extractSingleSubtopicCode(target2025, sheet, rowIndex, "2025");
 			List<String> sourceCodes = extractSubtopicCodes(source2019);
-			/*
-			 * NEW/NO means the 2025 descriptor has no 2019 equivalent, so there is no
-			 * legacy mapping to create.
-			 */
+
+			// NEW/NO means the 2025 descriptor has no 2019 equivalent, so there is no
+			// legacy mapping to create.
 			if (sourceCodes.isEmpty()) {
 				if (NEW_MARKER.matcher(source2019).find()) {
 					continue;
@@ -141,5 +136,8 @@ public class CurriculumMappingExcelImporter {
 				mappings.add(new CurriculumMappingImportRow(sourceCode, targetCode));
 			}
 		}
+	}
+
+	private record HeaderColumns(int headerRow, int target2025Column, int source2019Column) {
 	}
 }

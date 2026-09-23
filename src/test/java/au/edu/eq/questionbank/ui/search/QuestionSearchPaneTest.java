@@ -875,10 +875,9 @@ public class QuestionSearchPaneTest {
 					release.await();
 					released = true;
 				} catch (InterruptedException e) {
-					/*
-					 * Deliberately ignore cancellation so this test proves a late hierarchy result
-					 * cannot overwrite the newer UI state.
-					 */
+
+					// Deliberately ignore cancellation so this test proves a late hierarchy result
+					// cannot overwrite the newer UI state.
 				}
 			}
 			try {
@@ -957,10 +956,9 @@ public class QuestionSearchPaneTest {
 						delayRelease.await();
 						released = true;
 					} catch (InterruptedException e) {
-						/*
-						 * Ignore cancellation deliberately so the old preview can finish after the
-						 * newer UI state.
-						 */
+
+						// Ignore cancellation deliberately so the old preview can finish after the
+						// newer UI state.
 					}
 				}
 				delayFinished.countDown();
@@ -1008,10 +1006,9 @@ public class QuestionSearchPaneTest {
 						release.await();
 						released = true;
 					} catch (InterruptedException e) {
-						/*
-						 * Ignore cancellation deliberately so a superseded retrieval can finish after
-						 * the newer search.
-						 */
+
+						// Ignore cancellation deliberately so a superseded retrieval can finish after
+						// the newer search.
 					}
 				}
 				delayFinished.countDown();

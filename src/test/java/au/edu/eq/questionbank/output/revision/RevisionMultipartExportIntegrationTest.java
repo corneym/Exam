@@ -97,14 +97,24 @@ class RevisionMultipartExportIntegrationTest {
 		Path destination = tempDir.resolve("revision-output");
 		RevisionExportResult result = service.export(new RevisionExportRequest(chemistry, destination));
 		Path topicFile = destination.resolve(Path.of("units", "unit-10", "topic-11.html"));
+		Path subjectIndex = destination.resolve("index.html");
 		Path contextImage = destination.resolve(Path.of("assets", "contexts", "context-50.png"));
 		Path partAImage = destination.resolve(Path.of("assets", "questions", "question-4.png"));
 		Path partBImage = destination.resolve(Path.of("assets", "questions", "question-5.png"));
 		assertTrue(Files.isRegularFile(topicFile));
+		assertTrue(Files.isRegularFile(subjectIndex));
 		assertTrue(Files.isRegularFile(contextImage));
 		assertTrue(Files.isRegularFile(partAImage));
 		assertTrue(Files.isRegularFile(partBImage));
 		String html = Files.readString(topicFile);
+		String subjectHtml = Files.readString(subjectIndex);
+
+		// Two persisted source parts form one student-facing revision Question.
+		assertTrue(subjectHtml.contains("<strong>1</strong>"));
+		assertTrue(subjectHtml.contains("Revision question"));
+		assertFalse(subjectHtml.contains("Applicable questions"));
+		assertFalse(subjectHtml.contains("Exportable questions"));
+		assertFalse(subjectHtml.contains("Awaiting question capture"));
 		assertEquals(1, countOccurrences(html, "context-50.png"));
 		assertEquals(1, countOccurrences(html, "<summary>Reveal answer</summary>"));
 		assertTrue(html.contains("Question 1"));

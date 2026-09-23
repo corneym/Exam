@@ -496,9 +496,8 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn(marks).write("2");
 		assertTrue(save.isDisabled());
 		dragRegionOnDisplayedPage(robot);
-		/*
-		 * A rectangle exists, but it has not yet been accepted.
-		 */
+
+		// A rectangle exists, but it has not yet been accepted.
 		assertTrue(save.isDisabled());
 		fireControl(robot, "#add-question-region");
 		assertFalse(save.isDisabled());

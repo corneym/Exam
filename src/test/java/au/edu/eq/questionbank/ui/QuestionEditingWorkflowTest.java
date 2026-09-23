@@ -221,20 +221,17 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		AtomicInteger completed = new AtomicInteger();
 		robot.interact(() -> assertTrue(pane.recaptureQuestion(question, completed::incrementAndGet)));
 		WaitForAsyncUtils.waitForFxEvents();
-		/*
-		 * Recapture starts with no transient replacement regions.
-		 */
+
+		// Recapture starts with no transient replacement regions.
 		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(lookup(robot, "#save-question", Button.class).isDisable());
 		assertTrue(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
-		/*
-		 * Nothing has yet changed in SQLite.
-		 */
+
+		// Nothing has yet changed in SQLite.
 		assertEquals(1, repository.findById(question.getId()).orElseThrow().getRegions().size());
 		assertEquals(0, completed.get());
-		/*
-		 * Cancelling recapture leaves the persisted question untouched.
-		 */
+
+		// Cancelling recapture leaves the persisted question untouched.
 		fireControl(robot, "#cancel-question-edit");
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(1, completed.get());
@@ -254,11 +251,10 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question metadataOnlyQuestion = repository.save(booklet, "61", "", 2, List.of(), classification, true, null,
 				null);
 		assertTrue(metadataOnlyQuestion.getRegions().isEmpty());
-		/*
-		 * Open Search Questions through the real application method. showAndWait()
-		 * enters a nested JavaFX event loop, so schedule it rather than blocking the
-		 * TestFX interaction thread.
-		 */
+
+		// Open Search Questions through the real application method. showAndWait()
+		// enters a nested JavaFX event loop, so schedule it rather than blocking the
+		// TestFX interaction thread.
 		Platform.runLater(() -> {
 			try {
 				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },

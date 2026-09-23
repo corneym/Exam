@@ -162,10 +162,9 @@ class ScormPackageValidatorTest {
 		writeFile(packageRoot.resolve(Path.of("assets", "questions", "question-1.png")), "question image");
 		writeFile(packageRoot.resolve(Path.of("assets", "answers", "question-1-answer-01.png")), "answer image");
 		writeFile(packageRoot.resolve(Path.of("units", "unit-10", "topic-11.html")), "<html></html>");
-		/*
-		 * SCORM schema/support files are package infrastructure, not SCO content. They
-		 * therefore do not appear as <file> children of the resource.
-		 */
+
+		// SCORM schema/support files are package infrastructure, not SCO content. They
+		// therefore do not appear as <file> children of the resource.
 		writeFile(packageRoot.resolve("adlcp_rootv1p2.xsd"), "schema support");
 		writeFile(packageRoot.resolve("ims_xml.xsd"), "schema support");
 		writeFile(packageRoot.resolve("imscp_rootv1p1p2.xsd"), "schema support");

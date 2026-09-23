@@ -81,10 +81,9 @@ class RevisionExportDialogTest {
 		assertEquals(RevisionGroupingMode.DESCRIPTOR, dialog.getGroupingMode());
 		setupFixture(() -> subjectBox.setValue(physics));
 		WaitForAsyncUtils.waitForFxEvents();
-		/*
-		 * Physics represents a corpus with incomplete Descriptor coverage. Descriptor
-		 * is absent rather than presented as a misleading disabled option.
-		 */
+
+		// Physics represents a corpus with incomplete Descriptor coverage. Descriptor
+		// is absent rather than presented as a misleading disabled option.
 		assertEquals(List.of(RevisionGroupingMode.SUBTOPIC), groupingBox.getItems());
 		assertEquals(RevisionGroupingMode.SUBTOPIC, dialog.getGroupingMode());
 	}

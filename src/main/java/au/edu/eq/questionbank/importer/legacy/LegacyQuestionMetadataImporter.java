@@ -506,13 +506,12 @@ public final class LegacyQuestionMetadataImporter {
 				if (existing != null) {
 					verifyExistingQuestion(existing, classificationNodeId, sourceQuestionId, sheet.providerName(), row);
 					existingQuestionId = existing.id();
-					/*
-					 * UNKNOWN means no authoritative decision has yet been made. Explicit MCQ
-					 * workbook evidence may therefore resolve it.
-					 *
-					 * A non-UNKNOWN value is deliberately preserved because it may have been
-					 * corrected after the legacy import.
-					 */
+
+					// UNKNOWN means no authoritative decision has yet been made. Explicit MCQ
+					// workbook evidence may therefore resolve it.
+					//
+					// A non-UNKNOWN value is deliberately preserved because it may have been
+					// corrected after the legacy import.
 					updateExistingResponseType = existing.responseType() == QuestionResponseType.UNKNOWN
 							&& importedResponseType != QuestionResponseType.UNKNOWN;
 					insertAnswer = shouldInsertAnswer(connection, existing.id(), sheet.providerName(), row);

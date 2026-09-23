@@ -24,12 +24,6 @@ import javafx.stage.Stage;
 @Tag("workflow-ui")
 class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
-	@Override
-	@Start
-	void start(Stage stage) throws Exception {
-		super.start(stage);
-	}
-
 	@Test
 	void acceptedAnswerRegionUsesContentHeightImmediately(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
@@ -114,33 +108,29 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Button choosePdf = lookup(robot, "#choose-answer-pdf", Button.class);
 		Label selectedPdf = lookup(robot, "#selected-answer-pdf", Label.class);
 		javafx.scene.layout.VBox pdfControls = lookup(robot, "#answer-pdf-controls", javafx.scene.layout.VBox.class);
-		/*
-		 * Exercise a filename deliberately much longer than the supported narrow
-		 * workspace. Real imported files can contain similarly descriptive names.
-		 */
+
+		// Exercise a filename deliberately much longer than the supported narrow
+		// workspace. Real imported files can contain similarly descriptive names.
 		robot.interact(() -> selectedPdf
 				.setText("Queensland-Chemistry-External-Assessment-2024-Marking-Guide-With-A-Very-Long-Filename.pdf"));
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
 		robot.interact(() -> {
-			/*
-			 * Force the capture pane to the application's configured minimum width, then
-			 * perform a complete CSS/layout pass before measuring controls.
-			 */
+
+			// Force the capture pane to the application's configured minimum width, then
+			// perform a complete CSS/layout pass before measuring controls.
 			splitPane.setDividerPosition(0, 0.0);
 			primaryStage.getScene().getRoot().applyCss();
 			primaryStage.getScene().getRoot().layout();
 		});
 		WaitForAsyncUtils.waitForFxEvents();
-		/*
-		 * The action must not be compressed below its JavaFX minimum readable width.
-		 */
+
+		// The action must not be compressed below its JavaFX minimum readable width.
 		assertTrue(choosePdf.getWidth() + 0.5 >= choosePdf.minWidth(choosePdf.getHeight()),
 				"Choose PDF must remain fully readable at minimum workspace width");
-		/*
-		 * The filename occupies its own wrapping row rather than sharing horizontal
-		 * space with the action.
-		 */
+
+		// The filename occupies its own wrapping row rather than sharing horizontal
+		// space with the action.
 		assertTrue(selectedPdf.isWrapText());
 		assertEquals(pdfControls, choosePdf.getParent());
 		assertEquals(pdfControls, selectedPdf.getParent());
@@ -194,10 +184,9 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Question question = captureQuestion(robot, "MC1");
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
-		/*
-		 * Exercise the multiple-choice controls at the minimum supported capture
-		 * workspace width.
-		 */
+
+		// Exercise the multiple-choice controls at the minimum supported capture
+		// workspace width.
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
 		robot.interact(() -> {
@@ -214,10 +203,9 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Node answerB = lookup(robot, "#answer-choice-b", Node.class);
 		Node answerC = lookup(robot, "#answer-choice-c", Node.class);
 		Node answerD = lookup(robot, "#answer-choice-d", Node.class);
-		/*
-		 * The descriptive prompt occupies its own row while all compact answer choices
-		 * share a second row. This prevents the prompt from squeezing the controls.
-		 */
+
+		// The descriptive prompt occupies its own row while all compact answer choices
+		// share a second row. This prevents the prompt from squeezing the controls.
 		assertTrue(controls.isVisible());
 		assertEquals(controls, label.getParent());
 		assertEquals(answerA.getParent(), answerB.getParent());
@@ -226,10 +214,9 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(answerA.getParent(), clearChoice.getParent());
 		assertFalse(label.getParent() == clearChoice.getParent(),
 				"Multiple-choice prompt must not compete with the choice controls");
-		/*
-		 * Clear choice is the widest action on the choice row and therefore provides
-		 * the useful regression check that the row is not being compressed.
-		 */
+
+		// Clear choice is the widest action on the choice row and therefore provides
+		// the useful regression check that the row is not being compressed.
 		assertTrue(clearChoice.getWidth() + 0.5 >= clearChoice.minWidth(clearChoice.getHeight()),
 				"Clear choice must remain fully readable at minimum workspace width");
 	}
@@ -333,5 +320,11 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// narrow workspace wider.
 		assertTrue(status.getWidth() <= questionCapturePane().getWidth() + 0.5,
 				"Question status must remain within the Question pane width");
+	}
+
+	@Override
+	@Start
+	void start(Stage stage) throws Exception {
+		super.start(stage);
 	}
 }

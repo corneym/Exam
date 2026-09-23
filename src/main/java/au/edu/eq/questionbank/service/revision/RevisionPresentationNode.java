@@ -34,10 +34,9 @@ public final class RevisionPresentationNode {
 			}
 		}
 		CurriculumLevel level = curriculumNode.getLevel();
-		/*
-		 * Descriptor mode uses Descriptor buckets. Subtopic mode uses Subtopic buckets,
-		 * except for three-level curricula where Topic is the practical roll-up bucket.
-		 */
+
+		// Descriptor mode uses Descriptor buckets. Subtopic mode uses Subtopic buckets,
+		// except for three-level curricula where Topic is the practical roll-up bucket.
 		if (level == CurriculumLevel.UNIT && !presentations.isEmpty()) {
 			throw new IllegalArgumentException("Unit nodes may not contain question presentations");
 		}

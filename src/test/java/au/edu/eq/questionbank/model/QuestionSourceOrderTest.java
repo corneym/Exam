@@ -67,10 +67,9 @@ class QuestionSourceOrderTest {
 	}
 
 	private Question question(long id, ExamBooklet booklet, String questionCode) {
-		/*
-		 * Source-order tests need only Question metadata, so zero source regions are
-		 * sufficient for these legacy-compatible Question instances.
-		 */
+
+		// Source-order tests need only Question metadata, so zero source regions are
+		// sufficient for these legacy-compatible Question instances.
 		return new Question(id, booklet, questionCode, "", 1, List.of(), descriptor, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
 	}

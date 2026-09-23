@@ -113,65 +113,41 @@ class RevisionHtmlRendererTest {
 
 	@Test
 	void omitsEmptyCurriculumBranchesFromNavigationAndGeneratedFiles() throws Exception {
-
 		Fixture fixture = new Fixture();
-
 		RevisionCorpus corpus = fixture.createCorpus(
 				_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.nestedDescriptor)));
-
 		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
 				Path.of("assets", "questions", "question-2.png"));
-
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, RevisionGroupingMode.SUBTOPIC,
 				List.of(questionAsset), List.of());
-
 		Path outputRoot = tempDir.resolve("pruned-output");
-
 		List<Path> htmlFiles = renderer.render(corpus, outputRoot);
-
 		Path populatedUnitFile = outputRoot.resolve(Path.of("units", "unit-10", "index.html"));
-
 		Path populatedTopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20.html"));
-
 		Path populatedSubtopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20", "subtopic-21.html"));
-
 		Path emptySubtopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-20", "subtopic-23.html"));
-
 		Path emptyTopicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-30.html"));
-
 		Path emptyUnitFile = outputRoot.resolve(Path.of("units", "unit-40", "index.html"));
-
 		Path emptyUnitTopicFile = outputRoot.resolve(Path.of("units", "unit-40", "topic-41.html"));
-
 		assertTrue(Files.isRegularFile(populatedUnitFile));
 		assertTrue(Files.isRegularFile(populatedTopicFile));
 		assertTrue(Files.isRegularFile(populatedSubtopicFile));
-
 		assertFalse(Files.exists(emptySubtopicFile));
 		assertFalse(Files.exists(emptyTopicFile));
 		assertFalse(Files.exists(emptyUnitFile));
 		assertFalse(Files.exists(emptyUnitTopicFile));
-
 		assertFalse(htmlFiles.contains(emptySubtopicFile.toAbsolutePath().normalize()));
-
 		assertFalse(htmlFiles.contains(emptyTopicFile.toAbsolutePath().normalize()));
-
 		assertFalse(htmlFiles.contains(emptyUnitFile.toAbsolutePath().normalize()));
-
 		String subjectHtml = Files.readString(outputRoot.resolve("index.html"));
-
 		assertTrue(subjectHtml.contains("1 Unit 1"));
 		assertFalse(subjectHtml.contains("4 Empty unit"));
 		assertFalse(subjectHtml.contains("unit-40"));
-
 		String unitHtml = Files.readString(populatedUnitFile);
-
 		assertTrue(unitHtml.contains("2.1 Subtopic mode"));
 		assertFalse(unitHtml.contains("3.1 Empty topic"));
 		assertFalse(unitHtml.contains("topic-30.html"));
-
 		String topicHtml = Files.readString(populatedTopicFile);
-
 		assertTrue(topicHtml.contains("2.1.1 Subtopic classification"));
 		assertFalse(topicHtml.contains("2.1.2 Empty subtopic"));
 		assertFalse(topicHtml.contains("subtopic-23.html"));
@@ -298,8 +274,11 @@ class RevisionHtmlRendererTest {
 		String subjectHtml = Files.readString(subjectIndex);
 		assertTrue(subjectHtml.contains("href=\"units/unit-10/index.html\""));
 		assertTrue(subjectHtml.contains("1 revision question"));
-		assertTrue(subjectHtml.contains("Applicable questions"));
-		assertTrue(subjectHtml.contains("Exportable questions"));
+		assertTrue(subjectHtml.contains("Revision question"));
+		assertFalse(subjectHtml.contains("Applicable questions"));
+		assertFalse(subjectHtml.contains("Exportable questions"));
+		assertFalse(subjectHtml.contains("Awaiting question capture"));
+		assertFalse(subjectHtml.contains("Revision corpus status"));
 		String unitHtml = Files.readString(unitIndex);
 		assertTrue(unitHtml.contains("href=\"../../index.html\""));
 		assertTrue(unitHtml.contains("href=\"topic-11.html\""));
@@ -438,19 +417,13 @@ class RevisionHtmlRendererTest {
 			subtopic = new Subtopic(21, currentVersion, subtopicTopic, "2.1.1", "Subtopic classification", 1);
 			nestedDescriptor = new Descriptor(22, currentVersion, subtopic, "2.1.1.1", "Nested descriptor", 1);
 			emptySubtopic = new Subtopic(23, currentVersion, subtopicTopic, "2.1.2", "Empty subtopic", 2);
-
 			Descriptor emptySubtopicDescriptor = new Descriptor(24, currentVersion, emptySubtopic, "2.1.2.1",
 					"Empty subtopic descriptor", 1);
-
 			emptyTopicInPopulatedUnit = new Topic(30, currentVersion, currentUnit, "3.1", "Empty topic", 3);
-
 			Descriptor emptyTopicDescriptor = new Descriptor(31, currentVersion, emptyTopicInPopulatedUnit, "3.1.1",
 					"Empty topic descriptor", 1);
-
 			emptyUnit = new Unit(40, currentVersion, "4", "Empty unit", 2);
-
 			emptyTopic = new Topic(41, currentVersion, emptyUnit, "4.1", "Empty unit topic", 1);
-
 			Descriptor emptyUnitDescriptor = new Descriptor(42, currentVersion, emptyTopic, "4.1.1",
 					"Empty unit descriptor", 1);
 			ExamProvider provider = new ExamProvider(1, "QCAA");

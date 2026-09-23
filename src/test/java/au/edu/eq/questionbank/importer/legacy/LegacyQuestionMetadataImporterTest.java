@@ -59,29 +59,6 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
-	void repeatedImportAddsMissingAnswerToExistingQuestion() throws Exception {
-		Fixture fixture = createFixture("missing-answer.db", false);
-		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
-		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
-		try (Connection connection = fixture.database().openConnection();
-				Statement statement = connection.createStatement()) {
-			statement.executeUpdate("DELETE FROM answers");
-		}
-		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
-		assertEquals(new LegacyQuestionImportResult(0, 2, 1), result);
-		try (Connection connection = fixture.database().openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet answer = statement.executeQuery("""
-						SELECT q.question_code, a.answer_text
-						FROM answers a JOIN questions q ON q.id = a.question_id
-						""")) {
-			assertTrue(answer.next());
-			assertEquals("1", answer.getString("question_code"));
-			assertEquals("B", answer.getString("answer_text"));
-		}
-	}
-
-	@Test
 	void conflictingExistingQuestionPreventsAnyNewRows() throws Exception {
 		Fixture fixture = createFixture("existing-conflict.db", false);
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
@@ -257,13 +234,35 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void repeatedImportAddsMissingAnswerToExistingQuestion() throws Exception {
+		Fixture fixture = createFixture("missing-answer.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.executeUpdate("DELETE FROM answers");
+		}
+		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		assertEquals(new LegacyQuestionImportResult(0, 2, 1), result);
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet answer = statement.executeQuery("""
+						SELECT q.question_code, a.answer_text
+						FROM answers a JOIN questions q ON q.id = a.question_id
+						""")) {
+			assertTrue(answer.next());
+			assertEquals("1", answer.getString("question_code"));
+			assertEquals("B", answer.getString("answer_text"));
+		}
+	}
+
+	@Test
 	void repeatedImportDoesNotOverwriteDeliberatelyResolvedResponseType() throws Exception {
 		Fixture fixture = createFixture("resolved-response-type.db", false);
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
 		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
-		/*
-		 * Simulate a later deliberate metadata correction.
-		 */
+
+		// Simulate a later deliberate metadata correction.
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
 			statement.executeUpdate("""

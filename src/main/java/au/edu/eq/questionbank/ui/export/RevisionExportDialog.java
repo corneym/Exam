@@ -153,10 +153,9 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		if (descriptorAvailable) {
 			groupingBox.getItems().setAll(RevisionGroupingMode.DESCRIPTOR, RevisionGroupingMode.SUBTOPIC);
 		} else {
-			/*
-			 * Descriptor is not merely disabled: it is not presented as an available output
-			 * choice when corpus coverage is incomplete.
-			 */
+
+			// Descriptor is not merely disabled: it is not presented as an available output
+			// choice when corpus coverage is incomplete.
 			groupingBox.getItems().setAll(RevisionGroupingMode.SUBTOPIC);
 		}
 		if (previous != null && groupingBox.getItems().contains(previous)) {

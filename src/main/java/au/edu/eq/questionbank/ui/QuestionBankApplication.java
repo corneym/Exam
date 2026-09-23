@@ -1899,10 +1899,9 @@ public class QuestionBankApplication extends Application {
 		if (revisionExportRunning) {
 			return;
 		}
-		/*
-		 * Use the real current corpus to decide whether Descriptor grouping is a
-		 * legitimate option for each selected Subject.
-		 */
+
+		// Use the real current corpus to decide whether Descriptor grouping is a
+		// legitimate option for each selected Subject.
 		RevisionExportService eligibilityService = createRevisionExportService(config);
 		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
 				curriculumSelectionModel.getSubject(), eligibilityService::isDescriptorGroupingAvailable);

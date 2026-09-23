@@ -57,30 +57,27 @@ public final class QuestionSourceOrder {
 			if (prefixComparison != 0) {
 				return prefixComparison;
 			}
-			/*
-			 * Compare the numeric portion as a number rather than as text so that Question
-			 * 10 sorts after Question 3 rather than between 1 and 2.
-			 */
+
+			// Compare the numeric portion as a number rather than as text so that Question
+			// 10 sorts after Question 3 rather than between 1 and 2.
 			BigInteger leftNumber = new BigInteger(leftMatcher.group(2));
 			BigInteger rightNumber = new BigInteger(rightMatcher.group(2));
 			int numberComparison = leftNumber.compareTo(rightNumber);
 			if (numberComparison != 0) {
 				return numberComparison;
 			}
-			/*
-			 * The empty part sorts before alphabetic parts, producing the required
-			 * base/part sequence: 3, 3a, 3b.
-			 */
+
+			// The empty part sorts before alphabetic parts, producing the required
+			// base/part sequence: 3, 3a, 3b.
 			int partComparison = compareText(leftMatcher.group(3), rightMatcher.group(3));
 			if (partComparison != 0) {
 				return partComparison;
 			}
 			return left.compareTo(right);
 		}
-		/*
-		 * Unsupported legacy forms are not interpreted. A deterministic textual
-		 * fallback keeps them sortable without silently inventing additional syntax.
-		 */
+
+		// Unsupported legacy forms are not interpreted. A deterministic textual
+		// fallback keeps them sortable without silently inventing additional syntax.
 		return compareText(left, right);
 	}
 
@@ -113,11 +110,10 @@ public final class QuestionSourceOrder {
 		if (questionComparison != 0) {
 			return questionComparison;
 		}
-		/*
-		 * Database identity does not define ordinary source order. It is consulted only
-		 * when two Questions have identical source-order keys so comparison remains
-		 * deterministic.
-		 */
+
+		// Database identity does not define ordinary source order. It is consulted only
+		// when two Questions have identical source-order keys so comparison remains
+		// deterministic.
 		return Long.compare(left.getId(), right.getId());
 	}
 

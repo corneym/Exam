@@ -223,16 +223,14 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn(sharedContext);
 		assertTrue(sharedContext.isSelected());
 		assertTrue(save.isDisabled());
-		/*
-		 * The already-drawn rectangle is now accepted as the shared context rather than
-		 * as an ordinary question region.
-		 */
+
+		// The already-drawn rectangle is now accepted as the shared context rather than
+		// as an ordinary question region.
 		robot.clickOn("#add-question-region");
 		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(save.isDisabled());
-		/*
-		 * Now capture the actual 24a question region.
-		 */
+
+		// Now capture the actual 24a question region.
 		dragRegionOnDisplayedPage(robot);
 		assertTrue(save.isDisabled());
 		robot.clickOn("#add-question-region");
@@ -452,9 +450,8 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.20)));
 		Question question = questionRepository.save(booklet, "63", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.40, 0.80, 0.30)), classification, true, null, context);
-		/*
-		 * Open Search Questions through the real application workflow.
-		 */
+
+		// Open Search Questions through the real application workflow.
 		Platform.runLater(() -> {
 			try {
 				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
@@ -485,12 +482,8 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Wait for the actual modal conversion decision rather than locating a
 		// particular button node in the scene graph.
 		waitForDialogShowing(robot, "Question Shared Context Converted");
-		/*
-		 * Conversion has already committed before recapture is offered.
-		 */
-		/*
-		 * Conversion has already committed before recapture is offered.
-		 */
+
+		// Conversion has already committed before recapture is offered.
 		Question converted = questionRepository.findById(question.getId()).orElseThrow();
 		assertFalse(converted.isSharedContextCaptureRequired());
 		assertFalse(converted.hasSharedContext());

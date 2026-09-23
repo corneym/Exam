@@ -120,10 +120,9 @@ public final class RevisionExportService {
 		progress.update("Building revision corpus...", 0, 0);
 		RevisionCorpus corpus = corpusBuilder.build(request.getSubject());
 		progress.update("Planning revision presentation...", 0, 0);
-		/*
-		 * Legacy/internal callers may still use automatic safe grouping. New UI exports
-		 * carry the user's explicit choice.
-		 */
+
+		// Legacy/internal callers may still use automatic safe grouping. New UI exports
+		// carry the user's explicit choice.
 		RevisionPresentationPlan presentationPlan;
 		if (request.hasGroupingMode()) {
 			presentationPlan = presentationPlanner.plan(corpus, request.getGroupingMode());
