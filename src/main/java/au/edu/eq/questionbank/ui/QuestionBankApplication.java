@@ -1899,12 +1899,10 @@ public class QuestionBankApplication extends Application {
 		if (revisionExportRunning) {
 			return;
 		}
-
-		// Use the real current corpus to decide whether Descriptor grouping is a
-		// legitimate option for each selected Subject.
 		RevisionExportService eligibilityService = createRevisionExportService(config);
 		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
-				curriculumSelectionModel.getSubject(), eligibilityService::isDescriptorGroupingAvailable);
+				curriculumSelectionModel.getSubject(), eligibilityService::findExportableUnits,
+				eligibilityService::isDescriptorGroupingAvailable);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
@@ -1912,11 +1910,12 @@ public class QuestionBankApplication extends Application {
 		Subject subject = dialog.getSelectedSubject();
 		Path destinationParent = dialog.getDestinationParent();
 		RevisionGroupingMode groupingMode = dialog.getGroupingMode();
-		if (subject == null || destinationParent == null || groupingMode == null) {
+		Set<Long> selectedUnitIds = dialog.getSelectedUnitIds();
+		if (subject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
 			return;
 		}
 		Path destination = revisionExportDestination(destinationParent, subject);
-		startRevisionExport(primaryStage, config, subject, destination, groupingMode);
+		startRevisionExport(primaryStage, config, subject, destination, groupingMode, selectedUnitIds);
 	}
 
 	private void showRevisionExportSuccess(RevisionExportResult result) {
@@ -1944,7 +1943,8 @@ public class QuestionBankApplication extends Application {
 		}
 		ScormExportService eligibilityService = createScormExportService(config);
 		ScormExportDialog dialog = new ScormExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
-				curriculumSelectionModel.getSubject(), eligibilityService::isDescriptorGroupingAvailable);
+				curriculumSelectionModel.getSubject(), eligibilityService::findExportableUnits,
+				eligibilityService::isDescriptorGroupingAvailable);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
@@ -1952,11 +1952,12 @@ public class QuestionBankApplication extends Application {
 		Subject subject = dialog.getSelectedSubject();
 		Path destinationParent = dialog.getDestinationParent();
 		RevisionGroupingMode groupingMode = dialog.getGroupingMode();
-		if (subject == null || destinationParent == null || groupingMode == null) {
+		Set<Long> selectedUnitIds = dialog.getSelectedUnitIds();
+		if (subject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
 			return;
 		}
 		Path destination = scormExportDestination(destinationParent, subject);
-		startScormExport(primaryStage, config, subject, destination, groupingMode);
+		startScormExport(primaryStage, config, subject, destination, groupingMode, selectedUnitIds);
 	}
 
 	private void showScormExportSuccess(ScormExportResult result) {
@@ -2059,11 +2060,16 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
-		startRevisionExport(primaryStage, config, subject, destination, null);
+		startRevisionExport(primaryStage, config, subject, destination, null, null);
 	}
 
 	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
 			RevisionGroupingMode groupingMode) {
+		startRevisionExport(primaryStage, config, subject, destination, groupingMode, null);
+	}
+
+	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
+			RevisionGroupingMode groupingMode, Set<Long> selectedUnitIds) {
 		if (revisionExportRunning) {
 			return;
 		}
@@ -2072,8 +2078,7 @@ public class QuestionBankApplication extends Application {
 			revisionExportMenuItem.setDisable(true);
 		}
 		RevisionExportService exportService = createRevisionExportService(config);
-		RevisionExportRequest request = groupingMode == null ? new RevisionExportRequest(subject, destination)
-				: new RevisionExportRequest(subject, destination, groupingMode);
+		RevisionExportRequest request = new RevisionExportRequest(subject, destination, groupingMode, selectedUnitIds);
 		RevisionExportTask task = new RevisionExportTask(exportService, request);
 		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision HTML",
 				"Creating revision website...", "Starting export...");
@@ -2086,11 +2091,16 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
-		startScormExport(primaryStage, config, subject, destination, null);
+		startScormExport(primaryStage, config, subject, destination, null, null);
 	}
 
 	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
 			RevisionGroupingMode groupingMode) {
+		startScormExport(primaryStage, config, subject, destination, groupingMode, null);
+	}
+
+	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
+			RevisionGroupingMode groupingMode, Set<Long> selectedUnitIds) {
 		if (scormExportRunning) {
 			return;
 		}
@@ -2099,8 +2109,7 @@ public class QuestionBankApplication extends Application {
 			scormExportMenuItem.setDisable(true);
 		}
 		ScormExportService exportService = createScormExportService(config);
-		ScormExportRequest request = groupingMode == null ? new ScormExportRequest(subject, destination)
-				: new ScormExportRequest(subject, destination, groupingMode);
+		ScormExportRequest request = new ScormExportRequest(subject, destination, groupingMode, selectedUnitIds);
 		ScormExportTask task = new ScormExportTask(exportService, request);
 		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision SCORM",
 				"Creating SCORM package...", "Starting SCORM export...");

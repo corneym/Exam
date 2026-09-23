@@ -92,17 +92,21 @@ class QuestionRetrievalImportOriginTest {
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("QCAA");
 			writeHeader(sheet);
-			Row questionRow = sheet.createRow(1);
-			questionRow.createCell(0).setCellValue(2020);
-			questionRow.createCell(1).setCellValue("1");
-			questionRow.createCell(2).setCellValue("21a");
-			questionRow.createCell(3).setCellValue(3);
-			questionRow.createCell(4).setCellValue("1.1.1");
+			writeQuestionMetadataRow(sheet);
 			try (OutputStream output = Files.newOutputStream(workbookPath)) {
 				workbook.write(output);
 			}
 		}
 		return workbookPath;
+	}
+
+	private void writeQuestionMetadataRow(Sheet sheet) {
+		Row questionRow = sheet.createRow(1);
+		questionRow.createCell(0).setCellValue(2020);
+		questionRow.createCell(1).setCellValue("1");
+		questionRow.createCell(2).setCellValue("21a");
+		questionRow.createCell(3).setCellValue(3);
+		questionRow.createCell(4).setCellValue("1.1.1");
 	}
 
 	private QuestionRetrievalResult findByQuestionCode(List<QuestionRetrievalResult> results, String questionCode) {
@@ -122,6 +126,6 @@ class QuestionRetrievalImportOriginTest {
 		header.createCell(3).setCellValue("Marks");
 		header.createCell(4).setCellValue("Topic");
 		header.createCell(5).setCellValue("Answer");
-		header.createCell(6).setCellValue("Shared Context");
+		header.createCell(6).setCellValue("Preamble");
 	}
 }

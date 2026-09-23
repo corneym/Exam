@@ -7,11 +7,14 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.service.revision.RevisionCorpus;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionCorpusScope;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlan;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
@@ -29,6 +32,7 @@ public final class RevisionExportService {
 	private final RevisionExportValidator validator;
 	private final RevisionPresentationPlanner presentationPlanner;
 	private final RevisionSharedContextAssetRenderer sharedContextAssetRenderer;
+	private final RevisionCorpusScope corpusScope = new RevisionCorpusScope();
 
 	/**
 	 * Creates an exporter from corpus, rendering and validation services.
@@ -118,7 +122,13 @@ public final class RevisionExportService {
 			throw new IOException("Revision export staging directory escaped destination parent");
 		}
 		progress.update("Building revision corpus...", 0, 0);
-		RevisionCorpus corpus = corpusBuilder.build(request.getSubject());
+		RevisionCorpus fullCorpus = corpusBuilder.build(request.getSubject());
+		RevisionCorpus corpus;
+		if (request.hasUnitSelection()) {
+			corpus = corpusScope.selectUnits(fullCorpus, request.getSelectedUnitIds());
+		} else {
+			corpus = fullCorpus;
+		}
 		progress.update("Planning revision presentation...", 0, 0);
 
 		// Legacy/internal callers may still use automatic safe grouping. New UI exports
@@ -164,6 +174,14 @@ public final class RevisionExportService {
 		}
 	}
 
+	public List<Unit> findExportableUnits(Subject subject) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		RevisionCorpus corpus = corpusBuilder.build(subject);
+		return corpusScope.findNonEmptyUnits(corpus);
+	}
+
 	/**
 	 * Returns whether the Subject's current renderable revision corpus has complete
 	 * Descriptor-level coverage.
@@ -180,6 +198,18 @@ public final class RevisionExportService {
 		}
 		RevisionCorpus corpus = corpusBuilder.build(subject);
 		return presentationPlanner.isDescriptorGroupingAvailable(corpus);
+	}
+
+	public boolean isDescriptorGroupingAvailable(Subject subject, Set<Long> selectedUnitIds) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (selectedUnitIds == null) {
+			throw new NullPointerException("selectedUnitIds");
+		}
+		RevisionCorpus fullCorpus = corpusBuilder.build(subject);
+		RevisionCorpus scopedCorpus = corpusScope.selectUnits(fullCorpus, selectedUnitIds);
+		return presentationPlanner.isDescriptorGroupingAvailable(scopedCorpus);
 	}
 
 	private void deleteRecursively(Path root) throws IOException {

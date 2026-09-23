@@ -29,7 +29,7 @@ public class LegacyQuestionWorkbookReader {
 	private static final String MARKS = "Marks";
 	private static final String TOPIC = "Topic";
 	private static final String ANSWER = "Answer";
-	private static final String SHARED_CONTEXT = "Shared Context";
+	private static final String PREAMBLE = "Preamble";
 	private final DataFormatter formatter = new DataFormatter();
 
 	/**
@@ -88,7 +88,7 @@ public class LegacyQuestionWorkbookReader {
 		requireColumn(sheet, columns, MARKS);
 		requireColumn(sheet, columns, TOPIC);
 		requireColumn(sheet, columns, ANSWER);
-		requireColumn(sheet, columns, SHARED_CONTEXT);
+		requireColumn(sheet, columns, PREAMBLE);
 		return columns;
 	}
 
@@ -135,7 +135,7 @@ public class LegacyQuestionWorkbookReader {
 			int marks = positiveInteger(sheet, row, columns.get(MARKS), MARKS, evaluator);
 			String classificationCode = requiredText(sheet, row, columns.get(TOPIC), TOPIC, evaluator);
 			String answer = optionalText(row, columns.get(ANSWER), evaluator);
-			boolean sharedContextCaptureRequired = sharedContext(sheet, row, columns.get(SHARED_CONTEXT), evaluator);
+			boolean sharedContextCaptureRequired = sharedContext(sheet, row, columns.get(PREAMBLE), evaluator);
 			return new LegacyQuestionRow(year, paperCode, questionCode, marks, classificationCode, answer,
 					sharedContextCaptureRequired);
 		} catch (IllegalArgumentException e) {
@@ -188,7 +188,7 @@ public class LegacyQuestionWorkbookReader {
 		if ("1".equals(value)) {
 			return true;
 		}
-		throw new IllegalArgumentException(SHARED_CONTEXT + " must be blank or 1: " + value);
+		throw new IllegalArgumentException(PREAMBLE + " must be blank or 1: " + value);
 	}
 
 	private String text(Row row, int columnIndex, FormulaEvaluator evaluator) {

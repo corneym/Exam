@@ -104,7 +104,7 @@ class LegacyQuestionWorkbookReaderTest {
 		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
 				() -> new LegacyQuestionWorkbookReader().read(path));
 		assertTrue(exception.getMessage().contains("row 2"));
-		assertTrue(exception.getMessage().contains("Shared Context"));
+		assertTrue(exception.getMessage().contains("Preamble"));
 	}
 
 	@Test
@@ -135,7 +135,7 @@ class LegacyQuestionWorkbookReaderTest {
 			header.createCell(3).setCellValue("Marks");
 			header.createCell(4).setCellValue("Topic");
 			header.createCell(5).setCellValue("Answer");
-			header.createCell(6).setCellValue("Shared Context");
+			header.createCell(6).setCellValue("Preamble");
 			Row first = sheet.createRow(1);
 			first.createCell(0).setCellValue(2020);
 			first.createCell(1).setCellValue("MCQ");

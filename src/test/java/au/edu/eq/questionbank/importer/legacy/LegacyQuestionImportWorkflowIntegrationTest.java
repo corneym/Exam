@@ -173,7 +173,7 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 		header.createCell(3).setCellValue("Marks");
 		header.createCell(4).setCellValue("Topic");
 		header.createCell(5).setCellValue("Answer");
-		header.createCell(6).setCellValue("Shared Context");
+		header.createCell(6).setCellValue("Preamble");
 	}
 
 	private void writeQuestion(Sheet sheet, int rowIndex, int year, String paper, String questionCode, int marks,

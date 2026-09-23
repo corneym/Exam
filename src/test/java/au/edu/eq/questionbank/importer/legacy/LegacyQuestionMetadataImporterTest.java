@@ -386,7 +386,7 @@ class LegacyQuestionMetadataImporterTest {
 			header.createCell(3).setCellValue("Marks");
 			header.createCell(4).setCellValue("Topic");
 			header.createCell(5).setCellValue("Answer");
-			header.createCell(6).setCellValue("Shared Context");
+			header.createCell(6).setCellValue("Preamble");
 			Row first = sheet.createRow(1);
 			first.createCell(0).setCellValue(2020);
 			first.createCell(1).setCellValue("MCQ");

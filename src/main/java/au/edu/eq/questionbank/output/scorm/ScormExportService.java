@@ -7,9 +7,11 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.output.revision.RevisionExportProgressListener;
 import au.edu.eq.questionbank.output.revision.RevisionExportRequest;
 import au.edu.eq.questionbank.output.revision.RevisionExportResult;
@@ -110,9 +112,15 @@ public final class ScormExportService {
 			// SCORM must use exactly the same grouping semantics as the static HTML
 			// revision site it packages.
 			RevisionExportRequest revisionRequest;
-			if (request.hasGroupingMode()) {
+			if (request.hasGroupingMode() && request.hasUnitSelection()) {
+				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot,
+						request.getGroupingMode(), request.getSelectedUnitIds());
+			} else if (request.hasGroupingMode()) {
 				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot,
 						request.getGroupingMode());
+			} else if (request.hasUnitSelection()) {
+				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot, null,
+						request.getSelectedUnitIds());
 			} else {
 				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot);
 			}
@@ -155,6 +163,10 @@ public final class ScormExportService {
 		}
 	}
 
+	public List<Unit> findExportableUnits(Subject subject) {
+		return revisionExportService.findExportableUnits(subject);
+	}
+
 	/**
 	 * Returns whether Descriptor grouping is available for the Subject's current
 	 * revision corpus.
@@ -164,6 +176,10 @@ public final class ScormExportService {
 	 */
 	public boolean isDescriptorGroupingAvailable(Subject subject) {
 		return revisionExportService.isDescriptorGroupingAvailable(subject);
+	}
+
+	public boolean isDescriptorGroupingAvailable(Subject subject, Set<Long> selectedUnitIds) {
+		return revisionExportService.isDescriptorGroupingAvailable(subject, selectedUnitIds);
 	}
 
 	private List<Path> collectContentFiles(Path revisionRoot) throws IOException {

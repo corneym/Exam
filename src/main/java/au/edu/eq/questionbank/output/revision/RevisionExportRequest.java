@@ -1,68 +1,57 @@
 package au.edu.eq.questionbank.output.revision;
 
 import java.nio.file.Path;
+import java.util.Set;
 
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 
-/**
- * Request to export one Subject's current revision corpus.
- */
 public final class RevisionExportRequest {
 
 	private final Subject subject;
 	private final Path destination;
 	private final RevisionGroupingMode groupingMode;
+	private final Set<Long> selectedUnitIds;
 
-	/**
-	 * Creates an export request using the exporter's automatic safe grouping
-	 * decision.
-	 * <p>
-	 * This constructor is retained for existing callers. New UI exports should
-	 * normally supply an explicit grouping mode.
-	 *
-	 * @param subject     the subject whose current curriculum is exported
-	 * @param destination the new output directory
-	 */
 	public RevisionExportRequest(Subject subject, Path destination) {
-		this(subject, destination, null);
+		this(subject, destination, null, null);
 	}
 
-	/**
-	 * Creates an export request with an explicit transient grouping mode.
-	 *
-	 * @param subject      the subject whose current curriculum is exported
-	 * @param destination  the new output directory
-	 * @param groupingMode requested student-facing grouping mode
-	 */
 	public RevisionExportRequest(Subject subject, Path destination, RevisionGroupingMode groupingMode) {
+		this(subject, destination, groupingMode, null);
+	}
+
+	public RevisionExportRequest(Subject subject, Path destination, RevisionGroupingMode groupingMode,
+			Set<Long> selectedUnitIds) {
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
 		if (destination == null) {
 			throw new NullPointerException("destination");
 		}
+		if (selectedUnitIds != null) {
+			if (selectedUnitIds.isEmpty()) {
+				throw new IllegalArgumentException("At least one Unit must be selected");
+			}
+			for (Long unitId : selectedUnitIds) {
+				if (unitId == null) {
+					throw new NullPointerException("selectedUnitIds contains null");
+				}
+				if (unitId.longValue() < 1) {
+					throw new IllegalArgumentException("Selected Unit IDs must be positive");
+				}
+			}
+		}
 		this.subject = subject;
 		this.destination = destination;
 		this.groupingMode = groupingMode;
+		this.selectedUnitIds = selectedUnitIds == null ? null : Set.copyOf(selectedUnitIds);
 	}
 
-	/**
-	 * Returns the requested destination directory.
-	 *
-	 * @return requested output directory
-	 */
 	public Path getDestination() {
 		return destination;
 	}
 
-	/**
-	 * Returns the explicitly requested grouping mode.
-	 *
-	 * @return grouping mode
-	 * @throws IllegalStateException if this legacy-compatible request did not
-	 *                               specify one
-	 */
 	public RevisionGroupingMode getGroupingMode() {
 		if (groupingMode == null) {
 			throw new IllegalStateException("Revision export request does not specify a grouping mode");
@@ -70,21 +59,22 @@ public final class RevisionExportRequest {
 		return groupingMode;
 	}
 
-	/**
-	 * Returns the subject whose current curriculum will organise the export.
-	 *
-	 * @return subject to export
-	 */
+	public Set<Long> getSelectedUnitIds() {
+		if (selectedUnitIds == null) {
+			throw new IllegalStateException("Revision export request does not specify a Unit selection");
+		}
+		return selectedUnitIds;
+	}
+
 	public Subject getSubject() {
 		return subject;
 	}
 
-	/**
-	 * Indicates whether this request explicitly chose a grouping mode.
-	 *
-	 * @return true when grouping was explicitly supplied
-	 */
 	public boolean hasGroupingMode() {
 		return groupingMode != null;
+	}
+
+	public boolean hasUnitSelection() {
+		return selectedUnitIds != null;
 	}
 }
