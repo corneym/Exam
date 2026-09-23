@@ -188,7 +188,7 @@ public class LegacyQuestionWorkbookReader {
 		if ("1".equals(value)) {
 			return true;
 		}
-		throw new IllegalArgumentException("Shared context must be blank or 1: " + value);
+		throw new IllegalArgumentException(SHARED_CONTEXT + " must be blank or 1: " + value);
 	}
 
 	private String text(Row row, int columnIndex, FormulaEvaluator evaluator) {
