@@ -65,15 +65,15 @@ class LegacyQuestionSplitDialogTest {
 		TextField partBMarks = robot.lookup("#legacy-split-part-1-marks").queryAs(TextField.class);
 		ComboBox<CurriculumNode> partBClassification = robot.lookup("#legacy-split-part-1-classification")
 				.queryAs(ComboBox.class);
-		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> preamble = robot.lookup("#legacy-split-preamble-choice")
-				.queryAs(ComboBox.class);
+		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> sharedContext = robot
+				.lookup("#legacy-split-shared-context-choice").queryAs(ComboBox.class);
 		Button continueButton = robot.lookup("#legacy-split-continue").queryAs(Button.class);
 		assertEquals("3", sourceCode.getText());
 		assertFalse(sourceCode.isEditable());
 		assertEquals("3a", partACode.getText());
 		assertEquals("3b", partBCode.getText());
 
-		// Marks and preamble semantics require explicit confirmation rather than
+		// Marks and shared context semantics require explicit confirmation rather than
 		// being guessed from the unsplit legacy Question.
 		assertTrue(partAMarks.getText().isBlank());
 		assertTrue(partBMarks.getText().isBlank());
@@ -82,7 +82,7 @@ class LegacyQuestionSplitDialogTest {
 			partAMarks.setText("2");
 			partBMarks.setText("3");
 			partBClassification.setValue(secondSubtopic);
-			preamble.setValue(LegacyQuestionSplitDialog.SharedContextChoice.NO_SHARED_CONTEXT);
+			sharedContext.setValue(LegacyQuestionSplitDialog.SharedContextChoice.NO_SHARED_CONTEXT);
 		});
 		assertFalse(continueButton.isDisabled());
 		robot.interact(continueButton::fire);

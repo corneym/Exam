@@ -973,20 +973,20 @@ public final class SqliteDatabase {
 	}
 
 	private void verifyVersion06SourceQuestionSchema(Connection connection) throws SQLException {
-		boolean hasPreambleStatus = false;
+		boolean hassharedContextStatus = false;
 		try (Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("PRAGMA table_info(source_questions)")) {
 			while (result.next()) {
 				if (!"preamble_status".equals(result.getString("name"))) {
 					continue;
 				}
-				hasPreambleStatus = true;
+				hassharedContextStatus = true;
 				if (result.getInt("notnull") == 0) {
 					throw new SQLException("source_questions column must be NOT NULL: preamble_status");
 				}
 			}
 		}
-		if (!hasPreambleStatus) {
+		if (!hassharedContextStatus) {
 			throw new SQLException("source_questions is missing required column preamble_status");
 		}
 	}

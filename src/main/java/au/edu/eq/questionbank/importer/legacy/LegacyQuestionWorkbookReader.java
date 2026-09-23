@@ -23,20 +23,20 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
  */
 public class LegacyQuestionWorkbookReader {
 
-	/**
-	 * Creates a reader for provider worksheets in legacy question workbooks.
-	 */
-	public LegacyQuestionWorkbookReader() {
-	}
-
 	private static final String YEAR = "Year";
 	private static final String PAPER = "Paper";
 	private static final String QUESTION = "Question";
 	private static final String MARKS = "Marks";
 	private static final String TOPIC = "Topic";
 	private static final String ANSWER = "Answer";
-	private static final String PREAMBLE = "Preamble";
+	private static final String SHARED_CONTEXT = "Shared Context";
 	private final DataFormatter formatter = new DataFormatter();
+
+	/**
+	 * Creates a reader for provider worksheets in legacy question workbooks.
+	 */
+	public LegacyQuestionWorkbookReader() {
+	}
 
 	/**
 	 * Reads every worksheet in workbook order.
@@ -88,7 +88,7 @@ public class LegacyQuestionWorkbookReader {
 		requireColumn(sheet, columns, MARKS);
 		requireColumn(sheet, columns, TOPIC);
 		requireColumn(sheet, columns, ANSWER);
-		requireColumn(sheet, columns, PREAMBLE);
+		requireColumn(sheet, columns, SHARED_CONTEXT);
 		return columns;
 	}
 
@@ -125,20 +125,6 @@ public class LegacyQuestionWorkbookReader {
 		}
 	}
 
-	private boolean sharedContext(Sheet sheet, Row row, int columnIndex, FormulaEvaluator evaluator) {
-
-		// The legacy format uses blank and 1 only; other values must not silently
-		// become false.
-		String value = text(row, columnIndex, evaluator);
-		if (value.isBlank()) {
-			return false;
-		}
-		if ("1".equals(value)) {
-			return true;
-		}
-		throw new IllegalArgumentException("Preamble must be blank or 1: " + value);
-	}
-
 	private LegacyQuestionRow readQuestion(Sheet sheet, Row row, Map<String, Integer> columns,
 			FormulaEvaluator evaluator) {
 		int excelRow = row.getRowNum() + 1;
@@ -149,7 +135,7 @@ public class LegacyQuestionWorkbookReader {
 			int marks = positiveInteger(sheet, row, columns.get(MARKS), MARKS, evaluator);
 			String classificationCode = requiredText(sheet, row, columns.get(TOPIC), TOPIC, evaluator);
 			String answer = optionalText(row, columns.get(ANSWER), evaluator);
-			boolean sharedContextCaptureRequired = sharedContext(sheet, row, columns.get(PREAMBLE), evaluator);
+			boolean sharedContextCaptureRequired = sharedContext(sheet, row, columns.get(SHARED_CONTEXT), evaluator);
 			return new LegacyQuestionRow(year, paperCode, questionCode, marks, classificationCode, answer,
 					sharedContextCaptureRequired);
 		} catch (IllegalArgumentException e) {
@@ -189,6 +175,20 @@ public class LegacyQuestionWorkbookReader {
 			throw new IllegalArgumentException(columnName + " is blank");
 		}
 		return value;
+	}
+
+	private boolean sharedContext(Sheet sheet, Row row, int columnIndex, FormulaEvaluator evaluator) {
+
+		// The legacy format uses blank and 1 only; other values must not silently
+		// become false.
+		String value = text(row, columnIndex, evaluator);
+		if (value.isBlank()) {
+			return false;
+		}
+		if ("1".equals(value)) {
+			return true;
+		}
+		throw new IllegalArgumentException("Shared context must be blank or 1: " + value);
 	}
 
 	private String text(Row row, int columnIndex, FormulaEvaluator evaluator) {

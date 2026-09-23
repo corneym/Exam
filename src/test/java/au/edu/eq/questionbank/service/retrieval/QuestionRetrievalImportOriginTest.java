@@ -122,6 +122,6 @@ class QuestionRetrievalImportOriginTest {
 		header.createCell(3).setCellValue("Marks");
 		header.createCell(4).setCellValue("Topic");
 		header.createCell(5).setCellValue("Answer");
-		header.createCell(6).setCellValue("Preamble");
+		header.createCell(6).setCellValue("Shared Context");
 	}
 }

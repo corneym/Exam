@@ -113,7 +113,7 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		// The source identity is confirmed here rather than derived from entered
 		// part codes. Correct an incorrect legacy Question code before splitting.
 		sourceQuestionCodeField.setEditable(false);
-		sharedContextChoiceBox.setId("legacy-split-preamble-choice");
+		sharedContextChoiceBox.setId("legacy-split-shared-context-choice");
 		sharedContextChoiceBox.getItems().add(SharedContextChoice.NO_SHARED_CONTEXT);
 		sharedContextChoiceBox.getItems().add(SharedContextChoice.CAPTURE_NEW_SHARED_CONTEXT);
 		if (existingSharedContext != null) {
@@ -169,7 +169,7 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		summary.setHgap(FORM_SPACING);
 		summary.setVgap(FORM_SPACING);
 		Label sourceLabel = createFieldLabel("Source Question", "legacy-split-source-code-label");
-		Label sharedContextLabel = createFieldLabel("Shared context", "legacy-split-preamble-label");
+		Label sharedContextLabel = createFieldLabel("Shared context", "legacy-split-shared-context-label");
 		summary.add(sourceLabel, 0, 0);
 		summary.add(sourceQuestionCodeField, 1, 0);
 		summary.add(sharedContextLabel, 0, 1);

@@ -297,8 +297,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Label status = lookup(robot, "#question-save-status", Label.class);
 
 		// Use a deliberately long message representative of Question capture,
-		// edit and shared-preamble workflow status text.
-		String longStatus = "Shared preamble captured — select the remaining question "
+		// edit and shared-context workflow status text.
+		String longStatus = "Shared context captured — select the remaining question "
 				+ "region or regions before saving this question.";
 		robot.interact(() -> status.setText(longStatus));
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",

@@ -46,7 +46,7 @@ public final class RevisionSharedContextAssetRenderer {
 	/**
 	 * Renders one image per shared context used by renderable corpus questions.
 	 *
-	 * @param corpus     corpus whose reusable preambles are required
+	 * @param corpus     corpus whose reusable shared contexts are required
 	 * @param outputRoot destination root for generated assets
 	 * @return immutable rendered assets ordered by shared-context identity
 	 * @throws IOException if source material is unavailable or rendering fails

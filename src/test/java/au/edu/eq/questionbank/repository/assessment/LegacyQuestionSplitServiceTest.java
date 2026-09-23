@@ -17,10 +17,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
@@ -106,7 +106,7 @@ class LegacyQuestionSplitServiceTest {
 	}
 
 	@Test
-	void failedSplitRollsBackNewSharedPreambleAndSourceQuestion() throws Exception {
+	void failedSplitRollsBackNewSharedSharedContextAndSourceQuestion() throws Exception {
 		Question original = questionRepository.save(booklet, "3", "", 5,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.80, 0.60)), subtopicOne, true, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
@@ -142,7 +142,7 @@ class LegacyQuestionSplitServiceTest {
 		assertEquals(1, reloadedOriginal.getRegions().size());
 		assertEquals(0.10, reloadedOriginal.getRegions().getFirst().y());
 
-		// Neither multipart identity nor shared-preamble state may survive the
+		// Neither multipart identity nor shared-context state may survive the
 		// rollback.
 		assertTrue(new SqliteSourceQuestionRepository(database).findByBooklet(booklet).isEmpty());
 		assertTrue(new SqliteSharedQuestionContextRepository(database).findByBooklet(booklet).isEmpty());
@@ -180,7 +180,7 @@ class LegacyQuestionSplitServiceTest {
 	}
 
 	@Test
-	void splitCreatesAndSharesNewPreambleAtomically() {
+	void splitCreatesAndSharesNewSharedContextAtomically() {
 		Question original = questionRepository.save(booklet, "3", "", 5,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.80, 0.60)), subtopicOne, true, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
@@ -194,7 +194,7 @@ class LegacyQuestionSplitServiceTest {
 				.split(new SplitRequest(original, "3", List.of(partA, partB), 0, newSharedContext));
 		assertEquals(SharedContextStatus.PRESENT, result.sourceQuestion().getSharedContextStatus());
 		assertNotNull(result.sharedContext());
-		assertEquals("Question 3 preamble", result.sharedContext().getLabel());
+		assertEquals("Question 3 shared context", result.sharedContext().getLabel());
 		assertEquals(1, result.sharedContext().getRegions().size());
 		Question resultingA = result.questions().get(0);
 		Question resultingB = result.questions().get(1);
@@ -209,13 +209,15 @@ class LegacyQuestionSplitServiceTest {
 		assertEquals(result.sharedContext().getId(), resultingB.getSharedContext().getId());
 
 		// The old legacy hint is no longer the authority after an explicit split. The
-		// SourceQuestion and SharedQuestionContext now represent preamble semantics.
+		// SourceQuestion and SharedQuestionContext now represent shared context
+		// semantics.
 		assertFalse(resultingA.isSharedContextCaptureRequired());
 		assertFalse(resultingB.isSharedContextCaptureRequired());
 		Question reloadedA = new SqliteQuestionRepository(database).findById(resultingA.getId()).orElseThrow();
 		Question reloadedB = new SqliteQuestionRepository(database).findById(resultingB.getId()).orElseThrow();
 
-		// Reload proves the shared identity and preamble are persisted rather than
+		// Reload proves the shared identity and shared context are persisted rather
+		// than
 		// merely attached to the returned objects.
 		assertEquals(SharedContextStatus.PRESENT, reloadedA.getSourceQuestion().getSharedContextStatus());
 		assertEquals(reloadedA.getSourceQuestion().getId(), reloadedB.getSourceQuestion().getId());
@@ -337,11 +339,11 @@ class LegacyQuestionSplitServiceTest {
 	}
 
 	@Test
-	void splitRejectsExistingSourceQuestionWithUnresolvedPreambleStatus() {
+	void splitRejectsExistingSourceQuestionWithUnresolvedSharedContextStatus() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 
-		// A newly persisted SourceQuestion has UNKNOWN preamble status. The split
-		// must not silently reinterpret that unresolved state as no preamble.
+		// A newly persisted SourceQuestion has UNKNOWN shared context status. The split
+		// must not silently reinterpret that unresolved state as no shared context.
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
 		Question existingSibling = questionRepository.save(booklet, "3c", "", 1,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.65, 0.80, 0.15)), subtopicOne, false,
@@ -352,13 +354,14 @@ class LegacyQuestionSplitServiceTest {
 		SplitPart partA = new SplitPart("3a", 2, subtopicOne, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.15, 0.80, 0.20)));
 
-		// Keep the destination metadata valid so unresolved preamble status remains the
+		// Keep the destination metadata valid so unresolved shared context status
+		// remains the
 		// reason this split is rejected.
 		SplitPart partB = new SplitPart("3b", 3, subtopicTwo, QuestionResponseType.WRITTEN_RESPONSE,
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.80, 0.25)));
 		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
 				() -> splitService.split(new SplitRequest(original, "3", List.of(partA, partB), 0)));
-		assertTrue(failure.getMessage().contains("compatible no-preamble status"));
+		assertTrue(failure.getMessage().contains("compatible no-shared context status"));
 		Question reloadedOriginal = questionRepository.findById(original.getId()).orElseThrow();
 		Question reloadedSibling = questionRepository.findById(existingSibling.getId()).orElseThrow();
 
@@ -374,10 +377,10 @@ class LegacyQuestionSplitServiceTest {
 	}
 
 	@Test
-	void splitRejectsNoPreambleSourceGroupWhoseMembersUseSharedContext() {
+	void splitRejectsNoSharedContextSourceGroupWhoseMembersUseSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
-		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion,
+		existingSourceQuestion = sourceRepository.updatesharedContextStatus(existingSourceQuestion,
 				SharedContextStatus.NONE);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
 		SharedQuestionContext sharedContext = contextRepository.save(booklet, "Existing shared material",
@@ -421,7 +424,7 @@ class LegacyQuestionSplitServiceTest {
 	void splitReusesCompatibleExistingSourceQuestion() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
-		existingSourceQuestion = sourceRepository.updatePreambleStatus(existingSourceQuestion,
+		existingSourceQuestion = sourceRepository.updatesharedContextStatus(existingSourceQuestion,
 				SharedContextStatus.NONE);
 
 		// An existing sibling establishes that SourceQuestion 3 is already a real
@@ -462,12 +465,12 @@ class LegacyQuestionSplitServiceTest {
 	}
 
 	@Test
-	void splitReusesExistingSourceQuestionAndSharedPreamble() {
+	void splitReusesExistingSourceQuestionAndSharedSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSource = sourceRepository.save(booklet, "3");
-		existingSource = sourceRepository.updatePreambleStatus(existingSource, SharedContextStatus.PRESENT);
+		existingSource = sourceRepository.updatesharedContextStatus(existingSource, SharedContextStatus.PRESENT);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
-		SharedQuestionContext existingContext = contextRepository.save(booklet, "Question 3 preamble",
+		SharedQuestionContext existingContext = contextRepository.save(booklet, "Question 3 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));
 
 		// Existing part 3c establishes both the SourceQuestion identity and the
@@ -491,7 +494,7 @@ class LegacyQuestionSplitServiceTest {
 		Question reloadedSibling = questionRepository.findById(existingSibling.getId()).orElseThrow();
 
 		// The two corrected parts and the existing sibling must reconstruct as one
-		// persisted multipart group using exactly one shared preamble.
+		// persisted multipart group using exactly one shared shared context.
 		assertEquals(existingSource.getId(), resultingA.getSourceQuestion().getId());
 		assertEquals(existingSource.getId(), resultingB.getSourceQuestion().getId());
 		assertEquals(existingSource.getId(), reloadedSibling.getSourceQuestion().getId());
@@ -548,7 +551,8 @@ class LegacyQuestionSplitServiceTest {
 		assertFalse(resultingA.hasSharedContext());
 		assertFalse(resultingB.hasSharedContext());
 
-		// The old legacy preamble hint must not survive a confirmed no-preamble
+		// The old legacy shared context hint must not survive a confirmed no-shared
+		// context
 		// split, otherwise Corpus Audit would still report unresolved context.
 		assertFalse(resultingA.isSharedContextCaptureRequired());
 		assertFalse(resultingB.isSharedContextCaptureRequired());

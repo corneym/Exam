@@ -80,7 +80,7 @@ class QuestionTest {
 	}
 
 	@Test
-	void importedQuestionCanHaveNoPreambleCaptureRequirement() {
+	void importedQuestionCanHaveNoSharedContextCaptureRequirement() {
 		Question question = new Question(33, booklet, "7", "", 1, List.of(), createClassification(), false);
 		assertFalse(question.isSharedContextCaptureRequired());
 	}
@@ -225,7 +225,7 @@ class QuestionTest {
 		CurriculumNode classification = createClassification();
 		ExamBooklet otherBooklet = new ExamBooklet(99, exam, "Other booklet", new SourceDocument(99, "other.pdf"));
 		SourceQuestion otherSourceQuestion = new SourceQuestion(50, otherBooklet, "21");
-		SharedQuestionContext otherContext = new SharedQuestionContext(60, otherBooklet, "Other preamble",
+		SharedQuestionContext otherContext = new SharedQuestionContext(60, otherBooklet, "Other shared context",
 				List.of(new SharedQuestionContextRegion(1, 0, 0, 1, 0.2)));
 		assertAll(
 				() -> assertThrows(IllegalArgumentException.class,
@@ -286,7 +286,7 @@ class QuestionTest {
 	void retainsSourceQuestionAndSharedContextRelationships() {
 		CurriculumNode classification = createClassification();
 		SourceQuestion sourceQuestion = new SourceQuestion(50, booklet, "21");
-		SharedQuestionContext sharedContext = new SharedQuestionContext(60, booklet, "Question 21 preamble",
+		SharedQuestionContext sharedContext = new SharedQuestionContext(60, booklet, "Question 21 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.2)));
 		Question question = new Question(33, booklet, "21a", "", 2, List.of(), classification, true, sourceQuestion,
 				sharedContext);
@@ -307,7 +307,7 @@ class QuestionTest {
 	@Test
 	void sharedContextResolvesLegacyRequirementWithoutRemovingHistoricalFlag() {
 		CurriculumNode classification = createClassification();
-		SharedQuestionContext sharedContext = new SharedQuestionContext(1, booklet, "Question 21 preamble",
+		SharedQuestionContext sharedContext = new SharedQuestionContext(1, booklet, "Question 21 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20)));
 		Question question = new Question(1, booklet, "21a", "", 2, List.of(), classification, true, null,
 				sharedContext);

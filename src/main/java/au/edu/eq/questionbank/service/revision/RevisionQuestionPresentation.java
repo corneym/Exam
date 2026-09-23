@@ -86,7 +86,7 @@ public final class RevisionQuestionPresentation {
 	}
 
 	/**
-	 * Returns the reusable preamble shared by the presentation members.
+	 * Returns the reusable shared context shared by the presentation members.
 	 *
 	 * @return shared context, or null if none is linked
 	 */
@@ -113,7 +113,8 @@ public final class RevisionQuestionPresentation {
 	}
 
 	/**
-	 * Indicates whether this presentation has linked reusable preamble material.
+	 * Indicates whether this presentation has linked reusable shared context
+	 * material.
 	 *
 	 * @return true when shared context is available
 	 */
@@ -140,7 +141,8 @@ public final class RevisionQuestionPresentation {
 	}
 
 	/**
-	 * Indicates whether the planner requests preamble output for this presentation.
+	 * Indicates whether the planner requests shared context output for this
+	 * presentation.
 	 *
 	 * @return true when the shared context should be rendered here
 	 */

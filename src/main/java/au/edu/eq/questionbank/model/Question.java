@@ -94,7 +94,7 @@ public class Question {
 	 * @param regions                      zero or more source regions in assembly
 	 *                                     order
 	 * @param classification               the syllabus subtopic or descriptor
-	 * @param sharedContextCaptureRequired historical legacy preamble-capture
+	 * @param sharedContextCaptureRequired historical legacy shared context-capture
 	 *                                     evidence
 	 * @param sourceQuestion               common source-question identity, or null
 	 * @param sharedContext                reusable shared question context, or null

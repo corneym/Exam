@@ -114,7 +114,7 @@ public final class RevisionCorpusBuilder {
 			// Preserve the legacy review signal even when shared context has since been
 			// captured.
 			if (question.isSharedContextCaptureRequired()) {
-				accumulator.preambleReviewQuestionIds.add(questionId);
+				accumulator.sharedContextReviewQuestionIds.add(questionId);
 			}
 		}
 		for (MutableCorpusNode child : node.children) {
@@ -147,7 +147,7 @@ public final class RevisionCorpusBuilder {
 		return new RevisionCorpusStatistics(accumulator.applicablePlacements, accumulator.uniqueQuestionIds.size(),
 				accumulator.renderableQuestionIds.size(), accumulator.missingRegionQuestionIds.size(),
 				accumulator.questionIdsWithAnswers.size(), accumulator.questionIdsWithoutAnswers.size(),
-				accumulator.preambleReviewQuestionIds.size());
+				accumulator.sharedContextReviewQuestionIds.size());
 	}
 
 	private SyllabusVersion findCurrentVersion(Subject subject) {
@@ -343,6 +343,6 @@ public final class RevisionCorpusBuilder {
 		private final Set<Long> missingRegionQuestionIds = new HashSet<Long>();
 		private final Set<Long> questionIdsWithAnswers = new HashSet<Long>();
 		private final Set<Long> questionIdsWithoutAnswers = new HashSet<Long>();
-		private final Set<Long> preambleReviewQuestionIds = new HashSet<Long>();
+		private final Set<Long> sharedContextReviewQuestionIds = new HashSet<Long>();
 	}
 }

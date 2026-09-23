@@ -288,15 +288,15 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#legacy-metadata-question-code").tryQuery().isPresent());
 		TextField questionCode = lookup(robot, "#legacy-metadata-question-code", TextField.class);
 		TextField marks = lookup(robot, "#legacy-metadata-marks", TextField.class);
-		CheckBox preamble = lookup(robot, "#legacy-metadata-preamble-required", CheckBox.class);
+		CheckBox sharedContext = lookup(robot, "#legacy-metadata-shared-context-required", CheckBox.class);
 		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#legacy-metadata-response-type");
 		assertEquals("61", questionCode.getText());
 		assertEquals("2", marks.getText());
-		assertTrue(preamble.isSelected());
+		assertTrue(sharedContext.isSelected());
 		robot.interact(() -> {
 			questionCode.setText("61a");
 			marks.setText("4");
-			preamble.setSelected(false);
+			sharedContext.setSelected(false);
 			responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE);
 		});
 		fireControl(robot, "#legacy-metadata-save");
@@ -367,14 +367,14 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#legacy-split-answer-part").tryQuery().isPresent());
 		TextField partAMarks = lookup(robot, "#legacy-split-part-0-marks", TextField.class);
 		TextField partBMarks = lookup(robot, "#legacy-split-part-1-marks", TextField.class);
-		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> preambleChoice = comboBox(robot,
-				"#legacy-split-preamble-choice");
+		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> sharedContextChoice = comboBox(robot,
+				"#legacy-split-shared-context-choice");
 		ComboBox<String> answerPart = comboBox(robot, "#legacy-split-answer-part");
 		Button continueButton = lookup(robot, "#legacy-split-continue", Button.class);
 		robot.interact(() -> {
 			partAMarks.setText("2");
 			partBMarks.setText("3");
-			preambleChoice.setValue(LegacyQuestionSplitDialog.SharedContextChoice.NO_SHARED_CONTEXT);
+			sharedContextChoice.setValue(LegacyQuestionSplitDialog.SharedContextChoice.NO_SHARED_CONTEXT);
 		});
 
 		// An answered legacy Question cannot proceed until one resulting part is

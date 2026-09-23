@@ -82,7 +82,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		splitQuestionButton.setId("question-search-split-question");
 		editMetadataButton.setId("question-search-edit-metadata");
 		editExamButton.setId("question-search-edit-exam");
-		recaptureSharedContextButton.setId("question-search-recapture-preamble");
+		recaptureSharedContextButton.setId("question-search-recapture-shared-context");
 		editAnswerButton.setId("question-search-edit-answer");
 		editQuestionButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
 

@@ -22,7 +22,7 @@ class SourceQuestionTest {
 	}
 
 	@Test
-	void retainsExplicitPreambleStatus() {
+	void retainsExplicitSharedContextStatus() {
 		SourceQuestion sourceQuestion = new SourceQuestion(10, booklet, "21", SharedContextStatus.PRESENT);
 		assertEquals(SharedContextStatus.PRESENT, sourceQuestion.getSharedContextStatus());
 	}

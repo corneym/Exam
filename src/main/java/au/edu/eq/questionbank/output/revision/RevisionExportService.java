@@ -34,7 +34,7 @@ public final class RevisionExportService {
 	 * Creates an exporter from corpus, rendering and validation services.
 	 *
 	 * @param presentationPlanner        multipart grouping and numbering planner
-	 * @param sharedContextAssetRenderer the reusable preamble image renderer
+	 * @param sharedContextAssetRenderer the reusable shared context image renderer
 	 * @param corpusBuilder              the subject corpus builder
 	 * @param questionAssetRenderer      the question image renderer
 	 * @param answerAssetRenderer        the answer image renderer

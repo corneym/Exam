@@ -77,7 +77,7 @@ class ScormMultipartExportIntegrationTest {
 		SourceDocument sourceDocument = new SourceDocument(1, "question.pdf");
 		ExamBooklet booklet = new ExamBooklet(1, exam, "Paper 1", sourceDocument);
 		SourceQuestion sourceQuestion = new SourceQuestion(24, booklet, "24", SharedContextStatus.PRESENT);
-		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Question 24 preamble",
+		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Question 24 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.25)));
 		Question partA = new Question(4, booklet, "24a", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.25, 1.0, 0.25)), historicalDescriptor, false,

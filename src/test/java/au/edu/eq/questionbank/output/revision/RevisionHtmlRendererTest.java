@@ -214,8 +214,8 @@ class RevisionHtmlRendererTest {
 	void rendersMultipartPresentationWithSharedContextOnceAndCombinedMarks() throws Exception {
 		Fixture fixture = new Fixture();
 		SourceQuestion sourceQuestion = new SourceQuestion(24, fixture.booklet, "24", SharedContextStatus.PRESENT);
-		SharedQuestionContext sharedContext = new SharedQuestionContext(50, fixture.booklet, "Question 24 preamble",
-				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.25)));
+		SharedQuestionContext sharedContext = new SharedQuestionContext(50, fixture.booklet,
+				"Question 24 shared context", List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.25)));
 		Question partA = new Question(4, fixture.booklet, "24a", "", 2,
 				List.of(new QuestionRegion(fixture.booklet, 1, 0.0, 0.25, 1.0, 0.25)), fixture.historicalDescriptor,
 				false, sourceQuestion, sharedContext);

@@ -131,7 +131,7 @@ public final class SqliteQuestionCaptureService {
 				if (sourceQuestion != null && sharedContext != null) {
 					questionWriter.applySharedContextToSourceQuestion(connection, sourceQuestion, sharedContext);
 				}
-				sourceQuestion = resolvePreambleStatus(connection, sourceQuestion, sharedContext);
+				sourceQuestion = resolvesharedContextStatus(connection, sourceQuestion, sharedContext);
 				Question question = persistQuestion(connection, request, sourceQuestion, sharedContext);
 
 				// Update restart-safe MCQ continuation in the same transaction. The
@@ -273,7 +273,7 @@ public final class SqliteQuestionCaptureService {
 					}
 					if (contextId != null && contextId.longValue() != candidateId) {
 						throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()
-								+ " has inconsistent shared preamble links");
+								+ " has inconsistent shared context links");
 					}
 					contextId = Long.valueOf(candidateId);
 				}
@@ -386,18 +386,6 @@ public final class SqliteQuestionCaptureService {
 		return updated;
 	}
 
-	private SourceQuestion resolvePreambleStatus(Connection connection, SourceQuestion sourceQuestion,
-			SharedQuestionContext sharedContext) throws SQLException {
-
-		// Capture resolves unknown preamble status without replacing an explicit
-		// decision.
-		if (sourceQuestion == null || sourceQuestion.getSharedContextStatus() != SharedContextStatus.UNKNOWN) {
-			return sourceQuestion;
-		}
-		SharedContextStatus status = sharedContext == null ? SharedContextStatus.NONE : SharedContextStatus.PRESENT;
-		return sourceQuestionRepository.updatePreambleStatus(connection, sourceQuestion, status);
-	}
-
 	private SharedQuestionContext resolveSharedContext(Connection connection, Request request,
 			SourceQuestion sourceQuestion) throws SQLException {
 		Question existing = request.existingQuestion();
@@ -437,6 +425,18 @@ public final class SqliteQuestionCaptureService {
 			}
 		}
 		return null;
+	}
+
+	private SourceQuestion resolvesharedContextStatus(Connection connection, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+
+		// Capture resolves unknown shared context status without replacing an explicit
+		// decision.
+		if (sourceQuestion == null || sourceQuestion.getSharedContextStatus() != SharedContextStatus.UNKNOWN) {
+			return sourceQuestion;
+		}
+		SharedContextStatus status = sharedContext == null ? SharedContextStatus.NONE : SharedContextStatus.PRESENT;
+		return sourceQuestionRepository.updateSharedContextStatus(connection, sourceQuestion, status);
 	}
 
 	private SourceQuestion resolveSourceQuestion(Connection connection, Request request) throws SQLException {
@@ -530,17 +530,17 @@ public final class SqliteQuestionCaptureService {
 	}
 
 	/**
-	 * Shared preamble captured in memory and awaiting persistence.
+	 * Shared shared context captured in memory and awaiting persistence.
 	 *
-	 * @param label   non-blank label for the new reusable preamble
+	 * @param label   non-blank label for the new reusable shared context
 	 * @param regions non-empty shared-context regions in source order
 	 */
 	public record PendingSharedContext(String label, List<SharedQuestionContextRegion> regions) {
 
 		/**
-		 * Validates a pending preamble and copies its ordered regions.
+		 * Validates a pending shared context and copies its ordered regions.
 		 *
-		 * @param label   non-blank label for the new reusable preamble
+		 * @param label   non-blank label for the new reusable shared context
 		 * @param regions non-empty shared-context regions in source order
 		 */
 		public PendingSharedContext {

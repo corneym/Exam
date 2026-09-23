@@ -11,10 +11,10 @@ import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
@@ -71,7 +71,7 @@ public final class LegacyQuestionSplitService {
 				validatePersistedOriginal(request, originalState);
 				validateDestinationParts(connection, request, originalState);
 
-				// Resolve all multipart and shared-preamble relationships inside the
+				// Resolve all multipart and shared-context relationships inside the
 				// same transaction as the Question changes.
 				SplitRelationships relationships = resolveSplitRelationships(connection, request);
 				persistedSourceQuestion = relationships.sourceQuestion();
@@ -89,8 +89,8 @@ public final class LegacyQuestionSplitService {
 								request.originalQuestion().getBooklet(), part.responseType());
 
 						// The explicit SourceQuestion relationship now represents the
-						// multipart preamble semantics, so the old legacy hint is cleared.
-						clearLegacyPreambleRequirement(connection, request.originalQuestion().getId(),
+						// multipart shared context semantics, so the old legacy hint is cleared.
+						clearLegacySharedContextRequirement(connection, request.originalQuestion().getId(),
 								request.originalQuestion().getBooklet());
 						resultingQuestionIds.add(request.originalQuestion().getId());
 					} else {
@@ -127,7 +127,7 @@ public final class LegacyQuestionSplitService {
 		return new SplitResult(resultingQuestions, persistedSourceQuestion, persistedSharedContext);
 	}
 
-	private void clearLegacyPreambleRequirement(Connection connection, long questionId, ExamBooklet booklet)
+	private void clearLegacySharedContextRequirement(Connection connection, long questionId, ExamBooklet booklet)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE questions
@@ -138,7 +138,7 @@ public final class LegacyQuestionSplitService {
 			statement.setLong(1, questionId);
 			statement.setLong(2, booklet.getId());
 			if (statement.executeUpdate() != 1) {
-				throw new SQLException("Question preamble update affected an unexpected number of rows");
+				throw new SQLException("Question shared context update affected an unexpected number of rows");
 			}
 		}
 	}
@@ -188,19 +188,19 @@ public final class LegacyQuestionSplitService {
 				request.originalQuestion().getBooklet(), request.sourceQuestionCode());
 		if (request.newSharedContext() != null) {
 
-			// A newly captured preamble establishes a new multipart source identity.
+			// A newly captured shared context establishes a new multipart source identity.
 			// It must not overwrite or reinterpret an existing source group.
 			if (existingSourceQuestion.isPresent()) {
 				throw new IllegalArgumentException(
-						"Cannot create a new shared preamble for an existing source question: "
+						"Cannot create a new shared context for an existing source question: "
 								+ request.sourceQuestionCode());
 			}
 			SourceQuestion createdSourceQuestion = sourceQuestionRepository.save(connection,
 					request.originalQuestion().getBooklet(), request.sourceQuestionCode());
-			String contextLabel = "Question " + request.sourceQuestionCode() + " preamble";
+			String contextLabel = "Question " + request.sourceQuestionCode() + " shared context";
 			SharedQuestionContext sharedContext = sharedContextRepository.save(connection,
 					request.originalQuestion().getBooklet(), contextLabel, request.newSharedContext().regions());
-			SourceQuestion resolvedSourceQuestion = sourceQuestionRepository.updatePreambleStatus(connection,
+			SourceQuestion resolvedSourceQuestion = sourceQuestionRepository.updateSharedContextStatus(connection,
 					createdSourceQuestion, SharedContextStatus.PRESENT);
 			return new SplitRelationships(resolvedSourceQuestion, sharedContext);
 		}
@@ -224,18 +224,20 @@ public final class LegacyQuestionSplitService {
 		}
 		if (existingSourceQuestion.isPresent()) {
 
-			// A no-preamble split may join only an already-confirmed no-preamble
+			// A no-shared context split may join only an already-confirmed no-shared
+			// context
 			// source group.
 			SourceQuestion sourceQuestion = existingSourceQuestion.get();
-			validateCompatibleNoPreambleSourceGroup(connection, sourceQuestion);
+			validateCompatibleNoSharedContextSourceGroup(connection, sourceQuestion);
 			return new SplitRelationships(sourceQuestion, null);
 		}
 
-		// No existing group and no shared preamble means a new explicitly resolved
-		// no-preamble SourceQuestion.
+		// No existing group and no shared shared context means a new explicitly
+		// resolved
+		// no-shared context SourceQuestion.
 		SourceQuestion createdSourceQuestion = sourceQuestionRepository.save(connection,
 				request.originalQuestion().getBooklet(), request.sourceQuestionCode());
-		SourceQuestion resolvedSourceQuestion = sourceQuestionRepository.updatePreambleStatus(connection,
+		SourceQuestion resolvedSourceQuestion = sourceQuestionRepository.updateSharedContextStatus(connection,
 				createdSourceQuestion, SharedContextStatus.NONE);
 		return new SplitRelationships(resolvedSourceQuestion, null);
 	}
@@ -244,10 +246,10 @@ public final class LegacyQuestionSplitService {
 			SharedQuestionContext sharedContext) throws SQLException {
 		if (sourceQuestion.getSharedContextStatus() != SharedContextStatus.PRESENT) {
 
-			// Reusing a persisted preamble is valid only when the SourceQuestion
+			// Reusing a persisted shared context is valid only when the SourceQuestion
 			// already declares that shared introductory material is present.
 			throw new IllegalArgumentException("Existing source question " + sourceQuestion.getSourceQuestionCode()
-					+ " does not have PRESENT preamble status");
+					+ " does not have PRESENT shared context status");
 		}
 		if (sharedContext.getBooklet().getId() != sourceQuestion.getBooklet().getId()) {
 			throw new IllegalArgumentException("Shared context belongs to another booklet");
@@ -285,14 +287,14 @@ public final class LegacyQuestionSplitService {
 		}
 	}
 
-	private void validateCompatibleNoPreambleSourceGroup(Connection connection, SourceQuestion sourceQuestion)
+	private void validateCompatibleNoSharedContextSourceGroup(Connection connection, SourceQuestion sourceQuestion)
 			throws SQLException {
 		if (sourceQuestion.getSharedContextStatus() != SharedContextStatus.NONE) {
 
-			// UNKNOWN and PRESENT both require an explicit preamble decision rather
-			// than being silently converted by a no-preamble split.
+			// UNKNOWN and PRESENT both require an explicit shared context decision rather
+			// than being silently converted by a no-shared context split.
 			throw new IllegalArgumentException("Existing source question " + sourceQuestion.getSourceQuestionCode()
-					+ " does not have compatible no-preamble status");
+					+ " does not have compatible no-shared context status");
 		}
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
@@ -314,7 +316,7 @@ public final class LegacyQuestionSplitService {
 					result.getLong("shared_context_id");
 					if (!result.wasNull()) {
 
-						// A no-preamble split cannot join a source group whose existing
+						// A no-s split cannot join a source group whose existing
 						// members already use shared material.
 						throw new IllegalArgumentException("Existing source question "
 								+ sourceQuestion.getSourceQuestionCode() + " already uses shared context");
@@ -393,8 +395,8 @@ public final class LegacyQuestionSplitService {
 			throw new IllegalArgumentException("retainedPartIndex is outside the resulting parts");
 		}
 
-		// A split has exactly one preamble strategy: none, create new, or reuse the
-		// established context of an existing source group.
+		// A split has exactly one shared context strategy: none, create new, or reuse
+		// the established context of an existing source group.
 		if (request.newSharedContext() != null && request.existingSharedContext() != null) {
 			throw new IllegalArgumentException("A split cannot both create and reuse shared context");
 		}
@@ -470,21 +472,21 @@ public final class LegacyQuestionSplitService {
 		public SplitRequest(Question originalQuestion, String sourceQuestionCode, List<SplitPart> parts,
 				int retainedPartIndex) {
 
-			// Four arguments represent an explicitly confirmed no-preamble split.
+			// Four arguments represent an explicitly confirmed no-shared context split.
 			this(originalQuestion, sourceQuestionCode, parts, retainedPartIndex, null, null);
 		}
 
 		public SplitRequest(Question originalQuestion, String sourceQuestionCode, List<SplitPart> parts,
 				int retainedPartIndex, NewSharedContext newSharedContext) {
 
-			// A staged new preamble will be created inside the split transaction.
+			// A staged new shared context will be created inside the split transaction.
 			this(originalQuestion, sourceQuestionCode, parts, retainedPartIndex, newSharedContext, null);
 		}
 
 		public SplitRequest(Question originalQuestion, String sourceQuestionCode, List<SplitPart> parts,
 				int retainedPartIndex, SharedQuestionContext existingSharedContext) {
 
-			// An existing preamble may be reused only when it is already the
+			// An existing shared context may be reused only when it is already the
 			// authoritative context of the destination SourceQuestion.
 			this(originalQuestion, sourceQuestionCode, parts, retainedPartIndex, null, existingSharedContext);
 		}
@@ -507,7 +509,7 @@ public final class LegacyQuestionSplitService {
 	}
 
 	/**
-	 * Newly captured shared-preamble regions to create as part of the split
+	 * Newly captured shared-context regions to create as part of the split
 	 * transaction.
 	 */
 	public record NewSharedContext(List<SharedQuestionContextRegion> regions) {
@@ -517,7 +519,7 @@ public final class LegacyQuestionSplitService {
 				throw new NullPointerException("regions");
 			}
 			if (regions.isEmpty()) {
-				throw new IllegalArgumentException("Shared preamble requires at least one region");
+				throw new IllegalArgumentException("Shared context requires at least one region");
 			}
 
 			// Freeze the staged capture before persistence begins.

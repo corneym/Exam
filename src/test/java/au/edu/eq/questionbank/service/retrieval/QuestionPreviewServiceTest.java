@@ -65,7 +65,7 @@ class QuestionPreviewServiceTest {
 	@Test
 	void prependsLinkedSharedContextToPreview() throws Exception {
 		createPdf(tempDir.resolve("exam.pdf"), Color.RED, Color.BLUE);
-		SharedQuestionContext sharedContext = new SharedQuestionContext(12, booklet, "Question 24 preamble",
+		SharedQuestionContext sharedContext = new SharedQuestionContext(12, booklet, "Question 24 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0)));
 		Question question = new Question(13, booklet, "24a", "", 2,
 				List.of(new QuestionRegion(booklet, 2, 0.0, 0.0, 1.0, 1.0)), classification, false, null,

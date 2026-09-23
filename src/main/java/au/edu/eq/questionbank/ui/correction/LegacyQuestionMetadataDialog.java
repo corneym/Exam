@@ -41,7 +41,7 @@ public final class LegacyQuestionMetadataDialog
 	private final TextField marksField = new TextField();
 	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
 	private final ComboBox<QuestionResponseType> responseTypeBox = new ComboBox<>();
-	private final CheckBox preambleRequiredCheckBox = new CheckBox("Legacy shared-context capture required");
+	private final CheckBox sharedContextRequiredCheckBox = new CheckBox("Legacy shared-context capture required");
 	private final ButtonType saveButtonType = new ButtonType("Save Metadata", ButtonBar.ButtonData.OK_DONE);
 
 	/**
@@ -77,7 +77,8 @@ public final class LegacyQuestionMetadataDialog
 				return null;
 			}
 			return new Result(questionCodeField.getText().trim(), Integer.parseInt(marksField.getText().trim()),
-					classificationBox.getValue(), preambleRequiredCheckBox.isSelected(), responseTypeBox.getValue());
+					classificationBox.getValue(), sharedContextRequiredCheckBox.isSelected(),
+					responseTypeBox.getValue());
 		});
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 	}
@@ -96,7 +97,7 @@ public final class LegacyQuestionMetadataDialog
 		marksField.setId("legacy-metadata-marks");
 		classificationBox.setId("legacy-metadata-classification");
 		responseTypeBox.setId("legacy-metadata-response-type");
-		preambleRequiredCheckBox.setId("legacy-metadata-preamble-required");
+		sharedContextRequiredCheckBox.setId("legacy-metadata-shared-context-required");
 		questionCodeField.setText(question.getQuestionCode());
 		marksField.setText(Integer.toString(question.getMarks()));
 		classificationBox.getItems()
@@ -108,7 +109,7 @@ public final class LegacyQuestionMetadataDialog
 		responseTypeBox.setMaxWidth(Double.MAX_VALUE);
 		responseTypeBox.setCellFactory(_ -> createResponseTypeCell());
 		responseTypeBox.setButtonCell(createResponseTypeCell());
-		preambleRequiredCheckBox.setSelected(question.isSharedContextCaptureRequired());
+		sharedContextRequiredCheckBox.setSelected(question.isSharedContextCaptureRequired());
 	}
 
 	private void configureSaveButton() {
@@ -153,7 +154,7 @@ public final class LegacyQuestionMetadataDialog
 		grid.add(classificationBox, 1, 5);
 		grid.add(createFieldLabel("Response type", "legacy-metadata-response-type-label"), 0, 6);
 		grid.add(responseTypeBox, 1, 6);
-		grid.add(preambleRequiredCheckBox, 1, 7);
+		grid.add(sharedContextRequiredCheckBox, 1, 7);
 		grid.add(hintExplanation, 1, 8);
 		GridPane.setHgrow(questionCodeField, Priority.ALWAYS);
 		GridPane.setHgrow(marksField, Priority.ALWAYS);
@@ -222,23 +223,23 @@ public final class LegacyQuestionMetadataDialog
 	/**
 	 * User-approved replacement metadata.
 	 *
-	 * @param questionCode            corrected question code
-	 * @param marks                   corrected positive mark value
-	 * @param classification          corrected classification
-	 * @param preambleCaptureRequired corrected historical shared context hint
-	 * @param responseType            corrected Question response type
+	 * @param questionCode                 corrected question code
+	 * @param marks                        corrected positive mark value
+	 * @param classification               corrected classification
+	 * @param sharedContextCaptureRequired corrected historical shared context hint
+	 * @param responseType                 corrected Question response type
 	 */
-	public record Result(String questionCode, int marks, CurriculumNode classification, boolean preambleCaptureRequired,
-			QuestionResponseType responseType) {
+	public record Result(String questionCode, int marks, CurriculumNode classification,
+			boolean sharedContextCaptureRequired, QuestionResponseType responseType) {
 
 		/**
 		 * Validates the replacement metadata accepted by the dialog.
 		 *
-		 * @param questionCode            corrected question code
-		 * @param marks                   corrected positive mark value
-		 * @param classification          corrected classification
-		 * @param preambleCaptureRequired corrected historical shared context hint
-		 * @param responseType            corrected Question response type
+		 * @param questionCode                 corrected question code
+		 * @param marks                        corrected positive mark value
+		 * @param classification               corrected classification
+		 * @param sharedContextCaptureRequired corrected historical shared context hint
+		 * @param responseType                 corrected Question response type
 		 */
 		public Result {
 			if (questionCode == null || questionCode.isBlank()) {

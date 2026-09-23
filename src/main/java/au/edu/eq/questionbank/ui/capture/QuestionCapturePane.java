@@ -63,9 +63,9 @@ import javafx.util.StringConverter;
 
 /**
  * Owns the question-capture controls, pending regions, previews, validation,
- * and save workflow for new, imported and edited questions. Shared preambles
- * are captured separately from ordinary question regions. All control and
- * capture-state access belongs on the JavaFX application thread.
+ * and save workflow for new, imported and edited questions. Shared shared
+ * contexts are captured separately from ordinary question regions. All control
+ * and capture-state access belongs on the JavaFX application thread.
  */
 public final class QuestionCapturePane extends VBox {
 
@@ -117,15 +117,15 @@ public final class QuestionCapturePane extends VBox {
 	private final VBox legacyCaptureBox = new VBox(COMPACT_SPACING);
 	private final Label questionCodeStatusLabel = new Label();
 
-	// Question metadata and shared preamble controls.
+	// Question metadata and shared shared context controls.
 	private final TextField questionCodeField = new TextField();
 	private final TextField marksField = new TextField();
 	private final ToggleGroup responseTypeGroup = new ToggleGroup();
 	private final RadioButton multipleChoiceResponseButton = new RadioButton("Multiple choice");
 	private final RadioButton writtenResponseButton = new RadioButton("Written response");
-	private final CheckBox firstRegionPreambleCheckBox = new CheckBox("First region is shared context");
-	private final Label preambleStatusLabel = new Label();
-	private final VBox preambleControlsBox = new VBox(COMPACT_SPACING);
+	private final CheckBox firstRegionSharedContextCheckBox = new CheckBox("First region is shared context");
+	private final Label sharedContextStatusLabel = new Label();
+	private final VBox sharedContextControlsBox = new VBox(COMPACT_SPACING);
 
 	// Pending and accepted region controls.
 	private final Button addRegionButton = new Button("Add Region");
@@ -141,7 +141,7 @@ public final class QuestionCapturePane extends VBox {
 	private final Label saveStatusLabel = new Label();
 
 	// Transient capture and edit state.
-	private boolean refreshingPreambleControls;
+	private boolean refreshingSharedContextControls;
 
 	// The most recently refreshed Question corpus is sufficient for synchronous
 	// duplicate-code feedback without querying SQLite for every keystroke.
@@ -340,13 +340,13 @@ public final class QuestionCapturePane extends VBox {
 				cancelLegacyQuestionSplit();
 				return false;
 			}
-			showPreambleRequiredStatus("Capture the shared context before capturing "
+			showSharedContextRequiredStatus("Capture the shared context before capturing "
 					+ legacySplitCaptureState.activeDefinition().questionCode() + ".");
 		}
 		if (definition
 				.sharedContextChoice() == LegacyQuestionSplitDialog.SharedContextChoice.REUSE_EXISTING_SHARED_CONTEXT) {
 			sharedContextCapturePane.selectContext(definition.existingSharedContext());
-			showPreambleStatus("Reusing shared context for Question " + definition.sourceQuestionCode());
+			showSharedContextStatus("Reusing shared context for Question " + definition.sourceQuestionCode());
 		}
 		refreshSaveButtonState();
 		return true;
@@ -508,7 +508,7 @@ public final class QuestionCapturePane extends VBox {
 		cancelQuestionEditButton.setManaged(true);
 		showCaptureHint(
 				"Editing stored question " + question.getQuestionCode() + ". Exam and booklet cannot be changed.");
-		refreshPreambleControls();
+		refreshSharedContextControls();
 		saveStatusLabel.setText(
 				"Editing " + question.getQuestionCode() + " — " + pendingRegions.size() + " stored region(s) loaded");
 		refreshSaveButtonState();
@@ -761,7 +761,7 @@ public final class QuestionCapturePane extends VBox {
 				return;
 			}
 			updateQuestionCodeLock();
-			hidePreambleStatus();
+			hideSharedContextStatus();
 			if (importedQuestion != null && !importedQuestion.getRegions().isEmpty()) {
 				saveStatusLabel.setText("Shared context captured — save the resolution.");
 			} else {
@@ -926,7 +926,7 @@ public final class QuestionCapturePane extends VBox {
 	private void buildContent() {
 		legacyCaptureBox.getChildren().addAll(new Label("Question awaiting capture"), createImportedQuestionControls(),
 				importedClassificationLabel, captureHintLabel);
-		preambleControlsBox.getChildren().addAll(firstRegionPreambleCheckBox, preambleStatusLabel);
+		sharedContextControlsBox.getChildren().addAll(firstRegionSharedContextCheckBox, sharedContextStatusLabel);
 		setLegacyCaptureControlsVisible(false);
 
 		// The shared-context editor is exposed only for an explicit correction
@@ -935,7 +935,7 @@ public final class QuestionCapturePane extends VBox {
 		sharedContextCapturePane.setVisible(false);
 		sharedContextCapturePane.setManaged(false);
 		getChildren().addAll(createSectionLabel("Question"), createCaptureModeControls(), legacyCaptureBox,
-				createQuestionControls(), preambleControlsBox, saveStatusLabel, createCurrentSelectionControls(),
+				createQuestionControls(), sharedContextControlsBox, saveStatusLabel, createCurrentSelectionControls(),
 				new Separator(), new Label("Accepted regions"), regionCountLabel, createRegionsScrollPane(),
 				sharedContextCapturePane);
 	}
@@ -1114,8 +1114,8 @@ public final class QuestionCapturePane extends VBox {
 		multipleChoiceResponseButton.setOnAction(_ -> responseTypeManuallySelected = true);
 		writtenResponseButton.setOnAction(_ -> responseTypeManuallySelected = true);
 		curriculumSelectorPane.selectedClassificationProperty().addListener((_, _, _) -> refreshSaveButtonState());
-		firstRegionPreambleCheckBox.selectedProperty()
-				.addListener((_, _, selected) -> handlePreambleOptionChanged(selected.booleanValue()));
+		firstRegionSharedContextCheckBox.selectedProperty()
+				.addListener((_, _, selected) -> handleSharedContextOptionChanged(selected.booleanValue()));
 		importedQuestionBox.setOnAction(_ -> checkImportedQuestionBox());
 		newQuestionsModeButton.setOnAction(_ -> showNewQuestionCapture());
 		importedQuestionsModeButton.setOnAction(_ -> showImportedQuestionCapture());
@@ -1190,15 +1190,15 @@ public final class QuestionCapturePane extends VBox {
 		importedQuestionsModeButton.setToggleGroup(captureModeGroup);
 		newQuestionsModeButton.setSelected(true);
 		legacyCaptureBox.setId("legacy-question-capture");
-		firstRegionPreambleCheckBox.setId("first-region-shared-preamble");
-		firstRegionPreambleCheckBox.setTooltip(
+		firstRegionSharedContextCheckBox.setId("first-region-shared-context");
+		firstRegionSharedContextCheckBox.setTooltip(
 				new Tooltip("Store the first captured region as shared context for all parts of this question."));
-		firstRegionPreambleCheckBox.setVisible(false);
-		firstRegionPreambleCheckBox.setManaged(false);
-		preambleStatusLabel.setId("shared-preamble-status");
-		preambleStatusLabel.setVisible(false);
-		preambleStatusLabel.setManaged(false);
-		preambleStatusLabel.setWrapText(true);
+		firstRegionSharedContextCheckBox.setVisible(false);
+		firstRegionSharedContextCheckBox.setManaged(false);
+		sharedContextStatusLabel.setId("shared-context-status");
+		sharedContextStatusLabel.setVisible(false);
+		sharedContextStatusLabel.setManaged(false);
+		sharedContextStatusLabel.setWrapText(true);
 		captureHintLabel.setId("question-capture-hint");
 		captureHintLabel.setWrapText(true);
 		captureHintLabel.setVisible(false);
@@ -1529,77 +1529,6 @@ public final class QuestionCapturePane extends VBox {
 		completedHandler.run();
 	}
 
-	private void handlePreambleOptionChanged(boolean selected) {
-		if (refreshingPreambleControls) {
-			return;
-		}
-		try {
-			if (isNewIndependentMcqCapture()) {
-				mcqContinuationSelected = selected;
-				if (!selected) {
-					if (mcqSharedContextCaptureActive) {
-
-						// Unticking before Save abandons a newly staged MCQ context.
-						sharedContextCapturePane.cancelAutomaticContext();
-						mcqSharedContextCaptureActive = false;
-						inheritedMcqSharedContext = null;
-					}
-					if (inheritedMcqSharedContext != null) {
-						showPreambleStatus("Using shared context from the previous question.");
-					} else {
-						hidePreambleStatus();
-					}
-					updateQuestionCodeLock();
-					return;
-				}
-				if (inheritedMcqSharedContext != null) {
-
-					// This MCQ already inherits the context. Selecting the checkbox means
-					// only that the same context should continue to one more MCQ.
-					showPreambleStatus(
-							"Using shared context from the previous question — it will also continue to the following question.");
-					updateQuestionCodeLock();
-					return;
-				}
-				if (!beginAutomaticSharedContextCapture(newMcqSharedContextLabel())) {
-					mcqContinuationSelected = false;
-					setPreambleCheckBoxSelected(false);
-					return;
-				}
-				mcqSharedContextCaptureActive = true;
-				showPreambleStatus("Capture the shared context before capturing the question region.");
-				updateQuestionCodeLock();
-				return;
-			}
-
-			// Multipart Written Response continues to use the existing SourceQuestion
-			// semantics. MCQ continuation state must never leak into that workflow.
-			mcqContinuationSelected = false;
-			inheritedMcqSharedContext = null;
-			String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
-			if (!selected) {
-				sharedContextCapturePane.cancelAutomaticContext();
-				hidePreambleStatus();
-				updateQuestionCodeLock();
-				return;
-			}
-			if (sourceCode == null) {
-				setPreambleCheckBoxSelected(false);
-				return;
-			}
-
-			// Retain the existing persisted-label convention for multipart Questions.
-			String label = "Question " + sourceCode + " context";
-			if (!beginAutomaticSharedContextCapture(label)) {
-				setPreambleCheckBoxSelected(false);
-				return;
-			}
-			updateQuestionCodeLock();
-		} finally {
-			refreshSaveButtonState();
-		}
-	}
-
 	private void handleQuestionCodeChanged(String newCode) {
 		if (legacySplitCaptureState != null) {
 
@@ -1616,7 +1545,7 @@ public final class QuestionCapturePane extends VBox {
 		// Resolve response type before shared-context controls because independent MCQ
 		// continuation depends on the effective response type.
 		applyAutomaticResponseType();
-		refreshPreambleControls();
+		refreshSharedContextControls();
 
 		// Duplicate feedback is deliberately independent of classification and region
 		// state, so it appears as soon as the Question number is recognisable.
@@ -1636,8 +1565,79 @@ public final class QuestionCapturePane extends VBox {
 
 		// The same compact checkbox represents different context semantics for
 		// independent MCQs and multipart Written Response Questions.
-		refreshPreambleControls();
+		refreshSharedContextControls();
 		refreshSaveButtonState();
+	}
+
+	private void handleSharedContextOptionChanged(boolean selected) {
+		if (refreshingSharedContextControls) {
+			return;
+		}
+		try {
+			if (isNewIndependentMcqCapture()) {
+				mcqContinuationSelected = selected;
+				if (!selected) {
+					if (mcqSharedContextCaptureActive) {
+
+						// Unticking before Save abandons a newly staged MCQ context.
+						sharedContextCapturePane.cancelAutomaticContext();
+						mcqSharedContextCaptureActive = false;
+						inheritedMcqSharedContext = null;
+					}
+					if (inheritedMcqSharedContext != null) {
+						showSharedContextStatus("Using shared context from the previous question.");
+					} else {
+						hideSharedContextStatus();
+					}
+					updateQuestionCodeLock();
+					return;
+				}
+				if (inheritedMcqSharedContext != null) {
+
+					// This MCQ already inherits the context. Selecting the checkbox means
+					// only that the same context should continue to one more MCQ.
+					showSharedContextStatus(
+							"Using shared context from the previous question — it will also continue to the following question.");
+					updateQuestionCodeLock();
+					return;
+				}
+				if (!beginAutomaticSharedContextCapture(newMcqSharedContextLabel())) {
+					mcqContinuationSelected = false;
+					setSharedContextCheckBoxSelected(false);
+					return;
+				}
+				mcqSharedContextCaptureActive = true;
+				showSharedContextStatus("Capture the shared context before capturing the question region.");
+				updateQuestionCodeLock();
+				return;
+			}
+
+			// Multipart Written Response continues to use the existing SourceQuestion
+			// semantics. MCQ continuation state must never leak into that workflow.
+			mcqContinuationSelected = false;
+			inheritedMcqSharedContext = null;
+			String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
+			if (!selected) {
+				sharedContextCapturePane.cancelAutomaticContext();
+				hideSharedContextStatus();
+				updateQuestionCodeLock();
+				return;
+			}
+			if (sourceCode == null) {
+				setSharedContextCheckBoxSelected(false);
+				return;
+			}
+
+			// Retain the existing persisted-label convention for multipart Questions.
+			String label = "Question " + sourceCode + " context";
+			if (!beginAutomaticSharedContextCapture(label)) {
+				setSharedContextCheckBoxSelected(false);
+				return;
+			}
+			updateQuestionCodeLock();
+		} finally {
+			refreshSaveButtonState();
+		}
 	}
 
 	private void hideCaptureHint() {
@@ -1651,18 +1651,18 @@ public final class QuestionCapturePane extends VBox {
 		importedClassificationLabel.setManaged(false);
 	}
 
-	private void hidePreambleControls() {
-		setPreambleCheckBoxSelected(false);
-		setPreambleCheckBoxVisible(false);
-		firstRegionPreambleCheckBox.setDisable(false);
-		hidePreambleStatus();
+	private void hideSharedContextControls() {
+		setSharedContextCheckBoxSelected(false);
+		setSharedContextCheckBoxVisible(false);
+		firstRegionSharedContextCheckBox.setDisable(false);
+		hideSharedContextStatus();
 	}
 
-	private void hidePreambleStatus() {
-		preambleStatusLabel.setText("");
-		preambleStatusLabel.setStyle("");
-		preambleStatusLabel.setVisible(false);
-		preambleStatusLabel.setManaged(false);
+	private void hideSharedContextStatus() {
+		sharedContextStatusLabel.setText("");
+		sharedContextStatusLabel.setStyle("");
+		sharedContextStatusLabel.setVisible(false);
+		sharedContextStatusLabel.setManaged(false);
 	}
 
 	private boolean isNewIndependentMcqCapture() {
@@ -1675,7 +1675,8 @@ public final class QuestionCapturePane extends VBox {
 		LegacyQuestionSplitDialog.PartDefinition part = legacySplitCaptureState.activeDefinition();
 
 		// Only ordinary Question regions are cleared between parts. Any newly captured
-		// shared preamble remains staged until the final atomic split transaction.
+		// shared shared context remains staged until the final atomic split
+		// transaction.
 		pendingRegions.clear();
 		clearCurrentSelection();
 		refreshRegionPreviews();
@@ -1693,7 +1694,7 @@ public final class QuestionCapturePane extends VBox {
 		curriculumSelectorPane.setSyllabusContextLocked(true);
 		curriculumSelectorPane.setDisable(true);
 		hideImportedClassification();
-		hidePreambleControls();
+		hideSharedContextControls();
 		saveQuestionButton.setText(legacySplitCaptureState.isLastPart() ? "Save Split" : "Next Part");
 		cancelQuestionEditButton.setVisible(true);
 		cancelQuestionEditButton.setManaged(true);
@@ -1891,57 +1892,6 @@ public final class QuestionCapturePane extends VBox {
 		}
 	}
 
-	private void refreshPreambleControls() {
-		if (isNewIndependentMcqCapture()) {
-
-			// Preserve a context currently being captured for this MCQ. Any older
-			// automatic multipart capture is no longer compatible with MCQ mode.
-			if (!mcqSharedContextCaptureActive && sharedContextCapturePane.hasUnsavedContextCapture()) {
-				sharedContextCapturePane.cancelAutomaticContext();
-			}
-			showMcqSharedContextOption();
-			return;
-		}
-		if (mcqSharedContextCaptureActive) {
-			sharedContextCapturePane.cancelAutomaticContext();
-		}
-		mcqSharedContextCaptureActive = false;
-		mcqContinuationSelected = false;
-		inheritedMcqSharedContext = null;
-
-		// Existing multipart and imported workflows retain their SourceQuestion-based
-		// context rules.
-		sharedContextCapturePane.cancelAutomaticContext();
-		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
-		if (sourceCode == null) {
-			if (importedQuestion != null && importedQuestion.isSharedContextUnresolved()) {
-				hidePreambleControls();
-				boolean started = sharedContextCapturePane
-						.beginAutomaticContext("Question " + importedQuestion.getQuestionCode() + " context");
-				if (started) {
-					showPreambleRequiredStatus("Shared context required — capture it as the first region.");
-				}
-				return;
-			}
-			hidePreambleControls();
-			return;
-		}
-		ExamBooklet booklet = bookletSupplier.get();
-		if (booklet == null) {
-			hidePreambleControls();
-			return;
-		}
-		if (showImportedPreamble(sourceCode)) {
-			return;
-		}
-		SourceQuestion sourceQuestion = sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode).orElse(null);
-		if (sourceQuestion != null && showStoredPreamble(sourceCode, sourceQuestion)) {
-			return;
-		}
-		boolean required = importedQuestion != null && importedQuestion.isSharedContextUnresolved();
-		showPreambleOption(sourceCode, required);
-	}
-
 	private void refreshQuestionCodeStatus(String questionCode) {
 		Question duplicate = findDuplicateQuestion(questionCode);
 		if (duplicate == null) {
@@ -1995,6 +1945,57 @@ public final class QuestionCapturePane extends VBox {
 		saveQuestionButton.setDisable(!ready);
 	}
 
+	private void refreshSharedContextControls() {
+		if (isNewIndependentMcqCapture()) {
+
+			// Preserve a context currently being captured for this MCQ. Any older
+			// automatic multipart capture is no longer compatible with MCQ mode.
+			if (!mcqSharedContextCaptureActive && sharedContextCapturePane.hasUnsavedContextCapture()) {
+				sharedContextCapturePane.cancelAutomaticContext();
+			}
+			showMcqSharedContextOption();
+			return;
+		}
+		if (mcqSharedContextCaptureActive) {
+			sharedContextCapturePane.cancelAutomaticContext();
+		}
+		mcqSharedContextCaptureActive = false;
+		mcqContinuationSelected = false;
+		inheritedMcqSharedContext = null;
+
+		// Existing multipart and imported workflows retain their SourceQuestion-based
+		// context rules.
+		sharedContextCapturePane.cancelAutomaticContext();
+		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
+		if (sourceCode == null) {
+			if (importedQuestion != null && importedQuestion.isSharedContextUnresolved()) {
+				hideSharedContextControls();
+				boolean started = sharedContextCapturePane
+						.beginAutomaticContext("Question " + importedQuestion.getQuestionCode() + " context");
+				if (started) {
+					showSharedContextRequiredStatus("Shared context required — capture it as the first region.");
+				}
+				return;
+			}
+			hideSharedContextControls();
+			return;
+		}
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null) {
+			hideSharedContextControls();
+			return;
+		}
+		if (showImportedSharedContext(sourceCode)) {
+			return;
+		}
+		SourceQuestion sourceQuestion = sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode).orElse(null);
+		if (sourceQuestion != null && showStoredSharedContext(sourceCode, sourceQuestion)) {
+			return;
+		}
+		boolean required = importedQuestion != null && importedQuestion.isSharedContextUnresolved();
+		showSharedContextOption(sourceCode, required);
+	}
+
 	private void removeRegion(int regionIndex) {
 		pendingRegions.remove(regionIndex);
 		refreshRegionPreviews();
@@ -2032,7 +2033,7 @@ public final class QuestionCapturePane extends VBox {
 		mcqContinuationSelected = false;
 		inheritedMcqSharedContext = null;
 		sharedContextCapturePane.clearForQuestion();
-		hidePreambleControls();
+		hideSharedContextControls();
 		questionCodeField.clear();
 		questionCodeField.setDisable(false);
 		marksField.clear();
@@ -2044,7 +2045,7 @@ public final class QuestionCapturePane extends VBox {
 		selectResponseType(null);
 		setResponseTypeDisabled(false);
 		applyAutomaticResponseType();
-		refreshPreambleControls();
+		refreshSharedContextControls();
 		clearRegions();
 		curriculumSelectorPane.clearClassificationBelowSubject();
 		refreshSaveButtonState();
@@ -2157,20 +2158,6 @@ public final class QuestionCapturePane extends VBox {
 		legacyCaptureBox.setManaged(visible);
 	}
 
-	private void setPreambleCheckBoxSelected(boolean selected) {
-		refreshingPreambleControls = true;
-		try {
-			firstRegionPreambleCheckBox.setSelected(selected);
-		} finally {
-			refreshingPreambleControls = false;
-		}
-	}
-
-	private void setPreambleCheckBoxVisible(boolean visible) {
-		firstRegionPreambleCheckBox.setVisible(visible);
-		firstRegionPreambleCheckBox.setManaged(visible);
-	}
-
 	private void setRegionCountLabel(int count) {
 		regionCountLabel.setText(String.format("Regions: %d", count));
 	}
@@ -2182,11 +2169,25 @@ public final class QuestionCapturePane extends VBox {
 		writtenResponseButton.setDisable(disabled);
 	}
 
+	private void setSharedContextCheckBoxSelected(boolean selected) {
+		refreshingSharedContextControls = true;
+		try {
+			firstRegionSharedContextCheckBox.setSelected(selected);
+		} finally {
+			refreshingSharedContextControls = false;
+		}
+	}
+
+	private void setSharedContextCheckBoxVisible(boolean visible) {
+		firstRegionSharedContextCheckBox.setVisible(visible);
+		firstRegionSharedContextCheckBox.setManaged(visible);
+	}
+
 	private void setSharedContextCorrectionVisible(boolean visible) {
 		sharedContextCapturePane.setVisible(visible);
 		sharedContextCapturePane.setManaged(visible);
 
-		// During preamble correction, ordinary Question controls must not trigger
+		// During shared context correction, ordinary Question controls must not trigger
 		// listeners that could cancel or otherwise alter the replacement capture.
 		for (Node child : getChildren()) {
 			if (child != sharedContextCapturePane) {
@@ -2260,7 +2261,7 @@ public final class QuestionCapturePane extends VBox {
 		}
 
 		// Shared-context regions are persisted in source order, so start correction
-		// on the page containing the first stored preamble region.
+		// on the page containing the first stored shared context region.
 		examPageNavigationHandler.accept(context.getRegions().getFirst().pageNumber());
 	}
 
@@ -2269,16 +2270,6 @@ public final class QuestionCapturePane extends VBox {
 				+ question.getClassification().getName());
 		importedClassificationLabel.setVisible(true);
 		importedClassificationLabel.setManaged(true);
-	}
-
-	private boolean showImportedPreamble(String sourceCode) {
-		if (importedQuestion == null || !importedQuestion.hasSharedContext()) {
-			return false;
-		}
-		sharedContextCapturePane.selectContext(importedQuestion.getSharedContext());
-		hidePreambleControls();
-		showPreambleStatus("Shared context: Question " + sourceCode);
-		return true;
 	}
 
 	private void showImportedQuestionMode(Question question) {
@@ -2297,7 +2288,7 @@ public final class QuestionCapturePane extends VBox {
 		marksField.setDisable(true);
 		loadResponseType(question);
 		setResponseTypeDisabled(false);
-		refreshPreambleControls();
+		refreshSharedContextControls();
 		if (question.getRegions().isEmpty()) {
 			saveQuestionButton.setText("Save Question");
 			if (question.isSharedContextUnresolved()) {
@@ -2324,7 +2315,7 @@ public final class QuestionCapturePane extends VBox {
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		curriculumSelectorPane.setDisable(true);
 		hideImportedClassification();
-		hidePreambleControls();
+		hideSharedContextControls();
 		saveQuestionButton.setText("Save Resolution");
 		saveQuestionButton.setDisable(true);
 		if (importedQuestionBox.getItems().isEmpty()) {
@@ -2334,19 +2325,29 @@ public final class QuestionCapturePane extends VBox {
 		}
 	}
 
+	private boolean showImportedSharedContext(String sourceCode) {
+		if (importedQuestion == null || !importedQuestion.hasSharedContext()) {
+			return false;
+		}
+		sharedContextCapturePane.selectContext(importedQuestion.getSharedContext());
+		hideSharedContextControls();
+		showSharedContextStatus("Shared context: Question " + sourceCode);
+		return true;
+	}
+
 	private void showMcqSharedContextOption() {
-		firstRegionPreambleCheckBox.setText("Shared context with next question");
-		firstRegionPreambleCheckBox
+		firstRegionSharedContextCheckBox.setText("Shared context with next question");
+		firstRegionSharedContextCheckBox
 				.setTooltip(new Tooltip("Select when this MCQ and the following MCQ use the same source context."));
-		firstRegionPreambleCheckBox.setDisable(false);
-		setPreambleCheckBoxVisible(true);
+		firstRegionSharedContextCheckBox.setDisable(false);
+		setSharedContextCheckBoxVisible(true);
 		if (mcqSharedContextCaptureActive) {
 			inheritedMcqSharedContext = null;
-			setPreambleCheckBoxSelected(mcqContinuationSelected);
+			setSharedContextCheckBoxSelected(mcqContinuationSelected);
 			if (sharedContextCapturePane.isCaptureMode()) {
-				showPreambleStatus("Capture the shared context before capturing the question region.");
+				showSharedContextStatus("Capture the shared context before capturing the question region.");
 			} else {
-				showPreambleStatus("Shared context captured — it will also be used by the next question.");
+				showSharedContextStatus("Shared context captured — it will also be used by the next question.");
 			}
 			return;
 		}
@@ -2358,18 +2359,18 @@ public final class QuestionCapturePane extends VBox {
 
 			// Only the immediate sequence successor inherits automatically. The checkbox
 			// now means "continue this same context one Question further".
-			setPreambleCheckBoxSelected(mcqContinuationSelected);
+			setSharedContextCheckBoxSelected(mcqContinuationSelected);
 			if (mcqContinuationSelected) {
-				showPreambleStatus(
+				showSharedContextStatus(
 						"Using shared context from the previous question — it will also continue to the following question.");
 			} else {
-				showPreambleStatus("Using shared context from the previous question.");
+				showSharedContextStatus("Using shared context from the previous question.");
 			}
 			return;
 		}
 		mcqContinuationSelected = false;
-		setPreambleCheckBoxSelected(false);
-		hidePreambleStatus();
+		setSharedContextCheckBoxSelected(false);
+		hideSharedContextStatus();
 	}
 
 	private void showNewQuestionMode() {
@@ -2386,39 +2387,6 @@ public final class QuestionCapturePane extends VBox {
 		hideImportedClassification();
 		saveQuestionButton.setText("Save Question");
 		hideCaptureHint();
-	}
-
-	private void showPreambleOption(String sourceCode, boolean required) {
-		firstRegionPreambleCheckBox.setText("First region is shared context");
-		firstRegionPreambleCheckBox.setTooltip(
-				new Tooltip("Store the first captured region as shared context for all parts of this question."));
-		setPreambleCheckBoxVisible(true);
-		firstRegionPreambleCheckBox.setDisable(required);
-		setPreambleCheckBoxSelected(required);
-		if (!required) {
-			hidePreambleStatus();
-			return;
-		}
-		boolean started = sharedContextCapturePane.beginAutomaticContext("Question " + sourceCode + " context");
-		if (!started) {
-			setPreambleCheckBoxSelected(false);
-			return;
-		}
-		showPreambleRequiredStatus("Shared context required — capture it as the first region.");
-	}
-
-	private void showPreambleRequiredStatus(String text) {
-		preambleStatusLabel.setStyle(REQUIRED_STATUS_STYLE);
-		preambleStatusLabel.setText(text);
-		preambleStatusLabel.setVisible(true);
-		preambleStatusLabel.setManaged(true);
-	}
-
-	private void showPreambleStatus(String text) {
-		preambleStatusLabel.setStyle("");
-		preambleStatusLabel.setText(text);
-		preambleStatusLabel.setVisible(true);
-		preambleStatusLabel.setManaged(true);
 	}
 
 	private void showQuestionPendingStatus() {
@@ -2462,25 +2430,58 @@ public final class QuestionCapturePane extends VBox {
 		curriculumSelectorPane.setSyllabusContextLocked(true);
 		curriculumSelectorPane.setDisable(true);
 		hideImportedClassification();
-		hidePreambleControls();
+		hideSharedContextControls();
 		saveStatusLabel.setText("Recapturing shared context used by Question " + question.getQuestionCode());
 	}
 
-	private boolean showStoredPreamble(String sourceCode, SourceQuestion sourceQuestion) {
+	private void showSharedContextOption(String sourceCode, boolean required) {
+		firstRegionSharedContextCheckBox.setText("First region is shared context");
+		firstRegionSharedContextCheckBox.setTooltip(
+				new Tooltip("Store the first captured region as shared context for all parts of this question."));
+		setSharedContextCheckBoxVisible(true);
+		firstRegionSharedContextCheckBox.setDisable(required);
+		setSharedContextCheckBoxSelected(required);
+		if (!required) {
+			hideSharedContextStatus();
+			return;
+		}
+		boolean started = sharedContextCapturePane.beginAutomaticContext("Question " + sourceCode + " context");
+		if (!started) {
+			setSharedContextCheckBoxSelected(false);
+			return;
+		}
+		showSharedContextRequiredStatus("Shared context required — capture it as the first region.");
+	}
+
+	private void showSharedContextRequiredStatus(String text) {
+		sharedContextStatusLabel.setStyle(REQUIRED_STATUS_STYLE);
+		sharedContextStatusLabel.setText(text);
+		sharedContextStatusLabel.setVisible(true);
+		sharedContextStatusLabel.setManaged(true);
+	}
+
+	private void showSharedContextStatus(String text) {
+		sharedContextStatusLabel.setStyle("");
+		sharedContextStatusLabel.setText(text);
+		sharedContextStatusLabel.setVisible(true);
+		sharedContextStatusLabel.setManaged(true);
+	}
+
+	private boolean showStoredSharedContext(String sourceCode, SourceQuestion sourceQuestion) {
 		SharedQuestionContext existingContext = findSharedContextForSourceQuestion(sourceQuestion);
 		if (existingContext != null) {
 			sharedContextCapturePane.selectContext(existingContext);
-			hidePreambleControls();
-			showPreambleStatus("Shared context: Question " + sourceCode);
+			hideSharedContextControls();
+			showSharedContextStatus("Shared context: Question " + sourceCode);
 			return true;
 		}
 		if (sourceQuestion.getSharedContextStatus() == SharedContextStatus.NONE) {
-			hidePreambleControls();
+			hideSharedContextControls();
 			return true;
 		}
 		if (sourceQuestion.getSharedContextStatus() == SharedContextStatus.PRESENT) {
-			hidePreambleControls();
-			showPreambleStatus("Shared context for Question " + sourceCode + " could not be found.");
+			hideSharedContextControls();
+			showSharedContextStatus("Shared context for Question " + sourceCode + " could not be found.");
 			return true;
 		}
 		return false;
@@ -2522,7 +2523,7 @@ public final class QuestionCapturePane extends VBox {
 		// Ordinary accepted question regions do not lock the question number. The user
 		// may still correct or enter metadata before Save.
 		//
-		// A captured shared preamble does lock the number because changing the source
+		// A captured shared context does lock the number because changing the source
 		// question would change ownership of that shared context.
 		questionCodeField.setDisable(sharedContextCapturePane.hasPendingAutomaticRegion());
 	}

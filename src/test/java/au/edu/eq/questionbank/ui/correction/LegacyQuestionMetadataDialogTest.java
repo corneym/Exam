@@ -118,14 +118,14 @@ class LegacyQuestionMetadataDialogTest {
 				.queryAs(ComboBox.class);
 		ComboBox<QuestionResponseType> responseType = robot.lookup("#legacy-metadata-response-type")
 				.queryAs(ComboBox.class);
-		CheckBox preamble = robot.lookup("#legacy-metadata-preamble-required").queryAs(CheckBox.class);
+		CheckBox sharedContext = robot.lookup("#legacy-metadata-shared-context-required").queryAs(CheckBox.class);
 		Button save = robot.lookup("#legacy-metadata-save").queryAs(Button.class);
 		robot.interact(() -> {
 			questionCode.setText("Q12b");
 			responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE);
 			marks.setText("4");
 			classification.setValue(secondSubtopic);
-			preamble.setSelected(false);
+			sharedContext.setSelected(false);
 		});
 		assertFalse(save.isDisabled());
 		robot.interact(save::fire);
@@ -134,7 +134,7 @@ class LegacyQuestionMetadataDialogTest {
 		assertEquals("Q12b", result.questionCode());
 		assertEquals(4, result.marks());
 		assertEquals(secondSubtopic, result.classification());
-		assertFalse(result.preambleCaptureRequired());
+		assertFalse(result.sharedContextCaptureRequired());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, result.responseType());
 	}
 
@@ -154,14 +154,14 @@ class LegacyQuestionMetadataDialogTest {
 				.queryAs(ComboBox.class);
 		ComboBox<QuestionResponseType> responseType = robot.lookup("#legacy-metadata-response-type")
 				.queryAs(ComboBox.class);
-		CheckBox preamble = robot.lookup("#legacy-metadata-preamble-required").queryAs(CheckBox.class);
+		CheckBox sharedContext = robot.lookup("#legacy-metadata-shared-context-required").queryAs(CheckBox.class);
 		assertEquals("Q12a", questionCode.getText());
 		assertEquals("2", marks.getText());
 		assertEquals(firstSubtopic, classification.getValue());
 		assertEquals(2, classification.getItems().size());
 		assertTrue(classification.getItems().contains(firstSubtopic));
 		assertTrue(classification.getItems().contains(secondSubtopic));
-		assertTrue(preamble.isSelected());
+		assertTrue(sharedContext.isSelected());
 		assertEquals(QuestionResponseType.UNKNOWN, responseType.getValue());
 		assertEquals(3, responseType.getItems().size());
 		assertTrue(responseType.getItems().contains(QuestionResponseType.MULTIPLE_CHOICE));

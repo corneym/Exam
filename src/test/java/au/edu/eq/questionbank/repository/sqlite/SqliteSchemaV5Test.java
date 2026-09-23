@@ -14,8 +14,8 @@ import java.sql.Statement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 
 class SqliteSchemaV5Test {
@@ -78,7 +78,7 @@ class SqliteSchemaV5Test {
 					INSERT INTO shared_question_contexts
 					    (id, booklet_id, context_label)
 					VALUES
-					    (30, 1, 'Question 21 preamble')
+					    (30, 1, 'Question 21 shared context')
 					""");
 			statement.execute("""
 					INSERT INTO shared_question_context_regions
@@ -185,7 +185,7 @@ class SqliteSchemaV5Test {
 					INSERT INTO shared_question_contexts
 					    (id, booklet_id, context_label)
 					VALUES
-					    (30, 1, 'Question 24 preamble')
+					    (30, 1, 'Question 24 shared context')
 					""");
 
 			// Insert these deliberately out of physical insertion order. Repository
@@ -259,7 +259,7 @@ class SqliteSchemaV5Test {
 		assertEquals(SharedContextStatus.UNKNOWN, reloaded.getSourceQuestion().getSharedContextStatus());
 		assertTrue(reloaded.hasSharedContext());
 		assertEquals(30, reloaded.getSharedContext().getId());
-		assertEquals("Question 24 preamble", reloaded.getSharedContext().getLabel());
+		assertEquals("Question 24 shared context", reloaded.getSharedContext().getLabel());
 		assertEquals(2, reloaded.getSharedContext().getRegions().size());
 		assertEquals(2, reloaded.getSharedContext().getRegions().get(0).pageNumber());
 		assertEquals(3, reloaded.getSharedContext().getRegions().get(1).pageNumber());
@@ -367,7 +367,7 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void rejectsVersionSixSchemaWithNullablePreambleStatusColumn() throws Exception {
+	void rejectsVersionSixSchemaWithNullableSharedContextStatusColumn() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-nullable-status.db"));
 		createVersionFiveSchema(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -380,7 +380,7 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void rejectsVersionSixSchemaWithoutPreambleStatusColumn() throws Exception {
+	void rejectsVersionSixSchemaWithoutSharedContextStatusColumn() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-missing-status.db"));
 		createVersionFiveSchema(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -392,7 +392,7 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void versionSixPreambleStatusDefaultsAndConstraintAreEnforced() throws Exception {
+	void versionSixSharedContextStatusDefaultsAndConstraintAreEnforced() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-status-constraint.db"));
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {

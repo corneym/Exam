@@ -24,37 +24,20 @@ class LegacyQuestionWorkbookReaderTest {
 	@TempDir
 	Path tempDirectory;
 
-	private Path createWorkbook() throws Exception {
-		Path path = tempDirectory.resolve("legacy.xlsx");
-		try (Workbook workbook = new XSSFWorkbook()) {
-			Sheet sheet = workbook.createSheet("QCAA");
-			Row header = sheet.createRow(0);
-			header.createCell(0).setCellValue("Year");
-			header.createCell(1).setCellValue("Paper");
-			header.createCell(2).setCellValue("Question");
-			header.createCell(3).setCellValue("Marks");
-			header.createCell(4).setCellValue("Topic");
-			header.createCell(5).setCellValue("Answer");
-			header.createCell(6).setCellValue("Preamble");
-			Row first = sheet.createRow(1);
-			first.createCell(0).setCellValue(2020);
-			first.createCell(1).setCellValue("MCQ");
-			first.createCell(2).setCellValue(1);
-			first.createCell(3).setCellValue(1);
-			first.createCell(4).setCellValue("1.1.1");
-			first.createCell(5).setCellValue("B");
-			Row second = sheet.createRow(2);
-			second.createCell(0).setCellValue(2020);
-			second.createCell(1).setCellValue("1");
-			second.createCell(2).setCellValue("21a");
-			second.createCell(3).setCellValue(3);
-			second.createCell(4).setCellValue("2.3.1");
-			second.createCell(6).setCellValue(1);
+	@Test
+	void evaluatesFormulaCellsUsedByLegacyMetadata() throws Exception {
+		Path path = createWorkbook();
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
+			Row row = workbook.getSheetAt(0).getRow(2);
+			row.getCell(0).setCellFormula("2019+1");
+			row.getCell(3).setCellFormula("1+2");
 			try (OutputStream output = Files.newOutputStream(path)) {
 				workbook.write(output);
 			}
 		}
-		return path;
+		LegacyQuestionRow row = new LegacyQuestionWorkbookReader().read(path).getFirst().questions().get(1);
+		assertEquals(2020, row.year());
+		assertEquals(3, row.marks());
 	}
 
 	@Test
@@ -81,6 +64,20 @@ class LegacyQuestionWorkbookReaderTest {
 	}
 
 	@Test
+	void rejectsDuplicateHeadings() throws Exception {
+		Path path = createWorkbook();
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
+			workbook.getSheetAt(0).getRow(0).createCell(7).setCellValue("Year");
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> new LegacyQuestionWorkbookReader().read(path));
+		assertTrue(exception.getMessage().contains("Duplicate column: Year"));
+	}
+
+	@Test
 	void rejectsInvalidMarksWithRowNumber() throws Exception {
 		Path path = createWorkbook();
 		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
@@ -96,7 +93,7 @@ class LegacyQuestionWorkbookReaderTest {
 	}
 
 	@Test
-	void rejectsInvalidPreambleValueWithRowNumber() throws Exception {
+	void rejectsInvalidSValueWithRowNumber() throws Exception {
 		Path path = createWorkbook();
 		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
 			workbook.getSheetAt(0).getRow(1).createCell(6).setCellValue("yes");
@@ -107,7 +104,7 @@ class LegacyQuestionWorkbookReaderTest {
 		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
 				() -> new LegacyQuestionWorkbookReader().read(path));
 		assertTrue(exception.getMessage().contains("row 2"));
-		assertTrue(exception.getMessage().contains("Preamble"));
+		assertTrue(exception.getMessage().contains("Shared Context"));
 	}
 
 	@Test
@@ -127,33 +124,36 @@ class LegacyQuestionWorkbookReaderTest {
 		assertTrue(exception.getMessage().contains("QCAA"));
 	}
 
-	@Test
-	void evaluatesFormulaCellsUsedByLegacyMetadata() throws Exception {
-		Path path = createWorkbook();
-		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
-			Row row = workbook.getSheetAt(0).getRow(2);
-			row.getCell(0).setCellFormula("2019+1");
-			row.getCell(3).setCellFormula("1+2");
+	private Path createWorkbook() throws Exception {
+		Path path = tempDirectory.resolve("legacy.xlsx");
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet sheet = workbook.createSheet("QCAA");
+			Row header = sheet.createRow(0);
+			header.createCell(0).setCellValue("Year");
+			header.createCell(1).setCellValue("Paper");
+			header.createCell(2).setCellValue("Question");
+			header.createCell(3).setCellValue("Marks");
+			header.createCell(4).setCellValue("Topic");
+			header.createCell(5).setCellValue("Answer");
+			header.createCell(6).setCellValue("Shared Context");
+			Row first = sheet.createRow(1);
+			first.createCell(0).setCellValue(2020);
+			first.createCell(1).setCellValue("MCQ");
+			first.createCell(2).setCellValue(1);
+			first.createCell(3).setCellValue(1);
+			first.createCell(4).setCellValue("1.1.1");
+			first.createCell(5).setCellValue("B");
+			Row second = sheet.createRow(2);
+			second.createCell(0).setCellValue(2020);
+			second.createCell(1).setCellValue("1");
+			second.createCell(2).setCellValue("21a");
+			second.createCell(3).setCellValue(3);
+			second.createCell(4).setCellValue("2.3.1");
+			second.createCell(6).setCellValue(1);
 			try (OutputStream output = Files.newOutputStream(path)) {
 				workbook.write(output);
 			}
 		}
-		LegacyQuestionRow row = new LegacyQuestionWorkbookReader().read(path).getFirst().questions().get(1);
-		assertEquals(2020, row.year());
-		assertEquals(3, row.marks());
-	}
-
-	@Test
-	void rejectsDuplicateHeadings() throws Exception {
-		Path path = createWorkbook();
-		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
-			workbook.getSheetAt(0).getRow(0).createCell(7).setCellValue("Year");
-			try (OutputStream output = Files.newOutputStream(path)) {
-				workbook.write(output);
-			}
-		}
-		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-				() -> new LegacyQuestionWorkbookReader().read(path));
-		assertTrue(exception.getMessage().contains("Duplicate column: Year"));
+		return path;
 	}
 }

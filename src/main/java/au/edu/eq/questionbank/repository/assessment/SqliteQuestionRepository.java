@@ -260,10 +260,10 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired) {
 		try {
 			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
-					preambleCaptureRequired);
+					sharedContextCaptureRequired);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
 		}
@@ -271,11 +271,11 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
 		try {
 			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
-					preambleCaptureRequired, sourceQuestion, sharedContext);
+					sharedContextCaptureRequired, sourceQuestion, sharedContext);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
 		}
@@ -283,11 +283,11 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 		try {
 			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
-					preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+					sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
 		}

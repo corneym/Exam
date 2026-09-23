@@ -30,7 +30,8 @@ public interface SourceQuestionRepository {
 	Optional<SourceQuestion> findByBookletAndCode(ExamBooklet booklet, String sourceQuestionCode);
 
 	/**
-	 * Persists a new source-question identity with an unresolved preamble state.
+	 * Persists a new source-question identity with an unresolved shared context
+	 * state.
 	 *
 	 * @param booklet            the owning booklet
 	 * @param sourceQuestionCode the booklet-scoped source-question code
@@ -41,12 +42,12 @@ public interface SourceQuestionRepository {
 	SourceQuestion save(ExamBooklet booklet, String sourceQuestionCode);
 
 	/**
-	 * Replaces the persisted preamble state of an existing source question.
+	 * Replaces the persisted shared context state of an existing source question.
 	 *
-	 * @param sourceQuestion the persisted source-question identity
-	 * @param preambleStatus the replacement state
+	 * @param sourceQuestion      the persisted source-question identity
+	 * @param sharedContextStatus the replacement state
 	 * @return the source question with the persisted replacement state
 	 * @throws IllegalStateException if the identified row cannot be updated
 	 */
-	SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, SharedContextStatus preambleStatus);
+	SourceQuestion updatesharedContextStatus(SourceQuestion sourceQuestion, SharedContextStatus sharedContextStatus);
 }

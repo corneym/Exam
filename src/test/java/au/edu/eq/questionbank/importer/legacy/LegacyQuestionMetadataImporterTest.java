@@ -207,8 +207,8 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
-	void mcqQuestionMayRequirePreambleWithoutInventingMultipartIdentity() throws Exception {
-		Fixture fixture = createFixture("mcq-preamble.db", false, true);
+	void mcqQuestionMayRequireSharedContextWithoutInventingMultipartIdentity() throws Exception {
+		Fixture fixture = createFixture("mcq-shared-context.db", false, true);
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
 				"2019");
 		try (Connection connection = fixture.database().openConnection();
@@ -352,8 +352,8 @@ class LegacyQuestionMetadataImporterTest {
 		return createFixture(databaseName, invalidSecondClassification, false);
 	}
 
-	private Fixture createFixture(String databaseName, boolean invalidSecondClassification, boolean mcqPreambleRequired)
-			throws Exception {
+	private Fixture createFixture(String databaseName, boolean invalidSecondClassification,
+			boolean mcqSharedContextRequired) throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
 		database.initialiseSchema();
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
@@ -370,11 +370,12 @@ class LegacyQuestionMetadataImporterTest {
 		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "MCQ booklet",
 				"Chemistry/2020/mcq.pdf");
 		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1", "Chemistry/2020/paper1.pdf");
-		Path workbookPath = createWorkbook(invalidSecondClassification, mcqPreambleRequired);
+		Path workbookPath = createWorkbook(invalidSecondClassification, mcqSharedContextRequired);
 		return new Fixture(database, workbookPath);
 	}
 
-	private Path createWorkbook(boolean invalidSecondClassification, boolean mcqPreambleRequired) throws Exception {
+	private Path createWorkbook(boolean invalidSecondClassification, boolean mcqSharedContextRequired)
+			throws Exception {
 		Path path = tempDirectory.resolve("legacy-" + System.nanoTime() + ".xlsx");
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("QCAA");
@@ -385,7 +386,7 @@ class LegacyQuestionMetadataImporterTest {
 			header.createCell(3).setCellValue("Marks");
 			header.createCell(4).setCellValue("Topic");
 			header.createCell(5).setCellValue("Answer");
-			header.createCell(6).setCellValue("Preamble");
+			header.createCell(6).setCellValue("Shared Conext");
 			Row first = sheet.createRow(1);
 			first.createCell(0).setCellValue(2020);
 			first.createCell(1).setCellValue("MCQ");
@@ -393,7 +394,7 @@ class LegacyQuestionMetadataImporterTest {
 			first.createCell(3).setCellValue(1);
 			first.createCell(4).setCellValue("1.1.1");
 			first.createCell(5).setCellValue("B");
-			if (mcqPreambleRequired) {
+			if (mcqSharedContextRequired) {
 				first.createCell(6).setCellValue(1);
 			}
 			Row second = sheet.createRow(2);

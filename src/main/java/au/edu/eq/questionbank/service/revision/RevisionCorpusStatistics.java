@@ -14,14 +14,14 @@ public final class RevisionCorpusStatistics {
 	private final int missingQuestionRegionQuestions;
 	private final int questionsWithAnswers;
 	private final int questionsWithoutAnswers;
-	private final int preambleReviewQuestions;
+	private final int sharedContextReviewQuestions;
 
 	RevisionCorpusStatistics(int applicablePlacements, int uniqueApplicableQuestions, int renderableQuestions,
 			int missingQuestionRegionQuestions, int questionsWithAnswers, int questionsWithoutAnswers,
-			int preambleReviewQuestions) {
+			int sharedContextReviewQuestions) {
 		if (applicablePlacements < 0 || uniqueApplicableQuestions < 0 || renderableQuestions < 0
 				|| missingQuestionRegionQuestions < 0 || questionsWithAnswers < 0 || questionsWithoutAnswers < 0
-				|| preambleReviewQuestions < 0) {
+				|| sharedContextReviewQuestions < 0) {
 			throw new IllegalArgumentException("Corpus statistics must not be negative");
 		}
 		if (renderableQuestions + missingQuestionRegionQuestions != uniqueApplicableQuestions) {
@@ -37,7 +37,7 @@ public final class RevisionCorpusStatistics {
 		this.missingQuestionRegionQuestions = missingQuestionRegionQuestions;
 		this.questionsWithAnswers = questionsWithAnswers;
 		this.questionsWithoutAnswers = questionsWithoutAnswers;
-		this.preambleReviewQuestions = preambleReviewQuestions;
+		this.sharedContextReviewQuestions = sharedContextReviewQuestions;
 	}
 
 	/**
@@ -56,16 +56,6 @@ public final class RevisionCorpusStatistics {
 	 */
 	public int getMissingQuestionRegionQuestions() {
 		return missingQuestionRegionQuestions;
-	}
-
-	/**
-	 * Counts unique questions carrying the historical legacy preamble hint. This
-	 * count does not subtract questions whose shared context is now linked.
-	 *
-	 * @return the number of questions with legacy preamble evidence
-	 */
-	public int getSharedContextReviewQuestions() {
-		return preambleReviewQuestions;
 	}
 
 	/**
@@ -93,6 +83,16 @@ public final class RevisionCorpusStatistics {
 	 */
 	public int getRenderableQuestions() {
 		return renderableQuestions;
+	}
+
+	/**
+	 * Counts unique questions carrying the historical legacy shared context hint.
+	 * This count does not subtract questions whose shared context is now linked.
+	 *
+	 * @return the number of questions with legacy shared context evidence
+	 */
+	public int getSharedContextReviewQuestions() {
+		return sharedContextReviewQuestions;
 	}
 
 	/**

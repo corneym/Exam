@@ -116,15 +116,16 @@ public final class SqliteQuestionWriter {
 	/**
 	 * Stores a classified question and all of its regions atomically.
 	 *
-	 * @param booklet                 the booklet containing the question
-	 * @param questionCode            the non-blank question label
-	 * @param questionText            supplementary text, which may be blank
-	 * @param marks                   the positive mark value
-	 * @param regions                 zero or more source regions in extraction
-	 *                                order
-	 * @param classification          the question's syllabus subtopic or descriptor
-	 * @param preambleCaptureRequired whether shared or introductory material must
-	 *                                be included during later capture
+	 * @param booklet                      the booklet containing the question
+	 * @param questionCode                 the non-blank question label
+	 * @param questionText                 supplementary text, which may be blank
+	 * @param marks                        the positive mark value
+	 * @param regions                      zero or more source regions in extraction
+	 *                                     order
+	 * @param classification               the question's syllabus subtopic or
+	 *                                     descriptor
+	 * @param sharedContextCaptureRequired whether shared or introductory material
+	 *                                     must be included during later capture
 	 * @return the stored question with its generated identifier
 	 * @throws SQLException             if the transaction cannot be completed
 	 * @throws NullPointerException     if a required object is {@code null}
@@ -132,28 +133,29 @@ public final class SqliteQuestionWriter {
 	 *                                  are invalid
 	 */
 	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired)
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired)
 			throws SQLException {
 		return insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, null, null);
+				sharedContextCaptureRequired, null, null);
 	}
 
 	/**
 	 * Stores a classified question and all of its regions atomically.
 	 *
-	 * @param booklet                 the booklet containing the question
-	 * @param questionCode            the non-blank question label
-	 * @param questionText            supplementary text, which may be blank
-	 * @param marks                   the positive mark value
-	 * @param regions                 zero or more source regions in extraction
-	 *                                order
-	 * @param classification          the question's syllabus subtopic or descriptor
-	 * @param preambleCaptureRequired whether shared or introductory material must
-	 *                                be included during later capture
-	 * @param sourceQuestion          optional persisted source identity for related
-	 *                                parts
-	 * @param sharedContext           optional reusable preamble belonging to the
-	 *                                same booklet
+	 * @param booklet                      the booklet containing the question
+	 * @param questionCode                 the non-blank question label
+	 * @param questionText                 supplementary text, which may be blank
+	 * @param marks                        the positive mark value
+	 * @param regions                      zero or more source regions in extraction
+	 *                                     order
+	 * @param classification               the question's syllabus subtopic or
+	 *                                     descriptor
+	 * @param sharedContextCaptureRequired whether shared or introductory material
+	 *                                     must be included during later capture
+	 * @param sourceQuestion               optional persisted source identity for
+	 *                                     related parts
+	 * @param sharedContext                optional reusable shared context
+	 *                                     belonging to the same booklet
 	 * @return the stored question with its generated identifier
 	 * @throws SQLException             if the transaction cannot be completed
 	 * @throws NullPointerException     if a required object is {@code null}
@@ -161,38 +163,39 @@ public final class SqliteQuestionWriter {
 	 *                                  are invalid
 	 */
 	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
 		return insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
+				sharedContextCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
 	}
 
 	/**
 	 * Stores a classified question with its authoritative response type and all
 	 * source regions atomically.
 	 *
-	 * @param booklet                 booklet containing the question
-	 * @param questionCode            question identifier
-	 * @param questionText            supplementary text
-	 * @param marks                   positive mark value
-	 * @param regions                 ordered source regions
-	 * @param classification          original curriculum classification
-	 * @param preambleCaptureRequired historical preamble-capture evidence
-	 * @param sourceQuestion          source-question identity, or null
-	 * @param sharedContext           shared context, or null
-	 * @param responseType            authoritative response type
+	 * @param booklet                      booklet containing the question
+	 * @param questionCode                 question identifier
+	 * @param questionText                 supplementary text
+	 * @param marks                        positive mark value
+	 * @param regions                      ordered source regions
+	 * @param classification               original curriculum classification
+	 * @param sharedContextCaptureRequired historical shared context-capture
+	 *                                     evidence
+	 * @param sourceQuestion               source-question identity, or null
+	 * @param sharedContext                shared context, or null
+	 * @param responseType                 authoritative response type
 	 * @return stored question
 	 * @throws SQLException if persistence fails
 	 */
 	public Question insertQuestion(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType)
 			throws SQLException {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
 				Question question = insertQuestion(connection, booklet, questionCode, questionText, marks, regions,
-						classification, preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+						classification, sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
 				connection.commit();
 				return question;
 			} catch (SQLException | RuntimeException e) {
@@ -306,16 +309,17 @@ public final class SqliteQuestionWriter {
 	}
 
 	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
-			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
-			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+			int marks, List<QuestionRegion> regions, CurriculumNode classification,
+			boolean sharedContextCaptureRequired, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
+			throws SQLException {
 		return insertQuestion(connection, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
+				sharedContextCaptureRequired, sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
 	}
 
 	Question insertQuestion(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
-			int marks, List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
-			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType)
-			throws SQLException {
+			int marks, List<QuestionRegion> regions, CurriculumNode classification,
+			boolean sharedContextCaptureRequired, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
+			QuestionResponseType responseType) throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");
 		}
@@ -354,10 +358,10 @@ public final class SqliteQuestionWriter {
 
 		// Use the caller transaction for the row, regions and domain validation below.
 		long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+				sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
 		insertRegions(connection, questionId, regions);
 		return new Question(questionId, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+				sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
 	}
 
 	void updateCaptureRelationships(Connection connection, long questionId, ExamBooklet booklet,
@@ -556,8 +560,9 @@ public final class SqliteQuestionWriter {
 	}
 
 	private long insertQuestionRow(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
-			int marks, CurriculumNode classification, boolean preambleCaptureRequired, SourceQuestion sourceQuestion,
-			SharedQuestionContext sharedContext, QuestionResponseType responseType) throws SQLException {
+			int marks, CurriculumNode classification, boolean sharedContextCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType)
+			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO questions
 				    (booklet_id,
@@ -577,7 +582,7 @@ public final class SqliteQuestionWriter {
 			statement.setString(3, questionCode);
 			statement.setString(4, questionText);
 			statement.setInt(5, marks);
-			statement.setInt(6, preambleCaptureRequired ? 1 : 0);
+			statement.setInt(6, sharedContextCaptureRequired ? 1 : 0);
 			if (sourceQuestion == null) {
 				statement.setNull(7, Types.BIGINT);
 			} else {
@@ -872,7 +877,7 @@ public final class SqliteQuestionWriter {
 					long existingContextId = result.getLong("shared_context_id");
 					if (!result.wasNull() && existingContextId != sharedContext.getId()) {
 						throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()
-								+ " has inconsistent shared preamble links");
+								+ " has inconsistent shared context links");
 					}
 				}
 			}

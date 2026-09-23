@@ -50,7 +50,7 @@ public final class QuestionPreviewService {
 			throw new NullPointerException("question");
 		}
 
-		// Metadata-only questions have no preview, even if shared preamble regions are
+		// Metadata-only questions have no preview, even if shared context regions are
 		// already linked.
 		if (question.getRegions().isEmpty()) {
 			return Optional.empty();

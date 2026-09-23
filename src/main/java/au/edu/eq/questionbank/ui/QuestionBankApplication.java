@@ -870,13 +870,13 @@ public class QuestionBankApplication extends Application {
 		try {
 			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
 					replacement.questionCode(), replacement.marks(), replacement.classification(),
-					replacement.preambleCaptureRequired(), replacement.responseType());
+					replacement.sharedContextCaptureRequired(), replacement.responseType());
 			Question updated = updateResult.question();
 			questionCapturePane.refreshImportedQuestions();
 			answerCapturePane.refreshQuestions();
 			if (updateResult
-					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
-				offerQuestionRecaptureAfterPreambleConversion(primaryStage, updated, completedHandler);
+					.sharedContextOutcome() == LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+				offerQuestionRecaptureAfterSharedContextConversion(primaryStage, updated, completedHandler);
 				return;
 			}
 			completedHandler.run();
@@ -935,14 +935,14 @@ public class QuestionBankApplication extends Application {
 		try {
 			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
 					replacement.questionCode(), replacement.marks(), replacement.classification(),
-					replacement.preambleCaptureRequired(), replacement.responseType());
+					replacement.sharedContextCaptureRequired(), replacement.responseType());
 			Question updated = updateResult.question();
 			questionCapturePane.refreshImportedQuestions();
 			answerCapturePane.refreshQuestions();
 			if (updateResult
-					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
-				offerQuestionRecaptureAfterPreambleConversion(primaryStage, searchDialog, updated, curriculumRepository,
-						metadataService);
+					.sharedContextOutcome() == LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+				offerQuestionRecaptureAfterSharedContextConversion(primaryStage, searchDialog, updated,
+						curriculumRepository, metadataService);
 				return;
 			}
 			resumeSearchAfterEdit(primaryStage, searchDialog, updated.getId(), curriculumRepository, metadataService);
@@ -1014,7 +1014,7 @@ public class QuestionBankApplication extends Application {
 			SharedQuestionContext candidateContext = candidate.getSharedContext();
 			if (matchingContext != null && matchingContext.getId() != candidateContext.getId()) {
 				throw new IllegalStateException("Existing source Question " + originalQuestion.getQuestionCode()
-						+ " has inconsistent shared preamble links");
+						+ " has inconsistent shared context links");
 			}
 			matchingContext = candidateContext;
 		}
@@ -1036,7 +1036,7 @@ public class QuestionBankApplication extends Application {
 		}
 		if (matchingContext == null) {
 			throw new IllegalStateException("Existing source Question " + originalQuestion.getQuestionCode()
-					+ " is recorded as having a shared preamble, but no shared context could be found");
+					+ " is recorded as having a shared context, but no shared context could be found");
 		}
 		return matchingContext;
 	}
@@ -1323,7 +1323,7 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
 	}
 
-	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, Question question,
+	private void offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage, Question question,
 			Runnable completedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -1355,12 +1355,12 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, QuestionSearchDialog searchDialog,
-			Question question, CurriculumRepository curriculumRepository,
+	private void offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage,
+			QuestionSearchDialog searchDialog, Question question, CurriculumRepository curriculumRepository,
 			LegacyQuestionMetadataService metadataService) {
 		Runnable resumeSearch = () -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(),
 				curriculumRepository, metadataService);
-		offerQuestionRecaptureAfterPreambleConversion(primaryStage, question, resumeSearch);
+		offerQuestionRecaptureAfterSharedContextConversion(primaryStage, question, resumeSearch);
 	}
 
 	private void openAnswerPdf(SelectedPdf selectedPdf) {

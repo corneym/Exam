@@ -105,7 +105,7 @@ class RevisionCorpusBuilderTest {
 	}
 
 	@Test
-	void placementExposesRenderabilityAnswerAndPreambleState() {
+	void placementExposesRenderabilityAnswerAndSharedContextState() {
 		Fixture fixture = new Fixture();
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.subtopicQuestion, fixture.currentSubtopic),
@@ -116,13 +116,13 @@ class RevisionCorpusBuilderTest {
 		assertFalse(incomplete.hasRevisionNumber());
 		assertThrows(IllegalStateException.class, incomplete::getRevisionNumber);
 		assertFalse(incomplete.hasAnswer());
-		assertTrue(incomplete.isPreambleCaptureRequired());
+		assertTrue(incomplete.issharedContextCaptureRequired());
 		RevisionQuestionPlacement renderable = findNode(corpus, fixture.directDescriptor).getQuestionPlacements()
 				.get(0);
 		assertTrue(renderable.isRenderable());
 		assertTrue(renderable.hasRevisionNumber());
 		assertTrue(renderable.hasAnswer());
-		assertFalse(renderable.isPreambleCaptureRequired());
+		assertFalse(renderable.issharedContextCaptureRequired());
 	}
 
 	@Test

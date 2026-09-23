@@ -51,7 +51,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			if (question.hasSharedContext() && question.getSharedContext().getId() != sharedContext.getId()) {
 				throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()
-						+ " has inconsistent shared preamble links");
+						+ " has inconsistent shared context links");
 			}
 		}
 
@@ -190,25 +190,25 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
-		return save(booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired, null,
-				null);
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired) {
+		return save(booklet, questionCode, questionText, marks, regions, classification, sharedContextCaptureRequired,
+				null, null);
 	}
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
-		return save(booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired,
+		return save(booklet, questionCode, questionText, marks, regions, classification, sharedContextCaptureRequired,
 				sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
 	}
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 		Question question = new Question(nextId++, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+				sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
 		questions.add(question);
 		return question;
 	}

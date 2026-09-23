@@ -107,11 +107,12 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 	 *                               update fails
 	 */
 	@Override
-	public SourceQuestion updatePreambleStatus(SourceQuestion sourceQuestion, SharedContextStatus preambleStatus) {
+	public SourceQuestion updatesharedContextStatus(SourceQuestion sourceQuestion,
+			SharedContextStatus sharedContextStatus) {
 		try (Connection connection = database.openConnection()) {
-			return updatePreambleStatus(connection, sourceQuestion, preambleStatus);
+			return updateSharedContextStatus(connection, sourceQuestion, sharedContextStatus);
 		} catch (SQLException e) {
-			throw new IllegalStateException("Could not update source question preamble status", e);
+			throw new IllegalStateException("Could not update source question shared context status", e);
 		}
 	}
 
@@ -201,16 +202,16 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		}
 	}
 
-	SourceQuestion updatePreambleStatus(Connection connection, SourceQuestion sourceQuestion,
-			SharedContextStatus preambleStatus) throws SQLException {
+	SourceQuestion updateSharedContextStatus(Connection connection, SourceQuestion sourceQuestion,
+			SharedContextStatus sharedContextStatus) throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");
 		}
 		if (sourceQuestion == null) {
 			throw new NullPointerException("sourceQuestion");
 		}
-		if (preambleStatus == null) {
-			throw new NullPointerException("preambleStatus");
+		if (sharedContextStatus == null) {
+			throw new NullPointerException("sharedContextStatus");
 		}
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE source_questions
@@ -218,7 +219,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				WHERE id = ?
 				  AND booklet_id = ?
 				""")) {
-			statement.setString(1, preambleStatus.name());
+			statement.setString(1, sharedContextStatus.name());
 			statement.setLong(2, sourceQuestion.getId());
 			statement.setLong(3, sourceQuestion.getBooklet().getId());
 			if (statement.executeUpdate() != 1) {
@@ -226,6 +227,6 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 			}
 		}
 		return new SourceQuestion(sourceQuestion.getId(), sourceQuestion.getBooklet(),
-				sourceQuestion.getSourceQuestionCode(), preambleStatus);
+				sourceQuestion.getSourceQuestionCode(), sharedContextStatus);
 	}
 }

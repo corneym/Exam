@@ -40,7 +40,7 @@ public final class RevisionExportValidator {
 	 * @param htmlFiles           generated HTML file paths beneath the export root
 	 * @param questionAssets      rendered question images
 	 * @param answerAssets        rendered answer-region images
-	 * @param sharedContextAssets rendered reusable preamble images
+	 * @param sharedContextAssets rendered reusable shared context images
 	 * @throws IOException if generated files or references fail validation
 	 */
 	public void validate(Path exportRoot, RevisionCorpus corpus, List<Path> htmlFiles,

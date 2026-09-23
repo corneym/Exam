@@ -25,7 +25,7 @@ public interface QuestionRepository {
 	 * and must not be overwritten.
 	 *
 	 * @param sourceQuestion source-paper question identity
-	 * @param sharedContext  shared preamble/context for that source question
+	 * @param sharedContext  shared context for that source question
 	 * @return number of previously unlinked questions updated
 	 */
 	int applySharedContextToSourceQuestion(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext);
@@ -94,16 +94,17 @@ public interface QuestionRepository {
 	/**
 	 * Stores a classified question and its ordered source regions.
 	 *
-	 * @param booklet                 the booklet containing the question
-	 * @param questionCode            the non-blank question label
-	 * @param questionText            supplementary question text, which may be
-	 *                                blank
-	 * @param marks                   the positive mark value
-	 * @param regions                 zero or more source regions in extraction
-	 *                                order
-	 * @param classification          the question's syllabus subtopic or descriptor
-	 * @param preambleCaptureRequired whether shared or introductory material must
-	 *                                be included during later capture
+	 * @param booklet                      the booklet containing the question
+	 * @param questionCode                 the non-blank question label
+	 * @param questionText                 supplementary question text, which may be
+	 *                                     blank
+	 * @param marks                        the positive mark value
+	 * @param regions                      zero or more source regions in extraction
+	 *                                     order
+	 * @param classification               the question's syllabus subtopic or
+	 *                                     descriptor
+	 * @param sharedContextCaptureRequired whether shared or introductory material
+	 *                                     must be included during later capture
 	 * @return the stored question with its persistent identifier
 	 * @throws NullPointerException     if a required object is {@code null}
 	 * @throws IllegalArgumentException if the question metadata or relationships
@@ -112,47 +113,50 @@ public interface QuestionRepository {
 	 *                                  question
 	 */
 	Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired);
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired);
 
 	/**
 	 * Stores a classified question with optional source-question and shared-context
 	 * relationships.
 	 *
-	 * @param booklet                 the booklet containing the question
-	 * @param questionCode            the non-blank question label
-	 * @param questionText            supplementary question text, which may be
-	 *                                blank
-	 * @param marks                   the positive mark value
-	 * @param regions                 zero or more source regions in extraction
-	 *                                order
-	 * @param classification          the question's syllabus subtopic or descriptor
-	 * @param preambleCaptureRequired historical legacy preamble-capture evidence
-	 * @param sourceQuestion          source-question identity, or {@code null}
-	 * @param sharedContext           reusable shared context, or {@code null}
+	 * @param booklet                      the booklet containing the question
+	 * @param questionCode                 the non-blank question label
+	 * @param questionText                 supplementary question text, which may be
+	 *                                     blank
+	 * @param marks                        the positive mark value
+	 * @param regions                      zero or more source regions in extraction
+	 *                                     order
+	 * @param classification               the question's syllabus subtopic or
+	 *                                     descriptor
+	 * @param sharedContextCaptureRequired historical legacy shared context-capture
+	 *                                     evidence
+	 * @param sourceQuestion               source-question identity, or {@code null}
+	 * @param sharedContext                reusable shared context, or {@code null}
 	 * @return the stored question
 	 */
 	Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext);
 
 	/**
 	 * Saves a question with its authoritative response type and optional capture
 	 * relationships.
 	 *
-	 * @param booklet                 source booklet
-	 * @param questionCode            question identifier
-	 * @param questionText            supplementary text
-	 * @param marks                   positive mark value
-	 * @param regions                 ordered question regions
-	 * @param classification          original curriculum classification
-	 * @param preambleCaptureRequired historical preamble-capture evidence
-	 * @param sourceQuestion          source-question identity, or null
-	 * @param sharedContext           shared context, or null
-	 * @param responseType            authoritative response type
+	 * @param booklet                      source booklet
+	 * @param questionCode                 question identifier
+	 * @param questionText                 supplementary text
+	 * @param marks                        positive mark value
+	 * @param regions                      ordered question regions
+	 * @param classification               original curriculum classification
+	 * @param sharedContextCaptureRequired historical shared context-capture
+	 *                                     evidence
+	 * @param sourceQuestion               source-question identity, or null
+	 * @param sharedContext                shared context, or null
+	 * @param responseType                 authoritative response type
 	 * @return persisted question
 	 */
 	Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType);
 
 	/**
@@ -175,7 +179,7 @@ public interface QuestionRepository {
 	/**
 	 * Replaces the editable metadata, classification, capture relationships and
 	 * ordered regions of an existing question while preserving its identity,
-	 * booklet, supplementary text, legacy preamble evidence and answer.
+	 * booklet, supplementary text, legacy shared context evidence and answer.
 	 *
 	 * @param questionId     persistent question identifier
 	 * @param questionCode   replacement non-blank question code

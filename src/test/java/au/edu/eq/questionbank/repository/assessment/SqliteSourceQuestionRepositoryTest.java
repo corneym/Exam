@@ -24,6 +24,50 @@ class SqliteSourceQuestionRepositoryTest {
 	Path tempDirectory;
 
 	@Test
+	void rejectsInvalidArgumentsAndMissingPersistentIdentity() throws Exception {
+		RepositoryFixture fixture = createFixture("invalid-source-questions.db");
+		SqliteSourceQuestionRepository repository = fixture.repository();
+		SourceQuestion missing = new SourceQuestion(999, fixture.firstBooklet(), "21");
+		assertAll(() -> assertThrows(NullPointerException.class, () -> new SqliteSourceQuestionRepository(null)),
+				() -> assertThrows(NullPointerException.class, () -> repository.findByBooklet(null)),
+				() -> assertThrows(NullPointerException.class, () -> repository.findByBookletAndCode(null, "21")),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> repository.findByBookletAndCode(fixture.firstBooklet(), " ")),
+				() -> assertThrows(NullPointerException.class, () -> repository.save(null, "21")),
+				() -> assertThrows(IllegalArgumentException.class, () -> repository.save(fixture.firstBooklet(), " ")),
+				() -> assertThrows(NullPointerException.class,
+						() -> repository.updatesharedContextStatus(null, SharedContextStatus.NONE)),
+				() -> assertThrows(NullPointerException.class,
+						() -> repository.updatesharedContextStatus(missing, null)),
+				() -> assertThrows(IllegalStateException.class,
+						() -> repository.updatesharedContextStatus(missing, SharedContextStatus.PRESENT)));
+	}
+
+	@Test
+	void returnsSourceQuestionsInPersistentInsertionOrder() throws Exception {
+		RepositoryFixture fixture = createFixture("ordered-source-questions.db");
+		SqliteSourceQuestionRepository repository = fixture.repository();
+		repository.save(fixture.firstBooklet(), "24");
+		repository.save(fixture.firstBooklet(), "7");
+		repository.save(fixture.firstBooklet(), "19");
+		assertEquals(List.of("24", "7", "19"), repository.findByBooklet(fixture.firstBooklet()).stream()
+				.map(SourceQuestion::getSourceQuestionCode).toList());
+	}
+
+	@Test
+	void roundTripsResolvedSharedContextStates() throws Exception {
+		RepositoryFixture fixture = createFixture("shared-context-states.db");
+		SqliteSourceQuestionRepository repository = fixture.repository();
+		SourceQuestion sourceQuestion = repository.save(fixture.firstBooklet(), "21");
+		sourceQuestion = repository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.NONE);
+		assertEquals(SharedContextStatus.NONE,
+				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getSharedContextStatus());
+		repository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
+		assertEquals(SharedContextStatus.PRESENT,
+				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getSharedContextStatus());
+	}
+
+	@Test
 	void savesReloadsAndScopesSourceQuestionsByBooklet() throws Exception {
 		RepositoryFixture fixture = createFixture("source-questions.db");
 		SqliteSourceQuestionRepository repository = fixture.repository();
@@ -39,53 +83,10 @@ class SqliteSourceQuestionRepositoryTest {
 		assertEquals(second.getId(),
 				repository.findByBookletAndCode(fixture.secondBooklet(), "21").orElseThrow().getId());
 		assertThrows(IllegalArgumentException.class, () -> repository.save(fixture.firstBooklet(), "21"));
-		SourceQuestion updated = repository.updatePreambleStatus(first, SharedContextStatus.PRESENT);
+		SourceQuestion updated = repository.updatesharedContextStatus(first, SharedContextStatus.PRESENT);
 		assertEquals(SharedContextStatus.PRESENT, updated.getSharedContextStatus());
 		SourceQuestion reloaded = repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow();
 		assertEquals(SharedContextStatus.PRESENT, reloaded.getSharedContextStatus());
-	}
-
-	@Test
-	void rejectsInvalidArgumentsAndMissingPersistentIdentity() throws Exception {
-		RepositoryFixture fixture = createFixture("invalid-source-questions.db");
-		SqliteSourceQuestionRepository repository = fixture.repository();
-		SourceQuestion missing = new SourceQuestion(999, fixture.firstBooklet(), "21");
-		assertAll(() -> assertThrows(NullPointerException.class, () -> new SqliteSourceQuestionRepository(null)),
-				() -> assertThrows(NullPointerException.class, () -> repository.findByBooklet(null)),
-				() -> assertThrows(NullPointerException.class, () -> repository.findByBookletAndCode(null, "21")),
-				() -> assertThrows(IllegalArgumentException.class,
-						() -> repository.findByBookletAndCode(fixture.firstBooklet(), " ")),
-				() -> assertThrows(NullPointerException.class, () -> repository.save(null, "21")),
-				() -> assertThrows(IllegalArgumentException.class, () -> repository.save(fixture.firstBooklet(), " ")),
-				() -> assertThrows(NullPointerException.class,
-						() -> repository.updatePreambleStatus(null, SharedContextStatus.NONE)),
-				() -> assertThrows(NullPointerException.class, () -> repository.updatePreambleStatus(missing, null)),
-				() -> assertThrows(IllegalStateException.class,
-						() -> repository.updatePreambleStatus(missing, SharedContextStatus.PRESENT)));
-	}
-
-	@Test
-	void returnsSourceQuestionsInPersistentInsertionOrder() throws Exception {
-		RepositoryFixture fixture = createFixture("ordered-source-questions.db");
-		SqliteSourceQuestionRepository repository = fixture.repository();
-		repository.save(fixture.firstBooklet(), "24");
-		repository.save(fixture.firstBooklet(), "7");
-		repository.save(fixture.firstBooklet(), "19");
-		assertEquals(List.of("24", "7", "19"), repository.findByBooklet(fixture.firstBooklet()).stream()
-				.map(SourceQuestion::getSourceQuestionCode).toList());
-	}
-
-	@Test
-	void roundTripsResolvedPreambleStates() throws Exception {
-		RepositoryFixture fixture = createFixture("preamble-states.db");
-		SqliteSourceQuestionRepository repository = fixture.repository();
-		SourceQuestion sourceQuestion = repository.save(fixture.firstBooklet(), "21");
-		sourceQuestion = repository.updatePreambleStatus(sourceQuestion, SharedContextStatus.NONE);
-		assertEquals(SharedContextStatus.NONE,
-				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getSharedContextStatus());
-		repository.updatePreambleStatus(sourceQuestion, SharedContextStatus.PRESENT);
-		assertEquals(SharedContextStatus.PRESENT,
-				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getSharedContextStatus());
 	}
 
 	private RepositoryFixture createFixture(String databaseName) throws Exception {

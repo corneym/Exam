@@ -40,80 +40,6 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 	@TempDir
 	Path tempDirectory;
 
-	private Subject createCurriculum(SqliteDatabase database) throws Exception {
-		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
-		Subject chemistry = writer.insertSubject("Chemistry");
-		SyllabusVersion syllabus = writer.insertSyllabusVersion(chemistry, "2019", false);
-		Unit unit = writer.insertUnit(syllabus, "1", "Unit 1", 1);
-		Topic topic = writer.insertTopic(unit, "1.1", "Topic 1", 1);
-		writer.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-		return chemistry;
-	}
-
-	private Path createWorkbook() throws Exception {
-		Path path = tempDirectory.resolve("legacy-workflow.xlsx");
-		try (Workbook workbook = new XSSFWorkbook()) {
-			Sheet qcaa = workbook.createSheet("QCAA");
-			writeHeader(qcaa);
-			writeQuestion(qcaa, 1, 2020, "MCQ", "1", 1, "1.1.1", "B", false);
-			writeQuestion(qcaa, 2, 2020, "1", "21a", 3, "1.1.1", null, false);
-			writeQuestion(qcaa, 3, 2020, "2", "1a", 2, "1.1.1", null, true);
-			writeQuestion(qcaa, 4, 2021, "1", "21a", 4, "1.1.1", null, true);
-			Sheet neap = workbook.createSheet("NEAP");
-			writeHeader(neap);
-			writeQuestion(neap, 1, 2021, "MCQ", "1", 1, "1.1.1", "D", false);
-			try (OutputStream output = Files.newOutputStream(path)) {
-				workbook.write(output);
-			}
-		}
-		return path;
-	}
-
-	private Question findQuestion(List<Question> questions, String provider, int year, String bookletName,
-			String questionCode) {
-		for (Question question : questions) {
-			if (provider.equals(question.getExam().getProvider().getName()) && year == question.getExam().getYear()
-					&& bookletName.equals(question.getBooklet().getName())
-					&& questionCode.equals(question.getQuestionCode())) {
-				return question;
-			}
-		}
-		throw new AssertionError(
-				"Question not found: " + provider + " " + year + " " + bookletName + " " + questionCode);
-	}
-
-	private String sourceFilename(LegacyBookletRequirement requirement) {
-		return (requirement.providerName() + "-" + requirement.year() + "-" + requirement.bookletName() + ".pdf")
-				.replace(' ', '-');
-	}
-
-	private void writeHeader(Sheet sheet) {
-		Row header = sheet.createRow(0);
-		header.createCell(0).setCellValue("Year");
-		header.createCell(1).setCellValue("Paper");
-		header.createCell(2).setCellValue("Question");
-		header.createCell(3).setCellValue("Marks");
-		header.createCell(4).setCellValue("Topic");
-		header.createCell(5).setCellValue("Answer");
-		header.createCell(6).setCellValue("Preamble");
-	}
-
-	private void writeQuestion(Sheet sheet, int rowIndex, int year, String paper, String questionCode, int marks,
-			String classificationCode, String answer, boolean preamble) {
-		Row row = sheet.createRow(rowIndex);
-		row.createCell(0).setCellValue(year);
-		row.createCell(1).setCellValue(paper);
-		row.createCell(2).setCellValue(questionCode);
-		row.createCell(3).setCellValue(marks);
-		row.createCell(4).setCellValue(classificationCode);
-		if (answer != null) {
-			row.createCell(5).setCellValue(answer);
-		}
-		if (preamble) {
-			row.createCell(6).setCellValue(1);
-		}
-	}
-
 	@Test
 	void importsMissingBookletsQuestionsAndCaptureStateEndToEnd() throws Exception {
 		Path databasePath = tempDirectory.resolve("questionbank.db");
@@ -189,6 +115,80 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 				pathCount++;
 			}
 			assertEquals(5, pathCount);
+		}
+	}
+
+	private Subject createCurriculum(SqliteDatabase database) throws Exception {
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SyllabusVersion syllabus = writer.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = writer.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = writer.insertTopic(unit, "1.1", "Topic 1", 1);
+		writer.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		return chemistry;
+	}
+
+	private Path createWorkbook() throws Exception {
+		Path path = tempDirectory.resolve("legacy-workflow.xlsx");
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet qcaa = workbook.createSheet("QCAA");
+			writeHeader(qcaa);
+			writeQuestion(qcaa, 1, 2020, "MCQ", "1", 1, "1.1.1", "B", false);
+			writeQuestion(qcaa, 2, 2020, "1", "21a", 3, "1.1.1", null, false);
+			writeQuestion(qcaa, 3, 2020, "2", "1a", 2, "1.1.1", null, true);
+			writeQuestion(qcaa, 4, 2021, "1", "21a", 4, "1.1.1", null, true);
+			Sheet neap = workbook.createSheet("NEAP");
+			writeHeader(neap);
+			writeQuestion(neap, 1, 2021, "MCQ", "1", 1, "1.1.1", "D", false);
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		return path;
+	}
+
+	private Question findQuestion(List<Question> questions, String provider, int year, String bookletName,
+			String questionCode) {
+		for (Question question : questions) {
+			if (provider.equals(question.getExam().getProvider().getName()) && year == question.getExam().getYear()
+					&& bookletName.equals(question.getBooklet().getName())
+					&& questionCode.equals(question.getQuestionCode())) {
+				return question;
+			}
+		}
+		throw new AssertionError(
+				"Question not found: " + provider + " " + year + " " + bookletName + " " + questionCode);
+	}
+
+	private String sourceFilename(LegacyBookletRequirement requirement) {
+		return (requirement.providerName() + "-" + requirement.year() + "-" + requirement.bookletName() + ".pdf")
+				.replace(' ', '-');
+	}
+
+	private void writeHeader(Sheet sheet) {
+		Row header = sheet.createRow(0);
+		header.createCell(0).setCellValue("Year");
+		header.createCell(1).setCellValue("Paper");
+		header.createCell(2).setCellValue("Question");
+		header.createCell(3).setCellValue("Marks");
+		header.createCell(4).setCellValue("Topic");
+		header.createCell(5).setCellValue("Answer");
+		header.createCell(6).setCellValue("Shared Context");
+	}
+
+	private void writeQuestion(Sheet sheet, int rowIndex, int year, String paper, String questionCode, int marks,
+			String classificationCode, String answer, boolean sharedContext) {
+		Row row = sheet.createRow(rowIndex);
+		row.createCell(0).setCellValue(year);
+		row.createCell(1).setCellValue(paper);
+		row.createCell(2).setCellValue(questionCode);
+		row.createCell(3).setCellValue(marks);
+		row.createCell(4).setCellValue(classificationCode);
+		if (answer != null) {
+			row.createCell(5).setCellValue(answer);
+		}
+		if (sharedContext) {
+			row.createCell(6).setCellValue(1);
 		}
 	}
 }

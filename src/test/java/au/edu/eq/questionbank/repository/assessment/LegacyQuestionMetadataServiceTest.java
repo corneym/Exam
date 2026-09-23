@@ -94,7 +94,7 @@ class LegacyQuestionMetadataServiceTest {
 	}
 
 	@Test
-	void cannotRemoveLegacyPreambleHintFromMultipartQuestionWithSharedContext() {
+	void cannotRemoveLegacySharedContextHintFromMultipartQuestionWithSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q7");
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
@@ -121,7 +121,7 @@ class LegacyQuestionMetadataServiceTest {
 	}
 
 	@Test
-	void changesLegacyPreambleHintInBothDirections() {
+	void changesLegacySharedContextHintInBothDirections() {
 		Question question = questionRepository.save(booklet, "Q2", "", 1, List.of(), historicalSubtopicOne, false);
 		Question trueVersion = service.updateMetadata(question, "Q2", 1, historicalSubtopicOne, true);
 		assertTrue(trueVersion.isSharedContextCaptureRequired());
@@ -260,16 +260,17 @@ class LegacyQuestionMetadataServiceTest {
 		assertFalse(updated.isSharedContextCaptureRequired());
 		assertFalse(updated.hasSharedContext());
 
-		// The former preamble becomes the first ordinary question region. Existing
+		// The former shared context becomes the first ordinary question region.
+		// Existing
 		// question material follows it.
 		assertEquals(2, updated.getRegions().size());
-		QuestionRegion convertedPreamble = updated.getRegions().get(0);
-		assertEquals(2, convertedPreamble.pageNumber());
-		assertEquals(0.10, convertedPreamble.x(), 0.000001);
-		assertEquals(0.10, convertedPreamble.y(), 0.000001);
-		assertEquals(0.80, convertedPreamble.width(), 0.000001);
-		assertEquals(0.25, convertedPreamble.height(), 0.000001);
-		assertEquals(booklet.getId(), convertedPreamble.booklet().getId());
+		QuestionRegion convertedSharedContext = updated.getRegions().get(0);
+		assertEquals(2, convertedSharedContext.pageNumber());
+		assertEquals(0.10, convertedSharedContext.x(), 0.000001);
+		assertEquals(0.10, convertedSharedContext.y(), 0.000001);
+		assertEquals(0.80, convertedSharedContext.width(), 0.000001);
+		assertEquals(0.25, convertedSharedContext.height(), 0.000001);
+		assertEquals(booklet.getId(), convertedSharedContext.booklet().getId());
 		QuestionRegion retainedQuestionRegion = updated.getRegions().get(1);
 		assertEquals(2, retainedQuestionRegion.pageNumber());
 		assertEquals(0.10, retainedQuestionRegion.x(), 0.000001);
@@ -416,12 +417,12 @@ class LegacyQuestionMetadataServiceTest {
 		SharedQuestionContext restoredContext = contexts.getFirst();
 		assertEquals(context.getId(), restoredContext.getId());
 		assertEquals(1, restoredContext.getRegions().size());
-		SharedQuestionContextRegion restoredPreamble = restoredContext.getRegions().getFirst();
-		assertEquals(2, restoredPreamble.pageNumber());
-		assertEquals(0.10, restoredPreamble.x(), 0.000001);
-		assertEquals(0.10, restoredPreamble.y(), 0.000001);
-		assertEquals(0.80, restoredPreamble.width(), 0.000001);
-		assertEquals(0.20, restoredPreamble.height(), 0.000001);
+		SharedQuestionContextRegion restoredSharedContext = restoredContext.getRegions().getFirst();
+		assertEquals(2, restoredSharedContext.pageNumber());
+		assertEquals(0.10, restoredSharedContext.x(), 0.000001);
+		assertEquals(0.10, restoredSharedContext.y(), 0.000001);
+		assertEquals(0.80, restoredSharedContext.width(), 0.000001);
+		assertEquals(0.20, restoredSharedContext.height(), 0.000001);
 	}
 
 	@Test
@@ -451,9 +452,9 @@ class LegacyQuestionMetadataServiceTest {
 		assertFalse(updated.hasSourceQuestion());
 		assertFalse(updated.hasSharedContext());
 		assertEquals(2, updated.getRegions().size());
-		QuestionRegion convertedPreamble = updated.getRegions().get(0);
-		assertEquals(2, convertedPreamble.pageNumber());
-		assertEquals(0.10, convertedPreamble.y(), 0.000001);
+		QuestionRegion convertedSharedContext = updated.getRegions().get(0);
+		assertEquals(2, convertedSharedContext.pageNumber());
+		assertEquals(0.10, convertedSharedContext.y(), 0.000001);
 		QuestionRegion retainedQuestionRegion = updated.getRegions().get(1);
 		assertEquals(2, retainedQuestionRegion.pageNumber());
 		assertEquals(0.40, retainedQuestionRegion.y(), 0.000001);
@@ -476,8 +477,9 @@ class LegacyQuestionMetadataServiceTest {
 		LegacyQuestionMetadataUpdateResult result = service.updateMetadataWithResult(question, "Q16", 2,
 				historicalSubtopicOne, false);
 		Question updated = result.question();
-		assertEquals(LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS,
-				result.preambleOutcome());
+		assertEquals(
+				LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS,
+				result.sharedContextOutcome());
 		assertFalse(updated.hasSourceQuestion());
 		assertFalse(updated.hasSharedContext());
 		assertFalse(updated.isSharedContextCaptureRequired());
@@ -562,8 +564,9 @@ class LegacyQuestionMetadataServiceTest {
 				context);
 		LegacyQuestionMetadataUpdateResult result = service.updateMetadataWithResult(question, "Q13", 2,
 				historicalSubtopicOne, false);
-		assertEquals(LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS,
-				result.preambleOutcome());
+		assertEquals(
+				LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS,
+				result.sharedContextOutcome());
 		assertFalse(result.question().hasSharedContext());
 		assertEquals(2, result.question().getRegions().size());
 	}
@@ -625,7 +628,8 @@ class LegacyQuestionMetadataServiceTest {
 		LegacyQuestionMetadataUpdateResult result = service.updateMetadataWithResult(question, "Q14", 4,
 				historicalSubtopicTwo, false, QuestionResponseType.WRITTEN_RESPONSE);
 		Question updated = result.question();
-		assertEquals(LegacyQuestionMetadataUpdateResult.PreambleOutcome.NO_CAPTURE_CHANGE, result.preambleOutcome());
+		assertEquals(LegacyQuestionMetadataUpdateResult.SharedContextOutcome.NO_CAPTURE_CHANGE,
+				result.sharedContextOutcome());
 		assertEquals(4, updated.getMarks());
 		assertEquals(historicalSubtopicTwo.getId(), updated.getClassification().getId());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.getResponseType());

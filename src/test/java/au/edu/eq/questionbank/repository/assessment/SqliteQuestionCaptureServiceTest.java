@@ -58,10 +58,10 @@ class SqliteQuestionCaptureServiceTest {
 		Fixture fixture = createFixture("edit-last-part-to-non-multipart.db");
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
 		SourceQuestion sourceQuestion = sourceRepository.save(fixture.booklet(), "24");
-		sourceQuestion = sourceRepository.updatePreambleStatus(sourceQuestion, SharedContextStatus.PRESENT);
+		sourceQuestion = sourceRepository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
 		SqliteSharedQuestionContextRepository sharedContextRepository = new SqliteSharedQuestionContextRepository(
 				fixture.database());
-		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 preamble",
+		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(fixture.database());
 		Question original = questionRepository.save(fixture.booklet(), "24a", "", 2,
@@ -90,10 +90,10 @@ class SqliteQuestionCaptureServiceTest {
 		Fixture fixture = createFixture("edit-one-multipart-part.db");
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
 		SourceQuestion sourceQuestion = sourceRepository.save(fixture.booklet(), "24");
-		sourceQuestion = sourceRepository.updatePreambleStatus(sourceQuestion, SharedContextStatus.PRESENT);
+		sourceQuestion = sourceRepository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
 		SqliteSharedQuestionContextRepository sharedContextRepository = new SqliteSharedQuestionContextRepository(
 				fixture.database());
-		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 preamble",
+		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(fixture.database());
 		Question firstPart = questionRepository.save(fixture.booklet(), "24a", "", 2,
@@ -119,7 +119,7 @@ class SqliteQuestionCaptureServiceTest {
 	}
 
 	@Test
-	void failedImportedCaptureRollsBackContextPropagationAndPreambleStatus() throws Exception {
+	void failedImportedCaptureRollsBackContextPropagationAndSharedContextStatus() throws Exception {
 		Fixture fixture = createFixture("capture-rollback.db");
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
 		SourceQuestion sourceQuestion = sourceRepository.save(fixture.booklet(), "24");
@@ -145,8 +145,9 @@ class SqliteQuestionCaptureServiceTest {
 		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(
 				SqliteQuestionCaptureService.Operation.IMPORTED, fixture.booklet(), first, first.getQuestionCode(),
 				first.getMarks(), List.of(new QuestionRegion(fixture.booklet(), 2, 0.10, 0.20, 0.60, 0.15)),
-				fixture.classification(), null, new SqliteQuestionCaptureService.PendingSharedContext(
-						"Question 24 preamble", List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15))));
+				fixture.classification(), null,
+				new SqliteQuestionCaptureService.PendingSharedContext("Question 24 shared context",
+						List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15))));
 		assertThrows(IllegalStateException.class, () -> service.save(request));
 		SourceQuestion reloadedSource = new SqliteSourceQuestionRepository(fixture.database())
 				.findByBookletAndCode(fixture.booklet(), "24").orElseThrow();
@@ -181,7 +182,7 @@ class SqliteQuestionCaptureServiceTest {
 		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(
 				SqliteQuestionCaptureService.Operation.NEW, fixture.booklet(), null, "25a", 2,
 				List.of(new QuestionRegion(fixture.booklet(), 2, 0.10, 0.30, 0.70, 0.15)), fixture.classification(),
-				null, new SqliteQuestionCaptureService.PendingSharedContext("Question 25 preamble",
+				null, new SqliteQuestionCaptureService.PendingSharedContext("Question 25 shared context",
 						List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15))));
 		assertThrows(IllegalStateException.class, () -> service.save(request));
 		assertTrue(new SqliteSourceQuestionRepository(fixture.database()).findByBookletAndCode(fixture.booklet(), "25")

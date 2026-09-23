@@ -136,11 +136,11 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(questionCode).write("24a");
 		robot.clickOn(marks).write("2");
-		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
-		assertTrue(preamble.isVisible());
-		assertFalse(preamble.isSelected());
-		fireControl(robot, preamble);
-		assertTrue(preamble.isSelected());
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		assertTrue(sharedContext.isVisible());
+		assertFalse(sharedContext.isSelected());
+		fireControl(robot, sharedContext);
+		assertTrue(sharedContext.isSelected());
 		assertTrue(questionCapturePane().isCapturingSharedContext());
 		dragRegionOnDisplayedPage(robot);
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
@@ -224,16 +224,16 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void clickingPdfAfterPendingSharedContextSelectionClearsVisualAndLogicalSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 
-		// A recognised multipart code exposes automatic shared-preamble capture.
+		// A recognised multipart code exposes automatic shared-context capture.
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(questionCode).write("24a");
 		robot.clickOn(marks).write("2");
-		CheckBox preamble = lookup(robot, "#first-region-shared-preamble", CheckBox.class);
-		fireControl(robot, preamble);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		fireControl(robot, sharedContext);
 		assertTrue(questionCapturePane().isCapturingSharedContext());
 
-		// Create one valid unaccepted preamble region.
+		// Create one valid unaccepted shared context region.
 		dragRegionOnDisplayedPage(robot);
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 		SharedContextCapturePane sharedContextPane = field(questionCapturePane(), "sharedContextCapturePane",

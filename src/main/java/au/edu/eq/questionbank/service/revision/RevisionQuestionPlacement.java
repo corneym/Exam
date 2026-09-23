@@ -96,16 +96,6 @@ public final class RevisionQuestionPlacement {
 	}
 
 	/**
-	 * Returns the historical legacy capture hint, independently of whether shared
-	 * context has subsequently been linked.
-	 *
-	 * @return whether legacy metadata requested preamble capture
-	 */
-	public boolean isPreambleCaptureRequired() {
-		return question.isSharedContextCaptureRequired();
-	}
-
-	/**
 	 * Returns whether this question has source regions from which student-facing
 	 * content can be rendered.
 	 *
@@ -113,5 +103,15 @@ public final class RevisionQuestionPlacement {
 	 */
 	public boolean isRenderable() {
 		return !question.getRegions().isEmpty();
+	}
+
+	/**
+	 * Returns the historical legacy capture hint, independently of whether shared
+	 * context has subsequently been linked.
+	 *
+	 * @return whether legacy metadata requested shared context capture
+	 */
+	public boolean issharedContextCaptureRequired() {
+		return question.isSharedContextCaptureRequired();
 	}
 }
