@@ -131,7 +131,7 @@ public final class LegacyQuestionSplitService {
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE questions
-				SET preamble_capture_required = 0
+				SET shared_context_capture_required = 0
 				WHERE id = ?
 				  AND booklet_id = ?
 				""")) {

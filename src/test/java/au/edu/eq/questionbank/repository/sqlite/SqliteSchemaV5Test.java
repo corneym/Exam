@@ -277,7 +277,7 @@ class SqliteSchemaV5Test {
 
 	@Test
 	void migratesPopulatedVersion11DatabaseToVersion12WithoutChangingQuestionApplicability() throws Exception {
-		Path databasePath = tempDir.resolve("version-eleven-to-twelve.db");
+		Path databasePath = tempDir.resolve("version-eleven-to-latest.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		createVersion11Schema(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -352,8 +352,8 @@ class SqliteSchemaV5Test {
 		}
 		assertEquals(11, database.schemaVersion());
 
-		// This is the production upgrade path: initialise an existing v11 database
-		// rather than constructing a new v12 database from scratch.
+		// Exercise the production upgrade path from version 11 through every later
+		// migration, including applicability exclusions and the terminology rename.
 		database.initialiseSchema();
 		assertEquals(12, database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {

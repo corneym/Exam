@@ -47,7 +47,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		List<SourceQuestion> sourceQuestions = new ArrayList<>();
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
-						SELECT id, source_question_code, preamble_status
+						SELECT id, source_question_code, shared_context_status
 						FROM source_questions
 						WHERE booklet_id = ?
 						ORDER BY id
@@ -57,7 +57,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				while (result.next()) {
 					sourceQuestions.add(
 							new SourceQuestion(result.getLong("id"), booklet, result.getString("source_question_code"),
-									SharedContextStatus.valueOf(result.getString("preamble_status"))));
+									SharedContextStatus.valueOf(result.getString("shared_context_status"))));
 				}
 			}
 		} catch (SQLException e) {
@@ -153,7 +153,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 			throw new IllegalArgumentException("sourceQuestionCode must not be blank");
 		}
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT id, source_question_code, preamble_status
+				SELECT id, source_question_code, shared_context_status
 				FROM source_questions
 				WHERE booklet_id = ?
 				  AND source_question_code = ?
@@ -166,7 +166,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				}
 				return Optional
 						.of(new SourceQuestion(result.getLong("id"), booklet, result.getString("source_question_code"),
-								SharedContextStatus.valueOf(result.getString("preamble_status"))));
+								SharedContextStatus.valueOf(result.getString("shared_context_status"))));
 			}
 		}
 	}
@@ -188,7 +188,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				INSERT INTO source_questions
 				    (booklet_id, source_question_code)
 				VALUES (?, ?)
-				RETURNING id, preamble_status
+				RETURNING id, shared_context_status
 				""")) {
 			statement.setLong(1, booklet.getId());
 			statement.setString(2, sourceQuestionCode);
@@ -197,7 +197,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 					throw new SQLException("Source question insert did not return an id");
 				}
 				return new SourceQuestion(result.getLong("id"), booklet, sourceQuestionCode,
-						SharedContextStatus.valueOf(result.getString("preamble_status")));
+						SharedContextStatus.valueOf(result.getString("shared_context_status")));
 			}
 		}
 	}
@@ -215,7 +215,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		}
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE source_questions
-				SET preamble_status = ?
+				SET shared_context_status = ?
 				WHERE id = ?
 				  AND booklet_id = ?
 				""")) {

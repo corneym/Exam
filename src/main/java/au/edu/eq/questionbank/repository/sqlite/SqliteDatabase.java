@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	static final int LATEST_SCHEMA_VERSION = 12;
+	static final int LATEST_SCHEMA_VERSION = 13;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -536,6 +536,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v11-to-v12.sql", 12);
 			return 12;
 		}
+		if (version == 12) {
+
+			// Version thirteen removes the final legacy physical "preamble" names
+			// from the live schema without changing any stored semantics.
+			executeMigration(connection, "/db/migration-v12-to-v13.sql", 13);
+			return 13;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -698,8 +705,9 @@ public final class SqliteDatabase {
 			}
 		}
 
-		// Apply the checks introduced by each version, retaining earlier structural
-		// requirements.
+		// Apply the checks introduced by each version while allowing the version-13
+		// migration to rename two legacy physical columns without weakening the
+		// structural checks that originally introduced them.
 		verifyVersion01RelationalSchema(connection, version);
 		if (version >= 2) {
 			if (!tableExists(connection, "curriculum_mappings")) {
@@ -716,13 +724,16 @@ public final class SqliteDatabase {
 			verifyCurriculumMappingReviewSchema(connection);
 		}
 		if (version >= 4) {
-			verifyVersion04QuestionSchema(connection);
+			String sharedContextCaptureColumnName = version >= 13 ? "shared_context_capture_required"
+					: "preamble_capture_required";
+			verifyVersion04QuestionSchema(connection, sharedContextCaptureColumnName);
 		}
 		if (version >= 5) {
 			verifyVersion05SharedQuestionSchema(connection);
 		}
 		if (version >= 6) {
-			verifyVersion06SourceQuestionSchema(connection);
+			String sharedContextStatusColumnName = version >= 13 ? "shared_context_status" : "preamble_status";
+			verifyVersion06SourceQuestionSchema(connection, sharedContextStatusColumnName);
 		}
 		if (version >= 7) {
 			verifyVersion07CurriculumAuthoringSchema(connection);
@@ -898,9 +909,10 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersion04QuestionSchema(Connection connection) throws SQLException {
+	private void verifyVersion04QuestionSchema(Connection connection, String sharedContextCaptureColumnName)
+			throws SQLException {
 		Set<String> requiredColumns = new HashSet<>(List.of("id", "booklet_id", "classification_node_id",
-				"question_code", "question_text", "marks", "preamble_capture_required"));
+				"question_code", "question_text", "marks", sharedContextCaptureColumnName));
 		int primaryKeyColumnCount = 0;
 		int idPrimaryKeyPosition = 0;
 		try (Statement statement = connection.createStatement();
@@ -916,7 +928,7 @@ public final class SqliteDatabase {
 					idPrimaryKeyPosition = primaryKeyPosition;
 				} else if (("booklet_id".equals(columnName) || "classification_node_id".equals(columnName)
 						|| "question_code".equals(columnName) || "question_text".equals(columnName)
-						|| "marks".equals(columnName) || "preamble_capture_required".equals(columnName))
+						|| "marks".equals(columnName) || sharedContextCaptureColumnName.equals(columnName))
 						&& result.getInt("notnull") == 0) {
 					throw new SQLException("questions column must be NOT NULL: " + columnName);
 				}
@@ -989,22 +1001,24 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersion06SourceQuestionSchema(Connection connection) throws SQLException {
-		boolean hassharedContextStatus = false;
+	private void verifyVersion06SourceQuestionSchema(Connection connection, String sharedContextStatusColumnName)
+			throws SQLException {
+		boolean hasSharedContextStatus = false;
 		try (Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("PRAGMA table_info(source_questions)")) {
 			while (result.next()) {
-				if (!"preamble_status".equals(result.getString("name"))) {
+				if (!sharedContextStatusColumnName.equals(result.getString("name"))) {
 					continue;
 				}
-				hassharedContextStatus = true;
+				hasSharedContextStatus = true;
 				if (result.getInt("notnull") == 0) {
-					throw new SQLException("source_questions column must be NOT NULL: preamble_status");
+					throw new SQLException(
+							"source_questions column must be NOT NULL: " + sharedContextStatusColumnName);
 				}
 			}
 		}
-		if (!hassharedContextStatus) {
-			throw new SQLException("source_questions is missing required column preamble_status");
+		if (!hasSharedContextStatus) {
+			throw new SQLException("source_questions is missing required column " + sharedContextStatusColumnName);
 		}
 	}
 

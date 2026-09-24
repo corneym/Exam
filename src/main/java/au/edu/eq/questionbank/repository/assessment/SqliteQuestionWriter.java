@@ -615,7 +615,7 @@ public final class SqliteQuestionWriter {
 				     question_code,
 				     question_text,
 				     marks,
-				     preamble_capture_required,
+				     shared_context_capture_required,
 				     source_question_id,
 				     shared_context_id,
 				     response_type)

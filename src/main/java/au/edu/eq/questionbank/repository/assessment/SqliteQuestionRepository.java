@@ -212,7 +212,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 							q.question_code,
 							q.question_text,
 							q.marks,
-							q.preamble_capture_required,
+							q.q.shared_context_capture_required,
 							q.response_type,
 							q.source_question_id,
 							q.shared_context_id,
@@ -505,7 +505,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	private SourceQuestion findSourceQuestion(Connection connection, long sourceQuestionId, ExamBooklet questionBooklet)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT booklet_id, source_question_code, preamble_status
+				SELECT booklet_id, source_question_code, shared_context_status
 				FROM source_questions
 				WHERE id = ?
 				""")) {
@@ -518,7 +518,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 					throw new IllegalStateException("Source question belongs to a different booklet");
 				}
 				return new SourceQuestion(sourceQuestionId, questionBooklet, result.getString("source_question_code"),
-						SharedContextStatus.valueOf(result.getString("preamble_status")));
+						SharedContextStatus.valueOf(result.getString("shared_context_status")));
 			}
 		}
 	}
@@ -556,7 +556,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		QuestionResponseType responseType = QuestionResponseType.valueOf(result.getString("response_type"));
 		Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
 				result.getString("question_text"), result.getInt("marks"), regions, classification,
-				result.getInt("preamble_capture_required") != 0, sourceQuestion, sharedContext, responseType);
+				result.getInt("shared_context_capture_required") != 0, sourceQuestion, sharedContext, responseType);
 		Answer answer = findAnswer(connection, questionId, exam);
 		if (answer != null) {
 			question.setAnswer(answer);

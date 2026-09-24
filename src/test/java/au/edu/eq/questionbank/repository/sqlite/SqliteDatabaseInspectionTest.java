@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.repository.sqlite;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -108,7 +109,48 @@ class SqliteDatabaseInspectionTest {
 		// free-standing numeric preferences.
 		assertTrue(questionForeignKeyFound);
 		assertTrue(curriculumForeignKeyFound);
-		assertEquals(12, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+	}
+
+	@Test
+	void latestSchemaUsesSharedContextColumnNames() throws SQLException {
+		Path databasePath = tempDir.resolve("shared-context-column-names.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		boolean hasSharedContextCaptureRequired = false;
+		boolean hasLegacyPreambleCaptureRequired = false;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				String name = result.getString("name");
+				if ("shared_context_capture_required".equals(name)) {
+					hasSharedContextCaptureRequired = true;
+				} else if ("preamble_capture_required".equals(name)) {
+					hasLegacyPreambleCaptureRequired = true;
+				}
+			}
+		}
+		assertTrue(hasSharedContextCaptureRequired);
+		assertFalse(hasLegacyPreambleCaptureRequired);
+		boolean hasSharedContextStatus = false;
+		boolean hasLegacyPreambleStatus = false;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("PRAGMA table_info(source_questions)")) {
+			while (result.next()) {
+				String name = result.getString("name");
+				if ("shared_context_status".equals(name)) {
+					hasSharedContextStatus = true;
+				} else if ("preamble_status".equals(name)) {
+					hasLegacyPreambleStatus = true;
+				}
+			}
+		}
+		assertTrue(hasSharedContextStatus);
+		assertFalse(hasLegacyPreambleStatus);
+		assertEquals(13, database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 	}
 

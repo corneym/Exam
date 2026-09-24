@@ -303,7 +303,7 @@ public final class LegacyQuestionMetadataService {
 				SELECT
 				    booklet_id,
 				    classification_node_id,
-				    preamble_capture_required,
+				    shared_context_capture_required,
 				    source_question_id,
 				    shared_context_id,
 				    response_type
@@ -326,7 +326,7 @@ public final class LegacyQuestionMetadataService {
 					sharedContextId = Long.valueOf(storedSharedContextId);
 				}
 				return new StoredQuestionState(result.getLong("booklet_id"), result.getLong("classification_node_id"),
-						result.getInt("preamble_capture_required") != 0, sourceQuestionId, sharedContextId,
+						result.getInt("shared_context_capture_required") != 0, sourceQuestionId, sharedContextId,
 						QuestionResponseType.valueOf(result.getString("response_type")));
 			}
 		}
@@ -524,7 +524,7 @@ public final class LegacyQuestionMetadataService {
 				SET question_code = ?,
 				    marks = ?,
 				    classification_node_id = ?,
-				    preamble_capture_required = ?,
+				    shared_context_capture_required = ?,
 				    source_question_id = ?,
 				    shared_context_id = ?,
 				    response_type = ?
