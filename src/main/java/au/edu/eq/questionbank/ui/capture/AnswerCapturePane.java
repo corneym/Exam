@@ -156,6 +156,21 @@ public final class AnswerCapturePane extends VBox {
 
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
+	 *
+	 * @param stage                       owner used by PDF selection
+	 * @param questionRepository          source of persisted Questions
+	 * @param answerWriter                writer for Answer persistence
+	 * @param pdfFilePicker               managed PDF-selection service
+	 * @param answerPdfHandler            callback that registers a selected Answer
+	 *                                    PDF
+	 * @param answerDocumentHandler       callback that displays the Answer document
+	 * @param answerTransitionAllowed     guard for changing Answer targets
+	 * @param selectionClearHandler       callback that clears the shared PDF
+	 *                                    selection
+	 * @param questionExtractor           extractor used to preview accepted regions
+	 * @param answerPdfSessionSupplier    supplier of the active Answer PDF session
+	 * @param answerPageNavigationHandler callback that navigates Answer pages
+	 * @param answerPdfLoader             asynchronous Answer PDF loader
 	 */
 	public AnswerCapturePane(Stage stage, QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
 			PdfFilePicker pdfFilePicker, Consumer<SelectedPdf> answerPdfHandler, Runnable answerDocumentHandler,
@@ -274,11 +289,22 @@ public final class AnswerCapturePane extends VBox {
 		refreshSaveButtonState();
 	}
 
+	/**
+	 * Returns whether a region can currently be captured for the selected answer.
+	 *
+	 * @return {@code true} when a written-response target and Answer PDF are ready
+	 */
 	public boolean canCaptureRegions() {
 		return !answerSaveInProgress && answerFile != null
 				&& isWrittenResponseQuestion(unansweredQuestionField.getValue());
 	}
 
+	/**
+	 * Starts Answer capture for an unanswered Question.
+	 *
+	 * @param question Question to capture
+	 * @return {@code true} when the transition into capture was accepted
+	 */
 	public boolean captureAnswer(Question question) {
 		if (answerSaveInProgress) {
 			return false;
@@ -384,6 +410,8 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Returns whether accepted Answer regions are held in transient capture state.
+	 *
 	 * @return whether accepted answer regions are loaded in the current capture or
 	 *         edit
 	 */
@@ -392,6 +420,8 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Returns whether Answer persistence is in progress.
+	 *
 	 * @return whether answer persistence is currently running
 	 */
 	public boolean isSaveInProgress() {
@@ -405,6 +435,11 @@ public final class AnswerCapturePane extends VBox {
 		refreshQuestions(questionRepository.findAll());
 	}
 
+	/**
+	 * Rebuilds the unanswered queue from a supplied Question snapshot.
+	 *
+	 * @param questions complete Questions to filter and order
+	 */
 	public void refreshQuestions(List<Question> questions) {
 		Question editTarget = editingAnswerQuestion;
 		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;

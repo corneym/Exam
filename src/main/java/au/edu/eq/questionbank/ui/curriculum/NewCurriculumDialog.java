@@ -33,6 +33,12 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 	private final TextField versionField = new TextField();
 	private final CheckBox currentCheckBox = new CheckBox();
 
+	/**
+	 * Creates a dialog that can add a syllabus to an existing or new Subject.
+	 *
+	 * @param owner    owner window
+	 * @param subjects existing Subjects available for selection
+	 */
 	public NewCurriculumDialog(Window owner, List<Subject> subjects) {
 		if (subjects == null) {
 			throw new NullPointerException("subjects");
@@ -84,6 +90,11 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 		refreshSubjectMode();
 	}
 
+	/**
+	 * Returns the selected or newly entered Subject name.
+	 *
+	 * @return trimmed Subject name
+	 */
 	public String getSubjectName() {
 		if (newSubjectButton.isSelected()) {
 			return newSubjectField.getText().strip();
@@ -92,10 +103,20 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 		return subject == null ? "" : subject.getName();
 	}
 
+	/**
+	 * Returns the entered syllabus-version name.
+	 *
+	 * @return trimmed syllabus-version name
+	 */
 	public String getVersionName() {
 		return versionField.getText().strip();
 	}
 
+	/**
+	 * Returns whether the new syllabus should become current.
+	 *
+	 * @return {@code true} when the current-syllabus option is selected
+	 */
 	public boolean isCurrent() {
 		return currentCheckBox.isSelected();
 	}

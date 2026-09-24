@@ -15,6 +15,7 @@ import java.util.List;
 public record BackupManifest(int formatVersion, BackupKind kind, Instant createdAt, int databaseSchemaVersion,
 		String applicationVersion) {
 
+	/** Current on-disk backup-manifest format version. */
 	public static final int CURRENT_FORMAT_VERSION = 1;
 
 	/**

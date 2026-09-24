@@ -9,8 +9,21 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Unit;
 
+/**
+ * Applies export-time Unit selection to an immutable revision corpus.
+ */
 public final class RevisionCorpusScope {
 
+	/** Creates a stateless corpus-scope service. */
+	public RevisionCorpusScope() {
+	}
+
+	/**
+	 * Returns corpus Units containing at least one renderable placement.
+	 *
+	 * @param corpus corpus to inspect
+	 * @return immutable Units in corpus order
+	 */
 	public List<Unit> findNonEmptyUnits(RevisionCorpus corpus) {
 		if (corpus == null) {
 			throw new NullPointerException("corpus");
@@ -28,6 +41,15 @@ public final class RevisionCorpusScope {
 		return List.copyOf(units);
 	}
 
+	/**
+	 * Restricts a corpus to the requested Units and recalculates its statistics.
+	 *
+	 * @param corpus          source corpus
+	 * @param selectedUnitIds identifiers of Units to retain
+	 * @return immutable corpus containing the selected Unit roots
+	 * @throws IllegalArgumentException if no Unit is selected or an identifier is
+	 *                                  invalid or absent from the corpus
+	 */
 	public RevisionCorpus selectUnits(RevisionCorpus corpus, Set<Long> selectedUnitIds) {
 		if (corpus == null) {
 			throw new NullPointerException("corpus");

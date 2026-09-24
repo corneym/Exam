@@ -5,11 +5,20 @@ import au.edu.eq.questionbank.output.revision.RevisionExportResult;
 import au.edu.eq.questionbank.output.revision.RevisionExportService;
 import javafx.concurrent.Task;
 
+/**
+ * JavaFX background task that exposes revision-export progress and messages.
+ */
 public final class RevisionExportTask extends Task<RevisionExportResult> {
 
 	private final RevisionExportService exportService;
 	private final RevisionExportRequest request;
 
+	/**
+	 * Creates an export task.
+	 *
+	 * @param exportService service that performs the export
+	 * @param request       validated export configuration
+	 */
 	public RevisionExportTask(RevisionExportService exportService, RevisionExportRequest request) {
 		if (exportService == null) {
 			throw new NullPointerException("exportService");

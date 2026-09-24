@@ -176,6 +176,13 @@ public interface QuestionRepository {
 	Question updateCaptureRelationships(long questionId, CurriculumNode classification, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext);
 
+	/**
+	 * Replaces only a Question's historical curriculum classification.
+	 *
+	 * @param questionId     persistent Question identifier
+	 * @param classification replacement classification in the same syllabus
+	 * @return reloaded updated Question
+	 */
 	Question updateClassification(long questionId, CurriculumNode classification);
 
 	/**

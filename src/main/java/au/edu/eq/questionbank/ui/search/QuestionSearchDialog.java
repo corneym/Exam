@@ -191,15 +191,34 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			close();
 		});
 
-		// Closing with an unsaved Descriptor requires an explicit decision rather
-		// than silently abandoning the inline classification edit.
+		// The DialogPane Close button has its own action event. Resolve the pending
+		// classification before allowing that button to close Search.
 		closeButton.addEventFilter(ActionEvent.ACTION, event -> {
 			if (!searchPane.isClassificationDirty()) {
 				return;
 			}
 			event.consume();
 			if (confirmPendingClassificationBeforeClose()) {
+
+				// Save or Discard has cleared the dirty state, so the Dialog-level
+				// close-request guard below will allow this close to complete
+				// without displaying a second prompt.
 				close();
+			}
+		});
+
+		// A native title-bar close does not fire the DialogPane Close button action.
+		// Guard the Dialog close request itself so every exit path resolves an
+		// unsaved Descriptor refinement consistently.
+		setOnCloseRequest(event -> {
+			if (!searchPane.isClassificationDirty()) {
+				return;
+			}
+			if (!confirmPendingClassificationBeforeClose()) {
+
+				// Cancel or a failed Save must leave Search open with the pending
+				// Descriptor refinement intact.
+				event.consume();
 			}
 		});
 	}
@@ -471,12 +490,31 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		}
 	}
 
+	/** Application workflow requested for the selected Question. */
 	public enum EditTarget {
-		QUESTION, SPLIT, METADATA, EXAM, SHARED_CONTEXT, ANSWER
+		/** Edit or recapture the Question. */
+		QUESTION,
+		/** Split one legacy Question into multipart Questions. */
+		SPLIT,
+		/** Correct Question metadata. */
+		METADATA,
+		/** Correct owning Exam metadata. */
+		EXAM,
+		/** Recapture the reusable shared context. */
+		SHARED_CONTEXT,
+		/** Edit or recapture the Answer. */
+		ANSWER
 	}
 
+	/**
+	 * Question and workflow selected when Search closes for editing.
+	 *
+	 * @param question selected Question
+	 * @param target   workflow to launch
+	 */
 	public record EditRequest(Question question, EditTarget target) {
 
+		/** Validates an edit request. */
 		public EditRequest {
 			if (question == null) {
 				throw new NullPointerException("question");

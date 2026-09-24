@@ -49,10 +49,13 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -60,6 +63,7 @@ import javafx.scene.control.TextArea;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.Region;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 @Tag("ui")
 @ExtendWith(ApplicationExtension.class)
@@ -560,6 +564,59 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void nativeDialogCloseGuardsDirtyDescriptor(FxRobot robot) throws TimeoutException {
+		Question subtopicQuestion = new Question(50, historicalQuestion.getBooklet(), "22", "", 2, List.of(),
+				currentSubtopic, false);
+		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
+		QuestionSearchPane[] paneHolder = new QuestionSearchPane[1];
+		robot.interact(() -> {
+			QuestionSearchDialog dialog = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
+					() -> List.of(subtopicQuestion), previewService, outputApplicabilityRepository, (_, _) -> {
+
+						// This regression exercises Cancel and Discard.
+						// Neither path may attempt classification persistence.
+						throw new AssertionError("Classification persistence was not expected");
+					});
+			dialogHolder[0] = dialog;
+			paneHolder[0] = (QuestionSearchPane) dialog.getDialogPane().getContent();
+			dialog.show();
+		});
+		QuestionSearchDialog dialog = dialogHolder[0];
+		QuestionSearchPane pane = paneHolder[0];
+		ComboBox<QuestionSearchScope> scopeBox = robot.from(pane).lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.from(pane).lookup("#question-search-results")
+				.queryListView();
+		ComboBox<CurriculumNode> selectedDescriptorBox = robot.from(pane).lookup("#question-search-selected-descriptor")
+				.queryComboBox();
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> selectedDescriptorBox.getItems().contains(currentDescriptor));
+		robot.interact(() -> selectedDescriptorBox.setValue(currentDescriptor));
+		assertTrue(pane.isClassificationDirty());
+
+		// JavaFX's native window-close path reaches Dialog.close() without firing
+		// the DialogPane Close button ActionEvent. Queue the close because its
+		// dirty-state handler opens a modal confirmation Alert.
+		Platform.runLater(dialog::close);
+		fireShowingDialogButton(robot, "Unsaved Question", "Cancel");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Cancel must veto the native close and retain the unsaved refinement.
+		assertTrue(dialog.isShowing());
+		assertTrue(pane.isClassificationDirty());
+		Platform.runLater(dialog::close);
+		fireShowingDialogButton(robot, "Unsaved Question", "Discard Changes");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !dialog.isShowing());
+
+		// Discard allows the same native close route to complete without
+		// persisting the Descriptor refinement.
+		assertFalse(pane.isClassificationDirty());
+		robot.interact(dialog::dispose);
+	}
+
+	@Test
 	public void refreshAfterEditRetainsAllQuestionsScopeAndReselectsUpdatedQuestion(FxRobot robot)
 			throws TimeoutException {
 		AtomicReference<List<Question>> allQuestions = new AtomicReference<>(List.of(historicalQuestion));
@@ -1027,6 +1084,49 @@ public class QuestionSearchPaneTest {
 		dialog.show();
 		dialog.hide();
 		dialog.dispose();
+	}
+
+	private void fireShowingDialogButton(FxRobot robot, String dialogTitle, String buttonText) throws TimeoutException {
+		AtomicReference<DialogPane> dialogPane = new AtomicReference<>();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			dialogPane.set(null);
+			robot.interact(() -> linkPaneToWindow(dialogTitle, dialogPane));
+			return dialogPane.get() != null;
+		});
+		DialogPane pane = dialogPane.get();
+		ButtonType buttonType = pane.getButtonTypes().stream()
+				.filter(candidate -> buttonText.equals(candidate.getText())).findFirst()
+				.orElseThrow(() -> new AssertionError("Dialog button not found: " + buttonText));
+		Node buttonNode = pane.lookupButton(buttonType);
+		if (!(buttonNode instanceof Button button)) {
+			throw new AssertionError("Dialog button is not a Button: " + buttonText);
+		}
+
+		// Fire the control belonging to the actual showing Dialog rather than using a
+		// text lookup that could match a retained hidden Dialog node.
+		robot.interact(button::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
+	private void linkPaneToWindow(String dialogTitle, AtomicReference<DialogPane> dialogPane) {
+		for (Window window : Window.getWindows()) {
+			if (!window.isShowing() || window.getScene() == null || !(window instanceof Stage showingStage)
+					|| !dialogTitle.equals(showingStage.getTitle())) {
+				continue;
+			}
+			Node root = window.getScene().getRoot();
+			if (root instanceof DialogPane pane) {
+				dialogPane.set(pane);
+			} else {
+				Node candidate = root.lookup(".dialog-pane");
+				if (candidate instanceof DialogPane pane) {
+					dialogPane.set(pane);
+				}
+			}
+			if (dialogPane.get() != null) {
+				break;
+			}
+		}
 	}
 
 	private QuestionSearchPane replaceSearchPane(FxRobot robot, InMemoryCurriculumRepository repository,

@@ -67,6 +67,11 @@ public final class RevisionPresentationPlan {
 		return rootNodes;
 	}
 
+	/**
+	 * Returns the scoped corpus from which this presentation was planned.
+	 *
+	 * @return source revision corpus
+	 */
 	public RevisionCorpus getSourceCorpus() {
 		return sourceCorpus;
 	}

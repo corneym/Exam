@@ -147,6 +147,9 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		storedRegionHighlights.clear();
 	}
 
+	/**
+	 * Closes every PDF session and prevents late asynchronous loads from applying.
+	 */
 	@Override
 	public void close() throws Exception {
 		closed = true;
@@ -317,6 +320,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns the Answer PDF session owned by the workspace.
+	 *
 	 * @return the borrowed answer session, or {@code null}; callers must not close
 	 *         it
 	 */
@@ -325,6 +330,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns the current one-based page number.
+	 *
 	 * @return the one-based page currently selected in the workspace
 	 */
 	public int getCurrentPageNumber() {
@@ -332,6 +339,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns the role of the document currently displayed.
+	 *
 	 * @return the active exam, answer or viewer document mode
 	 */
 	public DocumentMode getDisplayedDocument() {
@@ -339,6 +348,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns the Exam PDF session owned by the workspace.
+	 *
 	 * @return the borrowed exam session, or {@code null}; callers must not close it
 	 */
 	public PdfSession getExamPdfSession() {
@@ -346,6 +357,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns whether an Exam PDF is open.
+	 *
 	 * @return whether an exam PDF session is open
 	 */
 	public boolean hasExamPdf() {
@@ -382,6 +395,9 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * Loads the answer document after a save without rendering on the FX thread.
 	 * The worker owns a fresh session until it is handed to the UI, so it never
 	 * shares a PDFBox session with selection extraction or navigation.
+	 *
+	 * @param path      Answer PDF to load
+	 * @param completed callback receiving {@code null} on success or the failure
 	 */
 	public void openAnswerPdfAsync(Path path, Consumer<Throwable> completed) {
 		if (closed) {
@@ -1158,9 +1174,15 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		selectionRectangle.setWidth(Math.abs(currentX - selectionStartX));
 	}
 
+	/** Document role currently displayed by the shared PDF workspace. */
 	public enum DocumentMode {
 
-		EXAM("Page"), ANSWER("Answer page"), VIEWER("Page");
+		/** Source examination document used for Question capture. */
+		EXAM("Page"),
+		/** Answer or marking-guide document used for Answer capture. */
+		ANSWER("Answer page"),
+		/** Read-only document opened for inspection. */
+		VIEWER("Page");
 
 		private final String pageLabel;
 

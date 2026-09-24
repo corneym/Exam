@@ -22,6 +22,10 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
+/**
+ * Collects source PDFs and exam metadata needed to create missing legacy
+ * booklets.
+ */
 public final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 
 	private static final int VIEWPORT_WIDTH = 680;
@@ -40,6 +44,12 @@ public final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 	private final Map<LegacyBookletRequirement, Label> pdfLabels = new LinkedHashMap<>();
 	private Path lastPdfDirectory;
 
+	/**
+	 * Creates an import dialog for the required legacy booklets.
+	 *
+	 * @param owner        owner window
+	 * @param requirements missing booklets to resolve
+	 */
 	public LegacyBookletImportDialog(Window owner, List<LegacyBookletRequirement> requirements) {
 		if (requirements == null) {
 			throw new NullPointerException("requirements");
@@ -63,6 +73,11 @@ public final class LegacyBookletImportDialog extends Dialog<ButtonType> {
 		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, this::validateImportAction);
 	}
 
+	/**
+	 * Builds import requests from the validated dialog selections.
+	 *
+	 * @return immutable requests in requirement order
+	 */
 	public List<LegacyBookletImportRequest> getRequests() {
 		List<LegacyBookletImportRequest> requests = new ArrayList<>();
 		for (LegacyBookletRequirement requirement : requirements) {

@@ -12,6 +12,12 @@ import javafx.stage.Stage;
  */
 public final class ExamImportDialog extends Dialog<Void> {
 
+	/**
+	 * Creates a modal wrapper for an exam-metadata pane.
+	 *
+	 * @param owner            owner stage
+	 * @param examMetadataPane pane that validates and persists the selected exam
+	 */
 	public ExamImportDialog(Stage owner, ExamMetadataPane examMetadataPane) {
 		if (owner == null) {
 			throw new NullPointerException("owner");

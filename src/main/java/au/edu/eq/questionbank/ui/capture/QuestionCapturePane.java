@@ -180,6 +180,27 @@ public final class QuestionCapturePane extends VBox {
 	 * Suppliers provide the active booklet and PDF session, while the callbacks
 	 * coordinate selection ownership, imported-question activation and downstream
 	 * question refreshes with the containing application.
+	 *
+	 * @param questionRepository                Question lookup and persistence
+	 * @param sourceQuestionRepository          multipart source-identity lookup
+	 * @param questionCaptureService            atomic capture persistence service
+	 * @param legacyQuestionSplitService        atomic legacy split service
+	 * @param sharedContextCapturePane          shared-context capture controls
+	 * @param questionExtractor                 extractor used for captured-region
+	 *                                          previews
+	 * @param curriculumSelectionModel          selected classification state
+	 * @param curriculumSelectorPane            classification controls
+	 * @param bookletSupplier                   supplier of the active Exam booklet
+	 * @param examPdfSessionSupplier            supplier of the active Exam PDF
+	 *                                          session
+	 * @param importedQuestionActivationHandler opens an imported Question's source
+	 * @param examPageNavigationHandler         callback that navigates Exam pages
+	 * @param questionTargetChangeAllowed       guard for changing capture targets
+	 * @param questionSelectionTransferHandler  transfers PDF-selection ownership
+	 * @param selectionClearHandler             callback that clears the shared PDF
+	 *                                          selection
+	 * @param questionsChangedHandler           callback receiving refreshed
+	 *                                          Questions after a save
 	 */
 	public QuestionCapturePane(QuestionRepository questionRepository, SourceQuestionRepository sourceQuestionRepository,
 			SqliteQuestionCaptureService questionCaptureService, LegacyQuestionSplitService legacyQuestionSplitService,
@@ -527,6 +548,8 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Returns whether the shared-context pane currently owns PDF selections.
+	 *
 	 * @return {@code true} while the shared-context pane owns PDF selections
 	 */
 	public boolean isCapturingSharedContext() {
@@ -534,6 +557,8 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Returns whether Question persistence is in progress.
+	 *
 	 * @return whether a question save transaction is currently running
 	 */
 	public boolean isSaveInProgress() {

@@ -424,10 +424,18 @@ public final class LegacyQuestionSplitService {
 
 	/**
 	 * Explicit metadata and captured regions for one resulting part.
+	 *
+	 * @param questionCode   destination Question code
+	 * @param marks          positive mark value
+	 * @param classification historical curriculum classification
+	 * @param responseType   response type; legacy split parts must be written
+	 *                       response
+	 * @param regions        captured source regions in display order
 	 */
 	public record SplitPart(String questionCode, int marks, CurriculumNode classification,
 			QuestionResponseType responseType, List<QuestionRegion> regions) {
 
+		/** Validates and freezes a split part. */
 		public SplitPart {
 			if (questionCode == null || questionCode.isBlank()) {
 				throw new IllegalArgumentException("questionCode must not be blank");
@@ -465,10 +473,26 @@ public final class LegacyQuestionSplitService {
 	 * <p>
 	 * The part at {@code retainedPartIndex} reuses the original Question row and
 	 * therefore owns any existing Answer that is deliberately retained.
+	 *
+	 * @param originalQuestion      legacy Question being split
+	 * @param sourceQuestionCode    common multipart source code
+	 * @param parts                 ordered destination parts
+	 * @param retainedPartIndex     index of the part retaining the original row
+	 * @param newSharedContext      new context to create, or {@code null}
+	 * @param existingSharedContext existing authoritative context to reuse, or
+	 *                              {@code null}
 	 */
 	public record SplitRequest(Question originalQuestion, String sourceQuestionCode, List<SplitPart> parts,
 			int retainedPartIndex, NewSharedContext newSharedContext, SharedQuestionContext existingSharedContext) {
 
+		/**
+		 * Creates a split with no shared context.
+		 *
+		 * @param originalQuestion   legacy Question being split
+		 * @param sourceQuestionCode common multipart source code
+		 * @param parts              ordered destination parts
+		 * @param retainedPartIndex  index of the part retaining the original row
+		 */
 		public SplitRequest(Question originalQuestion, String sourceQuestionCode, List<SplitPart> parts,
 				int retainedPartIndex) {
 
@@ -476,6 +500,15 @@ public final class LegacyQuestionSplitService {
 			this(originalQuestion, sourceQuestionCode, parts, retainedPartIndex, null, null);
 		}
 
+		/**
+		 * Creates a split that captures a new shared context atomically.
+		 *
+		 * @param originalQuestion   legacy Question being split
+		 * @param sourceQuestionCode common multipart source code
+		 * @param parts              ordered destination parts
+		 * @param retainedPartIndex  index of the part retaining the original row
+		 * @param newSharedContext   shared-context regions to create
+		 */
 		public SplitRequest(Question originalQuestion, String sourceQuestionCode, List<SplitPart> parts,
 				int retainedPartIndex, NewSharedContext newSharedContext) {
 
@@ -483,6 +516,15 @@ public final class LegacyQuestionSplitService {
 			this(originalQuestion, sourceQuestionCode, parts, retainedPartIndex, newSharedContext, null);
 		}
 
+		/**
+		 * Creates a split that reuses an existing authoritative shared context.
+		 *
+		 * @param originalQuestion      legacy Question being split
+		 * @param sourceQuestionCode    common multipart source code
+		 * @param parts                 ordered destination parts
+		 * @param retainedPartIndex     index of the part retaining the original row
+		 * @param existingSharedContext context already associated with the source
+		 */
 		public SplitRequest(Question originalQuestion, String sourceQuestionCode, List<SplitPart> parts,
 				int retainedPartIndex, SharedQuestionContext existingSharedContext) {
 
@@ -491,6 +533,7 @@ public final class LegacyQuestionSplitService {
 			this(originalQuestion, sourceQuestionCode, parts, retainedPartIndex, null, existingSharedContext);
 		}
 
+		/** Validates and freezes a complete split request. */
 		public SplitRequest {
 			if (originalQuestion == null) {
 				throw new NullPointerException("originalQuestion");
@@ -511,9 +554,12 @@ public final class LegacyQuestionSplitService {
 	/**
 	 * Newly captured shared-context regions to create as part of the split
 	 * transaction.
+	 *
+	 * @param regions ordered regions defining the shared context
 	 */
 	public record NewSharedContext(List<SharedQuestionContextRegion> regions) {
 
+		/** Validates and freezes the staged shared-context regions. */
 		public NewSharedContext {
 			if (regions == null) {
 				throw new NullPointerException("regions");
@@ -534,10 +580,15 @@ public final class LegacyQuestionSplitService {
 
 	/**
 	 * Persisted result of a successful split.
+	 *
+	 * @param questions      reloaded multipart Questions in requested order
+	 * @param sourceQuestion common multipart source identity
+	 * @param sharedContext  common context, or {@code null} when none was selected
 	 */
 	public record SplitResult(List<Question> questions, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) {
 
+		/** Validates and freezes a split result. */
 		public SplitResult {
 			if (questions == null) {
 				throw new NullPointerException("questions");

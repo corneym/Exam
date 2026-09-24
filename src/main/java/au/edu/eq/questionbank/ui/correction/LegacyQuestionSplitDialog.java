@@ -337,9 +337,14 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		throw new IllegalStateException("Selected Answer part is no longer present");
 	}
 
+	/** Shared-context treatment selected for the resulting multipart Question. */
 	public enum SharedContextChoice {
 
-		NO_SHARED_CONTEXT("No shared context"), CAPTURE_NEW_SHARED_CONTEXT("Capture new shared context"),
+		/** Confirm that the multipart Question has no shared context. */
+		NO_SHARED_CONTEXT("No shared context"),
+		/** Capture a new shared context during the split workflow. */
+		CAPTURE_NEW_SHARED_CONTEXT("Capture new shared context"),
+		/** Reuse the SourceQuestion's existing authoritative shared context. */
 		REUSE_EXISTING_SHARED_CONTEXT("Reuse existing shared context");
 
 		private final String displayText;
@@ -353,9 +358,18 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		}
 	}
 
+	/**
+	 * Metadata entered for one destination part.
+	 *
+	 * @param questionCode   destination Question code
+	 * @param marks          positive mark value
+	 * @param classification historical classification
+	 * @param responseType   response type, which must be written response
+	 */
 	public record PartDefinition(String questionCode, int marks, CurriculumNode classification,
 			QuestionResponseType responseType) {
 
+		/** Validates and normalises a part definition. */
 		public PartDefinition {
 			if (questionCode == null || questionCode.isBlank()) {
 				throw new IllegalArgumentException("questionCode must not be blank");
@@ -376,9 +390,19 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		}
 	}
 
+	/**
+	 * Complete split definition returned by the dialog.
+	 *
+	 * @param sourceQuestionCode    common multipart source code
+	 * @param parts                 ordered destination parts
+	 * @param retainedPartIndex     part that retains the original Answer
+	 * @param sharedContextChoice   selected shared-context treatment
+	 * @param existingSharedContext context selected for reuse, or {@code null}
+	 */
 	public record Result(String sourceQuestionCode, List<PartDefinition> parts, int retainedPartIndex,
 			SharedContextChoice sharedContextChoice, SharedQuestionContext existingSharedContext) {
 
+		/** Validates and freezes the split definition. */
 		public Result {
 			if (sourceQuestionCode == null || sourceQuestionCode.isBlank()) {
 				throw new IllegalArgumentException("sourceQuestionCode must not be blank");

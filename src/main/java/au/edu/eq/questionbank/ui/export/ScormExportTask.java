@@ -5,11 +5,20 @@ import au.edu.eq.questionbank.output.scorm.ScormExportResult;
 import au.edu.eq.questionbank.output.scorm.ScormExportService;
 import javafx.concurrent.Task;
 
+/**
+ * JavaFX background task that exposes SCORM-export progress and messages.
+ */
 public final class ScormExportTask extends Task<ScormExportResult> {
 
 	private final ScormExportService exportService;
 	private final ScormExportRequest request;
 
+	/**
+	 * Creates an export task.
+	 *
+	 * @param exportService service that performs the export
+	 * @param request       validated export configuration
+	 */
 	public ScormExportTask(ScormExportService exportService, ScormExportRequest request) {
 		if (exportService == null) {
 			throw new NullPointerException("exportService");

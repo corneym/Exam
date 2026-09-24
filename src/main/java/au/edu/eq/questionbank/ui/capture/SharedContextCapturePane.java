@@ -85,6 +85,13 @@ public final class SharedContextCapturePane extends VBox {
 	 * Creates shared-context controls for the active booklet and exam PDF. The
 	 * transition callback prevents this pane from taking selection ownership while
 	 * incompatible question capture is pending.
+	 *
+	 * @param contextRepository      shared-context persistence
+	 * @param bookletSupplier        supplier of the active Exam booklet
+	 * @param questionExtractor      extractor used for region previews
+	 * @param examPdfSessionSupplier supplier of the active Exam PDF session
+	 * @param selectionClearHandler  callback that clears the shared PDF selection
+	 * @param captureStartAllowed    guard for starting shared-context capture
 	 */
 	public SharedContextCapturePane(SharedQuestionContextRepository contextRepository,
 			Supplier<ExamBooklet> bookletSupplier, QuestionExtractor questionExtractor,

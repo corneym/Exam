@@ -193,6 +193,12 @@ public final class RevisionExportService {
 		}
 	}
 
+	/**
+	 * Returns the current Units containing revision questions that can be rendered.
+	 *
+	 * @param subject subject whose corpus will be inspected
+	 * @return immutable Units in curriculum order
+	 */
 	public List<Unit> findExportableUnits(Subject subject) {
 		if (subject == null) {
 			throw new NullPointerException("subject");
@@ -219,6 +225,14 @@ public final class RevisionExportService {
 		return presentationPlanner.isDescriptorGroupingAvailable(corpus);
 	}
 
+	/**
+	 * Returns whether Descriptor grouping is safe within a selected Unit scope.
+	 *
+	 * @param subject         subject being considered for export
+	 * @param selectedUnitIds identifiers of Units included in the export
+	 * @return {@code true} when every renderable scoped placement is at Descriptor
+	 *         level
+	 */
 	public boolean isDescriptorGroupingAvailable(Subject subject, Set<Long> selectedUnitIds) {
 		if (subject == null) {
 			throw new NullPointerException("subject");

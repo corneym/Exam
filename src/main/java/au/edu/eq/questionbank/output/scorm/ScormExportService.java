@@ -163,6 +163,12 @@ public final class ScormExportService {
 		}
 	}
 
+	/**
+	 * Returns Units that contain renderable revision content for SCORM export.
+	 *
+	 * @param subject subject whose corpus will be inspected
+	 * @return immutable Units in curriculum order
+	 */
 	public List<Unit> findExportableUnits(Subject subject) {
 		return revisionExportService.findExportableUnits(subject);
 	}
@@ -178,6 +184,14 @@ public final class ScormExportService {
 		return revisionExportService.isDescriptorGroupingAvailable(subject);
 	}
 
+	/**
+	 * Returns whether Descriptor grouping is safe within a selected Unit scope.
+	 *
+	 * @param subject         subject being considered for SCORM export
+	 * @param selectedUnitIds identifiers of Units included in the export
+	 * @return {@code true} when every renderable scoped placement is at Descriptor
+	 *         level
+	 */
 	public boolean isDescriptorGroupingAvailable(Subject subject, Set<Long> selectedUnitIds) {
 		return revisionExportService.isDescriptorGroupingAvailable(subject, selectedUnitIds);
 	}

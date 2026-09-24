@@ -83,6 +83,11 @@ public final class PdfFilePicker {
 		return selectedFile.toPath().toAbsolutePath().normalize();
 	}
 
+	/**
+	 * Returns the configured root used for managed relative PDF paths.
+	 *
+	 * @return normalised absolute data root
+	 */
 	public Path dataRoot() {
 		return dataRoot;
 	}

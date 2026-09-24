@@ -80,6 +80,22 @@ public final class ExamMetadataPane extends VBox {
 
 	/**
 	 * Creates the exam metadata workflow controls and persistence integration.
+	 *
+	 * @param stage                         owner used by PDF selection
+	 * @param pdfDataRoot                   root containing managed Exam PDFs
+	 * @param curriculumSelectionModel      shared Subject and classification state
+	 * @param optionsRepository             stored provider and assessment options
+	 * @param examImporter                  service for importing an Exam PDF
+	 * @param examWriter                    writer for persisted Exam metadata
+	 * @param examMetadataCorrectionService service for correcting Exam identity and
+	 *                                      relocating PDFs
+	 * @param examChangeAllowed             guard for changing the active Exam
+	 * @param examPdfHandler                callback that opens the selected Exam
+	 *                                      PDF
+	 * @param selectionCursorHandler        callback controlling PDF region
+	 *                                      selection
+	 * @param examSubjectHandler            callback receiving the active Exam
+	 *                                      Subject
 	 */
 	public ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
 			ExamMetadataOptionsRepository optionsRepository, SqliteExamImporter examImporter,
@@ -158,6 +174,7 @@ public final class ExamMetadataPane extends VBox {
 		examSubjectHandler.accept(booklet.getExam().getSubject());
 	}
 
+	/** Resets the controls for a new PDF open or import attempt. */
 	public void beginImport() {
 		pendingPdfPath = null;
 		pendingKnownBooklet = null;
@@ -260,6 +277,7 @@ public final class ExamMetadataPane extends VBox {
 		}
 	}
 
+	/** Reloads selectable Subjects while preserving the current selection by id. */
 	public void refreshSubjects() {
 		Subject selectedSubject = subjectField.getValue();
 		subjectField.getItems().setAll(curriculumSelectionModel.getSubjects());

@@ -9,7 +9,10 @@ package au.edu.eq.questionbank.service.revision;
  */
 public enum RevisionGroupingMode {
 
-	SUBTOPIC("Subtopic"), DESCRIPTOR("Descriptor");
+	/** Roll Descriptor placements up beneath their parent Subtopic. */
+	SUBTOPIC("Subtopic"),
+	/** Retain eligible Descriptor placements beneath Descriptor headings. */
+	DESCRIPTOR("Descriptor");
 
 	private final String displayName;
 

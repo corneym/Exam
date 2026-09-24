@@ -6,6 +6,12 @@ import java.util.Set;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 
+/**
+ * Immutable configuration for packaging revision content as SCORM 1.2.
+ * <p>
+ * Grouping and Unit selection are optional and are passed through to the shared
+ * revision export pipeline when present.
+ */
 public final class ScormExportRequest {
 
 	private final Subject subject;
@@ -13,14 +19,42 @@ public final class ScormExportRequest {
 	private final RevisionGroupingMode groupingMode;
 	private final Set<Long> selectedUnitIds;
 
+	/**
+	 * Creates a request using automatic grouping and all exportable Units.
+	 *
+	 * @param subject     subject whose current revision corpus will be packaged
+	 * @param destination destination ZIP file to create
+	 */
 	public ScormExportRequest(Subject subject, Path destination) {
 		this(subject, destination, null, null);
 	}
 
+	/**
+	 * Creates a request for all exportable Units using explicit grouping.
+	 *
+	 * @param subject      subject whose current revision corpus will be packaged
+	 * @param destination  destination ZIP file to create
+	 * @param groupingMode grouping mode to use
+	 */
 	public ScormExportRequest(Subject subject, Path destination, RevisionGroupingMode groupingMode) {
 		this(subject, destination, groupingMode, null);
 	}
 
+	/**
+	 * Creates a fully configured request.
+	 *
+	 * @param subject         subject whose current revision corpus will be packaged
+	 * @param destination     destination ZIP file to create
+	 * @param groupingMode    grouping mode, or {@code null} to select it
+	 *                        automatically
+	 * @param selectedUnitIds Unit identifiers to include, or {@code null} for all
+	 *                        exportable Units
+	 * @throws NullPointerException     if the subject or destination is
+	 *                                  {@code null}, or the Unit selection contains
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if the Unit selection is empty or contains a
+	 *                                  non-positive identifier
+	 */
 	public ScormExportRequest(Subject subject, Path destination, RevisionGroupingMode groupingMode,
 			Set<Long> selectedUnitIds) {
 		if (subject == null) {
@@ -48,10 +82,21 @@ public final class ScormExportRequest {
 		this.selectedUnitIds = selectedUnitIds == null ? null : Set.copyOf(selectedUnitIds);
 	}
 
+	/**
+	 * Returns the destination SCORM ZIP file.
+	 *
+	 * @return export destination
+	 */
 	public Path getDestination() {
 		return destination;
 	}
 
+	/**
+	 * Returns the explicitly requested grouping mode.
+	 *
+	 * @return explicit grouping mode
+	 * @throws IllegalStateException if this request uses automatic grouping
+	 */
 	public RevisionGroupingMode getGroupingMode() {
 		if (groupingMode == null) {
 			throw new IllegalStateException("SCORM export request does not specify a grouping mode");
@@ -59,6 +104,12 @@ public final class ScormExportRequest {
 		return groupingMode;
 	}
 
+	/**
+	 * Returns the explicitly selected Unit identifiers.
+	 *
+	 * @return immutable selected Unit identifiers
+	 * @throws IllegalStateException if this request includes all exportable Units
+	 */
 	public Set<Long> getSelectedUnitIds() {
 		if (selectedUnitIds == null) {
 			throw new IllegalStateException("SCORM export request does not specify a Unit selection");
@@ -66,14 +117,29 @@ public final class ScormExportRequest {
 		return selectedUnitIds;
 	}
 
+	/**
+	 * Returns the subject to export.
+	 *
+	 * @return export subject
+	 */
 	public Subject getSubject() {
 		return subject;
 	}
 
+	/**
+	 * Returns whether grouping was selected explicitly.
+	 *
+	 * @return {@code true} when {@link #getGroupingMode()} is available
+	 */
 	public boolean hasGroupingMode() {
 		return groupingMode != null;
 	}
 
+	/**
+	 * Returns whether the request is restricted to selected Units.
+	 *
+	 * @return {@code true} when {@link #getSelectedUnitIds()} is available
+	 */
 	public boolean hasUnitSelection() {
 		return selectedUnitIds != null;
 	}

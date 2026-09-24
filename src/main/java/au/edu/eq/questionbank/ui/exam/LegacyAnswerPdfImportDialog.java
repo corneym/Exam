@@ -22,6 +22,10 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
+/**
+ * Collects optional answer or marking-guide PDFs for legacy exams whose
+ * Question booklets are already present.
+ */
 public final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 
 	private static final int VIEWPORT_WIDTH = 620;
@@ -35,6 +39,12 @@ public final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 	private final Map<ExamKey, Label> pdfLabels = new LinkedHashMap<>();
 	private Path lastPdfDirectory;
 
+	/**
+	 * Creates the selection dialog for the distinct exams in the requirements.
+	 *
+	 * @param owner        owner window
+	 * @param requirements legacy booklet requirements identifying the exams
+	 */
 	public LegacyAnswerPdfImportDialog(Window owner, List<LegacyBookletRequirement> requirements) {
 		if (requirements == null) {
 			throw new NullPointerException("requirements");
@@ -60,6 +70,11 @@ public final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 		getDialogPane().setContent(scrollPane);
 	}
 
+	/**
+	 * Returns selections for exams given an answer PDF.
+	 *
+	 * @return immutable selections in first-requirement order
+	 */
 	public List<AnswerPdfSelection> getSelections() {
 		List<AnswerPdfSelection> selections = new ArrayList<>();
 		for (ExamKey exam : exams) {
@@ -105,6 +120,13 @@ public final class LegacyAnswerPdfImportDialog extends Dialog<ButtonType> {
 		return content;
 	}
 
+	/**
+	 * Selected answer document for one provider and year.
+	 *
+	 * @param providerName exam-provider name
+	 * @param year         exam year
+	 * @param pdfPath      selected source PDF
+	 */
 	public record AnswerPdfSelection(String providerName, int year, Path pdfPath) {
 	}
 

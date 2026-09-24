@@ -29,6 +29,10 @@ import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
 
+/**
+ * Collects Subject, Unit, grouping and destination choices for an HTML revision
+ * export.
+ */
 public final class RevisionExportDialog extends Dialog<ButtonType> {
 
 	private static final int FILE_CONTROL_SPACING = 6;
@@ -47,16 +51,44 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	private Path destinationParent;
 	private final Button exportButton;
 
+	/**
+	 * Creates the legacy all-Units dialog with Subject-level grouping capability.
+	 *
+	 * @param owner          owner window
+	 * @param subjects       Subjects available for export
+	 * @param defaultSubject initially selected Subject, or {@code null}
+	 */
 	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
 		this(owner, subjects, defaultSubject, _ -> false);
 	}
 
+	/**
+	 * Creates a dialog with Unit selection and scope-aware grouping capability.
+	 *
+	 * @param owner                       owner window
+	 * @param subjects                    Subjects available for export
+	 * @param defaultSubject              initially selected Subject, or
+	 *                                    {@code null}
+	 * @param exportableUnits             lookup for Units containing renderable
+	 *                                    content
+	 * @param descriptorGroupingAvailable capability check for the selected Unit
+	 *                                    scope
+	 */
 	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject,
 			Function<Subject, List<Unit>> exportableUnits,
 			BiPredicate<Subject, Set<Long>> descriptorGroupingAvailable) {
 		this(owner, subjects, defaultSubject, exportableUnits, descriptorGroupingAvailable, true);
 	}
 
+	/**
+	 * Creates the legacy all-Units dialog with a grouping capability check.
+	 *
+	 * @param owner                       owner window
+	 * @param subjects                    Subjects available for export
+	 * @param defaultSubject              initially selected Subject, or
+	 *                                    {@code null}
+	 * @param descriptorGroupingAvailable Subject-level grouping capability check
+	 */
 	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject,
 			Predicate<Subject> descriptorGroupingAvailable) {
 		this(owner, subjects, defaultSubject, _ -> List.of(), (subject, _) -> descriptorGroupingAvailable.test(subject),
@@ -143,18 +175,38 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		updateExportButton();
 	}
 
+	/**
+	 * Returns the selected parent directory for the generated site.
+	 *
+	 * @return selected parent directory
+	 */
 	public Path getDestinationParent() {
 		return destinationParent;
 	}
 
+	/**
+	 * Returns the selected presentation grouping mode.
+	 *
+	 * @return selected grouping mode
+	 */
 	public RevisionGroupingMode getGroupingMode() {
 		return groupingBox.getValue();
 	}
 
+	/**
+	 * Returns the selected Subject.
+	 *
+	 * @return selected Subject, or {@code null} when none is selected
+	 */
 	public Subject getSelectedSubject() {
 		return subjectBox.getValue();
 	}
 
+	/**
+	 * Returns the selected Unit identifiers.
+	 *
+	 * @return immutable identifiers of selected Units
+	 */
 	public Set<Long> getSelectedUnitIds() {
 		Set<Long> selectedIds = new LinkedHashSet<>();
 		for (Node node : unitBox.getChildren()) {

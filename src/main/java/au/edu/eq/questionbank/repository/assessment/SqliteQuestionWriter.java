@@ -240,6 +240,14 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
+	/**
+	 * Updates only a Question's historical classification in one transaction.
+	 *
+	 * @param questionId     persistent Question identifier
+	 * @param booklet        Question's owning booklet
+	 * @param classification replacement classification
+	 * @throws SQLException if the update cannot be committed
+	 */
 	public void updateClassification(long questionId, ExamBooklet booklet, CurriculumNode classification)
 			throws SQLException {
 		try (Connection connection = database.openConnection()) {
