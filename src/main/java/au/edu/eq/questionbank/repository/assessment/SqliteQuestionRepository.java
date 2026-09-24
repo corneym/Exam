@@ -212,7 +212,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 							q.question_code,
 							q.question_text,
 							q.marks,
-							q.q.shared_context_capture_required,
+							q.shared_context_capture_required,
 							q.response_type,
 							q.source_question_id,
 							q.shared_context_id,

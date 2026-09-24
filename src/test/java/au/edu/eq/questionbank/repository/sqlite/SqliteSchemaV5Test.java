@@ -10,12 +10,14 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SharedContextStatus;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 
 class SqliteSchemaV5Test {
@@ -26,7 +28,11 @@ class SqliteSchemaV5Test {
 	@Test
 	void enforcesVersionFiveRelationshipsAndNaturalKeys() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-five.db"));
-		database.initialiseSchema();
+
+		// This test exercises the historical version-5 schema itself. Migrating the
+		// fixture to the latest schema would rename its legacy physical columns.
+		createVersion05Schema(database);
+		assertEquals(5, database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 			statement.execute("""
@@ -276,7 +282,7 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void migratesPopulatedVersion11DatabaseToVersion12WithoutChangingQuestionApplicability() throws Exception {
+	void migratesPopulatedVersion11DatabaseToLatestWithoutChangingQuestionApplicability() throws Exception {
 		Path databasePath = tempDir.resolve("version-eleven-to-latest.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		createVersion11Schema(database);
@@ -355,7 +361,7 @@ class SqliteSchemaV5Test {
 		// Exercise the production upgrade path from version 11 through every later
 		// migration, including applicability exclusions and the terminology rename.
 		database.initialiseSchema();
-		assertEquals(12, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("""
 					SELECT question_code,
@@ -393,11 +399,173 @@ class SqliteSchemaV5Test {
 		// validation rather than merely surviving the migration transaction itself.
 		SqliteDatabase reopened = new SqliteDatabase(databasePath);
 		reopened.initialiseSchema();
-		assertEquals(12, reopened.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), reopened.schemaVersion());
 		Question reloaded = new SqliteQuestionRepository(reopened).findById(100).orElseThrow();
 		assertEquals("Q7", reloaded.getQuestionCode());
 		assertEquals(12, reloaded.getClassification().getId());
 		assertEquals(3, reloaded.getMarks());
+	}
+
+	@Test
+	void migratesPopulatedVersion12DatabaseToVersion13WithoutChangingSharedContextSemantics() throws Exception {
+		Path databasePath = tempDir.resolve("version-twelve-to-thirteen.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		createVersion12Schema(database);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO subjects
+					    (id, subject_name)
+					VALUES
+					    (1, 'Chemistry')
+					""");
+			statement.execute("""
+					INSERT INTO syllabus_versions
+					    (id, subject_id, syllabus_name, is_current)
+					VALUES
+					    (1, 1, 'Chemistry 2025', 1)
+					""");
+			statement.execute("""
+					INSERT INTO curriculum_nodes
+					    (id, syllabus_version_id, parent_id,
+					     curriculum_code, curriculum_name,
+					     curriculum_level, display_order)
+					VALUES
+					    (10, 1, NULL,
+					     '1', 'Unit 1',
+					     'UNIT', 1),
+					    (11, 1, 10,
+					     '1.1', 'Topic 1',
+					     'TOPIC', 1),
+					    (12, 1, 11,
+					     '1.1.1', 'Descriptor 1',
+					     'DESCRIPTOR', 1)
+					""");
+			statement.execute("""
+					INSERT INTO exam_providers
+					    (id, provider_name)
+					VALUES
+					    (1, 'QCAA')
+					""");
+			statement.execute("""
+					INSERT INTO source_documents
+					    (id, relative_path)
+					VALUES
+					    (1, 'Chemistry/2025/paper1.pdf')
+					""");
+			statement.execute("""
+					INSERT INTO exams
+					    (id, subject_id, provider_id,
+					     exam_year, exam_name)
+					VALUES
+					    (1, 1, 1,
+					     2025, 'External Assessment')
+					""");
+			statement.execute("""
+					INSERT INTO exam_booklets
+					    (id, exam_id, source_document_id,
+					     booklet_name)
+					VALUES
+					    (1, 1, 1,
+					     'Paper 1')
+					""");
+			statement.execute("""
+					INSERT INTO source_questions
+					    (id, booklet_id,
+					     source_question_code, preamble_status)
+					VALUES
+					    (20, 1,
+					     'Q8', 'NONE')
+					""");
+			statement.execute("""
+					INSERT INTO questions
+					    (id, booklet_id, classification_node_id,
+					     question_code, question_text,
+					     marks, preamble_capture_required,
+					     response_type)
+					VALUES
+					    (100, 1, 12,
+					     'Q7', 'Stored question text',
+					     3, 1,
+					     'WRITTEN_RESPONSE')
+					""");
+			statement.execute("""
+					INSERT INTO question_output_exclusions
+					    (question_id, current_curriculum_node_id)
+					VALUES
+					    (100, 12)
+					""");
+		}
+		assertEquals(12, database.schemaVersion());
+
+		// Version 13 renames physical fields only. It must retain values, constraints,
+		// Questions and the independently persisted output-exclusion relationship.
+		database.initialiseSchema();
+		assertEquals(13, database.schemaVersion());
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			boolean hasSharedContextCaptureRequired = false;
+			boolean hasLegacyPreambleCaptureRequired = false;
+			try (ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+				while (result.next()) {
+					String name = result.getString("name");
+					if ("shared_context_capture_required".equals(name)) {
+						hasSharedContextCaptureRequired = true;
+					} else if ("preamble_capture_required".equals(name)) {
+						hasLegacyPreambleCaptureRequired = true;
+					}
+				}
+			}
+			assertTrue(hasSharedContextCaptureRequired);
+			assertFalse(hasLegacyPreambleCaptureRequired);
+			boolean hasSharedContextStatus = false;
+			boolean hasLegacyPreambleStatus = false;
+			try (ResultSet result = statement.executeQuery("PRAGMA table_info(source_questions)")) {
+				while (result.next()) {
+					String name = result.getString("name");
+					if ("shared_context_status".equals(name)) {
+						hasSharedContextStatus = true;
+					} else if ("preamble_status".equals(name)) {
+						hasLegacyPreambleStatus = true;
+					}
+				}
+			}
+			assertTrue(hasSharedContextStatus);
+			assertFalse(hasLegacyPreambleStatus);
+			try (ResultSet result = statement.executeQuery("""
+					SELECT shared_context_capture_required
+					FROM questions
+					WHERE id = 100
+					""")) {
+				assertTrue(result.next());
+				assertEquals(1, result.getInt("shared_context_capture_required"));
+			}
+			try (ResultSet result = statement.executeQuery("""
+					SELECT shared_context_status
+					FROM source_questions
+					WHERE id = 20
+					""")) {
+				assertTrue(result.next());
+				assertEquals("NONE", result.getString("shared_context_status"));
+			}
+
+			// RENAME COLUMN must preserve the original CHECK constraint rather than
+			// silently turning the renamed field into unrestricted text.
+			assertThrows(SQLException.class, () -> statement.execute("""
+					UPDATE source_questions
+					SET shared_context_status = 'INVALID'
+					WHERE id = 20
+					"""));
+		}
+		Question reloaded = new SqliteQuestionRepository(database).findById(100).orElseThrow();
+		assertTrue(reloaded.isSharedContextCaptureRequired());
+		assertEquals(Set.of(12L),
+				new SqliteQuestionOutputApplicabilityRepository(database).findExcludedCurrentNodeIds(reloaded));
+
+		// Reopening verifies the renamed latest schema through the normal startup
+		// validation path rather than only through the migration transaction.
+		SqliteDatabase reopened = new SqliteDatabase(databasePath);
+		reopened.initialiseSchema();
+		assertEquals(13, reopened.schemaVersion());
+		reopened.verifySchema();
 	}
 
 	@Test
@@ -467,7 +635,7 @@ class SqliteSchemaV5Test {
 		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("""
-					SELECT question_code, marks, preamble_capture_required,
+					SELECT question_code, marks, shared_context_capture_required,
 					       source_question_id, shared_context_id
 					FROM questions
 					WHERE id = 100
@@ -475,7 +643,7 @@ class SqliteSchemaV5Test {
 				assertTrue(result.next());
 				assertEquals("21a", result.getString("question_code"));
 				assertEquals(2, result.getInt("marks"));
-				assertEquals(1, result.getInt("preamble_capture_required"));
+				assertEquals(1, result.getInt("shared_context_capture_required"));
 				assertEquals(null, result.getObject("source_question_id"));
 				assertEquals(null, result.getObject("shared_context_id"));
 				assertFalse(result.next());
@@ -519,37 +687,63 @@ class SqliteSchemaV5Test {
 	@Test
 	void version06SharedContextStatusDefaultsAndConstraintAreEnforced() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-status-constraint.db"));
-		database.initialiseSchema();
+		createVersion05Schema(database);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Construct the historical version-6 boundary itself. The physical column
+			// was still named preamble_status at this schema version.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			connection.commit();
+		}
+		assertEquals(6, database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 			statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
 			statement.execute("INSERT INTO source_documents (id, relative_path) VALUES (1, 'paper.pdf')");
 			statement.execute("""
-					INSERT INTO exams (id, subject_id, provider_id, exam_year, exam_name)
-					VALUES (1, 1, 1, 2025, 'External assessment')
+					INSERT INTO exams
+					    (id, subject_id, provider_id,
+					     exam_year, exam_name)
+					VALUES
+					    (1, 1, 1,
+					     2025, 'External assessment')
 					""");
 			statement.execute("""
-					INSERT INTO exam_booklets (id, exam_id, source_document_id, booklet_name)
-					VALUES (1, 1, 1, 'Paper 1')
+					INSERT INTO exam_booklets
+					    (id, exam_id, source_document_id,
+					     booklet_name)
+					VALUES
+					    (1, 1, 1,
+					     'Paper 1')
 					""");
 			statement.execute("""
-					INSERT INTO source_questions (id, booklet_id, source_question_code)
-					VALUES (1, 1, '21')
+					INSERT INTO source_questions
+					    (id, booklet_id, source_question_code)
+					VALUES
+					    (1, 1, '21')
 					""");
-			try (ResultSet result = statement
-					.executeQuery("SELECT preamble_status FROM source_questions WHERE id = 1")) {
+			try (ResultSet result = statement.executeQuery("""
+					SELECT preamble_status
+					FROM source_questions
+					WHERE id = 1
+					""")) {
 				assertTrue(result.next());
 				assertEquals("UNKNOWN", result.getString(1));
 			}
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO source_questions
-					    (id, booklet_id, source_question_code, preamble_status)
-					VALUES (2, 1, '22', 'INVALID')
+					    (id, booklet_id,
+					     source_question_code, preamble_status)
+					VALUES
+					    (2, 1, '22', 'INVALID')
 					"""));
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO source_questions
-					    (id, booklet_id, source_question_code, preamble_status)
-					VALUES (3, 1, '23', NULL)
+					    (id, booklet_id,
+					     source_question_code, preamble_status)
+					VALUES
+					    (3, 1, '23', NULL)
 					"""));
 		}
 	}
@@ -590,5 +784,18 @@ class SqliteSchemaV5Test {
 		// Guard the fixture itself. If this fails, the test is no longer exercising
 		// the intended v11 -> v12 production migration boundary.
 		assertEquals(11, database.schemaVersion());
+	}
+
+	private void createVersion12Schema(SqliteDatabase database) throws Exception {
+		createVersion11Schema(database);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Build exactly the schema immediately preceding the terminology-only
+			// version-13 migration.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v11-to-v12.sql"));
+			connection.commit();
+		}
+		assertEquals(12, database.schemaVersion());
 	}
 }
