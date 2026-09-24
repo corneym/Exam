@@ -76,6 +76,75 @@ public class QuestionSearchPaneTest {
 	private Stage stage;
 
 	@Test
+	public void allQuestionsCanBeFilteredBySubject(FxRobot robot) throws TimeoutException {
+		Subject physics = new Subject(40, "Physics");
+		SyllabusVersion physicsVersion = new SyllabusVersion(41, physics, "2025", false);
+		Unit physicsUnit = new Unit(42, physicsVersion, "1", "Physics Unit", 1);
+		Topic physicsTopic = new Topic(43, physicsVersion, physicsUnit, "1.1", "Physics Topic", 1);
+		Descriptor physicsDescriptor = new Descriptor(44, physicsVersion, physicsTopic, "1.1.1", "Physics Descriptor",
+				1);
+		ExamProvider provider = new ExamProvider(45, "QCAA");
+		Exam physicsExam = new Exam(46, physics, provider, 2020, "Physics examination");
+		SourceDocument sourceDocument = new SourceDocument(47, "Physics/2020/paper1.pdf");
+		ExamBooklet booklet = new ExamBooklet(48, physicsExam, "Paper 1", sourceDocument);
+		Question physicsQuestion = new Question(49, booklet, "1", "", 2, List.of(), physicsDescriptor, false);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry, physics),
+				List.of(physicsVersion), List.of(physicsUnit, physicsTopic, physicsDescriptor));
+		replaceSearchPane(robot, repository, retrievalService, () -> List.of(historicalQuestion, physicsQuestion));
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry)
+				&& subjectBox.getItems().contains(physics) && resultsList.getItems().size() == 2);
+		assertFalse(subjectBox.isDisable());
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+				&& resultsList.getItems().getFirst().question().getId() == historicalQuestion.getId());
+		robot.interact(() -> subjectBox.setValue(physics));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+				&& resultsList.getItems().getFirst().question().getId() == physicsQuestion.getId());
+	}
+
+	@Test
+	public void allQuestionsRestartsCancelledInitialSubjectLoad(FxRobot robot) throws TimeoutException {
+
+		SyllabusVersion historicalVersion = historicalDescriptor.getSyllabusVersion();
+
+		SyllabusVersion currentVersion = currentUnit.getSyllabusVersion();
+
+		DelayedCurriculumRepository delayedRepository = new DelayedCurriculumRepository(List.of(chemistry),
+				List.of(historicalVersion, currentVersion),
+				List.of(currentUnit, currentTopic, currentSubtopic, currentDescriptor));
+
+		// Delay the constructor's initial Subject lookup so switching scope cancels
+		// that request before any Subject reaches the UI.
+		delayedRepository.delaySubjects();
+
+		QuestionSearchPane pane = replaceSearchPane(robot, delayedRepository, retrievalService);
+
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+
+		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, delayedRepository::hasSubjectDelayStarted);
+
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+
+		// All Questions now needs the Subject list as an optional filter, so it starts
+		// a fresh Subject load after cancelling the constructor's stale request.
+		delayedRepository.releaseDelayedSubjects();
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
+
+		assertFalse(subjectBox.isDisable());
+		assertTrue(unitBox.isDisable());
+		assertFalse(pane.isDisabled());
+	}
+
+	@Test
 	public void allQuestionsScopeShowsCompleteBankWithoutCurriculumApplicability(FxRobot robot)
 			throws TimeoutException {
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
@@ -88,7 +157,7 @@ public class QuestionSearchPaneTest {
 
 		// All Questions is independent of curriculum navigation and therefore disables
 		// controls that would otherwise imply those values are filtering the result.
-		assertTrue(subjectBox.isDisable());
+		assertFalse(subjectBox.isDisable());
 		assertTrue(unitBox.isDisable());
 		QuestionSearchResult result = resultsList.getItems().getFirst();
 		assertEquals(QuestionSearchScope.ALL_QUESTIONS, result.scope());
@@ -409,43 +478,6 @@ public class QuestionSearchPaneTest {
 		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scopeBox.getValue());
 		assertEquals(QuestionSearchScope.ALL_QUESTIONS, resultsList.getSelectionModel().getSelectedItem().scope());
 		assertEquals(editedQuestion.getId(), pane.getSelectedQuestion().getId());
-	}
-
-	@Test
-	public void returningFromAllQuestionsRestartsCancelledInitialSubjectLoad(FxRobot robot) throws TimeoutException {
-		SyllabusVersion historicalVersion = historicalDescriptor.getSyllabusVersion();
-		SyllabusVersion currentVersion = currentUnit.getSyllabusVersion();
-		DelayedCurriculumRepository delayedRepository = new DelayedCurriculumRepository(List.of(chemistry),
-				List.of(historicalVersion, currentVersion),
-				List.of(currentUnit, currentTopic, currentSubtopic, currentDescriptor));
-
-		// Delay the constructor's initial Subject lookup so switching scope can cancel
-		// it before any Subject reaches the UI.
-		delayedRepository.delaySubjects();
-		QuestionSearchPane pane = replaceSearchPane(robot, delayedRepository, retrievalService);
-		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, delayedRepository::hasSubjectDelayStarted);
-		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-
-		// Allow the cancelled old request to finish. Its stale completion must not
-		// populate the disabled Current-syllabus navigation.
-		delayedRepository.releaseDelayedSubjects();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, delayedRepository::hasSubjectDelayFinished);
-		WaitForAsyncUtils.waitForFxEvents();
-		assertTrue(subjectBox.getItems().isEmpty());
-		assertTrue(subjectBox.isDisable());
-		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
-
-		// Returning to Current syllabus must notice that the initial load never
-		// completed and start a fresh Subject lookup.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
-		assertFalse(subjectBox.isDisable());
-		assertTrue(subjectBox.getItems().contains(chemistry));
-
-		// Keep the local variable used so the pane is clearly the replacement under
-		// test rather than the disposed constructor fixture.
-		assertFalse(pane.isDisabled());
 	}
 
 	@Test

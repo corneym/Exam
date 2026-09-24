@@ -295,13 +295,7 @@ public class QuestionSearchPane extends BorderPane {
 		List<QuestionSearchResult> results = task.getValue();
 		resultsList.getItems().setAll(results);
 		reselectEditedQuestion(results);
-		if (results.isEmpty()) {
-			statusLabel.setText("No questions found.");
-		} else if (results.size() == 1) {
-			statusLabel.setText("1 question found.");
-		} else {
-			statusLabel.setText(results.size() + " questions found.");
-		}
+		updateSearchStatus();
 	}
 
 	private void configureControls() {
@@ -566,18 +560,21 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 
-		// A scope transition invalidates every asynchronous operation belonging to the
-		// previous scope so a late curriculum or Question result cannot overwrite it.
+		// A scope transition invalidates asynchronous work belonging to the previous
+		// scope so late results cannot overwrite the new Search state.
 		cancelActiveHierarchyLoad();
 		invalidateCurrentSearch();
 		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 			setCurriculumControlsDisabled(true);
+
+			// Subject remains available as an All Questions filter. If the constructor's
+			// initial Subject load was cancelled by this scope change, restart it.
+			if (!subjectsLoaded) {
+				startSubjectLoading();
+			}
 			startAllQuestionsSearch();
 			return;
 		}
-
-		// Returning to current-syllabus mode restores the existing navigation state
-		// rather than discarding the teacher's previous hierarchy selection.
 		restoreCurriculumControlState();
 		startMostSpecificCurrentSyllabusSearch();
 	}
@@ -589,11 +586,18 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void handleSubjectSelection() {
-		if (updatingControls) {
+		if (updatingControls || disposed) {
 			return;
 		}
 		clearBelowSubject();
 		Subject subject = subjectBox.getValue();
+		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
+
+			// All Questions filters directly by the persisted Exam Subject. It does not
+			// load or evaluate current-syllabus navigation.
+			startAllQuestionsSearch();
+			return;
+		}
 		if (subject == null) {
 			return;
 		}
@@ -739,7 +743,11 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void setCurriculumControlsDisabled(boolean disabled) {
-		subjectBox.setDisable(disabled);
+
+		// Subject remains meaningful in All Questions because it filters by the
+		// Question's persisted Exam Subject. Lower controls represent current-syllabus
+		// applicability and therefore remain unavailable in that scope.
+		subjectBox.setDisable(false);
 		unitBox.setDisable(disabled || currentSyllabus == null || unitBox.getItems().isEmpty());
 		topicBox.setDisable(disabled || unitBox.getValue() == null || topicBox.getItems().isEmpty());
 		classificationBox.setDisable(disabled || topicBox.getValue() == null || classificationBox.getItems().isEmpty());
@@ -846,10 +854,18 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startAllQuestionsSearch() {
+		Subject selectedSubject = subjectBox.getValue();
 
-		// All Questions reads the complete persisted corpus and deliberately does not
-		// ask the curriculum retrieval service to manufacture applicability.
-		startAutomaticSearch(() -> QuestionSearchResult.allQuestionResults(allQuestionsSupplier.get()));
+		// Capture the FX control value before starting the background task. The task
+		// itself must not read JavaFX controls.
+		startAutomaticSearch(() -> {
+			List<Question> questions = allQuestionsSupplier.get();
+			if (selectedSubject != null) {
+				questions = questions.stream()
+						.filter(question -> selectedSubject.equals(question.getExam().getSubject())).toList();
+			}
+			return QuestionSearchResult.allQuestionResults(questions);
+		});
 	}
 
 	private void startAutomaticSearch(CurriculumNode currentNode) {
@@ -998,7 +1014,29 @@ public class QuestionSearchPane extends BorderPane {
 			// A false value therefore means loading never completed successfully.
 			subjectsLoaded = true;
 			subjectBox.getItems().setAll(subjects);
+
+			// In All Questions, Subject loading is auxiliary to the Question search.
+			// Restore whichever Search status is currently authoritative.
+			if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
+				subjectBox.setDisable(false);
+				if (activeSearchTask != null) {
+					statusLabel.setText("Searching...");
+				} else {
+					updateSearchStatus();
+				}
+			}
 		});
+	}
+
+	private void updateSearchStatus() {
+		int resultCount = resultsList.getItems().size();
+		if (resultCount == 0) {
+			statusLabel.setText("No questions found.");
+		} else if (resultCount == 1) {
+			statusLabel.setText("1 question found.");
+		} else {
+			statusLabel.setText(resultCount + " questions found.");
+		}
 	}
 
 	private record SubjectNavigation(SyllabusVersion currentSyllabus, List<CurriculumNode> units) {

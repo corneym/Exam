@@ -12,6 +12,7 @@ import javafx.scene.Node;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
+import javafx.stage.Screen;
 import javafx.stage.Window;
 
 /**
@@ -27,6 +28,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	// Preserve teacher-adjusted dimensions across that hide/show cycle.
 	private double rememberedWidth = Double.NaN;
 	private double rememberedHeight = Double.NaN;
+	private double rememberedX = Double.NaN;
+	private double rememberedY = Double.NaN;
 
 	/**
 	 * Creates a question-search dialog owned by the supplied window.
@@ -153,26 +156,50 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private void configureSizePersistence() {
 		setOnHiding(_ -> {
 
-			// Capture the actual window dimensions immediately before an edit action
-			// hides Search. Preferred DialogPane dimensions are only the initial size.
+			// Capture the actual window geometry immediately before an edit action hides
+			// Search so the same Dialog instance can return to the teacher's location.
 			if (Double.isFinite(getWidth()) && getWidth() > 0) {
 				rememberedWidth = getWidth();
 			}
 			if (Double.isFinite(getHeight()) && getHeight() > 0) {
 				rememberedHeight = getHeight();
 			}
+			if (Double.isFinite(getX())) {
+				rememberedX = getX();
+			}
+			if (Double.isFinite(getY())) {
+				rememberedY = getY();
+			}
 		});
 		setOnShown(_ -> {
 
-			// The first display uses the ordinary preferred dimensions. Subsequent
-			// displays restore the teacher's last resized dimensions.
+			// Restore size before position so the visibility check uses the window's
+			// remembered dimensions.
 			if (Double.isFinite(rememberedWidth) && rememberedWidth > 0) {
 				setWidth(rememberedWidth);
 			}
 			if (Double.isFinite(rememberedHeight) && rememberedHeight > 0) {
 				setHeight(rememberedHeight);
 			}
+
+			// Do not force a remembered location that is now completely outside every
+			// available screen.
+			if (isRememberedPositionVisible()) {
+				setX(rememberedX);
+				setY(rememberedY);
+			}
 		});
+	}
+
+	private boolean isRememberedPositionVisible() {
+		if (!Double.isFinite(rememberedX) || !Double.isFinite(rememberedY)) {
+			return false;
+		}
+		double width = Double.isFinite(rememberedWidth) && rememberedWidth > 0 ? rememberedWidth
+				: Math.max(getWidth(), 1);
+		double height = Double.isFinite(rememberedHeight) && rememberedHeight > 0 ? rememberedHeight
+				: Math.max(getHeight(), 1);
+		return !Screen.getScreensForRectangle(rememberedX, rememberedY, width, height).isEmpty();
 	}
 
 	public enum EditTarget {
