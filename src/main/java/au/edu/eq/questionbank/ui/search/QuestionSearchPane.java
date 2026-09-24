@@ -40,6 +40,7 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
@@ -131,6 +132,12 @@ public class QuestionSearchPane extends BorderPane {
 	private final Label outputApplicabilityStatusLabel = new Label();
 	private Task<List<QuestionOutputApplicabilityRow>> activeOutputApplicabilityTask;
 	private long outputApplicabilityGeneration;
+	private final Button includeOutputApplicabilityButton = new Button("Include");
+	private final Button excludeOutputApplicabilityButton = new Button("Exclude");
+
+	// Output applicability changes save immediately. Keep the active write separate
+	// from the background task that reads applicability for a selected Question.
+	private Task<Void> activeOutputApplicabilityUpdateTask;
 
 	// The Dialog owns persistence and supplies the action that commits the pending
 	// Descriptor refinement.
@@ -446,17 +453,53 @@ public class QuestionSearchPane extends BorderPane {
 		if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
 			return;
 		}
-		List<QuestionOutputApplicabilityRow> rows = task.getValue();
-		outputApplicabilityList.getItems().setAll(rows);
-		if (rows.isEmpty()) {
-			outputApplicabilityStatusLabel.setText("No current revision applicability.");
+		outputApplicabilityList.getItems().setAll(task.getValue());
+		updateOutputApplicabilityStatus();
+		updateOutputApplicabilityActionState();
+	}
+
+	private void completeOutputApplicabilityUpdate(Task<Void> task, long questionId, CurriculumNode currentNode,
+			boolean excluded) {
+		if (task != activeOutputApplicabilityUpdateTask) {
 			return;
 		}
-		long excludedCount = rows.stream().filter(QuestionOutputApplicabilityRow::excluded).count();
-		long includedCount = rows.size() - excludedCount;
-		String placementWord = rows.size() == 1 ? "placement" : "placements";
-		outputApplicabilityStatusLabel.setText("%d current %s: %d included, %d excluded.".formatted(rows.size(),
-				placementWord, includedCount, excludedCount));
+		activeOutputApplicabilityUpdateTask = null;
+		if (disposed) {
+			return;
+		}
+		Question selectedQuestion = getSelectedQuestion();
+		if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
+
+			// The write succeeded for the previously selected Question. Do not let its
+			// completion alter controls belonging to a newer selection.
+			updateOutputApplicabilityActionState();
+			return;
+		}
+		for (int index = 0; index < outputApplicabilityList.getItems().size(); index++) {
+			QuestionOutputApplicabilityRow existing = outputApplicabilityList.getItems().get(index);
+			if (existing.currentNode().getId() != currentNode.getId()) {
+				continue;
+			}
+			QuestionOutputApplicabilityRow updated = new QuestionOutputApplicabilityRow(existing.currentNode(),
+					excluded);
+
+			// Replace only the persisted placement and retain its selection so the
+			// teacher can immediately reverse the decision if required.
+			outputApplicabilityList.getItems().set(index, updated);
+			outputApplicabilityList.getSelectionModel().select(index);
+			updateOutputApplicabilityStatus();
+			updateOutputApplicabilityActionState();
+			return;
+		}
+		QuestionSearchResult selectedResult = resultsList.getSelectionModel().getSelectedItem();
+		if (selectedResult != null) {
+
+			// An unexpected intervening reload removed the edited row. Re-read the
+			// selected Question rather than manufacturing UI state.
+			startOutputApplicabilityLoad(selectedResult);
+		} else {
+			clearOutputApplicability();
+		}
 	}
 
 	private void completePreview(Task<Optional<BufferedImage>> task, long generation) {
@@ -508,9 +551,19 @@ public class QuestionSearchPane extends BorderPane {
 		outputApplicabilityList.setId("question-search-output-applicability");
 		outputApplicabilityStatusLabel.setId("question-search-output-applicability-status");
 
-		// Part 1 presents output applicability read-only. The row already retains the
-		// CurriculumNode needed when editing controls are added in the next slice.
+		// Each row represents one curriculum-derived placement. Include and Exclude
+		// operate only on the selected row and persist that exception immediately.
 		outputApplicabilityList.setPrefHeight(110);
+		includeOutputApplicabilityButton.setId("question-search-output-include");
+		excludeOutputApplicabilityButton.setId("question-search-output-exclude");
+
+		// The action labels must remain readable when the details pane is narrow.
+		includeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
+		excludeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
+
+		// No action is available until an applicability row has been selected.
+		includeOutputApplicabilityButton.setDisable(true);
+		excludeOutputApplicabilityButton.setDisable(true);
 		outputApplicabilityList.setCellFactory(_ -> new ListCell<>() {
 
 			@Override
@@ -646,6 +699,10 @@ public class QuestionSearchPane extends BorderPane {
 		classificationDirty.addListener((_, _, _) -> updateClassificationEditLock());
 		resultsList.getSelectionModel().selectedItemProperty()
 				.addListener((_, oldResult, newResult) -> handleResultSelection(oldResult, newResult));
+		outputApplicabilityList.getSelectionModel().selectedItemProperty()
+				.addListener((_, _, _) -> updateOutputApplicabilityActionState());
+		includeOutputApplicabilityButton.setOnAction(_ -> handleOutputApplicabilityChange(false));
+		excludeOutputApplicabilityButton.setOnAction(_ -> handleOutputApplicabilityChange(true));
 	}
 
 	private <T> void configurePromptDisplay(ComboBox<T> comboBox) {
@@ -668,8 +725,14 @@ public class QuestionSearchPane extends BorderPane {
 		detailsLabel.setStyle("-fx-font-weight: bold;");
 		Label outputApplicabilityLabel = new Label("Revision output applicability");
 		outputApplicabilityLabel.setStyle("-fx-font-weight: bold;");
+		HBox outputApplicabilityActions = new HBox(SECTION_SPACING, includeOutputApplicabilityButton,
+				excludeOutputApplicabilityButton);
+
+		// Include and Exclude apply to the selected applicability row. They remain
+		// separate from Descriptor classification Save because the two operations
+		// change different persisted concepts.
 		VBox pane = new VBox(SECTION_SPACING, detailsLabel, detailsArea, outputApplicabilityLabel,
-				outputApplicabilityStatusLabel, outputApplicabilityList);
+				outputApplicabilityStatusLabel, outputApplicabilityList, outputApplicabilityActions);
 		pane.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));
 		VBox.setVgrow(detailsArea, Priority.ALWAYS);
 
@@ -802,6 +865,34 @@ public class QuestionSearchPane extends BorderPane {
 					.setText("Revision output applicability unavailable: " + failure.getMessage());
 		}
 		outputApplicabilityList.getItems().clear();
+
+		// A failed read leaves no trustworthy placement on which an Include or
+		// Exclude action could operate.
+		updateOutputApplicabilityActionState();
+	}
+
+	private void failOutputApplicabilityUpdate(Task<Void> task, long questionId) {
+		if (task != activeOutputApplicabilityUpdateTask) {
+			return;
+		}
+		activeOutputApplicabilityUpdateTask = null;
+		if (disposed) {
+			return;
+		}
+		Question selectedQuestion = getSelectedQuestion();
+		if (selectedQuestion != null && selectedQuestion.getId() == questionId) {
+			Throwable failure = task.getException();
+			if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+				outputApplicabilityStatusLabel.setText("Revision output applicability could not be saved.");
+			} else {
+				outputApplicabilityStatusLabel
+						.setText("Revision output applicability could not be saved: " + failure.getMessage());
+			}
+		}
+
+		// The row still represents the last successfully persisted state, so restore
+		// whichever action is valid for that state.
+		updateOutputApplicabilityActionState();
 	}
 
 	private void failPreview(Task<Optional<BufferedImage>> task, long generation) {
@@ -893,6 +984,21 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		cancelActiveHierarchyLoad();
 		startAutomaticSearch(descriptorBox.getValue());
+	}
+
+	private void handleOutputApplicabilityChange(boolean excluded) {
+		if (disposed || classificationDirty.get() || activeOutputApplicabilityUpdateTask != null) {
+			return;
+		}
+		Question question = getSelectedQuestion();
+		QuestionOutputApplicabilityRow row = outputApplicabilityList.getSelectionModel().getSelectedItem();
+		if (question == null || row == null || row.excluded() == excluded) {
+			return;
+		}
+
+		// Capture the Question and node before leaving the FX thread. The background
+		// task must not inspect mutable JavaFX selection state.
+		startOutputApplicabilityUpdate(question, row.currentNode(), excluded);
 	}
 
 	private void handleResultSelection(QuestionSearchResult oldResult, QuestionSearchResult newResult) {
@@ -1530,6 +1636,30 @@ public class QuestionSearchPane extends BorderPane {
 		Thread.ofVirtual().name("question-output-applicability").start(task);
 	}
 
+	private void startOutputApplicabilityUpdate(Question question, CurriculumNode currentNode, boolean excluded) {
+		if (activeOutputApplicabilityUpdateTask != null) {
+			throw new IllegalStateException("Revision output applicability update is already in progress");
+		}
+		outputApplicabilityStatusLabel.setText("Saving revision output applicability...");
+		Task<Void> task = new Task<>() {
+
+			@Override
+			protected Void call() {
+
+				// Persist only this Question/current-node exception. Curriculum
+				// mapping and the Question's historical classification remain
+				// unchanged.
+				outputApplicabilityRepository.setExcluded(question, currentNode, excluded);
+				return null;
+			}
+		};
+		activeOutputApplicabilityUpdateTask = task;
+		updateOutputApplicabilityActionState();
+		task.setOnSucceeded(_ -> completeOutputApplicabilityUpdate(task, question.getId(), currentNode, excluded));
+		task.setOnFailed(_ -> failOutputApplicabilityUpdate(task, question.getId()));
+		Thread.ofVirtual().name("question-output-applicability-save").start(task);
+	}
+
 	private void startQuestionPreview(Question question) {
 		if (disposed) {
 			return;
@@ -1605,6 +1735,33 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		restoreCurriculumControlState();
+	}
+
+	private void updateOutputApplicabilityActionState() {
+		QuestionOutputApplicabilityRow selected = outputApplicabilityList.getSelectionModel().getSelectedItem();
+		boolean saving = activeOutputApplicabilityUpdateTask != null;
+		boolean editingClassification = classificationDirty.get();
+
+		// Prevent another placement from being selected while its current state is
+		// being persisted. Ordinary inspection remains available otherwise.
+		outputApplicabilityList.setDisable(saving);
+		includeOutputApplicabilityButton
+				.setDisable(saving || editingClassification || selected == null || !selected.excluded());
+		excludeOutputApplicabilityButton
+				.setDisable(saving || editingClassification || selected == null || selected.excluded());
+	}
+
+	private void updateOutputApplicabilityStatus() {
+		List<QuestionOutputApplicabilityRow> rows = List.copyOf(outputApplicabilityList.getItems());
+		if (rows.isEmpty()) {
+			outputApplicabilityStatusLabel.setText("No current revision applicability.");
+			return;
+		}
+		long excludedCount = rows.stream().filter(QuestionOutputApplicabilityRow::excluded).count();
+		long includedCount = rows.size() - excludedCount;
+		String placementWord = rows.size() == 1 ? "placement" : "placements";
+		outputApplicabilityStatusLabel.setText("%d current %s: %d included, %d excluded.".formatted(rows.size(),
+				placementWord, includedCount, excludedCount));
 	}
 
 	private void updateSearchStatus() {

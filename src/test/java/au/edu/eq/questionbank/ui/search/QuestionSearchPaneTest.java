@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -549,6 +550,66 @@ public class QuestionSearchPaneTest {
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
 		assertEquals(chemistry, subjectBox.getValue());
 		assertFalse(subjectBox.isDisable());
+	}
+
+	@Test
+	public void revisionOutputApplicabilityCanExcludeAndRestoreOnePlacement(FxRobot robot) throws TimeoutException {
+		QuestionRetrievalRepository multipleApplicabilityRepository = currentNodes -> {
+			if (!currentNodes.contains(currentDescriptor) || !currentNodes.contains(noMatchDescriptor)) {
+				return List.of();
+			}
+
+			// One historical Question is applicable at two distinct current
+			// Descriptors so the test can prove that only the selected placement
+			// is changed.
+			return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+					new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
+		};
+		QuestionRetrievalService multipleApplicabilityService = new QuestionRetrievalService(
+				multipleApplicabilityRepository, new CurriculumSearchNodeExpansionService(curriculumRepository));
+		replaceSearchPane(robot, curriculumRepository, multipleApplicabilityService);
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchPane.QuestionOutputApplicabilityRow> outputList = robot
+				.lookup("#question-search-output-applicability").queryListView();
+		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
+		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
+		Label outputStatus = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
+		QuestionSearchPane.QuestionOutputApplicabilityRow firstPlacement = outputList.getItems().stream()
+				.filter(row -> row.currentNode().equals(currentDescriptor)).findFirst().orElseThrow();
+		robot.interact(() -> outputList.getSelectionModel().select(firstPlacement));
+
+		// An included placement can be excluded, but Include is meaningless until
+		// that exclusion has actually been persisted.
+		assertTrue(includeButton.isDisable());
+		assertFalse(excludeButton.isDisable());
+		robot.clickOn("#question-search-output-exclude");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> outputList.getItems().stream().filter(row -> row.currentNode().equals(currentDescriptor))
+						.anyMatch(QuestionSearchPane.QuestionOutputApplicabilityRow::excluded));
+		assertEquals(Set.of(currentDescriptor.getId()),
+				outputApplicabilityRepository.findExcludedCurrentNodeIds(historicalQuestion));
+
+		// The second placement remains independently included.
+		assertFalse(outputList.getItems().stream().filter(row -> row.currentNode().equals(noMatchDescriptor))
+				.findFirst().orElseThrow().excluded());
+		assertEquals("2 current placements: 1 included, 1 excluded.", outputStatus.getText());
+		assertFalse(includeButton.isDisable());
+		assertTrue(excludeButton.isDisable());
+		robot.clickOn("#question-search-output-include");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> outputList.getItems().stream().filter(row -> row.currentNode().equals(currentDescriptor))
+						.noneMatch(QuestionSearchPane.QuestionOutputApplicabilityRow::excluded));
+
+		// Removing the exception restores normal curriculum-derived applicability.
+		assertEquals(Set.of(), outputApplicabilityRepository.findExcludedCurrentNodeIds(historicalQuestion));
+		assertEquals("2 current placements: 2 included, 0 excluded.", outputStatus.getText());
+		assertTrue(includeButton.isDisable());
+		assertFalse(excludeButton.isDisable());
 	}
 
 	@Test
