@@ -1,50 +1,20 @@
 Exam Question Bank — active working issues
-Updated: 20 September 2026
+Updated: 24 September 2026
 
-This file is a short-lived defect list. Active Sprint 10 design belongs in
-`docs/design/sprint-10-capture-output.md`; deferred work belongs in
-`docs/design/backlog.md`. Eclipse Task List may replace this file for day-to-day
-tracking later.
-
------------------------------------------------------------------------
-SPRINT 10 — ACTIVE DEFECT 1: visible PDF selection clears but pending selection remains
-
-Reproduction:
-1. Select a valid Question/Answer region in the PDF.
-2. Click elsewhere in the PDF without creating another valid region.
-3. The visible rectangle disappears.
-4. The capture workflow still reports/retains the old pending selection.
-
-Required result:
-Visible and logical pending-selection state must clear together and selection
-controls must become non-actionable.
+This file is a short-lived defect list. Deferred work belongs in
+`docs/design/backlog.md`; implemented sprint state belongs in the relevant sprint
+record and `docs/current-status.md`.
 
 -----------------------------------------------------------------------
-SPRINT 10 — ACTIVE DEFECT 2: curriculum hierarchy ComboBox state can be stale/out of sync
+NO ACTIVE WORKING DEFECTS RECORDED
 
-Observed behaviours:
-- Entering a complete curriculum code can populate Subtopic and Descriptor while
-  Topic is visibly blank.
-- After entering a complete code, replacing it with only the Unit number can
-  select/redisplay the previous Topic.
-- The problem can occur with no PDF region selected, so it is not solely a PDF
-  focus/selection issue.
+The two defects that opened Sprint 10 are resolved:
 
-Required result:
-Visible Unit/Topic/Subtopic/Descriptor values and CurriculumSelectionModel must
-always represent the same resolved path. Shortening to a Unit must clear all
-finer visible/model selections.
+- visible PDF selection and logical pending-selection state now clear together;
+- curriculum hierarchy ComboBox state is synchronised with the
+  CurriculumSelectionModel.
 
------------------------------------------------------------------------
-DEFERRED / NOT SPRINT 10
+Sprint 10 implementation is complete and verified on `feature/capture-output`
+at `07b7b337`; GitHub Actions CI run 59 is green.
 
-- Search Questions now preserves resized width/height across edit hide/show, but
-  its user-adjusted screen position is not preserved. See backlog.
-- Exam provider/year correction relocates managed PDFs and updates persisted
-  paths, but now-empty old managed directories are not pruned. See backlog.
-
------------------------------------------------------------------------
-SCHEDULED FEATURE, NOT DEFECT
-
-- General shared-context capture/reuse for independent Questions, including MCQs,
-  is an agreed Sprint 10 feature slice.
+Protected-main merge is repository closeout, not an active product defect.

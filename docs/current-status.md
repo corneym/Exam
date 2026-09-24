@@ -1,26 +1,40 @@
 # Current Status
 
-> **Authoritative status date:** 22 September 2026.  
+> **Authoritative status date:** 24 September 2026.  
 > Sprints 01 through 09 are complete and merged.  
-> Current `main` at Sprint 10 start: `5a1e5a9`.  
-> Active branch: `feature/capture-output`.  
-> Sprint 10 implementation is in progress; only behaviour supported by repository, test or explicit manual-verification evidence is described as implemented below.
+> Sprint 10 implementation is complete and verified on `feature/capture-output`.  
+> Current `main`: `5a1e5a9`.  
+> Verified Sprint 10 feature-branch head: `07b7b337`.  
+> Sprint 10 merge to `main` is still pending.
 
 ## Status summary
 
-The Exam Question Bank is a working Java/JavaFX desktop application backed by SQLite. It manages authoritative exam and marking PDFs, versioned curriculum data, legacy metadata import, Question and Answer capture from PDF regions, historical-to-current curriculum mapping, current-curriculum retrieval, revision HTML generation, SCORM 1.2 packaging, backup/restore, curriculum authoring, corpus audit and correction of persisted assessment data.
+The Exam Question Bank is a working Java/JavaFX desktop application backed by
+SQLite. It manages authoritative exam and marking PDFs, versioned curriculum
+data, legacy metadata import, Question and Answer capture from PDF regions,
+historical-to-current curriculum mapping, current-curriculum retrieval, revision
+HTML generation, SCORM 1.2 packaging, backup/restore, curriculum authoring,
+corpus audit and correction of persisted assessment data.
 
-Sprint 07 established persisted source-question identity, reusable shared context, preamble-aware capture, multipart presentation semantics, syllabus-sensitive classification and Question/Answer correction.
+Sprint 07 established persisted SourceQuestion identity, reusable
+SharedQuestionContext, shared-context-aware capture, multipart presentation
+semantics, syllabus-sensitive classification and Question/Answer correction.
 
-Sprint 08 added subject-neutral curriculum authoring, mapping coverage, legacy-metadata correction, persisted Question response type, response-type-aware Answer completeness and corpus-audit tooling.
+Sprint 08 added subject-neutral curriculum authoring, mapping coverage,
+legacy-metadata correction, persisted Question response type,
+response-type-aware Answer completeness and corpus-audit tooling.
 
-Sprint 09 completed a sustained-use capture/correction pass and was merged to `main` in commit `2533586`. It added responsive capture controls, deterministic source ordering, shared-context recapture, Exam correction with managed-file relocation, known-PDF reuse, legacy Question splitting, Search scope, audit ordering, MCQ Answer-PDF visibility, UI package refactoring and CI hardening.
+Sprint 09 completed a sustained-use capture/correction pass and was merged to
+`main` in commit `2533586`. Protected-main workflow was then exercised through
+pull request #1.
 
-Protected-main workflow was then exercised through pull request #1. GitHub reports `main` as protected.
+Sprint 10 completes the next sustained-use/output pass. It hardens capture and
+Search workflows, adds booklet-level response/Answer-file semantics, exposes
+independent MCQ shared-context continuation, adds Question-specific revision
+output exclusions, aligns live persistence terminology with Shared Context, and
+turns the revision HTML/SCORM pipeline into a configurable student-facing export.
 
-Sprint 10 implementation to date includes capture-selection state correction, curriculum selector synchronisation, Working Subject filtering, persisted booklet-level Question format, response-type capture rules, booklet-specific AnswerFile assignment, and sequence-aware shared-context capture for independent MCQs.
-
-The latest supported SQLite schema version is **11**.
+The latest supported SQLite schema version is **13**.
 
 ## Implemented and current
 
@@ -31,28 +45,48 @@ The latest supported SQLite schema version is **11**.
 - JavaFX desktop UI.
 - Apache PDFBox for PDF loading, rendering and region extraction.
 - SQLite persistence with foreign-key enforcement and sequential migrations.
-- SQLite connections use a bounded busy timeout so short asynchronous writes do not cause concurrent JavaFX reads to fail immediately with `SQLITE_BUSY`.
+- SQLite connections use a bounded busy timeout so short asynchronous writes do
+  not cause concurrent JavaFX reads to fail immediately with `SQLITE_BUSY`.
 - JUnit and TestFX regression coverage.
 - Repository/service/importer/PDF/output/UI package separation.
 - GitHub Actions with separate non-UI, remaining-UI and workflow-UI jobs.
 
 ### Configuration and managed data
 
-One configured `data.root` derives managed locations including `pdf/`, `curriculum/` and `questionbank.db`.
+One configured `data.root` derives managed locations including `pdf/`,
+`curriculum/` and `questionbank.db`.
 
-Persisted document paths are portable paths beneath the managed data root rather than machine-specific absolute paths. Managed source PDFs remain authoritative; rendered images are derived assets.
+Persisted document paths are portable paths beneath the managed data root rather
+than machine-specific absolute paths. Managed source PDFs remain authoritative;
+rendered images are derived assets.
 
-Exam/provider/year correction relocates managed exam/answer PDFs when the managed directory changes and updates persisted source paths with rollback protection. Assessment-name-only edits do not move files because assessment name is not part of the managed path.
+Exam/provider/year correction relocates managed exam/answer PDFs when the
+managed directory changes and updates persisted source paths with rollback
+protection. Assessment-name-only edits do not move files because assessment name
+is not part of the managed path.
 
 ### Database and assessment model
 
-Schema version 11 supports Subjects, SyllabusVersions, curriculum hierarchy, providers, Exams, Booklets, managed source documents, booklet-level Question format, booklet-to-AnswerFile assignment, restart-safe pending independent-MCQ shared-context continuation, Questions, ordered Question regions, persisted Question response type, Answers, ordered Answer regions, historical-to-current mappings, SourceQuestion identity, SharedQuestionContext and ordered shared-context regions.
+Schema version 13 supports Subjects, SyllabusVersions, curriculum hierarchy,
+providers, Exams, Booklets, managed source documents, booklet-level Question
+format, booklet-to-AnswerFile assignment, restart-safe pending independent-MCQ
+shared-context continuation, Questions, ordered Question regions, persisted
+Question response type, Answers, ordered Answer regions, historical-to-current
+mappings, SourceQuestion identity, SharedQuestionContext, ordered shared-context
+regions and Question-specific revision-output exclusions.
 
-Schema version 9 added persisted `ExamBookletQuestionFormat`.
+Schema evolution introduced during Sprint 10:
 
-Schema version 10 added the nullable `ExamBooklet -> AnswerFile` relationship. Several booklets may share one AnswerFile, but each resolved booklet has at most one assigned AnswerFile. Legacy data is migrated conservatively and unresolved relationships are not guessed.
+- **v9** — persisted `ExamBookletQuestionFormat`;
+- **v10** — nullable `exam_booklets.answer_file_id`;
+- **v11** — nullable `exam_booklets.pending_mcq_shared_context_id`;
+- **v12** — `question_output_exclusions(question_id,
+  current_curriculum_node_id)`;
+- **v13** — live physical columns renamed from legacy `preamble_*` terminology
+  to `shared_context_capture_required` and `shared_context_status`.
 
-Schema version 11 added nullable `exam_booklets.pending_mcq_shared_context_id`. The field records only an explicit one-step continuation requested during independent MCQ capture. Existing databases migrate with NULL because legacy data does not establish continuation intent.
+Historical migrations retain their historical column names so old database
+versions remain reproducible and testable.
 
 Conceptually:
 
@@ -69,33 +103,58 @@ Subject
                  -> QuestionResponseType
                  -> ordered QuestionRegion(s)
                  -> optional SharedQuestionContext
+                 -> zero or more output-applicability exclusions
                  -> optional Answer
                       -> text and/or ordered AnswerRegion(s)
 ```
 
-`SourceQuestion` and `SharedQuestionContext` are independent. Independent MCQs may share a SharedQuestionContext without acquiring SourceQuestion multipart identity.
+`SourceQuestion` and `SharedQuestionContext` are independent. Independent MCQs
+may share a SharedQuestionContext without acquiring multipart SourceQuestion
+identity.
 
 ### Curriculum and mapping
 
-Current behaviour supports Unit, Topic, optional Subtopic and Descriptor hierarchies; historical/current syllabus versions; confirmed directional historical-to-current mappings; one-to-many mapping; and provenance-preserving retrieval.
+Current behaviour supports Unit, Topic, optional Subtopic and Descriptor
+hierarchies; historical/current syllabus versions; confirmed directional
+historical-to-current mappings; one-to-many mapping; and provenance-preserving
+retrieval.
 
-Application SQLite mapping-review state is authoritative. The standalone Chemistry mapping workbook remains reference material only.
+Application SQLite mapping-review state is authoritative. The standalone
+Chemistry mapping workbook remains reference material only.
+
+A Question-specific output exclusion is an exception to derived placement, not a
+new mapping. Absence of an exclusion means normal curriculum-derived
+applicability applies. Exclusions are valid only for current Subtopic or
+Descriptor nodes in the same Subject and do not rewrite historical
+classification or curriculum mappings.
 
 ### Curriculum authoring
 
-Curriculum authoring can create and edit Subjects/syllabuses, author hierarchy nodes, preserve managed syllabus-PDF provenance and use `IN_PROGRESS` / `FINAL` lifecycle state.
+Curriculum authoring can create and edit Subjects/syllabuses, author hierarchy
+nodes, preserve managed syllabus-PDF provenance and use `IN_PROGRESS` / `FINAL`
+lifecycle state.
 
-Sprint 10 corrected code-driven hierarchy synchronisation so visible Unit/Topic/Subtopic/Descriptor controls and the `CurriculumSelectionModel` remain consistent when a complete code is entered or shortened.
+Sprint 10 corrected code-driven hierarchy synchronisation so visible
+Unit/Topic/Subtopic/Descriptor controls and the `CurriculumSelectionModel` remain
+consistent when a complete code is entered or shortened.
 
 ### Question capture and correction
 
-Current Question capture supports rendered PDF selection, multiple ordered ordinary regions, question code/marks, Subtopic/Descriptor classification, imported metadata-only Questions, editing/correction, persisted SourceQuestion identity, multipart shared-context capture/reuse, independent-MCQ shared-context capture/reuse, shared-context recapture and asynchronous save work.
+Current Question capture supports rendered PDF selection, multiple ordered
+ordinary regions, question code/marks, Subtopic/Descriptor classification,
+imported metadata-only Questions, editing/correction, persisted SourceQuestion
+identity, multipart shared-context capture/reuse, independent-MCQ shared-context
+capture/reuse, shared-context recapture and asynchronous save work.
 
-Sprint 10 corrected the pending-selection invariant so a visually cancelled PDF selection no longer remains logically owned by Question or Answer capture.
+Sprint 10 corrected the pending-selection invariant so a visually cancelled PDF
+selection no longer remains logically owned by Question or Answer capture.
 
-Successful booklet activation now also clears transient Question code/marks, accepted regions, pending rectangles, transient shared-context state and stale green pending-status text from the previous booklet.
+Successful booklet activation clears transient Question code/marks, accepted
+regions, pending rectangles, transient shared-context state and stale status text
+from the previous booklet.
 
-A workspace-level Working Subject filters Question and Answer capture queues without rewriting persisted Subject, classification or Exam ownership.
+A workspace-level Working Subject filters Question and Answer capture queues
+without rewriting persisted Subject, classification or Exam ownership.
 
 Each ExamBooklet records a Question format:
 
@@ -106,43 +165,51 @@ MIXED
 UNSPECIFIED
 ```
 
-`UNSPECIFIED` is reserved for unresolved legacy data.
-
 For genuinely new Question capture:
 
 - MCQ-only booklets fix response type to Multiple Choice and marks to 1;
-- Written-Response-only booklets fix response type to Written Response while marks remain editable;
-- Mixed booklets permit manual response-type choice and conservative Written Response inference;
+- Written-Response-only booklets fix response type to Written Response while
+  marks remain editable;
+- Mixed booklets permit manual response-type choice and conservative Written
+  Response inference;
+- recognised part-letter suffixes and greater-than-one-mark whole Questions may
+  support Written Response inference in Mixed booklets;
 - one mark alone never implies Multiple Choice;
-- imported, edited and legacy-split Questions retain their persisted response type.
+- imported, edited and legacy-split Questions retain their persisted response
+  type.
 
-For genuinely new independent MCQs, the UI exposes `Shared context with next question`.
+For genuinely new independent MCQs, `Shared context with next question` records
+a booklet-scoped, restart-safe, one-step continuation. Supported numeric
+successors include `5 -> 6`, `Q5 -> Q6` and `Q09 -> Q10`.
 
-When selected on an MCQ that has no inherited context, the application begins automatic Shared Context capture. Saving the Question records that context and a booklet-scoped one-step continuation.
+Continuation is sequence-aware rather than capture-order-aware. An out-of-order
+Question does not inherit or consume pending context. An inherited Question may
+extend the same context one Question further without recapture.
 
-The next supported numeric successor may inherit automatically. Examples include `5 -> 6`, `Q5 -> Q6` and `Q09 -> Q10`.
+Question-code duplication is reported immediately and non-modally before the
+user repeats classification/capture work. Correcting the code preserves accepted
+regions and metadata.
 
-Continuation is sequence-aware rather than capture-order-aware. If Q5 leaves context pending and Q7 is captured first, Q7 does not inherit or consume the Q5 context. Q6 may still inherit it later.
-
-An inherited Question starts with the continuation checkbox clear. Selecting it extends the same context one Question further without recapturing the context. Leaving it clear consumes the continuation when the intended successor is successfully saved.
-
-The pending continuation is restart-safe and booklet-scoped. EDIT and IMPORTED operations do not consume it. Independent MCQ sharing never creates a common SourceQuestion.
-
-Question-code duplication is now reported immediately and non-modally when the entered code already exists in the active booklet. Save is disabled before the user repeats classification/capture work. Correcting the code preserves already accepted regions and metadata.
-
-User-facing capture/correction terminology is now **Shared Context**. Legacy/internal identifiers such as `PreambleStatus`, historical database fields and method names may remain where changing them would add unnecessary migration/refactor risk.
+User-facing and live runtime persistence terminology is now **Shared Context**.
+Historical migration SQL and legacy workbook vocabulary retain `preamble` only
+where required to represent historical/external data accurately.
 
 ### Answer capture and correction
 
-Answer capture supports deterministic source-order unanswered queues, Question marks, multiple ordered written-response regions, MCQ answer letters, persisted Answer correction and asynchronous persistence.
+Answer capture supports deterministic source-order unanswered queues, Question
+marks, multiple ordered written-response regions, MCQ answer letters, persisted
+Answer correction and asynchronous persistence.
 
-Answer PDFs are resolved at ExamBooklet level rather than merely at Exam level. Each booklet may have one assigned AnswerFile, while one AnswerFile may serve several booklets. For example, an MCQ booklet and Paper 1 may share one marking PDF while Paper 2 uses another.
+Answer PDFs are resolved at ExamBooklet level. Each booklet may have zero or one
+assigned AnswerFile, while one AnswerFile may serve several booklets.
 
-When Answer capture moves to a booklet whose AnswerFile is already known, the correct PDF is restored automatically. If the booklet has no assignment, the previous booklet's PDF is cleared and `Choose PDF...` is shown again. Selecting a PDF persists that mapping for later Questions and later application sessions.
+When Answer capture moves to a booklet whose AnswerFile is known, the correct PDF
+is restored automatically. If the booklet has no assignment, the previous
+booklet's PDF is cleared and `Choose PDF...` is shown. Selecting a PDF persists
+that mapping.
 
-Answer persistence rejects one Answer whose regions span multiple AnswerFiles, rejects AnswerFiles belonging to another Exam and rejects regions that conflict with the AnswerFile assigned to the Question's booklet.
-
-The MCQ/Paper 1 shared-answer-file plus Paper 2 separate-answer-file workflow has been manually verified in the real application, including persistence across application restart.
+Persistence rejects cross-Exam assignments, regions that conflict with the
+booklet assignment and one Answer spanning multiple AnswerFiles.
 
 Completeness remains response-type aware:
 
@@ -154,90 +221,163 @@ UNKNOWN -> ordinary Answer capture blocked until resolved
 
 ### Legacy import and correction
 
-Legacy import supports workbook Question metadata, exam/provider/year/booklet reconstruction, historical classification, MCQ letters, metadata-only zero-region Questions, managed source documents, idempotent/conflict-aware persistence, conservative legacy preamble evidence and marking-guide registration.
+Legacy import supports workbook Question metadata, exam/provider/year/booklet
+reconstruction, historical classification, MCQ letters, metadata-only
+zero-region Questions, managed source documents, idempotent/conflict-aware
+persistence, conservative legacy shared-context evidence and marking-guide
+registration.
 
-The legacy split workflow can transactionally convert one imported Question into multipart parts with explicit part metadata, regions, Answer ownership and shared-context options.
+The legacy split workflow can transactionally convert one imported Question into
+multipart parts with explicit part metadata, regions, Answer ownership and
+shared-context options.
 
-User-facing correction dialogs and statuses now use Shared Context terminology while internal historical identifiers may remain.
+Legacy workbook labels may still use `Preamble`; runtime/domain and live-schema
+terminology use Shared Context.
 
 ### Corpus audit and Search
 
-Corpus Audit identifies missing Question source, missing Answer, unresolved shared context and unknown response type. Search Questions supports `Current syllabus` and `All Questions`, deterministic source ordering and stored preview with shared context.
+Corpus Audit identifies missing Question source, missing Answer, unresolved
+shared context and unknown response type.
+
+Search Questions supports `Current syllabus` and `All Questions`, deterministic
+source ordering and stored Question preview.
+
+Sprint 10 Search refinements include:
+
+- a functional minimum dialog width and reliable width/height/X/Y restoration
+  across edit hide/show cycles, including full-height snapped windows;
+- a separate selected-Question classification display rather than conflating
+  stored classification with search filters;
+- inline refinement of a stored Subtopic to one of its child Descriptors, with
+  dirty state, Save, Discard Changes and navigation protection;
+- broader classification changes remaining in `Edit Question`;
+- classification removed from `Edit Metadata`;
+- Edit Question reopening the stored PDF at the saved region and showing a
+  light-grey overlay for the persisted region;
+- a Revision Output Applicability panel with immediate Include/Exclude
+  persistence.
+
+Revision Output Applicability is deliberately independent from the active Search
+filter. Even when Search is narrowed to one Descriptor, the output panel resolves
+the selected Question's complete Subject-wide current applicability and shows all
+current placements.
 
 ### Revision HTML and SCORM
 
-The application builds a deterministic current-curriculum revision corpus and exports a static hierarchical website with rendered assets, marks, provenance, answer disclosure, SourceQuestion grouping and shared-context rendering.
+The application builds a deterministic current-curriculum revision corpus and
+exports a static hierarchical student website with rendered assets, marks,
+provenance, answer disclosure, SourceQuestion grouping and shared-context
+rendering.
 
-Current presentation limitations include global presentation numbering, links to empty curriculum branches, fixed hierarchy presentation and no export-time Unit selection. The subject index currently exposes internal corpus counts that are not the desired student-facing status model.
+Sprint 10 adds:
 
-SCORM 1.2 packages the static revision site as a single-SCO ZIP. A real Chemistry package has been imported into QLearn and launched successfully.
+- export-time grouping by Subtopic or Descriptor;
+- Topic roll-up for curricula whose Topics contain Descriptors directly;
+- preservation of directly Subtopic-classified Questions when Descriptor grouping
+  is used;
+- Multiple Choice before Written Response, with `Other questions` for unresolved
+  renderable material;
+- response-type section headings and navigation where useful;
+- page-local Question numbering beginning at 1 on every generated question page;
+- multipart presentations counted and numbered as one student-facing card;
+- omission of empty Unit/Topic/Subtopic/Descriptor branches and unnecessary
+  files;
+- explicit Unit selection, with all non-empty Units selected by default;
+- identical grouping and Unit-selection options for Revision HTML and SCORM;
+- Question-specific output exclusions applied before placement/statistics/rendering;
+- subject-index status based on student-facing presentation/card count rather
+  than stored Question rows;
+- one export timestamp captured by the export service and rendered consistently,
+  with fixed/injected time used in tests.
+
+SCORM 1.2 packages the same configured static revision site as a single-SCO ZIP.
+A real Chemistry package has previously been imported into QLearn and launched
+successfully.
 
 ### Backup and restore
 
-Current data-safety support includes versioned archives, SQLite-consistent snapshots, manual and automatic backup, bounded retention, validated restore, pre-restore protection, rollback after failed destructive restore, migration-compatibility validation and a restart boundary.
+Current data-safety support includes versioned archives, SQLite-consistent
+snapshots, manual and automatic backup, bounded retention, validated restore,
+pre-restore protection, rollback after failed destructive restore,
+migration-compatibility validation and a restart boundary.
+
+Schema v13 snapshot/migration tests verify that current terminology and prior
+data survive upgrade.
 
 ## Repository governance
 
-Sprint 09 merged to `main` on 20 September 2026 (`2533586`). The protected-main workflow was then tested using pull request #1, resulting in current Sprint 10 starting point `5a1e5a9`. GitHub reports `main` as protected.
+Sprint 09 merged to `main` on 20 September 2026 (`2533586`). Protected-main
+workflow was then tested using pull request #1, producing current `main`
+`5a1e5a9`.
 
-This supersedes earlier documentation that described Sprint 09 merge and main protection as future closeout work.
+Sprint 10 remains on `feature/capture-output`. The final verified implementation
+head is `07b7b337` (`question applicability updated`). GitHub Actions CI run 59
+completed successfully for that head.
+
+Sprint 10 implementation is therefore complete and verified, but the sprint is
+not yet recorded as merged to `main`.
 
 ## Sprint 10 implementation status
 
-Sprint 10 — Capture Hardening and Revision Output Refinement — is documented in `docs/design/sprint-10-capture-output.md` and uses branch `feature/capture-output`.
+All planned Sprint 10 slices are implemented and verified:
 
-Implemented work includes:
-
-1. pending PDF-selection state correction and booklet-transition capture reset;
-2. curriculum selector synchronisation correction;
-3. Working Subject filtering for Question and Answer capture;
-4. persisted booklet-level Question format and response-type capture rules;
+1. pending PDF-selection state correction and booklet-transition reset;
+2. curriculum selector synchronisation;
+3. Working Subject filtering;
+4. persisted booklet Question format and response-type capture rules;
 5. booklet-specific AnswerFile persistence and automatic Answer-PDF switching;
-6. independent-MCQ Shared Context capture, restart-safe continuation, immediate-successor enforcement and continuation consumption/extension;
-7. early duplicate Question-code feedback;
-8. user-facing Shared Context terminology cleanup in the affected capture/correction workflows.
+6. independent-MCQ Shared Context capture and sequence-aware continuation;
+7. Subtopic/Descriptor revision-output grouping;
+8. MCQ-before-written ordering and response-type sections;
+9. page-local numbering;
+10. empty-branch pruning and selected-Unit HTML/SCORM export;
+11. generated-site timestamp and student-facing presentation counts.
 
-Still-planned Sprint 10 work includes:
-
-- Subtopic-versus-Descriptor revision-output grouping;
-- MCQ-before-written ordering;
-- page-local numbering beginning at 1;
-- empty-branch pruning and selected-Unit export;
-- useful generated-site status including generation date/time rather than internal captured-part statistics.
+Additional Sprint 10 work completed during sustained use includes Search
+classification refinement, stored-region edit navigation, Question-specific
+revision-output exclusions, Search dialog geometry hardening and live database
+Shared Context terminology migration.
 
 ## Verification evidence
 
-Current Sprint 10 verification includes:
+Sprint 10 verification includes:
 
-- schema/persistence tests green with latest schema version 11;
-- the previously stale schema-version expectation corrected and passing;
-- focused response-type workflow tests green;
-- focused Answer Capture workflow tests green after booklet-specific AnswerFile changes and SQLite busy-timeout hardening;
-- service tests covering restart-safe and sequence-aware independent-MCQ context continuation green;
-- `WorkflowCaptureTests` and `WorkflowStateEditingTests` green after Slice 5 implementation, follow-up state fixes and Shared Context terminology cleanup;
-- manual real-application verification of shared/separate answer PDFs across multiple booklets;
-- manual real-application verification of Q5/Q6/Q7 Shared Context continuation, restart persistence, different classifications, out-of-sequence protection and booklet-switch reset behaviour.
-
-A broader full-suite/CI run remains appropriate at major Sprint 10 checkpoints and closeout.
+- focused capture, persistence, repository, revision-output, SCORM and Search
+  regression sets;
+- schema v9-v13 migration and malformed-schema coverage;
+- direct populated v12 -> v13 migration verification;
+- TestFX/Xvfb hardening for modal-dialog lifecycle and reusable hidden Dialog
+  nodes;
+- regression coverage for Subject-wide output applicability when Search is
+  narrowed to one Descriptor;
+- manual real-application verification of shared/separate answer PDFs across
+  multiple booklets;
+- manual verification of Q5/Q6/Q7 Shared Context continuation, restart
+  persistence, different classifications, out-of-sequence protection and
+  booklet-switch reset behaviour;
+- local full Maven suite green before final push;
+- GitHub Actions CI success on final feature-branch head `07b7b337`.
 
 ## Active limitations and backlog themes
 
 The authoritative deferred-work inventory is `docs/design/backlog.md`.
 
-Major work deliberately outside Sprint 10 includes multi-page automatic shared-context capture, optional MCQ explanation regions, multipart provenance display simplification, possible response-type section headings, Search-dialog position persistence, empty managed-directory cleanup after successful Exam relocation, Question-level applicability exceptions, multiple original-classification decisions, explicit out-of-scope source disposition, import/reconciliation hardening, future clipboard/image content, Exam Builder, printable assessment output and packaging.
+Major remaining themes include multi-page automatic shared-context capture,
+optional MCQ explanation regions, empty managed-directory cleanup after Exam
+relocation, direct multiple-original-classification decisions, explicit
+out-of-scope source disposition, import/reconciliation hardening, future
+clipboard/image content, broader SQLite-backed export integration, Exam Builder,
+printable assessment output and deployment packaging.
 
 ## Explicit non-current claims
 
 Do **not** describe the following as current application capabilities:
 
-- selectable Subtopic/Descriptor revision grouping;
-- selected-Unit revision export;
-- page-local revision numbering;
-- complete current-generation Exam Builder/assessment assembly;
 - multiple direct original classifications on one Question;
 - automatic multi-page shared-context capture;
-- Question-level mapped-applicability exclusions;
+- explicit reviewed out-of-scope source disposition;
 - clipboard/image-attachment Question capture;
-- current-generation printable assessment assembly;
+- complete current-generation Exam Builder/assessment assembly;
+- current-generation printable assessment/solution assembly;
 - self-contained installer/deployment packaging;
 - safe simultaneous multi-user editing of one shared SQLite database.

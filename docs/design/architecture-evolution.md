@@ -1,8 +1,8 @@
 # Architecture Evolution
 
-> Updated 21 September 2026.  
+> Updated 24 September 2026.  
 > This document records why major design directions changed. It distinguishes
-> implemented architecture from Sprint 10 decisions that remain planned.
+> implemented architecture from deferred/proposed work.
 
 ## 1. Legacy workbook/filesystem application -> relational Question bank
 
@@ -69,9 +69,11 @@ PDFBox ownership.
 
 ## 6. In-memory prototypes -> SQLite repositories/services
 
+**IMPLEMENTED / CURRENT**
+
 Early smoke-test repositories proved vertical slices. Runtime persistence is now
 SQLite with migrations, transactions and reconstruction tests. In-memory
-repositories remain useful for focused tests rather than runtime authority.
+repositories remain focused test tools rather than runtime authority.
 
 ## 7. Current classification overwrite -> historical provenance plus derived applicability
 
@@ -111,10 +113,9 @@ Questions without making those Questions one multipart source question.
 Multipart grouping occurs only after final curriculum placement and only from
 persisted SourceQuestion identity. Shared context alone never groups Questions.
 
-Sprint 10 will expose general capture/reuse of SharedQuestionContext for otherwise
-independent Questions, including MCQs and Questions in different curriculum
-buckets. This is a UI/workflow extension of existing domain semantics, not a new
-persistence model.
+Sprint 10 exposes general SharedQuestionContext capture/reuse for independent
+MCQs. Sequence-aware booklet continuation lets an immediate successor inherit the
+same context without manufacturing SourceQuestion identity.
 
 ## 9. One region -> ordered multi-region content
 
@@ -129,10 +130,10 @@ multipart identity.
 **IMPLEMENTED / CURRENT**
 
 `QuestionResponseType` remains persisted on each Question because mixed-response
-booklets require per-Question semantics and Answer completeness depends on the
-actual Question type.
+booklets require per-Question semantics and Answer completeness depends on actual
+Question type.
 
-Sprint 10 additionally introduced persisted `ExamBookletQuestionFormat`:
+Sprint 10 introduced persisted `ExamBookletQuestionFormat`:
 
 ```text
 MULTIPLE_CHOICE
@@ -140,9 +141,6 @@ WRITTEN_RESPONSE
 MIXED
 UNSPECIFIED
 ```
-
-This metadata controls genuinely new Question capture without replacing
-Question-level response type.
 
 The resulting rules are:
 
@@ -152,11 +150,11 @@ The resulting rules are:
 - Mixed booklets permit manual response-type selection and conservative Written
   Response inference;
 - one mark alone never implies Multiple Choice;
-- existing/imported/editing Questions retain their persisted response type;
+- existing/imported/editing Questions retain persisted response type;
 - `UNSPECIFIED` is retained for unresolved legacy booklet metadata.
 
-Reason: booklet format is a real source-document property, but it must not be
-used to rewrite the identity of existing individual Questions.
+Reason: booklet format is a real source-document property, but it must not
+rewrite individual Question identity.
 
 ## 11. Blocking UI operations -> asynchronous persistence and stale-request protection
 
@@ -166,10 +164,12 @@ Search, Question/Answer persistence and relevant PDF transitions use background
 work with JavaFX completion handling. Stale/lifecycle protection prevents older
 work from overwriting newer UI state.
 
-SQLite connections now also use a bounded busy timeout. JavaFX reads and
-background persistence can legitimately overlap briefly; ordinary short-lived
-write locks should therefore wait rather than immediately surface as
-`SQLITE_BUSY`.
+SQLite connections use a bounded busy timeout because JavaFX reads and
+background persistence can legitimately overlap briefly.
+
+Sprint 10 additionally hardened TestFX lifecycle handling around modal
+`showAndWait()` dialogs and reusable hidden Dialog nodes so CI under Xvfb tests
+actual showing windows rather than stale retained controls.
 
 ## 12. Shared PDF rectangle -> explicit capture-selection ownership
 
@@ -184,20 +184,20 @@ one workflow does not silently clear another workflow's pending selection.
 
 **IMPLEMENTED / CURRENT**
 
-Visible rectangle state and logical pending-selection state are treated as one
-coherent interaction state. A user action that visually cancels a pending
-rectangle also clears the owning workflow's logical selection. Programmatic
-visual cleanup does not create callback loops.
+Visible rectangle state and logical pending-selection state are one coherent
+interaction state. A user action that visually cancels a pending rectangle also
+clears the owning workflow's logical selection. Programmatic visual cleanup does
+not create callback loops.
 
 ## 13. Independent per-pane subject context -> workspace Working Subject
 
 **IMPLEMENTED / CURRENT**
 
-Question and Answer capture use one working Subject context so sustained
-Chemistry capture does not surface unrelated Engineering work.
+Question and Answer capture use one Working Subject context so sustained
+Chemistry capture does not surface unrelated work.
 
-The Working Subject is a transient UI filter/default. It does not rewrite stored
-Question Subject, classification, Exam ownership or global Search/Audit scope.
+The Working Subject is transient UI state. It does not rewrite stored Question
+Subject, classification, Exam ownership or global Search/Audit scope.
 
 ## 14. Flat capture UI growth -> focused feature packages/panes
 
@@ -234,58 +234,59 @@ data safety
 This allowed real student revision output to exercise the bank before rebuilding
 the full assessment-authoring pipeline.
 
-## 16. Static revision output: fixed corpus traversal -> configurable presentation
+## 16. Static revision output: fixed traversal -> configurable presentation
 
-### Current implementation
+### Earlier
 
-**IMPLEMENTED**
+The revision corpus preserved current curriculum structure, while presentation
+used a largely fixed traversal and global numbering. Empty branches and
+student-irrelevant internal counts could leak into the generated site.
 
-The revision corpus preserves current curriculum structure and placements.
-`RevisionPresentationPlanner` groups SourceQuestion members within a final bucket
-and currently assigns one global presentation-number sequence. The renderer
-currently creates pages/links for the full curriculum traversal.
+### Current
 
-### Sprint 10 direction
-
-**DECIDED / PLANNED**
+**IMPLEMENTED / CURRENT**
 
 Presentation configuration is separate from persisted curriculum semantics:
 
 - choose Subtopic or Descriptor grouping at export time;
-- roll Descriptor-classified Questions upward for Subtopic-mode presentation;
-- order MCQ before written-response presentations;
+- roll Descriptor-classified Questions upward for Subtopic presentation;
+- retain directly Subtopic-classified Questions under Descriptor grouping;
+- order Multiple Choice before Written Response, with an Other section for
+  unresolved renderable material;
+- use explicit response-type sections/navigation where useful;
 - number Questions locally per generated question page;
-- omit empty navigation branches by default;
-- export all non-empty or selected Units;
-- show generation metadata rather than internal capture-part statistics.
+- omit empty navigation branches and unnecessary pages;
+- export all non-empty Units by default or an explicit Unit subset;
+- use the same grouping/Unit scope for HTML and SCORM;
+- show student-facing card counts and generation metadata.
 
-No output choice rewrites Question classification or mapping data.
+No presentation choice rewrites Question classification or mapping data.
 
 ## 17. Global generated numbering -> page-local student numbering
 
-**DECIDED / SPRINT 10 PLANNED**
+**IMPLEMENTED / CURRENT**
 
 A student-facing Question number is presentation state for one generated page,
-not durable Question identity and not a corpus-wide invariant. Each generated
-question page therefore begins at Question 1. Multipart members presented as one
-card retain one displayed number.
+not durable Question identity and not a corpus-wide invariant.
 
-Source Question code remains provenance and is unaffected.
+Every generated question page starts at Question 1. Multipart members presented
+as one card retain one displayed number. Source Question code remains provenance.
 
 ## 18. Byte-deterministic export -> explicit generation metadata
 
+### Earlier
+
+The revision pipeline was deterministic for a fixed corpus/request but had no
+explicit generation time.
+
 ### Current
 
-The existing revision pipeline is deterministic for a fixed corpus/request.
+**IMPLEMENTED / CURRENT**
 
-### Sprint 10
-
-**DECIDED / PLANNED**
-
-The student site should record when it was generated. Generation timestamp is
-therefore intentional output metadata. Tests should inject/fix the export time so
-rendering remains deterministic for a fixed request/time rather than depending
-on the test machine clock.
+The student site records one export generation timestamp. `RevisionExportService`
+captures it once and passes it to rendering. Tests use a fixed/injected `Clock`
+or explicit generated time, so deterministic test output does not depend on wall
+clock time.
 
 Internal stored-part/capture counts are not student-facing output semantics.
 
@@ -293,12 +294,13 @@ Internal stored-part/capture counts are not student-facing output semantics.
 
 **IMPLEMENTED / CURRENT**
 
-SCORM 1.2 packages the static revision site rather than implementing separate
-Question grouping rules. Authoritative source PDFs are not normally copied into
+SCORM 1.2 packages the configured static revision site rather than implementing
+separate grouping rules. Authoritative source PDFs are not normally copied into
 the package.
 
-Any later SCORM option parity should reuse the same presentation configuration
-rather than fork output semantics.
+Sprint 10 gives Revision HTML and SCORM matching grouping and selected-Unit
+configuration, preserving one presentation system rather than two diverging
+ones.
 
 ## 20. Local desktop -> future deployment choices
 
@@ -321,27 +323,14 @@ attachments, but it must extend rather than weaken PDF provenance.
 
 ## 22. Exam-wide Answer PDF reuse -> booklet-specific AnswerFile assignment
 
-**IMPLEMENTED / SPRINT 10**
+**IMPLEMENTED / CURRENT**
 
 Real examinations may contain several question booklets and several answer
-documents. The relationship is not one AnswerFile per Exam and is not multiple
-AnswerFiles per individual booklet.
-
-The persisted relationship is:
+documents. The persisted relationship is:
 
 ```text
 ExamBooklet -> zero or one AnswerFile
 AnswerFile  -> zero or many ExamBooklets
-```
-
-For example:
-
-```text
-MCQ booklet ──┐
-              ├── Answers A
-Paper 1 ──────┘
-
-Paper 2 ───────── Answers B
 ```
 
 Schema version 10 adds nullable `exam_booklets.answer_file_id`. Null represents
@@ -349,18 +338,96 @@ an unresolved legacy or not-yet-selected relationship rather than an inferred
 default.
 
 Answer Capture resolves the PDF from the active Question's ExamBooklet. A mapped
-booklet automatically restores its AnswerFile. An unmapped booklet clears any
-previous booklet's file and presents `Choose PDF...`; selecting a PDF persists
-the mapping.
+booklet automatically restores its AnswerFile. An unmapped booklet clears the
+previous file and presents `Choose PDF...`; selecting a PDF persists the mapping.
 
-The persistence layer enforces the corresponding domain rules:
+Persistence enforces same-Exam ownership and prevents one Answer from spanning
+multiple AnswerFiles.
 
-- several booklets may share one AnswerFile;
-- an AnswerFile assigned to a booklet must belong to the same Exam;
-- one Answer cannot contain regions from multiple AnswerFiles;
-- Answer regions cannot contradict the booklet's assigned AnswerFile;
-- legacy mappings are backfilled only when existing regions establish one
-  unambiguous AnswerFile.
+This supersedes the earlier exam-wide heuristic.
 
-This supersedes the earlier exam-wide heuristic that reused a registered answer
-PDF whenever the next Question belonged to the same Exam.
+## 23. Mapping-only applicability -> mapping plus Question-specific output exceptions
+
+### Earlier
+
+A Question inherited every current placement derived from direct current
+classification or confirmed historical mapping. There was no way to preserve a
+valid mapping while suppressing one exceptional historical Question.
+
+### Current
+
+**IMPLEMENTED / CURRENT**
+
+Schema version 12 adds:
+
+```text
+question_output_exclusions (
+    question_id,
+    current_curriculum_node_id
+)
+```
+
+Absence of a row means normal derived applicability. A row suppresses only that
+Question/current-node placement.
+
+Exclusions are valid only for current Subtopic or Descriptor nodes in the same
+Subject. They do not rewrite historical classification or curriculum mapping.
+
+The revision corpus applies exclusions before placement/statistics/rendering.
+
+Search exposes Include/Exclude controls, but the output-applicability panel does
+not reuse the active Search filter as its truth source. It resolves the selected
+Question's complete Subject-wide current applicability, so a narrow Descriptor
+search cannot hide another valid output placement.
+
+Reason: "why this Search matched" and "where this Question may appear in revision
+output" are related but different concepts.
+
+## 24. Mixed legacy/live preamble terminology -> Shared Context live schema
+
+### Earlier
+
+Domain/UI wording had moved to Shared Context while live physical database
+columns still used historical `preamble_*` names.
+
+### Current
+
+**IMPLEMENTED / CURRENT**
+
+Schema version 13 physically renames:
+
+```text
+questions.preamble_capture_required
+    -> questions.shared_context_capture_required
+
+source_questions.preamble_status
+    -> source_questions.shared_context_status
+```
+
+Runtime SQL uses the new names. Historical migration files and historical-schema
+tests keep the old names because they must still describe genuine earlier
+versions. Legacy workbook vocabulary may also retain `Preamble` where that is the
+external source term.
+
+Reason: current runtime terminology should agree across UI, domain and live
+persistence without falsifying historical schemas.
+
+## 25. Generic metadata correction -> separated Search classification and Question editing responsibilities
+
+**IMPLEMENTED / CURRENT**
+
+Search now shows the selected Question's stored classification path separately
+from the active Search filters.
+
+A stored Subtopic may be refined inline to one child Descriptor with explicit
+dirty state and Save/Discard/Cancel navigation behaviour. Broader
+reclassification remains the responsibility of `Edit Question`.
+
+`Edit Metadata` no longer contains classification controls.
+
+When Search transfers to Edit Question, the Question PDF restores the saved
+location and displays the persisted region with a light-grey overlay.
+
+Reason: classification and source-region correction are substantive Question
+editing concerns; general metadata correction should not become an ambiguous
+second path for changing them.

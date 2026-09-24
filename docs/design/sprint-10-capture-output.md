@@ -1,19 +1,25 @@
 # Sprint 10 — Capture Hardening and Revision Output Refinement
 
-> **Status:** IMPLEMENTATION IN PROGRESS  
+> **Status:** IMPLEMENTATION COMPLETE / VERIFIED ON FEATURE BRANCH  
 > **Start date:** 20 September 2026  
-> **Status updated:** 22 September 2026  
+> **Implementation closeout:** 24 September 2026  
 > **Branch:** `feature/capture-output`  
-> **Starting `main`:** `5a1e5a9`
+> **Starting `main`:** `5a1e5a9`  
+> **Verified branch head:** `07b7b337` (`question applicability updated`)  
+> **CI:** GitHub Actions run 59 successful  
+> **Merge state:** pending protected-main merge
 
 ## 1. Purpose
 
-Sprint 10 combines two closely related kinds of work exposed by real use of the bank:
+Sprint 10 combined two kinds of work exposed by sustained real use of the bank:
 
-1. repair capture-state/UI defects that make sustained Question capture unreliable; and
-2. refine the existing revision HTML output so it reflects how the generated resource is actually intended to be used by students.
+1. harden capture, correction and Search state so ordinary teacher workflows are
+   reliable; and
+2. refine revision HTML/SCORM presentation so generated resources match the
+   intended student experience.
 
-The sprint does not rebuild retrieval, persistence or the revision corpus from scratch. It extends existing architecture established in Sprints 05–09.
+The sprint extended architecture established in Sprints 05–09 rather than
+rebuilding retrieval, persistence or corpus generation.
 
 ## 2. Starting point and schema evolution
 
@@ -23,147 +29,16 @@ At Sprint 10 start:
 - protected-main workflow had been exercised through PR #1;
 - current `main` was `5a1e5a9`;
 - SQLite schema version was 8;
-- SourceQuestion and SharedQuestionContext were already separate persisted concepts;
-- revision corpus, presentation planning and static HTML export already existed;
+- SourceQuestion and SharedQuestionContext were separate persisted concepts;
+- revision corpus, presentation planning, HTML export and SCORM packaging existed;
 - QuestionResponseType was persisted on each Question;
-- Question and Answer capture already shared explicit PDF-selection ownership.
+- Question and Answer capture used explicit PDF-selection ownership.
 
-The sprint began with no expected schema migration. Implementation subsequently proved that three persisted relationships or hints were required.
+Sprint 10 introduced five schema versions:
 
-Schema version 9 added booklet-level Question format so MCQ-only, Written-Response-only and Mixed booklets can drive new-Question capture without guessing from individual Questions.
+### Version 9 — booklet Question format
 
-Schema version 10 added nullable booklet-to-AnswerFile assignment. This supports exams where several question booklets may share one answer PDF while another booklet uses a different answer PDF. Existing data is migrated conservatively; relationships are not invented where legacy evidence is ambiguous.
-
-Schema version 11 added nullable `exam_booklets.pending_mcq_shared_context_id`. This records only the restart-safe intent that one independent MCQ shared context should be offered to the immediate successor Question in the same booklet. Existing databases migrate with no pending continuation because legacy data does not establish such intent.
-
-The latest supported SQLite schema version is therefore **11**.
-
-## 3. Sprint goals
-
-Sprint 10 must:
-
-- make pending PDF-selection state internally consistent;
-- make curriculum code entry and hierarchy controls display the same path;
-- allow capture work to be focused on one working Subject;
-- remove repetitive response-type selection where Question metadata or booklet format makes the normal answer type clear;
-- support correct answer-PDF selection across exams containing multiple question booklets and multiple answer documents;
-- expose existing shared-context semantics for independent Questions/MCQs without manufacturing multipart identity;
-- make revision HTML grouping, ordering, numbering and navigation match the intended student resource;
-- replace internal capture-count status with useful generated-resource metadata.
-
-## 4. Cross-cutting design rules
-
-### Persisted identity is not presentation state
-
-Question IDs, source Question codes, curriculum classification and mappings are not rewritten to obtain nicer HTML grouping or numbering.
-
-### Shared context is not multipart identity
-
-Questions may share one SharedQuestionContext without sharing a SourceQuestion. The UI must not manufacture multipart identity merely to support a shared MCQ stimulus.
-
-### Independent MCQ continuation is explicit and one-step
-
-`Shared context with next question` records a one-Question continuation. It is booklet-scoped, restart-safe and sequence-aware. It is not inferred merely because the preceding Question has shared context.
-
-### A shared context may cross output buckets
-
-Two independent Questions may use the same stimulus while belonging to different Subtopics/Descriptors. Each retains its own classification. Output repeats the shared context wherever required to make a question understandable; it may be suppressed only when the same context is already immediately applicable within the same generated page/group.
-
-### Visual selection and logical selection are one user interaction
-
-If the PDF no longer displays a pending rectangle because the user cancelled it, the owning capture workflow must not continue to report a pending selection.
-
-A successful booklet change must also clear transient Question metadata, accepted regions, pending rectangles and capture-status text from the previous booklet.
-
-### Booklet format and Question response type have different roles
-
-Booklet format constrains/defaults genuinely new capture. Persisted QuestionResponseType remains authoritative for existing/imported/editing Questions.
-
-### AnswerFile assignment belongs to the ExamBooklet
-
-A Question uses the AnswerFile assigned to its ExamBooklet. Several booklets may share one AnswerFile, but one booklet does not span several answer documents.
-
-### Export configuration is transient
-
-Grouping depth, selected Units, question numbering and generated timestamp are properties of one export, not Question-bank persistence.
-
-## 5. Slice 1 — capture-selection state regression
-
-### Status
-
-**IMPLEMENTED / VERIFIED**
-
-### Problem
-
-After selecting a valid PDF region, an ordinary click could make the visible selection rectangle disappear because the new rectangle was below the minimum size. The application-level CaptureSelectionState and Question/Answer capture pane could nevertheless retain the old pending selection.
-
-### Implemented behaviour
-
-- A user action that visually cancels the current pending PDF selection also clears its logical owner and pane-local pending selection.
-- Add/Clear controls become disabled when no compatible selection exists.
-- Programmatic clearing initiated by the owning workflow does not recurse through the cancellation callback.
-- Anchored/double-click shared-context selection behaviour remains intact.
-- Successful activation of another booklet resets ordinary Question capture state so regions or pending selections from the old booklet cannot leak into the new one.
-- Booklet activation also clears the stale green pending/saved status text associated with the previous capture state.
-
-Regression coverage reproduces valid region -> ordinary PDF click -> visible rectangle gone -> no logical pending selection, and booklet A capture state -> booklet B -> no retained Question capture state.
-
-## 6. Slice 2 — curriculum selector synchronisation
-
-### Status
-
-**IMPLEMENTED / VERIFIED**
-
-### Problem
-
-Real use demonstrated both:
-
-- a complete code could resolve Unit/Topic/Subtopic/Descriptor while the visible Topic ComboBox appeared blank; and
-- after entering a complete code, replacing it with only the Unit could select or redisplay the previous Topic.
-
-### Implemented behaviour
-
-For code-driven hierarchy transitions, visible ComboBox values and the CurriculumSelectionModel now agree.
-
-Examples:
-
-```text
-3.1.1.1 -> Unit 3 / Topic 3.1 / Subtopic 3.1.1 / Descriptor 3.1.1.1
-3       -> Unit 3 / Topic empty / Subtopic empty / Descriptor empty
-```
-
-UI regression tests assert actual ComboBox values for complete-code entry, progressive editing, shortening back to Unit and restoring existing Question classification.
-
-## 7. Slice 3 — Working Subject capture filter
-
-### Status
-
-**IMPLEMENTED / VERIFIED**
-
-### Purpose
-
-Allow sustained work on Chemistry without unrelated Engineering Questions or Answers appearing in capture queues.
-
-### Implemented design
-
-One workspace-level **Working Subject** selector is used in the capture workspace. It is transient UI state, not persisted metadata.
-
-The selected Subject filters at least:
-
-- imported/pending Question capture choices; and
-- unanswered Answer capture choices.
-
-New Question classification remains consistent with the active Working Subject. Changing the Working Subject respects pending-selection/accepted-region transition guards so data is not silently discarded.
-
-Search Questions, Corpus Audit and other bank-wide administrative tools retain their own explicit Subject/scope controls and are not silently restricted by the Working Subject.
-
-## 8. Slice 4 — response-type defaults and booklet format
-
-### Status
-
-**IMPLEMENTED / VERIFIED**
-
-Each new ExamBooklet records one of:
+Persisted `ExamBookletQuestionFormat`:
 
 ```text
 MULTIPLE_CHOICE
@@ -172,21 +47,208 @@ MIXED
 UNSPECIFIED
 ```
 
-`UNSPECIFIED` exists only for unresolved legacy data.
+Existing rows migrate to `UNSPECIFIED` rather than inventing format.
 
-For genuinely new Question capture:
+### Version 10 — booklet-specific AnswerFile
 
-- an MCQ booklet fixes response type to Multiple Choice and marks to exactly 1;
-- a Written Response booklet fixes response type to Written Response while marks remain editable;
-- a Mixed booklet permits manual response-type selection and conservative Written Response inference;
-- a recognised part-letter suffix may infer Written Response in a Mixed booklet;
-- a whole-number Question worth more than one mark may infer Written Response in a Mixed booklet;
+Added nullable `exam_booklets.answer_file_id`.
+
+```text
+one ExamBooklet -> zero or one AnswerFile
+one AnswerFile  -> zero or many ExamBooklets
+```
+
+Legacy relationships are backfilled only when existing region evidence is
+unambiguous.
+
+### Version 11 — restart-safe independent-MCQ continuation
+
+Added nullable `exam_booklets.pending_mcq_shared_context_id`.
+
+It stores explicit one-step continuation intent only. Existing databases migrate
+with no pending continuation.
+
+### Version 12 — Question-specific output exclusions
+
+Added:
+
+```text
+question_output_exclusions (
+    question_id,
+    current_curriculum_node_id
+)
+```
+
+No exclusion row means normal curriculum-derived applicability. A row suppresses
+one Question/current-node placement without modifying classification or mapping.
+
+### Version 13 — Shared Context physical terminology
+
+Renamed live columns:
+
+```text
+questions.preamble_capture_required
+    -> questions.shared_context_capture_required
+
+source_questions.preamble_status
+    -> source_questions.shared_context_status
+```
+
+Historical migrations and historical-schema tests retain old names because they
+must still represent genuine earlier versions.
+
+The latest supported SQLite schema version is **13**.
+
+## 3. Sprint goals and final result
+
+Sprint 10 goals were to:
+
+- make pending PDF-selection state internally consistent;
+- synchronise curriculum code entry with visible hierarchy controls;
+- allow capture work to focus on one Working Subject;
+- reduce repetitive response-type selection through explicit booklet semantics;
+- support correct Answer PDF selection across multi-booklet exams;
+- expose shared-context semantics for independent Questions/MCQs;
+- make revision grouping, ordering, numbering and navigation student-facing;
+- replace internal corpus/capture counts with useful generated-resource metadata.
+
+All of those goals are implemented and verified.
+
+Sustained use also promoted additional work into Sprint 10:
+
+- Search classification display and Descriptor refinement;
+- Search dialog geometry persistence/minimum width;
+- stored-region visual navigation when editing a Question;
+- Question-specific revision-output Include/Exclude controls;
+- live persistence terminology alignment to Shared Context.
+
+## 4. Cross-cutting design rules
+
+### Persisted identity is not presentation state
+
+Question IDs, source Question codes, curriculum classification and mappings are
+not rewritten to obtain nicer HTML grouping or numbering.
+
+### Shared context is not multipart identity
+
+Questions may share one SharedQuestionContext without sharing a SourceQuestion.
+The UI does not manufacture multipart identity merely to support a shared MCQ
+stimulus.
+
+### Independent MCQ continuation is explicit and one-step
+
+`Shared context with next question` records a one-Question continuation. It is
+booklet-scoped, restart-safe and sequence-aware.
+
+### A shared context may cross output buckets
+
+Independent Questions using one context may belong to different
+Subtopics/Descriptors. Each retains independent classification. Output repeats
+context where needed for the Question to remain understandable.
+
+### Visual selection and logical selection are one interaction
+
+If the visible pending PDF rectangle is cancelled, the owning workflow's logical
+pending selection is cancelled too.
+
+Booklet changes also clear transient metadata, accepted/pending regions and stale
+capture status from the previous booklet.
+
+### Booklet format and Question response type have different roles
+
+Booklet format constrains/defaults genuinely new capture. Persisted
+QuestionResponseType remains authoritative for existing/imported/editing
+Questions.
+
+### AnswerFile assignment belongs to the ExamBooklet
+
+A Question uses the AnswerFile assigned to its ExamBooklet. Several booklets may
+share one AnswerFile, but one booklet does not span several answer documents.
+
+### Export configuration is transient
+
+Grouping depth, selected Units, question numbering and generated timestamp are
+properties of one export, not Question-bank persistence.
+
+### Search-match applicability is not output applicability
+
+A Search result's current applicability explains why it matched the active
+Search scope. Revision-output applicability must instead show the selected
+Question's complete Subject-wide current placements.
+
+## 5. Slice 1 — capture-selection state regression
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+A user action that visually cancels the current pending PDF selection also clears
+its logical owner and pane-local pending selection.
+
+Add/Clear controls become disabled when no compatible selection exists.
+Programmatic cleanup avoids callback recursion.
+
+Successful activation of another booklet resets Question code/marks, accepted
+regions, pending rectangles, transient shared-context state and stale status
+text.
+
+Regression coverage reproduces valid region -> ordinary PDF click -> no visible
+rectangle -> no logical pending selection.
+
+## 6. Slice 2 — curriculum selector synchronisation
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+Code-driven hierarchy transitions keep visible ComboBox state and the
+`CurriculumSelectionModel` aligned.
+
+Examples:
+
+```text
+3.1.1.1 -> Unit 3 / Topic 3.1 / Subtopic 3.1.1 / Descriptor 3.1.1.1
+3       -> Unit 3 / Topic empty / Subtopic empty / Descriptor empty
+```
+
+Regression tests cover complete-code entry, progressive editing, shortening back
+to Unit and restoring existing Question classification.
+
+## 7. Slice 3 — Working Subject capture filter
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+One workspace-level **Working Subject** selector filters imported/pending
+Question choices and unanswered Answer choices.
+
+The value is transient UI state. It does not rewrite persisted Subject,
+classification or Exam ownership.
+
+Changing Working Subject respects pending-selection and accepted-region guards.
+
+Search Questions, Corpus Audit and other bank-wide tools retain their own scope.
+
+## 8. Slice 4 — response-type defaults and booklet format
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+For genuinely new capture:
+
+- MCQ booklets fix response type to Multiple Choice and marks to 1;
+- Written Response booklets fix response type to Written Response while marks
+  remain editable;
+- Mixed booklets allow manual response type and conservative Written Response
+  inference;
+- recognised part-letter suffixes and greater-than-one-mark whole Questions may
+  support Written Response inference in Mixed booklets;
 - one mark alone never implies Multiple Choice;
-- imported, edited and legacy-split Questions retain their persisted response type.
+- imported, edited and legacy-split Questions retain persisted response type.
 
-Schema version 9 persists the booklet format. Existing rows migrate to `UNSPECIFIED`, not `MIXED`, because legacy data does not justify inventing a format.
-
-The MCQ invariant is enforced below the UI: an explicitly Multiple Choice Question must have exactly one mark.
+The MCQ one-mark invariant is enforced below the UI.
 
 ## 8A. Additional capture hardening — multiple answer PDFs
 
@@ -194,44 +256,21 @@ The MCQ invariant is enforced below the UI: an explicitly Multiple Choice Questi
 
 **IMPLEMENTED / VERIFIED**
 
-Real use established the following AnswerFile cardinality:
+Answer Capture resolves AnswerFile from the Question's ExamBooklet.
 
-```text
-one ExamBooklet -> zero or one assigned AnswerFile
-one AnswerFile  -> zero or many ExamBooklets
-```
+Behaviour:
 
-A Question therefore obtains its answer document from its ExamBooklet.
+- mapped booklet -> restore assigned AnswerFile automatically;
+- several booklets may share one AnswerFile;
+- different booklet assignment -> switch automatically;
+- unmapped booklet -> clear previous file and show `Choose PDF...`;
+- choosing a PDF persists the booklet assignment.
 
-A valid real-world arrangement is:
+Persistence rejects cross-Exam assignment, conflicting regions and one Answer
+spanning multiple files.
 
-```text
-MCQ booklet ──┐
-              ├── Answers A
-Paper 1 ──────┘
-
-Paper 2 ───────── Answers B
-```
-
-Answer Capture behaviour is:
-
-- when the current booklet has an assigned AnswerFile, restore it automatically;
-- when two booklets share an AnswerFile, reuse that file;
-- when the next booklet has a different assigned AnswerFile, switch automatically;
-- when the next booklet has no assignment, clear the previous file and show `Choose PDF...`;
-- selecting a PDF persists that booklet assignment for future Questions and later application sessions.
-
-One Answer may never span multiple answer documents.
-
-Schema version 10 persists this relationship in `exam_booklets.answer_file_id`. Existing region data is used for migration only when it establishes one unambiguous mapping.
-
-Persistence also rejects:
-
-- an AnswerFile assignment from another Exam;
-- regions from a different file than the booklet assignment;
-- one Answer containing regions from more than one AnswerFile.
-
-The MCQ/Paper 1 shared-answer plus Paper 2 separate-answer workflow has been verified manually in the real application, including restart persistence.
+The MCQ/Paper 1 shared-answer plus Paper 2 separate-answer workflow was manually
+verified, including restart persistence.
 
 ## 9. Slice 5 — shared context for independent Questions and MCQs
 
@@ -239,57 +278,19 @@ The MCQ/Paper 1 shared-answer plus Paper 2 separate-answer workflow has been ver
 
 **IMPLEMENTED / VERIFIED**
 
-### Requirement
-
-The normal capture UI must allow independently classified MCQs to share one SharedQuestionContext without creating a SourceQuestion multipart identity.
-
-Example:
-
-```text
-Shared stimulus
-  -> MCQ 5 -> Subtopic A
-  -> MCQ 6 -> Subtopic B
-```
-
-MCQ 5 and MCQ 6 remain independent Questions and retain independent curriculum classification.
-
-### Implemented capture workflow
-
-For a genuinely new independent MCQ, the normal Question capture UI exposes:
+For a genuinely new independent MCQ, the capture UI exposes:
 
 ```text
 Shared context with next question
 ```
 
-The checkbox is clear by default.
+If no context is inherited, selecting it begins automatic shared-context
+capture. One context region is sufficient in Sprint 10.
 
-If the current MCQ has no inherited context:
+Saving records the context and a booklet-scoped continuation for the supported
+immediate numeric successor.
 
-- selecting the checkbox immediately begins automatic shared-context capture;
-- one captured context region is sufficient for Sprint 10;
-- no separate New/Reuse selector, label prompt, confirmation dialog or context picker is required;
-- saving the Question stores the context and persists a booklet-scoped continuation for the immediate successor.
-
-If the current MCQ inherited context from the previous Question:
-
-- the checkbox begins clear;
-- the context is applied automatically only when the typed Question code is the immediate supported successor;
-- selecting the checkbox extends the same context to one further Question without recapturing it.
-
-For example:
-
-```text
-Q5 tick -> capture context -> save Q5
-Q6 inherits -> tick -> save Q6
-Q7 inherits -> leave unticked -> save Q7
-Q8 does not inherit
-```
-
-### Sequence-aware continuation
-
-The continuation is deliberately not a generic “next thing captured” flag.
-
-Supported automatic succession is conservative numeric succession such as:
+Examples:
 
 ```text
 5   -> 6
@@ -297,69 +298,103 @@ Q5  -> Q6
 Q09 -> Q10
 ```
 
-If Q5 has a pending continuation and Q7 is captured before Q6:
+If Q5 leaves continuation pending and Q7 is captured first, Q7 neither inherits
+nor consumes the Q5 context. Q6 may still inherit later.
 
-- Q7 does not inherit the Q5 context;
-- Q7 does not consume the pending continuation;
-- Q6 may still be captured later and receive the context.
+An inherited Question starts with continuation clear. Selecting it extends the
+same context one more Question without recapture; leaving it clear consumes the
+continuation when the intended successor saves successfully.
 
-Unusual codes whose sequence cannot be established conservatively do not receive automatic continuation by guesswork.
+Independent MCQs sharing context never acquire a common SourceQuestion.
 
-### Restart and booklet semantics
+Early duplicate Question-code feedback was also added. Duplicate detection
+disables Save without discarding accepted regions/metadata.
 
-Schema version 11 adds nullable `exam_booklets.pending_mcq_shared_context_id`.
+## 9A. Search and Question-editing hardening
 
-This provides restart-safe intent:
+### Status
 
-- save Q5 with continuation;
-- close the application;
-- reopen the same booklet;
-- Q6 can still inherit the same context.
+**IMPLEMENTED / VERIFIED**
 
-The continuation is booklet-scoped. Another booklet cannot consume it. EDIT and IMPORTED operations do not consume it. Transient mode/booklet changes clear unsaved checkbox/capture state but do not erase a legitimate persisted continuation belonging to the previous booklet.
+Search Questions gained a clearer separation between search filters and selected
+Question state.
 
-### Identity and persistence rules
+Implemented behaviour includes:
 
-Independent MCQs sharing context never create a common SourceQuestion.
+- functional minimum width of 900;
+- resized width/height persistence across hide/show;
+- X/Y restoration across hide/show, including full-height snapped placement;
+- non-shrinking selector labels;
+- a selected-Question classification section independent of Search filters;
+- read-only stored Unit/Topic/Subtopic and existing Descriptor display;
+- optional child-Descriptor selection when stored classification is a Subtopic;
+- dirty-state tracking and a separate inline `Save`;
+- Save / Discard Changes / Cancel protection when navigating away dirty;
+- broader classification correction delegated to `Edit Question`;
+- Classification removed from `Edit Metadata`.
 
-`SourceQuestion` remains the multipart source identity used by cases such as `21a`, `21b`. SharedQuestionContext remains independently reusable.
+Search -> Edit Question transfers to the non-modal editor. The editor restores
+the saved PDF position and displays the stored region with a light-grey overlay.
+PDF lifecycle handling closes editor-owned PDFs after Save or Cancel without
+breaking sustained capture workflows.
 
-The service layer enforces the sequence-aware continuation rule so an out-of-sequence Question cannot accidentally inherit or consume context even if UI behaviour changes later.
+## 9B. Question-specific revision-output applicability
 
-### Additional capture hardening completed with Slice 5
+### Status
 
-- Entering a Question code that already exists in the active booklet now produces immediate non-modal feedback before the user repeats classification and region capture work.
-- Duplicate detection disables Save while preserving already accepted regions and metadata so correcting the code does not lose work.
-- Switching booklets clears stale Question metadata, accepted/pending regions and the green pending-status message.
-- User-facing capture/correction wording has been standardised on **Shared Context**. Historical/internal identifiers such as `PreambleStatus`, legacy database fields and existing method names may remain where renaming would add migration/refactor risk without user benefit.
+**IMPLEMENTED / VERIFIED**
 
-### Verification
+Schema v12 and `QuestionOutputApplicabilityRepository` persist explicit
+Question/current-node exclusions.
 
-Automated coverage verifies:
+Rules:
 
-- independent MCQs share one context while remaining independent Questions;
-- the context survives application restart intent through booklet persistence;
-- continuation does not leak across booklets;
-- failed continuation persistence rolls back atomically;
-- Q5 -> Q7 does not inherit or consume a Q5 continuation, while Q5 -> Q6 does;
-- Q6 may extend the same context to Q7 without recapture;
-- Q7 may consume the continuation by saving unticked;
-- duplicate Question codes are reported before classification/capture is repeated;
-- duplicate feedback does not discard accepted regions;
-- booklet activation clears prior transient Question capture and status text;
-- legacy multipart shared-context capture and recapture workflows remain operational.
+- default/absence = included under normal derived applicability;
+- exclusion suppresses one current Subtopic/Descriptor placement;
+- current node must be in the same Subject;
+- mapping and historical classification remain unchanged;
+- repository reads store node IDs rather than reconstructing curriculum.
 
-Manual acceptance in the real application confirmed the expected Q5/Q6/Q7 flow, restart behaviour, independent classification, out-of-sequence protection and booklet-switch reset behaviour.
+`RevisionCorpusBuilder` applies exclusions before placement, statistics, HTML and
+SCORM rendering.
+
+Search exposes a Revision Output Applicability list with Include/Exclude actions.
+Updates persist immediately.
+
+The panel resolves complete Subject-wide current applicability independently of
+the Search filter. Regression coverage proves that a Question mapping to two
+current Descriptors still displays both output placements when Search itself is
+narrowed to one Descriptor.
+
+## 9C. Shared Context terminology migration
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+Java/domain/user-facing terminology had already moved to Shared Context. Schema
+v13 completes that alignment for live database columns.
+
+Runtime SQL now uses:
+
+```text
+shared_context_capture_required
+shared_context_status
+```
+
+Historical v4-v12 migrations/tests preserve `preamble_*` where required. The
+legacy workbook's external `Preamble` label is not silently rewritten.
+
+Populated v12 -> v13 migration tests verify data, constraints, output exclusions,
+Question reload and database reopen.
 
 ## 10. Slice 6 — revision HTML grouping choice
 
 ### Status
 
-**PLANNED**
+**IMPLEMENTED / VERIFIED**
 
-### Requirement
-
-At export time choose how the student resource groups Questions where Descriptor structure exists:
+Revision HTML and SCORM export offer:
 
 ```text
 Subtopic
@@ -368,160 +403,190 @@ Descriptor
 
 ### Subtopic mode
 
-- Descriptor-classified Questions roll up to their parent Subtopic.
-- Descriptor headings are not emitted as separate question buckets.
-- Ordering remains deterministic and should retain curriculum order before Question order.
-- For a Topic whose curriculum has direct Descriptor children and no Subtopics, Topic is the practical roll-up parent rather than inventing a fake Subtopic.
+Descriptor-classified Questions roll up to their parent Subtopic. Descriptor
+headings are suppressed.
+
+For curricula with direct Descriptor children under Topic, Topic is the practical
+roll-up page.
 
 ### Descriptor mode
 
-- Descriptor-classified Questions remain beneath their Descriptor.
-- A Question classified directly to a Subtopic must not disappear; present it as a general/unassigned-to-descriptor block within that Subtopic before or beside Descriptor sections using a clear deterministic rule.
+Descriptor-classified Questions remain beneath Descriptor headings.
 
-### Persistence boundary
+A Question classified directly to a Subtopic remains visible rather than
+disappearing when Descriptor grouping is chosen.
 
-Grouping mode never changes stored classification or mapping relationships.
+Grouping never rewrites persisted classification/mapping.
 
-## 11. Slice 7 — MCQ before written-response output
+## 11. Slice 7 — response-type ordering
 
 ### Status
 
-**PLANNED**
+**IMPLEMENTED / VERIFIED**
 
-Within each final output bucket, order student-facing presentations by response category:
+Within each output bucket:
 
 1. Multiple Choice;
 2. Written Response;
-3. unresolved/Unknown, if any are still renderable.
+3. Other/Unknown renderable Questions.
 
-Within a response category retain deterministic source/curriculum ordering. Multipart grouping is resolved before final card ordering so one multipart SourceQuestion presentation is not split for display purposes.
+Presentation grouping is resolved before ordering so one multipart SourceQuestion
+card is not split.
 
-Explicit `Multiple Choice` / `Written Response` section headings are not required in Sprint 10; that remains backlog polish after the ordering is exercised.
+The renderer also emits response-type section headings. When multiple response
+types are present, page navigation links target those sections.
 
 ## 12. Slice 8 — page-local Question numbering
 
 ### Status
 
-**PLANNED**
+**IMPLEMENTED / VERIFIED**
 
-Every generated question page starts at `Question 1` and increments only across presentations actually rendered on that page.
+Every generated question page begins at `Question 1` and increments across only
+the presentations rendered on that page.
 
-A multipart presentation receives one displayed Question number. Source Question codes remain provenance and are not renumbered in persistence.
+A multipart presentation receives one displayed Question number.
 
-Displayed numbering belongs to page presentation/rendering rather than a single global RevisionPresentationPlanner sequence. Anchors, alternative text and answer references must use the same page-local displayed number.
+Anchors, image alternative text and answer references use the same page-local
+display number.
+
+Persisted Question IDs/codes are unchanged.
 
 ## 13. Slice 9 — empty navigation pruning and Unit selection
 
 ### Status
 
-**PLANNED**
+**IMPLEMENTED / VERIFIED**
 
-### Default export
+Only branches containing student-facing presentations are generated/linked.
 
-Generate/link only curriculum branches that contain at least one student-facing revision presentation in the selected export configuration.
+Therefore empty Units, Topics, Subtopics and Descriptor sections are omitted.
 
-Therefore:
+Export dialogs list non-empty Units, all selected by default. A user may choose
+an explicit subset.
 
-- an empty Unit has no subject-index link and no unnecessary Unit page;
-- empty Topics/Subtopics are similarly omitted from navigation/pages;
-- Descriptor sections with no presentations are omitted.
+Unit scope is transient output configuration and is applied consistently to:
 
-### Unit scope
+- corpus scope;
+- rendered assets;
+- validation/statistics;
+- Revision HTML;
+- SCORM.
 
-Revision HTML export supports:
-
-- **All non-empty Units** — default; or
-- **Selected Units** — explicit subset.
-
-Selecting Units is an output scope choice only. It does not alter corpus classification/applicability.
+Grouping availability is recalculated for the selected Unit set.
 
 ## 14. Slice 10 — generated-site status information
 
 ### Status
 
-**PLANNED**
+**IMPLEMENTED / VERIFIED**
 
-The subject index should show useful resource metadata, including:
+The subject index uses student-facing presentation/card counts rather than stored
+Question-row counts. A multipart SourceQuestion card therefore counts once.
 
-- Subject;
-- syllabus/version;
-- generation date and time;
-- number of student-facing revision presentations/cards generated for this export.
+The site displays Subject, syllabus/version and one generated-at timestamp.
 
-Internal concepts such as stored captured parts are not relevant to the student site and must not be presented as the primary output count.
+`RevisionExportService` captures the timestamp once. Renderer tests use a fixed
+time and service tests inject a fixed `Clock`, avoiding wall-clock-dependent
+tests.
 
-The displayed revision-question count must use the same presentation semantics as the generated pages so homepage/Unit counts do not appear contradictory merely because multipart member Questions were grouped into one card.
+Operational diagnostics remain application/export-result concerns rather than
+student site statistics.
 
-Capture one generation timestamp for the export and reuse it consistently. Test code should use a fixed/injected clock or explicit generated-at value so tests do not become time-dependent.
+## 15. TestFX/Xvfb and lifecycle hardening
 
-Operational diagnostics such as missing source regions, unresolved shared context or missing Answers may remain available in the application/export result rather than being presented as student resource statistics.
+### Status
 
-## 15. Explicitly outside Sprint 10
+**IMPLEMENTED / VERIFIED**
+
+Sprint 10 exposed CI-only lifecycle races around modal JavaFX Dialog reuse.
+
+The shared TestFX harness now distinguishes:
+
+- synchronous `fire()` for non-modal transfers;
+- deferred actions for controls that open `showAndWait()` dialogs;
+- actual showing JavaFX windows/dialog panes rather than retained hidden nodes.
+
+This removed brittle text-based `robot.clickOn("Close")` assumptions and improved
+headless Xvfb execution speed/reliability.
+
+## 16. Explicitly outside Sprint 10
 
 The following remain backlog/future work:
 
 - multi-page automatic shared-context capture;
 - optional MCQ explanation regions;
-- multipart provenance-decoration simplification;
-- deciding whether explicit response-type section headings are useful;
-- Search Questions dialog screen-position persistence across edit hide/show;
 - pruning empty managed source directories after successful Exam relocation;
 - direct multiple original classifications;
-- Question-level applicability exceptions;
 - explicit out-of-scope source disposition;
 - broad import/reconciliation/reporting hardening;
 - clipboard/image-attachment Question capture;
+- SQLite-backed full persistence-to-export integration hardening;
 - Exam Builder;
-- printable assessment/solution generation;
-- deployment packaging;
-- any SCORM-specific option UI that would duplicate HTML presentation semantics.
+- printable/vector-preserving assessment/solution generation;
+- deployment packaging.
 
-## 16. Testing strategy and current evidence
+The following items were originally deferred or expected as later polish but were
+completed during Sprint 10 and therefore are not backlog:
 
-Implementation proceeds slice by slice with focused tests, followed by meaningful broader checkpoints.
+- Search dialog position persistence;
+- multipart source-provenance simplification;
+- response-type section headings;
+- SCORM grouping/Unit-selection parity;
+- Question-level output applicability exceptions.
 
-Completed capture work now has regression coverage for:
+## 17. Verification evidence
+
+Automated coverage includes:
 
 - visual PDF cancellation clearing logical selection ownership;
-- booklet switching clearing transient Question capture state and status text;
-- full-code visible curriculum hierarchy population;
-- shortening a full code to Unit without stale Topic;
-- Working Subject queue filtering and safe subject transitions;
-- booklet-format and response-type defaults;
-- MCQ one-mark persistence invariants;
-- booklet-to-AnswerFile persistence;
-- shared AnswerFile use across several booklets;
-- distinct AnswerFiles across booklets in the same Exam;
-- unresolved booklet behaviour;
-- rejection of cross-Exam or cross-file Answer relationships;
-- independent MCQ SharedQuestionContext creation, reuse, extension and consumption;
-- restart-safe pending MCQ continuation;
-- sequence-aware continuation and out-of-order capture;
-- early duplicate Question-code feedback without losing accepted regions;
-- legacy multipart/shared-context correction workflows after terminology cleanup.
+- booklet-switch capture-state reset;
+- complete-code hierarchy synchronisation and shortening;
+- Working Subject queue filtering;
+- booklet-format/response-type defaults and MCQ one-mark invariants;
+- booklet-to-AnswerFile migration/persistence and cross-file rejection;
+- independent MCQ Shared Context creation, reuse, extension and consumption;
+- restart-safe and out-of-order continuation;
+- duplicate-code feedback preserving accepted regions;
+- response grouping and response-type section navigation;
+- page-local numbering reset;
+- empty-branch pruning;
+- selected-Unit HTML/SCORM export;
+- multipart student-facing count semantics;
+- fixed/injected generated timestamps;
+- Question-specific exclusion persistence/corpus filtering;
+- Subject-wide output applicability independent of narrowed Search scope;
+- Search classification dirty/save/navigation behaviour;
+- stored-region edit overlay/navigation;
+- Search geometry restoration;
+- v12 -> v13 populated migration;
+- snapshot/import/repository/runtime SQL after Shared Context rename.
 
-The schema-version test expectation has been corrected for schema version 11 and the relevant database/schema tests are green.
+Manual verification includes:
 
-The focused workflow command covering `WorkflowCaptureTests` and `WorkflowStateEditingTests` is green after the Slice 5 implementation, follow-up fixes and Shared Context terminology sweep.
+- shared/separate Answer PDFs across multiple booklets;
+- Q5/Q6/Q7 Shared Context continuation;
+- restart persistence;
+- different classifications on shared-context MCQs;
+- out-of-sequence protection;
+- booklet-switch reset behaviour.
 
-Remaining Sprint 10 work requires regression coverage for:
+The full Maven suite was green at final implementation checkpoint.
 
-- context rendering across different output buckets/pages;
-- Subtopic and Descriptor export grouping;
-- response-type ordering;
-- per-page numbering reset;
-- empty-branch pruning and selected-Unit scope;
-- stable generated status with a fixed timestamp.
+GitHub Actions CI run 59 completed successfully for final branch head
+`07b7b337`.
 
-Broader non-UI/headless UI suites should be run at meaningful checkpoints and at sprint closeout, not after every small edit.
+## 18. Closeout state
 
-## 17. Documentation and closeout
+Sprint 10 implementation is complete. This document is the canonical final-state
+record for the feature branch.
 
-During implementation:
+Repository merge state is deliberately recorded separately:
 
-- `docs/current-status.md` must distinguish planned from implemented slices;
-- completed Sprint 10 work should be removed from `docs/design/backlog.md` if any deferred item is promoted during the sprint;
-- architectural changes should update `docs/design/architecture-evolution.md` where a durable cross-sprint architectural rule is introduced;
-- `docs/issues.txt` should contain only still-active working defects, not resolved chat transcripts.
+```text
+feature/capture-output: 07b7b337  (verified, CI green)
+main:                   5a1e5a9   (Sprint 10 not yet merged)
+```
 
-At sprint closeout, this document becomes the canonical final-state record and must be updated with completed slices, verification evidence and merge state.
+After protected-main merge, only merge-state references need updating; no
+additional Sprint 10 implementation is currently planned.

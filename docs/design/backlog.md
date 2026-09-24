@@ -1,34 +1,12 @@
 # Exam Question Bank Backlog
 
-> **Authoritative deferred/unresolved-work list:** 20 September 2026.  
-> Sprints 01–09 are complete.  
-> Sprint 10 active work is intentionally excluded from backlog sections and is
-> listed near the end under **Scheduled in Sprint 10 — not backlog**.
+> **Authoritative deferred/unresolved-work list:** 24 September 2026.  
+> Sprints 01–09 are complete and merged.  
+> Sprint 10 implementation is complete and verified on `feature/capture-output`;
+> merge to `main` is pending.  
+> Completed Sprint 10 work is not duplicated below as future work.
 
 ## Revision-output follow-on work
-
-### Multipart provenance presentation
-
-For multipart output with one shared preamble, repeated source decorations such
-as `Source part 26a` and `Source part 26b` may be unnecessarily noisy.
-
-Future work may present source/original-classification provenance once for the
-multipart presentation while retaining traceability to source parts.
-
-Do not change persisted multipart identity merely to simplify display.
-
-### Optional response-type section headings
-
-After Sprint 10 establishes MCQ-before-written ordering, assess whether explicit
-`Multiple Choice` and `Written Response` headings beneath each output bucket add
-useful navigation or only visual noise.
-
-### SCORM export-option parity
-
-Sprint 10 is focused on Revision HTML configuration. If any new grouping or Unit
-selection option is initially exposed only through the HTML dialog, add equivalent
-SCORM configuration later while continuing to reuse the same presentation/render
-semantics rather than creating a second SCORM-specific grouping system.
 
 ### Printable/vector-preserving output
 
@@ -36,17 +14,11 @@ For print-oriented PDF generation, evaluate direct source-PDF page/viewport
 clipping rather than rasterising web assets. Preserve generated numbering,
 solution alignment and source attribution.
 
+The current student HTML/SCORM pipeline already supports grouping, response-type
+sections, page-local numbering, selected Units, empty-branch pruning,
+Question-specific exclusions and generation metadata.
+
 ## Capture / correction follow-on work
-
-### Search dialog position persistence
-
-Sprint 09 preserves the Search Questions dialog's resized width and height when
-an edit action temporarily hides and redisplays the dialog. The dialog does not
-currently preserve its user-adjusted screen position across that cycle.
-
-Future work should preserve the last valid X/Y position as well as dimensions,
-without restoring an off-screen position after monitor/work-area changes. This
-is usability polish and is not part of Sprint 10.
 
 ### Remove empty managed directories after Exam relocation
 
@@ -57,15 +29,13 @@ source directories that become empty after a successful move.
 
 Future housekeeping may safely prune empty managed year/provider directories,
 working upwards only within the managed PDF root and stopping at the first
-non-empty or protected directory. The authoritative file relocation itself is
-already implemented; this item concerns empty-directory cleanup only and is not
-part of Sprint 10.
+non-empty or protected directory.
 
-### Multi-page automatic shared-preamble capture
+### Multi-page automatic shared-context capture
 
 Persistence supports several ordered `SharedQuestionContextRegion` records. The
-automatic imported-question preamble workflow currently completes after one
-accepted source region.
+automatic independent-MCQ continuation workflow currently captures one context
+region.
 
 Future work should allow multiple ordered context regions across pages, explicit
 finish, source-order preservation and regression coverage while keeping the
@@ -125,14 +95,8 @@ explicitly out of scope
 
 without forcing deliberately out-of-scope source Questions into the bank.
 
-### Question-level applicability exceptions
-
-A curriculum mapping can remain valid while one historical Question tests only
-content that did not carry forward.
-
-Future behaviour may preserve provenance/mapping while explicitly excluding that
-Question from one mapped current target. Prefer node-specific exceptions when a
-historical node maps to several current targets.
+This is distinct from the implemented Question-specific output exclusion, which
+suppresses one current revision placement for an otherwise stored Question.
 
 ## Import / reconciliation
 
@@ -161,7 +125,7 @@ A dry-run mode may later reuse the same validation.
 
 Test representative legacy files for multiple Subjects/providers, unexpected
 formatting, blank/formula-driven cells, conflicting duplicates, unusual Question
-codes, missing MCQ answers, preamble evidence and relocated source PDFs.
+codes, missing MCQ answers, shared-context evidence and relocated source PDFs.
 
 Do not infer multipart/shared-context relationships merely because workbook data
 appears patterned.
@@ -252,10 +216,12 @@ controlled import/export/merge or an IT-supported central database.
 Add a temporary-SQLite end-to-end export test using fresh production
 repository/service instances to cover persisted curriculum reconstruction,
 confirmed mapping retrieval, ordered regions, Answer reconstruction,
-SourceQuestion/shared-context reconstruction and complete export after reopen.
+SourceQuestion/shared-context reconstruction, Question-specific exclusions and
+complete export after reopen.
 
-Real Chemistry acceptance has exercised the production path manually, so this is
-hardening rather than a current blocker.
+Existing integration output tests use in-memory curriculum/retrieval boundaries,
+and real Chemistry acceptance has exercised the production path manually. This
+remains hardening rather than a current blocker.
 
 ### Public API documentation
 
@@ -263,44 +229,40 @@ Continue reviewing Javadoc/doclint where public or semantic contracts change.
 
 ## Repository housekeeping
 
-Protected `main` is now established and was exercised through pull request #1.
-The former backlog item "Protect main with required CI checks" is therefore
-closed and must not be re-added as future product work.
+Protected `main` is established and has been exercised through pull request #1.
 
-Old feature/chore branches may be cleaned up when convenient; branch cleanup is
+Sprint 10 is ready for protected-main merge from `feature/capture-output`.
+Feature/chore branch cleanup may follow merge when convenient; branch cleanup is
 repository housekeeping rather than product scope.
-
-## Scheduled in Sprint 10 — not backlog
-
-Do not duplicate these as deferred items while Sprint 10 is active:
-
-- stale logical pending selection after the visible PDF rectangle is cleared;
-- curriculum-code / ComboBox hierarchy synchronisation defects;
-- capture-workspace Working Subject filtering;
-- Written Response defaults from part-letter and marks evidence;
-- shared-context capture/reuse for independent Questions including MCQs;
-- Subtopic-versus-Descriptor revision-output grouping;
-- MCQ-before-written presentation ordering;
-- per-page numbering starting at 1;
-- empty curriculum-branch pruning and all-non-empty/selected Unit export;
-- generated-site status metadata including creation date/time and a
-  student-facing revision-question count.
 
 ## Completed / not backlog
 
-Do not re-add completed Sprint 04–09 work, including backup/restore, deterministic
-revision/SCORM foundations, persisted SourceQuestion/shared-context semantics,
-Question/Answer correction, curriculum authoring, response-type persistence,
-Corpus Audit, Sprint 09 shared-preamble recapture, known-PDF reuse, Exam metadata
-correction, managed-PDF relocation, legacy split, Search scope, audit ordering,
-Search dialog size persistence, MCQ Answer-PDF visibility, UI package refactoring
-and CI hardening.
+Do not re-add completed Sprint 04–10 work, including:
+
+- backup/restore and deterministic revision/SCORM foundations;
+- SourceQuestion/shared-context semantics and correction;
+- curriculum authoring, response-type persistence and Corpus Audit;
+- Sprint 09 shared-context recapture, known-PDF reuse, Exam correction,
+  managed-PDF relocation, legacy split, Search scope and CI hardening;
+- Working Subject capture filtering;
+- booklet Question format and booklet-specific AnswerFile assignment;
+- independent-MCQ Shared Context continuation;
+- Search dialog size and position restoration;
+- Search classification display/refinement and stored-region edit navigation;
+- Subtopic/Descriptor revision grouping;
+- response-type section ordering/headings;
+- page-local numbering;
+- empty-branch pruning;
+- selected-Unit Revision HTML and SCORM export;
+- student-facing revision-question counts and generated timestamp;
+- Question-specific revision-output exclusions;
+- Shared Context live-schema terminology migration.
 
 ## Backlog rules
 
 - Keep every known deferred requirement represented until implemented,
   deliberately rejected or superseded.
-- Do not keep active Sprint 10 items duplicated as future work.
+- Do not keep completed sprint items duplicated as future work.
 - Preserve completed sprint documents as history.
 - Keep performance work measurement-driven.
 - Prefer behaviour-focused regressions over coverage percentages.

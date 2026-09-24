@@ -1,9 +1,9 @@
 # Exam Question Bank — Project History
 
-> Consolidated factual development history through 20 September 2026.  
+> Consolidated factual development history through 24 September 2026.  
 > This is historical evidence, not the authority for current branch capability.
-> Use `current-status.md` for current implementation and the active sprint design
-> for planned work.
+> Use `current-status.md` for current implementation and the active/final sprint
+> record for sprint-specific state.
 
 ## 1. Legacy application and inherited problem
 
@@ -16,8 +16,8 @@ The redevelopment retained the useful publishing goals but rejected workbook and
 snippet filenames as the long-term system of record.
 
 Important inherited requirements were durable source provenance, multipart
-Question handling, reusable preamble material, classification against syllabus
-content and linked Question/Answer material.
+Question handling, reusable shared source material, classification against
+syllabus content and linked Question/Answer material.
 
 ## 2. 17 August 2026 — batching exercise exposes redevelopment requirements
 
@@ -70,7 +70,7 @@ classification and MCQ answer letters where reliable. Managed source documents
 were registered and import was made conflict-aware/idempotent.
 
 Legacy preamble evidence was preserved conservatively. Import did not invent
-SourceQuestion grouping or fake preamble regions from metadata patterns.
+SourceQuestion grouping or fake shared-context regions from metadata patterns.
 
 ## 6. 2–3 September 2026 — Sprint 02: Directional Curriculum Applicability
 
@@ -149,19 +149,19 @@ Chemistry package successfully imported and launched in QLearn.
 
 Authoritative source PDFs are not normally copied into the SCORM package.
 
-## 14. 7–11 September 2026 — Sprint 07: Preamble-aware capture and UI redesign
+## 14. 7–11 September 2026 — Sprint 07: shared-context-aware capture and UI redesign
 
 Branch: `feature/preamble-capture`.
 
 Schema v5/v6 introduced persisted SourceQuestion identity,
-SharedQuestionContext, ordered shared-context regions and source-question
-PreambleStatus.
+SharedQuestionContext, ordered shared-context regions and source-question shared
+context status (then physically named with legacy `preamble_*` columns).
 
 Multipart source identity and shared source material were deliberately separated.
 One shared context may serve several Questions without making them one multipart
 Question.
 
-Capture/correction work added preamble-aware workflows, shared-context reuse,
+Capture/correction work added shared-context-aware workflows, context reuse,
 anchored same-page selection, explicit transient selection ownership,
 syllabus-sensitive classification, Question correction preserving Answer
 identity, Answer correction, MCQ letter entry and asynchronous save/PDF work.
@@ -192,7 +192,7 @@ Implemented work included:
 - deterministic source/natural ordering in capture/management views;
 - responsive Question/Answer controls and explicit response-type radio buttons;
 - imported-question activation performance correction;
-- shared-preamble recapture/replacement;
+- shared-context recapture/replacement;
 - authoritative Exam metadata correction;
 - managed booklet/answer PDF relocation when corrected provider/year changes;
 - known-PDF metadata reuse;
@@ -205,7 +205,7 @@ Implemented work included:
 - UI package refactoring;
 - GitHub Actions CI hardening.
 
-Implementation head `11acb24` passed the configured GitHub Actions jobs. Final
+Implementation head `11acb24` passed configured GitHub Actions jobs. Final
 documentation commit was `57777aa`.
 
 Sprint 09 merged to `main` on 20 September 2026 in commit `2533586`.
@@ -216,8 +216,7 @@ After Sprint 09 merge, the repository moved from convention-only main-branch
 safety to protected-main workflow. A test change on `chore/test-pr-protection`
 was merged through pull request #1, producing `main` commit `5a1e5a9`.
 
-GitHub reports `main` as protected. Repository governance is therefore no longer
-an unfinished Sprint 09 backlog item.
+GitHub reports `main` as protected.
 
 ## 18. 20 September 2026 — Sprint 10 design begins
 
@@ -225,36 +224,142 @@ Branch: `feature/capture-output`, created from `5a1e5a9`.
 
 Real use identified two immediate defects:
 
-- a visible PDF selection can be cleared by a later click while logical pending
-  selection remains; and
-- curriculum code entry can leave visible Topic state blank/stale, including
-  restoring a previous Topic when the code is shortened to only the Unit.
+- a visible PDF selection could clear while logical pending selection remained;
+- curriculum code entry could leave visible Topic state blank/stale.
 
-Sprint 10 was then scoped around capture hardening plus revision-output
-refinement:
+Sprint 10 was scoped around capture hardening plus revision-output refinement:
+Working Subject filtering, response-type defaults, independent shared-context
+capture, configurable revision grouping, response ordering, page-local numbering,
+empty-branch pruning, selected-Unit export and generated-site status.
 
-- Working Subject filtering for Question/Answer capture;
-- Written Response defaults from part-letter and marks evidence;
-- general shared-context capture/reuse for independent Questions/MCQs;
-- export-time Subtopic/Descriptor grouping;
-- MCQ-before-written ordering;
-- per-page numbering beginning at 1;
-- empty-branch pruning and selected-Unit export;
-- generated-site status including creation date/time and student-facing revision
-  question count.
+## 19. 20–22 September 2026 — Sprint 10 capture hardening
 
-At this history point these Sprint 10 items are design/planned work, not
-implemented capability.
+Initial Sprint 10 implementation repaired capture-selection ownership and
+curriculum selector synchronisation.
 
-## 19. Future content-source extension
+Booklet-level Question format was persisted in schema v9, allowing MCQ,
+Written-Response and Mixed booklet behaviour without rewriting existing Question
+response type.
+
+Schema v10 added booklet-specific AnswerFile assignment so several booklets can
+share one answer document while another booklet uses a different file.
+
+Schema v11 added restart-safe, sequence-aware one-step Shared Context
+continuation for independent MCQs.
+
+The capture workspace gained a transient Working Subject filter and early
+duplicate Question-code feedback.
+
+TestFX/Xvfb workflow handling was hardened after Linux CI exposed modal-dialog
+lifecycle races.
+
+## 20. 22–23 September 2026 — revision output becomes student-facing and configurable
+
+The revision renderer/presentation pipeline was refined to support:
+
+- Subtopic or Descriptor grouping;
+- Multiple Choice before Written Response;
+- response-type section headings/navigation;
+- page-local numbering from Question 1;
+- student-facing multipart card semantics;
+- empty curriculum-branch pruning;
+- combined multipart source provenance;
+- non-empty Unit selection.
+
+Revision HTML and SCORM export dialogs both gained the same grouping and Unit
+selection options. Selected Unit scope is transient and filters assets,
+validation, statistics and generated output.
+
+The subject index moved from internal corpus counts to student-facing revision
+question/card counts.
+
+## 21. 23–24 September 2026 — Search and Question correction refinement
+
+Search Questions was refined after real editing use:
+
+- selector labels no longer collapse under narrow layout;
+- functional minimum dialog width was added;
+- width/height and X/Y position survive edit hide/show cycles;
+- selected Question classification is displayed separately from Search filters;
+- a Subtopic classification can be refined to a child Descriptor inline;
+- Descriptor refinement has explicit dirty/Save/Discard/Cancel behaviour;
+- broader reclassification remains in Edit Question;
+- Classification was removed from Edit Metadata;
+- Edit Question restores the saved PDF location and shows the stored region
+  overlay.
+
+The dialog constructor was refactored after this feature growth.
+
+## 22. 24 September 2026 — Question-specific revision-output applicability
+
+A requirement emerged that a valid historical-to-current mapping may still be
+too broad for one particular Question.
+
+Schema v12 added `question_output_exclusions`.
+
+The design preserves existing behaviour by default:
+
+```text
+no exclusion row -> ordinary derived applicability
+exclusion row    -> suppress this Question at this current node
+```
+
+Exclusions do not rewrite mappings or historical classification.
+
+`RevisionCorpusBuilder` applies exclusions before placement and output
+statistics. Search exposes immediate Include/Exclude controls.
+
+A final semantic correction separated Search-match applicability from
+revision-output applicability: the output panel always resolves complete
+Subject-wide applicability even when Search is narrowed to one Descriptor.
+
+Commit `07b7b337` contains the final applicability correction.
+
+## 23. 24 September 2026 — live persistence terminology aligned to Shared Context
+
+Schema v13 renamed the live physical columns:
+
+```text
+preamble_capture_required -> shared_context_capture_required
+preamble_status           -> shared_context_status
+```
+
+Historical migration scripts/tests deliberately retain old names so earlier
+schemas remain reproducible.
+
+Migration hardening found and corrected stale runtime SQL, stale latest-schema
+tests and a semicolon-sensitive migration-comment issue. Populated migration,
+snapshot, legacy import and repository tests were brought back to green.
+
+## 24. 24 September 2026 — generated-site timestamp and Sprint 10 implementation closeout
+
+Revision export now captures one generation timestamp and renders it on the
+student site. Tests inject/fix time so wall-clock variability does not make
+output tests nondeterministic.
+
+The student-facing subject count uses presentation semantics, so multipart source
+members displayed as one card count once.
+
+The local full Maven suite was green at the final implementation checkpoint.
+
+Final Sprint 10 feature-branch head:
+
+`07b7b337` — `question applicability updated`
+
+GitHub Actions CI run 59 completed successfully for that head.
+
+At this history point Sprint 10 implementation is complete and verified on
+`feature/capture-output`; protected-main merge has not yet occurred.
+
+## 25. Future content-source extension
 
 A later workflow may allow clipboard/Windows Snipping Tool images and other
 managed attachments for Questions whose source is not a durable PDF. Storage,
 provenance, backup and output integration remain future design decisions.
 
-## 20. Development discipline
+## 26. Development discipline
 
-Git/GitHub branches, commits, sprint records, tests and CI are the implementation
+Git/GitHub branches, commits, sprint records, tests and CI are implementation
 evidence. Current repository code must be inspected before exact implementation
 instructions are based on remembered classes/methods.
 
