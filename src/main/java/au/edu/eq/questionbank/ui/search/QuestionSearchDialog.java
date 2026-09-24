@@ -12,6 +12,7 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.event.ActionEvent;
+import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
@@ -350,7 +351,14 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void restoreRememberedGeometry() {
-		if (getDialogPane().getScene().getWindow() instanceof Stage dialogStage) {
+		Scene scene = getDialogPane().getScene();
+
+		// Geometry restoration is deferred until after showing. A very short-lived
+		// Dialog may already have been hidden or disposed before this callback runs.
+		if (scene == null || scene.getWindow() == null || !scene.getWindow().isShowing()) {
+			return;
+		}
+		if (scene.getWindow() instanceof Stage dialogStage) {
 
 			// DialogPane minimum size controls layout, while Stage minimum width
 			// prevents the native window itself from being dragged below that limit.
@@ -358,8 +366,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		}
 		if (Double.isFinite(rememberedWidth) && rememberedWidth > 0) {
 
-			// A geometry value remembered before the minimum-width rule was introduced
-			// must not restore the Dialog below its current usable minimum.
+			// Geometry remembered before the minimum-width rule was introduced must
+			// not restore the Dialog below its current usable minimum.
 			setWidth(Math.max(DIALOG_WIDTH, rememberedWidth));
 		}
 		if (Double.isFinite(rememberedHeight) && rememberedHeight > 0) {
@@ -367,8 +375,15 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		}
 
 		// Restoring screen-height geometry can itself cause the native window manager
-		// to adjust the Dialog position. Apply X/Y only after that sizing pass.
+		// to adjust position. Apply X/Y only after that sizing pass.
 		Platform.runLater(() -> {
+			Scene currentScene = getDialogPane().getScene();
+
+			// The Dialog may also have been closed between the size restoration and
+			// this second deferred position-restoration callback.
+			if (currentScene == null || currentScene.getWindow() == null || !currentScene.getWindow().isShowing()) {
+				return;
+			}
 			if (isRememberedPositionVisible()) {
 				setX(rememberedX);
 				setY(rememberedY);

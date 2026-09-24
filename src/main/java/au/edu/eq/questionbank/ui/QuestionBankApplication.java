@@ -1055,6 +1055,17 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void focusStoredQuestionRegions(Question question) {
+		List<PdfWorkspacePane.RegionSelection> regions = question.getRegions().stream()
+				.map(region -> new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+						region.pageNumber(), region.x(), region.y(), region.width(), region.height()))
+				.toList();
+
+		// Stored Question regions are shown only while the full Question editor owns
+		// the workspace. An empty list also clears any stale previous overlay.
+		pdfWorkspace.focusStoredRegions(regions);
+	}
+
 	private void handleCloseRequest(javafx.stage.WindowEvent event, Stage primaryStage) {
 		event.consume();
 		requestApplicationExit(primaryStage);
@@ -1349,7 +1360,14 @@ public class QuestionBankApplication extends Application {
 			completedHandler.run();
 			return;
 		}
-		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question, completedHandler);
+		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question, () -> {
+
+			// Recapture explicitly opened the source Exam PDF. Once the
+			// recapture is saved or cancelled, that temporary document must
+			// no longer remain active.
+			pdfWorkspace.closeExamPdf();
+			completedHandler.run();
+		});
 		if (!recaptureStarted) {
 			completedHandler.run();
 		}
@@ -1808,8 +1826,10 @@ public class QuestionBankApplication extends Application {
 		case QUESTION -> questionCapturePane.captureImportedQuestion(question);
 		case ANSWER -> {
 			if (question.hasAnswer()) {
-				answerCapturePane.editAnswer(question, () -> {
-				});
+
+				// An existing Answer edit temporarily opens its assigned Answer PDF.
+				// Save and Cancel must both release that document.
+				answerCapturePane.editAnswer(question, pdfWorkspace::closeAnswerPdf);
 			} else {
 				answerCapturePane.captureAnswer(question);
 			}
@@ -1858,25 +1878,46 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_CONTEXT) {
-			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question,
-					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
-							metadataService));
+			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question, () -> {
+
+				// Shared-context correction temporarily owns the Question's
+				// Exam PDF. Release it after either Save or Cancel.
+				pdfWorkspace.closeExamPdf();
+				resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
+			});
 			if (!correctionStarted) {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 			}
 			return;
 		}
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
-			boolean editingStarted = questionCapturePane.editQuestion(question,
-					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
-							metadataService));
+			boolean editingStarted = questionCapturePane.editQuestion(question, () -> {
+
+				// Search temporarily opened this Question's Exam PDF for
+				// editing. Save and Cancel both release it before Search
+				// becomes active again.
+				pdfWorkspace.closeExamPdf();
+				resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
+			});
 			if (!editingStarted) {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
+				return;
 			}
+
+			// The Question editor now owns the correct Exam document. Display the
+			// persisted regions as informational grey overlays and focus the first one.
+			focusStoredQuestionRegions(question);
 			return;
 		}
-		boolean editingStarted = answerCapturePane.editAnswer(question, () -> resumeSearchAfterEdit(primaryStage,
-				dialog, question.getId(), curriculumRepository, metadataService));
+
+		// ANswer editing
+		boolean editingStarted = answerCapturePane.editAnswer(question, () -> {
+
+			// The Answer PDF was opened for this temporary edit. It must
+			// not remain active after either Save or Cancel.
+			pdfWorkspace.closeAnswerPdf();
+			resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
+		});
 		if (!editingStarted) {
 			showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 		}
@@ -2052,9 +2093,13 @@ public class QuestionBankApplication extends Application {
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
 			return;
 		}
-		boolean captureStarted = questionCapturePane.beginLegacyQuestionSplit(question, splitDefinition.get(),
-				() -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository,
-						metadataService));
+		boolean captureStarted = questionCapturePane.beginLegacyQuestionSplit(question, splitDefinition.get(), () -> {
+
+			// Split correction uses the original Question's Exam PDF only
+			// for the lifetime of the correction workflow.
+			pdfWorkspace.closeExamPdf();
+			resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository, metadataService);
+		});
 		if (!captureStarted) {
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
 		}

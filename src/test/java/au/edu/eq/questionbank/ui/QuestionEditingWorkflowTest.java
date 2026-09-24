@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -44,6 +45,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
+import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -315,6 +317,74 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
 		fireDialogButton(robot, "Close");
+	}
+
+	@Test
+	void searchEditQuestionShowsAndClearsStoredRegionHighlight(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "EDIT-HIGHLIGHT");
+
+		// Search Questions is modal, so schedule it and leave the test thread free
+		// to interact with the nested JavaFX event loop.
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		ListView<Object> results = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId()));
+		Object selectedResult = results.getItems().stream()
+				.filter(result -> searchResultQuestion(result).getId() == question.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		Button editQuestion = lookup(robot, "#question-search-edit-question", Button.class);
+
+		// Edit Question closes Search and transfers control to the non-modal capture
+		// workspace. It does not itself create another modal dialog, so fire it
+		// synchronously rather than queueing a modal-producing action.
+		assertFalse(editQuestion.isDisabled());
+		fireControl(robot, editQuestion);
+		waitForDialogHidden(robot, "Search Questions");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#cancel-question-edit").tryQuery().filter(node -> node.isVisible()).isPresent());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup(".pdf-stored-region-highlight").tryQuery().isPresent());
+		Rectangle highlight = robot.lookup(".pdf-stored-region-highlight").queryAs(Rectangle.class);
+
+		// Search -> Edit Question must expose the persisted source region as the
+		// dedicated grey informational overlay.
+		assertTrue(highlight.isVisible());
+
+		// Cancelling the editor invokes its completion callback, which reopens the
+		// modal Search dialog. Queue the action so TestFX does not wait for that
+		// nested showAndWait() call to return.
+		fireControlLater(robot, "#cancel-question-edit");
+
+		// Wait for the actual Dialog window to be showing. Looking up Search content
+		// alone is insufficient because the reusable Dialog retains its controls
+		// while hidden.
+		waitForDialogShowing(robot, "Search Questions");
+
+		// Cancel must release the source document as well as its visual overlay. The
+		// teacher must not be left with an apparently active Exam PDF after Search
+		// resumes.
+		assertNull(pdfWorkspace().getExamPdfSession());
+
+		// Cancelling the edit returns to Search and removes the PDF overlay so it
+		// cannot be mistaken for an active capture selection.
+		assertTrue(robot.lookup(".pdf-stored-region-highlight").tryQuery().isEmpty());
+		closeDialog(robot, "Search Questions");
 	}
 
 	@Test
