@@ -507,6 +507,59 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void narrowedSearchStillShowsCompleteRevisionOutputApplicability(FxRobot robot) throws TimeoutException {
+		QuestionRetrievalRepository multipleApplicabilityRepository = currentNodes -> {
+
+			// Return only applicability inside the requested Search scope.
+			// A Descriptor search therefore carries one matching placement,
+			// while a Subject-wide lookup carries both.
+			if (currentNodes.contains(currentDescriptor) && currentNodes.contains(noMatchDescriptor)) {
+				return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+						new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
+			}
+			if (currentNodes.contains(currentDescriptor)) {
+				return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor));
+			}
+			if (currentNodes.contains(noMatchDescriptor)) {
+				return List.of(new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
+			}
+			return List.of();
+		};
+		QuestionRetrievalService multipleApplicabilityService = new QuestionRetrievalService(
+				multipleApplicabilityRepository, new CurriculumSearchNodeExpansionService(curriculumRepository));
+		replaceSearchPane(robot, curriculumRepository, multipleApplicabilityService);
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
+		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
+		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
+		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchPane.QuestionOutputApplicabilityRow> outputList = robot
+				.lookup("#question-search-output-applicability").queryListView();
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		robot.interact(() -> unitBox.setValue(currentUnit));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
+		robot.interact(() -> topicBox.setValue(currentTopic));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(currentSubtopic));
+		robot.interact(() -> classificationBox.setValue(currentSubtopic));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> descriptorBox.getItems().contains(currentDescriptor));
+		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		QuestionSearchResult searchResult = resultsList.getItems().getFirst();
+
+		// Search itself is deliberately narrowed to one Descriptor.
+		assertEquals(List.of(currentDescriptor), searchResult.currentApplicability());
+		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
+
+		// Revision output is independent of the Search filter and therefore exposes
+		// both Subject-wide current placements for the selected Question.
+		assertTrue(outputList.getItems().stream().anyMatch(row -> row.currentNode().equals(currentDescriptor)));
+		assertTrue(outputList.getItems().stream().anyMatch(row -> row.currentNode().equals(noMatchDescriptor)));
+	}
+
+	@Test
 	public void refreshAfterEditRetainsAllQuestionsScopeAndReselectsUpdatedQuestion(FxRobot robot)
 			throws TimeoutException {
 		AtomicReference<List<Question>> allQuestions = new AtomicReference<>(List.of(historicalQuestion));

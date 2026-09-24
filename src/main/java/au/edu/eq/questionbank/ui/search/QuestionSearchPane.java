@@ -924,7 +924,7 @@ public class QuestionSearchPane extends BorderPane {
 		}
 	}
 
-	private List<CurriculumNode> findCurrentApplicabilityForAllQuestion(Question question) {
+	private List<CurriculumNode> findCompleteCurrentApplicability(Question question) {
 		List<QuestionRetrievalResult> results = retrievalService
 				.findQuestionsApplicableTo(question.getExam().getSubject());
 		for (QuestionRetrievalResult result : results) {
@@ -932,8 +932,9 @@ public class QuestionSearchPane extends BorderPane {
 				continue;
 			}
 
-			// All Questions deliberately carries no applicability in its Search result,
-			// so resolve the selected Question explicitly against the current syllabus.
+			// Output applicability is Subject-wide. The Search result may represent a
+			// much narrower Unit, Topic, Subtopic or Descriptor scope and therefore
+			// cannot be used as the complete set of output placements.
 			return result.getCurrentApplicability();
 		}
 
@@ -1154,18 +1155,12 @@ public class QuestionSearchPane extends BorderPane {
 
 	private List<QuestionOutputApplicabilityRow> loadOutputApplicability(QuestionSearchResult result) {
 		Question question = result.question();
-		List<CurriculumNode> currentApplicability;
-		if (result.scope() == QuestionSearchScope.CURRENT_SYLLABUS) {
 
-			// Current-syllabus Search has already performed the authoritative
-			// applicability calculation, so do not repeat that repository work.
-			currentApplicability = result.currentApplicability();
-		} else {
-
-			// All Questions intentionally skipped mappings while searching. Evaluate
-			// only the selected Question now so revision-output state can still be shown.
-			currentApplicability = findCurrentApplicabilityForAllQuestion(question);
-		}
+		// Search-result applicability explains why this Question matched the current
+		// Search scope. Revision-output applicability is different: it must show every
+		// current placement for the Question across its Subject, regardless of how
+		// narrowly Search itself is filtered.
+		List<CurriculumNode> currentApplicability = findCompleteCurrentApplicability(question);
 		Set<Long> excludedCurrentNodeIds = outputApplicabilityRepository.findExcludedCurrentNodeIds(question);
 		if (excludedCurrentNodeIds == null) {
 			throw new IllegalStateException("Question output applicability repository returned null");
