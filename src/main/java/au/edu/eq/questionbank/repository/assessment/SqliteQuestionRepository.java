@@ -20,10 +20,10 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -305,6 +305,29 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 					() -> new IllegalStateException("Question disappeared after updating capture relationships"));
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not update question capture relationships", e);
+		}
+	}
+
+	/**
+	 * Updates only the stored curriculum classification of an existing Question.
+	 *
+	 * @param questionId     persistent Question identifier
+	 * @param classification replacement classification in the existing syllabus
+	 * @return the reloaded Question after the classification change
+	 */
+	@Override
+	public Question updateClassification(long questionId, CurriculumNode classification) {
+		Question existing = findById(questionId)
+				.orElseThrow(() -> new IllegalArgumentException("Question does not exist: " + questionId));
+		try {
+
+			// Delegate the narrow persistence change to the writer so Question regions,
+			// relationships and other metadata remain untouched.
+			writer.updateClassification(questionId, existing.getBooklet(), classification);
+			return findById(questionId)
+					.orElseThrow(() -> new IllegalStateException("Question disappeared after classification update"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not update question classification", e);
 		}
 	}
 

@@ -176,6 +176,8 @@ public interface QuestionRepository {
 	Question updateCaptureRelationships(long questionId, CurriculumNode classification, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext);
 
+	Question updateClassification(long questionId, CurriculumNode classification);
+
 	/**
 	 * Replaces the editable metadata, classification, capture relationships and
 	 * ordered regions of an existing question while preserving its identity,

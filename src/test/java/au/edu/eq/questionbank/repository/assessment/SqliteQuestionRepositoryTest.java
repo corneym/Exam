@@ -105,6 +105,46 @@ class SqliteQuestionRepositoryTest {
 	}
 
 	@Test
+	void refinesSubtopicClassificationToDescriptorWithoutChangingQuestion() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("classification-refinement.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		Descriptor descriptor = curriculumWriter.insertDescriptor(subtopic, "1.1.1.1", "Descriptor 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/2025/paper1.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.save(booklet, "Q7", "", 3,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.60, 0.15)), subtopic, false);
+		Question updated = repository.updateClassification(saved.getId(), descriptor);
+		assertEquals(descriptor.getId(), updated.getClassification().getId());
+		assertEquals(saved.getQuestionCode(), updated.getQuestionCode());
+		assertEquals(saved.getMarks(), updated.getMarks());
+		assertEquals(saved.getResponseType(), updated.getResponseType());
+
+		// Reloading reconstructs the persisted Booklet as a new domain object, so
+		// compare region identity and coordinates rather than Java object identity.
+		assertEquals(saved.getRegions().size(), updated.getRegions().size());
+		QuestionRegion savedRegion = saved.getRegions().getFirst();
+		QuestionRegion updatedRegion = updated.getRegions().getFirst();
+		assertEquals(savedRegion.booklet().getId(), updatedRegion.booklet().getId());
+		assertEquals(savedRegion.pageNumber(), updatedRegion.pageNumber());
+		assertEquals(savedRegion.x(), updatedRegion.x());
+		assertEquals(savedRegion.y(), updatedRegion.y());
+		assertEquals(savedRegion.width(), updatedRegion.width());
+		assertEquals(savedRegion.height(), updatedRegion.height());
+		Question reloaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
+		assertEquals(descriptor.getId(), reloaded.getClassification().getId());
+		assertEquals(1, reloaded.getRegions().size());
+		assertEquals(2, reloaded.getRegions().getFirst().pageNumber());
+	}
+
+	@Test
 	void rejectsAttachingRegionsToQuestionThatAlreadyHasRegions() throws Exception {
 		ReconstructionFixture fixture = createReconstructionFixture("already-captured-question.db");
 		Question question = fixture.question();

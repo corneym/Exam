@@ -243,6 +243,39 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 	}
 
 	@Override
+	public Question updateClassification(long questionId, CurriculumNode classification) {
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+		for (int i = 0; i < questions.size(); i++) {
+			Question existing = questions.get(i);
+			if (existing.getId() != questionId) {
+				continue;
+			}
+
+			// A Search refinement may change Subtopic to Descriptor, but it must remain
+			// within the Question's existing syllabus version.
+			if (classification.getSyllabusVersion().getId() != existing.getClassification().getSyllabusVersion()
+					.getId()) {
+				throw new IllegalArgumentException("Question classification must remain in its existing syllabus");
+			}
+
+			// Replace only the classification. All capture relationships, regions,
+			// response metadata and any persisted Answer remain unchanged.
+			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
+					existing.getQuestionText(), existing.getMarks(), existing.getRegions(), classification,
+					existing.isSharedContextCaptureRequired(), existing.getSourceQuestion(),
+					existing.getSharedContext(), existing.getResponseType());
+			if (existing.hasAnswer()) {
+				updated.setAnswer(existing.getAnswer());
+			}
+			questions.set(i, updated);
+			return updated;
+		}
+		throw new IllegalArgumentException("Question does not exist: " + questionId);
+	}
+
+	@Override
 	public Question updateQuestion(long questionId, String questionCode, int marks, List<QuestionRegion> regions,
 			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
 		if (questionCode == null || questionCode.isBlank()) {

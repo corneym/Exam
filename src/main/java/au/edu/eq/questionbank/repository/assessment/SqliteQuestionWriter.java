@@ -240,6 +240,24 @@ public final class SqliteQuestionWriter {
 		}
 	}
 
+	public void updateClassification(long questionId, ExamBooklet booklet, CurriculumNode classification)
+			throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				updateClassification(connection, questionId, booklet, classification);
+				connection.commit();
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
 	/**
 	 * Atomically replaces editable metadata and ordered regions, retaining the
 	 * question identity, booklet, text, legacy evidence and answer. A failed region
@@ -388,6 +406,33 @@ public final class SqliteQuestionWriter {
 		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
 		verifySharedContextRelationship(connection, booklet, sharedContext);
 		updateQuestionCaptureDetails(connection, questionId, classification, sourceQuestion, sharedContext);
+	}
+
+	void updateClassification(Connection connection, long questionId, ExamBooklet booklet,
+			CurriculumNode classification) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		validateClassificationForBooklet(booklet, classification);
+		verifyQuestionBooklet(connection, questionId, booklet);
+		verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET classification_node_id = ?
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, classification.getId());
+			statement.setLong(2, questionId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Question classification update affected an unexpected number of rows");
+			}
+		}
 	}
 
 	void updateQuestion(Connection connection, long questionId, ExamBooklet booklet, String questionCode, int marks,

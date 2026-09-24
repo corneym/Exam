@@ -1828,9 +1828,10 @@ public class QuestionBankApplication extends Application {
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
 
 		// Search receives complete-bank retrieval separately from curriculum-aware
-		// retrieval so All Questions never fabricates current applicability.
+		// retrieval, while the classification callback exposes only the narrow
+		// classification-only persistence operation needed by inline refinement.
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
-				questionRepository::findAll, previewService);
+				questionRepository::findAll, previewService, questionRepository::updateClassification);
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 

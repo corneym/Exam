@@ -4,6 +4,7 @@ import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.Optional;
 import java.util.StringJoiner;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -16,11 +17,15 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyObjectProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -33,6 +38,7 @@ import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 /**
@@ -63,6 +69,12 @@ public class QuestionSearchPane extends BorderPane {
 	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> descriptorBox = new ComboBox<>();
 	private final Label statusLabel = new Label();
+	private final Label selectedSyllabusValue = new Label();
+	private final ComboBox<CurriculumNode> selectedUnitBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> selectedTopicBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> selectedSubtopicBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> selectedDescriptorBox = new ComboBox<>();
+	private final GridPane selectedClassificationPane = new GridPane();
 
 	// Search presentation uses its own result type so current-curriculum matches
 	// and future all-bank results can coexist without weakening retrieval
@@ -93,6 +105,26 @@ public class QuestionSearchPane extends BorderPane {
 	// Distinguish "no subjects exist" from "the initial subject load was cancelled
 	// before completion". This lets Current syllabus restart an interrupted load.
 	private boolean subjectsLoaded;
+	private final BooleanProperty classificationDirty = new SimpleBooleanProperty(false);
+
+	// Population of the selected-Question classification controls must not be
+	// mistaken for a teacher edit.
+	private boolean updatingSelectedClassification;
+
+	// The containing Dialog owns the Save/Cancel decision because it owns modal
+	// warnings and persistence errors.
+	private BooleanSupplier classificationNavigationGuard = () -> false;
+
+	// Restoring the previously selected result after a cancelled navigation must
+	// not recursively trigger another navigation decision.
+	private boolean restoringResultSelection;
+	private final Button saveClassificationButton = new Button("Save");
+
+	// The Dialog owns persistence and supplies the action that commits the pending
+	// Descriptor refinement.
+	private Runnable classificationSaveHandler = () -> {
+		throw new IllegalStateException("Classification save handler is not configured");
+	};
 
 	/**
 	 * Creates the question-search pane.
@@ -124,9 +156,38 @@ public class QuestionSearchPane extends BorderPane {
 		setPadding(new Insets(PANE_PADDING));
 		configureControls();
 		configureHandlers();
-		setTop(createSelectionPane());
+		VBox navigationPane = new VBox(createSelectionPane(), createSelectedClassificationPane());
+		setTop(navigationPane);
 		setCenter(createResultsAndDetailsPane());
 		startSubjectLoading();
+	}
+
+	ReadOnlyBooleanProperty classificationDirtyProperty() {
+
+		// The containing Dialog uses this read-only state to alter action-button
+		// availability without being able to mutate the edit state directly.
+		return classificationDirty;
+	}
+
+	void classificationDiscarded() {
+		QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
+
+		// Discard means return the classification controls to the authoritative
+		// persisted state, not merely clear the dirty flag.
+		showSelectedClassification(selected);
+	}
+
+	void classificationSaved(long questionId) {
+		Question selected = getSelectedQuestion();
+		if (selected == null || selected.getId() != questionId) {
+			throw new IllegalStateException("Saved classification does not belong to the selected Question");
+		}
+
+		// Persistence has succeeded. Clear the dirty state without starting a search;
+		// the caller decides whether to refresh the current Question or continue to
+		// another intended navigation target.
+		classificationDirty.set(false);
+		selectedDescriptorBox.setDisable(true);
 	}
 
 	/**
@@ -148,6 +209,26 @@ public class QuestionSearchPane extends BorderPane {
 		statusLabel.setText("");
 	}
 
+	CurriculumNode getPendingClassification() {
+		if (!classificationDirty.get()) {
+			return null;
+		}
+		Question question = getSelectedQuestion();
+		CurriculumNode descriptor = selectedDescriptorBox.getValue();
+		if (question == null || descriptor == null) {
+			throw new IllegalStateException("Dirty classification edit has no selected Question or Descriptor");
+		}
+		CurriculumNode original = question.getClassification();
+
+		// Search is permitted to refine only Subtopic -> child Descriptor. Broader
+		// reclassification remains the responsibility of Edit Question.
+		if (original.getLevel() != CurriculumLevel.SUBTOPIC || descriptor.getLevel() != CurriculumLevel.DESCRIPTOR
+				|| !original.equals(descriptor.getParent())) {
+			throw new IllegalStateException("Pending Descriptor is not a child of the Question's stored Subtopic");
+		}
+		return descriptor;
+	}
+
 	/**
 	 * @return the selected persisted question, or {@code null} when no result is
 	 *         selected
@@ -158,6 +239,10 @@ public class QuestionSearchPane extends BorderPane {
 		// Editing workflows operate on the authoritative persisted Question regardless
 		// of which Search scope produced the visible result.
 		return result == null ? null : result.question();
+	}
+
+	boolean isClassificationDirty() {
+		return classificationDirty.get();
 	}
 
 	/**
@@ -193,6 +278,26 @@ public class QuestionSearchPane extends BorderPane {
 		// result;
 		// the result's scope remains an internal Search concern.
 		return resultsList.getSelectionModel().selectedItemProperty();
+	}
+
+	void setClassificationNavigationGuard(BooleanSupplier classificationNavigationGuard) {
+		if (classificationNavigationGuard == null) {
+			throw new NullPointerException("classificationNavigationGuard");
+		}
+
+		// Search delegates the decision but retains responsibility for restoring or
+		// continuing the attempted result selection.
+		this.classificationNavigationGuard = classificationNavigationGuard;
+	}
+
+	void setClassificationSaveHandler(Runnable classificationSaveHandler) {
+		if (classificationSaveHandler == null) {
+			throw new NullPointerException("classificationSaveHandler");
+		}
+
+		// Retain only the persistence action; classification state remains owned by
+		// this Pane.
+		this.classificationSaveHandler = classificationSaveHandler;
 	}
 
 	private void cancelActiveHierarchyLoad() {
@@ -255,6 +360,30 @@ public class QuestionSearchPane extends BorderPane {
 		detailsArea.clear();
 	}
 
+	private void clearSelectedClassification() {
+		updatingSelectedClassification = true;
+		try {
+
+			// Clear the displayed historical path as one operation so ComboBox action
+			// handlers cannot turn population changes into a dirty edit.
+			selectedSyllabusValue.setText("");
+			selectedUnitBox.getItems().clear();
+			selectedUnitBox.setValue(null);
+			selectedTopicBox.getItems().clear();
+			selectedTopicBox.setValue(null);
+			selectedSubtopicBox.getItems().clear();
+			selectedSubtopicBox.setValue(null);
+			selectedDescriptorBox.getItems().clear();
+			selectedDescriptorBox.setValue(null);
+			selectedDescriptorBox.setDisable(true);
+			classificationDirty.set(false);
+		} finally {
+			updatingSelectedClassification = false;
+		}
+		selectedClassificationPane.setVisible(false);
+		selectedClassificationPane.setManaged(false);
+	}
+
 	private <T> void completeHierarchyLoad(Task<T> task, long generation, Consumer<T> onSucceeded) {
 
 		// Ignore a hierarchy loaded for a selection that has since changed or been
@@ -304,6 +433,12 @@ public class QuestionSearchPane extends BorderPane {
 		topicBox.setId("question-search-topic");
 		classificationBox.setId("question-search-classification");
 		descriptorBox.setId("question-search-descriptor");
+		selectedUnitBox.setId("question-search-selected-unit");
+		selectedTopicBox.setId("question-search-selected-topic");
+		selectedSubtopicBox.setId("question-search-selected-subtopic");
+		selectedDescriptorBox.setId("question-search-selected-descriptor");
+		selectedSyllabusValue.setId("question-search-selected-syllabus");
+		selectedClassificationPane.setId("question-search-selected-classification");
 		resultsList.setId("question-search-results");
 		detailsArea.setId("question-search-details");
 		statusLabel.setId("question-search-status");
@@ -337,6 +472,31 @@ public class QuestionSearchPane extends BorderPane {
 		configurePromptDisplay(topicBox);
 		configurePromptDisplay(classificationBox);
 		configurePromptDisplay(descriptorBox);
+		selectedUnitBox.setPromptText("No unit");
+		selectedTopicBox.setPromptText("No topic");
+		selectedSubtopicBox.setPromptText("No subtopic");
+		selectedDescriptorBox.setPromptText("No descriptor");
+		configurePromptDisplay(selectedUnitBox);
+		configurePromptDisplay(selectedTopicBox);
+		configurePromptDisplay(selectedSubtopicBox);
+		configurePromptDisplay(selectedDescriptorBox);
+		selectedUnitBox.setMaxWidth(Double.MAX_VALUE);
+		selectedTopicBox.setMaxWidth(Double.MAX_VALUE);
+		selectedSubtopicBox.setMaxWidth(Double.MAX_VALUE);
+		selectedDescriptorBox.setMaxWidth(Double.MAX_VALUE);
+		saveClassificationButton.setId("question-search-save-classification");
+
+		// Save is meaningful only while the selected Descriptor differs from the
+		// persisted Question classification.
+		saveClassificationButton.disableProperty().bind(classificationDirty.not());
+
+		// The selected Question path is informational in this first drop.
+		selectedUnitBox.setDisable(true);
+		selectedTopicBox.setDisable(true);
+		selectedSubtopicBox.setDisable(true);
+		selectedDescriptorBox.setDisable(true);
+		selectedClassificationPane.setVisible(false);
+		selectedClassificationPane.setManaged(false);
 		previewImageView.setId("question-search-preview");
 		previewStatusLabel.setId("question-search-preview-status");
 		previewImageView.setPreserveRatio(true);
@@ -387,8 +547,19 @@ public class QuestionSearchPane extends BorderPane {
 		topicBox.setOnMousePressed(_ -> handleTopicBoxMousePress());
 		classificationBox.setOnMousePressed(_ -> handleClassificationBoxMousePress());
 		descriptorBox.setOnMousePressed(_ -> handleDescriptorBoxMousePress());
+
+		// Only a previously blank Descriptor may be refined directly from Search.
+		selectedDescriptorBox.setOnAction(_ -> handleSelectedDescriptorSelection());
+
+		// Persistence remains outside the Pane; this button delegates the action to
+		// the containing Dialog.
+		saveClassificationButton.setOnAction(_ -> classificationSaveHandler.run());
+
+		// Dirty classification state controls which Search navigation remains
+		// available until the pending Descriptor is saved.
+		classificationDirty.addListener((_, _, _) -> updateClassificationEditLock());
 		resultsList.getSelectionModel().selectedItemProperty()
-				.addListener((_, _, newResult) -> showResultDetails(newResult));
+				.addListener((_, oldResult, newResult) -> handleResultSelection(oldResult, newResult));
 	}
 
 	private <T> void configurePromptDisplay(ComboBox<T> comboBox) {
@@ -439,24 +610,53 @@ public class QuestionSearchPane extends BorderPane {
 		return pane;
 	}
 
+	private GridPane createSelectedClassificationPane() {
+		selectedClassificationPane.setHgap(SELECTOR_COLUMN_GAP);
+		selectedClassificationPane.setVgap(SELECTOR_ROW_GAP);
+		selectedClassificationPane.setPadding(new Insets(SECTION_TOP_PADDING, 0, PANE_PADDING, 0));
+		Label heading = new Label("Selected question classification");
+		heading.setStyle("-fx-font-weight: bold;");
+		selectedClassificationPane.add(heading, 0, 0, 2, 1);
+		selectedClassificationPane.add(createSelectorLabel("Syllabus"), 0, 1);
+		selectedClassificationPane.add(selectedSyllabusValue, 1, 1);
+		selectedClassificationPane.add(createSelectorLabel("Unit"), 0, 2);
+		selectedClassificationPane.add(selectedUnitBox, 1, 2);
+		selectedClassificationPane.add(createSelectorLabel("Topic"), 0, 3);
+		selectedClassificationPane.add(selectedTopicBox, 1, 3);
+		selectedClassificationPane.add(createSelectorLabel("Subtopic"), 0, 4);
+		selectedClassificationPane.add(selectedSubtopicBox, 1, 4);
+		selectedClassificationPane.add(createSelectorLabel("Descriptor"), 0, 5);
+		selectedClassificationPane.add(selectedDescriptorBox, 1, 5);
+
+		// Keep the narrow Descriptor save action beside the field it commits.
+		selectedClassificationPane.add(saveClassificationButton, 2, 5);
+
+		// Keep the narrow Descriptor save action beside the field it commits.
+		GridPane.setHgrow(selectedUnitBox, Priority.ALWAYS);
+		GridPane.setHgrow(selectedTopicBox, Priority.ALWAYS);
+		GridPane.setHgrow(selectedSubtopicBox, Priority.ALWAYS);
+		GridPane.setHgrow(selectedDescriptorBox, Priority.ALWAYS);
+		return selectedClassificationPane;
+	}
+
 	private GridPane createSelectionPane() {
 		GridPane pane = new GridPane();
 		pane.setHgap(SELECTOR_COLUMN_GAP);
 		pane.setVgap(SELECTOR_ROW_GAP);
 		pane.setPadding(new Insets(0, 0, PANE_PADDING, 0));
-		pane.add(new Label("Search scope"), 0, 0);
+		pane.add(createSelectorLabel("Search scope"), 0, 0);
 		pane.add(searchScopeBox, 1, 0);
-		pane.add(new Label("Subject"), 0, 1);
+		pane.add(createSelectorLabel("Subject"), 0, 1);
 		pane.add(subjectBox, 1, 1);
-		pane.add(new Label("Current syllabus"), 0, 2);
+		pane.add(createSelectorLabel("Current syllabus"), 0, 2);
 		pane.add(syllabusValue, 1, 2);
-		pane.add(new Label("Unit"), 0, 3);
+		pane.add(createSelectorLabel("Unit"), 0, 3);
 		pane.add(unitBox, 1, 3);
-		pane.add(new Label("Topic"), 0, 4);
+		pane.add(createSelectorLabel("Topic"), 0, 4);
 		pane.add(topicBox, 1, 4);
-		pane.add(new Label("Subtopic / Descriptor"), 0, 5);
+		pane.add(createSelectorLabel("Subtopic / Descriptor"), 0, 5);
 		pane.add(classificationBox, 1, 5);
-		pane.add(new Label("Descriptor"), 0, 6);
+		pane.add(createSelectorLabel("Descriptor"), 0, 6);
 		pane.add(descriptorBox, 1, 6);
 		pane.add(statusLabel, 1, 7);
 		GridPane.setHgrow(searchScopeBox, Priority.ALWAYS);
@@ -466,6 +666,15 @@ public class QuestionSearchPane extends BorderPane {
 		GridPane.setHgrow(classificationBox, Priority.ALWAYS);
 		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
 		return pane;
+	}
+
+	private Label createSelectorLabel(String text) {
+		Label label = new Label(text);
+
+		// Selector labels describe the controls beside them and must not collapse to
+		// ellipses when the Dialog is resized.
+		label.setMinWidth(Region.USE_PREF_SIZE);
+		return label;
 	}
 
 	private <T> void failHierarchyLoad(Task<T> task, long generation) {
@@ -555,6 +764,36 @@ public class QuestionSearchPane extends BorderPane {
 		startAutomaticSearch(descriptorBox.getValue());
 	}
 
+	private void handleResultSelection(QuestionSearchResult oldResult, QuestionSearchResult newResult) {
+		if (restoringResultSelection) {
+			return;
+		}
+		if (classificationDirty.get() && oldResult != null && newResult != null
+				&& oldResult.question().getId() != newResult.question().getId()) {
+
+			// Restore the Question that owns the dirty Descriptor before opening the
+			// warning so Cancel leaves both the edit and visible details untouched.
+			restoringResultSelection = true;
+			try {
+				resultsList.getSelectionModel().select(oldResult);
+			} finally {
+				restoringResultSelection = false;
+			}
+			if (!classificationNavigationGuard.getAsBoolean()) {
+
+				// Cancel means cancel navigation, not discard the Descriptor edit.
+				return;
+			}
+
+			// Save succeeded. Re-run the current search and select the Question the
+			// teacher originally attempted to move to from authoritative data.
+			refreshAfterEdit(newResult.question().getId());
+			return;
+		}
+		showResultDetails(newResult);
+		showSelectedClassification(newResult);
+	}
+
 	private void handleSearchScopeSelection() {
 		if (updatingControls || disposed) {
 			return;
@@ -577,6 +816,27 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		restoreCurriculumControlState();
 		startMostSpecificCurrentSyllabusSearch();
+	}
+
+	private void handleSelectedDescriptorSelection() {
+		if (updatingSelectedClassification || disposed) {
+			return;
+		}
+		Question question = getSelectedQuestion();
+		CurriculumNode descriptor = selectedDescriptorBox.getValue();
+		if (question == null || descriptor == null) {
+			classificationDirty.set(false);
+			return;
+		}
+		CurriculumNode original = question.getClassification();
+
+		// A valid inline edit can only refine the selected Question's stored
+		// Subtopic to one of its immediate Descriptor children.
+		if (original.getLevel() != CurriculumLevel.SUBTOPIC || descriptor.getLevel() != CurriculumLevel.DESCRIPTOR
+				|| !original.equals(descriptor.getParent())) {
+			throw new IllegalStateException("Selected Descriptor is not valid for this Question");
+		}
+		classificationDirty.set(true);
 	}
 
 	private void handleSubjectBoxMousePress() {
@@ -823,6 +1083,77 @@ public class QuestionSearchPane extends BorderPane {
 		startQuestionPreview(question);
 	}
 
+	private void showSelectedClassification(QuestionSearchResult result) {
+		clearSelectedClassification();
+		if (result == null) {
+			return;
+		}
+		Question question = result.question();
+		CurriculumNode classification = question.getClassification();
+		CurriculumNode unit = null;
+		CurriculumNode topic = null;
+		CurriculumNode subtopic = null;
+		CurriculumNode descriptor = null;
+		List<CurriculumNode> descriptorChoices = List.of();
+		if (classification.getLevel() == CurriculumLevel.SUBTOPIC) {
+
+			// A Subtopic-classified Question may be refined only to one of that
+			// Subtopic's own Descriptors.
+			subtopic = classification;
+			topic = subtopic.getParent();
+			unit = topic.getParent();
+			descriptorChoices = curriculumRepository.findChildren(subtopic).stream()
+					.filter(node -> node.getLevel() == CurriculumLevel.DESCRIPTOR).toList();
+		} else if (classification.getLevel() == CurriculumLevel.DESCRIPTOR) {
+
+			// An existing Descriptor classification is informational in Search and
+			// therefore remains read-only.
+			descriptor = classification;
+			CurriculumNode parent = descriptor.getParent();
+			if (parent.getLevel() == CurriculumLevel.SUBTOPIC) {
+				subtopic = parent;
+				topic = subtopic.getParent();
+			} else if (parent.getLevel() == CurriculumLevel.TOPIC) {
+				topic = parent;
+			} else {
+				throw new IllegalStateException("Descriptor has invalid parent level " + parent.getLevel());
+			}
+			unit = topic.getParent();
+			descriptorChoices = List.of(descriptor);
+		} else {
+			throw new IllegalStateException("Question classification must be a Subtopic or Descriptor");
+		}
+		updatingSelectedClassification = true;
+		try {
+
+			// Populate the complete stored hierarchy before enabling the one allowed
+			// refinement control.
+			selectedSyllabusValue.setText(classification.getSyllabusVersion().getName());
+			selectedUnitBox.getItems().setAll(unit);
+			selectedUnitBox.setValue(unit);
+			selectedTopicBox.getItems().setAll(topic);
+			selectedTopicBox.setValue(topic);
+			if (subtopic != null) {
+				selectedSubtopicBox.getItems().setAll(subtopic);
+				selectedSubtopicBox.setValue(subtopic);
+			}
+			selectedDescriptorBox.getItems().setAll(descriptorChoices);
+			if (descriptor != null) {
+				selectedDescriptorBox.setValue(descriptor);
+			}
+
+			// Descriptor selection is available only when the stored classification is
+			// still at Subtopic level and valid child Descriptors exist.
+			selectedDescriptorBox
+					.setDisable(classification.getLevel() != CurriculumLevel.SUBTOPIC || descriptorChoices.isEmpty());
+			classificationDirty.set(false);
+		} finally {
+			updatingSelectedClassification = false;
+		}
+		selectedClassificationPane.setVisible(true);
+		selectedClassificationPane.setManaged(true);
+	}
+
 	private void showSubjectNavigation(Subject subject, SubjectNavigation navigation) {
 		currentSyllabus = navigation.currentSyllabus();
 		if (currentSyllabus == null) {
@@ -1026,6 +1357,39 @@ public class QuestionSearchPane extends BorderPane {
 				}
 			}
 		});
+	}
+
+	private void updateClassificationEditLock() {
+		boolean dirty = classificationDirty.get();
+
+		// Result selection remains available so an attempt to leave the Question can
+		// invoke the Save/Cancel navigation guard.
+		resultsList.setDisable(false);
+		if (dirty) {
+
+			// Search-filter changes are still held for the next slice. This keeps the
+			// pending Question stable while result-to-result navigation is hardened.
+			searchScopeBox.setDisable(true);
+			subjectBox.setDisable(true);
+			unitBox.setDisable(true);
+			topicBox.setDisable(true);
+			classificationBox.setDisable(true);
+			descriptorBox.setDisable(true);
+			return;
+		}
+		searchScopeBox.setDisable(false);
+		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
+
+			// All Questions restores only its persisted-Subject filter because the
+			// remaining selectors represent current-syllabus applicability.
+			subjectBox.setDisable(false);
+			unitBox.setDisable(true);
+			topicBox.setDisable(true);
+			classificationBox.setDisable(true);
+			descriptorBox.setDisable(true);
+			return;
+		}
+		restoreCurriculumControlState();
 	}
 
 	private void updateSearchStatus() {
