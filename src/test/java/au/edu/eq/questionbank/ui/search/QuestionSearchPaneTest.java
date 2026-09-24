@@ -41,6 +41,7 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
@@ -77,6 +78,7 @@ public class QuestionSearchPaneTest {
 	private DelayedQuestionRetrievalRepository retrievalRepository;
 	private QuestionPreviewService previewService;
 	private QuestionRetrievalService retrievalService;
+	private InMemoryQuestionOutputApplicabilityRepository outputApplicabilityRepository;
 	private Stage stage;
 
 	@Test
@@ -145,6 +147,8 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		ListView<QuestionSearchPane.QuestionOutputApplicabilityRow> outputList = robot
+				.lookup("#question-search-output-applicability").queryListView();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 
@@ -161,6 +165,14 @@ public class QuestionSearchPaneTest {
 		// Empty applicability here means it was not evaluated, not that the Question
 		// failed current-curriculum mapping.
 		assertTrue(detailsArea.getText().contains("Not evaluated in All Questions scope."));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
+		QuestionSearchPane.QuestionOutputApplicabilityRow outputRow = outputList.getItems().getFirst();
+
+		// All Questions itself still carries no inferred applicability, but selecting
+		// a Question performs a separate current-curriculum lookup for revision-output
+		// information.
+		assertEquals(currentDescriptor, outputRow.currentNode());
+		assertFalse(outputRow.excluded());
 	}
 
 	@Test
@@ -559,6 +571,27 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void selectedQuestionShowsRevisionOutputExclusion(FxRobot robot) throws TimeoutException {
+		outputApplicabilityRepository.setExcluded(historicalQuestion, currentDescriptor, true);
+		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionSearchPane.QuestionOutputApplicabilityRow> outputList = robot
+				.lookup("#question-search-output-applicability").queryListView();
+		Label outputStatus = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
+		robot.interact(() -> subjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
+		QuestionSearchPane.QuestionOutputApplicabilityRow row = outputList.getItems().getFirst();
+		assertEquals(currentDescriptor, row.currentNode());
+		assertTrue(row.excluded());
+
+		// The selected Question remains curriculum-applicable, but its one current
+		// placement is explicitly suppressed from revision output.
+		assertEquals("1 current placement: 0 included, 1 excluded.", outputStatus.getText());
+	}
+
+	@Test
 	public void selectedSubtopicQuestionShowsBlankDescriptorWithChoices(FxRobot robot) throws TimeoutException {
 		Question subtopicQuestion = new Question(50, historicalQuestion.getBooklet(), "22", "", 2, List.of(),
 				currentSubtopic, false);
@@ -762,8 +795,9 @@ public class QuestionSearchPaneTest {
 		retrievalService = new QuestionRetrievalService(retrievalRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
 		previewService = new QuestionPreviewService(new PdfStore(Path.of(".")), new QuestionExtractor());
+		outputApplicabilityRepository = new InMemoryQuestionOutputApplicabilityRepository();
 		QuestionSearchPane pane = new QuestionSearchPane(curriculumRepository, retrievalService,
-				() -> List.of(historicalQuestion), previewService);
+				() -> List.of(historicalQuestion), previewService, outputApplicabilityRepository);
 		stage.setScene(new Scene(pane, 700, 600));
 		stage.show();
 	}
@@ -867,7 +901,7 @@ public class QuestionSearchPaneTest {
 
 	private void extracted(QuestionSearchDialog[] dialogHolder, QuestionSearchPane[] paneHolder) {
 		QuestionSearchDialog dialog = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
-				() -> List.of(historicalQuestion), previewService, (_, _) -> {
+				() -> List.of(historicalQuestion), previewService, outputApplicabilityRepository, (_, _) -> {
 
 					// This test exercises Dialog disposal only. A classification
 					// persistence request would indicate unrelated behaviour.
@@ -888,9 +922,10 @@ public class QuestionSearchPaneTest {
 			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
 			existing.dispose();
 
-			// Replacement panes use the fixture Question as their complete-bank source;
-			// specialised tests can still replace curriculum retrieval independently.
-			pane[0] = new QuestionSearchPane(repository, service, () -> List.of(historicalQuestion), previewService);
+			// Replacement panes retain the same revision-output repository so
+			// individual tests may preconfigure inclusion state.
+			pane[0] = new QuestionSearchPane(repository, service, () -> List.of(historicalQuestion), previewService,
+					outputApplicabilityRepository);
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];
@@ -903,10 +938,10 @@ public class QuestionSearchPaneTest {
 			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
 			existing.dispose();
 
-			// Keep complete-bank retrieval stable while this overload varies only the
-			// preview service under test.
+			// Keep complete-bank retrieval and output-applicability persistence
+			// stable while this overload varies only the preview service.
 			pane[0] = new QuestionSearchPane(repository, service, () -> List.of(historicalQuestion),
-					replacementPreviewService);
+					replacementPreviewService, outputApplicabilityRepository);
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];
@@ -919,9 +954,10 @@ public class QuestionSearchPaneTest {
 			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
 			existing.dispose();
 
-			// This overload varies the complete-bank source while keeping curriculum
-			// retrieval and preview behaviour unchanged.
-			pane[0] = new QuestionSearchPane(repository, service, allQuestionsSupplier, previewService);
+			// This overload varies the complete-bank source while retaining the
+			// same revision-output state for selected Questions.
+			pane[0] = new QuestionSearchPane(repository, service, allQuestionsSupplier, previewService,
+					outputApplicabilityRepository);
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];

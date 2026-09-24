@@ -17,6 +17,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -132,7 +133,7 @@ class QuestionSearchDialogTest {
 			QuestionRetrievalService retrievalService, QuestionPreviewService previewService,
 			QuestionSearchDialog[] dialogHolder) {
 		return dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
-				() -> List.of(), previewService, (_, _) -> {
+				() -> List.of(), previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 
 					// Geometry tests must never attempt Question persistence.
 					throw new AssertionError("Classification update was not expected");
@@ -143,7 +144,7 @@ class QuestionSearchDialogTest {
 			QuestionPreviewService previewService, QuestionSearchDialog[] dialogHolder, Rectangle2D[] screenBounds) {
 		screenBounds[0] = Screen.getPrimary().getVisualBounds();
 		dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService, () -> List.of(),
-				previewService, (_, _) -> {
+				previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 
 					// Geometry tests must never attempt Question persistence.
 					throw new AssertionError("Classification update was not expected");

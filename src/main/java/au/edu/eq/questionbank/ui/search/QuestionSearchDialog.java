@@ -1,11 +1,13 @@
 package au.edu.eq.questionbank.ui.search;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.repository.assessment.QuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
@@ -38,93 +40,80 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private double rememberedHeight = Double.NaN;
 	private double rememberedX = Double.NaN;
 	private double rememberedY = Double.NaN;
+	private final ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
+	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
+	private final ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
+	private final ButtonType editExamButtonType = new ButtonType("Edit Exam", ButtonBar.ButtonData.OTHER);
+	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Recapture Shared Context",
+			ButtonBar.ButtonData.OTHER);
+	private final ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
 
 	/**
 	 * Creates a question-search dialog owned by the supplied window.
 	 *
-	 * @param owner                dialog owner
-	 * @param curriculumRepository current curriculum hierarchy lookup
-	 * @param retrievalService     curriculum-aware question retrieval
-	 * @param allQuestionsSupplier complete stored Question retrieval
-	 * @param previewService       stored question image preview service
-	 * @throws NullPointerException if any argument is {@code null}
-	 */
-	/**
-	 * Creates a question-search dialog owned by the supplied window.
-	 *
-	 * @param owner                 dialog owner
-	 * @param curriculumRepository  current curriculum hierarchy lookup
-	 * @param retrievalService      curriculum-aware question retrieval
-	 * @param allQuestionsSupplier  complete stored Question retrieval
-	 * @param previewService        stored question image preview service
-	 * @param classificationUpdater persistence operation for a classification-only
-	 *                              Question update
+	 * @param owner                         dialog owner
+	 * @param curriculumRepository          current curriculum hierarchy lookup
+	 * @param retrievalService              curriculum-aware Question retrieval
+	 * @param allQuestionsSupplier          complete stored Question retrieval
+	 * @param previewService                stored Question image preview service
+	 * @param outputApplicabilityRepository persisted per-Question revision-output
+	 *                                      exclusions
+	 * @param classificationUpdater         persistence operation for a
+	 *                                      classification-only Question update
 	 * @throws NullPointerException if any argument is {@code null}
 	 */
 	public QuestionSearchDialog(Window owner, CurriculumRepository curriculumRepository,
 			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
-			QuestionPreviewService previewService, BiFunction<Long, CurriculumNode, Question> classificationUpdater) {
-		if (owner == null) {
-			throw new NullPointerException("owner");
-		}
-		if (curriculumRepository == null) {
-			throw new NullPointerException("curriculumRepository");
-		}
-		if (retrievalService == null) {
-			throw new NullPointerException("retrievalService");
-		}
-		if (allQuestionsSupplier == null) {
-			throw new NullPointerException("allQuestionsSupplier");
-		}
-		if (previewService == null) {
-			throw new NullPointerException("previewService");
-		}
-		if (classificationUpdater == null) {
-			throw new NullPointerException("classificationUpdater");
-		}
-		this.classificationUpdater = classificationUpdater;
-		initOwner(owner);
-		setTitle("Search Questions");
-		setHeaderText("Find questions across the bank or by current curriculum");
-		setResizable(true);
-		ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
-		ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
-		ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
-		ButtonType editExamButtonType = new ButtonType("Edit Exam", ButtonBar.ButtonData.OTHER);
-		ButtonType recaptureSharedContextButtonType = new ButtonType("Recapture Shared Context",
-				ButtonBar.ButtonData.OTHER);
-		ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
-		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
-				editExamButtonType, recaptureSharedContextButtonType, editAnswerButtonType, ButtonType.CLOSE);
-		searchPane = new QuestionSearchPane(curriculumRepository, retrievalService, allQuestionsSupplier,
-				previewService);
+			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
+			BiFunction<Long, CurriculumNode, Question> classificationUpdater) {
+		this.classificationUpdater = Objects.requireNonNull(classificationUpdater, "classificationUpdater");
+		initOwner(Objects.requireNonNull(owner, "owner"));
 
-		// Search delegates dirty result-navigation decisions to the Dialog so the
-		// warning and classification persistence remain at the Dialog boundary.
-		searchPane.setClassificationNavigationGuard(this::confirmPendingClassificationBeforeNavigation);
+		// The Pane owns Search state and background retrieval. The Dialog owns modal
+		// decisions, persistence callbacks and edit-workflow actions.
+		searchPane = new QuestionSearchPane(Objects.requireNonNull(curriculumRepository, "curriculumRepository"),
+				Objects.requireNonNull(retrievalService, "retrievalService"),
+				Objects.requireNonNull(allQuestionsSupplier, "allQuestionsSupplier"),
+				Objects.requireNonNull(previewService, "previewService"),
+				Objects.requireNonNull(outputApplicabilityRepository, "outputApplicabilityRepository"));
+		configureDialogShell();
+		configureSearchPaneCallbacks();
+		configureActionButtons();
+		configureResultConversion();
+		configureGeometry();
+	}
 
-		// The inline Save button commits only the Descriptor refinement and leaves
-		// Search open on the refreshed Question.
-		searchPane.setClassificationSaveHandler(() -> {
-			Question updated = savePendingClassification();
-			if (updated != null) {
-				searchPane.refreshAfterEdit(updated.getId());
-			}
-		});
-		getDialogPane().setContent(searchPane);
-		Button editQuestionButton = (Button) getDialogPane().lookupButton(editQuestionButtonType);
-		Button splitQuestionButton = (Button) getDialogPane().lookupButton(splitQuestionButtonType);
-		Button editMetadataButton = (Button) getDialogPane().lookupButton(editMetadataButtonType);
-		Button editExamButton = (Button) getDialogPane().lookupButton(editExamButtonType);
-		Button recaptureSharedContextButton = (Button) getDialogPane().lookupButton(recaptureSharedContextButtonType);
-		Button editAnswerButton = (Button) getDialogPane().lookupButton(editAnswerButtonType);
-		Button closeButton = (Button) getDialogPane().lookupButton(ButtonType.CLOSE);
-		editQuestionButton.setId("question-search-edit-question");
-		splitQuestionButton.setId("question-search-split-question");
-		editMetadataButton.setId("question-search-edit-metadata");
-		editExamButton.setId("question-search-edit-exam");
-		recaptureSharedContextButton.setId("question-search-recapture-shared-context");
-		editAnswerButton.setId("question-search-edit-answer");
+	/**
+	 * Disposes the search pane and cancels its pending background work.
+	 */
+	public void dispose() {
+		searchPane.dispose();
+	}
+
+	/**
+	 * Refreshes the active search after an edit.
+	 *
+	 * @param questionId the persistent question identifier to reselect if still
+	 *                   present
+	 */
+	public void refreshAfterEdit(long questionId) {
+		searchPane.refreshAfterEdit(questionId);
+	}
+
+	private Button buttonFor(ButtonType buttonType) {
+
+		// Every supplied ButtonType is installed before this lookup, so failure here
+		// means the Dialog configuration itself is inconsistent.
+		Button button = (Button) getDialogPane().lookupButton(buttonType);
+		if (button == null) {
+			throw new IllegalStateException("Dialog button was not created: " + buttonType.getText());
+		}
+		return button;
+	}
+
+	private void configureActionButtonBindings(Button editQuestionButton, Button splitQuestionButton,
+			Button editMetadataButton, Button editExamButton, Button recaptureSharedContextButton,
+			Button editAnswerButton) {
 		editQuestionButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
 		splitQuestionButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
@@ -143,29 +132,67 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			Question selected = searchPane.getSelectedQuestion();
 			return searchPane.isClassificationDirty() || selected == null || !selected.hasAnswer();
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty()));
+	}
 
-		// Consume the normal Dialog action while dirty so Save Question persists the
-		// Descriptor without closing Search.
+	private void configureActionButtonIds(Button editQuestionButton, Button splitQuestionButton,
+			Button editMetadataButton, Button editExamButton, Button recaptureSharedContextButton,
+			Button editAnswerButton) {
+
+		// Stable IDs support TestFX without exposing implementation-specific button
+		// ordering to UI tests.
+		editQuestionButton.setId("question-search-edit-question");
+		splitQuestionButton.setId("question-search-split-question");
+		editMetadataButton.setId("question-search-edit-metadata");
+		editExamButton.setId("question-search-edit-exam");
+		recaptureSharedContextButton.setId("question-search-recapture-shared-context");
+		editAnswerButton.setId("question-search-edit-answer");
+	}
+
+	private void configureActionButtons() {
+		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
+				editExamButtonType, recaptureSharedContextButtonType, editAnswerButtonType, ButtonType.CLOSE);
+		Button editQuestionButton = buttonFor(editQuestionButtonType);
+		Button splitQuestionButton = buttonFor(splitQuestionButtonType);
+		Button editMetadataButton = buttonFor(editMetadataButtonType);
+		Button editExamButton = buttonFor(editExamButtonType);
+		Button recaptureSharedContextButton = buttonFor(recaptureSharedContextButtonType);
+		Button editAnswerButton = buttonFor(editAnswerButtonType);
+		Button closeButton = buttonFor(ButtonType.CLOSE);
+		configureActionButtonIds(editQuestionButton, splitQuestionButton, editMetadataButton, editExamButton,
+				recaptureSharedContextButton, editAnswerButton);
+		configureActionButtonBindings(editQuestionButton, splitQuestionButton, editMetadataButton, editExamButton,
+				recaptureSharedContextButton, editAnswerButton);
+		configureDirtyActionHandling(editQuestionButton, closeButton);
+	}
+
+	private void configureDialogShell() {
+		setTitle("Search Questions");
+		setHeaderText("Find questions across the bank or by current curriculum");
+		setResizable(true);
+		getDialogPane().setContent(searchPane);
+	}
+
+	private void configureDirtyActionHandling(Button editQuestionButton, Button closeButton) {
+
+		// A dirty Descriptor must be resolved before full Question editing begins,
+		// while Edit Question itself remains available.
 		editQuestionButton.addEventFilter(ActionEvent.ACTION, event -> {
 			if (!searchPane.isClassificationDirty()) {
 				return;
 			}
-
-			// A dirty Descriptor must be resolved before full Question editing
-			// begins, but Edit Question itself remains available.
 			event.consume();
 			Question question = resolvePendingClassificationForEdit();
 			if (question == null) {
 
-				// Cancel leaves Search open with the pending Descriptor intact.
+				// Cancel preserves the pending Descriptor and leaves Search open.
 				return;
 			}
 			setResult(new EditRequest(question, EditTarget.QUESTION));
 			close();
 		});
 
-		// Closing with an unsaved Descriptor requires an explicit Save or Cancel
-		// decision rather than silently discarding the inline edit.
+		// Closing with an unsaved Descriptor requires an explicit decision rather
+		// than silently abandoning the inline classification edit.
 		closeButton.addEventFilter(ActionEvent.ACTION, event -> {
 			if (!searchPane.isClassificationDirty()) {
 				return;
@@ -175,6 +202,28 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 				close();
 			}
 		});
+	}
+
+	private void configureGeometry() {
+
+		// Search controls have a functional minimum size below which selector labels
+		// and inline actions no longer remain usable.
+		getDialogPane().setMinWidth(DIALOG_WIDTH);
+		getDialogPane().setPrefWidth(DIALOG_WIDTH);
+		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
+
+		// JavaFX may permit programmatic width changes below the native Stage minimum.
+		// Correct those after the current resize event rather than re-entrantly.
+		widthProperty().addListener((_, _, width) -> {
+			if (!isShowing() || width.doubleValue() >= DIALOG_WIDTH) {
+				return;
+			}
+			Platform.runLater(this::enforceMinimumWidth);
+		});
+		configureSizePersistence();
+	}
+
+	private void configureResultConversion() {
 		setResultConverter(buttonType -> {
 			Question selected = searchPane.getSelectedQuestion();
 			if (selected == null) {
@@ -200,43 +249,22 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			}
 			return null;
 		});
+	}
 
-		// Search controls have a practical minimum width below which selector labels
-		// and actions cease to be usable.
-		getDialogPane().setMinWidth(DIALOG_WIDTH);
-		getDialogPane().setPrefWidth(DIALOG_WIDTH);
-		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
+	private void configureSearchPaneCallbacks() {
 
-		// Stage minimum width protects normal native resizing, but JavaFX permits some
-		// programmatic width changes below that value. Keep the Dialog invariant
-		// explicit so selector labels and inline actions cannot collapse.
-		widthProperty().addListener((_, _, width) -> {
-			if (!isShowing() || width.doubleValue() >= DIALOG_WIDTH) {
-				return;
+		// The Dialog owns modal decisions and persistence; the Pane owns the dirty
+		// classification state that triggers those decisions.
+		searchPane.setClassificationNavigationGuard(this::confirmPendingClassificationBeforeNavigation);
+
+		// Inline Save commits only the Descriptor refinement and leaves Search open on
+		// the refreshed Question.
+		searchPane.setClassificationSaveHandler(() -> {
+			Question updated = savePendingClassification();
+			if (updated != null) {
+				searchPane.refreshAfterEdit(updated.getId());
 			}
-
-			// Defer the correction until the current native resize event has
-			// completed rather than changing geometry re-entrantly.
-			Platform.runLater(this::enforceMinimumWidth);
 		});
-		configureSizePersistence();
-	}
-
-	/**
-	 * Disposes the search pane and cancels its pending background work.
-	 */
-	public void dispose() {
-		searchPane.dispose();
-	}
-
-	/**
-	 * Refreshes the active search after an edit.
-	 *
-	 * @param questionId the persistent question identifier to reselect if still
-	 *                   present
-	 */
-	public void refreshAfterEdit(long questionId) {
-		searchPane.refreshAfterEdit(questionId);
 	}
 
 	private void configureSizePersistence() {

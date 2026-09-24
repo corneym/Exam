@@ -1854,12 +1854,14 @@ public class QuestionBankApplication extends Application {
 		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(config.pdfDataRoot()),
 				questionExtractor);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
+		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
+				database);
 
-		// Search receives complete-bank retrieval separately from curriculum-aware
-		// retrieval, while the classification callback exposes only the narrow
-		// classification-only persistence operation needed by inline refinement.
+		// Search keeps curriculum-derived applicability separate from the persisted
+		// Question-specific exclusions that control revision output.
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
-				questionRepository::findAll, previewService, questionRepository::updateClassification);
+				questionRepository::findAll, previewService, outputApplicabilityRepository,
+				questionRepository::updateClassification);
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
