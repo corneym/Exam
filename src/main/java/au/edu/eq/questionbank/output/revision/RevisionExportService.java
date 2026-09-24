@@ -5,6 +5,8 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Clock;
+import java.time.ZonedDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
@@ -33,6 +35,7 @@ public final class RevisionExportService {
 	private final RevisionPresentationPlanner presentationPlanner;
 	private final RevisionSharedContextAssetRenderer sharedContextAssetRenderer;
 	private final RevisionCorpusScope corpusScope = new RevisionCorpusScope();
+	private final Clock clock;
 
 	/**
 	 * Creates an exporter from corpus, rendering and validation services.
@@ -49,6 +52,14 @@ public final class RevisionExportService {
 			RevisionQuestionAssetRenderer questionAssetRenderer,
 			RevisionSharedContextAssetRenderer sharedContextAssetRenderer,
 			RevisionAnswerAssetRenderer answerAssetRenderer, RevisionExportValidator validator) {
+		this(corpusBuilder, presentationPlanner, questionAssetRenderer, sharedContextAssetRenderer, answerAssetRenderer,
+				validator, Clock.systemDefaultZone());
+	}
+
+	RevisionExportService(RevisionCorpusBuilder corpusBuilder, RevisionPresentationPlanner presentationPlanner,
+			RevisionQuestionAssetRenderer questionAssetRenderer,
+			RevisionSharedContextAssetRenderer sharedContextAssetRenderer,
+			RevisionAnswerAssetRenderer answerAssetRenderer, RevisionExportValidator validator, Clock clock) {
 		if (corpusBuilder == null) {
 			throw new NullPointerException("corpusBuilder");
 		}
@@ -67,12 +78,16 @@ public final class RevisionExportService {
 		if (validator == null) {
 			throw new NullPointerException("validator");
 		}
+		if (clock == null) {
+			throw new NullPointerException("clock");
+		}
 		this.corpusBuilder = corpusBuilder;
 		this.presentationPlanner = presentationPlanner;
 		this.questionAssetRenderer = questionAssetRenderer;
 		this.sharedContextAssetRenderer = sharedContextAssetRenderer;
 		this.answerAssetRenderer = answerAssetRenderer;
 		this.validator = validator;
+		this.clock = clock;
 	}
 
 	/**
@@ -107,6 +122,10 @@ public final class RevisionExportService {
 		if (progress == null) {
 			throw new NullPointerException("progress");
 		}
+
+		// Capture one timestamp for the whole export. Page generation must not obtain
+		// separate wall-clock values as a long-running export progresses.
+		ZonedDateTime generatedAt = ZonedDateTime.now(clock);
 		Path destination = request.getDestination().toAbsolutePath().normalize();
 		validateDestination(destination);
 		Path parent = destination.getParent();
@@ -153,7 +172,7 @@ public final class RevisionExportService {
 							completed.intValue(), total.intValue()));
 			progress.update("Writing HTML...", 0, 0);
 			RevisionHtmlRenderer htmlRenderer = new RevisionHtmlRenderer(presentationPlan, questionAssets, answerAssets,
-					sharedContextAssets);
+					sharedContextAssets, generatedAt);
 			List<Path> htmlFiles = htmlRenderer.render(corpus, staging);
 			progress.update("Validating export...", 0, 0);
 

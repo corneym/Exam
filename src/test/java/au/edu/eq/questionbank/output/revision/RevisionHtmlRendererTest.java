@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -45,6 +47,8 @@ import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
 class RevisionHtmlRendererTest {
 
+	private static final ZonedDateTime GENERATED_AT = ZonedDateTime.of(2026, 9, 24, 21, 18, 0, 0,
+			ZoneId.of("Australia/Brisbane"));
 	@TempDir
 	Path tempDir;
 
@@ -237,9 +241,15 @@ class RevisionHtmlRendererTest {
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, List.of(partAAsset, partBAsset), List.of(),
 				List.of(contextAsset));
 		Path outputRoot = tempDir.resolve("multipart-output");
-		renderer.renderTopicPages(corpus, outputRoot);
+		renderer.render(corpus, outputRoot);
 		Path topicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-11.html"));
 		String html = Files.readString(topicFile);
+		String subjectHtml = Files.readString(outputRoot.resolve("index.html"));
+
+		// Two persisted multipart members form one student-facing card, so the
+		// homepage count must use presentation semantics rather than Question rows.
+		assertTrue(subjectHtml.contains("1 revision question"));
+		assertFalse(subjectHtml.contains("2 revision questions"));
 		assertEquals(1, countOccurrences(html, "context-50.png"));
 		assertEquals(1, countOccurrences(html, "<summary>Reveal answer</summary>"));
 		assertTrue(html.contains("Question 1"));
@@ -273,6 +283,10 @@ class RevisionHtmlRendererTest {
 		assertTrue(htmlFiles.contains(unitIndex.toAbsolutePath().normalize()));
 		assertTrue(htmlFiles.contains(descriptorTopic.toAbsolutePath().normalize()));
 		String subjectHtml = Files.readString(subjectIndex);
+
+		// Resource metadata uses the single export timestamp rather than the time at
+		// which this particular page happened to be written.
+		assertTrue(subjectHtml.contains("Generated 24 Sep 2026, 21:18 AEST"));
 		assertTrue(subjectHtml.contains("href=\"units/unit-10/index.html\""));
 		assertTrue(subjectHtml.contains("1 revision question"));
 		assertTrue(subjectHtml.contains("Revision question"));
@@ -331,7 +345,7 @@ class RevisionHtmlRendererTest {
 		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, List.of(answeredAsset, noAnswerAsset),
 				List.of(answerAsset));
 		Path outputRoot = tempDir.resolve("output");
-		renderer.renderTopicPages(corpus, outputRoot);
+		renderer.render(corpus, outputRoot);
 		Path topicFile = outputRoot.resolve(Path.of("units", "unit-10", "topic-11.html"));
 		assertTrue(Files.isRegularFile(topicFile));
 		String html = Files.readString(topicFile);
@@ -469,14 +483,14 @@ class RevisionHtmlRendererTest {
 		private RevisionHtmlRenderer createRenderer(RevisionCorpus corpus, List<RevisionQuestionAsset> questionAssets,
 				List<RevisionAnswerAsset> answerAssets, List<RevisionSharedContextAsset> sharedContextAssets) {
 			return new RevisionHtmlRenderer(new RevisionPresentationPlanner().plan(corpus), questionAssets,
-					answerAssets, sharedContextAssets);
+					answerAssets, sharedContextAssets, GENERATED_AT);
 		}
 
 		private RevisionHtmlRenderer createRenderer(RevisionCorpus corpus, RevisionGroupingMode groupingMode,
 				List<RevisionQuestionAsset> questionAssets, List<RevisionAnswerAsset> answerAssets) {
 			RevisionPresentationPlanner planner = new RevisionPresentationPlanner();
-			return new RevisionHtmlRenderer(planner.plan(corpus, groupingMode), questionAssets, answerAssets,
-					List.of());
+			return new RevisionHtmlRenderer(planner.plan(corpus, groupingMode), questionAssets, answerAssets, List.of(),
+					GENERATED_AT);
 		}
 	}
 }

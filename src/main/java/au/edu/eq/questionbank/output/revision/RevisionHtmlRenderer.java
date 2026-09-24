@@ -3,11 +3,14 @@ package au.edu.eq.questionbank.output.revision;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import au.edu.eq.questionbank.model.Answer;
@@ -30,6 +33,8 @@ import au.edu.eq.questionbank.service.revision.RevisionQuestionPresentation;
  */
 public final class RevisionHtmlRenderer {
 
+	private static final DateTimeFormatter GENERATED_AT_FORMAT = DateTimeFormatter.ofPattern("d MMM uuuu, HH:mm z",
+			Locale.ENGLISH);
 	private static final String STYLESHEET = """
 			:root {
 			    font-family: Arial, Helvetica, sans-serif;
@@ -60,6 +65,12 @@ public final class RevisionHtmlRenderer {
 
 			.page-header {
 			    margin-bottom: 2rem;
+			}
+
+			.generated-at {
+			    margin: 0.75rem 0 0;
+			    color: #5f6368;
+			    font-size: 0.9rem;
 			}
 
 			.eyebrow {
@@ -270,6 +281,7 @@ public final class RevisionHtmlRenderer {
 	private final Map<Long, RevisionSharedContextAsset> sharedContextAssetsByContextId;
 	private final Map<Long, RevisionPresentationNode> presentationNodesByCurriculumNodeId;
 	private final Map<Long, List<CurriculumNode>> currentDescriptorsByQuestionId;
+	private final ZonedDateTime generatedAt;
 
 	/**
 	 * Indexes the presentation plan and rendered assets for subsequent HTML
@@ -282,6 +294,12 @@ public final class RevisionHtmlRenderer {
 	 */
 	public RevisionHtmlRenderer(RevisionPresentationPlan presentationPlan, List<RevisionQuestionAsset> questionAssets,
 			List<RevisionAnswerAsset> answerAssets, List<RevisionSharedContextAsset> sharedContextAssets) {
+		this(presentationPlan, questionAssets, answerAssets, sharedContextAssets, ZonedDateTime.now());
+	}
+
+	RevisionHtmlRenderer(RevisionPresentationPlan presentationPlan, List<RevisionQuestionAsset> questionAssets,
+			List<RevisionAnswerAsset> answerAssets, List<RevisionSharedContextAsset> sharedContextAssets,
+			ZonedDateTime generatedAt) {
 		if (presentationPlan == null) {
 			throw new NullPointerException("presentationPlan");
 		}
@@ -294,7 +312,11 @@ public final class RevisionHtmlRenderer {
 		if (sharedContextAssets == null) {
 			throw new NullPointerException("sharedContextAssets");
 		}
+		if (generatedAt == null) {
+			throw new NullPointerException("generatedAt");
+		}
 		this.presentationPlan = presentationPlan;
+		this.generatedAt = generatedAt;
 		questionAssetsByQuestionId = indexQuestionAssets(questionAssets);
 		answerAssetsByQuestionId = indexAnswerAssets(answerAssets);
 		sharedContextAssetsByContextId = indexSharedContextAssets(sharedContextAssets);
@@ -917,6 +939,10 @@ public final class RevisionHtmlRenderer {
 		String stylesheetSource = relativeUrl(outputFile, outputRoot, Path.of("assets", "revision.css"));
 		int revisionQuestionCount = countStudentFacingPresentations(corpus);
 		String revisionQuestionLabel = revisionQuestionCount == 1 ? "Revision question" : "Revision questions";
+
+		// The timestamp belongs to this generated resource rather than the stored
+		// Question bank. It is captured once for the export and reused here verbatim.
+		String generatedAtText = GENERATED_AT_FORMAT.format(generatedAt);
 		StringBuilder html = new StringBuilder();
 		html.append("""
 				<!DOCTYPE html>
@@ -932,6 +958,7 @@ public final class RevisionHtmlRenderer {
 				    <header class="page-header">
 				        <p class="eyebrow">%s syllabus</p>
 				        <h1>%s Revision</h1>
+				        <p class="generated-at">Generated %s</p>
 				    </header>
 
 				    <section class="statistics" aria-label="Revision summary">
@@ -945,7 +972,7 @@ public final class RevisionHtmlRenderer {
 				    <ul class="navigation-list">
 				""".formatted(escapeText(corpus.getSubject().getName()), stylesheetSource,
 				escapeText(corpus.getSyllabusVersion().getName()), escapeText(corpus.getSubject().getName()),
-				revisionQuestionCount, escapeText(revisionQuestionLabel)));
+				escapeText(generatedAtText), revisionQuestionCount, escapeText(revisionQuestionLabel)));
 		for (RevisionCorpusNode unitNode : corpus.getRootNodes()) {
 			int questionCount = countPresentations(unitNode);
 

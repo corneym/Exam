@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -29,6 +32,8 @@ import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
 class RevisionExportServiceTest {
 
+	private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-09-24T11:18:00Z"),
+			ZoneId.of("Australia/Brisbane"));
 	@TempDir
 	Path tempDir;
 
@@ -40,6 +45,8 @@ class RevisionExportServiceTest {
 		assertEquals(destination.toAbsolutePath().normalize(), result.getDestination());
 		assertTrue(Files.isDirectory(destination));
 		assertTrue(Files.isRegularFile(destination.resolve("index.html")));
+		String subjectHtml = Files.readString(destination.resolve("index.html"));
+		assertTrue(subjectHtml.contains("Generated 24 Sep 2026, 21:18 AEST"));
 		assertTrue(Files.isRegularFile(destination.resolve(Path.of("assets", "revision.css"))));
 		assertEquals(0, result.getStatistics().getUniqueApplicableQuestions());
 		assertFalse(hasStagingDirectory(destination));
@@ -107,7 +114,7 @@ class RevisionExportServiceTest {
 			service = new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
 					new RevisionQuestionAssetRenderer(pdfStore, extractor),
 					new RevisionSharedContextAssetRenderer(pdfStore, extractor),
-					new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
+					new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator(), FIXED_CLOCK);
 		}
 	}
 }
