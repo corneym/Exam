@@ -602,8 +602,10 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
+
+		// Search is a reusable Dialog, so retained controls from a hidden instance do
+		// not prove that the modal Search window is actually showing.
+		waitForDialogShowing(robot, "Search Questions");
 		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
@@ -628,8 +630,10 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		});
 		assertFalse(continueButton.isDisabled());
 		fireControl(robot, continueButton);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> !robot.lookup("#question-search-results").tryQuery().isPresent());
+
+		// Starting split capture hides Search. Check the actual Dialog window rather
+		// than the reusable Dialog's retained result-list node.
+		waitForDialogHidden(robot, "Search Questions");
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Button save = lookup(robot, "#save-question", Button.class);
 		assertEquals("67a", questionCode.getText());
@@ -664,11 +668,14 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Capture the second Question part.
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertFalse(save.isDisabled());
-		robot.clickOn(save);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+		fireControl(robot, save);
+
+		// Successful split completion resumes the same modal Search Dialog. Wait for
+		// its real Stage before inspecting the persisted split or attempting to close
+		// it.
+		waitForDialogShowing(robot, "Search Questions");
 		List<Question> stored = repository.findAll();
 		assertEquals(2, stored.size());
 		Question partA = stored.stream().filter(question -> "67a".equals(question.getQuestionCode())).findFirst()
@@ -691,8 +698,10 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Exactly one shared-context entity must have been created for the multipart
 		// source Question.
 		assertEquals(1, contextRepository.findByBooklet(original.getBooklet()).size());
-		robot.clickOn("Close");
-		WaitForAsyncUtils.waitForFxEvents();
+
+		// Close the showing Search Dialog specifically; text lookup can match hidden
+		// Close buttons retained by other reusable Dialog instances.
+		closeDialog(robot, "Search Questions");
 	}
 
 	@Test

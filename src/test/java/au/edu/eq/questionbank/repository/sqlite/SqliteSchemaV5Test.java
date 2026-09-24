@@ -405,10 +405,10 @@ class SqliteSchemaV5Test {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-four.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 				statement.execute("""
