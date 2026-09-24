@@ -149,7 +149,7 @@ class LegacyQuestionMetadataImporterTest {
 					SELECT
 					    question_code,
 					    marks,
-					    preamble_capture_required,
+					    shared_context_capture_required,
 					    source_question_id,
 					    shared_context_id,
 						response_type
@@ -160,14 +160,14 @@ class LegacyQuestionMetadataImporterTest {
 				assertEquals("1", questions.getString("question_code"));
 				assertEquals(1, questions.getInt("marks"));
 				assertEquals("MULTIPLE_CHOICE", questions.getString("response_type"));
-				assertEquals(0, questions.getInt("preamble_capture_required"));
+				assertEquals(0, questions.getInt("shared_context_capture_required"));
 				assertNull(questions.getObject("source_question_id"));
 				assertNull(questions.getObject("shared_context_id"));
 				assertTrue(questions.next());
 				assertEquals("21a", questions.getString("question_code"));
 				assertEquals("UNKNOWN", questions.getString("response_type"));
 				assertEquals(3, questions.getInt("marks"));
-				assertEquals(1, questions.getInt("preamble_capture_required"));
+				assertEquals(1, questions.getInt("shared_context_capture_required"));
 				assertTrue(questions.getObject("source_question_id") != null);
 				assertNull(questions.getObject("shared_context_id"));
 			}
@@ -176,12 +176,12 @@ class LegacyQuestionMetadataImporterTest {
 			try (ResultSet sourceQuestion = statement.executeQuery("""
 					SELECT
 					    source_question_code,
-					    preamble_status
+					    shared_context_status
 					FROM source_questions
 					""")) {
 				assertTrue(sourceQuestion.next());
 				assertEquals("21", sourceQuestion.getString("source_question_code"));
-				assertEquals("UNKNOWN", sourceQuestion.getString("preamble_status"));
+				assertEquals("UNKNOWN", sourceQuestion.getString("shared_context_status"));
 			}
 			assertEquals(0, countRows(statement, "question_regions"));
 			assertEquals(1, countRows(statement, "answers"));
@@ -216,7 +216,7 @@ class LegacyQuestionMetadataImporterTest {
 				ResultSet question = statement.executeQuery("""
 						SELECT
 						    q.question_code,
-						    q.preamble_capture_required,
+						    q.shared_context_capture_required,
 						    q.source_question_id,
 						    q.shared_context_id,
 						    b.booklet_name
@@ -227,7 +227,7 @@ class LegacyQuestionMetadataImporterTest {
 						""")) {
 			assertTrue(question.next());
 			assertEquals("MCQ booklet", question.getString("booklet_name"));
-			assertEquals(1, question.getInt("preamble_capture_required"));
+			assertEquals(1, question.getInt("shared_context_capture_required"));
 			assertNull(question.getObject("source_question_id"));
 			assertNull(question.getObject("shared_context_id"));
 		}

@@ -333,7 +333,7 @@ public final class LegacyQuestionMetadataImporter {
 				    id,
 				    classification_node_id,
 				    marks,
-				    preamble_capture_required,
+				    shared_context_capture_required,
 				    source_question_id,
 				    response_type
 				FROM questions
@@ -351,7 +351,7 @@ public final class LegacyQuestionMetadataImporter {
 					sourceQuestionId = Long.valueOf(result.getLong("source_question_id"));
 				}
 				return new ExistingQuestion(result.getLong("id"), result.getLong("classification_node_id"),
-						result.getInt("marks"), result.getInt("preamble_capture_required") != 0, sourceQuestionId,
+						result.getInt("marks"), result.getInt("shared_context_capture_required") != 0, sourceQuestionId,
 						QuestionResponseType.valueOf(result.getString("response_type")));
 			}
 		}
@@ -454,7 +454,7 @@ public final class LegacyQuestionMetadataImporter {
 				     question_code,
 				     question_text,
 				     marks,
-				     preamble_capture_required,
+				     shared_context_capture_required,
 				     source_question_id,
 				     response_type)
 				VALUES (?, ?, ?, '', ?, ?, ?, ?)

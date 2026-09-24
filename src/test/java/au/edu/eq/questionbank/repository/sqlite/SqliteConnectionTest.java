@@ -1015,7 +1015,7 @@ class SqliteConnectionTest {
 					     question_code,
 					     question_text,
 					     marks,
-					     preamble_capture_required,
+					     shared_context_capture_required,
 					     response_type)
 					VALUES
 					    (1, 1, 3,
@@ -1333,7 +1333,7 @@ class SqliteConnectionTest {
 				    classification_node_id INTEGER NOT NULL,
 				    question_code TEXT NOT NULL,
 				    question_text TEXT NOT NULL,
-				    preamble_capture_required INTEGER NOT NULL,
+				    shared_context_capture_required INTEGER NOT NULL,
 				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
 				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id),
 				    UNIQUE (booklet_id, question_code)
@@ -1355,7 +1355,7 @@ class SqliteConnectionTest {
 				    question_code TEXT NOT NULL,
 				    question_text TEXT NOT NULL,
 				    marks INTEGER NOT NULL,
-				    preamble_capture_required INTEGER NOT NULL,
+				    shared_context_capture_required INTEGER NOT NULL,
 				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
 				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id)
 				)
@@ -1647,7 +1647,7 @@ class SqliteConnectionTest {
 					     question_code,
 					     question_text,
 					     marks,
-					     preamble_capture_required)
+					     shared_context_capture_required)
 					VALUES
 					    (1, 1, 3, 'Q1', '', 1, 0)
 					""");
@@ -1896,7 +1896,7 @@ class SqliteConnectionTest {
 					     question_code,
 					     question_text,
 					     marks,
-					     preamble_capture_required)
+					     shared_context_capture_required)
 					VALUES
 					    (1, 1, 3, 'Q6', '', 3, 0)
 					""");
