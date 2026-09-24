@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	static final int LATEST_SCHEMA_VERSION = 11;
+	static final int LATEST_SCHEMA_VERSION = 12;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -331,7 +331,7 @@ public final class SqliteDatabase {
 	private void createVersionOneSchema(Connection connection) throws SQLException {
 		String sql;
 		try {
-			sql = SqlResourceLoader.load("/db/schema-v1.sql");
+			sql = SqlResourceLoader.load("/db/schema-v01.sql");
 		} catch (IOException e) {
 			throw new SQLException("Unable to load schema resource", e);
 		}
@@ -479,11 +479,11 @@ public final class SqliteDatabase {
 
 	private int migrate(Connection connection, int version) throws SQLException {
 		if (version == 1) {
-			executeMigration(connection, "/db/migration-v1-to-v2.sql", 2);
+			executeMigration(connection, "/db/migration-v01-to-v02.sql", 2);
 			return 2;
 		}
 		if (version == 2) {
-			executeMigration(connection, "/db/migration-v2-to-v3.sql", 3);
+			executeMigration(connection, "/db/migration-v02-to-v03.sql", 3);
 			return 3;
 		}
 
@@ -491,35 +491,35 @@ public final class SqliteDatabase {
 		// databases.
 		if (version == 3) {
 			verifyVersion03CanBeMigrated(connection);
-			executeMigration(connection, "/db/migration-v3-to-v4.sql", 4);
+			executeMigration(connection, "/db/migration-v03-to-v04.sql", 4);
 			return 4;
 		}
 		if (version == 4) {
-			executeMigration(connection, "/db/migration-v4-to-v5.sql", 5);
+			executeMigration(connection, "/db/migration-v04-to-v05.sql", 5);
 			return 5;
 		}
 		if (version == 5) {
-			executeMigration(connection, "/db/migration-v5-to-v6.sql", 6);
+			executeMigration(connection, "/db/migration-v05-to-v06.sql", 6);
 			return 6;
 		}
 		if (version == 6) {
-			executeMigration(connection, "/db/migration-v6-to-v7.sql", 7);
+			executeMigration(connection, "/db/migration-v06-to-v07.sql", 7);
 			return 7;
 		}
 		if (version == 7) {
-			executeMigration(connection, "/db/migration-v7-to-v8.sql", 8);
+			executeMigration(connection, "/db/migration-v07-to-v08.sql", 8);
 			return 8;
 		}
 		if (version == 8) {
 
 			// Version nine records the expected Question format at booklet level.
-			executeMigration(connection, "/db/migration-v8-to-v9.sql", 9);
+			executeMigration(connection, "/db/migration-v08-to-v09.sql", 9);
 			return 9;
 		}
 		if (version == 9) {
 
 			// Version ten records which AnswerFile supplies answers for each ExamBooklet.
-			executeMigration(connection, "/db/migration-v9-to-v10.sql", 10);
+			executeMigration(connection, "/db/migration-v09-to-v10.sql", 10);
 			return 10;
 		}
 		if (version == 10) {
@@ -528,6 +528,13 @@ public final class SqliteDatabase {
 			// continuation for each booklet.
 			executeMigration(connection, "/db/migration-v10-to-v11.sql", 11);
 			return 11;
+		}
+		if (version == 11) {
+
+			// Version twelve stores only explicit Question-specific exclusions from
+			// otherwise-derived current-curriculum output applicability.
+			executeMigration(connection, "/db/migration-v11-to-v12.sql", 12);
+			return 12;
 		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
@@ -741,6 +748,16 @@ public final class SqliteDatabase {
 			// Schema version 11 introduced restart-safe continuation of shared context
 			// between otherwise independent MCQs.
 			verifyVersion11PendingMcqSharedContextSchema(connection);
+		}
+		if (version >= 12) {
+
+			// Schema version 12 introduced reversible per-Question exclusions from
+			// derived current-curriculum output applicability.
+			if (!tableExists(connection, "question_output_exclusions")) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table question_output_exclusions");
+			}
+			verifyVersion12QuestionOutputExclusionSchema(connection);
 		}
 	}
 
@@ -1108,6 +1125,17 @@ public final class SqliteDatabase {
 			throw new SQLException(
 					"exam_booklets is missing exact foreign key pending_mcq_shared_context_id -> shared_question_contexts(id)");
 		}
+	}
+
+	private void verifyVersion12QuestionOutputExclusionSchema(Connection connection) throws SQLException {
+
+		// The composite primary key guarantees at most one exclusion decision for a
+		// Question/current-node pair. Both references are mandatory.
+		verifyTableSchema(connection, "question_output_exclusions",
+				List.of(column("question_id", true, 1), column("current_curriculum_node_id", true, 2)),
+				List.of(foreignKey("question_id", "questions", "id"),
+						foreignKey("current_curriculum_node_id", "curriculum_nodes", "id")),
+				List.of());
 	}
 
 	private record ColumnRequirement(String name, boolean notNull, int primaryKeyPosition) {

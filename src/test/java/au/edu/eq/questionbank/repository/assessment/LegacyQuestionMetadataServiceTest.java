@@ -168,8 +168,8 @@ class LegacyQuestionMetadataServiceTest {
 			return List.of(new QuestionApplicabilityMatch(reloadedMoving, currentSubtopic),
 					new QuestionApplicabilityMatch(reloadedSibling, currentSubtopic));
 		}, new CurriculumSearchNodeExpansionService(curriculumRepository));
-		RevisionCorpus corpus = new RevisionCorpusBuilder(curriculumRepository, retrievalService)
-				.build(booklet.getExam().getSubject());
+		RevisionCorpus corpus = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				new SqliteQuestionOutputApplicabilityRepository(database)).build(booklet.getExam().getSubject());
 		RevisionPresentationPlan plan = new RevisionPresentationPlanner().plan(corpus);
 		RevisionQuestionPresentation presentation = plan.getRootNodes().getFirst().getChildren().getFirst()
 				.getChildren().getFirst().getPresentations().getFirst();

@@ -41,6 +41,7 @@ import au.edu.eq.questionbank.output.revision.RevisionQuestionAssetRenderer;
 import au.edu.eq.questionbank.output.revision.RevisionSharedContextAssetRenderer;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -159,7 +160,10 @@ class ScormExportServiceIntegrationTest {
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
 			QuestionRetrievalService retrieval = new QuestionRetrievalService(
 					_ -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
-			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval);
+
+			// SCORM shares the revision corpus and this fixture has no output exclusions.
+			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval,
+					new InMemoryQuestionOutputApplicabilityRepository());
 			PdfStore pdfStore = new PdfStore(pdfRoot);
 			QuestionExtractor extractor = new QuestionExtractor();
 			RevisionExportService revisionExportService = new RevisionExportService(corpusBuilder,

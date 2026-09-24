@@ -21,6 +21,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -177,8 +178,12 @@ class RevisionExportValidatorTest {
 			QuestionRetrievalService withQuestion = new QuestionRetrievalService(
 					_ -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
 			QuestionRetrievalService empty = new QuestionRetrievalService(_ -> List.of(), expansion);
-			corpus = new RevisionCorpusBuilder(repository, withQuestion).build(chemistry);
-			emptyCorpus = new RevisionCorpusBuilder(repository, empty).build(chemistry);
+
+			// Validator fixtures contain no explicit per-Question output exclusions.
+			corpus = new RevisionCorpusBuilder(repository, withQuestion,
+					new InMemoryQuestionOutputApplicabilityRepository()).build(chemistry);
+			emptyCorpus = new RevisionCorpusBuilder(repository, empty,
+					new InMemoryQuestionOutputApplicabilityRepository()).build(chemistry);
 		}
 	}
 }

@@ -35,6 +35,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -87,7 +88,10 @@ class RevisionMultipartExportIntegrationTest {
 				_ -> List.of(new QuestionApplicabilityMatch(partA, currentDescriptor),
 						new QuestionApplicabilityMatch(partB, currentDescriptor)),
 				expansionService);
-		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+
+		// Both source parts remain included in this multipart export fixture.
+		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				new InMemoryQuestionOutputApplicabilityRepository());
 		PdfStore pdfStore = new PdfStore(pdfRoot);
 		QuestionExtractor extractor = new QuestionExtractor();
 		RevisionExportService service = new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),

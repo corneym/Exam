@@ -206,6 +206,19 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		getDialogPane().setMinWidth(DIALOG_WIDTH);
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
+
+		// Stage minimum width protects normal native resizing, but JavaFX permits some
+		// programmatic width changes below that value. Keep the Dialog invariant
+		// explicit so selector labels and inline actions cannot collapse.
+		widthProperty().addListener((_, _, width) -> {
+			if (!isShowing() || width.doubleValue() >= DIALOG_WIDTH) {
+				return;
+			}
+
+			// Defer the correction until the current native resize event has
+			// completed rather than changing geometry re-entrantly.
+			Platform.runLater(this::enforceMinimumWidth);
+		});
 		configureSizePersistence();
 	}
 
@@ -310,6 +323,16 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		return false;
 	}
 
+	private void enforceMinimumWidth() {
+		if (!isShowing() || getWidth() >= DIALOG_WIDTH) {
+			return;
+		}
+
+		// Search has a functional minimum width independent of whether the resize
+		// originated from the native window manager, restored geometry or code.
+		setWidth(DIALOG_WIDTH);
+	}
+
 	private boolean isRememberedPositionVisible() {
 		if (!Double.isFinite(rememberedX) || !Double.isFinite(rememberedY)) {
 			return false;
@@ -369,6 +392,11 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			// Geometry remembered before the minimum-width rule was introduced must
 			// not restore the Dialog below its current usable minimum.
 			setWidth(Math.max(DIALOG_WIDTH, rememberedWidth));
+		} else {
+
+			// The first show has no remembered geometry, but it must obey the same
+			// minimum-width invariant as later restored shows.
+			enforceMinimumWidth();
 		}
 		if (Double.isFinite(rememberedHeight) && rememberedHeight > 0) {
 			setHeight(rememberedHeight);

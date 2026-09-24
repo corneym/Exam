@@ -56,6 +56,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
@@ -826,7 +827,14 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionRepository revisionQuestionRepository = new SqliteQuestionRepository(database);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(revisionQuestionRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
+				database);
+
+		// Retrieval establishes every curriculum-derived current placement. The
+		// output-applicability repository then removes only explicit Question-specific
+		// exceptions while constructing the revision corpus.
+		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				outputApplicabilityRepository);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		QuestionExtractor extractor = new QuestionExtractor();
 		return new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),

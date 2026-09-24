@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
@@ -95,7 +96,10 @@ class RevisionExportServiceTest {
 					List.of(current), List.of(unit, topic, descriptor));
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
 			QuestionRetrievalService retrieval = new QuestionRetrievalService(_ -> List.of(), expansion);
-			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval);
+
+			// The export-service fixture represents the default fully included state.
+			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval,
+					new InMemoryQuestionOutputApplicabilityRepository());
 			Path pdfRoot = tempDir.resolve("pdf");
 			Files.createDirectories(pdfRoot);
 			PdfStore pdfStore = new PdfStore(pdfRoot);

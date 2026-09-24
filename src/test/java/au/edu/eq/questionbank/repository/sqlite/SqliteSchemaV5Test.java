@@ -116,10 +116,10 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void migratesPopulatedVersionFiveQuestionBankToLatestSchemaWithoutDataLoss() throws Exception {
+	void migratesPopulatedVersion05QuestionBankToLatestSchemaWithoutDataLoss() throws Exception {
 		Path databasePath = tempDir.resolve("populated-version-five-to-six.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-		createVersionFiveSchema(database);
+		createVersion05Schema(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			connection.setAutoCommit(false);
 			statement.execute("""
@@ -276,7 +276,132 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void migratesVersionFourQuestionsWithoutInferringRelationships() throws Exception {
+	void migratesPopulatedVersion11DatabaseToVersion12WithoutChangingQuestionApplicability() throws Exception {
+		Path databasePath = tempDir.resolve("version-eleven-to-twelve.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		createVersion11Schema(database);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO subjects
+					    (id, subject_name)
+					VALUES
+					    (1, 'Chemistry')
+					""");
+			statement.execute("""
+					INSERT INTO syllabus_versions
+					    (id, subject_id, syllabus_name, is_current)
+					VALUES
+					    (1, 1, 'Chemistry 2025', 1)
+					""");
+			statement.execute("""
+					INSERT INTO curriculum_nodes
+					    (id, syllabus_version_id, parent_id,
+					     curriculum_code, curriculum_name,
+					     curriculum_level, display_order)
+					VALUES
+					    (10, 1, NULL,
+					     '1', 'Unit 1',
+					     'UNIT', 1),
+					    (11, 1, 10,
+					     '1.1', 'Topic 1',
+					     'TOPIC', 1),
+					    (12, 1, 11,
+					     '1.1.1', 'Descriptor 1',
+					     'DESCRIPTOR', 1)
+					""");
+			statement.execute("""
+					INSERT INTO exam_providers
+					    (id, provider_name)
+					VALUES
+					    (1, 'QCAA')
+					""");
+			statement.execute("""
+					INSERT INTO source_documents
+					    (id, relative_path)
+					VALUES
+					    (1, 'Chemistry/2025/paper1.pdf')
+					""");
+			statement.execute("""
+					INSERT INTO exams
+					    (id, subject_id, provider_id,
+					     exam_year, exam_name)
+					VALUES
+					    (1, 1, 1,
+					     2025, 'External Assessment')
+					""");
+			statement.execute("""
+					INSERT INTO exam_booklets
+					    (id, exam_id, source_document_id,
+					     booklet_name)
+					VALUES
+					    (1, 1, 1,
+					     'Paper 1')
+					""");
+			statement.execute("""
+					INSERT INTO questions
+					    (id, booklet_id, classification_node_id,
+					     question_code, question_text,
+					     marks, preamble_capture_required,
+					     response_type)
+					VALUES
+					    (100, 1, 12,
+					     'Q7', 'Stored question text',
+					     3, 0,
+					     'WRITTEN_RESPONSE')
+					""");
+		}
+		assertEquals(11, database.schemaVersion());
+
+		// This is the production upgrade path: initialise an existing v11 database
+		// rather than constructing a new v12 database from scratch.
+		database.initialiseSchema();
+		assertEquals(12, database.schemaVersion());
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("""
+					SELECT question_code,
+					       question_text,
+					       marks,
+					       classification_node_id,
+					       response_type
+					FROM questions
+					WHERE id = 100
+					""")) {
+				assertTrue(result.next());
+
+				// Migration must not rewrite any existing Question metadata or
+				// classification while introducing the new exclusion mechanism.
+				assertEquals("Q7", result.getString("question_code"));
+				assertEquals("Stored question text", result.getString("question_text"));
+				assertEquals(3, result.getInt("marks"));
+				assertEquals(12, result.getLong("classification_node_id"));
+				assertEquals("WRITTEN_RESPONSE", result.getString("response_type"));
+				assertFalse(result.next());
+			}
+			try (ResultSet result = statement.executeQuery("""
+					SELECT COUNT(*)
+					FROM question_output_exclusions
+					""")) {
+				assertTrue(result.next());
+
+				// No exclusion data can be inferred from a v11 database. Every existing
+				// Question therefore retains all of its derived applicability.
+				assertEquals(0, result.getInt(1));
+			}
+		}
+
+		// Reopening verifies that the migrated structure passes normal startup schema
+		// validation rather than merely surviving the migration transaction itself.
+		SqliteDatabase reopened = new SqliteDatabase(databasePath);
+		reopened.initialiseSchema();
+		assertEquals(12, reopened.schemaVersion());
+		Question reloaded = new SqliteQuestionRepository(reopened).findById(100).orElseThrow();
+		assertEquals("Q7", reloaded.getQuestionCode());
+		assertEquals(12, reloaded.getClassification().getId());
+		assertEquals(3, reloaded.getMarks());
+	}
+
+	@Test
+	void migratesVersion04QuestionsWithoutInferringRelationships() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-four.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
@@ -367,9 +492,9 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void rejectsVersionSixSchemaWithNullableSharedContextStatusColumn() throws Exception {
+	void rejectsVersion06SchemaWithNullableSharedContextStatusColumn() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-nullable-status.db"));
-		createVersionFiveSchema(database);
+		createVersion05Schema(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("ALTER TABLE source_questions ADD COLUMN preamble_status TEXT DEFAULT 'UNKNOWN'");
 			statement.execute("UPDATE schema_version SET version = 6");
@@ -380,9 +505,9 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void rejectsVersionSixSchemaWithoutSharedContextStatusColumn() throws Exception {
+	void rejectsVersion06SchemaWithoutSharedContextStatusColumn() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-missing-status.db"));
-		createVersionFiveSchema(database);
+		createVersion05Schema(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("UPDATE schema_version SET version = 6");
 		}
@@ -392,7 +517,7 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void versionSixSharedContextStatusDefaultsAndConstraintAreEnforced() throws Exception {
+	void version06SharedContextStatusDefaultsAndConstraintAreEnforced() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-status-constraint.db"));
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -429,15 +554,41 @@ class SqliteSchemaV5Test {
 		}
 	}
 
-	private void createVersionFiveSchema(SqliteDatabase database) throws Exception {
+	private void createVersion05Schema(SqliteDatabase database) throws Exception {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
 			connection.commit();
 		}
+	}
+
+	private void createVersion11Schema(SqliteDatabase database) throws Exception {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Build exactly the schema that existed immediately before version 12.
+			// This prevents the migration test from accidentally starting with any
+			// structures introduced by the code under test.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v07-to-v08.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v08-to-v09.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v09-to-v10.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v10-to-v11.sql"));
+			connection.commit();
+		}
+
+		// Guard the fixture itself. If this fails, the test is no longer exercising
+		// the intended v11 -> v12 production migration boundary.
+		assertEquals(11, database.schemaVersion());
 	}
 }

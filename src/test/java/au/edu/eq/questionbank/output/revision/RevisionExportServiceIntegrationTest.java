@@ -34,6 +34,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -139,7 +140,11 @@ class RevisionExportServiceIntegrationTest {
 			CurriculumSearchNodeExpansionService expansion = new CurriculumSearchNodeExpansionService(repository);
 			QuestionRetrievalService retrieval = new QuestionRetrievalService(
 					_ -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
-			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval);
+
+			// Existing integration output remains fully included unless a fixture
+			// explicitly supplies a Question-specific exclusion.
+			RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(repository, retrieval,
+					new InMemoryQuestionOutputApplicabilityRepository());
 			PdfStore pdfStore = new PdfStore(pdfRoot);
 			QuestionExtractor extractor = new QuestionExtractor();
 			service = new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),

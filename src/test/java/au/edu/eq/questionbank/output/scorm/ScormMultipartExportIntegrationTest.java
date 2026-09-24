@@ -44,6 +44,7 @@ import au.edu.eq.questionbank.output.revision.RevisionQuestionAssetRenderer;
 import au.edu.eq.questionbank.output.revision.RevisionSharedContextAssetRenderer;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -96,7 +97,10 @@ class ScormMultipartExportIntegrationTest {
 				_ -> List.of(new QuestionApplicabilityMatch(partA, currentDescriptor),
 						new QuestionApplicabilityMatch(partB, currentDescriptor)),
 				expansionService);
-		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+
+		// The multipart SCORM fixture exercises normal fully included applicability.
+		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				new InMemoryQuestionOutputApplicabilityRepository());
 		PdfStore pdfStore = new PdfStore(pdfRoot);
 		QuestionExtractor extractor = new QuestionExtractor();
 		RevisionExportService revisionExportService = new RevisionExportService(corpusBuilder,

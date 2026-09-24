@@ -184,7 +184,7 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						INSERT INTO subjects (subject_name)
@@ -225,8 +225,8 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-two-migration.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 				statement.execute("""
@@ -294,9 +294,9 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
 			connection.commit();
 		}
 		database.verifyMigrationCompatibility();
@@ -316,12 +316,12 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-curriculum-migration.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						INSERT INTO subjects
@@ -403,13 +403,13 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-seven-response-type.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						INSERT INTO subjects
@@ -532,14 +532,14 @@ class SqliteConnectionTest {
 
 			// Construct a genuine version-eight database so this test exercises only
 			// the new booklet-format migration.
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v7-to-v8.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v07-to-v08.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 				statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
@@ -586,15 +586,15 @@ class SqliteConnectionTest {
 
 			// Construct a genuine version-nine database so only the new booklet-answer
 			// relationship is exercised by this migration test.
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v7-to-v8.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v8-to-v9.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v07-to-v08.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v08-to-v09.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 				statement.execute("""
@@ -1131,7 +1131,7 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v2-schema.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 2");
 			}
@@ -1147,9 +1147,9 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 				statement.execute("""
@@ -1208,8 +1208,8 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v3-schema.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 3");
 			}
@@ -1372,10 +1372,10 @@ class SqliteConnectionTest {
 
 			// Build a genuine version-four database, then falsely claim version five
 			// without applying the migration that introduces shared-question structure.
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 5");
 			}
@@ -1400,12 +1400,12 @@ class SqliteConnectionTest {
 
 			// Build a genuine version-six database, then falsely claim version seven
 			// without applying the curriculum-authoring migration.
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 7");
 			}
@@ -1430,13 +1430,13 @@ class SqliteConnectionTest {
 
 			// Build a genuine version-seven database, then falsely claim version eight
 			// without applying the response-type migration.
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 8");
 			}
@@ -1534,7 +1534,7 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("migration-rollback.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						CREATE TRIGGER reject_schema_version_update
@@ -1562,8 +1562,8 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-two-rollback.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						CREATE TRIGGER reject_version_three

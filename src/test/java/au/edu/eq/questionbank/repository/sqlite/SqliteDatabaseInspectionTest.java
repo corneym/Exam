@@ -54,7 +54,62 @@ class SqliteDatabaseInspectionTest {
 
 		// The workflow state must never reference a context row that does not exist.
 		assertTrue(foreignKeyFound);
-		assertEquals(11, database.schemaVersion());
+
+		// Later migrations retain the version-11 pending-context relationship.
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+	}
+
+	@Test
+	void latestSchemaContainsQuestionOutputExclusions() throws SQLException {
+		Path databasePath = tempDir.resolve("question-output-exclusions.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		int questionPrimaryKeyPosition = 0;
+		int nodePrimaryKeyPosition = 0;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("PRAGMA table_info(question_output_exclusions)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				if ("question_id".equals(columnName)) {
+					questionPrimaryKeyPosition = result.getInt("pk");
+
+					// Every exclusion must identify a persisted Question.
+					assertEquals(1, result.getInt("notnull"));
+				} else if ("current_curriculum_node_id".equals(columnName)) {
+					nodePrimaryKeyPosition = result.getInt("pk");
+
+					// Every exclusion must identify one concrete current placement node.
+					assertEquals(1, result.getInt("notnull"));
+				}
+			}
+		}
+		assertEquals(1, questionPrimaryKeyPosition);
+		assertEquals(2, nodePrimaryKeyPosition);
+		boolean questionForeignKeyFound = false;
+		boolean curriculumForeignKeyFound = false;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("PRAGMA foreign_key_list(question_output_exclusions)")) {
+			while (result.next()) {
+				String from = result.getString("from");
+				String table = result.getString("table");
+				String to = result.getString("to");
+				if ("question_id".equals(from) && "questions".equals(table) && "id".equals(to)) {
+					questionForeignKeyFound = true;
+				}
+				if ("current_curriculum_node_id".equals(from) && "curriculum_nodes".equals(table) && "id".equals(to)) {
+					curriculumForeignKeyFound = true;
+				}
+			}
+		}
+
+		// Both sides of the exclusion are durable domain identities rather than
+		// free-standing numeric preferences.
+		assertTrue(questionForeignKeyFound);
+		assertTrue(curriculumForeignKeyFound);
+		assertEquals(12, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
 	}
 
 	@Test

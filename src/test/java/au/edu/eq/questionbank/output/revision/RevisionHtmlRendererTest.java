@@ -32,6 +32,7 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
@@ -453,7 +454,10 @@ class RevisionHtmlRendererTest {
 					curriculumRepository);
 			QuestionRetrievalService retrievalService = new QuestionRetrievalService(retrievalRepository,
 					expansionService);
-			RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+
+			// HTML rendering is tested independently of persisted exclusion choices.
+			RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+					new InMemoryQuestionOutputApplicabilityRepository());
 			return builder.build(chemistry);
 		}
 
