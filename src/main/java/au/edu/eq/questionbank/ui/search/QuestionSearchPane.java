@@ -486,6 +486,10 @@ public class QuestionSearchPane extends BorderPane {
 		selectedDescriptorBox.setMaxWidth(Double.MAX_VALUE);
 		saveClassificationButton.setId("question-search-save-classification");
 
+		// The narrow action must retain enough width for its complete label rather
+		// than collapsing to an ellipsis when the Search Dialog is resized.
+		saveClassificationButton.setMinWidth(Region.USE_PREF_SIZE);
+
 		// Save is meaningful only while the selected Descriptor differs from the
 		// persisted Question classification.
 		saveClassificationButton.disableProperty().bind(classificationDirty.not());
@@ -771,23 +775,10 @@ public class QuestionSearchPane extends BorderPane {
 		if (classificationDirty.get() && oldResult != null && newResult != null
 				&& oldResult.question().getId() != newResult.question().getId()) {
 
-			// Restore the Question that owns the dirty Descriptor before opening the
-			// warning so Cancel leaves both the edit and visible details untouched.
-			restoringResultSelection = true;
-			try {
-				resultsList.getSelectionModel().select(oldResult);
-			} finally {
-				restoringResultSelection = false;
-			}
-			if (!classificationNavigationGuard.getAsBoolean()) {
-
-				// Cancel means cancel navigation, not discard the Descriptor edit.
-				return;
-			}
-
-			// Save succeeded. Re-run the current search and select the Question the
-			// teacher originally attempted to move to from authoritative data.
-			refreshAfterEdit(newResult.question().getId());
+			// ListView is still updating its internal selected-items collection while
+			// this listener runs. Defer restoration and the modal navigation decision
+			// until that JavaFX selection transaction has completed.
+			Platform.runLater(() -> resolveDirtyResultNavigation(oldResult, newResult));
 			return;
 		}
 		showResultDetails(newResult);
@@ -994,6 +985,46 @@ public class QuestionSearchPane extends BorderPane {
 		unitBox.getItems().clear();
 		unitBox.setPromptText("Select unit");
 		unitBox.setDisable(true);
+	}
+
+	private void resolveDirtyResultNavigation(QuestionSearchResult oldResult, QuestionSearchResult requestedResult) {
+		if (disposed) {
+			return;
+		}
+		QuestionSearchResult currentResult = resultsList.getSelectionModel().getSelectedItem();
+
+		// A later user action may have superseded this deferred navigation request.
+		// Only process the request that still owns the current ListView selection.
+		if (currentResult == null || currentResult.question().getId() != requestedResult.question().getId()) {
+			return;
+		}
+		if (!classificationDirty.get()) {
+
+			// The pending classification may have been resolved before this deferred
+			// callback ran. In that case the requested result can now be displayed.
+			showResultDetails(requestedResult);
+			showSelectedClassification(requestedResult);
+			return;
+		}
+
+		// Restore the Question that owns the dirty Descriptor only after JavaFX has
+		// completed the original mouse-selection transaction.
+		restoringResultSelection = true;
+		try {
+			resultsList.getSelectionModel().select(oldResult);
+		} finally {
+			restoringResultSelection = false;
+		}
+
+		// The Dialog now opens Save / Discard Changes / Cancel outside the ListView
+		// selection listener, avoiding a nested modal event loop during selection.
+		if (!classificationNavigationGuard.getAsBoolean()) {
+			return;
+		}
+
+		// Save or Discard succeeded. Repeat the active search and select the Question
+		// the teacher originally attempted to navigate to.
+		refreshAfterEdit(requestedResult.question().getId());
 	}
 
 	private void restoreCurriculumControlState() {

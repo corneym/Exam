@@ -47,13 +47,16 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextArea;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.Region;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -249,7 +252,16 @@ public class QuestionSearchPaneTest {
 		robot.interact(() -> selectedDescriptorBox.setValue(currentDescriptor));
 		assertTrue(pane.classificationDirtyProperty().get());
 		pane.setClassificationNavigationGuard(() -> false);
-		robot.interact(() -> resultsList.getSelectionModel().select(otherResult));
+		Node otherResultCell = robot.from(resultsList).lookup(".list-cell")
+				.match(node -> node instanceof ListCell<?> cell && cell.getItem() == otherResult).query();
+
+		// This regression deliberately uses the pointer because the production defect
+		// occurred while ListView was processing a real mouse-selection transaction.
+		robot.clickOn(otherResultCell);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
+			return selected != null && selected.question().getId() == subtopicQuestion.getId();
+		});
 
 		// Cancelling navigation preserves both the selected Question and its dirty
 		// Descriptor refinement.
@@ -571,6 +583,10 @@ public class QuestionSearchPaneTest {
 		assertFalse(selectedDescriptorBox.isDisable());
 		robot.interact(() -> selectedDescriptorBox.setValue(currentDescriptor));
 		Button saveClassificationButton = robot.lookup("#question-search-save-classification").queryButton();
+
+		// Save must retain its complete label even when the surrounding GridPane
+		// competes for horizontal space.
+		assertEquals(Region.USE_PREF_SIZE, saveClassificationButton.getMinWidth());
 
 		// Selecting a Descriptor enables its dedicated Save action without changing
 		// the meaning of Edit Question.

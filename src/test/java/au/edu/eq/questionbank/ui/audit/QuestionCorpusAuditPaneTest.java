@@ -100,6 +100,7 @@ class QuestionCorpusAuditPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
 	void yearFilterIsChronologicalRegardlessOfQuestionInputOrder(FxRobot robot) {
 		ComboBox<Integer> year = robot.lookup("#corpus-filter-year").queryAs(ComboBox.class);
 

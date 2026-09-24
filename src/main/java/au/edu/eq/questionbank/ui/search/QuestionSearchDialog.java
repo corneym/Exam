@@ -18,6 +18,7 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.stage.Screen;
+import javafx.stage.Stage;
 import javafx.stage.Window;
 
 /**
@@ -198,6 +199,10 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			}
 			return null;
 		});
+
+		// Search controls have a practical minimum width below which selector labels
+		// and actions cease to be usable.
+		getDialogPane().setMinWidth(DIALOG_WIDTH);
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
 		configureSizePersistence();
@@ -345,8 +350,17 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void restoreRememberedGeometry() {
+		if (getDialogPane().getScene().getWindow() instanceof Stage dialogStage) {
+
+			// DialogPane minimum size controls layout, while Stage minimum width
+			// prevents the native window itself from being dragged below that limit.
+			dialogStage.setMinWidth(DIALOG_WIDTH);
+		}
 		if (Double.isFinite(rememberedWidth) && rememberedWidth > 0) {
-			setWidth(rememberedWidth);
+
+			// A geometry value remembered before the minimum-width rule was introduced
+			// must not restore the Dialog below its current usable minimum.
+			setWidth(Math.max(DIALOG_WIDTH, rememberedWidth));
 		}
 		if (Double.isFinite(rememberedHeight) && rememberedHeight > 0) {
 			setHeight(rememberedHeight);

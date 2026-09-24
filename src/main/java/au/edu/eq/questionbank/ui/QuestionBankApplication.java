@@ -857,10 +857,8 @@ public class QuestionBankApplication extends Application {
 			throw new NullPointerException("completedHandler");
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
-		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
-				curriculumRepository);
+		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question);
 		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
 		if (result.isEmpty()) {
 			completedHandler.run();
@@ -869,7 +867,7 @@ public class QuestionBankApplication extends Application {
 		LegacyQuestionMetadataDialog.Result replacement = result.get();
 		try {
 			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
-					replacement.questionCode(), replacement.marks(), replacement.classification(),
+					replacement.questionCode(), replacement.marks(), question.getClassification(),
 					replacement.sharedContextCaptureRequired(), replacement.responseType());
 			Question updated = updateResult.question();
 			questionCapturePane.refreshImportedQuestions();
@@ -924,8 +922,7 @@ public class QuestionBankApplication extends Application {
 
 	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
-		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
-				curriculumRepository);
+		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question);
 		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
 		if (result.isEmpty()) {
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
@@ -933,8 +930,11 @@ public class QuestionBankApplication extends Application {
 		}
 		LegacyQuestionMetadataDialog.Result replacement = result.get();
 		try {
+
+			// Edit Metadata deliberately preserves curriculum classification. Teachers
+			// use Edit Question when the stored classification itself is incorrect.
 			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
-					replacement.questionCode(), replacement.marks(), replacement.classification(),
+					replacement.questionCode(), replacement.marks(), question.getClassification(),
 					replacement.sharedContextCaptureRequired(), replacement.responseType());
 			Question updated = updateResult.question();
 			questionCapturePane.refreshImportedQuestions();

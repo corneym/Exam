@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.search;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -83,17 +84,6 @@ class QuestionSearchDialogTest {
 		robot.interact(dialog::close);
 	}
 
-	private void extracted(InMemoryCurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService,
-			QuestionPreviewService previewService, QuestionSearchDialog[] dialogHolder, Rectangle2D[] screenBounds) {
-		screenBounds[0] = Screen.getPrimary().getVisualBounds();
-		dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService, () -> List.of(),
-				previewService, (_, _) -> {
-
-					// Geometry tests must never attempt Question persistence.
-					throw new AssertionError("Classification update was not expected");
-				});
-	}
-
 	@Test
 	void resizedDimensionsSurviveHideAndReshow(FxRobot robot) {
 		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
@@ -113,6 +103,12 @@ class QuestionSearchDialogTest {
 		QuestionSearchDialog dialog = dialogHolder[0];
 		robot.interact(dialog::show);
 		WaitForAsyncUtils.waitForFxEvents();
+
+		// The native Dialog window must not become narrow enough to collapse its
+		// selector labels or inline actions.
+		robot.interact(() -> dialog.setWidth(600));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(dialog.getWidth() >= 900);
 		robot.interact(() -> {
 			dialog.setWidth(1120);
 			dialog.setHeight(810);
@@ -137,6 +133,17 @@ class QuestionSearchDialogTest {
 			QuestionSearchDialog[] dialogHolder) {
 		return dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
 				() -> List.of(), previewService, (_, _) -> {
+
+					// Geometry tests must never attempt Question persistence.
+					throw new AssertionError("Classification update was not expected");
+				});
+	}
+
+	private void extracted(InMemoryCurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService,
+			QuestionPreviewService previewService, QuestionSearchDialog[] dialogHolder, Rectangle2D[] screenBounds) {
+		screenBounds[0] = Screen.getPrimary().getVisualBounds();
+		dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService, () -> List.of(),
+				previewService, (_, _) -> {
 
 					// Geometry tests must never attempt Question persistence.
 					throw new AssertionError("Classification update was not expected");
