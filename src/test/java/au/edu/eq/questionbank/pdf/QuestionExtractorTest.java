@@ -72,7 +72,7 @@ class QuestionExtractorTest {
 	@Test
 	void doesNotRenderSamePhysicalRegionTwiceAcrossContextAndQuestion() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED));
-		SharedQuestionContext sharedContext = new SharedQuestionContext(30, booklet, "Duplicated preamble",
+		SharedQuestionContext sharedContext = new SharedQuestionContext(30, booklet, "Duplicated shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0)));
 		Question question = new Question(31, booklet, "25a", "", 1,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0)), createClassification(), false, null,
@@ -185,7 +185,7 @@ class QuestionExtractorTest {
 	void prependsSharedContextBeforeQuestionRegions() throws Exception {
 		Path pdf = createPdf(new PageSpec(72, 72, Color.RED), new PageSpec(72, 72, Color.GREEN),
 				new PageSpec(72, 72, Color.BLUE));
-		SharedQuestionContext sharedContext = new SharedQuestionContext(20, booklet, "Question 24 preamble",
+		SharedQuestionContext sharedContext = new SharedQuestionContext(20, booklet, "Question 24 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0),
 						new SharedQuestionContextRegion(2, 0.0, 0.0, 1.0, 1.0)));
 		Question question = new Question(21, booklet, "24a", "", 2,

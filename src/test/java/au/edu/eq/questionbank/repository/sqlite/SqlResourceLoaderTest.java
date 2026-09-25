@@ -10,18 +10,18 @@ import org.junit.jupiter.api.Test;
 class SqlResourceLoaderTest {
 
 	@Test
-	void loadsSchemaResource() throws Exception {
-		String sql = SqlResourceLoader.load("/db/schema-v1.sql");
-		assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS schema_version"));
-		assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS questions"));
-		assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS answers"));
+	void loadsMigrationResource() throws Exception {
+		String sql = SqlResourceLoader.load("/db/migration-v01-to-v02.sql");
+		assertTrue(sql.contains("CREATE TABLE curriculum_mappings"));
+		assertTrue(sql.contains("WHERE version = 1"));
 	}
 
 	@Test
-	void loadsMigrationResource() throws Exception {
-		String sql = SqlResourceLoader.load("/db/migration-v1-to-v2.sql");
-		assertTrue(sql.contains("CREATE TABLE curriculum_mappings"));
-		assertTrue(sql.contains("WHERE version = 1"));
+	void loadsSchemaResource() throws Exception {
+		String sql = SqlResourceLoader.load("/db/schema-v01.sql");
+		assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS schema_version"));
+		assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS questions"));
+		assertTrue(sql.contains("CREATE TABLE IF NOT EXISTS answers"));
 	}
 
 	@Test

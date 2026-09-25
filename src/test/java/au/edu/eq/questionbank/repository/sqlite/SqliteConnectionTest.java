@@ -19,9 +19,25 @@ import org.junit.jupiter.api.io.TempDir;
 
 class SqliteConnectionTest {
 
-	private static final int LATEST_SCHEMA_VERSION = 8;
 	@TempDir
 	Path tempDir;
+
+	@Test
+	void configuresBusyTimeout() throws Exception {
+		Path databasePath = tempDir.resolve("busy-timeout.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA busy_timeout")) {
+
+			// UI reads and asynchronous persistence may briefly overlap. Every
+			// application connection must therefore wait for ordinary short-lived SQLite
+			// locks rather than failing immediately with SQLITE_BUSY.
+			assertTrue(result.next());
+			assertEquals(5000, result.getInt(1));
+			assertFalse(result.next());
+		}
+	}
 
 	@Test
 	void createsNewDatabaseAtLatestSchemaVersion() throws Exception {
@@ -35,7 +51,7 @@ class SqliteConnectionTest {
 						""");
 				ResultSet result = statement.executeQuery()) {
 			assertTrue(result.next());
-			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
+			assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
 			assertFalse(result.next());
 		}
 		assertTrue(tableExists(database, "subjects"));
@@ -150,7 +166,7 @@ class SqliteConnectionTest {
 						FROM schema_version
 						""")) {
 			assertTrue(result.next());
-			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
+			assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
 			assertFalse(result.next());
 		}
 		try (Connection connection = database.openConnection();
@@ -163,35 +179,12 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void migratesEmptyVersionThreeDatabaseToLatestVersion() throws Exception {
-		Path databasePath = tempDir.resolve("version-three-to-four.db");
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			connection.commit();
-		}
-		database.verifyMigrationCompatibility();
-		assertEquals(3, database.schemaVersion());
-		database.initialiseSchema();
-		try (Connection connection = database.openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
-			assertTrue(result.next());
-			assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
-			assertFalse(result.next());
-		}
-	}
-
-	@Test
-	void migratesVersionOneDatabaseToLatestVersionWithoutLosingData() throws Exception {
+	void migratesVersion01DatabaseToLatestVersionWithoutLosingData() throws Exception {
 		Path databasePath = tempDir.resolve("migration.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						INSERT INTO subjects (subject_name)
@@ -207,7 +200,7 @@ class SqliteConnectionTest {
 					FROM schema_version
 					""")) {
 				assertTrue(result.next());
-				assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
+				assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
 			}
 			try (ResultSet result = statement.executeQuery("""
 					SELECT subject_name
@@ -228,17 +221,195 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void migratesVersionSevenQuestionResponseTypesConservatively() throws Exception {
+	void migratesVersion02MappingsAndBackfillsOnlyConfirmedReviews() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-two-migration.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
+				statement.execute("""
+						INSERT INTO syllabus_versions
+						    (id, subject_id, syllabus_name, is_current)
+						VALUES
+						    (1, 1, 'Old syllabus', 0),
+						    (2, 1, 'Current syllabus', 1),
+						    (3, 1, 'Other target syllabus', 0)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_nodes
+						    (id, syllabus_version_id, parent_id, curriculum_code,
+						     curriculum_name, curriculum_level, display_order)
+						VALUES
+						    (10, 1, NULL, '1', 'Old unit', 'UNIT', 0),
+						    (11, 1, 10, '1.1', 'Old topic', 'TOPIC', 0),
+						    (12, 1, 11, '1.1.1', 'Confirmed source', 'DESCRIPTOR', 0),
+						    (13, 1, 11, '1.1.2', 'Suggested source', 'DESCRIPTOR', 1),
+						    (20, 2, NULL, '1', 'Current unit', 'UNIT', 0),
+						    (21, 2, 20, '1.1', 'Current topic', 'TOPIC', 0),
+						    (22, 2, 21, '1.1.1', 'Confirmed target', 'DESCRIPTOR', 0),
+						    (30, 3, NULL, '1', 'Other unit', 'UNIT', 0),
+						    (31, 3, 30, '1.1', 'Other topic', 'TOPIC', 0),
+						    (32, 3, 31, '1.1.1', 'Suggested target', 'DESCRIPTOR', 0)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_mappings
+						    (id, source_node_id, target_node_id, mapping_status)
+						VALUES
+						    (1, 12, 22, 'CONFIRMED'),
+						    (2, 13, 32, 'SUGGESTED')
+						""");
+			}
+			connection.commit();
+		}
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
+				assertTrue(result.next());
+				assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
+				assertFalse(result.next());
+			}
+			try (ResultSet result = statement.executeQuery("""
+					SELECT source_node_id, target_syllabus_version_id, review_outcome
+					FROM curriculum_mapping_reviews
+					ORDER BY source_node_id
+					""")) {
+				assertTrue(result.next());
+				assertEquals(12, result.getLong("source_node_id"));
+				assertEquals(2, result.getLong("target_syllabus_version_id"));
+				assertEquals("MATCHED", result.getString("review_outcome"));
+				assertFalse(result.next(), "SUGGESTED mappings must remain unreviewed");
+			}
+			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
+				assertTrue(result.next());
+				assertEquals(2, result.getInt(1));
+			}
+		}
+	}
+
+	@Test
+	void migratesVersion03DatabaseToLatestVersion() throws Exception {
+		Path databasePath = tempDir.resolve("version-three-to-four.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			connection.commit();
+		}
+		database.verifyMigrationCompatibility();
+		assertEquals(3, database.schemaVersion());
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
+			assertTrue(result.next());
+			assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
+	void migratesVersion06CurriculumDataToLatestWithoutLosingIdentity() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-curriculum-migration.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("""
+						INSERT INTO subjects
+						    (id, subject_name)
+						VALUES
+						    (1, 'Engineering')
+						""");
+				statement.execute("""
+						INSERT INTO syllabus_versions
+						    (id, subject_id, syllabus_name, is_current)
+						VALUES
+						    (7, 1, '2025', 1)
+						""");
+				statement.execute("""
+						INSERT INTO curriculum_nodes
+						    (id,
+						     syllabus_version_id,
+						     parent_id,
+						     curriculum_code,
+						     curriculum_name,
+						     curriculum_level,
+						     display_order)
+						VALUES
+						    (42,
+						     7,
+						     NULL,
+						     '1',
+						     'Engineering fundamentals',
+						     'UNIT',
+						     0)
+						""");
+			}
+			connection.commit();
+		}
+		assertEquals(6, database.schemaVersion());
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("""
+					SELECT
+					    id,
+					    curriculum_status,
+					    curriculum_finalised_at,
+					    source_pdf_path
+					FROM syllabus_versions
+					WHERE id = 7
+					""")) {
+				assertTrue(result.next());
+				assertEquals(7, result.getLong("id"));
+				assertEquals("IN_PROGRESS", result.getString("curriculum_status"));
+				assertNull(result.getString("curriculum_finalised_at"));
+				assertNull(result.getString("source_pdf_path"));
+				assertFalse(result.next());
+			}
+			try (ResultSet result = statement.executeQuery("""
+					SELECT
+					    id,
+					    syllabus_version_id,
+					    curriculum_name,
+					    source_page_number
+					FROM curriculum_nodes
+					WHERE id = 42
+					""")) {
+				assertTrue(result.next());
+
+				// The imported node identity is deliberately preserved by migration.
+				assertEquals(42, result.getLong("id"));
+				assertEquals(7, result.getLong("syllabus_version_id"));
+				assertEquals("Engineering fundamentals", result.getString("curriculum_name"));
+				result.getInt("source_page_number");
+				assertTrue(result.wasNull());
+				assertFalse(result.next());
+			}
+		}
+	}
+
+	@Test
+	void migratesVersion07QuestionResponseTypesConservatively() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-seven-response-type.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v6-to-v7.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						INSERT INTO subjects
@@ -330,7 +501,7 @@ class SqliteConnectionTest {
 		}
 		assertEquals(7, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(8, database.schemaVersion());
+		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
@@ -354,157 +525,193 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void migratesVersionSixCurriculumDataToLatestWithoutLosingIdentity() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-six-curriculum-migration.db"));
+	void migratesVersion08BookletsWithUnspecifiedQuestionFormat() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-eight-booklet-format.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v3-to-v4.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v4-to-v5.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v5-to-v6.sql"));
+
+			// Construct a genuine version-eight database so this test exercises only
+			// the new booklet-format migration.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v07-to-v08.sql"));
 			try (Statement statement = connection.createStatement()) {
+				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
+				statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
+				statement.execute("INSERT INTO source_documents (id, relative_path) VALUES (1, 'paper.pdf')");
 				statement.execute("""
-						INSERT INTO subjects
-						    (id, subject_name)
+						INSERT INTO exams
+						    (id, subject_id, provider_id, exam_year, exam_name)
 						VALUES
-						    (1, 'Engineering')
+						    (1, 1, 1, 2025, 'External Assessment')
 						""");
 				statement.execute("""
-						INSERT INTO syllabus_versions
-						    (id, subject_id, syllabus_name, is_current)
+						INSERT INTO exam_booklets
+						    (id, exam_id, source_document_id, booklet_name)
 						VALUES
-						    (7, 1, '2025', 1)
-						""");
-				statement.execute("""
-						INSERT INTO curriculum_nodes
-						    (id,
-						     syllabus_version_id,
-						     parent_id,
-						     curriculum_code,
-						     curriculum_name,
-						     curriculum_level,
-						     display_order)
-						VALUES
-						    (42,
-						     7,
-						     NULL,
-						     '1',
-						     'Engineering fundamentals',
-						     'UNIT',
-						     0)
+						    (1, 1, 1, 'Paper 1')
 						""");
 			}
 			connection.commit();
 		}
-		assertEquals(6, database.schemaVersion());
-		database.initialiseSchema();
-		assertEquals(LATEST_SCHEMA_VERSION, database.schemaVersion());
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			try (ResultSet result = statement.executeQuery("""
-					SELECT
-					    id,
-					    curriculum_status,
-					    curriculum_finalised_at,
-					    source_pdf_path
-					FROM syllabus_versions
-					WHERE id = 7
-					""")) {
-				assertTrue(result.next());
-				assertEquals(7, result.getLong("id"));
-				assertEquals("IN_PROGRESS", result.getString("curriculum_status"));
-				assertNull(result.getString("curriculum_finalised_at"));
-				assertNull(result.getString("source_pdf_path"));
-				assertFalse(result.next());
-			}
-			try (ResultSet result = statement.executeQuery("""
-					SELECT
-					    id,
-					    syllabus_version_id,
-					    curriculum_name,
-					    source_page_number
-					FROM curriculum_nodes
-					WHERE id = 42
-					""")) {
-				assertTrue(result.next());
+		assertEquals(8, database.schemaVersion());
 
-				// The imported node identity is deliberately preserved by migration.
-				assertEquals(42, result.getLong("id"));
-				assertEquals(7, result.getLong("syllabus_version_id"));
-				assertEquals("Engineering fundamentals", result.getString("curriculum_name"));
-				result.getInt("source_page_number");
-				assertTrue(result.wasNull());
-				assertFalse(result.next());
-			}
+		// A pre-existing booklet contains no reliable response-format metadata, so
+		// migration must preserve that uncertainty rather than infer from its name.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT question_format
+						FROM exam_booklets
+						WHERE id = 1
+						""")) {
+			assertTrue(result.next());
+			assertEquals("UNSPECIFIED", result.getString("question_format"));
+			assertFalse(result.next());
 		}
 	}
 
 	@Test
-	void migratesVersionTwoMappingsAndBackfillsOnlyConfirmedReviews() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-two-migration.db"));
+	void migratesVersion09BookletAnswerFilesConservatively() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-nine-answer-files.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+
+			// Construct a genuine version-nine database so only the new booklet-answer
+			// relationship is exercised by this migration test.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v07-to-v08.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v08-to-v09.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 				statement.execute("""
 						INSERT INTO syllabus_versions
 						    (id, subject_id, syllabus_name, is_current)
 						VALUES
-						    (1, 1, 'Old syllabus', 0),
-						    (2, 1, 'Current syllabus', 1),
-						    (3, 1, 'Other target syllabus', 0)
+						    (1, 1, '2025', 1)
 						""");
 				statement.execute("""
 						INSERT INTO curriculum_nodes
-						    (id, syllabus_version_id, parent_id, curriculum_code,
-						     curriculum_name, curriculum_level, display_order)
+						    (id, syllabus_version_id, parent_id,
+						     curriculum_code, curriculum_name,
+						     curriculum_level, display_order)
 						VALUES
-						    (10, 1, NULL, '1', 'Old unit', 'UNIT', 0),
-						    (11, 1, 10, '1.1', 'Old topic', 'TOPIC', 0),
-						    (12, 1, 11, '1.1.1', 'Confirmed source', 'DESCRIPTOR', 0),
-						    (13, 1, 11, '1.1.2', 'Suggested source', 'DESCRIPTOR', 1),
-						    (20, 2, NULL, '1', 'Current unit', 'UNIT', 0),
-						    (21, 2, 20, '1.1', 'Current topic', 'TOPIC', 0),
-						    (22, 2, 21, '1.1.1', 'Confirmed target', 'DESCRIPTOR', 0),
-						    (30, 3, NULL, '1', 'Other unit', 'UNIT', 0),
-						    (31, 3, 30, '1.1', 'Other topic', 'TOPIC', 0),
-						    (32, 3, 31, '1.1.1', 'Suggested target', 'DESCRIPTOR', 0)
+						    (1, 1, NULL, '1', 'Unit 1', 'UNIT', 0),
+						    (2, 1, 1, '1.1', 'Topic 1', 'TOPIC', 0),
+						    (3, 1, 2, '1.1.1', 'Subtopic 1', 'SUBTOPIC', 0)
+						""");
+				statement.execute("INSERT INTO exam_providers (id, provider_name) VALUES (1, 'QCAA')");
+				statement.execute("""
+						INSERT INTO source_documents
+						    (id, relative_path)
+						VALUES
+						    (1, 'mcq.pdf'),
+						    (2, 'paper1.pdf'),
+						    (3, 'paper2.pdf'),
+						    (4, 'legacy-ambiguous.pdf'),
+						    (10, 'answers-a.pdf'),
+						    (11, 'answers-b.pdf')
 						""");
 				statement.execute("""
-						INSERT INTO curriculum_mappings
-						    (id, source_node_id, target_node_id, mapping_status)
+						INSERT INTO exams
+						    (id, subject_id, provider_id, exam_year, exam_name)
 						VALUES
-						    (1, 12, 22, 'CONFIRMED'),
-						    (2, 13, 32, 'SUGGESTED')
+						    (1, 1, 1, 2025, 'External Assessment')
+						""");
+				statement.execute("""
+						INSERT INTO exam_booklets
+						    (id, exam_id, source_document_id, booklet_name, question_format)
+						VALUES
+						    (1, 1, 1, 'MCQ booklet', 'MULTIPLE_CHOICE'),
+						    (2, 1, 2, 'Paper 1', 'WRITTEN_RESPONSE'),
+						    (3, 1, 3, 'Paper 2', 'WRITTEN_RESPONSE'),
+						    (4, 1, 4, 'Legacy ambiguous', 'WRITTEN_RESPONSE')
+						""");
+				statement.execute("""
+						INSERT INTO answer_files
+						    (id, exam_id, source_document_id, answer_file_name)
+						VALUES
+						    (10, 1, 10, 'Answers A'),
+						    (11, 1, 11, 'Answers B')
+						""");
+				statement.execute("""
+						INSERT INTO questions
+						    (id, booklet_id, classification_node_id,
+						     question_code, question_text, marks,
+						     preamble_capture_required, response_type)
+						VALUES
+						    (100, 2, 3, '1', '', 2, 0, 'WRITTEN_RESPONSE'),
+						    (101, 3, 3, '2', '', 2, 0, 'WRITTEN_RESPONSE'),
+						    (102, 4, 3, '3', '', 2, 0, 'WRITTEN_RESPONSE'),
+						    (103, 4, 3, '4', '', 2, 0, 'WRITTEN_RESPONSE')
+						""");
+				statement.execute("""
+						INSERT INTO answers
+						    (id, question_id, answer_text)
+						VALUES
+						    (200, 100, NULL),
+						    (201, 101, NULL),
+						    (202, 102, NULL),
+						    (203, 103, NULL)
+						""");
+				statement.execute("""
+						INSERT INTO answer_regions
+						    (answer_id, region_order, answer_file_id,
+						     page_number, x, y, width, height)
+						VALUES
+						    (200, 0, 10, 1, 0.10, 0.10, 0.50, 0.20),
+						    (201, 0, 11, 1, 0.10, 0.10, 0.50, 0.20),
+						    (202, 0, 10, 1, 0.10, 0.10, 0.50, 0.20),
+						    (203, 0, 11, 1, 0.10, 0.10, 0.50, 0.20)
 						""");
 			}
 			connection.commit();
 		}
+		assertEquals(9, database.schemaVersion());
 		database.initialiseSchema();
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			try (ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
-				assertTrue(result.next());
-				assertEquals(LATEST_SCHEMA_VERSION, result.getInt("version"));
-				assertFalse(result.next());
-			}
-			try (ResultSet result = statement.executeQuery("""
-					SELECT source_node_id, target_syllabus_version_id, review_outcome
-					FROM curriculum_mapping_reviews
-					ORDER BY source_node_id
-					""")) {
-				assertTrue(result.next());
-				assertEquals(12, result.getLong("source_node_id"));
-				assertEquals(2, result.getLong("target_syllabus_version_id"));
-				assertEquals("MATCHED", result.getString("review_outcome"));
-				assertFalse(result.next(), "SUGGESTED mappings must remain unreviewed");
-			}
-			try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM curriculum_mappings")) {
-				assertTrue(result.next());
-				assertEquals(2, result.getInt(1));
-			}
+		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT id, answer_file_id
+						FROM exam_booklets
+						ORDER BY id
+						""")) {
+
+			// The MCQ booklet has no region evidence, so migration must not guess that it
+			// shares Answers A with Paper 1.
+			assertTrue(result.next());
+			assertEquals(1, result.getLong("id"));
+			assertNull(result.getObject("answer_file_id"));
+
+			// Paper 1 has one unambiguous historical source.
+			assertTrue(result.next());
+			assertEquals(2, result.getLong("id"));
+			assertEquals(10, result.getLong("answer_file_id"));
+
+			// Paper 2 independently resolves to the second answer document.
+			assertTrue(result.next());
+			assertEquals(3, result.getLong("id"));
+			assertEquals(11, result.getLong("answer_file_id"));
+
+			// Conflicting legacy evidence is preserved as unresolved rather than guessed.
+			assertTrue(result.next());
+			assertEquals(4, result.getLong("id"));
+			assertNull(result.getObject("answer_file_id"));
+			assertFalse(result.next());
 		}
 	}
 
@@ -667,12 +874,12 @@ class SqliteConnectionTest {
 					    version INTEGER NOT NULL
 					)
 					""");
-			statement.execute(
-					String.format("INSERT INTO schema_version (version) VALUES (%d)", LATEST_SCHEMA_VERSION + 1));
+			statement.execute(String.format("INSERT INTO schema_version (version) VALUES (%d)",
+					SqliteDatabase.LATEST_SCHEMA_VERSION + 1));
 		}
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-		assertTrue(
-				exception.getMessage().contains("Unsupported database schema version " + (LATEST_SCHEMA_VERSION + 1)));
+		assertTrue(exception.getMessage()
+				.contains("Unsupported database schema version " + (SqliteDatabase.LATEST_SCHEMA_VERSION + 1)));
 	}
 
 	@Test
@@ -808,7 +1015,7 @@ class SqliteConnectionTest {
 					     question_code,
 					     question_text,
 					     marks,
-					     preamble_capture_required,
+					     shared_context_capture_required,
 					     response_type)
 					VALUES
 					    (1, 1, 3,
@@ -920,56 +1127,29 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionFourQuestionTableMissingMarks() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-marks.db"));
-		database.initialiseSchema();
-		replaceQuestionsTable(database, """
-				CREATE TABLE questions (
-				    id INTEGER PRIMARY KEY,
-				    booklet_id INTEGER NOT NULL,
-				    classification_node_id INTEGER NOT NULL,
-				    question_code TEXT NOT NULL,
-				    question_text TEXT NOT NULL,
-				    preamble_capture_required INTEGER NOT NULL,
-				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
-				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id),
-				    UNIQUE (booklet_id, question_code)
-				)
-				""");
+	void rejectsVersion02DatabaseWithoutItsMigrationTable() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v2-schema.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 2");
+			}
+			connection.commit();
+		}
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-		assertTrue(exception.getMessage().contains("missing required column marks"));
+		assertTrue(exception.getMessage().contains("missing required table curriculum_mappings"));
 	}
 
 	@Test
-	void rejectsVersionFourQuestionTableWithoutItsNaturalKey() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-natural-key.db"));
-		database.initialiseSchema();
-		replaceQuestionsTable(database, """
-				CREATE TABLE questions (
-				    id INTEGER PRIMARY KEY,
-				    booklet_id INTEGER NOT NULL,
-				    classification_node_id INTEGER NOT NULL,
-				    question_code TEXT NOT NULL,
-				    question_text TEXT NOT NULL,
-				    marks INTEGER NOT NULL,
-				    preamble_capture_required INTEGER NOT NULL,
-				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
-				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id)
-				)
-				""");
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-		assertTrue(exception.getMessage().contains("missing exact unique key"));
-	}
-
-	@Test
-	void rejectsVersionThreeDatabaseContainingQuestions() throws Exception {
+	void rejectsVersion03DatabaseContainingQuestions() throws Exception {
 		Path databasePath = tempDir.resolve("populated-version-three.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v2-to-v3.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Chemistry')");
 				statement.execute("""
@@ -1024,12 +1204,12 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionThreeDatabaseWithoutReviewTable() throws Exception {
+	void rejectsVersion03DatabaseWithoutReviewTable() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v3-schema.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("UPDATE schema_version SET version = 3");
 			}
@@ -1041,7 +1221,7 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionThreeReviewTableWithExtraPrimaryKeyColumn() throws Exception {
+	void rejectsVersion03ReviewTableWithExtraPrimaryKeyColumn() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("extra-review-primary-key-column.db"));
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -1063,7 +1243,7 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionThreeReviewTableWithInvalidPrimaryKey() throws Exception {
+	void rejectsVersion03ReviewTableWithInvalidPrimaryKey() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("invalid-review-primary-key.db"));
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -1083,7 +1263,7 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionThreeReviewTableWithMissingColumn() throws Exception {
+	void rejectsVersion03ReviewTableWithMissingColumn() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-review-column.db"));
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -1103,7 +1283,7 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionThreeReviewTableWithMissingSourceForeignKey() throws Exception {
+	void rejectsVersion03ReviewTableWithMissingSourceForeignKey() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-review-source-foreign-key.db"));
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -1123,7 +1303,7 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionThreeReviewTableWithMissingTargetVersionForeignKey() throws Exception {
+	void rejectsVersion03ReviewTableWithMissingTargetVersionForeignKey() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-review-target-foreign-key.db"));
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -1143,18 +1323,210 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rejectsVersionTwoDatabaseWithoutItsMigrationTable() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("missing-v2-schema.db"));
+	void rejectsVersion04QuestionTableMissingMarks() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-marks.db"));
+		database.initialiseSchema();
+		replaceQuestionsTable(database, """
+				CREATE TABLE questions (
+				    id INTEGER PRIMARY KEY,
+				    booklet_id INTEGER NOT NULL,
+				    classification_node_id INTEGER NOT NULL,
+				    question_code TEXT NOT NULL,
+				    question_text TEXT NOT NULL,
+				    shared_context_capture_required INTEGER NOT NULL,
+				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
+				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id),
+				    UNIQUE (booklet_id, question_code)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("missing required column marks"));
+	}
+
+	@Test
+	void rejectsVersion04QuestionTableWithoutItsNaturalKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v4-questions-missing-natural-key.db"));
+		database.initialiseSchema();
+		replaceQuestionsTable(database, """
+				CREATE TABLE questions (
+				    id INTEGER PRIMARY KEY,
+				    booklet_id INTEGER NOT NULL,
+				    classification_node_id INTEGER NOT NULL,
+				    question_code TEXT NOT NULL,
+				    question_text TEXT NOT NULL,
+				    marks INTEGER NOT NULL,
+				    shared_context_capture_required INTEGER NOT NULL,
+				    FOREIGN KEY (booklet_id) REFERENCES exam_booklets(id),
+				    FOREIGN KEY (classification_node_id) REFERENCES curriculum_nodes(id)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(exception.getMessage().contains("missing exact unique key"));
+	}
+
+	@Test
+	void rejectsVersion05DatabaseWithoutSharedQuestionSchema() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-five-missing-shared-question-schema.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+
+			// Build a genuine version-four database, then falsely claim version five
+			// without applying the migration that introduces shared-question structure.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
 			try (Statement statement = connection.createStatement()) {
-				statement.execute("UPDATE schema_version SET version = 2");
+				statement.execute("UPDATE schema_version SET version = 5");
 			}
 			connection.commit();
 		}
-		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
-		assertTrue(exception.getMessage().contains("missing required table curriculum_mappings"));
+
+		// A database claiming version five must contain the source-question and shared
+		// context structures introduced by the v4-to-v5 migration.
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+
+		// The version-five verifier reaches the absent source_questions structure
+		// through its required-column checks rather than a separate table-exists check.
+		assertTrue(exception.getMessage().contains("source_questions is missing required column"));
+		assertEquals(5, database.schemaVersion());
+	}
+
+	@Test
+	void rejectsVersion07DatabaseWithoutCurriculumAuthoringSchema() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-seven-missing-authoring-schema.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Build a genuine version-six database, then falsely claim version seven
+			// without applying the curriculum-authoring migration.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 7");
+			}
+			connection.commit();
+		}
+
+		// Version seven requires the curriculum-authoring columns added to
+		// syllabus_versions and curriculum_nodes.
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+
+		// Several version-seven columns are absent from the deliberately falsified
+		// version-six schema, so do not depend on HashSet iteration choosing one name.
+		assertTrue(exception.getMessage().contains("syllabus_versions is missing required column"));
+		assertEquals(7, database.schemaVersion());
+	}
+
+	@Test
+	void rejectsVersion08DatabaseWithoutQuestionResponseType() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-eight-missing-response-type.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Build a genuine version-seven database, then falsely claim version eight
+			// without applying the response-type migration.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v02-to-v03.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v03-to-v04.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v04-to-v05.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v05-to-v06.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v06-to-v07.sql"));
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 8");
+			}
+			connection.commit();
+		}
+
+		// Version eight requires every Question table to contain the persisted
+		// response_type column introduced by the v7-to-v8 migration.
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains("questions is missing required column response_type"));
+		assertEquals(8, database.schemaVersion());
+	}
+
+	@Test
+	void rejectsVersion09DatabaseWithoutBookletQuestionFormat() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("booklet-missing-question-format.db"));
+		database.initialiseSchema();
+
+		// Preserve the older valid ExamBooklet structure while deliberately removing
+		// only the column introduced by schema version 9.
+		replaceTable(database, "exam_booklets", """
+				CREATE TABLE exam_booklets (
+				    id INTEGER PRIMARY KEY,
+				    exam_id INTEGER NOT NULL,
+				    source_document_id INTEGER NOT NULL,
+				    booklet_name TEXT NOT NULL,
+				    FOREIGN KEY (exam_id)
+				        REFERENCES exams(id),
+				    FOREIGN KEY (source_document_id)
+				        REFERENCES source_documents(id),
+				    UNIQUE (exam_id, booklet_name)
+				)
+				""");
+
+		// A database declaring version 9 must be rejected when its version-9
+		// booklet-format structure is absent.
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains("exam_booklets is missing required column question_format"));
+	}
+
+	@Test
+	void rejectsVersion10DatabaseWithoutBookletAnswerFileColumn() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("booklet-missing-answer-file.db"));
+		database.initialiseSchema();
+
+		// Preserve all booklet structure through version nine while deliberately
+		// omitting only the relationship introduced by version ten.
+		replaceTable(database, "exam_booklets", """
+				CREATE TABLE exam_booklets (
+				    id INTEGER PRIMARY KEY,
+				    exam_id INTEGER NOT NULL,
+				    source_document_id INTEGER NOT NULL,
+				    booklet_name TEXT NOT NULL,
+				    question_format TEXT NOT NULL DEFAULT 'UNSPECIFIED',
+				    FOREIGN KEY (exam_id)
+				        REFERENCES exams(id),
+				    FOREIGN KEY (source_document_id)
+				        REFERENCES source_documents(id),
+				    UNIQUE (exam_id, booklet_name)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage().contains("exam_booklets is missing required column answer_file_id"));
+	}
+
+	@Test
+	void rejectsVersion10DatabaseWithoutBookletAnswerFileForeignKey() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("booklet-answer-file-missing-foreign-key.db"));
+		database.initialiseSchema();
+
+		// Include the version-ten column but remove only its required relationship to
+		// answer_files.
+		replaceTable(database, "exam_booklets", """
+				CREATE TABLE exam_booklets (
+				    id INTEGER PRIMARY KEY,
+				    exam_id INTEGER NOT NULL,
+				    source_document_id INTEGER NOT NULL,
+				    booklet_name TEXT NOT NULL,
+				    question_format TEXT NOT NULL DEFAULT 'UNSPECIFIED',
+				    answer_file_id INTEGER,
+				    FOREIGN KEY (exam_id)
+				        REFERENCES exams(id),
+				    FOREIGN KEY (source_document_id)
+				        REFERENCES source_documents(id),
+				    UNIQUE (exam_id, booklet_name)
+				)
+				""");
+		SQLException exception = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(exception.getMessage()
+				.contains("exam_booklets is missing exact foreign key answer_file_id -> answer_files(id)"));
 	}
 
 	@Test
@@ -1162,7 +1534,7 @@ class SqliteConnectionTest {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("migration-rollback.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						CREATE TRIGGER reject_schema_version_update
@@ -1186,12 +1558,12 @@ class SqliteConnectionTest {
 	}
 
 	@Test
-	void rollsBackVersionTwoMigrationWhenVersionUpdateFails() throws Exception {
+	void rollsBackVersion02MigrationWhenVersionUpdateFails() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-two-rollback.db"));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v1.sql"));
-			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v1-to-v2.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v01-to-v02.sql"));
 			try (Statement statement = connection.createStatement()) {
 				statement.execute("""
 						CREATE TRIGGER reject_version_three
@@ -1275,7 +1647,7 @@ class SqliteConnectionTest {
 					     question_code,
 					     question_text,
 					     marks,
-					     preamble_capture_required)
+					     shared_context_capture_required)
 					VALUES
 					    (1, 1, 3, 'Q1', '', 1, 0)
 					""");
@@ -1524,7 +1896,7 @@ class SqliteConnectionTest {
 					     question_code,
 					     question_text,
 					     marks,
-					     preamble_capture_required)
+					     shared_context_capture_required)
 					VALUES
 					    (1, 1, 3, 'Q6', '', 3, 0)
 					""");

@@ -1,50 +1,146 @@
 package au.edu.eq.questionbank.output.scorm;
 
 import java.nio.file.Path;
+import java.util.Set;
 
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 
 /**
- * Request to export one Subject's revision corpus as a SCORM ZIP.
+ * Immutable configuration for packaging revision content as SCORM 1.2.
+ * <p>
+ * Grouping and Unit selection are optional and are passed through to the shared
+ * revision export pipeline when present.
  */
 public final class ScormExportRequest {
 
 	private final Subject subject;
 	private final Path destination;
+	private final RevisionGroupingMode groupingMode;
+	private final Set<Long> selectedUnitIds;
 
 	/**
-	 * Creates a request for one Subject and final ZIP destination.
+	 * Creates a request using automatic grouping and all exportable Units.
 	 *
-	 * @param subject     the Subject whose current revision corpus will be exported
-	 * @param destination the final SCORM ZIP path
-	 * @throws NullPointerException if either argument is null
+	 * @param subject     subject whose current revision corpus will be packaged
+	 * @param destination destination ZIP file to create
 	 */
 	public ScormExportRequest(Subject subject, Path destination) {
+		this(subject, destination, null, null);
+	}
+
+	/**
+	 * Creates a request for all exportable Units using explicit grouping.
+	 *
+	 * @param subject      subject whose current revision corpus will be packaged
+	 * @param destination  destination ZIP file to create
+	 * @param groupingMode grouping mode to use
+	 */
+	public ScormExportRequest(Subject subject, Path destination, RevisionGroupingMode groupingMode) {
+		this(subject, destination, groupingMode, null);
+	}
+
+	/**
+	 * Creates a fully configured request.
+	 *
+	 * @param subject         subject whose current revision corpus will be packaged
+	 * @param destination     destination ZIP file to create
+	 * @param groupingMode    grouping mode, or {@code null} to select it
+	 *                        automatically
+	 * @param selectedUnitIds Unit identifiers to include, or {@code null} for all
+	 *                        exportable Units
+	 * @throws NullPointerException     if the subject or destination is
+	 *                                  {@code null}, or the Unit selection contains
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if the Unit selection is empty or contains a
+	 *                                  non-positive identifier
+	 */
+	public ScormExportRequest(Subject subject, Path destination, RevisionGroupingMode groupingMode,
+			Set<Long> selectedUnitIds) {
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
 		if (destination == null) {
 			throw new NullPointerException("destination");
 		}
+		if (selectedUnitIds != null) {
+			if (selectedUnitIds.isEmpty()) {
+				throw new IllegalArgumentException("At least one Unit must be selected");
+			}
+			for (Long unitId : selectedUnitIds) {
+				if (unitId == null) {
+					throw new NullPointerException("selectedUnitIds contains null");
+				}
+				if (unitId.longValue() < 1) {
+					throw new IllegalArgumentException("Selected Unit IDs must be positive");
+				}
+			}
+		}
 		this.subject = subject;
 		this.destination = destination;
+		this.groupingMode = groupingMode;
+		this.selectedUnitIds = selectedUnitIds == null ? null : Set.copyOf(selectedUnitIds);
 	}
 
 	/**
-	 * Returns the requested final ZIP destination.
+	 * Returns the destination SCORM ZIP file.
 	 *
-	 * @return the destination path
+	 * @return export destination
 	 */
 	public Path getDestination() {
 		return destination;
 	}
 
 	/**
-	 * Returns the Subject whose current revision corpus will be exported.
+	 * Returns the explicitly requested grouping mode.
 	 *
-	 * @return the Subject to export
+	 * @return explicit grouping mode
+	 * @throws IllegalStateException if this request uses automatic grouping
+	 */
+	public RevisionGroupingMode getGroupingMode() {
+		if (groupingMode == null) {
+			throw new IllegalStateException("SCORM export request does not specify a grouping mode");
+		}
+		return groupingMode;
+	}
+
+	/**
+	 * Returns the explicitly selected Unit identifiers.
+	 *
+	 * @return immutable selected Unit identifiers
+	 * @throws IllegalStateException if this request includes all exportable Units
+	 */
+	public Set<Long> getSelectedUnitIds() {
+		if (selectedUnitIds == null) {
+			throw new IllegalStateException("SCORM export request does not specify a Unit selection");
+		}
+		return selectedUnitIds;
+	}
+
+	/**
+	 * Returns the subject to export.
+	 *
+	 * @return export subject
 	 */
 	public Subject getSubject() {
 		return subject;
+	}
+
+	/**
+	 * Returns whether grouping was selected explicitly.
+	 *
+	 * @return {@code true} when {@link #getGroupingMode()} is available
+	 */
+	public boolean hasGroupingMode() {
+		return groupingMode != null;
+	}
+
+	/**
+	 * Returns whether the request is restricted to selected Units.
+	 *
+	 * @return {@code true} when {@link #getSelectedUnitIds()} is available
+	 */
+	public boolean hasUnitSelection() {
+		return selectedUnitIds != null;
 	}
 }

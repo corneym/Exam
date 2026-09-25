@@ -122,7 +122,7 @@ class QuestionCorpusAuditTest {
 		QuestionCorpusStatus statusB = QuestionCorpusAudit.assess(reloadedB);
 
 		// The split parts have captured Question source regions and their persisted
-		// shared preamble is fully resolved after reconstruction.
+		// shared context is fully resolved after reconstruction.
 		assertTrue(statusA.questionSourceCaptured());
 		assertTrue(statusB.questionSourceCaptured());
 		assertTrue(statusA.sharedContextResolved());
@@ -179,12 +179,16 @@ class QuestionCorpusAuditTest {
 		}
 
 		private Question question(QuestionResponseType responseType, boolean withQuestionRegion,
-				boolean preambleCaptureRequired) {
+				boolean sharedContextCaptureRequired) {
 			List<QuestionRegion> regions = withQuestionRegion
 					? List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20))
 					: List.of();
-			return new Question(20, booklet, "Q1", "", 2, regions, classification, preambleCaptureRequired, null, null,
-					responseType);
+
+			// Multiple-choice audit fixtures must remain valid domain Questions so each
+			// test exercises the audit condition it was actually written to inspect.
+			int marks = responseType == QuestionResponseType.MULTIPLE_CHOICE ? 1 : 2;
+			return new Question(20, booklet, "Q1", "", marks, regions, classification, sharedContextCaptureRequired,
+					null, null, responseType);
 		}
 	}
 }

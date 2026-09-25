@@ -16,7 +16,6 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 
-import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -28,7 +27,6 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
-import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import javafx.scene.Scene;
@@ -45,17 +43,14 @@ import javafx.stage.Stage;
 class LegacyQuestionMetadataDialogTest {
 
 	private Stage owner;
-	private SqliteCurriculumRepository curriculumRepository;
 	private Question question;
 	private Subtopic firstSubtopic;
-	private Subtopic secondSubtopic;
 
 	@Test
 	void disablesSaveForInvalidMetadata(FxRobot robot) {
 		AtomicReference<LegacyQuestionMetadataDialog> dialogRef = new AtomicReference<>();
 		robot.interact(() -> {
-			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question,
-					curriculumRepository);
+			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question);
 			dialogRef.set(dialog);
 			dialog.show();
 		});
@@ -78,8 +73,7 @@ class LegacyQuestionMetadataDialogTest {
 	void fieldLabelsRetainReadableWidth(FxRobot robot) {
 		AtomicReference<LegacyQuestionMetadataDialog> dialogRef = new AtomicReference<>();
 		robot.interact(() -> {
-			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question,
-					curriculumRepository);
+			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question);
 			dialogRef.set(dialog);
 			dialog.show();
 
@@ -89,8 +83,7 @@ class LegacyQuestionMetadataDialogTest {
 		});
 		String[] selectors = { "#legacy-metadata-subject-label", "#legacy-metadata-syllabus-label",
 				"#legacy-metadata-booklet-label", "#legacy-metadata-question-code-label",
-				"#legacy-metadata-marks-label", "#legacy-metadata-classification-label",
-				"#legacy-metadata-response-type-label" };
+				"#legacy-metadata-marks-label", "#legacy-metadata-response-type-label" };
 		for (String selector : selectors) {
 			Label label = robot.lookup(selector).queryAs(Label.class);
 
@@ -107,25 +100,21 @@ class LegacyQuestionMetadataDialogTest {
 	void returnsCorrectedMetadata(FxRobot robot) {
 		AtomicReference<LegacyQuestionMetadataDialog> dialogRef = new AtomicReference<>();
 		robot.interact(() -> {
-			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question,
-					curriculumRepository);
+			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question);
 			dialogRef.set(dialog);
 			dialog.show();
 		});
 		TextField questionCode = robot.lookup("#legacy-metadata-question-code").queryAs(TextField.class);
 		TextField marks = robot.lookup("#legacy-metadata-marks").queryAs(TextField.class);
-		ComboBox<CurriculumNode> classification = robot.lookup("#legacy-metadata-classification")
-				.queryAs(ComboBox.class);
 		ComboBox<QuestionResponseType> responseType = robot.lookup("#legacy-metadata-response-type")
 				.queryAs(ComboBox.class);
-		CheckBox preamble = robot.lookup("#legacy-metadata-preamble-required").queryAs(CheckBox.class);
+		CheckBox sharedContext = robot.lookup("#legacy-metadata-shared-context-required").queryAs(CheckBox.class);
 		Button save = robot.lookup("#legacy-metadata-save").queryAs(Button.class);
 		robot.interact(() -> {
 			questionCode.setText("Q12b");
 			responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE);
 			marks.setText("4");
-			classification.setValue(secondSubtopic);
-			preamble.setSelected(false);
+			sharedContext.setSelected(false);
 		});
 		assertFalse(save.isDisabled());
 		robot.interact(save::fire);
@@ -133,8 +122,7 @@ class LegacyQuestionMetadataDialogTest {
 		assertNotNull(result);
 		assertEquals("Q12b", result.questionCode());
 		assertEquals(4, result.marks());
-		assertEquals(secondSubtopic, result.classification());
-		assertFalse(result.preambleCaptureRequired());
+		assertFalse(result.sharedContextCaptureRequired());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, result.responseType());
 	}
 
@@ -143,25 +131,22 @@ class LegacyQuestionMetadataDialogTest {
 	void showsExistingMetadataAndSameSyllabusClassifications(FxRobot robot) {
 		AtomicReference<LegacyQuestionMetadataDialog> dialogRef = new AtomicReference<>();
 		robot.interact(() -> {
-			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question,
-					curriculumRepository);
+			LegacyQuestionMetadataDialog dialog = new LegacyQuestionMetadataDialog(owner, question);
 			dialogRef.set(dialog);
 			dialog.show();
 		});
 		TextField questionCode = robot.lookup("#legacy-metadata-question-code").queryAs(TextField.class);
 		TextField marks = robot.lookup("#legacy-metadata-marks").queryAs(TextField.class);
-		ComboBox<CurriculumNode> classification = robot.lookup("#legacy-metadata-classification")
-				.queryAs(ComboBox.class);
 		ComboBox<QuestionResponseType> responseType = robot.lookup("#legacy-metadata-response-type")
 				.queryAs(ComboBox.class);
-		CheckBox preamble = robot.lookup("#legacy-metadata-preamble-required").queryAs(CheckBox.class);
+		CheckBox sharedContext = robot.lookup("#legacy-metadata-shared-context-required").queryAs(CheckBox.class);
+
+		// Edit Metadata displays the stored context but does not expose curriculum
+		// classification as an editable field.
+		assertTrue(robot.lookup("#legacy-metadata-classification").tryQuery().isEmpty());
 		assertEquals("Q12a", questionCode.getText());
 		assertEquals("2", marks.getText());
-		assertEquals(firstSubtopic, classification.getValue());
-		assertEquals(2, classification.getItems().size());
-		assertTrue(classification.getItems().contains(firstSubtopic));
-		assertTrue(classification.getItems().contains(secondSubtopic));
-		assertTrue(preamble.isSelected());
+		assertTrue(sharedContext.isSelected());
 		assertEquals(QuestionResponseType.UNKNOWN, responseType.getValue());
 		assertEquals(3, responseType.getItems().size());
 		assertTrue(responseType.getItems().contains(QuestionResponseType.MULTIPLE_CHOICE));
@@ -184,11 +169,9 @@ class LegacyQuestionMetadataDialogTest {
 		Unit unit = curriculumWriter.insertUnit(historical, "1", "Unit 1", 0);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 0);
 		firstSubtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "First subtopic", 0);
-		secondSubtopic = curriculumWriter.insertSubtopic(topic, "1.1.2", "Second subtopic", 1);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
 				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
 		question = new SqliteQuestionRepository(database).save(booklet, "Q12a", "", 2, List.of(), firstSubtopic, true);
-		curriculumRepository = new SqliteCurriculumRepository(database);
 	}
 }

@@ -105,7 +105,7 @@ public final class RevisionQuestionAssetRenderer {
 			}
 			try {
 
-				// Keep the shared preamble separate so multipart presentation can display it
+				// Keep the shared context separate so multipart presentation can display it
 				// once per group.
 				questionExtractor.extractQuestionBody(sourcePdf, question, outputFile.toFile());
 			} catch (Exception e) {

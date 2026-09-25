@@ -55,12 +55,12 @@ class SqliteQuestionRepositoryTest {
 		assertEquals(imported.getId(), updated.getId());
 		assertEquals("21a", updated.getQuestionCode());
 		assertEquals(3, updated.getMarks());
-		assertTrue(updated.isPreambleCaptureRequired());
+		assertTrue(updated.isSharedContextCaptureRequired());
 		assertEquals(2, updated.getRegions().size());
 		assertEquals(4, updated.getRegions().get(0).pageNumber());
 		Question reloaded = new SqliteQuestionRepository(database).findById(imported.getId()).orElseThrow();
 		assertEquals(2, reloaded.getRegions().size());
-		assertTrue(reloaded.isPreambleCaptureRequired());
+		assertTrue(reloaded.isSharedContextCaptureRequired());
 		assertThrows(IllegalArgumentException.class, () -> repository.attachRegions(imported.getId(),
 				List.of(new QuestionRegion(booklet, 5, 0.10, 0.10, 0.50, 0.20))));
 		Question afterRejectedSecondAttachment = new SqliteQuestionRepository(database).findById(imported.getId())
@@ -105,12 +105,88 @@ class SqliteQuestionRepositoryTest {
 	}
 
 	@Test
+	void refinesSubtopicClassificationToDescriptorWithoutChangingQuestion() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("classification-refinement.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		Descriptor descriptor = curriculumWriter.insertDescriptor(subtopic, "1.1.1.1", "Descriptor 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/2025/paper1.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.save(booklet, "Q7", "", 3,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.60, 0.15)), subtopic, false);
+		Question updated = repository.updateClassification(saved.getId(), descriptor);
+		assertEquals(descriptor.getId(), updated.getClassification().getId());
+		assertEquals(saved.getQuestionCode(), updated.getQuestionCode());
+		assertEquals(saved.getMarks(), updated.getMarks());
+		assertEquals(saved.getResponseType(), updated.getResponseType());
+
+		// Reloading reconstructs the persisted Booklet as a new domain object, so
+		// compare region identity and coordinates rather than Java object identity.
+		assertEquals(saved.getRegions().size(), updated.getRegions().size());
+		QuestionRegion savedRegion = saved.getRegions().getFirst();
+		QuestionRegion updatedRegion = updated.getRegions().getFirst();
+		assertEquals(savedRegion.booklet().getId(), updatedRegion.booklet().getId());
+		assertEquals(savedRegion.pageNumber(), updatedRegion.pageNumber());
+		assertEquals(savedRegion.x(), updatedRegion.x());
+		assertEquals(savedRegion.y(), updatedRegion.y());
+		assertEquals(savedRegion.width(), updatedRegion.width());
+		assertEquals(savedRegion.height(), updatedRegion.height());
+		Question reloaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
+		assertEquals(descriptor.getId(), reloaded.getClassification().getId());
+		assertEquals(1, reloaded.getRegions().size());
+		assertEquals(2, reloaded.getRegions().getFirst().pageNumber());
+	}
+
+	@Test
 	void rejectsAttachingRegionsToQuestionThatAlreadyHasRegions() throws Exception {
 		ReconstructionFixture fixture = createReconstructionFixture("already-captured-question.db");
 		Question question = fixture.question();
 		assertThrows(IllegalArgumentException.class,
 				() -> new SqliteQuestionRepository(fixture.database()).attachRegions(question.getId(),
 						List.of(new QuestionRegion(question.getBooklet(), 2, 0.10, 0.10, 0.50, 0.20))));
+	}
+
+	@Test
+	void rejectsMultiMarkEditWithoutCorruptingPersistedMultipleChoiceQuestion() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("response-type.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Mixed booklet", "Chemistry/2025/questions.pdf");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.save(booklet, "Q1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, saved.getResponseType());
+		Question reloaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
+		assertEquals(1, reloaded.getMarks());
+
+		// A marks-only repository edit preserves response type, so changing this MCQ
+		// to two marks must be rejected before SQLite is modified.
+		IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+				() -> repository.updateQuestion(saved.getId(), "Q1", 2,
+						List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.50, 0.20)), subtopic, null, null));
+		assertTrue(failure.getMessage().contains("Multiple-choice questions must be worth exactly 1 mark"));
+		Question afterRejectedEdit = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
+
+		// Reopening proves the rejected edit did not leave an invalid row behind.
+		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, afterRejectedEdit.getResponseType());
+		assertEquals(1, afterRejectedEdit.getMarks());
+		assertEquals(1, afterRejectedEdit.getRegions().getFirst().pageNumber());
 	}
 
 	@Test
@@ -226,7 +302,7 @@ class SqliteQuestionRepositoryTest {
 		assertEquals(booklet.getId(), loaded.getBooklet().getId());
 		assertEquals(3, loaded.getMarks());
 		assertTrue(loaded.getRegions().isEmpty());
-		assertTrue(loaded.isPreambleCaptureRequired());
+		assertTrue(loaded.isSharedContextCaptureRequired());
 	}
 
 	@Test
@@ -260,33 +336,6 @@ class SqliteQuestionRepositoryTest {
 		assertEquals(5, loaded.getRegions().get(1).pageNumber());
 		assertEquals(subtopic.getId(), loaded.getClassification().getId());
 		assertEquals(1, secondRepository.findAll().size());
-	}
-
-	@Test
-	void savesReloadsAndPreservesExplicitResponseType() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("response-type.db"));
-		database.initialiseSchema();
-		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
-		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
-		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
-		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
-		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
-				"External Assessment", "Mixed booklet", "Chemistry/2025/questions.pdf");
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-		Question saved = repository.save(booklet, "Q1", "", 1,
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false, null, null,
-				QuestionResponseType.MULTIPLE_CHOICE);
-		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, saved.getResponseType());
-		Question reloaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
-		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
-		Question edited = repository.updateQuestion(saved.getId(), "Q1", 2,
-				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.50, 0.20)), subtopic, null, null);
-		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, edited.getResponseType());
-		Question afterReopen = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
-		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, afterReopen.getResponseType());
 	}
 
 	private ReconstructionFixture createReconstructionFixture(String databaseName) throws Exception {

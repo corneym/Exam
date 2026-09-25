@@ -53,16 +53,16 @@ class SharedContextCapturePaneTest {
 	private AtomicInteger selectionClearCount;
 
 	@Test
-	void acceptedAutomaticPreambleIsExposedWithoutBeingPersisted(FxRobot robot) {
+	void acceptedAutomaticSharedContextIsExposedWithoutBeingPersisted(FxRobot robot) {
 		QuestionRegion transferred = new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2);
-		robot.interact(() -> assertTrue(pane.beginAutomaticContext("Question 21 preamble", transferred)));
+		robot.interact(() -> assertTrue(pane.beginAutomaticContext("Question 21 shared context", transferred)));
 		assertTrue(pane.isCaptureMode());
 		assertTrue(pane.hasCurrentSelection());
 		robot.interact(() -> assertTrue(pane.acceptAutomaticRegion()));
 		assertFalse(pane.isCaptureMode());
 		assertTrue(pane.hasPendingAutomaticRegion());
 		robot.interact(() -> {
-			assertEquals("Question 21 preamble", pane.getPendingAutomaticContextLabel());
+			assertEquals("Question 21 shared context", pane.getPendingAutomaticContextLabel());
 			assertEquals(List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2)),
 					pane.getPendingAutomaticContextRegions());
 		});
@@ -96,7 +96,7 @@ class SharedContextCapturePaneTest {
 	@Test
 	void automaticContextDataIsNotAvailableBeforeSelectionIsAccepted(FxRobot robot) {
 		robot.interact(() -> {
-			pane.beginAutomaticContext("Preamble", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2));
+			pane.beginAutomaticContext("Shared Context", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2));
 			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextLabel);
 			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextRegions);
 			assertTrue(pane.hasCurrentSelection());
@@ -121,9 +121,10 @@ class SharedContextCapturePaneTest {
 	}
 
 	@Test
-	void cancellingAcceptedAutomaticPreambleLeavesNothingToSave(FxRobot robot) {
+	void cancellingAcceptedAutomaticSharedContextLeavesNothingToSave(FxRobot robot) {
 		robot.interact(() -> {
-			assertTrue(pane.beginAutomaticContext("Preamble", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2)));
+			assertTrue(
+					pane.beginAutomaticContext("Shared Context", new QuestionRegion(booklet, 1, 0.1, 0.1, 0.5, 0.2)));
 			assertTrue(pane.acceptAutomaticRegion());
 			assertTrue(pane.hasUnsavedContextCapture());
 			pane.cancelAutomaticContext();
@@ -139,7 +140,8 @@ class SharedContextCapturePaneTest {
 	@Test
 	void cancellingSharedContextRecapturePreservesPersistedContext(FxRobot robot) {
 		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20);
-		SharedQuestionContext original = repository.save(booklet, "Question 22 preamble", List.of(originalRegion));
+		SharedQuestionContext original = repository.save(booklet, "Question 22 shared context",
+				List.of(originalRegion));
 		AtomicInteger completed = new AtomicInteger();
 		robot.interact(() -> {
 			pane.refreshForCurrentBooklet();
@@ -158,7 +160,7 @@ class SharedContextCapturePaneTest {
 		assertTrue(pane.hasUnsavedContextCapture());
 		SharedQuestionContext beforeCancel = repository.findByBooklet(booklet).getFirst();
 		assertEquals(original.getId(), beforeCancel.getId());
-		assertEquals("Question 22 preamble", beforeCancel.getLabel());
+		assertEquals("Question 22 shared context", beforeCancel.getLabel());
 		assertEquals(List.of(originalRegion), beforeCancel.getRegions());
 		robot.clickOn("#cancel-shared-context");
 
@@ -172,14 +174,15 @@ class SharedContextCapturePaneTest {
 
 		// The persisted context must remain exactly as it was before recapture began.
 		assertEquals(original.getId(), afterCancel.getId());
-		assertEquals("Question 22 preamble", afterCancel.getLabel());
+		assertEquals("Question 22 shared context", afterCancel.getLabel());
 		assertEquals(List.of(originalRegion), afterCancel.getRegions());
 	}
 
 	@Test
 	void recapturingContextReplacesRegionsWithoutChangingIdentity(FxRobot robot) {
 		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20);
-		SharedQuestionContext original = repository.save(booklet, "Question 21 preamble", List.of(originalRegion));
+		SharedQuestionContext original = repository.save(booklet, "Question 21 shared context",
+				List.of(originalRegion));
 		AtomicInteger completed = new AtomicInteger();
 		robot.interact(() -> {
 			pane.refreshForCurrentBooklet();
@@ -204,7 +207,7 @@ class SharedContextCapturePaneTest {
 		robot.clickOn("#save-shared-context");
 		SharedQuestionContext replaced = repository.findByBooklet(booklet).getFirst();
 		assertEquals(original.getId(), replaced.getId());
-		assertEquals("Question 21 preamble", replaced.getLabel());
+		assertEquals("Question 21 shared context", replaced.getLabel());
 		assertEquals(List.of(replacementRegion), replaced.getRegions());
 		assertEquals(1, completed.get());
 		assertFalse(pane.isCaptureMode());
@@ -214,8 +217,8 @@ class SharedContextCapturePaneTest {
 	void rejectsTransferredRegionFromAnotherBookletBeforeChangingCaptureState(FxRobot robot) {
 		ExamBooklet other = new ExamBooklet(2, booklet.getExam(), "Paper 2", new SourceDocument(2, "paper-2.pdf"));
 		robot.interact(() -> {
-			assertThrows(IllegalArgumentException.class,
-					() -> pane.beginAutomaticContext("Preamble", new QuestionRegion(other, 1, 0.1, 0.1, 0.5, 0.2)));
+			assertThrows(IllegalArgumentException.class, () -> pane.beginAutomaticContext("Shared Context",
+					new QuestionRegion(other, 1, 0.1, 0.1, 0.5, 0.2)));
 			assertFalse(pane.isCaptureMode());
 			assertFalse(pane.hasUnsavedContextCapture());
 		});

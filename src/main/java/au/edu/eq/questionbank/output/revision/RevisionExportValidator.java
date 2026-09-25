@@ -21,14 +21,14 @@ import au.edu.eq.questionbank.service.revision.RevisionQuestionPlacement;
  */
 public final class RevisionExportValidator {
 
+	private static final Pattern REFERENCE_PATTERN = Pattern.compile("(?:href|src)\\s*=\\s*\"([^\"]+)\"",
+			Pattern.CASE_INSENSITIVE);
+
 	/**
 	 * Creates a validator for generated revision pages and their local assets.
 	 */
 	public RevisionExportValidator() {
 	}
-
-	private static final Pattern REFERENCE_PATTERN = Pattern.compile("(?:href|src)\\s*=\\s*\"([^\"]+)\"",
-			Pattern.CASE_INSENSITIVE);
 
 	/**
 	 * Checks generated pages, local references and required source-derived assets
@@ -40,7 +40,7 @@ public final class RevisionExportValidator {
 	 * @param htmlFiles           generated HTML file paths beneath the export root
 	 * @param questionAssets      rendered question images
 	 * @param answerAssets        rendered answer-region images
-	 * @param sharedContextAssets rendered reusable preamble images
+	 * @param sharedContextAssets rendered reusable shared context images
 	 * @throws IOException if generated files or references fail validation
 	 */
 	public void validate(Path exportRoot, RevisionCorpus corpus, List<Path> htmlFiles,
@@ -205,6 +205,21 @@ public final class RevisionExportValidator {
 		}
 	}
 
+	private void validateLocalFragment(Path htmlFile, String reference) throws IOException {
+		String fragment = reference.substring(1);
+		if (fragment.isBlank()) {
+			throw new IOException("Generated HTML contains an empty local fragment: " + htmlFile);
+		}
+		String html = Files.readString(htmlFile);
+
+		// Generated revision HTML uses double-quoted id attributes. Validate the
+		// same-page navigation target rather than treating the fragment as a file.
+		String expectedId = "id=\"" + fragment + "\"";
+		if (!html.contains(expectedId)) {
+			throw new IOException("Generated HTML local fragment does not exist: " + reference + " in " + htmlFile);
+		}
+	}
+
 	private void validateNonEmptyFile(Path file, String description) throws IOException {
 		if (!Files.isRegularFile(file)) {
 			throw new IOException(description + " does not exist: " + file);
@@ -251,12 +266,17 @@ public final class RevisionExportValidator {
 				|| reference.matches("^[A-Za-z]:.*")) {
 			throw new IOException("Generated HTML contains an absolute or external reference: " + reference);
 		}
+		if (reference.startsWith("#")) {
+			validateLocalFragment(htmlFile, reference);
+			return;
+		}
 		if (reference.contains("#") || reference.contains("?")) {
-			throw new IOException("Generated HTML reference must be a plain relative file path: " + reference);
+			throw new IOException(
+					"Generated HTML reference must be a relative file path or local fragment: " + reference);
 		}
 
-		// Links are relative to their containing page, which may be several directories
-		// below the root.
+		// Links are relative to their containing page, which may be several
+		// directories below the export root.
 		Path target = htmlFile.getParent().resolve(reference.replace('/', java.io.File.separatorChar)).normalize();
 		validateInsideRoot(root, target, "HTML reference");
 		validateNonEmptyFile(target, "HTML reference");

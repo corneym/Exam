@@ -24,6 +24,106 @@ class LegacyQuestionWorkbookReaderTest {
 	@TempDir
 	Path tempDirectory;
 
+	@Test
+	void evaluatesFormulaCellsUsedByLegacyMetadata() throws Exception {
+		Path path = createWorkbook();
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
+			Row row = workbook.getSheetAt(0).getRow(2);
+			row.getCell(0).setCellFormula("2019+1");
+			row.getCell(3).setCellFormula("1+2");
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		LegacyQuestionRow row = new LegacyQuestionWorkbookReader().read(path).getFirst().questions().get(1);
+		assertEquals(2020, row.year());
+		assertEquals(3, row.marks());
+	}
+
+	@Test
+	void readsLegacyQuestionRowsAndSheetProvider() throws Exception {
+		Path workbookPath = createWorkbook();
+		List<LegacyQuestionSheet> sheets = new LegacyQuestionWorkbookReader().read(workbookPath);
+		assertEquals(1, sheets.size());
+		LegacyQuestionSheet sheet = sheets.getFirst();
+		assertEquals("QCAA", sheet.providerName());
+		assertEquals(2, sheet.questions().size());
+		LegacyQuestionRow first = sheet.questions().get(0);
+		assertEquals(2020, first.year());
+		assertEquals("MCQ", first.paperCode());
+		assertEquals("1", first.questionCode());
+		assertEquals(1, first.marks());
+		assertEquals("1.1.1", first.classificationCode());
+		assertEquals("B", first.answer());
+		assertFalse(first.sharedContextCaptureRequired());
+		LegacyQuestionRow second = sheet.questions().get(1);
+		assertEquals("21a", second.questionCode());
+		assertEquals(3, second.marks());
+		assertNull(second.answer());
+		assertTrue(second.sharedContextCaptureRequired());
+	}
+
+	@Test
+	void rejectsDuplicateHeadings() throws Exception {
+		Path path = createWorkbook();
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
+			workbook.getSheetAt(0).getRow(0).createCell(7).setCellValue("Year");
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> new LegacyQuestionWorkbookReader().read(path));
+		assertTrue(exception.getMessage().contains("Duplicate column: Year"));
+	}
+
+	@Test
+	void rejectsInvalidMarksWithRowNumber() throws Exception {
+		Path path = createWorkbook();
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
+			workbook.getSheetAt(0).getRow(1).getCell(3).setCellValue("two");
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> new LegacyQuestionWorkbookReader().read(path));
+		assertTrue(exception.getMessage().contains("row 2"));
+		assertTrue(exception.getMessage().contains("Marks"));
+	}
+
+	@Test
+	void rejectsInvalidSValueWithRowNumber() throws Exception {
+		Path path = createWorkbook();
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
+			workbook.getSheetAt(0).getRow(1).createCell(6).setCellValue("yes");
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> new LegacyQuestionWorkbookReader().read(path));
+		assertTrue(exception.getMessage().contains("row 2"));
+		assertTrue(exception.getMessage().contains("Preamble"));
+	}
+
+	@Test
+	void rejectsMissingRequiredColumn() throws Exception {
+		Path path = tempDirectory.resolve("missing-column.xlsx");
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet sheet = workbook.createSheet("QCAA");
+			Row header = sheet.createRow(0);
+			header.createCell(0).setCellValue("Year");
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> new LegacyQuestionWorkbookReader().read(path));
+		assertTrue(exception.getMessage().contains("Missing column"));
+		assertTrue(exception.getMessage().contains("QCAA"));
+	}
+
 	private Path createWorkbook() throws Exception {
 		Path path = tempDirectory.resolve("legacy.xlsx");
 		try (Workbook workbook = new XSSFWorkbook()) {
@@ -55,105 +155,5 @@ class LegacyQuestionWorkbookReaderTest {
 			}
 		}
 		return path;
-	}
-
-	@Test
-	void readsLegacyQuestionRowsAndSheetProvider() throws Exception {
-		Path workbookPath = createWorkbook();
-		List<LegacyQuestionSheet> sheets = new LegacyQuestionWorkbookReader().read(workbookPath);
-		assertEquals(1, sheets.size());
-		LegacyQuestionSheet sheet = sheets.getFirst();
-		assertEquals("QCAA", sheet.providerName());
-		assertEquals(2, sheet.questions().size());
-		LegacyQuestionRow first = sheet.questions().get(0);
-		assertEquals(2020, first.year());
-		assertEquals("MCQ", first.paperCode());
-		assertEquals("1", first.questionCode());
-		assertEquals(1, first.marks());
-		assertEquals("1.1.1", first.classificationCode());
-		assertEquals("B", first.answer());
-		assertFalse(first.preambleCaptureRequired());
-		LegacyQuestionRow second = sheet.questions().get(1);
-		assertEquals("21a", second.questionCode());
-		assertEquals(3, second.marks());
-		assertNull(second.answer());
-		assertTrue(second.preambleCaptureRequired());
-	}
-
-	@Test
-	void rejectsInvalidMarksWithRowNumber() throws Exception {
-		Path path = createWorkbook();
-		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
-			workbook.getSheetAt(0).getRow(1).getCell(3).setCellValue("two");
-			try (OutputStream output = Files.newOutputStream(path)) {
-				workbook.write(output);
-			}
-		}
-		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-				() -> new LegacyQuestionWorkbookReader().read(path));
-		assertTrue(exception.getMessage().contains("row 2"));
-		assertTrue(exception.getMessage().contains("Marks"));
-	}
-
-	@Test
-	void rejectsInvalidPreambleValueWithRowNumber() throws Exception {
-		Path path = createWorkbook();
-		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
-			workbook.getSheetAt(0).getRow(1).createCell(6).setCellValue("yes");
-			try (OutputStream output = Files.newOutputStream(path)) {
-				workbook.write(output);
-			}
-		}
-		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-				() -> new LegacyQuestionWorkbookReader().read(path));
-		assertTrue(exception.getMessage().contains("row 2"));
-		assertTrue(exception.getMessage().contains("Preamble"));
-	}
-
-	@Test
-	void rejectsMissingRequiredColumn() throws Exception {
-		Path path = tempDirectory.resolve("missing-column.xlsx");
-		try (Workbook workbook = new XSSFWorkbook()) {
-			Sheet sheet = workbook.createSheet("QCAA");
-			Row header = sheet.createRow(0);
-			header.createCell(0).setCellValue("Year");
-			try (OutputStream output = Files.newOutputStream(path)) {
-				workbook.write(output);
-			}
-		}
-		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-				() -> new LegacyQuestionWorkbookReader().read(path));
-		assertTrue(exception.getMessage().contains("Missing column"));
-		assertTrue(exception.getMessage().contains("QCAA"));
-	}
-
-	@Test
-	void evaluatesFormulaCellsUsedByLegacyMetadata() throws Exception {
-		Path path = createWorkbook();
-		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
-			Row row = workbook.getSheetAt(0).getRow(2);
-			row.getCell(0).setCellFormula("2019+1");
-			row.getCell(3).setCellFormula("1+2");
-			try (OutputStream output = Files.newOutputStream(path)) {
-				workbook.write(output);
-			}
-		}
-		LegacyQuestionRow row = new LegacyQuestionWorkbookReader().read(path).getFirst().questions().get(1);
-		assertEquals(2020, row.year());
-		assertEquals(3, row.marks());
-	}
-
-	@Test
-	void rejectsDuplicateHeadings() throws Exception {
-		Path path = createWorkbook();
-		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(path))) {
-			workbook.getSheetAt(0).getRow(0).createCell(7).setCellValue("Year");
-			try (OutputStream output = Files.newOutputStream(path)) {
-				workbook.write(output);
-			}
-		}
-		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-				() -> new LegacyQuestionWorkbookReader().read(path));
-		assertTrue(exception.getMessage().contains("Duplicate column: Year"));
 	}
 }

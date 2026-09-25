@@ -22,9 +22,9 @@ class SourceQuestionTest {
 	}
 
 	@Test
-	void retainsExplicitPreambleStatus() {
-		SourceQuestion sourceQuestion = new SourceQuestion(10, booklet, "21", PreambleStatus.PRESENT);
-		assertEquals(PreambleStatus.PRESENT, sourceQuestion.getPreambleStatus());
+	void retainsExplicitSharedContextStatus() {
+		SourceQuestion sourceQuestion = new SourceQuestion(10, booklet, "21", SharedContextStatus.PRESENT);
+		assertEquals(SharedContextStatus.PRESENT, sourceQuestion.getSharedContextStatus());
 	}
 
 	@Test
@@ -33,7 +33,7 @@ class SourceQuestionTest {
 		assertAll(() -> assertEquals(10, sourceQuestion.getId()),
 				() -> assertSame(booklet, sourceQuestion.getBooklet()),
 				() -> assertEquals("21", sourceQuestion.getSourceQuestionCode()),
-				() -> assertEquals(PreambleStatus.UNKNOWN, sourceQuestion.getPreambleStatus()));
+				() -> assertEquals(SharedContextStatus.UNKNOWN, sourceQuestion.getSharedContextStatus()));
 	}
 
 	@BeforeEach

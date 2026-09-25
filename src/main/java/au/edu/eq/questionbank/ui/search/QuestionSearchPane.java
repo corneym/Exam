@@ -3,7 +3,9 @@ package au.edu.eq.questionbank.ui.search;
 import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.StringJoiner;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -12,15 +14,21 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.assessment.QuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
+import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyObjectProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -32,7 +40,9 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 /**
@@ -63,6 +73,12 @@ public class QuestionSearchPane extends BorderPane {
 	private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> descriptorBox = new ComboBox<>();
 	private final Label statusLabel = new Label();
+	private final Label selectedSyllabusValue = new Label();
+	private final ComboBox<CurriculumNode> selectedUnitBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> selectedTopicBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> selectedSubtopicBox = new ComboBox<>();
+	private final ComboBox<CurriculumNode> selectedDescriptorBox = new ComboBox<>();
+	private final GridPane selectedClassificationPane = new GridPane();
 
 	// Search presentation uses its own result type so current-curriculum matches
 	// and future all-bank results can coexist without weakening retrieval
@@ -93,18 +109,56 @@ public class QuestionSearchPane extends BorderPane {
 	// Distinguish "no subjects exist" from "the initial subject load was cancelled
 	// before completion". This lets Current syllabus restart an interrupted load.
 	private boolean subjectsLoaded;
+	private final BooleanProperty classificationDirty = new SimpleBooleanProperty(false);
+
+	// Population of the selected-Question classification controls must not be
+	// mistaken for a teacher edit.
+	private boolean updatingSelectedClassification;
+
+	// The containing Dialog owns the Save/Cancel decision because it owns modal
+	// warnings and persistence errors.
+	private BooleanSupplier classificationNavigationGuard = () -> false;
+
+	// Restoring the previously selected result after a cancelled navigation must
+	// not recursively trigger another navigation decision.
+	private boolean restoringResultSelection;
+	private final Button saveClassificationButton = new Button("Save");
+	private final QuestionOutputApplicabilityRepository outputApplicabilityRepository;
+
+	// Revision-output applicability is loaded independently from Search results.
+	// In All Questions scope the selected Question requires a separate
+	// current-curriculum applicability lookup.
+	private final ListView<QuestionOutputApplicabilityRow> outputApplicabilityList = new ListView<>();
+	private final Label outputApplicabilityStatusLabel = new Label();
+	private Task<List<QuestionOutputApplicabilityRow>> activeOutputApplicabilityTask;
+	private long outputApplicabilityGeneration;
+	private final Button includeOutputApplicabilityButton = new Button("Include");
+	private final Button excludeOutputApplicabilityButton = new Button("Exclude");
+
+	// Output applicability changes save immediately. Keep the active write separate
+	// from the background task that reads applicability for a selected Question.
+	private Task<Void> activeOutputApplicabilityUpdateTask;
+
+	// The Dialog owns persistence and supplies the action that commits the pending
+	// Descriptor refinement.
+	private Runnable classificationSaveHandler = () -> {
+		throw new IllegalStateException("Classification save handler is not configured");
+	};
 
 	/**
 	 * Creates the question-search pane.
 	 *
-	 * @param curriculumRepository current curriculum hierarchy lookup
-	 * @param retrievalService     curriculum-aware question retrieval
-	 * @param allQuestionsSupplier complete stored Question retrieval
-	 * @param previewService       stored question image preview service
+	 * @param curriculumRepository          current curriculum hierarchy lookup
+	 * @param retrievalService              curriculum-aware Question retrieval
+	 * @param allQuestionsSupplier          complete stored Question retrieval
+	 * @param previewService                stored Question image preview service
+	 * @param outputApplicabilityRepository persisted per-Question revision-output
+	 *                                      exclusions
 	 * @throws NullPointerException if any dependency is {@code null}
 	 */
 	public QuestionSearchPane(CurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService,
-			Supplier<List<Question>> allQuestionsSupplier, QuestionPreviewService previewService) {
+			Supplier<List<Question>> allQuestionsSupplier, QuestionPreviewService previewService,
+			QuestionOutputApplicabilityRepository outputApplicabilityRepository) {
 		if (curriculumRepository == null) {
 			throw new NullPointerException("curriculumRepository");
 		}
@@ -117,16 +171,49 @@ public class QuestionSearchPane extends BorderPane {
 		if (previewService == null) {
 			throw new NullPointerException("previewService");
 		}
+		if (outputApplicabilityRepository == null) {
+			throw new NullPointerException("outputApplicabilityRepository");
+		}
 		this.curriculumRepository = curriculumRepository;
 		this.retrievalService = retrievalService;
 		this.allQuestionsSupplier = allQuestionsSupplier;
 		this.previewService = previewService;
+		this.outputApplicabilityRepository = outputApplicabilityRepository;
 		setPadding(new Insets(PANE_PADDING));
 		configureControls();
 		configureHandlers();
-		setTop(createSelectionPane());
+		VBox navigationPane = new VBox(createSelectionPane(), createSelectedClassificationPane());
+		setTop(navigationPane);
 		setCenter(createResultsAndDetailsPane());
 		startSubjectLoading();
+	}
+
+	ReadOnlyBooleanProperty classificationDirtyProperty() {
+
+		// The containing Dialog uses this read-only state to alter action-button
+		// availability without being able to mutate the edit state directly.
+		return classificationDirty;
+	}
+
+	void classificationDiscarded() {
+		QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
+
+		// Discard means return the classification controls to the authoritative
+		// persisted state, not merely clear the dirty flag.
+		showSelectedClassification(selected);
+	}
+
+	void classificationSaved(long questionId) {
+		Question selected = getSelectedQuestion();
+		if (selected == null || selected.getId() != questionId) {
+			throw new IllegalStateException("Saved classification does not belong to the selected Question");
+		}
+
+		// Persistence has succeeded. Clear the dirty state without starting a search;
+		// the caller decides whether to refresh the current Question or continue to
+		// another intended navigation target.
+		classificationDirty.set(false);
+		selectedDescriptorBox.setDisable(true);
 	}
 
 	/**
@@ -142,10 +229,32 @@ public class QuestionSearchPane extends BorderPane {
 		cancelActiveHierarchyLoad();
 		cancelActiveSearch();
 		cancelActivePreview();
+		cancelActiveOutputApplicabilityLoad();
 		resultsList.getItems().clear();
 		detailsArea.clear();
 		clearPreview();
+		clearOutputApplicability();
 		statusLabel.setText("");
+	}
+
+	CurriculumNode getPendingClassification() {
+		if (!classificationDirty.get()) {
+			return null;
+		}
+		Question question = getSelectedQuestion();
+		CurriculumNode descriptor = selectedDescriptorBox.getValue();
+		if (question == null || descriptor == null) {
+			throw new IllegalStateException("Dirty classification edit has no selected Question or Descriptor");
+		}
+		CurriculumNode original = question.getClassification();
+
+		// Search is permitted to refine only Subtopic -> child Descriptor. Broader
+		// reclassification remains the responsibility of Edit Question.
+		if (original.getLevel() != CurriculumLevel.SUBTOPIC || descriptor.getLevel() != CurriculumLevel.DESCRIPTOR
+				|| !original.equals(descriptor.getParent())) {
+			throw new IllegalStateException("Pending Descriptor is not a child of the Question's stored Subtopic");
+		}
+		return descriptor;
 	}
 
 	/**
@@ -158,6 +267,10 @@ public class QuestionSearchPane extends BorderPane {
 		// Editing workflows operate on the authoritative persisted Question regardless
 		// of which Search scope produced the visible result.
 		return result == null ? null : result.question();
+	}
+
+	boolean isClassificationDirty() {
+		return classificationDirty.get();
 	}
 
 	/**
@@ -195,11 +308,39 @@ public class QuestionSearchPane extends BorderPane {
 		return resultsList.getSelectionModel().selectedItemProperty();
 	}
 
+	void setClassificationNavigationGuard(BooleanSupplier classificationNavigationGuard) {
+		if (classificationNavigationGuard == null) {
+			throw new NullPointerException("classificationNavigationGuard");
+		}
+
+		// Search delegates the decision but retains responsibility for restoring or
+		// continuing the attempted result selection.
+		this.classificationNavigationGuard = classificationNavigationGuard;
+	}
+
+	void setClassificationSaveHandler(Runnable classificationSaveHandler) {
+		if (classificationSaveHandler == null) {
+			throw new NullPointerException("classificationSaveHandler");
+		}
+
+		// Retain only the persistence action; classification state remains owned by
+		// this Pane.
+		this.classificationSaveHandler = classificationSaveHandler;
+	}
+
 	private void cancelActiveHierarchyLoad() {
 		hierarchyGeneration++;
 		if (activeHierarchyTask != null) {
 			activeHierarchyTask.cancel();
 			activeHierarchyTask = null;
+		}
+	}
+
+	private void cancelActiveOutputApplicabilityLoad() {
+		outputApplicabilityGeneration++;
+		if (activeOutputApplicabilityTask != null) {
+			activeOutputApplicabilityTask.cancel(false);
+			activeOutputApplicabilityTask = null;
 		}
 	}
 
@@ -245,14 +386,45 @@ public class QuestionSearchPane extends BorderPane {
 		}
 	}
 
+	private void clearOutputApplicability() {
+		outputApplicabilityList.getItems().clear();
+		outputApplicabilityStatusLabel.setText("");
+	}
+
 	private void clearPreview() {
 		previewImageView.setImage(null);
 		previewStatusLabel.setText("");
 	}
 
 	private void clearResults() {
+		cancelActiveOutputApplicabilityLoad();
 		resultsList.getItems().clear();
 		detailsArea.clear();
+		clearOutputApplicability();
+	}
+
+	private void clearSelectedClassification() {
+		updatingSelectedClassification = true;
+		try {
+
+			// Clear the displayed historical path as one operation so ComboBox action
+			// handlers cannot turn population changes into a dirty edit.
+			selectedSyllabusValue.setText("");
+			selectedUnitBox.getItems().clear();
+			selectedUnitBox.setValue(null);
+			selectedTopicBox.getItems().clear();
+			selectedTopicBox.setValue(null);
+			selectedSubtopicBox.getItems().clear();
+			selectedSubtopicBox.setValue(null);
+			selectedDescriptorBox.getItems().clear();
+			selectedDescriptorBox.setValue(null);
+			selectedDescriptorBox.setDisable(true);
+			classificationDirty.set(false);
+		} finally {
+			updatingSelectedClassification = false;
+		}
+		selectedClassificationPane.setVisible(false);
+		selectedClassificationPane.setManaged(false);
 	}
 
 	private <T> void completeHierarchyLoad(Task<T> task, long generation, Consumer<T> onSucceeded) {
@@ -265,6 +437,69 @@ public class QuestionSearchPane extends BorderPane {
 		activeHierarchyTask = null;
 		statusLabel.setText("");
 		onSucceeded.accept(task.getValue());
+	}
+
+	private void completeOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
+			long questionId) {
+
+		// A completed background lookup may belong to a Question that is no longer
+		// selected. Generation and task identity prevent stale applicability from
+		// replacing the current Question's display.
+		if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {
+			return;
+		}
+		activeOutputApplicabilityTask = null;
+		Question selectedQuestion = getSelectedQuestion();
+		if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
+			return;
+		}
+		outputApplicabilityList.getItems().setAll(task.getValue());
+		updateOutputApplicabilityStatus();
+		updateOutputApplicabilityActionState();
+	}
+
+	private void completeOutputApplicabilityUpdate(Task<Void> task, long questionId, CurriculumNode currentNode,
+			boolean excluded) {
+		if (task != activeOutputApplicabilityUpdateTask) {
+			return;
+		}
+		activeOutputApplicabilityUpdateTask = null;
+		if (disposed) {
+			return;
+		}
+		Question selectedQuestion = getSelectedQuestion();
+		if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
+
+			// The write succeeded for the previously selected Question. Do not let its
+			// completion alter controls belonging to a newer selection.
+			updateOutputApplicabilityActionState();
+			return;
+		}
+		for (int index = 0; index < outputApplicabilityList.getItems().size(); index++) {
+			QuestionOutputApplicabilityRow existing = outputApplicabilityList.getItems().get(index);
+			if (existing.currentNode().getId() != currentNode.getId()) {
+				continue;
+			}
+			QuestionOutputApplicabilityRow updated = new QuestionOutputApplicabilityRow(existing.currentNode(),
+					excluded);
+
+			// Replace only the persisted placement and retain its selection so the
+			// teacher can immediately reverse the decision if required.
+			outputApplicabilityList.getItems().set(index, updated);
+			outputApplicabilityList.getSelectionModel().select(index);
+			updateOutputApplicabilityStatus();
+			updateOutputApplicabilityActionState();
+			return;
+		}
+		QuestionSearchResult selectedResult = resultsList.getSelectionModel().getSelectedItem();
+		if (selectedResult != null) {
+
+			// An unexpected intervening reload removed the edited row. Re-read the
+			// selected Question rather than manufacturing UI state.
+			startOutputApplicabilityLoad(selectedResult);
+		} else {
+			clearOutputApplicability();
+		}
 	}
 
 	private void completePreview(Task<Optional<BufferedImage>> task, long generation) {
@@ -295,13 +530,7 @@ public class QuestionSearchPane extends BorderPane {
 		List<QuestionSearchResult> results = task.getValue();
 		resultsList.getItems().setAll(results);
 		reselectEditedQuestion(results);
-		if (results.isEmpty()) {
-			statusLabel.setText("No questions found.");
-		} else if (results.size() == 1) {
-			statusLabel.setText("1 question found.");
-		} else {
-			statusLabel.setText(results.size() + " questions found.");
-		}
+		updateSearchStatus();
 	}
 
 	private void configureControls() {
@@ -310,9 +539,44 @@ public class QuestionSearchPane extends BorderPane {
 		topicBox.setId("question-search-topic");
 		classificationBox.setId("question-search-classification");
 		descriptorBox.setId("question-search-descriptor");
+		selectedUnitBox.setId("question-search-selected-unit");
+		selectedTopicBox.setId("question-search-selected-topic");
+		selectedSubtopicBox.setId("question-search-selected-subtopic");
+		selectedDescriptorBox.setId("question-search-selected-descriptor");
+		selectedSyllabusValue.setId("question-search-selected-syllabus");
+		selectedClassificationPane.setId("question-search-selected-classification");
 		resultsList.setId("question-search-results");
 		detailsArea.setId("question-search-details");
 		statusLabel.setId("question-search-status");
+		outputApplicabilityList.setId("question-search-output-applicability");
+		outputApplicabilityStatusLabel.setId("question-search-output-applicability-status");
+
+		// Each row represents one curriculum-derived placement. Include and Exclude
+		// operate only on the selected row and persist that exception immediately.
+		outputApplicabilityList.setPrefHeight(110);
+		includeOutputApplicabilityButton.setId("question-search-output-include");
+		excludeOutputApplicabilityButton.setId("question-search-output-exclude");
+
+		// The action labels must remain readable when the details pane is narrow.
+		includeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
+		excludeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
+
+		// No action is available until an applicability row has been selected.
+		includeOutputApplicabilityButton.setDisable(true);
+		excludeOutputApplicabilityButton.setDisable(true);
+		outputApplicabilityList.setCellFactory(_ -> new ListCell<>() {
+
+			@Override
+			protected void updateItem(QuestionOutputApplicabilityRow row, boolean empty) {
+				super.updateItem(row, empty);
+				if (empty || row == null) {
+					setText(null);
+					return;
+				}
+				String state = row.excluded() ? "Excluded" : "Included";
+				setText(state + " — " + nodeDescription(row.currentNode()));
+			}
+		});
 		searchScopeBox.setId("question-search-scope");
 		searchScopeBox.getItems().setAll(QuestionSearchScope.values());
 		searchScopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS);
@@ -343,6 +607,35 @@ public class QuestionSearchPane extends BorderPane {
 		configurePromptDisplay(topicBox);
 		configurePromptDisplay(classificationBox);
 		configurePromptDisplay(descriptorBox);
+		selectedUnitBox.setPromptText("No unit");
+		selectedTopicBox.setPromptText("No topic");
+		selectedSubtopicBox.setPromptText("No subtopic");
+		selectedDescriptorBox.setPromptText("No descriptor");
+		configurePromptDisplay(selectedUnitBox);
+		configurePromptDisplay(selectedTopicBox);
+		configurePromptDisplay(selectedSubtopicBox);
+		configurePromptDisplay(selectedDescriptorBox);
+		selectedUnitBox.setMaxWidth(Double.MAX_VALUE);
+		selectedTopicBox.setMaxWidth(Double.MAX_VALUE);
+		selectedSubtopicBox.setMaxWidth(Double.MAX_VALUE);
+		selectedDescriptorBox.setMaxWidth(Double.MAX_VALUE);
+		saveClassificationButton.setId("question-search-save-classification");
+
+		// The narrow action must retain enough width for its complete label rather
+		// than collapsing to an ellipsis when the Search Dialog is resized.
+		saveClassificationButton.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Save is meaningful only while the selected Descriptor differs from the
+		// persisted Question classification.
+		saveClassificationButton.disableProperty().bind(classificationDirty.not());
+
+		// The selected Question path is informational in this first drop.
+		selectedUnitBox.setDisable(true);
+		selectedTopicBox.setDisable(true);
+		selectedSubtopicBox.setDisable(true);
+		selectedDescriptorBox.setDisable(true);
+		selectedClassificationPane.setVisible(false);
+		selectedClassificationPane.setManaged(false);
 		previewImageView.setId("question-search-preview");
 		previewStatusLabel.setId("question-search-preview-status");
 		previewImageView.setPreserveRatio(true);
@@ -393,8 +686,23 @@ public class QuestionSearchPane extends BorderPane {
 		topicBox.setOnMousePressed(_ -> handleTopicBoxMousePress());
 		classificationBox.setOnMousePressed(_ -> handleClassificationBoxMousePress());
 		descriptorBox.setOnMousePressed(_ -> handleDescriptorBoxMousePress());
+
+		// Only a previously blank Descriptor may be refined directly from Search.
+		selectedDescriptorBox.setOnAction(_ -> handleSelectedDescriptorSelection());
+
+		// Persistence remains outside the Pane; this button delegates the action to
+		// the containing Dialog.
+		saveClassificationButton.setOnAction(_ -> classificationSaveHandler.run());
+
+		// Dirty classification state controls which Search navigation remains
+		// available until the pending Descriptor is saved.
+		classificationDirty.addListener((_, _, _) -> updateClassificationEditLock());
 		resultsList.getSelectionModel().selectedItemProperty()
-				.addListener((_, _, newResult) -> showResultDetails(newResult));
+				.addListener((_, oldResult, newResult) -> handleResultSelection(oldResult, newResult));
+		outputApplicabilityList.getSelectionModel().selectedItemProperty()
+				.addListener((_, _, _) -> updateOutputApplicabilityActionState());
+		includeOutputApplicabilityButton.setOnAction(_ -> handleOutputApplicabilityChange(false));
+		excludeOutputApplicabilityButton.setOnAction(_ -> handleOutputApplicabilityChange(true));
 	}
 
 	private <T> void configurePromptDisplay(ComboBox<T> comboBox) {
@@ -413,11 +721,24 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private VBox createQuestionDetailsPane() {
-		Label label = new Label("Question details");
-		label.setStyle("-fx-font-weight: bold;");
-		VBox pane = new VBox(SECTION_SPACING, label, detailsArea);
+		Label detailsLabel = new Label("Question details");
+		detailsLabel.setStyle("-fx-font-weight: bold;");
+		Label outputApplicabilityLabel = new Label("Revision output applicability");
+		outputApplicabilityLabel.setStyle("-fx-font-weight: bold;");
+		HBox outputApplicabilityActions = new HBox(SECTION_SPACING, includeOutputApplicabilityButton,
+				excludeOutputApplicabilityButton);
+
+		// Include and Exclude apply to the selected applicability row. They remain
+		// separate from Descriptor classification Save because the two operations
+		// change different persisted concepts.
+		VBox pane = new VBox(SECTION_SPACING, detailsLabel, detailsArea, outputApplicabilityLabel,
+				outputApplicabilityStatusLabel, outputApplicabilityList, outputApplicabilityActions);
 		pane.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));
 		VBox.setVgrow(detailsArea, Priority.ALWAYS);
+
+		// Keep enough room for several applicability rows without allowing the list
+		// to consume the entire Question-details section.
+		VBox.setVgrow(outputApplicabilityList, Priority.SOMETIMES);
 		return pane;
 	}
 
@@ -445,24 +766,53 @@ public class QuestionSearchPane extends BorderPane {
 		return pane;
 	}
 
+	private GridPane createSelectedClassificationPane() {
+		selectedClassificationPane.setHgap(SELECTOR_COLUMN_GAP);
+		selectedClassificationPane.setVgap(SELECTOR_ROW_GAP);
+		selectedClassificationPane.setPadding(new Insets(SECTION_TOP_PADDING, 0, PANE_PADDING, 0));
+		Label heading = new Label("Selected question classification");
+		heading.setStyle("-fx-font-weight: bold;");
+		selectedClassificationPane.add(heading, 0, 0, 2, 1);
+		selectedClassificationPane.add(createSelectorLabel("Syllabus"), 0, 1);
+		selectedClassificationPane.add(selectedSyllabusValue, 1, 1);
+		selectedClassificationPane.add(createSelectorLabel("Unit"), 0, 2);
+		selectedClassificationPane.add(selectedUnitBox, 1, 2);
+		selectedClassificationPane.add(createSelectorLabel("Topic"), 0, 3);
+		selectedClassificationPane.add(selectedTopicBox, 1, 3);
+		selectedClassificationPane.add(createSelectorLabel("Subtopic"), 0, 4);
+		selectedClassificationPane.add(selectedSubtopicBox, 1, 4);
+		selectedClassificationPane.add(createSelectorLabel("Descriptor"), 0, 5);
+		selectedClassificationPane.add(selectedDescriptorBox, 1, 5);
+
+		// Keep the narrow Descriptor save action beside the field it commits.
+		selectedClassificationPane.add(saveClassificationButton, 2, 5);
+
+		// Keep the narrow Descriptor save action beside the field it commits.
+		GridPane.setHgrow(selectedUnitBox, Priority.ALWAYS);
+		GridPane.setHgrow(selectedTopicBox, Priority.ALWAYS);
+		GridPane.setHgrow(selectedSubtopicBox, Priority.ALWAYS);
+		GridPane.setHgrow(selectedDescriptorBox, Priority.ALWAYS);
+		return selectedClassificationPane;
+	}
+
 	private GridPane createSelectionPane() {
 		GridPane pane = new GridPane();
 		pane.setHgap(SELECTOR_COLUMN_GAP);
 		pane.setVgap(SELECTOR_ROW_GAP);
 		pane.setPadding(new Insets(0, 0, PANE_PADDING, 0));
-		pane.add(new Label("Search scope"), 0, 0);
+		pane.add(createSelectorLabel("Search scope"), 0, 0);
 		pane.add(searchScopeBox, 1, 0);
-		pane.add(new Label("Subject"), 0, 1);
+		pane.add(createSelectorLabel("Subject"), 0, 1);
 		pane.add(subjectBox, 1, 1);
-		pane.add(new Label("Current syllabus"), 0, 2);
+		pane.add(createSelectorLabel("Current syllabus"), 0, 2);
 		pane.add(syllabusValue, 1, 2);
-		pane.add(new Label("Unit"), 0, 3);
+		pane.add(createSelectorLabel("Unit"), 0, 3);
 		pane.add(unitBox, 1, 3);
-		pane.add(new Label("Topic"), 0, 4);
+		pane.add(createSelectorLabel("Topic"), 0, 4);
 		pane.add(topicBox, 1, 4);
-		pane.add(new Label("Subtopic / Descriptor"), 0, 5);
+		pane.add(createSelectorLabel("Subtopic / Descriptor"), 0, 5);
 		pane.add(classificationBox, 1, 5);
-		pane.add(new Label("Descriptor"), 0, 6);
+		pane.add(createSelectorLabel("Descriptor"), 0, 6);
 		pane.add(descriptorBox, 1, 6);
 		pane.add(statusLabel, 1, 7);
 		GridPane.setHgrow(searchScopeBox, Priority.ALWAYS);
@@ -472,6 +822,15 @@ public class QuestionSearchPane extends BorderPane {
 		GridPane.setHgrow(classificationBox, Priority.ALWAYS);
 		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
 		return pane;
+	}
+
+	private Label createSelectorLabel(String text) {
+		Label label = new Label(text);
+
+		// Selector labels describe the controls beside them and must not collapse to
+		// ellipses when the Dialog is resized.
+		label.setMinWidth(Region.USE_PREF_SIZE);
+		return label;
 	}
 
 	private <T> void failHierarchyLoad(Task<T> task, long generation) {
@@ -486,6 +845,54 @@ public class QuestionSearchPane extends BorderPane {
 		} else {
 			statusLabel.setText("Curriculum navigation failed: " + failure.getMessage());
 		}
+	}
+
+	private void failOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
+			long questionId) {
+		if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {
+			return;
+		}
+		activeOutputApplicabilityTask = null;
+		Question selectedQuestion = getSelectedQuestion();
+		if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
+			return;
+		}
+		Throwable failure = task.getException();
+		if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+			outputApplicabilityStatusLabel.setText("Revision output applicability unavailable.");
+		} else {
+			outputApplicabilityStatusLabel
+					.setText("Revision output applicability unavailable: " + failure.getMessage());
+		}
+		outputApplicabilityList.getItems().clear();
+
+		// A failed read leaves no trustworthy placement on which an Include or
+		// Exclude action could operate.
+		updateOutputApplicabilityActionState();
+	}
+
+	private void failOutputApplicabilityUpdate(Task<Void> task, long questionId) {
+		if (task != activeOutputApplicabilityUpdateTask) {
+			return;
+		}
+		activeOutputApplicabilityUpdateTask = null;
+		if (disposed) {
+			return;
+		}
+		Question selectedQuestion = getSelectedQuestion();
+		if (selectedQuestion != null && selectedQuestion.getId() == questionId) {
+			Throwable failure = task.getException();
+			if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+				outputApplicabilityStatusLabel.setText("Revision output applicability could not be saved.");
+			} else {
+				outputApplicabilityStatusLabel
+						.setText("Revision output applicability could not be saved: " + failure.getMessage());
+			}
+		}
+
+		// The row still represents the last successfully persisted state, so restore
+		// whichever action is valid for that state.
+		updateOutputApplicabilityActionState();
 	}
 
 	private void failPreview(Task<Optional<BufferedImage>> task, long generation) {
@@ -515,6 +922,25 @@ public class QuestionSearchPane extends BorderPane {
 		} else {
 			statusLabel.setText("Question search failed: " + failure.getMessage());
 		}
+	}
+
+	private List<CurriculumNode> findCompleteCurrentApplicability(Question question) {
+		List<QuestionRetrievalResult> results = retrievalService
+				.findQuestionsApplicableTo(question.getExam().getSubject());
+		for (QuestionRetrievalResult result : results) {
+			if (result.getQuestion().getId() != question.getId()) {
+				continue;
+			}
+
+			// Output applicability is Subject-wide. The Search result may represent a
+			// much narrower Unit, Topic, Subtopic or Descriptor scope and therefore
+			// cannot be used as the complete set of output placements.
+			return result.getCurrentApplicability();
+		}
+
+		// A Question may legitimately have no current mapping or the Subject may have
+		// no current syllabus.
+		return List.of();
 	}
 
 	private void handleClassificationBoxMousePress() {
@@ -561,25 +987,85 @@ public class QuestionSearchPane extends BorderPane {
 		startAutomaticSearch(descriptorBox.getValue());
 	}
 
+	private void handleOutputApplicabilityChange(boolean excluded) {
+		if (disposed || classificationDirty.get() || activeOutputApplicabilityUpdateTask != null) {
+			return;
+		}
+		Question question = getSelectedQuestion();
+		QuestionOutputApplicabilityRow row = outputApplicabilityList.getSelectionModel().getSelectedItem();
+		if (question == null || row == null || row.excluded() == excluded) {
+			return;
+		}
+
+		// Capture the Question and node before leaving the FX thread. The background
+		// task must not inspect mutable JavaFX selection state.
+		startOutputApplicabilityUpdate(question, row.currentNode(), excluded);
+	}
+
+	private void handleResultSelection(QuestionSearchResult oldResult, QuestionSearchResult newResult) {
+		if (restoringResultSelection) {
+			return;
+		}
+		if (classificationDirty.get() && oldResult != null && newResult != null
+				&& oldResult.question().getId() != newResult.question().getId()) {
+
+			// ListView is still updating its internal selected-items collection while
+			// this listener runs. Defer restoration and the modal navigation decision
+			// until that JavaFX selection transaction has completed.
+			Platform.runLater(() -> resolveDirtyResultNavigation(oldResult, newResult));
+			return;
+		}
+		showResultDetails(newResult);
+		showSelectedClassification(newResult);
+
+		// Revision-output applicability has an independent asynchronous lifecycle so
+		// selecting a Question never blocks the JavaFX application thread.
+		startOutputApplicabilityLoad(newResult);
+	}
+
 	private void handleSearchScopeSelection() {
 		if (updatingControls || disposed) {
 			return;
 		}
 
-		// A scope transition invalidates every asynchronous operation belonging to the
-		// previous scope so a late curriculum or Question result cannot overwrite it.
+		// A scope transition invalidates asynchronous work belonging to the previous
+		// scope so late results cannot overwrite the new Search state.
 		cancelActiveHierarchyLoad();
 		invalidateCurrentSearch();
 		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 			setCurriculumControlsDisabled(true);
+
+			// Subject remains available as an All Questions filter. If the constructor's
+			// initial Subject load was cancelled by this scope change, restart it.
+			if (!subjectsLoaded) {
+				startSubjectLoading();
+			}
 			startAllQuestionsSearch();
 			return;
 		}
-
-		// Returning to current-syllabus mode restores the existing navigation state
-		// rather than discarding the teacher's previous hierarchy selection.
 		restoreCurriculumControlState();
 		startMostSpecificCurrentSyllabusSearch();
+	}
+
+	private void handleSelectedDescriptorSelection() {
+		if (updatingSelectedClassification || disposed) {
+			return;
+		}
+		Question question = getSelectedQuestion();
+		CurriculumNode descriptor = selectedDescriptorBox.getValue();
+		if (question == null || descriptor == null) {
+			classificationDirty.set(false);
+			return;
+		}
+		CurriculumNode original = question.getClassification();
+
+		// A valid inline edit can only refine the selected Question's stored
+		// Subtopic to one of its immediate Descriptor children.
+		if (original.getLevel() != CurriculumLevel.SUBTOPIC || descriptor.getLevel() != CurriculumLevel.DESCRIPTOR
+				|| !original.equals(descriptor.getParent())) {
+			throw new IllegalStateException("Selected Descriptor is not valid for this Question");
+		}
+		classificationDirty.set(true);
 	}
 
 	private void handleSubjectBoxMousePress() {
@@ -589,11 +1075,18 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void handleSubjectSelection() {
-		if (updatingControls) {
+		if (updatingControls || disposed) {
 			return;
 		}
 		clearBelowSubject();
 		Subject subject = subjectBox.getValue();
+		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
+
+			// All Questions filters directly by the persisted Exam Subject. It does not
+			// load or evaluate current-syllabus navigation.
+			startAllQuestionsSearch();
+			return;
+		}
 		if (subject == null) {
 			return;
 		}
@@ -652,10 +1145,31 @@ public class QuestionSearchPane extends BorderPane {
 	private void invalidateCurrentSearch() {
 		cancelActiveSearch();
 		cancelActivePreview();
-		resultsList.getItems().clear();
-		detailsArea.clear();
+
+		// Clearing Search results also invalidates any selected Question's separate
+		// revision-output applicability request.
+		clearResults();
 		clearPreview();
 		statusLabel.setText("");
+	}
+
+	private List<QuestionOutputApplicabilityRow> loadOutputApplicability(QuestionSearchResult result) {
+		Question question = result.question();
+
+		// Search-result applicability explains why this Question matched the current
+		// Search scope. Revision-output applicability is different: it must show every
+		// current placement for the Question across its Subject, regardless of how
+		// narrowly Search itself is filtered.
+		List<CurriculumNode> currentApplicability = findCompleteCurrentApplicability(question);
+		Set<Long> excludedCurrentNodeIds = outputApplicabilityRepository.findExcludedCurrentNodeIds(question);
+		if (excludedCurrentNodeIds == null) {
+			throw new IllegalStateException("Question output applicability repository returned null");
+		}
+
+		// Only currently-derived placements are displayed. A stored exclusion for a
+		// node that is no longer applicable has no effect on current revision output.
+		return currentApplicability.stream().map(currentNode -> new QuestionOutputApplicabilityRow(currentNode,
+				excludedCurrentNodeIds.contains(currentNode.getId()))).toList();
 	}
 
 	private SubjectNavigation loadSubjectNavigation(Subject subject) {
@@ -732,6 +1246,47 @@ public class QuestionSearchPane extends BorderPane {
 		unitBox.setDisable(true);
 	}
 
+	private void resolveDirtyResultNavigation(QuestionSearchResult oldResult, QuestionSearchResult requestedResult) {
+		if (disposed) {
+			return;
+		}
+		QuestionSearchResult currentResult = resultsList.getSelectionModel().getSelectedItem();
+
+		// A later user action may have superseded this deferred navigation request.
+		// Only process the request that still owns the current ListView selection.
+		if (currentResult == null || currentResult.question().getId() != requestedResult.question().getId()) {
+			return;
+		}
+		if (!classificationDirty.get()) {
+
+			// The pending classification may have been resolved before this deferred
+			// callback ran. In that case the requested result can now be displayed.
+			showResultDetails(requestedResult);
+			showSelectedClassification(requestedResult);
+			startOutputApplicabilityLoad(requestedResult);
+			return;
+		}
+
+		// Restore the Question that owns the dirty Descriptor only after JavaFX has
+		// completed the original mouse-selection transaction.
+		restoringResultSelection = true;
+		try {
+			resultsList.getSelectionModel().select(oldResult);
+		} finally {
+			restoringResultSelection = false;
+		}
+
+		// The Dialog now opens Save / Discard Changes / Cancel outside the ListView
+		// selection listener, avoiding a nested modal event loop during selection.
+		if (!classificationNavigationGuard.getAsBoolean()) {
+			return;
+		}
+
+		// Save or Discard succeeded. Repeat the active search and select the Question
+		// the teacher originally attempted to navigate to.
+		refreshAfterEdit(requestedResult.question().getId());
+	}
+
 	private void restoreCurriculumControlState() {
 
 		// Re-enable only controls whose parent hierarchy has actually been loaded.
@@ -739,7 +1294,11 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void setCurriculumControlsDisabled(boolean disabled) {
-		subjectBox.setDisable(disabled);
+
+		// Subject remains meaningful in All Questions because it filters by the
+		// Question's persisted Exam Subject. Lower controls represent current-syllabus
+		// applicability and therefore remain unavailable in that scope.
+		subjectBox.setDisable(false);
 		unitBox.setDisable(disabled || currentSyllabus == null || unitBox.getItems().isEmpty());
 		topicBox.setDisable(disabled || unitBox.getValue() == null || topicBox.getItems().isEmpty());
 		classificationBox.setDisable(disabled || topicBox.getValue() == null || classificationBox.getItems().isEmpty());
@@ -815,6 +1374,77 @@ public class QuestionSearchPane extends BorderPane {
 		startQuestionPreview(question);
 	}
 
+	private void showSelectedClassification(QuestionSearchResult result) {
+		clearSelectedClassification();
+		if (result == null) {
+			return;
+		}
+		Question question = result.question();
+		CurriculumNode classification = question.getClassification();
+		CurriculumNode unit = null;
+		CurriculumNode topic = null;
+		CurriculumNode subtopic = null;
+		CurriculumNode descriptor = null;
+		List<CurriculumNode> descriptorChoices = List.of();
+		if (classification.getLevel() == CurriculumLevel.SUBTOPIC) {
+
+			// A Subtopic-classified Question may be refined only to one of that
+			// Subtopic's own Descriptors.
+			subtopic = classification;
+			topic = subtopic.getParent();
+			unit = topic.getParent();
+			descriptorChoices = curriculumRepository.findChildren(subtopic).stream()
+					.filter(node -> node.getLevel() == CurriculumLevel.DESCRIPTOR).toList();
+		} else if (classification.getLevel() == CurriculumLevel.DESCRIPTOR) {
+
+			// An existing Descriptor classification is informational in Search and
+			// therefore remains read-only.
+			descriptor = classification;
+			CurriculumNode parent = descriptor.getParent();
+			if (parent.getLevel() == CurriculumLevel.SUBTOPIC) {
+				subtopic = parent;
+				topic = subtopic.getParent();
+			} else if (parent.getLevel() == CurriculumLevel.TOPIC) {
+				topic = parent;
+			} else {
+				throw new IllegalStateException("Descriptor has invalid parent level " + parent.getLevel());
+			}
+			unit = topic.getParent();
+			descriptorChoices = List.of(descriptor);
+		} else {
+			throw new IllegalStateException("Question classification must be a Subtopic or Descriptor");
+		}
+		updatingSelectedClassification = true;
+		try {
+
+			// Populate the complete stored hierarchy before enabling the one allowed
+			// refinement control.
+			selectedSyllabusValue.setText(classification.getSyllabusVersion().getName());
+			selectedUnitBox.getItems().setAll(unit);
+			selectedUnitBox.setValue(unit);
+			selectedTopicBox.getItems().setAll(topic);
+			selectedTopicBox.setValue(topic);
+			if (subtopic != null) {
+				selectedSubtopicBox.getItems().setAll(subtopic);
+				selectedSubtopicBox.setValue(subtopic);
+			}
+			selectedDescriptorBox.getItems().setAll(descriptorChoices);
+			if (descriptor != null) {
+				selectedDescriptorBox.setValue(descriptor);
+			}
+
+			// Descriptor selection is available only when the stored classification is
+			// still at Subtopic level and valid child Descriptors exist.
+			selectedDescriptorBox
+					.setDisable(classification.getLevel() != CurriculumLevel.SUBTOPIC || descriptorChoices.isEmpty());
+			classificationDirty.set(false);
+		} finally {
+			updatingSelectedClassification = false;
+		}
+		selectedClassificationPane.setVisible(true);
+		selectedClassificationPane.setManaged(true);
+	}
+
 	private void showSubjectNavigation(Subject subject, SubjectNavigation navigation) {
 		currentSyllabus = navigation.currentSyllabus();
 		if (currentSyllabus == null) {
@@ -846,10 +1476,18 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startAllQuestionsSearch() {
+		Subject selectedSubject = subjectBox.getValue();
 
-		// All Questions reads the complete persisted corpus and deliberately does not
-		// ask the curriculum retrieval service to manufacture applicability.
-		startAutomaticSearch(() -> QuestionSearchResult.allQuestionResults(allQuestionsSupplier.get()));
+		// Capture the FX control value before starting the background task. The task
+		// itself must not read JavaFX controls.
+		startAutomaticSearch(() -> {
+			List<Question> questions = allQuestionsSupplier.get();
+			if (selectedSubject != null) {
+				questions = questions.stream()
+						.filter(question -> selectedSubject.equals(question.getExam().getSubject())).toList();
+			}
+			return QuestionSearchResult.allQuestionResults(questions);
+		});
 	}
 
 	private void startAutomaticSearch(CurriculumNode currentNode) {
@@ -968,6 +1606,55 @@ public class QuestionSearchPane extends BorderPane {
 		startAutomaticSearch(subject);
 	}
 
+	private void startOutputApplicabilityLoad(QuestionSearchResult result) {
+		cancelActiveOutputApplicabilityLoad();
+		clearOutputApplicability();
+		if (disposed || result == null) {
+			return;
+		}
+		long generation = outputApplicabilityGeneration;
+		long questionId = result.question().getId();
+		outputApplicabilityStatusLabel.setText("Loading revision output applicability...");
+		Task<List<QuestionOutputApplicabilityRow>> task = new Task<>() {
+
+			@Override
+			protected List<QuestionOutputApplicabilityRow> call() {
+
+				// SQLite reads and the optional All Questions applicability
+				// calculation remain off the JavaFX application thread.
+				return loadOutputApplicability(result);
+			}
+		};
+		activeOutputApplicabilityTask = task;
+		task.setOnSucceeded(_ -> completeOutputApplicabilityLoad(task, generation, questionId));
+		task.setOnFailed(_ -> failOutputApplicabilityLoad(task, generation, questionId));
+		Thread.ofVirtual().name("question-output-applicability").start(task);
+	}
+
+	private void startOutputApplicabilityUpdate(Question question, CurriculumNode currentNode, boolean excluded) {
+		if (activeOutputApplicabilityUpdateTask != null) {
+			throw new IllegalStateException("Revision output applicability update is already in progress");
+		}
+		outputApplicabilityStatusLabel.setText("Saving revision output applicability...");
+		Task<Void> task = new Task<>() {
+
+			@Override
+			protected Void call() {
+
+				// Persist only this Question/current-node exception. Curriculum
+				// mapping and the Question's historical classification remain
+				// unchanged.
+				outputApplicabilityRepository.setExcluded(question, currentNode, excluded);
+				return null;
+			}
+		};
+		activeOutputApplicabilityUpdateTask = task;
+		updateOutputApplicabilityActionState();
+		task.setOnSucceeded(_ -> completeOutputApplicabilityUpdate(task, question.getId(), currentNode, excluded));
+		task.setOnFailed(_ -> failOutputApplicabilityUpdate(task, question.getId()));
+		Thread.ofVirtual().name("question-output-applicability-save").start(task);
+	}
+
 	private void startQuestionPreview(Question question) {
 		if (disposed) {
 			return;
@@ -998,7 +1685,104 @@ public class QuestionSearchPane extends BorderPane {
 			// A false value therefore means loading never completed successfully.
 			subjectsLoaded = true;
 			subjectBox.getItems().setAll(subjects);
+
+			// In All Questions, Subject loading is auxiliary to the Question search.
+			// Restore whichever Search status is currently authoritative.
+			if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
+				subjectBox.setDisable(false);
+				if (activeSearchTask != null) {
+					statusLabel.setText("Searching...");
+				} else {
+					updateSearchStatus();
+				}
+			}
 		});
+	}
+
+	private void updateClassificationEditLock() {
+		boolean dirty = classificationDirty.get();
+
+		// Result selection remains available so an attempt to leave the Question can
+		// invoke the Save/Cancel navigation guard.
+		resultsList.setDisable(false);
+		if (dirty) {
+
+			// Search-filter changes are still held for the next slice. This keeps the
+			// pending Question stable while result-to-result navigation is hardened.
+			searchScopeBox.setDisable(true);
+			subjectBox.setDisable(true);
+			unitBox.setDisable(true);
+			topicBox.setDisable(true);
+			classificationBox.setDisable(true);
+			descriptorBox.setDisable(true);
+			return;
+		}
+		searchScopeBox.setDisable(false);
+		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
+
+			// All Questions restores only its persisted-Subject filter because the
+			// remaining selectors represent current-syllabus applicability.
+			subjectBox.setDisable(false);
+			unitBox.setDisable(true);
+			topicBox.setDisable(true);
+			classificationBox.setDisable(true);
+			descriptorBox.setDisable(true);
+			return;
+		}
+		restoreCurriculumControlState();
+	}
+
+	private void updateOutputApplicabilityActionState() {
+		QuestionOutputApplicabilityRow selected = outputApplicabilityList.getSelectionModel().getSelectedItem();
+		boolean saving = activeOutputApplicabilityUpdateTask != null;
+		boolean editingClassification = classificationDirty.get();
+
+		// Prevent another placement from being selected while its current state is
+		// being persisted. Ordinary inspection remains available otherwise.
+		outputApplicabilityList.setDisable(saving);
+		includeOutputApplicabilityButton
+				.setDisable(saving || editingClassification || selected == null || !selected.excluded());
+		excludeOutputApplicabilityButton
+				.setDisable(saving || editingClassification || selected == null || selected.excluded());
+	}
+
+	private void updateOutputApplicabilityStatus() {
+		List<QuestionOutputApplicabilityRow> rows = List.copyOf(outputApplicabilityList.getItems());
+		if (rows.isEmpty()) {
+			outputApplicabilityStatusLabel.setText("No current revision applicability.");
+			return;
+		}
+		long excludedCount = rows.stream().filter(QuestionOutputApplicabilityRow::excluded).count();
+		long includedCount = rows.size() - excludedCount;
+		String placementWord = rows.size() == 1 ? "placement" : "placements";
+		outputApplicabilityStatusLabel.setText("%d current %s: %d included, %d excluded.".formatted(rows.size(),
+				placementWord, includedCount, excludedCount));
+	}
+
+	private void updateSearchStatus() {
+		int resultCount = resultsList.getItems().size();
+		if (resultCount == 0) {
+			statusLabel.setText("No questions found.");
+		} else if (resultCount == 1) {
+			statusLabel.setText("1 question found.");
+		} else {
+			statusLabel.setText(resultCount + " questions found.");
+		}
+	}
+
+	record QuestionOutputApplicabilityRow(CurriculumNode currentNode, boolean excluded) {
+
+		QuestionOutputApplicabilityRow {
+			if (currentNode == null) {
+				throw new NullPointerException("currentNode");
+			}
+
+			// Revision-output rows represent final Question-placement levels only.
+			if (currentNode.getLevel() != CurriculumLevel.SUBTOPIC
+					&& currentNode.getLevel() != CurriculumLevel.DESCRIPTOR) {
+				throw new IllegalArgumentException("Output applicability row requires a Subtopic or Descriptor");
+			}
+		}
 	}
 
 	private record SubjectNavigation(SyllabusVersion currentSyllabus, List<CurriculumNode> units) {

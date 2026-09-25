@@ -66,26 +66,22 @@ class CurriculumLifecycleServiceTest {
 		assertThrows(IllegalStateException.class, () -> failingService.finalise(session));
 		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
 		SyllabusVersion afterFailure = repository.findVersionById(syllabus.getId()).orElseThrow();
-		/*
-		 * The draft save completed before the lifecycle transition failed.
-		 */
+
+		// The draft save completed before the lifecycle transition failed.
 		assertEquals("Calculate resultant force", repository.findByCode(afterFailure, "1.1.2").orElseThrow().getName());
-		/*
-		 * Finalisation itself failed, so both persisted and session state remain
-		 * IN_PROGRESS.
-		 */
+
+		// Finalisation itself failed, so both persisted and session state remain
+		// IN_PROGRESS.
 		assertEquals(CurriculumStatus.IN_PROGRESS, afterFailure.getCurriculumStatus());
 		assertNull(afterFailure.getCurriculumFinalisedAt());
 		assertEquals(CurriculumStatus.IN_PROGRESS, session.syllabusVersion().getCurriculumStatus());
-		/*
-		 * The successful save must also leave the newly persisted draft node bound to
-		 * its permanent database identity.
-		 */
+
+		// The successful save must also leave the newly persisted draft node bound to
+		// its permanent database identity.
 		assertTrue(session.persistentIdForDraftId(addedDescriptor.draftId()).isPresent());
-		/*
-		 * Retrying with the real lifecycle repository must succeed without reopening or
-		 * rebuilding the authoring session.
-		 */
+
+		// Retrying with the real lifecycle repository must succeed without reopening or
+		// rebuilding the authoring session.
 		CurriculumLifecycleService retryService = new CurriculumLifecycleService(authoringWriter,
 				new SqliteCurriculumLifecycleRepository(database),
 				Clock.fixed(Instant.parse("2026-09-17T04:00:00Z"), ZoneOffset.UTC));
@@ -135,9 +131,8 @@ class CurriculumLifecycleServiceTest {
 		SyllabusVersion reloadedReopened = repository.findVersionById(syllabus.getId()).orElseThrow();
 		assertEquals(CurriculumStatus.IN_PROGRESS, reloadedReopened.getCurriculumStatus());
 		assertNull(reloadedReopened.getCurriculumFinalisedAt());
-		/*
-		 * Editing and saving are available again only after explicit reopening.
-		 */
+
+		// Editing and saving are available again only after explicit reopening.
 		new CurriculumDraftNumberingService().updateText(session.draft(), descriptor.draftId(),
 				"Edited after reopening");
 		authoringWriter.save(session);

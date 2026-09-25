@@ -36,10 +36,9 @@ class CurriculumSourcePdfServiceTest {
 		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 		Subject engineering = writer.insertSubject("Engineering");
 		SyllabusVersion syllabus = writer.insertSyllabusVersion(engineering, "2025", true);
-		/*
-		 * This represents an existing curriculum such as one previously imported from
-		 * Excel. It has no source PDF yet.
-		 */
+
+		// This represents an existing curriculum such as one previously imported from
+		// Excel. It has no source PDF yet.
 		var unit = writer.insertUnit(syllabus, "1", "Engineering fundamentals", 0);
 		var topic = writer.insertTopic(unit, "1.1", "Forces", 0);
 		writer.insertDescriptor(topic, "1.1.1", "Resolve forces", 0);
@@ -64,9 +63,8 @@ class CurriculumSourcePdfServiceTest {
 		assertTrue(managedRelativePath.startsWith(
 				"Engineering--subject-" + engineering.getId() + "/2025--syllabus-" + syllabus.getId() + "/sources/"));
 		assertTrue(managedRelativePath.endsWith("Engineering-General-Senior-Syllabus-2025.pdf"));
-		/*
-		 * Once attached, the original external location is irrelevant.
-		 */
+
+		// Once attached, the original external location is irrelevant.
 		Files.delete(externalPdf);
 		assertFalse(Files.exists(externalPdf));
 		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);

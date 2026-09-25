@@ -20,10 +20,10 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -64,7 +64,7 @@ class RevisionPresentationPlannerTest {
 	void groupsSameSourceWithinOneBucketAndSumsMarks() {
 		Fixture fixture = new Fixture();
 		SourceQuestion source = fixture.sourceQuestion(24);
-		SharedQuestionContext context = fixture.context(1, "Question 24 preamble");
+		SharedQuestionContext context = fixture.context(1, "Question 24 shared context");
 		Question partC = fixture.question(1, "24c", 1, source, context);
 		Question partA = fixture.question(3, "24a", 2, source, context);
 		Question partB = fixture.question(2, "24b", 3, source, context);
@@ -146,7 +146,7 @@ class RevisionPresentationPlannerTest {
 	void sameSourceInDifferentBucketsProducesSeparatePresentations() {
 		Fixture fixture = new Fixture();
 		SourceQuestion source = fixture.sourceQuestion(24);
-		SharedQuestionContext context = fixture.context(1, "Question 24 preamble");
+		SharedQuestionContext context = fixture.context(1, "Question 24 shared context");
 		Question partA = fixture.question(1, "24a", 2, source, context);
 		Question partB = fixture.question(2, "24b", 4, source, context);
 		RevisionPresentationPlan plan = planner.plan(fixture.corpus(List.of(partA), List.of(partB)));
@@ -295,7 +295,7 @@ class RevisionPresentationPlannerTest {
 		}
 
 		private SourceQuestion sourceQuestion(long id) {
-			return new SourceQuestion(id, booklet, Long.toString(id), PreambleStatus.PRESENT);
+			return new SourceQuestion(id, booklet, Long.toString(id), SharedContextStatus.PRESENT);
 		}
 	}
 }

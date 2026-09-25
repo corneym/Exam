@@ -3,6 +3,8 @@ package au.edu.eq.questionbank.ui.pdf;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -10,6 +12,7 @@ import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 
 import au.edu.eq.questionbank.pdf.PdfSession;
+import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
@@ -50,6 +53,13 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private static final double PAGE_CONTROL_SPACING = 10.0;
 	private static final Insets PAGE_CONTROLS_PADDING = new Insets(6, 6, 16, 6);
 	private static final double ANCHOR_MARKER_RADIUS = 5.0;
+	private static final Color STORED_REGION_FILL = Color.rgb(160, 160, 160, 0.18);
+	private static final Color STORED_REGION_STROKE = Color.rgb(110, 110, 110, 0.75);
+	private static final double STORED_REGION_STROKE_WIDTH = 1.5;
+	private static final double STORED_REGION_TOP_MARGIN = 12.0;
+	private final ScrollPane pageScrollPane;
+	private final List<RegionSelection> storedRegionHighlights = new ArrayList<>();
+	private final List<StoredRegionHighlight> visibleStoredRegionHighlights = new ArrayList<>();
 	private final Pane pagePane = new Pane();
 	private final ImageView pageView = new ImageView();
 	private final Rectangle selectionRectangle = new Rectangle();
@@ -87,16 +97,29 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private int anchoredSelectionPageNumber;
 	private DocumentMode anchoredSelectionDocument;
 	private boolean anchoredSelectionFullWidth;
+	private boolean storedRegionScrollPending;
+
+	// Report user-driven cancellation separately from programmatic clearSelection()
+	// so the application can clear the logical owner without creating a callback
+	// loop.
+	private Runnable selectionCancelledHandler = () -> {
+	};
 
 	/**
 	 * Creates an empty PDF workspace with navigation and region-selection controls.
 	 */
 	public PdfWorkspacePane() {
+		pageScrollPane = createScrollPane();
 		configurePageView();
 		configureSelectionRectangle();
 		configureSelectionHandlers();
 		configureNavigation();
-		getChildren().addAll(createScrollPane(), createPageControls());
+
+		// Stored-region scrolling can complete only after both the content and
+		// viewport have acquired their real layout dimensions.
+		pagePane.heightProperty().addListener((_, _, _) -> completePendingStoredRegionScroll());
+		pageScrollPane.viewportBoundsProperty().addListener((_, _, _) -> completePendingStoredRegionScroll());
+		getChildren().addAll(pageScrollPane, createPageControls());
 	}
 
 	/**
@@ -109,6 +132,24 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		selectionRectangle.setHeight(0);
 	}
 
+	/**
+	 * Removes all persisted-region overlays from the PDF workspace.
+	 */
+	public void clearStoredRegionHighlights() {
+		storedRegionScrollPending = false;
+
+		// Remove only the grey persisted-region nodes. The blue live selection
+		// rectangle has an independent lifecycle.
+		for (StoredRegionHighlight highlight : visibleStoredRegionHighlights) {
+			pagePane.getChildren().remove(highlight.rectangle());
+		}
+		visibleStoredRegionHighlights.clear();
+		storedRegionHighlights.clear();
+	}
+
+	/**
+	 * Closes every PDF session and prevents late asynchronous loads from applying.
+	 */
 	@Override
 	public void close() throws Exception {
 		closed = true;
@@ -131,6 +172,43 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 		if (failure != null) {
 			throw failure;
+		}
+	}
+
+	/**
+	 * Closes the managed Answer PDF without affecting an independently open Exam or
+	 * viewer document.
+	 */
+	public void closeAnswerPdf() {
+		documentRequest++;
+		Exception failure = closeSession(answerPdfSession, null);
+		answerPdfSession = null;
+		answerPdfPath = null;
+		if (displayedDocument == DocumentMode.ANSWER) {
+			clearDisplayedPage();
+		}
+		if (failure != null) {
+			throw new IllegalStateException("Unable to close the Answer PDF", failure);
+		}
+	}
+
+	/**
+	 * Closes the managed Exam PDF without affecting an independently open Answer or
+	 * viewer document.
+	 */
+	public void closeExamPdf() {
+		documentRequest++;
+		Exception failure = closeSession(examPdfSession, null);
+		examPdfSession = null;
+
+		// Stored-region overlays belong to Question-side editing and must never
+		// survive after its source Exam document has been closed.
+		clearStoredRegionHighlights();
+		if (displayedDocument == DocumentMode.EXAM) {
+			clearDisplayedPage();
+		}
+		if (failure != null) {
+			throw new IllegalStateException("Unable to close the Exam PDF", failure);
 		}
 	}
 
@@ -202,6 +280,48 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Displays persisted proportional regions and focuses the PDF on the first
+	 * region's page. Only regions belonging to the displayed page are highlighted.
+	 *
+	 * @param regions stored regions to display in their persisted order
+	 * @throws NullPointerException     if {@code regions} or an element is
+	 *                                  {@code null}
+	 * @throws IllegalArgumentException if the regions span different document modes
+	 */
+	public void focusStoredRegions(List<RegionSelection> regions) {
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+		clearStoredRegionHighlights();
+		if (regions.isEmpty()) {
+			return;
+		}
+		DocumentMode documentMode = regions.getFirst().documentMode();
+		for (RegionSelection region : regions) {
+			if (region == null) {
+				throw new NullPointerException("regions contains null");
+			}
+			if (region.documentMode() != documentMode) {
+				throw new IllegalArgumentException("Stored regions must belong to one document mode");
+			}
+			storedRegionHighlights.add(region);
+		}
+		RegionSelection firstRegion = storedRegionHighlights.getFirst();
+
+		// Retain the focus request until JavaFX has established real page, content
+		// and viewport dimensions.
+		storedRegionScrollPending = true;
+		showPage(firstRegion.documentMode(), firstRegion.pageNumber());
+
+		// showPage() deliberately skips rerendering an already displayed page, so
+		// refresh its overlays explicitly as well.
+		renderStoredRegionHighlights();
+		Platform.runLater(this::completePendingStoredRegionScroll);
+	}
+
+	/**
+	 * Returns the Answer PDF session owned by the workspace.
+	 *
 	 * @return the borrowed answer session, or {@code null}; callers must not close
 	 *         it
 	 */
@@ -210,6 +330,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns the current one-based page number.
+	 *
 	 * @return the one-based page currently selected in the workspace
 	 */
 	public int getCurrentPageNumber() {
@@ -217,6 +339,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns the role of the document currently displayed.
+	 *
 	 * @return the active exam, answer or viewer document mode
 	 */
 	public DocumentMode getDisplayedDocument() {
@@ -224,6 +348,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns the Exam PDF session owned by the workspace.
+	 *
 	 * @return the borrowed exam session, or {@code null}; callers must not close it
 	 */
 	public PdfSession getExamPdfSession() {
@@ -231,6 +357,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Returns whether an Exam PDF is open.
+	 *
 	 * @return whether an exam PDF session is open
 	 */
 	public boolean hasExamPdf() {
@@ -267,6 +395,9 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 * Loads the answer document after a save without rendering on the FX thread.
 	 * The worker owns a fresh session until it is handed to the UI, so it never
 	 * shares a PDFBox session with selection extraction or navigation.
+	 *
+	 * @param path      Answer PDF to load
+	 * @param completed callback receiving {@code null} on success or the failure
 	 */
 	public void openAnswerPdfAsync(Path path, Consumer<Throwable> completed) {
 		if (closed) {
@@ -438,6 +569,23 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Sets the callback invoked when a user gesture removes the visible pending
+	 * selection without publishing a replacement region.
+	 *
+	 * @param selectionCancelledHandler callback used to clear the corresponding
+	 *                                  logical capture selection
+	 */
+	public void setSelectionCancelledHandler(Runnable selectionCancelledHandler) {
+		if (selectionCancelledHandler == null) {
+			throw new NullPointerException("selectionCancelledHandler");
+		}
+
+		// Programmatic clearSelection() deliberately does not invoke this callback.
+		// Only a user gesture that abandons the visible rectangle reports cancellation.
+		this.selectionCancelledHandler = selectionCancelledHandler;
+	}
+
+	/**
 	 * Updates the cursor to reflect selection availability.
 	 *
 	 * @param enabled whether region selection is enabled
@@ -542,6 +690,10 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pageNumberField.setDisable(false);
 		pageNumberField.setText(Integer.toString(currentPageNumber));
 		rememberCurrentPageNumber();
+
+		// Page navigation must immediately replace grey persisted-region overlays
+		// with those belonging to the newly rendered page.
+		renderStoredRegionHighlights();
 		pageChangedHandler.accept(currentPageNumber);
 	}
 
@@ -669,6 +821,47 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		publishSelection();
 	}
 
+	private void completePendingStoredRegionScroll() {
+		if (!storedRegionScrollPending || visibleStoredRegionHighlights.isEmpty()) {
+			return;
+		}
+		double pageHeight = pageView.getBoundsInLocal().getHeight();
+		double viewportHeight = pageScrollPane.getViewportBounds().getHeight();
+		double contentHeight = pagePane.getHeight();
+
+		// A zero value means JavaFX has not completed the corresponding layout pass.
+		// Leave the request pending; the dimension listeners will retry it.
+		if (pageHeight <= 0 || viewportHeight <= 0 || contentHeight <= 0) {
+			return;
+		}
+		if (pageHeight <= viewportHeight) {
+
+			// The entire page is already visible, so its first stored region needs no
+			// vertical scrolling.
+			pageScrollPane.setVvalue(pageScrollPane.getVmin());
+			storedRegionScrollPending = false;
+			return;
+		}
+		double scrollableHeight = contentHeight - viewportHeight;
+		if (scrollableHeight <= 0) {
+
+			// The ImageView has resized but its resizable parent has not yet completed
+			// the corresponding layout pass.
+			return;
+		}
+		double topRegionY = visibleStoredRegionHighlights.stream().mapToDouble(highlight -> highlight.region().y())
+				.min().orElse(0);
+		double requestedTop = Math.max(0, topRegionY * pageHeight - STORED_REGION_TOP_MARGIN);
+		double proportionalPosition = clamp(requestedTop / scrollableHeight, 0, 1);
+
+		// Convert the proportional content position through the ScrollPane's actual
+		// configured vertical range rather than assuming its default values.
+		double vvalue = pageScrollPane.getVmin()
+				+ proportionalPosition * (pageScrollPane.getVmax() - pageScrollPane.getVmin());
+		pageScrollPane.setVvalue(vvalue);
+		storedRegionScrollPending = false;
+	}
+
 	private void configureNavigation() {
 		previousButton.setDisable(true);
 		nextButton.setDisable(true);
@@ -687,6 +880,16 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pageView.setId("pdf-page-view");
 		pageView.setPreserveRatio(true);
 		pageView.fitWidthProperty().bind(pagePane.widthProperty());
+		pageView.boundsInLocalProperty().addListener((_, _, _) -> {
+
+			// Stored overlays use proportional coordinates and must track
+			// the rendered page whenever its dimensions change.
+			layoutStoredRegionHighlights();
+
+			// A pending focus request may now have enough real layout
+			// information to position the ScrollPane.
+			completePendingStoredRegionScroll();
+		});
 		pagePane.getChildren().add(pageView);
 		pagePane.setCursor(Cursor.DEFAULT);
 		fullWidthSelectionCheckBox.setSelected(true);
@@ -732,6 +935,7 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	private ScrollPane createScrollPane() {
 		ScrollPane scrollPane = new ScrollPane(pagePane);
+		scrollPane.setId("pdf-page-scroll");
 		scrollPane.setFitToWidth(true);
 		scrollPane.setFitToHeight(false);
 		scrollPane.setMinHeight(0);
@@ -830,12 +1034,39 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 		if (selectionRectangle.getWidth() < MIN_SELECTION_SIZE || selectionRectangle.getHeight() < MIN_SELECTION_SIZE) {
 			if (!anchoredSelectionActive) {
-				selectionRectangle.setVisible(false);
+
+				// A click or undersized drag means the user has abandoned the visible
+				// pending selection. Clear its visual state and tell the application to
+				// discard the corresponding logical capture selection as well.
+				clearSelection();
+				selectionCancelledHandler.run();
 			}
 			return;
 		}
+
+		// A valid completed region replaces any anchored-selection state and is
+		// published normally to the owning capture workflow.
 		clearAnchoredSelectionState();
 		publishSelection();
+	}
+
+	private void layoutStoredRegionHighlights() {
+		double pageWidth = pageView.getBoundsInLocal().getWidth();
+		double pageHeight = pageView.getBoundsInLocal().getHeight();
+		if (pageWidth <= 0 || pageHeight <= 0) {
+			return;
+		}
+		for (StoredRegionHighlight highlight : visibleStoredRegionHighlights) {
+			RegionSelection region = highlight.region();
+			Rectangle rectangle = highlight.rectangle();
+
+			// Persisted coordinates are proportional to the source page and therefore
+			// scale directly with the currently rendered ImageView dimensions.
+			rectangle.setX(region.x() * pageWidth);
+			rectangle.setY(region.y() * pageHeight);
+			rectangle.setWidth(region.width() * pageWidth);
+			rectangle.setHeight(region.height() * pageHeight);
+		}
 	}
 
 	private void nextPage() {
@@ -877,6 +1108,38 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 	}
 
+	private void renderStoredRegionHighlights() {
+
+		// Rebuild visible overlays whenever the displayed page changes. Persisted
+		// regions on other pages remain retained for later navigation.
+		for (StoredRegionHighlight highlight : visibleStoredRegionHighlights) {
+			pagePane.getChildren().remove(highlight.rectangle());
+		}
+		visibleStoredRegionHighlights.clear();
+		for (RegionSelection region : storedRegionHighlights) {
+			if (region.documentMode() != displayedDocument || region.pageNumber() != currentPageNumber) {
+				continue;
+			}
+			Rectangle rectangle = new Rectangle();
+			rectangle.getStyleClass().add("pdf-stored-region-highlight");
+			rectangle.setFill(STORED_REGION_FILL);
+			rectangle.setStroke(STORED_REGION_STROKE);
+			rectangle.setStrokeWidth(STORED_REGION_STROKE_WIDTH);
+
+			// Stored overlays are purely informational and must never intercept PDF
+			// capture gestures.
+			rectangle.setMouseTransparent(true);
+			StoredRegionHighlight highlight = new StoredRegionHighlight(region, rectangle);
+			visibleStoredRegionHighlights.add(highlight);
+			pagePane.getChildren().add(rectangle);
+		}
+		layoutStoredRegionHighlights();
+
+		// A live capture selection must remain visually above the stored grey boxes.
+		selectionRectangle.toFront();
+		selectionAnchorMarker.toFront();
+	}
+
 	private void restorePageNumberField() {
 		pageNumberField.setText(Integer.toString(currentPageNumber));
 		pageNumberField.selectAll();
@@ -911,9 +1174,15 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		selectionRectangle.setWidth(Math.abs(currentX - selectionStartX));
 	}
 
+	/** Document role currently displayed by the shared PDF workspace. */
 	public enum DocumentMode {
 
-		EXAM("Page"), ANSWER("Answer page"), VIEWER("Page");
+		/** Source examination document used for Question capture. */
+		EXAM("Page"),
+		/** Answer or marking-guide document used for Answer capture. */
+		ANSWER("Answer page"),
+		/** Read-only document opened for inspection. */
+		VIEWER("Page");
 
 		private final String pageLabel;
 
@@ -940,6 +1209,9 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 */
 	public record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width,
 			double height) {
+	}
+
+	private record StoredRegionHighlight(RegionSelection region, Rectangle rectangle) {
 	}
 
 	private record LoadedAnswerPage(PdfSession session, Image image, int pageNumber) {

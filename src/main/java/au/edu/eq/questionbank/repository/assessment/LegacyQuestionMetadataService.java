@@ -26,11 +26,11 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  * regions.
  * <p>
  * The operation may change question code, marks, classification and the
- * historical preamble-capture-required flag. Booklet and source-document
+ * historical shared context-capture-required flag. Booklet and source-document
  * identity remain fixed.
  * <p>
- * When a resulting single-part question changes from requiring a legacy
- * preamble to not requiring one, an attached shared context is converted into
+ * When a resulting single-part question changes from requiring a legacy shared
+ * context to not requiring one, an attached shared context is converted into
  * leading ordinary question regions. Existing question regions follow those
  * converted regions in their original order. The question is then unlinked from
  * the shared context, which is deleted only when no other question still
@@ -133,84 +133,88 @@ public final class LegacyQuestionMetadataService {
 	/**
 	 * Atomically corrects editable legacy metadata.
 	 *
-	 * @param question                persisted question being corrected
-	 * @param questionCode            replacement non-blank question code
-	 * @param marks                   replacement positive mark value
-	 * @param classification          replacement Subtopic or Descriptor from the
-	 *                                question's existing syllabus version
-	 * @param preambleCaptureRequired corrected historical preamble-capture hint
+	 * @param question                     persisted question being corrected
+	 * @param questionCode                 replacement non-blank question code
+	 * @param marks                        replacement positive mark value
+	 * @param classification               replacement Subtopic or Descriptor from
+	 *                                     the question's existing syllabus version
+	 * @param sharedContextCaptureRequired corrected historical shared
+	 *                                     context-capture hint
 	 * @return reloaded question after successful persistence
 	 * @throws NullPointerException     if question or classification is null
 	 * @throws IllegalArgumentException if metadata or classification is invalid
 	 * @throws IllegalStateException    if persistence fails
 	 */
 	public Question updateMetadata(Question question, String questionCode, int marks, CurriculumNode classification,
-			boolean preambleCaptureRequired) {
-		return updateMetadataWithResult(question, questionCode, marks, classification, preambleCaptureRequired)
+			boolean sharedContextCaptureRequired) {
+		return updateMetadataWithResult(question, questionCode, marks, classification, sharedContextCaptureRequired)
 				.question();
 	}
 
 	/**
 	 * Atomically corrects legacy metadata including the response type.
 	 *
-	 * @param question                persisted question being corrected
-	 * @param questionCode            replacement non-blank question code
-	 * @param marks                   replacement positive mark value
-	 * @param classification          replacement Subtopic or Descriptor from the
-	 *                                existing syllabus
-	 * @param preambleCaptureRequired corrected historical preamble-capture hint
-	 * @param responseType            replacement question response type
+	 * @param question                     persisted question being corrected
+	 * @param questionCode                 replacement non-blank question code
+	 * @param marks                        replacement positive mark value
+	 * @param classification               replacement Subtopic or Descriptor from
+	 *                                     the existing syllabus
+	 * @param sharedContextCaptureRequired corrected historical shared
+	 *                                     context-capture hint
+	 * @param responseType                 replacement question response type
 	 * @return reloaded question after successful persistence
 	 * @throws IllegalArgumentException if metadata or classification is invalid
 	 * @throws IllegalStateException    if persistence fails
 	 */
 	public Question updateMetadata(Question question, String questionCode, int marks, CurriculumNode classification,
-			boolean preambleCaptureRequired, QuestionResponseType responseType) {
-		return updateMetadataWithResult(question, questionCode, marks, classification, preambleCaptureRequired,
+			boolean sharedContextCaptureRequired, QuestionResponseType responseType) {
+		return updateMetadataWithResult(question, questionCode, marks, classification, sharedContextCaptureRequired,
 				responseType).question();
 	}
 
 	/**
 	 * Atomically corrects legacy metadata while preserving the response type.
 	 *
-	 * @param question                persisted question being corrected
-	 * @param questionCode            replacement non-blank question code
-	 * @param marks                   replacement positive mark value
-	 * @param classification          replacement Subtopic or Descriptor from the
-	 *                                existing syllabus
-	 * @param preambleCaptureRequired corrected historical preamble-capture hint
-	 * @return reloaded question and the effect on preamble capture
+	 * @param question                     persisted question being corrected
+	 * @param questionCode                 replacement non-blank question code
+	 * @param marks                        replacement positive mark value
+	 * @param classification               replacement Subtopic or Descriptor from
+	 *                                     the existing syllabus
+	 * @param sharedContextCaptureRequired corrected historical shared
+	 *                                     context-capture hint
+	 * @return reloaded question and the effect on shared context capture
 	 * @throws IllegalArgumentException if metadata or classification is invalid
 	 * @throws IllegalStateException    if persistence fails
 	 */
 	public LegacyQuestionMetadataUpdateResult updateMetadataWithResult(Question question, String questionCode,
-			int marks, CurriculumNode classification, boolean preambleCaptureRequired) {
-		return updateMetadataWithResultInternal(question, questionCode, marks, classification, preambleCaptureRequired,
-				null);
+			int marks, CurriculumNode classification, boolean sharedContextCaptureRequired) {
+		return updateMetadataWithResultInternal(question, questionCode, marks, classification,
+				sharedContextCaptureRequired, null);
 	}
 
 	/**
 	 * Atomically corrects legacy metadata including the response type.
 	 *
-	 * @param question                persisted question being corrected
-	 * @param questionCode            replacement non-blank question code
-	 * @param marks                   replacement positive mark value
-	 * @param classification          replacement Subtopic or Descriptor from the
-	 *                                existing syllabus
-	 * @param preambleCaptureRequired corrected historical preamble-capture hint
-	 * @param responseType            replacement question response type
-	 * @return reloaded question and the effect on preamble capture
+	 * @param question                     persisted question being corrected
+	 * @param questionCode                 replacement non-blank question code
+	 * @param marks                        replacement positive mark value
+	 * @param classification               replacement Subtopic or Descriptor from
+	 *                                     the existing syllabus
+	 * @param sharedContextCaptureRequired corrected historical shared
+	 *                                     context-capture hint
+	 * @param responseType                 replacement question response type
+	 * @return reloaded question and the effect on shared context capture
 	 * @throws IllegalArgumentException if metadata or classification is invalid
 	 * @throws IllegalStateException    if persistence fails
 	 */
 	public LegacyQuestionMetadataUpdateResult updateMetadataWithResult(Question question, String questionCode,
-			int marks, CurriculumNode classification, boolean preambleCaptureRequired,
+			int marks, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			QuestionResponseType responseType) {
 		if (responseType == null) {
 			throw new NullPointerException("responseType");
 		}
-		return updateMetadataWithResultInternal(question, questionCode, marks, classification, preambleCaptureRequired,
-				responseType);
+		return updateMetadataWithResultInternal(question, questionCode, marks, classification,
+				sharedContextCaptureRequired, responseType);
 	}
 
 	private void convertSharedContextToQuestionRegions(Connection connection, long questionId, long bookletId,
@@ -223,7 +227,8 @@ public final class LegacyQuestionMetadataService {
 		List<StoredRegion> existingQuestionRegions = readQuestionRegions(connection, questionId, bookletId);
 		List<StoredRegion> replacementRegions = new ArrayList<>(sharedRegions.size() + existingQuestionRegions.size());
 
-		// Place the preamble first, preserving the captured order within both groups.
+		// Place the shared context first, preserving the captured order within both
+		// groups.
 		replacementRegions.addAll(sharedRegions);
 		replacementRegions.addAll(existingQuestionRegions);
 		deleteQuestionRegions(connection, questionId);
@@ -298,7 +303,7 @@ public final class LegacyQuestionMetadataService {
 				SELECT
 				    booklet_id,
 				    classification_node_id,
-				    preamble_capture_required,
+				    shared_context_capture_required,
 				    source_question_id,
 				    shared_context_id,
 				    response_type
@@ -321,7 +326,7 @@ public final class LegacyQuestionMetadataService {
 					sharedContextId = Long.valueOf(storedSharedContextId);
 				}
 				return new StoredQuestionState(result.getLong("booklet_id"), result.getLong("classification_node_id"),
-						result.getInt("preamble_capture_required") != 0, sourceQuestionId, sharedContextId,
+						result.getInt("shared_context_capture_required") != 0, sourceQuestionId, sharedContextId,
 						QuestionResponseType.valueOf(result.getString("response_type")));
 			}
 		}
@@ -428,7 +433,7 @@ public final class LegacyQuestionMetadataService {
 	}
 
 	private LegacyQuestionMetadataUpdateResult updateMetadataWithResultInternal(Question question, String questionCode,
-			int marks, CurriculumNode classification, boolean preambleCaptureRequired,
+			int marks, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			QuestionResponseType requestedResponseType) {
 		validateRequest(question, questionCode, marks, classification);
 		long questionId = question.getId();
@@ -446,22 +451,23 @@ public final class LegacyQuestionMetadataService {
 				long existingSyllabusVersionId = findSyllabusVersionId(connection, stored.classificationNodeId());
 				verifyReplacementClassification(connection, classification, existingSyllabusVersionId);
 				String sourceQuestionCode = SourceQuestionCodeParser.derive(questionCode);
-				boolean removingLegacyPreambleHint = stored.preambleCaptureRequired() && !preambleCaptureRequired;
+				boolean removingLegacySharedContextHint = stored.sharedContextCaptureRequired()
+						&& !sharedContextCaptureRequired;
 				boolean removingMultipartSourceIdentity = stored.sourceQuestionId() != null
 						&& sourceQuestionCode == null;
-				if (removingLegacyPreambleHint && sourceQuestionCode != null && stored.sharedContextId() != null) {
-					throw new IllegalArgumentException("Cannot remove the preamble requirement from one part "
+				if (removingLegacySharedContextHint && sourceQuestionCode != null && stored.sharedContextId() != null) {
+					throw new IllegalArgumentException("Cannot remove the shared context requirement from one part "
 							+ "of a multipart question while shared context "
-							+ "is attached. Correct the shared preamble at " + "source-question level instead.");
+							+ "is attached. Correct the shared context at " + "source-question level instead.");
 				}
 				Long replacementSourceQuestionId = findOrCreateSourceQuestionId(connection, stored.bookletId(),
 						sourceQuestionCode);
 
 				// Convert only on a relevant transition; unrelated metadata edits retain the
 				// context.
-				convertedSharedContext = !preambleCaptureRequired && sourceQuestionCode == null
+				convertedSharedContext = !sharedContextCaptureRequired && sourceQuestionCode == null
 						&& stored.sharedContextId() != null
-						&& (removingLegacyPreambleHint || removingMultipartSourceIdentity);
+						&& (removingLegacySharedContextHint || removingMultipartSourceIdentity);
 				if (convertedSharedContext) {
 					convertSharedContextToQuestionRegions(connection, questionId, stored.bookletId(),
 							stored.sharedContextId().longValue());
@@ -475,7 +481,7 @@ public final class LegacyQuestionMetadataService {
 				QuestionResponseType replacementResponseType = requestedResponseType == null ? stored.responseType()
 						: requestedResponseType;
 				updateQuestionMetadata(connection, questionId, stored.bookletId(), questionCode, marks,
-						classification.getId(), preambleCaptureRequired, replacementSourceQuestionId,
+						classification.getId(), sharedContextCaptureRequired, replacementSourceQuestionId,
 						replacementSharedContextId, replacementResponseType);
 
 				// Remove superseded identities only after relinking, and only if no siblings
@@ -504,21 +510,21 @@ public final class LegacyQuestionMetadataService {
 		// Reload after commit so the result includes any converted source regions.
 		Question updated = questionRepository.findById(questionId).orElseThrow(
 				() -> new IllegalStateException("Question disappeared after metadata update: " + questionId));
-		LegacyQuestionMetadataUpdateResult.PreambleOutcome outcome = convertedSharedContext
-				? LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS
-				: LegacyQuestionMetadataUpdateResult.PreambleOutcome.NO_CAPTURE_CHANGE;
+		LegacyQuestionMetadataUpdateResult.SharedContextOutcome outcome = convertedSharedContext
+				? LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS
+				: LegacyQuestionMetadataUpdateResult.SharedContextOutcome.NO_CAPTURE_CHANGE;
 		return new LegacyQuestionMetadataUpdateResult(updated, outcome);
 	}
 
 	private void updateQuestionMetadata(Connection connection, long questionId, long bookletId, String questionCode,
-			int marks, long classificationNodeId, boolean preambleCaptureRequired, Long sourceQuestionId,
+			int marks, long classificationNodeId, boolean sharedContextCaptureRequired, Long sourceQuestionId,
 			Long sharedContextId, QuestionResponseType responseType) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE questions
 				SET question_code = ?,
 				    marks = ?,
 				    classification_node_id = ?,
-				    preamble_capture_required = ?,
+				    shared_context_capture_required = ?,
 				    source_question_id = ?,
 				    shared_context_id = ?,
 				    response_type = ?
@@ -528,7 +534,7 @@ public final class LegacyQuestionMetadataService {
 			statement.setString(1, questionCode);
 			statement.setInt(2, marks);
 			statement.setLong(3, classificationNodeId);
-			statement.setInt(4, preambleCaptureRequired ? 1 : 0);
+			statement.setInt(4, sharedContextCaptureRequired ? 1 : 0);
 			if (sourceQuestionId == null) {
 				statement.setNull(5, Types.BIGINT);
 			} else {
@@ -655,7 +661,7 @@ public final class LegacyQuestionMetadataService {
 		}
 	}
 
-	private record StoredQuestionState(long bookletId, long classificationNodeId, boolean preambleCaptureRequired,
+	private record StoredQuestionState(long bookletId, long classificationNodeId, boolean sharedContextCaptureRequired,
 			Long sourceQuestionId, Long sharedContextId, QuestionResponseType responseType) {
 	}
 

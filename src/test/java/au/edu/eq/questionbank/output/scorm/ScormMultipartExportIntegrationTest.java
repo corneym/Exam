@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.output.scorm;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,9 +26,9 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -43,6 +44,7 @@ import au.edu.eq.questionbank.output.revision.RevisionQuestionAssetRenderer;
 import au.edu.eq.questionbank.output.revision.RevisionSharedContextAssetRenderer;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -75,8 +77,8 @@ class ScormMultipartExportIntegrationTest {
 		Exam exam = new Exam(1, chemistry, provider, 2022, "Chemistry examination");
 		SourceDocument sourceDocument = new SourceDocument(1, "question.pdf");
 		ExamBooklet booklet = new ExamBooklet(1, exam, "Paper 1", sourceDocument);
-		SourceQuestion sourceQuestion = new SourceQuestion(24, booklet, "24", PreambleStatus.PRESENT);
-		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Question 24 preamble",
+		SourceQuestion sourceQuestion = new SourceQuestion(24, booklet, "24", SharedContextStatus.PRESENT);
+		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Question 24 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.25)));
 		Question partA = new Question(4, booklet, "24a", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.25, 1.0, 0.25)), historicalDescriptor, false,
@@ -95,7 +97,10 @@ class ScormMultipartExportIntegrationTest {
 				_ -> List.of(new QuestionApplicabilityMatch(partA, currentDescriptor),
 						new QuestionApplicabilityMatch(partB, currentDescriptor)),
 				expansionService);
-		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+
+		// The multipart SCORM fixture exercises normal fully included applicability.
+		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				new InMemoryQuestionOutputApplicabilityRepository());
 		PdfStore pdfStore = new PdfStore(pdfRoot);
 		QuestionExtractor extractor = new QuestionExtractor();
 		RevisionExportService revisionExportService = new RevisionExportService(corpusBuilder,
@@ -119,8 +124,9 @@ class ScormMultipartExportIntegrationTest {
 			assertEquals(1, countOccurrences(topicHtml, "<summary>Reveal answer</summary>"));
 			assertTrue(topicHtml.contains("Question 1"));
 			assertTrue(topicHtml.contains("5 marks"));
-			assertTrue(topicHtml.contains("Source part 24a"));
-			assertTrue(topicHtml.contains("Source part 24b"));
+			assertFalse(topicHtml.contains("Source part 24a"));
+			assertFalse(topicHtml.contains("Source part 24b"));
+			assertTrue(topicHtml.contains("Questions 24a, 24b"));
 			assertTrue(topicHtml.contains("Answer A"));
 			assertTrue(topicHtml.contains("Answer B"));
 			ZipEntry manifestEntry = zip.getEntry("imsmanifest.xml");

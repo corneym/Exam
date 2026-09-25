@@ -20,10 +20,11 @@ import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
@@ -55,6 +56,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
@@ -105,6 +107,7 @@ import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionSer
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 import au.edu.eq.questionbank.ui.audit.QuestionCorpusAuditDialog;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
@@ -124,7 +127,9 @@ import au.edu.eq.questionbank.ui.exam.LegacyAnswerPdfImportDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyBookletImportDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyQuestionImportDialog;
 import au.edu.eq.questionbank.ui.export.RevisionExportDialog;
+import au.edu.eq.questionbank.ui.export.RevisionExportTask;
 import au.edu.eq.questionbank.ui.export.ScormExportDialog;
+import au.edu.eq.questionbank.ui.export.ScormExportTask;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
@@ -197,6 +202,11 @@ public class QuestionBankApplication extends Application {
 	private boolean scormExportRunning;
 	private SplitPane workspaceSplitPane;
 
+	// Track the accepted workspace Subject separately so a rejected ComboBox change
+	// can restore the previous value without changing either capture queue.
+	private Subject workingSubject;
+	private boolean restoringWorkingSubject;
+
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
 	 */
@@ -257,6 +267,19 @@ public class QuestionBankApplication extends Application {
 		}
 		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
 			pdfWorkspace.close();
+		}
+	}
+
+	private void activateExamBookletSubject(Subject subject) {
+
+		// Activate the booklet's Subject before deriving any Question-capture defaults
+		// from the newly active booklet.
+		activateExamSubject(subject);
+		if (questionCapturePane != null) {
+
+			// Reopening an existing booklet must reapply its format only to the fresh
+			// new-question entry state.
+			questionCapturePane.refreshForActiveBooklet();
 		}
 	}
 
@@ -338,6 +361,23 @@ public class QuestionBankApplication extends Application {
 		}
 		showAlert(Alert.AlertType.WARNING, "Selection pending", "Selection pending",
 				"Add or clear the current selection before changing PDF pages.");
+		return false;
+	}
+
+	private boolean allowWorkingSubjectChange() {
+		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
+				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
+				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
+				|| answerCapturePane.isSaveInProgress();
+		if (!captureWorkInProgress) {
+			return true;
+		}
+
+		// Subject changes rebuild capture queues and can invalidate the active Exam.
+		// Never permit that transition while unsaved capture state still depends on
+		// the current Subject or PDF.
+		showAlert(Alert.AlertType.WARNING, "Working Subject", "Capture work is in progress",
+				"Add, clear, save or cancel the current Question, shared-context or Answer capture before changing Working Subject.");
 		return false;
 	}
 
@@ -472,7 +512,11 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
 		pdfWorkspace.setPageNavigationAllowed(this::allowPdfPageNavigation);
-		pdfWorkspace.setSelectionModeChangedHandler(this::handleSelectionModeChanged);
+
+		// A selection becomes invalid either because the selection mode changed or
+		// because the user clicked away from an existing pending rectangle.
+		pdfWorkspace.setSelectionModeChangedHandler(this::handlePdfSelectionInvalidated);
+		pdfWorkspace.setSelectionCancelledHandler(this::handlePdfSelectionInvalidated);
 	}
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
@@ -783,7 +827,14 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionRepository revisionQuestionRepository = new SqliteQuestionRepository(database);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(revisionQuestionRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
+				database);
+
+		// Retrieval establishes every curriculum-derived current placement. The
+		// output-applicability repository then removes only explicit Question-specific
+		// exceptions while constructing the revision corpus.
+		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				outputApplicabilityRepository);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 		QuestionExtractor extractor = new QuestionExtractor();
 		return new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
@@ -814,10 +865,8 @@ public class QuestionBankApplication extends Application {
 			throw new NullPointerException("completedHandler");
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
-		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
-				curriculumRepository);
+		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question);
 		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
 		if (result.isEmpty()) {
 			completedHandler.run();
@@ -826,14 +875,14 @@ public class QuestionBankApplication extends Application {
 		LegacyQuestionMetadataDialog.Result replacement = result.get();
 		try {
 			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
-					replacement.questionCode(), replacement.marks(), replacement.classification(),
-					replacement.preambleCaptureRequired(), replacement.responseType());
+					replacement.questionCode(), replacement.marks(), question.getClassification(),
+					replacement.sharedContextCaptureRequired(), replacement.responseType());
 			Question updated = updateResult.question();
 			questionCapturePane.refreshImportedQuestions();
 			answerCapturePane.refreshQuestions();
 			if (updateResult
-					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
-				offerQuestionRecaptureAfterPreambleConversion(primaryStage, updated, completedHandler);
+					.sharedContextOutcome() == LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+				offerQuestionRecaptureAfterSharedContextConversion(primaryStage, updated, completedHandler);
 				return;
 			}
 			completedHandler.run();
@@ -881,8 +930,7 @@ public class QuestionBankApplication extends Application {
 
 	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
-		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question,
-				curriculumRepository);
+		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question);
 		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
 		if (result.isEmpty()) {
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
@@ -890,16 +938,19 @@ public class QuestionBankApplication extends Application {
 		}
 		LegacyQuestionMetadataDialog.Result replacement = result.get();
 		try {
+
+			// Edit Metadata deliberately preserves curriculum classification. Teachers
+			// use Edit Question when the stored classification itself is incorrect.
 			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
-					replacement.questionCode(), replacement.marks(), replacement.classification(),
-					replacement.preambleCaptureRequired(), replacement.responseType());
+					replacement.questionCode(), replacement.marks(), question.getClassification(),
+					replacement.sharedContextCaptureRequired(), replacement.responseType());
 			Question updated = updateResult.question();
 			questionCapturePane.refreshImportedQuestions();
 			answerCapturePane.refreshQuestions();
 			if (updateResult
-					.preambleOutcome() == LegacyQuestionMetadataUpdateResult.PreambleOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
-				offerQuestionRecaptureAfterPreambleConversion(primaryStage, searchDialog, updated, curriculumRepository,
-						metadataService);
+					.sharedContextOutcome() == LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+				offerQuestionRecaptureAfterSharedContextConversion(primaryStage, searchDialog, updated,
+						curriculumRepository, metadataService);
 				return;
 			}
 			resumeSearchAfterEdit(primaryStage, searchDialog, updated.getId(), curriculumRepository, metadataService);
@@ -971,7 +1022,7 @@ public class QuestionBankApplication extends Application {
 			SharedQuestionContext candidateContext = candidate.getSharedContext();
 			if (matchingContext != null && matchingContext.getId() != candidateContext.getId()) {
 				throw new IllegalStateException("Existing source Question " + originalQuestion.getQuestionCode()
-						+ " has inconsistent shared preamble links");
+						+ " has inconsistent shared context links");
 			}
 			matchingContext = candidateContext;
 		}
@@ -980,20 +1031,20 @@ public class QuestionBankApplication extends Application {
 			// No existing multipart group is available for reuse.
 			return null;
 		}
-		if (matchingSource.getPreambleStatus() == PreambleStatus.UNKNOWN) {
+		if (matchingSource.getSharedContextStatus() == SharedContextStatus.UNKNOWN) {
 			throw new IllegalArgumentException("Existing source Question " + originalQuestion.getQuestionCode()
-					+ " still has unresolved preamble status");
+					+ " still has unresolved shared context status");
 		}
-		if (matchingSource.getPreambleStatus() == PreambleStatus.NONE) {
+		if (matchingSource.getSharedContextStatus() == SharedContextStatus.NONE) {
 			if (matchingContext != null) {
 				throw new IllegalStateException(
-						"Existing no-preamble source Question unexpectedly uses shared context");
+						"Existing no-shared-context source Question unexpectedly uses shared context");
 			}
 			return null;
 		}
 		if (matchingContext == null) {
 			throw new IllegalStateException("Existing source Question " + originalQuestion.getQuestionCode()
-					+ " is recorded as having a shared preamble, but no shared context could be found");
+					+ " is recorded as having a shared context, but no shared context could be found");
 		}
 		return matchingContext;
 	}
@@ -1012,9 +1063,41 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void focusStoredQuestionRegions(Question question) {
+		List<PdfWorkspacePane.RegionSelection> regions = question.getRegions().stream()
+				.map(region -> new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+						region.pageNumber(), region.x(), region.y(), region.width(), region.height()))
+				.toList();
+
+		// Stored Question regions are shown only while the full Question editor owns
+		// the workspace. An empty list also clears any stale previous overlay.
+		pdfWorkspace.focusStoredRegions(regions);
+	}
+
 	private void handleCloseRequest(javafx.stage.WindowEvent event, Stage primaryStage) {
 		event.consume();
 		requestApplicationExit(primaryStage);
+	}
+
+	private void handlePdfSelectionInvalidated() {
+		CaptureSelectionOwner owner = captureSelectionState.getOwner();
+		if (owner == null) {
+			return;
+		}
+
+		// Route cancellation back through the workflow that owns the logical
+		// selection. Its ordinary clear path also clears CaptureSelectionState.
+		//
+		// PdfWorkspacePane.clearSelection() itself never invokes the cancellation
+		// callback, so these programmatic clear operations cannot recurse.
+		switch (owner) {
+		case QUESTION -> questionCapturePane.clearCurrentSelection();
+		case SHARED_CONTEXT -> questionCapturePane.clearSharedContextCurrentSelection();
+		case ANSWER -> {
+			answerCapturePane.clearCurrentSelectionForPageChange();
+			clearCaptureSelection(CaptureSelectionOwner.ANSWER);
+		}
+		}
 	}
 
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
@@ -1043,22 +1126,44 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void handleSelectionModeChanged() {
-		CaptureSelectionOwner owner = captureSelectionState.getOwner();
-		if (owner == null) {
+	private void handleSubjectChanged(Subject newSubject) {
+		if (restoringWorkingSubject) {
 			return;
 		}
-		switch (owner) {
-		case QUESTION -> questionCapturePane.clearCurrentSelection();
-		case SHARED_CONTEXT -> questionCapturePane.clearSharedContextCurrentSelection();
-		case ANSWER -> {
-			answerCapturePane.clearCurrentSelectionForPageChange();
-			clearCaptureSelection(CaptureSelectionOwner.ANSWER);
-		}
-		}
-	}
+		boolean subjectActuallyChanged = workingSubject != null && !workingSubject.equals(newSubject);
+		if (subjectActuallyChanged && !allowWorkingSubjectChange()) {
 
-	private void handleSubjectChanged(Subject newSubject) {
+			// The value-property listener runs before the ComboBox's own action handler.
+			// Preserve the accepted classification now, but restore it only after the
+			// rejected Subject change has finished clearing its dependent controls.
+			CurriculumNode previousClassification = curriculumSelectionModel.getClassification();
+			Platform.runLater(() -> {
+				restoringWorkingSubject = true;
+				try {
+
+					// Re-establish the accepted Working Subject first, then reconstruct
+					// the complete classification path that existed before the rejected
+					// transition.
+					curriculumSelectorPane.selectSubject(workingSubject);
+					if (previousClassification != null) {
+						curriculumSelectorPane.selectClassificationPath(previousClassification);
+					}
+				} finally {
+					restoringWorkingSubject = false;
+				}
+			});
+			return;
+		}
+
+		// Once accepted, one workspace Subject drives classification plus both
+		// Question and Answer work queues.
+		workingSubject = newSubject;
+		if (questionCapturePane != null) {
+			questionCapturePane.setWorkingSubject(newSubject);
+		}
+		if (answerCapturePane != null) {
+			answerCapturePane.setWorkingSubject(newSubject);
+		}
 		examMetadataPane.invalidateForSubjectChange(newSubject);
 	}
 
@@ -1204,7 +1309,7 @@ public class QuestionBankApplication extends Application {
 		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
 				new ExamMetadataOptionsRepository(), examImporter, examWriter, examMetadataCorrectionService,
 				this::allowExamImportConfirmation, this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled,
-				this::activateExamSubject);
+				this::activateExamBookletSubject);
 		curriculumSelectorPane = createCurriculumSelectorPane();
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
@@ -1237,7 +1342,7 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
 	}
 
-	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, Question question,
+	private void offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage, Question question,
 			Runnable completedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -1249,8 +1354,8 @@ public class QuestionBankApplication extends Application {
 		ButtonType keepButton = new ButtonType("Keep converted regions", ButtonBar.ButtonData.CANCEL_CLOSE);
 		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
 		alert.initOwner(primaryStage);
-		alert.setTitle("Question Preamble Converted");
-		alert.setHeaderText("The captured preamble has been converted to ordinary question regions.");
+		alert.setTitle("Question Shared Context Converted");
+		alert.setHeaderText("The captured shared context has been converted to ordinary question regions.");
 		alert.setContentText(
 				"""
 						The converted material has already been saved safely.
@@ -1263,18 +1368,25 @@ public class QuestionBankApplication extends Application {
 			completedHandler.run();
 			return;
 		}
-		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question, completedHandler);
+		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question, () -> {
+
+			// Recapture explicitly opened the source Exam PDF. Once the
+			// recapture is saved or cancelled, that temporary document must
+			// no longer remain active.
+			pdfWorkspace.closeExamPdf();
+			completedHandler.run();
+		});
 		if (!recaptureStarted) {
 			completedHandler.run();
 		}
 	}
 
-	private void offerQuestionRecaptureAfterPreambleConversion(Stage primaryStage, QuestionSearchDialog searchDialog,
-			Question question, CurriculumRepository curriculumRepository,
+	private void offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage,
+			QuestionSearchDialog searchDialog, Question question, CurriculumRepository curriculumRepository,
 			LegacyQuestionMetadataService metadataService) {
 		Runnable resumeSearch = () -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(),
 				curriculumRepository, metadataService);
-		offerQuestionRecaptureAfterPreambleConversion(primaryStage, question, resumeSearch);
+		offerQuestionRecaptureAfterSharedContextConversion(primaryStage, question, resumeSearch);
 	}
 
 	private void openAnswerPdf(SelectedPdf selectedPdf) {
@@ -1722,8 +1834,10 @@ public class QuestionBankApplication extends Application {
 		case QUESTION -> questionCapturePane.captureImportedQuestion(question);
 		case ANSWER -> {
 			if (question.hasAnswer()) {
-				answerCapturePane.editAnswer(question, () -> {
-				});
+
+				// An existing Answer edit temporarily opens its assigned Answer PDF.
+				// Save and Cancel must both release that document.
+				answerCapturePane.editAnswer(question, pdfWorkspace::closeAnswerPdf);
 			} else {
 				answerCapturePane.captureAnswer(question);
 			}
@@ -1740,11 +1854,14 @@ public class QuestionBankApplication extends Application {
 		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(config.pdfDataRoot()),
 				questionExtractor);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
+		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
+				database);
 
-		// Search receives complete-bank retrieval separately from curriculum-aware
-		// retrieval so All Questions never fabricates current applicability.
+		// Search keeps curriculum-derived applicability separate from the persisted
+		// Question-specific exclusions that control revision output.
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
-				questionRepository::findAll, previewService);
+				questionRepository::findAll, previewService, outputApplicabilityRepository,
+				questionRepository::updateClassification);
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
@@ -1770,26 +1887,47 @@ public class QuestionBankApplication extends Application {
 			startQuestionSplitFromSearch(primaryStage, dialog, question, curriculumRepository, metadataService);
 			return;
 		}
-		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_PREAMBLE) {
-			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question,
-					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
-							metadataService));
+		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_CONTEXT) {
+			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question, () -> {
+
+				// Shared-context correction temporarily owns the Question's
+				// Exam PDF. Release it after either Save or Cancel.
+				pdfWorkspace.closeExamPdf();
+				resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
+			});
 			if (!correctionStarted) {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 			}
 			return;
 		}
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
-			boolean editingStarted = questionCapturePane.editQuestion(question,
-					() -> resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository,
-							metadataService));
+			boolean editingStarted = questionCapturePane.editQuestion(question, () -> {
+
+				// Search temporarily opened this Question's Exam PDF for
+				// editing. Save and Cancel both release it before Search
+				// becomes active again.
+				pdfWorkspace.closeExamPdf();
+				resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
+			});
 			if (!editingStarted) {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
+				return;
 			}
+
+			// The Question editor now owns the correct Exam document. Display the
+			// persisted regions as informational grey overlays and focus the first one.
+			focusStoredQuestionRegions(question);
 			return;
 		}
-		boolean editingStarted = answerCapturePane.editAnswer(question, () -> resumeSearchAfterEdit(primaryStage,
-				dialog, question.getId(), curriculumRepository, metadataService));
+
+		// ANswer editing
+		boolean editingStarted = answerCapturePane.editAnswer(question, () -> {
+
+			// The Answer PDF was opened for this temporary edit. It must
+			// not remain active after either Save or Cancel.
+			pdfWorkspace.closeAnswerPdf();
+			resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
+		});
 		if (!editingStarted) {
 			showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 		}
@@ -1813,19 +1951,23 @@ public class QuestionBankApplication extends Application {
 		if (revisionExportRunning) {
 			return;
 		}
+		RevisionExportService eligibilityService = createRevisionExportService(config);
 		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
-				curriculumSelectionModel.getSubject());
+				curriculumSelectionModel.getSubject(), eligibilityService::findExportableUnits,
+				eligibilityService::isDescriptorGroupingAvailable);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
 		Subject subject = dialog.getSelectedSubject();
 		Path destinationParent = dialog.getDestinationParent();
-		if (subject == null || destinationParent == null) {
+		RevisionGroupingMode groupingMode = dialog.getGroupingMode();
+		Set<Long> selectedUnitIds = dialog.getSelectedUnitIds();
+		if (subject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
 			return;
 		}
 		Path destination = revisionExportDestination(destinationParent, subject);
-		startRevisionExport(primaryStage, config, subject, destination);
+		startRevisionExport(primaryStage, config, subject, destination, groupingMode, selectedUnitIds);
 	}
 
 	private void showRevisionExportSuccess(RevisionExportResult result) {
@@ -1837,12 +1979,12 @@ public class QuestionBankApplication extends Application {
 				Exportable questions: %d
 				Awaiting question capture: %d
 				Questions without answers: %d
-				Preamble review flags: %d
+				Shared context review flags: %d
 				""".formatted(result.getDestination(), result.getStatistics().getUniqueApplicableQuestions(),
 				result.getStatistics().getRenderableQuestions(),
 				result.getStatistics().getMissingQuestionRegionQuestions(),
 				result.getStatistics().getQuestionsWithoutAnswers(),
-				result.getStatistics().getPreambleReviewQuestions());
+				result.getStatistics().getSharedContextReviewQuestions());
 		showAlert(Alert.AlertType.INFORMATION, "Export Revision HTML", "Revision website exported successfully.",
 				message);
 	}
@@ -1851,19 +1993,23 @@ public class QuestionBankApplication extends Application {
 		if (scormExportRunning) {
 			return;
 		}
+		ScormExportService eligibilityService = createScormExportService(config);
 		ScormExportDialog dialog = new ScormExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
-				curriculumSelectionModel.getSubject());
+				curriculumSelectionModel.getSubject(), eligibilityService::findExportableUnits,
+				eligibilityService::isDescriptorGroupingAvailable);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
 		Subject subject = dialog.getSelectedSubject();
 		Path destinationParent = dialog.getDestinationParent();
-		if (subject == null || destinationParent == null) {
+		RevisionGroupingMode groupingMode = dialog.getGroupingMode();
+		Set<Long> selectedUnitIds = dialog.getSelectedUnitIds();
+		if (subject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
 			return;
 		}
 		Path destination = scormExportDestination(destinationParent, subject);
-		startScormExport(primaryStage, config, subject, destination);
+		startScormExport(primaryStage, config, subject, destination, groupingMode, selectedUnitIds);
 	}
 
 	private void showScormExportSuccess(ScormExportResult result) {
@@ -1875,12 +2021,12 @@ public class QuestionBankApplication extends Application {
 				Exportable questions: %d
 				Awaiting question capture: %d
 				Questions without answers: %d
-				Preamble review flags: %d
+				Shared context review flags: %d
 				""".formatted(result.getDestination(), result.getStatistics().getUniqueApplicableQuestions(),
 				result.getStatistics().getRenderableQuestions(),
 				result.getStatistics().getMissingQuestionRegionQuestions(),
 				result.getStatistics().getQuestionsWithoutAnswers(),
-				result.getStatistics().getPreambleReviewQuestions());
+				result.getStatistics().getSharedContextReviewQuestions());
 		showAlert(Alert.AlertType.INFORMATION, "Export Revision SCORM", "SCORM package exported successfully.",
 				message);
 	}
@@ -1957,15 +2103,29 @@ public class QuestionBankApplication extends Application {
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
 			return;
 		}
-		boolean captureStarted = questionCapturePane.beginLegacyQuestionSplit(question, splitDefinition.get(),
-				() -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository,
-						metadataService));
+		boolean captureStarted = questionCapturePane.beginLegacyQuestionSplit(question, splitDefinition.get(), () -> {
+
+			// Split correction uses the original Question's Exam PDF only
+			// for the lifetime of the correction workflow.
+			pdfWorkspace.closeExamPdf();
+			resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository, metadataService);
+		});
 		if (!captureStarted) {
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
 		}
 	}
 
 	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
+		startRevisionExport(primaryStage, config, subject, destination, null, null);
+	}
+
+	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
+			RevisionGroupingMode groupingMode) {
+		startRevisionExport(primaryStage, config, subject, destination, groupingMode, null);
+	}
+
+	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
+			RevisionGroupingMode groupingMode, Set<Long> selectedUnitIds) {
 		if (revisionExportRunning) {
 			return;
 		}
@@ -1974,23 +2134,8 @@ public class QuestionBankApplication extends Application {
 			revisionExportMenuItem.setDisable(true);
 		}
 		RevisionExportService exportService = createRevisionExportService(config);
-		RevisionExportRequest request = new RevisionExportRequest(subject, destination);
-		Task<RevisionExportResult> task = new Task<RevisionExportResult>() {
-
-			@Override
-			protected RevisionExportResult call() throws Exception {
-				updateMessage("Starting export...");
-				updateProgress(-1, 1);
-				return exportService.export(request, (message, completed, total) -> {
-					updateMessage(message);
-					if (total > 0) {
-						updateProgress(completed, total);
-					} else {
-						updateProgress(-1, 1);
-					}
-				});
-			}
-		};
+		RevisionExportRequest request = new RevisionExportRequest(subject, destination, groupingMode, selectedUnitIds);
+		RevisionExportTask task = new RevisionExportTask(exportService, request);
 		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision HTML",
 				"Creating revision website...", "Starting export...");
 		task.setOnSucceeded(_ -> completeRevisionExport(task, progressAlert));
@@ -2002,6 +2147,16 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
+		startScormExport(primaryStage, config, subject, destination, null, null);
+	}
+
+	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
+			RevisionGroupingMode groupingMode) {
+		startScormExport(primaryStage, config, subject, destination, groupingMode, null);
+	}
+
+	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
+			RevisionGroupingMode groupingMode, Set<Long> selectedUnitIds) {
 		if (scormExportRunning) {
 			return;
 		}
@@ -2010,23 +2165,8 @@ public class QuestionBankApplication extends Application {
 			scormExportMenuItem.setDisable(true);
 		}
 		ScormExportService exportService = createScormExportService(config);
-		ScormExportRequest request = new ScormExportRequest(subject, destination);
-		Task<ScormExportResult> task = new Task<ScormExportResult>() {
-
-			@Override
-			protected ScormExportResult call() throws Exception {
-				updateMessage("Starting SCORM export...");
-				updateProgress(-1, 1);
-				return exportService.export(request, (message, completed, total) -> {
-					updateMessage(message);
-					if (total > 0) {
-						updateProgress(completed, total);
-					} else {
-						updateProgress(-1, 1);
-					}
-				});
-			}
-		};
+		ScormExportRequest request = new ScormExportRequest(subject, destination, groupingMode, selectedUnitIds);
+		ScormExportTask task = new ScormExportTask(exportService, request);
 		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision SCORM",
 				"Creating SCORM package...", "Starting SCORM export...");
 		task.setOnSucceeded(_ -> completeScormExport(task, progressAlert));

@@ -101,7 +101,7 @@ class SqliteDatabaseSnapshotTest {
 					    (id, booklet_id,
 					     classification_node_id,
 					     question_code, question_text,
-					     marks, preamble_capture_required)
+					     marks, shared_context_capture_required)
 					VALUES
 					    (100, 1, 20,
 					     'Q5',
@@ -135,7 +135,7 @@ class SqliteDatabaseSnapshotTest {
 					SELECT question_code,
 					       question_text,
 					       marks,
-					       preamble_capture_required,
+					       shared_context_capture_required,
 					       classification_node_id
 					FROM questions
 					WHERE id = 100
@@ -144,7 +144,7 @@ class SqliteDatabaseSnapshotTest {
 				assertEquals("Q5", result.getString("question_code"));
 				assertEquals("Explain the observed equilibrium shift.", result.getString("question_text"));
 				assertEquals(4, result.getInt("marks"));
-				assertEquals(1, result.getInt("preamble_capture_required"));
+				assertEquals(1, result.getInt("shared_context_capture_required"));
 				assertEquals(20, result.getLong("classification_node_id"));
 				assertFalse(result.next());
 			}

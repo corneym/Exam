@@ -7,8 +7,11 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Stream;
 
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.output.revision.RevisionExportProgressListener;
 import au.edu.eq.questionbank.output.revision.RevisionExportRequest;
 import au.edu.eq.questionbank.output.revision.RevisionExportResult;
@@ -60,25 +63,6 @@ public final class ScormExportService {
 		this.zipWriter = zipWriter;
 	}
 
-	private List<Path> collectContentFiles(Path revisionRoot) throws IOException {
-		Path root = revisionRoot.toAbsolutePath().normalize();
-		try (Stream<Path> paths = Files.walk(root)) {
-			return paths.filter(Files::isRegularFile).map(root::relativize)
-					.sorted(Comparator.comparing(this::portablePath)).toList();
-		}
-	}
-
-	private void deleteRecursively(Path root) throws IOException {
-		if (!Files.exists(root)) {
-			return;
-		}
-		try (Stream<Path> paths = Files.walk(root)) {
-			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-				Files.deleteIfExists(path);
-			}
-		}
-	}
-
 	/**
 	 * Generates and publishes a SCORM package without progress notifications.
 	 *
@@ -124,8 +108,23 @@ public final class ScormExportService {
 		try {
 			Path revisionRoot = workspace.resolve("revision");
 			progress.update("Generating revision content...", 0, 0);
-			RevisionExportResult revisionResult = revisionExportService
-					.export(new RevisionExportRequest(request.getSubject(), revisionRoot), progress);
+
+			// SCORM must use exactly the same grouping semantics as the static HTML
+			// revision site it packages.
+			RevisionExportRequest revisionRequest;
+			if (request.hasGroupingMode() && request.hasUnitSelection()) {
+				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot,
+						request.getGroupingMode(), request.getSelectedUnitIds());
+			} else if (request.hasGroupingMode()) {
+				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot,
+						request.getGroupingMode());
+			} else if (request.hasUnitSelection()) {
+				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot, null,
+						request.getSelectedUnitIds());
+			} else {
+				revisionRequest = new RevisionExportRequest(request.getSubject(), revisionRoot);
+			}
+			RevisionExportResult revisionResult = revisionExportService.export(revisionRequest, progress);
 
 			// Inventory learning content before adding schemas and the manifest, which are
 			// package infrastructure.
@@ -160,6 +159,58 @@ public final class ScormExportService {
 				} else {
 					throw cleanupException;
 				}
+			}
+		}
+	}
+
+	/**
+	 * Returns Units that contain renderable revision content for SCORM export.
+	 *
+	 * @param subject subject whose corpus will be inspected
+	 * @return immutable Units in curriculum order
+	 */
+	public List<Unit> findExportableUnits(Subject subject) {
+		return revisionExportService.findExportableUnits(subject);
+	}
+
+	/**
+	 * Returns whether Descriptor grouping is available for the Subject's current
+	 * revision corpus.
+	 *
+	 * @param subject subject being considered for SCORM export
+	 * @return true when every renderable placement has Descriptor coverage
+	 */
+	public boolean isDescriptorGroupingAvailable(Subject subject) {
+		return revisionExportService.isDescriptorGroupingAvailable(subject);
+	}
+
+	/**
+	 * Returns whether Descriptor grouping is safe within a selected Unit scope.
+	 *
+	 * @param subject         subject being considered for SCORM export
+	 * @param selectedUnitIds identifiers of Units included in the export
+	 * @return {@code true} when every renderable scoped placement is at Descriptor
+	 *         level
+	 */
+	public boolean isDescriptorGroupingAvailable(Subject subject, Set<Long> selectedUnitIds) {
+		return revisionExportService.isDescriptorGroupingAvailable(subject, selectedUnitIds);
+	}
+
+	private List<Path> collectContentFiles(Path revisionRoot) throws IOException {
+		Path root = revisionRoot.toAbsolutePath().normalize();
+		try (Stream<Path> paths = Files.walk(root)) {
+			return paths.filter(Files::isRegularFile).map(root::relativize)
+					.sorted(Comparator.comparing(this::portablePath)).toList();
+		}
+	}
+
+	private void deleteRecursively(Path root) throws IOException {
+		if (!Files.exists(root)) {
+			return;
+		}
+		try (Stream<Path> paths = Files.walk(root)) {
+			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+				Files.deleteIfExists(path);
 			}
 		}
 	}

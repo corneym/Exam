@@ -22,7 +22,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 8;
+	static final int LATEST_SCHEMA_VERSION = 13;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -184,6 +184,12 @@ public final class SqliteDatabase {
 		try {
 			try (Statement statement = connection.createStatement()) {
 
+				// Wait briefly for another short-lived SQLite transaction rather than
+				// failing immediately with SQLITE_BUSY. The application performs
+				// persistence work off the JavaFX thread while UI reads may occur
+				// concurrently on another connection.
+				statement.execute("PRAGMA busy_timeout = 5000");
+
 				// Foreign-key enforcement is connection-local, so enable it for every caller.
 				statement.execute("PRAGMA foreign_keys = ON");
 			}
@@ -325,7 +331,7 @@ public final class SqliteDatabase {
 	private void createVersionOneSchema(Connection connection) throws SQLException {
 		String sql;
 		try {
-			sql = SqlResourceLoader.load("/db/schema-v1.sql");
+			sql = SqlResourceLoader.load("/db/schema-v01.sql");
 		} catch (IOException e) {
 			throw new SQLException("Unable to load schema resource", e);
 		}
@@ -473,36 +479,69 @@ public final class SqliteDatabase {
 
 	private int migrate(Connection connection, int version) throws SQLException {
 		if (version == 1) {
-			executeMigration(connection, "/db/migration-v1-to-v2.sql", 2);
+			executeMigration(connection, "/db/migration-v01-to-v02.sql", 2);
 			return 2;
 		}
 		if (version == 2) {
-			executeMigration(connection, "/db/migration-v2-to-v3.sql", 3);
+			executeMigration(connection, "/db/migration-v02-to-v03.sql", 3);
 			return 3;
 		}
 
 		// The v4 question redesign has no lossless migration for populated development
 		// databases.
 		if (version == 3) {
-			verifyVersionThreeCanBeMigrated(connection);
-			executeMigration(connection, "/db/migration-v3-to-v4.sql", 4);
+			verifyVersion03CanBeMigrated(connection);
+			executeMigration(connection, "/db/migration-v03-to-v04.sql", 4);
 			return 4;
 		}
 		if (version == 4) {
-			executeMigration(connection, "/db/migration-v4-to-v5.sql", 5);
+			executeMigration(connection, "/db/migration-v04-to-v05.sql", 5);
 			return 5;
 		}
 		if (version == 5) {
-			executeMigration(connection, "/db/migration-v5-to-v6.sql", 6);
+			executeMigration(connection, "/db/migration-v05-to-v06.sql", 6);
 			return 6;
 		}
 		if (version == 6) {
-			executeMigration(connection, "/db/migration-v6-to-v7.sql", 7);
+			executeMigration(connection, "/db/migration-v06-to-v07.sql", 7);
 			return 7;
 		}
 		if (version == 7) {
-			executeMigration(connection, "/db/migration-v7-to-v8.sql", 8);
+			executeMigration(connection, "/db/migration-v07-to-v08.sql", 8);
 			return 8;
+		}
+		if (version == 8) {
+
+			// Version nine records the expected Question format at booklet level.
+			executeMigration(connection, "/db/migration-v08-to-v09.sql", 9);
+			return 9;
+		}
+		if (version == 9) {
+
+			// Version ten records which AnswerFile supplies answers for each ExamBooklet.
+			executeMigration(connection, "/db/migration-v09-to-v10.sql", 10);
+			return 10;
+		}
+		if (version == 10) {
+
+			// Version eleven records a restart-safe independent-MCQ shared-context
+			// continuation for each booklet.
+			executeMigration(connection, "/db/migration-v10-to-v11.sql", 11);
+			return 11;
+		}
+		if (version == 11) {
+
+			// Version twelve stores only explicit Question-specific exclusions from
+			// otherwise-derived current-curriculum output applicability.
+			executeMigration(connection, "/db/migration-v11-to-v12.sql", 12);
+			return 12;
+		}
+		if (version == 12) {
+
+			// Version thirteen removes the final legacy physical "preamble" names
+			// from the live schema without changing any stored semantics.
+			executeMigration(connection, "/db/migration-v12-to-v13.sql", 13);
+			return 13;
 		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
@@ -666,9 +705,10 @@ public final class SqliteDatabase {
 			}
 		}
 
-		// Apply the checks introduced by each version, retaining earlier structural
-		// requirements.
-		verifyVersionOneRelationalSchema(connection, version);
+		// Apply the checks introduced by each version while allowing the version-13
+		// migration to rename two legacy physical columns without weakening the
+		// structural checks that originally introduced them.
+		verifyVersion01RelationalSchema(connection, version);
 		if (version >= 2) {
 			if (!tableExists(connection, "curriculum_mappings")) {
 				throw new SQLException(
@@ -684,19 +724,51 @@ public final class SqliteDatabase {
 			verifyCurriculumMappingReviewSchema(connection);
 		}
 		if (version >= 4) {
-			verifyVersionFourQuestionSchema(connection);
+			String sharedContextCaptureColumnName = version >= 13 ? "shared_context_capture_required"
+					: "preamble_capture_required";
+			verifyVersion04QuestionSchema(connection, sharedContextCaptureColumnName);
 		}
 		if (version >= 5) {
-			verifyVersionFiveSharedQuestionSchema(connection);
+			verifyVersion05SharedQuestionSchema(connection);
 		}
 		if (version >= 6) {
-			verifyVersionSixSourceQuestionSchema(connection);
+			String sharedContextStatusColumnName = version >= 13 ? "shared_context_status" : "preamble_status";
+			verifyVersion06SourceQuestionSchema(connection, sharedContextStatusColumnName);
 		}
 		if (version >= 7) {
-			verifyVersionSevenCurriculumAuthoringSchema(connection);
+			verifyVersion07CurriculumAuthoringSchema(connection);
 		}
 		if (version >= 8) {
-			verifyVersionEightQuestionResponseTypeSchema(connection);
+
+			// Schema version 8 introduced the persisted Question response type.
+			verifyVersion08QuestionResponseTypeSchema(connection);
+		}
+		if (version >= 9) {
+
+			// Schema version 9 introduced the persisted booklet-level Question format.
+			verifyVersion09BookletQuestionFormatSchema(connection);
+		}
+		if (version >= 10) {
+
+			// Schema version 10 introduced the nullable booklet-to-answer-file
+			// relationship used to select the correct answer document.
+			verifyVersion10BookletAnswerFileSchema(connection);
+		}
+		if (version >= 11) {
+
+			// Schema version 11 introduced restart-safe continuation of shared context
+			// between otherwise independent MCQs.
+			verifyVersion11PendingMcqSharedContextSchema(connection);
+		}
+		if (version >= 12) {
+
+			// Schema version 12 introduced reversible per-Question exclusions from
+			// derived current-curriculum output applicability.
+			if (!tableExists(connection, "question_output_exclusions")) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table question_output_exclusions");
+			}
+			verifyVersion12QuestionOutputExclusionSchema(connection);
 		}
 	}
 
@@ -765,117 +837,7 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersionEightQuestionResponseTypeSchema(Connection connection) throws SQLException {
-		boolean hasResponseType = false;
-		try (Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
-			while (result.next()) {
-				if (!"response_type".equals(result.getString("name"))) {
-					continue;
-				}
-				hasResponseType = true;
-				if (result.getInt("notnull") == 0) {
-					throw new SQLException("questions column must be NOT NULL: response_type");
-				}
-			}
-		}
-		if (!hasResponseType) {
-			throw new SQLException("questions is missing required column response_type");
-		}
-	}
-
-	private void verifyVersionFiveSharedQuestionSchema(Connection connection) throws SQLException {
-		verifyTableSchema(connection, "source_questions",
-				List.of(column("id", false, 1), column("booklet_id", true, 0), column("source_question_code", true, 0)),
-				List.of(foreignKey("booklet_id", "exam_booklets", "id")),
-				List.of(List.of("booklet_id", "source_question_code")));
-		verifyTableSchema(connection, "shared_question_contexts",
-				List.of(column("id", false, 1), column("booklet_id", true, 0), column("context_label", true, 0)),
-				List.of(foreignKey("booklet_id", "exam_booklets", "id")), List.of());
-		verifyTableSchema(connection, "shared_question_context_regions",
-				List.of(column("shared_context_id", true, 1), column("region_order", true, 2),
-						column("page_number", true, 0), column("x", true, 0), column("y", true, 0),
-						column("width", true, 0), column("height", true, 0)),
-				List.of(foreignKey("shared_context_id", "shared_question_contexts", "id")), List.of());
-		boolean hasSourceQuestionId = false;
-		boolean hasSharedContextId = false;
-		try (Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
-			while (result.next()) {
-				String columnName = result.getString("name");
-				if ("source_question_id".equals(columnName)) {
-					hasSourceQuestionId = true;
-					if (result.getInt("notnull") != 0) {
-						throw new SQLException("questions column must be nullable: source_question_id");
-					}
-				} else if ("shared_context_id".equals(columnName)) {
-					hasSharedContextId = true;
-					if (result.getInt("notnull") != 0) {
-						throw new SQLException("questions column must be nullable: shared_context_id");
-					}
-				}
-			}
-		}
-		if (!hasSourceQuestionId) {
-			throw new SQLException("questions is missing required column source_question_id");
-		}
-		if (!hasSharedContextId) {
-			throw new SQLException("questions is missing required column shared_context_id");
-		}
-		if (!hasExactSingleColumnForeignKey(connection, "questions", "source_question_id", "source_questions", "id")) {
-			throw new SQLException("questions is missing exact foreign key source_question_id -> source_questions(id)");
-		}
-		if (!hasExactSingleColumnForeignKey(connection, "questions", "shared_context_id", "shared_question_contexts",
-				"id")) {
-			throw new SQLException(
-					"questions is missing exact foreign key shared_context_id -> shared_question_contexts(id)");
-		}
-	}
-
-	private void verifyVersionFourQuestionSchema(Connection connection) throws SQLException {
-		Set<String> requiredColumns = new HashSet<>(List.of("id", "booklet_id", "classification_node_id",
-				"question_code", "question_text", "marks", "preamble_capture_required"));
-		int primaryKeyColumnCount = 0;
-		int idPrimaryKeyPosition = 0;
-		try (Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
-			while (result.next()) {
-				String columnName = result.getString("name");
-				requiredColumns.remove(columnName);
-				int primaryKeyPosition = result.getInt("pk");
-				if (primaryKeyPosition > 0) {
-					primaryKeyColumnCount++;
-				}
-				if ("id".equals(columnName)) {
-					idPrimaryKeyPosition = primaryKeyPosition;
-				} else if (("booklet_id".equals(columnName) || "classification_node_id".equals(columnName)
-						|| "question_code".equals(columnName) || "question_text".equals(columnName)
-						|| "marks".equals(columnName) || "preamble_capture_required".equals(columnName))
-						&& result.getInt("notnull") == 0) {
-					throw new SQLException("questions column must be NOT NULL: " + columnName);
-				}
-			}
-		}
-		if (!requiredColumns.isEmpty()) {
-			throw new SQLException("questions is missing required column " + requiredColumns.iterator().next());
-		}
-		if (primaryKeyColumnCount != 1 || idPrimaryKeyPosition != 1) {
-			throw new SQLException("questions has an invalid primary key; expected exactly (id)");
-		}
-		if (!hasExactSingleColumnForeignKey(connection, "questions", "booklet_id", "exam_booklets", "id")) {
-			throw new SQLException("questions is missing exact foreign key booklet_id -> exam_booklets(id)");
-		}
-		if (!hasExactSingleColumnForeignKey(connection, "questions", "classification_node_id", "curriculum_nodes",
-				"id")) {
-			throw new SQLException(
-					"questions is missing exact foreign key classification_node_id -> curriculum_nodes(id)");
-		}
-		if (!hasExactUniqueIndex(connection, "questions", List.of("booklet_id", "question_code"))) {
-			throw new SQLException("questions is missing exact unique key (booklet_id, question_code)");
-		}
-	}
-
-	private void verifyVersionOneRelationalSchema(Connection connection, int version) throws SQLException {
+	private void verifyVersion01RelationalSchema(Connection connection, int version) throws SQLException {
 		verifyTableSchema(connection, "schema_version", List.of(column("version", true, 0)), List.of(), List.of());
 		verifyTableSchema(connection, "subjects", List.of(column("id", false, 1), column("subject_name", true, 0)),
 				List.of(), List.of(List.of("subject_name")));
@@ -936,7 +898,131 @@ public final class SqliteDatabase {
 				List.of());
 	}
 
-	private void verifyVersionSevenCurriculumAuthoringSchema(Connection connection) throws SQLException {
+	private void verifyVersion03CanBeMigrated(Connection connection) throws SQLException {
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM questions")) {
+			result.next();
+			if (result.getInt(1) > 0) {
+				throw new IncompatibleDatabaseException(
+						"The existing database contains question data that cannot be migrated safely.");
+			}
+		}
+	}
+
+	private void verifyVersion04QuestionSchema(Connection connection, String sharedContextCaptureColumnName)
+			throws SQLException {
+		Set<String> requiredColumns = new HashSet<>(List.of("id", "booklet_id", "classification_node_id",
+				"question_code", "question_text", "marks", sharedContextCaptureColumnName));
+		int primaryKeyColumnCount = 0;
+		int idPrimaryKeyPosition = 0;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				requiredColumns.remove(columnName);
+				int primaryKeyPosition = result.getInt("pk");
+				if (primaryKeyPosition > 0) {
+					primaryKeyColumnCount++;
+				}
+				if ("id".equals(columnName)) {
+					idPrimaryKeyPosition = primaryKeyPosition;
+				} else if (("booklet_id".equals(columnName) || "classification_node_id".equals(columnName)
+						|| "question_code".equals(columnName) || "question_text".equals(columnName)
+						|| "marks".equals(columnName) || sharedContextCaptureColumnName.equals(columnName))
+						&& result.getInt("notnull") == 0) {
+					throw new SQLException("questions column must be NOT NULL: " + columnName);
+				}
+			}
+		}
+		if (!requiredColumns.isEmpty()) {
+			throw new SQLException("questions is missing required column " + requiredColumns.iterator().next());
+		}
+		if (primaryKeyColumnCount != 1 || idPrimaryKeyPosition != 1) {
+			throw new SQLException("questions has an invalid primary key; expected exactly (id)");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "questions", "booklet_id", "exam_booklets", "id")) {
+			throw new SQLException("questions is missing exact foreign key booklet_id -> exam_booklets(id)");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "questions", "classification_node_id", "curriculum_nodes",
+				"id")) {
+			throw new SQLException(
+					"questions is missing exact foreign key classification_node_id -> curriculum_nodes(id)");
+		}
+		if (!hasExactUniqueIndex(connection, "questions", List.of("booklet_id", "question_code"))) {
+			throw new SQLException("questions is missing exact unique key (booklet_id, question_code)");
+		}
+	}
+
+	private void verifyVersion05SharedQuestionSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "source_questions",
+				List.of(column("id", false, 1), column("booklet_id", true, 0), column("source_question_code", true, 0)),
+				List.of(foreignKey("booklet_id", "exam_booklets", "id")),
+				List.of(List.of("booklet_id", "source_question_code")));
+		verifyTableSchema(connection, "shared_question_contexts",
+				List.of(column("id", false, 1), column("booklet_id", true, 0), column("context_label", true, 0)),
+				List.of(foreignKey("booklet_id", "exam_booklets", "id")), List.of());
+		verifyTableSchema(connection, "shared_question_context_regions",
+				List.of(column("shared_context_id", true, 1), column("region_order", true, 2),
+						column("page_number", true, 0), column("x", true, 0), column("y", true, 0),
+						column("width", true, 0), column("height", true, 0)),
+				List.of(foreignKey("shared_context_id", "shared_question_contexts", "id")), List.of());
+		boolean hasSourceQuestionId = false;
+		boolean hasSharedContextId = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				if ("source_question_id".equals(columnName)) {
+					hasSourceQuestionId = true;
+					if (result.getInt("notnull") != 0) {
+						throw new SQLException("questions column must be nullable: source_question_id");
+					}
+				} else if ("shared_context_id".equals(columnName)) {
+					hasSharedContextId = true;
+					if (result.getInt("notnull") != 0) {
+						throw new SQLException("questions column must be nullable: shared_context_id");
+					}
+				}
+			}
+		}
+		if (!hasSourceQuestionId) {
+			throw new SQLException("questions is missing required column source_question_id");
+		}
+		if (!hasSharedContextId) {
+			throw new SQLException("questions is missing required column shared_context_id");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "questions", "source_question_id", "source_questions", "id")) {
+			throw new SQLException("questions is missing exact foreign key source_question_id -> source_questions(id)");
+		}
+		if (!hasExactSingleColumnForeignKey(connection, "questions", "shared_context_id", "shared_question_contexts",
+				"id")) {
+			throw new SQLException(
+					"questions is missing exact foreign key shared_context_id -> shared_question_contexts(id)");
+		}
+	}
+
+	private void verifyVersion06SourceQuestionSchema(Connection connection, String sharedContextStatusColumnName)
+			throws SQLException {
+		boolean hasSharedContextStatus = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(source_questions)")) {
+			while (result.next()) {
+				if (!sharedContextStatusColumnName.equals(result.getString("name"))) {
+					continue;
+				}
+				hasSharedContextStatus = true;
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException(
+							"source_questions column must be NOT NULL: " + sharedContextStatusColumnName);
+				}
+			}
+		}
+		if (!hasSharedContextStatus) {
+			throw new SQLException("source_questions is missing required column " + sharedContextStatusColumnName);
+		}
+	}
+
+	private void verifyVersion07CurriculumAuthoringSchema(Connection connection) throws SQLException {
 		verifyTableSchema(connection, "syllabus_versions",
 				List.of(column("id", false, 1), column("subject_id", true, 0), column("syllabus_name", true, 0),
 						column("is_current", true, 0), column("curriculum_status", true, 0),
@@ -952,34 +1038,118 @@ public final class SqliteDatabase {
 				List.of(List.of("syllabus_version_id", "curriculum_code")));
 	}
 
-	private void verifyVersionSixSourceQuestionSchema(Connection connection) throws SQLException {
-		boolean hasPreambleStatus = false;
+	private void verifyVersion08QuestionResponseTypeSchema(Connection connection) throws SQLException {
+		boolean hasResponseType = false;
 		try (Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("PRAGMA table_info(source_questions)")) {
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
 			while (result.next()) {
-				if (!"preamble_status".equals(result.getString("name"))) {
+				if (!"response_type".equals(result.getString("name"))) {
 					continue;
 				}
-				hasPreambleStatus = true;
+				hasResponseType = true;
+
+				// Version 8 requires every persisted Question to carry a response-type
+				// value, using UNKNOWN for unresolved legacy Questions.
 				if (result.getInt("notnull") == 0) {
-					throw new SQLException("source_questions column must be NOT NULL: preamble_status");
+					throw new SQLException("questions column must be NOT NULL: response_type");
 				}
 			}
 		}
-		if (!hasPreambleStatus) {
-			throw new SQLException("source_questions is missing required column preamble_status");
+		if (!hasResponseType) {
+			throw new SQLException("questions is missing required column response_type");
 		}
 	}
 
-	private void verifyVersionThreeCanBeMigrated(Connection connection) throws SQLException {
+	private void verifyVersion09BookletQuestionFormatSchema(Connection connection) throws SQLException {
+		boolean hasQuestionFormat = false;
 		try (Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM questions")) {
-			result.next();
-			if (result.getInt(1) > 0) {
-				throw new IncompatibleDatabaseException(
-						"The existing database contains question data that cannot be migrated safely.");
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"question_format".equals(result.getString("name"))) {
+					continue;
+				}
+				hasQuestionFormat = true;
+
+				// Every persisted booklet must carry an explicit stored value. Legacy
+				// booklets use UNSPECIFIED rather than SQL NULL.
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("exam_booklets column must be NOT NULL: question_format");
+				}
 			}
 		}
+		if (!hasQuestionFormat) {
+			throw new SQLException("exam_booklets is missing required column question_format");
+		}
+	}
+
+	private void verifyVersion10BookletAnswerFileSchema(Connection connection) throws SQLException {
+		boolean hasAnswerFileId = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"answer_file_id".equals(result.getString("name"))) {
+					continue;
+				}
+				hasAnswerFileId = true;
+
+				// Existing and unresolved booklets must be allowed to remain unassigned
+				// until the correct AnswerFile is established explicitly.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("exam_booklets column must be nullable: answer_file_id");
+				}
+			}
+		}
+		if (!hasAnswerFileId) {
+			throw new SQLException("exam_booklets is missing required column answer_file_id");
+		}
+
+		// The stored mapping must always reference a real AnswerFile. Same-Exam
+		// ownership is enforced by the persistence writer when the mapping is changed.
+		if (!hasExactSingleColumnForeignKey(connection, "exam_booklets", "answer_file_id", "answer_files", "id")) {
+			throw new SQLException("exam_booklets is missing exact foreign key answer_file_id -> answer_files(id)");
+		}
+	}
+
+	private void verifyVersion11PendingMcqSharedContextSchema(Connection connection) throws SQLException {
+		boolean hasPendingSharedContextId = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"pending_mcq_shared_context_id".equals(result.getString("name"))) {
+					continue;
+				}
+				hasPendingSharedContextId = true;
+
+				// Most booklets have no pending MCQ continuation. NULL is therefore the
+				// normal persisted state rather than an exceptional placeholder value.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("exam_booklets column must be nullable: pending_mcq_shared_context_id");
+				}
+			}
+		}
+		if (!hasPendingSharedContextId) {
+			throw new SQLException("exam_booklets is missing required column pending_mcq_shared_context_id");
+		}
+
+		// A pending continuation must always identify a real persisted context. The
+		// capture service additionally verifies that the context belongs to this
+		// particular booklet before it is used.
+		if (!hasExactSingleColumnForeignKey(connection, "exam_booklets", "pending_mcq_shared_context_id",
+				"shared_question_contexts", "id")) {
+			throw new SQLException(
+					"exam_booklets is missing exact foreign key pending_mcq_shared_context_id -> shared_question_contexts(id)");
+		}
+	}
+
+	private void verifyVersion12QuestionOutputExclusionSchema(Connection connection) throws SQLException {
+
+		// The composite primary key guarantees at most one exclusion decision for a
+		// Question/current-node pair. Both references are mandatory.
+		verifyTableSchema(connection, "question_output_exclusions",
+				List.of(column("question_id", true, 1), column("current_curriculum_node_id", true, 2)),
+				List.of(foreignKey("question_id", "questions", "id"),
+						foreignKey("current_curriculum_node_id", "curriculum_nodes", "id")),
+				List.of());
 	}
 
 	private record ColumnRequirement(String name, boolean notNull, int primaryKeyPosition) {

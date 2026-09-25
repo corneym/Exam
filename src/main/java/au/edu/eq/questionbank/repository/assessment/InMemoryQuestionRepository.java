@@ -51,7 +51,7 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			if (question.hasSharedContext() && question.getSharedContext().getId() != sharedContext.getId()) {
 				throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()
-						+ " has inconsistent shared preamble links");
+						+ " has inconsistent shared context links");
 			}
 		}
 
@@ -65,8 +65,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), existing.getRegions(),
-					existing.getClassification(), existing.isPreambleCaptureRequired(), existing.getSourceQuestion(),
-					sharedContext, existing.getResponseType());
+					existing.getClassification(), existing.isSharedContextCaptureRequired(),
+					existing.getSourceQuestion(), sharedContext, existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -94,8 +94,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, existing.getClassification(),
-					existing.isPreambleCaptureRequired(), existing.getSourceQuestion(), existing.getSharedContext(),
-					existing.getResponseType());
+					existing.isSharedContextCaptureRequired(), existing.getSourceQuestion(),
+					existing.getSharedContext(), existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -132,7 +132,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, classification,
-					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
+					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext,
+					existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -161,7 +162,8 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), regions, existing.getClassification(),
-					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
+					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext,
+					existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -188,25 +190,25 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
-		return save(booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired, null,
-				null);
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired) {
+		return save(booklet, questionCode, questionText, marks, regions, classification, sharedContextCaptureRequired,
+				null, null);
 	}
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
-		return save(booklet, questionCode, questionText, marks, regions, classification, preambleCaptureRequired,
+		return save(booklet, questionCode, questionText, marks, regions, classification, sharedContextCaptureRequired,
 				sourceQuestion, sharedContext, QuestionResponseType.UNKNOWN);
 	}
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 		Question question = new Question(nextId++, booklet, questionCode, questionText, marks, regions, classification,
-				preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+				sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
 		questions.add(question);
 		return question;
 	}
@@ -229,7 +231,41 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
 					existing.getQuestionText(), existing.getMarks(), existing.getRegions(), classification,
-					existing.isPreambleCaptureRequired(), sourceQuestion, sharedContext, existing.getResponseType());
+					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext,
+					existing.getResponseType());
+			if (existing.hasAnswer()) {
+				updated.setAnswer(existing.getAnswer());
+			}
+			questions.set(i, updated);
+			return updated;
+		}
+		throw new IllegalArgumentException("Question does not exist: " + questionId);
+	}
+
+	@Override
+	public Question updateClassification(long questionId, CurriculumNode classification) {
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+		for (int i = 0; i < questions.size(); i++) {
+			Question existing = questions.get(i);
+			if (existing.getId() != questionId) {
+				continue;
+			}
+
+			// A Search refinement may change Subtopic to Descriptor, but it must remain
+			// within the Question's existing syllabus version.
+			if (classification.getSyllabusVersion().getId() != existing.getClassification().getSyllabusVersion()
+					.getId()) {
+				throw new IllegalArgumentException("Question classification must remain in its existing syllabus");
+			}
+
+			// Replace only the classification. All capture relationships, regions,
+			// response metadata and any persisted Answer remain unchanged.
+			Question updated = new Question(existing.getId(), existing.getBooklet(), existing.getQuestionCode(),
+					existing.getQuestionText(), existing.getMarks(), existing.getRegions(), classification,
+					existing.isSharedContextCaptureRequired(), existing.getSourceQuestion(),
+					existing.getSharedContext(), existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}
@@ -281,8 +317,9 @@ public class InMemoryQuestionRepository implements QuestionRepository {
 				throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 			}
 			Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
-					existing.getQuestionText(), marks, regions, classification, existing.isPreambleCaptureRequired(),
-					sourceQuestion, sharedContext, existing.getResponseType());
+					existing.getQuestionText(), marks, regions, classification,
+					existing.isSharedContextCaptureRequired(), sourceQuestion, sharedContext,
+					existing.getResponseType());
 			if (existing.hasAnswer()) {
 				updated.setAnswer(existing.getAnswer());
 			}

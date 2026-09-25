@@ -18,11 +18,12 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -211,13 +212,14 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 							q.question_code,
 							q.question_text,
 							q.marks,
-							q.preamble_capture_required,
+							q.shared_context_capture_required,
 							q.response_type,
 							q.source_question_id,
 							q.shared_context_id,
 							q.classification_node_id,
 							eb.id AS booklet_id,
 							eb.booklet_name,
+							eb.question_format,
 							sd.id AS source_document_id,
 							sd.relative_path,
 							e.id AS exam_id,
@@ -258,10 +260,10 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired) {
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired) {
 		try {
 			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
-					preambleCaptureRequired);
+					sharedContextCaptureRequired);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
 		}
@@ -269,11 +271,11 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
 		try {
 			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
-					preambleCaptureRequired, sourceQuestion, sharedContext);
+					sharedContextCaptureRequired, sourceQuestion, sharedContext);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
 		}
@@ -281,11 +283,11 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	@Override
 	public Question save(ExamBooklet booklet, String questionCode, String questionText, int marks,
-			List<QuestionRegion> regions, CurriculumNode classification, boolean preambleCaptureRequired,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 		try {
 			return writer.insertQuestion(booklet, questionCode, questionText, marks, regions, classification,
-					preambleCaptureRequired, sourceQuestion, sharedContext, responseType);
+					sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not save question", e);
 		}
@@ -306,6 +308,29 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		}
 	}
 
+	/**
+	 * Updates only the stored curriculum classification of an existing Question.
+	 *
+	 * @param questionId     persistent Question identifier
+	 * @param classification replacement classification in the existing syllabus
+	 * @return the reloaded Question after the classification change
+	 */
+	@Override
+	public Question updateClassification(long questionId, CurriculumNode classification) {
+		Question existing = findById(questionId)
+				.orElseThrow(() -> new IllegalArgumentException("Question does not exist: " + questionId));
+		try {
+
+			// Delegate the narrow persistence change to the writer so Question regions,
+			// relationships and other metadata remain untouched.
+			writer.updateClassification(questionId, existing.getBooklet(), classification);
+			return findById(questionId)
+					.orElseThrow(() -> new IllegalStateException("Question disappeared after classification update"));
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not update question classification", e);
+		}
+	}
+
 	@Override
 	public Question updateQuestion(long questionId, String questionCode, int marks, List<QuestionRegion> regions,
 			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
@@ -319,29 +344,6 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not update question", e);
 		}
-	}
-
-	private List<QuestionApplicabilityMatch> reconstructApplicabilityMatches(List<ApplicabilityRow> rows,
-			Map<Long, CurriculumNode> requestedNodesById) {
-
-		// Load each question once while retaining a separate match for every applicable
-		// node.
-		Map<Long, Question> questionsById = new LinkedHashMap<Long, Question>();
-		List<QuestionApplicabilityMatch> matches = new ArrayList<QuestionApplicabilityMatch>();
-		for (ApplicabilityRow row : rows) {
-			Question question = questionsById.get(row.questionId());
-			if (question == null) {
-				question = findById(row.questionId()).orElseThrow(() -> new IllegalStateException(
-						"Question disappeared while retrieving applicability: " + row.questionId()));
-				questionsById.put(row.questionId(), question);
-			}
-			CurriculumNode currentNode = requestedNodesById.get(row.currentNodeId());
-			if (currentNode == null) {
-				throw new IllegalStateException("Retrieval query returned an unrequested current node");
-			}
-			matches.add(new QuestionApplicabilityMatch(question, currentNode));
-		}
-		return List.copyOf(matches);
 	}
 
 	private String createRequestedNodeValues(int nodeCount) {
@@ -503,7 +505,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	private SourceQuestion findSourceQuestion(Connection connection, long sourceQuestionId, ExamBooklet questionBooklet)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT booklet_id, source_question_code, preamble_status
+				SELECT booklet_id, source_question_code, shared_context_status
 				FROM source_questions
 				WHERE id = ?
 				""")) {
@@ -516,7 +518,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 					throw new IllegalStateException("Source question belongs to a different booklet");
 				}
 				return new SourceQuestion(sourceQuestionId, questionBooklet, result.getString("source_question_code"),
-						PreambleStatus.valueOf(result.getString("preamble_status")));
+						SharedContextStatus.valueOf(result.getString("shared_context_status")));
 			}
 		}
 	}
@@ -528,8 +530,13 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				result.getString("exam_name"));
 		SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 				result.getString("relative_path"));
+
+		// Reconstruct the booklet with its persisted format so Question retrieval does
+		// not silently turn explicit booklet metadata back into UNSPECIFIED.
+		ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
+				.valueOf(result.getString("question_format"));
 		ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
-				sourceDocument);
+				sourceDocument, questionFormat);
 
 		// Reconstruct the original classification even when retrieval matched a newer
 		// syllabus.
@@ -549,12 +556,35 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		QuestionResponseType responseType = QuestionResponseType.valueOf(result.getString("response_type"));
 		Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
 				result.getString("question_text"), result.getInt("marks"), regions, classification,
-				result.getInt("preamble_capture_required") != 0, sourceQuestion, sharedContext, responseType);
+				result.getInt("shared_context_capture_required") != 0, sourceQuestion, sharedContext, responseType);
 		Answer answer = findAnswer(connection, questionId, exam);
 		if (answer != null) {
 			question.setAnswer(answer);
 		}
 		return question;
+	}
+
+	private List<QuestionApplicabilityMatch> reconstructApplicabilityMatches(List<ApplicabilityRow> rows,
+			Map<Long, CurriculumNode> requestedNodesById) {
+
+		// Load each question once while retaining a separate match for every applicable
+		// node.
+		Map<Long, Question> questionsById = new LinkedHashMap<Long, Question>();
+		List<QuestionApplicabilityMatch> matches = new ArrayList<QuestionApplicabilityMatch>();
+		for (ApplicabilityRow row : rows) {
+			Question question = questionsById.get(row.questionId());
+			if (question == null) {
+				question = findById(row.questionId()).orElseThrow(() -> new IllegalStateException(
+						"Question disappeared while retrieving applicability: " + row.questionId()));
+				questionsById.put(row.questionId(), question);
+			}
+			CurriculumNode currentNode = requestedNodesById.get(row.currentNodeId());
+			if (currentNode == null) {
+				throw new IllegalStateException("Retrieval query returned an unrequested current node");
+			}
+			matches.add(new QuestionApplicabilityMatch(question, currentNode));
+		}
+		return List.copyOf(matches);
 	}
 
 	private Map<Long, CurriculumNode> validateRetrievalNodes(List<CurriculumNode> currentNodes) {

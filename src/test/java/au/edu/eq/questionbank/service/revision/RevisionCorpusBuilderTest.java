@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
@@ -101,11 +102,42 @@ class RevisionCorpusBuilderTest {
 		assertEquals(0, statistics.getMissingQuestionRegionQuestions());
 		assertEquals(0, statistics.getQuestionsWithAnswers());
 		assertEquals(0, statistics.getQuestionsWithoutAnswers());
-		assertEquals(0, statistics.getPreambleReviewQuestions());
+		assertEquals(0, statistics.getSharedContextReviewQuestions());
 	}
 
 	@Test
-	void placementExposesRenderabilityAnswerAndPreambleState() {
+	void excludesOnlySpecifiedQuestionApplicabilityPlacement() {
+		Fixture fixture = new Fixture();
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
+				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor),
+				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.subtopicDescriptor),
+				new QuestionApplicabilityMatch(fixture.laterQuestion, fixture.directDescriptor));
+		InMemoryQuestionOutputApplicabilityRepository outputApplicabilityRepository = new InMemoryQuestionOutputApplicabilityRepository();
+		outputApplicabilityRepository.setExcluded(fixture.renderableQuestion, fixture.directDescriptor, true);
+		RevisionCorpus corpus = fixture.createBuilder(retrievalRepository, outputApplicabilityRepository)
+				.build(fixture.chemistry);
+		List<RevisionQuestionPlacement> directPlacements = findNode(corpus, fixture.directDescriptor)
+				.getQuestionPlacements();
+		List<RevisionQuestionPlacement> nestedPlacements = findNode(corpus, fixture.subtopicDescriptor)
+				.getQuestionPlacements();
+
+		// Excluding Question 2 from one Descriptor must not remove Question 3 from
+		// that Descriptor or Question 2 from its other valid current placement.
+		assertEquals(1, directPlacements.size());
+		assertSame(fixture.laterQuestion, directPlacements.getFirst().getQuestion());
+		assertEquals(1, nestedPlacements.size());
+		assertSame(fixture.renderableQuestion, nestedPlacements.getFirst().getQuestion());
+		RevisionCorpusStatistics statistics = corpus.getStatistics();
+
+		// Statistics describe the final revision corpus after exclusions rather than
+		// the larger set of curriculum-derived candidate placements.
+		assertEquals(2, statistics.getApplicablePlacements());
+		assertEquals(2, statistics.getUniqueApplicableQuestions());
+		assertEquals(2, statistics.getRenderableQuestions());
+	}
+
+	@Test
+	void placementExposesRenderabilityAnswerAndSharedContextState() {
 		Fixture fixture = new Fixture();
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
 				new QuestionApplicabilityMatch(fixture.subtopicQuestion, fixture.currentSubtopic),
@@ -116,13 +148,13 @@ class RevisionCorpusBuilderTest {
 		assertFalse(incomplete.hasRevisionNumber());
 		assertThrows(IllegalStateException.class, incomplete::getRevisionNumber);
 		assertFalse(incomplete.hasAnswer());
-		assertTrue(incomplete.isPreambleCaptureRequired());
+		assertTrue(incomplete.issharedContextCaptureRequired());
 		RevisionQuestionPlacement renderable = findNode(corpus, fixture.directDescriptor).getQuestionPlacements()
 				.get(0);
 		assertTrue(renderable.isRenderable());
 		assertTrue(renderable.hasRevisionNumber());
 		assertTrue(renderable.hasAnswer());
-		assertFalse(renderable.isPreambleCaptureRequired());
+		assertFalse(renderable.issharedContextCaptureRequired());
 	}
 
 	@Test
@@ -143,6 +175,29 @@ class RevisionCorpusBuilderTest {
 		assertEquals(1, subtopic.getQuestionPlacements().size());
 		assertSame(fixture.subtopicQuestion, subtopic.getQuestionPlacements().get(0).getQuestion());
 		assertEquals(0, findNode(corpus, fixture.subtopicModeTopic).getQuestionPlacements().size());
+	}
+
+	@Test
+	void questionExcludedFromEveryDerivedPlacementIsAbsentFromCorpusStatistics() {
+		Fixture fixture = new Fixture();
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
+				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.directDescriptor),
+				new QuestionApplicabilityMatch(fixture.renderableQuestion, fixture.subtopicDescriptor));
+		InMemoryQuestionOutputApplicabilityRepository outputApplicabilityRepository = new InMemoryQuestionOutputApplicabilityRepository();
+		outputApplicabilityRepository.setExcluded(fixture.renderableQuestion, fixture.directDescriptor, true);
+		outputApplicabilityRepository.setExcluded(fixture.renderableQuestion, fixture.subtopicDescriptor, true);
+		RevisionCorpus corpus = fixture.createBuilder(retrievalRepository, outputApplicabilityRepository)
+				.build(fixture.chemistry);
+
+		// The current curriculum hierarchy remains complete even though this Question
+		// has been suppressed from every revision-output placement.
+		assertTrue(findNode(corpus, fixture.directDescriptor).getQuestionPlacements().isEmpty());
+		assertTrue(findNode(corpus, fixture.subtopicDescriptor).getQuestionPlacements().isEmpty());
+		RevisionCorpusStatistics statistics = corpus.getStatistics();
+		assertEquals(0, statistics.getApplicablePlacements());
+		assertEquals(0, statistics.getUniqueApplicableQuestions());
+		assertEquals(0, statistics.getRenderableQuestions());
+		assertEquals(0, statistics.getQuestionsWithAnswers());
 	}
 
 	@Test
@@ -174,7 +229,11 @@ class RevisionCorpusBuilderTest {
 		CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 				curriculumRepository);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(_ -> List.of(), expansionService);
-		RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+		RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				new InMemoryQuestionOutputApplicabilityRepository());
+
+		// Output exclusions cannot make an ambiguous current-syllabus definition
+		// acceptable; corpus construction must reject it first.
 		assertThrows(IllegalStateException.class, () -> builder.build(chemistry));
 	}
 
@@ -187,7 +246,10 @@ class RevisionCorpusBuilderTest {
 		CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 				curriculumRepository);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(_ -> List.of(), expansionService);
-		RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+		RevisionCorpusBuilder builder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				new InMemoryQuestionOutputApplicabilityRepository());
+
+		// Question-specific exclusions do not substitute for a real current syllabus.
 		assertThrows(IllegalStateException.class, () -> builder.build(chemistry));
 	}
 
@@ -232,7 +294,7 @@ class RevisionCorpusBuilderTest {
 		assertEquals(1, statistics.getMissingQuestionRegionQuestions());
 		assertEquals(1, statistics.getQuestionsWithAnswers());
 		assertEquals(2, statistics.getQuestionsWithoutAnswers());
-		assertEquals(1, statistics.getPreambleReviewQuestions());
+		assertEquals(1, statistics.getSharedContextReviewQuestions());
 	}
 
 	private static final class Fixture {
@@ -292,11 +354,19 @@ class RevisionCorpusBuilderTest {
 		}
 
 		private RevisionCorpusBuilder createBuilder(QuestionRetrievalRepository retrievalRepository) {
+
+			// Existing corpus tests exercise ordinary derived applicability with no
+			// Question-specific output exceptions.
+			return createBuilder(retrievalRepository, new InMemoryQuestionOutputApplicabilityRepository());
+		}
+
+		private RevisionCorpusBuilder createBuilder(QuestionRetrievalRepository retrievalRepository,
+				InMemoryQuestionOutputApplicabilityRepository outputApplicabilityRepository) {
 			CurriculumSearchNodeExpansionService expansionService = new CurriculumSearchNodeExpansionService(
 					curriculumRepository);
 			QuestionRetrievalService retrievalService = new QuestionRetrievalService(retrievalRepository,
 					expansionService);
-			return new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+			return new RevisionCorpusBuilder(curriculumRepository, retrievalService, outputApplicabilityRepository);
 		}
 	}
 }

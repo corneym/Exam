@@ -41,10 +41,9 @@ class CurriculumSourcePdfStoreTest {
 		Path managedPdf = store.resolveManagedPdf(relativePath);
 		assertTrue(Files.isRegularFile(managedPdf));
 		assertArrayEquals(originalContent, Files.readAllBytes(managedPdf));
-		/*
-		 * The application must no longer depend on the original external file once it
-		 * has been managed.
-		 */
+
+		// The application must no longer depend on the original external file once it
+		// has been managed.
 		Files.delete(externalPdf);
 		assertFalse(Files.exists(externalPdf));
 		assertTrue(Files.isRegularFile(managedPdf));

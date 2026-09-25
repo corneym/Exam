@@ -41,13 +41,13 @@ class LegacyQuestionRowTest {
 		assertAll(() -> assertEquals(2023, row.year()), () -> assertEquals("1", row.paperCode()),
 				() -> assertEquals("21a", row.questionCode()), () -> assertEquals(3, row.marks()),
 				() -> assertEquals("2.1.4", row.classificationCode()), () -> assertNull(row.answer()),
-				() -> assertTrue(row.preambleCaptureRequired()));
+				() -> assertTrue(row.sharedContextCaptureRequired()));
 	}
 
 	@Test
 	void retainsMcqAnswer() {
 		LegacyQuestionRow row = new LegacyQuestionRow(2022, "MCQ", "7", 1, "1.2.3", "C", false);
 		assertEquals("C", row.answer());
-		assertFalse(row.preambleCaptureRequired());
+		assertFalse(row.sharedContextCaptureRequired());
 	}
 }

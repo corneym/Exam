@@ -35,39 +35,39 @@ class SqliteSharedQuestionContextRepositoryTest {
 		assertAll(() -> assertThrows(NullPointerException.class, () -> new SqliteSharedQuestionContextRepository(null)),
 				() -> assertThrows(NullPointerException.class, () -> repository.findByBooklet(null)),
 				() -> assertThrows(NullPointerException.class,
-						() -> repository.save(null, "Preamble", List.of(region))),
+						() -> repository.save(null, "Shared Context", List.of(region))),
 				() -> assertThrows(IllegalArgumentException.class,
 						() -> repository.save(fixture.firstBooklet(), " ", List.of(region))),
 				() -> assertThrows(NullPointerException.class,
-						() -> repository.save(fixture.firstBooklet(), "Preamble", null)),
+						() -> repository.save(fixture.firstBooklet(), "Shared Context", null)),
 				() -> assertThrows(IllegalArgumentException.class,
-						() -> repository.save(fixture.firstBooklet(), "Preamble", List.of())),
+						() -> repository.save(fixture.firstBooklet(), "Shared Context", List.of())),
 				() -> assertThrows(NullPointerException.class,
-						() -> repository.save(fixture.firstBooklet(), "Preamble", Arrays.asList(region, null))));
+						() -> repository.save(fixture.firstBooklet(), "Shared Context", Arrays.asList(region, null))));
 	}
 
 	@Test
 	void replacesSharedContextWithoutChangingIdentity() throws Exception {
 		RepositoryFixture fixture = createFixture("replace-shared-context.db");
 		SqliteSharedQuestionContextRepository repository = fixture.repository();
-		SharedQuestionContext saved = repository.save(fixture.firstBooklet(), "Question 21 preamble",
+		SharedQuestionContext saved = repository.save(fixture.firstBooklet(), "Question 21 shared context",
 				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.70, 0.15)));
 		List<SharedQuestionContextRegion> replacementRegions = List.of(
 				new SharedQuestionContextRegion(3, 0.12, 0.20, 0.65, 0.18),
 				new SharedQuestionContextRegion(4, 0.14, 0.10, 0.60, 0.22));
-		SharedQuestionContext replaced = repository.replace(saved, "Corrected Question 21 preamble",
+		SharedQuestionContext replaced = repository.replace(saved, "Corrected Question 21 shared context",
 				replacementRegions);
 
 		// Correction must preserve the shared-context identity so existing Question
-		// foreign keys continue to refer to this same logical preamble.
+		// foreign keys continue to refer to this same logical shared context.
 		assertEquals(saved.getId(), replaced.getId());
 		assertEquals(fixture.firstBooklet().getId(), replaced.getBooklet().getId());
-		assertEquals("Corrected Question 21 preamble", replaced.getLabel());
+		assertEquals("Corrected Question 21 shared context", replaced.getLabel());
 		assertEquals(replacementRegions, replaced.getRegions());
 		List<SharedQuestionContext> reloaded = repository.findByBooklet(fixture.firstBooklet());
 		assertEquals(1, reloaded.size());
 		assertEquals(saved.getId(), reloaded.getFirst().getId());
-		assertEquals("Corrected Question 21 preamble", reloaded.getFirst().getLabel());
+		assertEquals("Corrected Question 21 shared context", reloaded.getFirst().getLabel());
 		assertEquals(replacementRegions, reloaded.getFirst().getRegions());
 	}
 
@@ -86,7 +86,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 		}
 		List<SharedQuestionContextRegion> regions = List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2));
 		assertThrows(IllegalStateException.class,
-				() -> fixture.repository().save(fixture.firstBooklet(), "Question 21 preamble", regions));
+				() -> fixture.repository().save(fixture.firstBooklet(), "Question 21 shared context", regions));
 		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
 		assertEquals(0, rowCount(fixture.database(), "shared_question_context_regions"));
 	}
@@ -106,7 +106,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 					""");
 		}
 		assertThrows(IllegalStateException.class,
-				() -> fixture.repository().save(fixture.firstBooklet(), "Preamble",
+				() -> fixture.repository().save(fixture.firstBooklet(), "Shared Context",
 						List.of(new SharedQuestionContextRegion(1, 0.1, 0.1, 0.5, 0.2),
 								new SharedQuestionContextRegion(2, 0.1, 0.1, 0.5, 0.2))));
 		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
@@ -118,7 +118,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 		RepositoryFixture fixture = createFixture("replace-shared-context-rollback.db");
 		SqliteSharedQuestionContextRepository repository = fixture.repository();
 		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.60, 0.20);
-		SharedQuestionContext original = repository.save(fixture.firstBooklet(), "Original preamble",
+		SharedQuestionContext original = repository.save(fixture.firstBooklet(), "Original shared context",
 				List.of(originalRegion));
 
 		// Fail only the replacement insert. The original context and region have
@@ -138,7 +138,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 		}
 		SharedQuestionContextRegion replacementRegion = new SharedQuestionContextRegion(2, 0.20, 0.25, 0.55, 0.30);
 		assertThrows(IllegalStateException.class,
-				() -> repository.replace(original, "Changed preamble", List.of(replacementRegion)));
+				() -> repository.replace(original, "Changed shared context", List.of(replacementRegion)));
 		List<SharedQuestionContext> reloaded = repository.findByBooklet(fixture.firstBooklet());
 		assertEquals(1, reloaded.size());
 		SharedQuestionContext afterFailure = reloaded.getFirst();
@@ -147,7 +147,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 		// inserting the replacement set. A failed insert must roll all of those
 		// changes back within the same transaction.
 		assertEquals(original.getId(), afterFailure.getId());
-		assertEquals("Original preamble", afterFailure.getLabel());
+		assertEquals("Original shared context", afterFailure.getLabel());
 		assertEquals(List.of(originalRegion), afterFailure.getRegions());
 		assertEquals(1, rowCount(fixture.database(), "shared_question_contexts"));
 		assertEquals(1, rowCount(fixture.database(), "shared_question_context_regions"));
@@ -159,7 +159,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 		SqliteSharedQuestionContextRepository repository = fixture.repository();
 		List<SharedQuestionContextRegion> regions = List.of(new SharedQuestionContextRegion(3, 0.10, 0.15, 0.70, 0.20),
 				new SharedQuestionContextRegion(4, 0.12, 0.10, 0.65, 0.25));
-		SharedQuestionContext saved = repository.save(fixture.firstBooklet(), "Question 21 preamble", regions);
+		SharedQuestionContext saved = repository.save(fixture.firstBooklet(), "Question 21 shared context", regions);
 		repository.save(fixture.secondBooklet(), "Other booklet context",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20)));
 		List<SharedQuestionContext> loaded = repository.findByBooklet(fixture.firstBooklet());
@@ -167,7 +167,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 		SharedQuestionContext context = loaded.getFirst();
 		assertEquals(saved.getId(), context.getId());
 		assertEquals(fixture.firstBooklet().getId(), context.getBooklet().getId());
-		assertEquals("Question 21 preamble", context.getLabel());
+		assertEquals("Question 21 shared context", context.getLabel());
 		assertEquals(regions, context.getRegions());
 		assertEquals(1, repository.findByBooklet(fixture.secondBooklet()).size());
 	}

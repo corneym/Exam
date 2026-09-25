@@ -61,6 +61,8 @@ between the outer test class and the nested class.
 
 Work in small, testable slices.
 
+When producing code, ensure it contains Javadoc if necessary, i.e. public API; algorithmic style comments using // and never /* comment */ style.
+
 Do not give me a large batch of unrelated implementation changes at once unless
 I explicitly ask for that.
 
@@ -76,6 +78,49 @@ exercise.
 
 When fixing a reported defect, prefer a regression test that reproduces the real
 production failure mode.
+
+### TestFX and CI determinism
+
+Workflow and behaviour tests must be written so the same logical test is reliable
+both on a local desktop and under the GitHub Actions virtual-display harness.
+
+For ordinary JavaFX controls where the test is verifying application behaviour
+rather than mouse hit-testing, activate the actual control programmatically on
+the JavaFX thread. Prefer `robot.interact(control::fire)` for buttons, radio
+buttons, check boxes and similar controls, and direct selection-model operations
+for ComboBox/ListView selection where pointer behaviour is not itself under test.
+
+If firing a control is expected to enter a modal `showAndWait()` loop, schedule
+the control with `Platform.runLater(control::fire)` and then wait for the
+expected dialog or state. Do not block the test thread inside
+`robot.interact(control::fire)` while a modal dialog still needs a later test
+action to close it.
+
+Do not use `robot.clickOn(...)` merely to trigger an ordinary semantic control
+action in a workflow test.
+
+Use TestFX pointer operations only when the pointer interaction itself is part of
+the behaviour being tested, including PDF-region dragging, click-to-cancel
+selection behaviour, focus/typing behaviour, and other genuine hit-testing or
+gesture cases.
+
+For dialogs, wait for the intended `DialogPane`, resolve its button through
+`DialogPane.lookupButton(ButtonType...)`, and fire that button. Do not locate
+dialog actions by visible button text such as `robot.lookup("OK")` or
+`robot.clickOn("OK")`.
+
+After triggering asynchronous work, wait for the observable result that proves
+the operation occurred, such as queue advancement, persisted state, changed
+selection, dialog appearance or completed UI state. Do not rely only on a
+negative transient flag such as `!isSaveInProgress()` because it may already be
+true if the initiating action never fired.
+
+Shared TestFX fixtures and helper methods must follow the same rules because a
+flaky helper makes every workflow test that uses it flaky.
+
+Any intentional use of pointer-based activation for an ordinary control must be
+because pointer/hit-testing behaviour is specifically under test and should be
+made clear in the test comments.
 
 ### Design before implementation
 
@@ -119,6 +164,19 @@ If I paste a Codex review here:
 
 If fixes are made after a review begins, treat that review as potentially stale
 and verify the current branch state before drawing conclusions.
+
+### Issue tracking
+
+Short-lived working issues are recorded as Eclipse task markers.
+
+Do not create or reintroduce `docs/issues.txt`.
+
+When a defect is being handled as part of the current sprint/work item, resolve
+it through the normal implementation and regression-test workflow rather than
+adding it to the project backlog merely for tracking.
+
+Only deliberately deferred or unresolved work that must survive the current
+development session belongs in `docs/design/backlog.md`.
 
 ### Documentation
 

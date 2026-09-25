@@ -54,7 +54,7 @@ class QuestionTest {
 		Question question = new Question(33, booklet, "21a", "", 1, List.of(), classification, true);
 		assertAll(() -> assertSame(booklet, question.getBooklet()), () -> assertSame(exam, question.getExam()),
 				() -> assertTrue(question.getRegions().isEmpty()),
-				() -> assertTrue(question.isPreambleCaptureRequired()),
+				() -> assertTrue(question.isSharedContextCaptureRequired()),
 				() -> assertSame(classification, question.getClassification()));
 	}
 
@@ -80,16 +80,16 @@ class QuestionTest {
 	}
 
 	@Test
-	void importedQuestionCanHaveNoPreambleCaptureRequirement() {
+	void importedQuestionCanHaveNoSharedContextCaptureRequirement() {
 		Question question = new Question(33, booklet, "7", "", 1, List.of(), createClassification(), false);
-		assertFalse(question.isPreambleCaptureRequired());
+		assertFalse(question.isSharedContextCaptureRequired());
 	}
 
 	@Test
 	void questionWithoutLegacyRequirementIsNotUnresolved() {
 		CurriculumNode classification = createClassification();
 		Question question = new Question(1, booklet, "Q1", "", 1, List.of(), classification, false);
-		assertFalse(question.isPreambleCaptureRequired());
+		assertFalse(question.isSharedContextCaptureRequired());
 		assertFalse(question.isSharedContextUnresolved());
 	}
 
@@ -174,6 +174,16 @@ class QuestionTest {
 	}
 
 	@Test
+	void rejectsMultipleChoiceWithMoreThanOneMark() {
+		IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+				() -> new Question(33, booklet, "Q1", "", 2, List.of(), createClassification(), false, null, null,
+						QuestionResponseType.MULTIPLE_CHOICE));
+
+		// The invariant belongs to Question itself, not only to JavaFX validation.
+		assertEquals("Multiple-choice questions must be worth exactly 1 mark", error.getMessage());
+	}
+
+	@Test
 	void rejectsNonPositiveMarks() {
 		assertThrows(IllegalArgumentException.class,
 				() -> new Question(1, booklet, "Q1", "", 0, List.of(), createClassification(), false));
@@ -215,7 +225,7 @@ class QuestionTest {
 		CurriculumNode classification = createClassification();
 		ExamBooklet otherBooklet = new ExamBooklet(99, exam, "Other booklet", new SourceDocument(99, "other.pdf"));
 		SourceQuestion otherSourceQuestion = new SourceQuestion(50, otherBooklet, "21");
-		SharedQuestionContext otherContext = new SharedQuestionContext(60, otherBooklet, "Other preamble",
+		SharedQuestionContext otherContext = new SharedQuestionContext(60, otherBooklet, "Other shared context",
 				List.of(new SharedQuestionContextRegion(1, 0, 0, 1, 0.2)));
 		assertAll(
 				() -> assertThrows(IllegalArgumentException.class,
@@ -238,7 +248,7 @@ class QuestionTest {
 	void reportsLegacySharedContextRequirementAsUnresolved() {
 		CurriculumNode classification = createClassification();
 		Question question = new Question(1, booklet, "21a", "", 2, List.of(), classification, true);
-		assertTrue(question.isPreambleCaptureRequired());
+		assertTrue(question.isSharedContextCaptureRequired());
 		assertTrue(question.isSharedContextUnresolved());
 		assertFalse(question.hasSharedContext());
 	}
@@ -253,7 +263,7 @@ class QuestionTest {
 				() -> assertEquals("Calculate the result.", question.getQuestionText()),
 				() -> assertEquals(List.of(region), question.getRegions()),
 				() -> assertSame(booklet, question.getBooklet()),
-				() -> assertFalse(question.isPreambleCaptureRequired()),
+				() -> assertFalse(question.isSharedContextCaptureRequired()),
 				() -> assertSame(classification, question.getClassification()));
 	}
 
@@ -276,7 +286,7 @@ class QuestionTest {
 	void retainsSourceQuestionAndSharedContextRelationships() {
 		CurriculumNode classification = createClassification();
 		SourceQuestion sourceQuestion = new SourceQuestion(50, booklet, "21");
-		SharedQuestionContext sharedContext = new SharedQuestionContext(60, booklet, "Question 21 preamble",
+		SharedQuestionContext sharedContext = new SharedQuestionContext(60, booklet, "Question 21 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.2)));
 		Question question = new Question(33, booklet, "21a", "", 2, List.of(), classification, true, sourceQuestion,
 				sharedContext);
@@ -297,11 +307,11 @@ class QuestionTest {
 	@Test
 	void sharedContextResolvesLegacyRequirementWithoutRemovingHistoricalFlag() {
 		CurriculumNode classification = createClassification();
-		SharedQuestionContext sharedContext = new SharedQuestionContext(1, booklet, "Question 21 preamble",
+		SharedQuestionContext sharedContext = new SharedQuestionContext(1, booklet, "Question 21 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20)));
 		Question question = new Question(1, booklet, "21a", "", 2, List.of(), classification, true, null,
 				sharedContext);
-		assertTrue(question.isPreambleCaptureRequired());
+		assertTrue(question.isSharedContextCaptureRequired());
 		assertTrue(question.hasSharedContext());
 		assertFalse(question.isSharedContextUnresolved());
 	}

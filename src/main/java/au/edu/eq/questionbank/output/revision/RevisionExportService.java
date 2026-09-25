@@ -5,12 +5,18 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Clock;
+import java.time.ZonedDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.service.revision.RevisionCorpus;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
+import au.edu.eq.questionbank.service.revision.RevisionCorpusScope;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlan;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
@@ -28,12 +34,14 @@ public final class RevisionExportService {
 	private final RevisionExportValidator validator;
 	private final RevisionPresentationPlanner presentationPlanner;
 	private final RevisionSharedContextAssetRenderer sharedContextAssetRenderer;
+	private final RevisionCorpusScope corpusScope = new RevisionCorpusScope();
+	private final Clock clock;
 
 	/**
 	 * Creates an exporter from corpus, rendering and validation services.
 	 *
 	 * @param presentationPlanner        multipart grouping and numbering planner
-	 * @param sharedContextAssetRenderer the reusable preamble image renderer
+	 * @param sharedContextAssetRenderer the reusable shared context image renderer
 	 * @param corpusBuilder              the subject corpus builder
 	 * @param questionAssetRenderer      the question image renderer
 	 * @param answerAssetRenderer        the answer image renderer
@@ -44,6 +52,14 @@ public final class RevisionExportService {
 			RevisionQuestionAssetRenderer questionAssetRenderer,
 			RevisionSharedContextAssetRenderer sharedContextAssetRenderer,
 			RevisionAnswerAssetRenderer answerAssetRenderer, RevisionExportValidator validator) {
+		this(corpusBuilder, presentationPlanner, questionAssetRenderer, sharedContextAssetRenderer, answerAssetRenderer,
+				validator, Clock.systemDefaultZone());
+	}
+
+	RevisionExportService(RevisionCorpusBuilder corpusBuilder, RevisionPresentationPlanner presentationPlanner,
+			RevisionQuestionAssetRenderer questionAssetRenderer,
+			RevisionSharedContextAssetRenderer sharedContextAssetRenderer,
+			RevisionAnswerAssetRenderer answerAssetRenderer, RevisionExportValidator validator, Clock clock) {
 		if (corpusBuilder == null) {
 			throw new NullPointerException("corpusBuilder");
 		}
@@ -62,12 +78,16 @@ public final class RevisionExportService {
 		if (validator == null) {
 			throw new NullPointerException("validator");
 		}
+		if (clock == null) {
+			throw new NullPointerException("clock");
+		}
 		this.corpusBuilder = corpusBuilder;
 		this.presentationPlanner = presentationPlanner;
 		this.questionAssetRenderer = questionAssetRenderer;
 		this.sharedContextAssetRenderer = sharedContextAssetRenderer;
 		this.answerAssetRenderer = answerAssetRenderer;
 		this.validator = validator;
+		this.clock = clock;
 	}
 
 	/**
@@ -102,6 +122,10 @@ public final class RevisionExportService {
 		if (progress == null) {
 			throw new NullPointerException("progress");
 		}
+
+		// Capture one timestamp for the whole export. Page generation must not obtain
+		// separate wall-clock values as a long-running export progresses.
+		ZonedDateTime generatedAt = ZonedDateTime.now(clock);
 		Path destination = request.getDestination().toAbsolutePath().normalize();
 		validateDestination(destination);
 		Path parent = destination.getParent();
@@ -117,9 +141,23 @@ public final class RevisionExportService {
 			throw new IOException("Revision export staging directory escaped destination parent");
 		}
 		progress.update("Building revision corpus...", 0, 0);
-		RevisionCorpus corpus = corpusBuilder.build(request.getSubject());
+		RevisionCorpus fullCorpus = corpusBuilder.build(request.getSubject());
+		RevisionCorpus corpus;
+		if (request.hasUnitSelection()) {
+			corpus = corpusScope.selectUnits(fullCorpus, request.getSelectedUnitIds());
+		} else {
+			corpus = fullCorpus;
+		}
 		progress.update("Planning revision presentation...", 0, 0);
-		RevisionPresentationPlan presentationPlan = presentationPlanner.plan(corpus);
+
+		// Legacy/internal callers may still use automatic safe grouping. New UI exports
+		// carry the user's explicit choice.
+		RevisionPresentationPlan presentationPlan;
+		if (request.hasGroupingMode()) {
+			presentationPlan = presentationPlanner.plan(corpus, request.getGroupingMode());
+		} else {
+			presentationPlan = presentationPlanner.plan(corpus);
+		}
 		boolean promoted = false;
 		try {
 			Files.createDirectory(staging);
@@ -134,7 +172,7 @@ public final class RevisionExportService {
 							completed.intValue(), total.intValue()));
 			progress.update("Writing HTML...", 0, 0);
 			RevisionHtmlRenderer htmlRenderer = new RevisionHtmlRenderer(presentationPlan, questionAssets, answerAssets,
-					sharedContextAssets);
+					sharedContextAssets, generatedAt);
 			List<Path> htmlFiles = htmlRenderer.render(corpus, staging);
 			progress.update("Validating export...", 0, 0);
 
@@ -153,6 +191,58 @@ public final class RevisionExportService {
 				deleteRecursively(staging);
 			}
 		}
+	}
+
+	/**
+	 * Returns the current Units containing revision questions that can be rendered.
+	 *
+	 * @param subject subject whose corpus will be inspected
+	 * @return immutable Units in curriculum order
+	 */
+	public List<Unit> findExportableUnits(Subject subject) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		RevisionCorpus corpus = corpusBuilder.build(subject);
+		return corpusScope.findNonEmptyUnits(corpus);
+	}
+
+	/**
+	 * Returns whether the Subject's current renderable revision corpus has complete
+	 * Descriptor-level coverage.
+	 * <p>
+	 * This is an export-time capability check. It does not alter classification or
+	 * mapping data.
+	 *
+	 * @param subject subject being considered for export
+	 * @return true when Descriptor grouping may safely be offered
+	 */
+	public boolean isDescriptorGroupingAvailable(Subject subject) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		RevisionCorpus corpus = corpusBuilder.build(subject);
+		return presentationPlanner.isDescriptorGroupingAvailable(corpus);
+	}
+
+	/**
+	 * Returns whether Descriptor grouping is safe within a selected Unit scope.
+	 *
+	 * @param subject         subject being considered for export
+	 * @param selectedUnitIds identifiers of Units included in the export
+	 * @return {@code true} when every renderable scoped placement is at Descriptor
+	 *         level
+	 */
+	public boolean isDescriptorGroupingAvailable(Subject subject, Set<Long> selectedUnitIds) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (selectedUnitIds == null) {
+			throw new NullPointerException("selectedUnitIds");
+		}
+		RevisionCorpus fullCorpus = corpusBuilder.build(subject);
+		RevisionCorpus scopedCorpus = corpusScope.selectUnits(fullCorpus, selectedUnitIds);
+		return presentationPlanner.isDescriptorGroupingAvailable(scopedCorpus);
 	}
 
 	private void deleteRecursively(Path root) throws IOException {

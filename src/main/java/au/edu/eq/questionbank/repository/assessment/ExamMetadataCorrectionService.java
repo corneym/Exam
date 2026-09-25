@@ -181,6 +181,7 @@ public final class ExamMetadataCorrectionService {
 	 */
 	public record Result(Exam exam, Map<Long, String> sourceDocumentPaths) {
 
+		/** Validates the corrected Exam and freezes the path mapping. */
 		public Result {
 			if (exam == null) {
 				throw new NullPointerException("exam");

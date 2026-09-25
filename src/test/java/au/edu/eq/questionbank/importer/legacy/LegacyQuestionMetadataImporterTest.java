@@ -59,29 +59,6 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
-	void repeatedImportAddsMissingAnswerToExistingQuestion() throws Exception {
-		Fixture fixture = createFixture("missing-answer.db", false);
-		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
-		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
-		try (Connection connection = fixture.database().openConnection();
-				Statement statement = connection.createStatement()) {
-			statement.executeUpdate("DELETE FROM answers");
-		}
-		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
-		assertEquals(new LegacyQuestionImportResult(0, 2, 1), result);
-		try (Connection connection = fixture.database().openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet answer = statement.executeQuery("""
-						SELECT q.question_code, a.answer_text
-						FROM answers a JOIN questions q ON q.id = a.question_id
-						""")) {
-			assertTrue(answer.next());
-			assertEquals("1", answer.getString("question_code"));
-			assertEquals("B", answer.getString("answer_text"));
-		}
-	}
-
-	@Test
 	void conflictingExistingQuestionPreventsAnyNewRows() throws Exception {
 		Fixture fixture = createFixture("existing-conflict.db", false);
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
@@ -172,7 +149,7 @@ class LegacyQuestionMetadataImporterTest {
 					SELECT
 					    question_code,
 					    marks,
-					    preamble_capture_required,
+					    shared_context_capture_required,
 					    source_question_id,
 					    shared_context_id,
 						response_type
@@ -183,14 +160,14 @@ class LegacyQuestionMetadataImporterTest {
 				assertEquals("1", questions.getString("question_code"));
 				assertEquals(1, questions.getInt("marks"));
 				assertEquals("MULTIPLE_CHOICE", questions.getString("response_type"));
-				assertEquals(0, questions.getInt("preamble_capture_required"));
+				assertEquals(0, questions.getInt("shared_context_capture_required"));
 				assertNull(questions.getObject("source_question_id"));
 				assertNull(questions.getObject("shared_context_id"));
 				assertTrue(questions.next());
 				assertEquals("21a", questions.getString("question_code"));
 				assertEquals("UNKNOWN", questions.getString("response_type"));
 				assertEquals(3, questions.getInt("marks"));
-				assertEquals(1, questions.getInt("preamble_capture_required"));
+				assertEquals(1, questions.getInt("shared_context_capture_required"));
 				assertTrue(questions.getObject("source_question_id") != null);
 				assertNull(questions.getObject("shared_context_id"));
 			}
@@ -199,12 +176,12 @@ class LegacyQuestionMetadataImporterTest {
 			try (ResultSet sourceQuestion = statement.executeQuery("""
 					SELECT
 					    source_question_code,
-					    preamble_status
+					    shared_context_status
 					FROM source_questions
 					""")) {
 				assertTrue(sourceQuestion.next());
 				assertEquals("21", sourceQuestion.getString("source_question_code"));
-				assertEquals("UNKNOWN", sourceQuestion.getString("preamble_status"));
+				assertEquals("UNKNOWN", sourceQuestion.getString("shared_context_status"));
 			}
 			assertEquals(0, countRows(statement, "question_regions"));
 			assertEquals(1, countRows(statement, "answers"));
@@ -230,8 +207,8 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
-	void mcqQuestionMayRequirePreambleWithoutInventingMultipartIdentity() throws Exception {
-		Fixture fixture = createFixture("mcq-preamble.db", false, true);
+	void mcqQuestionMayRequireSharedContextWithoutInventingMultipartIdentity() throws Exception {
+		Fixture fixture = createFixture("mcq-shared-context.db", false, true);
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
 				"2019");
 		try (Connection connection = fixture.database().openConnection();
@@ -239,7 +216,7 @@ class LegacyQuestionMetadataImporterTest {
 				ResultSet question = statement.executeQuery("""
 						SELECT
 						    q.question_code,
-						    q.preamble_capture_required,
+						    q.shared_context_capture_required,
 						    q.source_question_id,
 						    q.shared_context_id,
 						    b.booklet_name
@@ -250,9 +227,32 @@ class LegacyQuestionMetadataImporterTest {
 						""")) {
 			assertTrue(question.next());
 			assertEquals("MCQ booklet", question.getString("booklet_name"));
-			assertEquals(1, question.getInt("preamble_capture_required"));
+			assertEquals(1, question.getInt("shared_context_capture_required"));
 			assertNull(question.getObject("source_question_id"));
 			assertNull(question.getObject("shared_context_id"));
+		}
+	}
+
+	@Test
+	void repeatedImportAddsMissingAnswerToExistingQuestion() throws Exception {
+		Fixture fixture = createFixture("missing-answer.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.executeUpdate("DELETE FROM answers");
+		}
+		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		assertEquals(new LegacyQuestionImportResult(0, 2, 1), result);
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet answer = statement.executeQuery("""
+						SELECT q.question_code, a.answer_text
+						FROM answers a JOIN questions q ON q.id = a.question_id
+						""")) {
+			assertTrue(answer.next());
+			assertEquals("1", answer.getString("question_code"));
+			assertEquals("B", answer.getString("answer_text"));
 		}
 	}
 
@@ -261,9 +261,8 @@ class LegacyQuestionMetadataImporterTest {
 		Fixture fixture = createFixture("resolved-response-type.db", false);
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
 		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
-		/*
-		 * Simulate a later deliberate metadata correction.
-		 */
+
+		// Simulate a later deliberate metadata correction.
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
 			statement.executeUpdate("""
@@ -353,8 +352,8 @@ class LegacyQuestionMetadataImporterTest {
 		return createFixture(databaseName, invalidSecondClassification, false);
 	}
 
-	private Fixture createFixture(String databaseName, boolean invalidSecondClassification, boolean mcqPreambleRequired)
-			throws Exception {
+	private Fixture createFixture(String databaseName, boolean invalidSecondClassification,
+			boolean mcqSharedContextRequired) throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
 		database.initialiseSchema();
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
@@ -371,11 +370,12 @@ class LegacyQuestionMetadataImporterTest {
 		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "MCQ booklet",
 				"Chemistry/2020/mcq.pdf");
 		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1", "Chemistry/2020/paper1.pdf");
-		Path workbookPath = createWorkbook(invalidSecondClassification, mcqPreambleRequired);
+		Path workbookPath = createWorkbook(invalidSecondClassification, mcqSharedContextRequired);
 		return new Fixture(database, workbookPath);
 	}
 
-	private Path createWorkbook(boolean invalidSecondClassification, boolean mcqPreambleRequired) throws Exception {
+	private Path createWorkbook(boolean invalidSecondClassification, boolean mcqSharedContextRequired)
+			throws Exception {
 		Path path = tempDirectory.resolve("legacy-" + System.nanoTime() + ".xlsx");
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("QCAA");
@@ -394,7 +394,7 @@ class LegacyQuestionMetadataImporterTest {
 			first.createCell(3).setCellValue(1);
 			first.createCell(4).setCellValue("1.1.1");
 			first.createCell(5).setCellValue("B");
-			if (mcqPreambleRequired) {
+			if (mcqSharedContextRequired) {
 				first.createCell(6).setCellValue(1);
 			}
 			Row second = sheet.createRow(2);

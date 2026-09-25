@@ -333,7 +333,7 @@ public final class LegacyQuestionMetadataImporter {
 				    id,
 				    classification_node_id,
 				    marks,
-				    preamble_capture_required,
+				    shared_context_capture_required,
 				    source_question_id,
 				    response_type
 				FROM questions
@@ -351,7 +351,7 @@ public final class LegacyQuestionMetadataImporter {
 					sourceQuestionId = Long.valueOf(result.getLong("source_question_id"));
 				}
 				return new ExistingQuestion(result.getLong("id"), result.getLong("classification_node_id"),
-						result.getInt("marks"), result.getInt("preamble_capture_required") != 0, sourceQuestionId,
+						result.getInt("marks"), result.getInt("shared_context_capture_required") != 0, sourceQuestionId,
 						QuestionResponseType.valueOf(result.getString("response_type")));
 			}
 		}
@@ -395,7 +395,7 @@ public final class LegacyQuestionMetadataImporter {
 			throws SQLException {
 
 		// Derive multipart ownership from the question code, not from the
-		// preamble-capture hint.
+		// shared context-capture hint.
 		String sourceQuestionCode = SourceQuestionCodeParser.derive(questionCode);
 		if (sourceQuestionCode == null) {
 			return null;
@@ -454,7 +454,7 @@ public final class LegacyQuestionMetadataImporter {
 				     question_code,
 				     question_text,
 				     marks,
-				     preamble_capture_required,
+				     shared_context_capture_required,
 				     source_question_id,
 				     response_type)
 				VALUES (?, ?, ?, '', ?, ?, ?, ?)
@@ -464,7 +464,7 @@ public final class LegacyQuestionMetadataImporter {
 			statement.setLong(2, question.classificationNodeId());
 			statement.setString(3, question.questionCode());
 			statement.setInt(4, question.marks());
-			statement.setInt(5, question.preambleCaptureRequired() ? 1 : 0);
+			statement.setInt(5, question.sharedContextCaptureRequired() ? 1 : 0);
 			if (question.sourceQuestionId() == null) {
 				statement.setNull(6, Types.BIGINT);
 			} else {
@@ -506,24 +506,34 @@ public final class LegacyQuestionMetadataImporter {
 				if (existing != null) {
 					verifyExistingQuestion(existing, classificationNodeId, sourceQuestionId, sheet.providerName(), row);
 					existingQuestionId = existing.id();
-					/*
-					 * UNKNOWN means no authoritative decision has yet been made. Explicit MCQ
-					 * workbook evidence may therefore resolve it.
-					 *
-					 * A non-UNKNOWN value is deliberately preserved because it may have been
-					 * corrected after the legacy import.
-					 */
+
+					// UNKNOWN means no authoritative decision has yet been made. Explicit MCQ
+					// workbook evidence may therefore resolve it.
+					//
+					// A non-UNKNOWN value is deliberately preserved because it may have been
+					// corrected after the legacy import.
 					updateExistingResponseType = existing.responseType() == QuestionResponseType.UNKNOWN
 							&& importedResponseType != QuestionResponseType.UNKNOWN;
 					insertAnswer = shouldInsertAnswer(connection, existing.id(), sheet.providerName(), row);
 				}
 				resolved.add(new ResolvedQuestion(bookletId, classificationNodeId, sheet.providerName(), row.year(),
 						row.paperCode(), importedResponseType, row.questionCode(), row.marks(), row.answer(),
-						row.preambleCaptureRequired(), sourceQuestionId, existingQuestionId, insertAnswer,
+						row.sharedContextCaptureRequired(), sourceQuestionId, existingQuestionId, insertAnswer,
 						updateExistingResponseType));
 			}
 		}
 		return resolved;
+	}
+
+	private QuestionResponseType responseType(String paperCode) {
+
+		// Only the explicit MCQ paper code establishes response type; numbered papers
+		// leave it unknown.
+		return switch (paperCode) {
+		case "MCQ" -> QuestionResponseType.MULTIPLE_CHOICE;
+		case "1", "2" -> QuestionResponseType.UNKNOWN;
+		default -> throw new IllegalArgumentException("Unsupported paper code: " + paperCode);
+		};
 	}
 
 	private boolean shouldInsertAnswer(Connection connection, long questionId, String providerName,
@@ -544,17 +554,6 @@ public final class LegacyQuestionMetadataImporter {
 			throw new IllegalArgumentException("Existing answer conflicts with " + description(providerName, row));
 		}
 		return false;
-	}
-
-	private QuestionResponseType responseType(String paperCode) {
-
-		// Only the explicit MCQ paper code establishes response type; numbered papers
-		// leave it unknown.
-		return switch (paperCode) {
-		case "MCQ" -> QuestionResponseType.MULTIPLE_CHOICE;
-		case "1", "2" -> QuestionResponseType.UNKNOWN;
-		default -> throw new IllegalArgumentException("Unsupported paper code: " + paperCode);
-		};
 	}
 
 	private void updateExistingResponseType(Connection connection, long questionId, QuestionResponseType responseType)
@@ -598,8 +597,8 @@ public final class LegacyQuestionMetadataImporter {
 		if (existing.marks() != row.marks()) {
 			throw new IllegalArgumentException("Existing marks conflict with " + description);
 		}
-		if (existing.preambleCaptureRequired() != row.preambleCaptureRequired()) {
-			throw new IllegalArgumentException("Existing preamble metadata conflicts with " + description);
+		if (existing.sharedContextCaptureRequired() != row.sharedContextCaptureRequired()) {
+			throw new IllegalArgumentException("Existing shared context metadata conflicts with " + description);
 		}
 		if (sourceQuestionId != null && existing.sourceQuestionId() != null
 				&& !sourceQuestionId.equals(existing.sourceQuestionId())) {
@@ -641,7 +640,7 @@ public final class LegacyQuestionMetadataImporter {
 	private record ExistingAnswer(boolean exists, String answerText) {
 	}
 
-	private record ExistingQuestion(long id, long classificationNodeId, int marks, boolean preambleCaptureRequired,
+	private record ExistingQuestion(long id, long classificationNodeId, int marks, boolean sharedContextCaptureRequired,
 			Long sourceQuestionId, QuestionResponseType responseType) {
 	}
 
@@ -653,7 +652,7 @@ public final class LegacyQuestionMetadataImporter {
 
 	private record ResolvedQuestion(long bookletId, long classificationNodeId, String providerName, int year,
 			String paperCode, QuestionResponseType responseType, String questionCode, int marks, String answer,
-			boolean preambleCaptureRequired, Long sourceQuestionId, Long existingQuestionId, boolean insertAnswer,
+			boolean sharedContextCaptureRequired, Long sourceQuestionId, Long existingQuestionId, boolean insertAnswer,
 			boolean updateExistingResponseType) {
 	}
 }

@@ -1,153 +1,73 @@
 # Exam Question Bank Backlog
 
-> Authoritative deferred/unresolved-work list at 20 September 2026.
->
-> Sprint 08 is complete and merged.
-> Sprint 09 implementation is complete on `feature/capture-workflow`; completed
-> Sprint 09 items are recorded under **Completed / not backlog** rather than kept
-> as future work.
+> **Authoritative deferred/unresolved-work list:** 25 September 2026.  
+> Sprints 01–09 are complete and merged.  
+> Sprint 10 implementation is complete and verified on `feature/capture-output`;
+> merge to `main` is pending.  
+> Completed Sprint 10 work is not duplicated below as future work.
 
-## High-value next design input — revision HTML presentation
+## Revision-output follow-on work
 
-These items were deliberately kept outside Sprint 09 so capture/correction work
-did not expand into a presentation redesign.
+### Printable/vector-preserving output
 
-### Select revision-output curriculum grouping depth
+For print-oriented PDF generation, evaluate direct source-PDF page/viewport
+clipping rather than rasterising web assets. Preserve generated numbering,
+solution alignment and source attribution.
 
-Origin: application-use review, 17 September 2026.
-
-Where Descriptors are present, allow export to choose presentation grouping at
-Descriptor or Subtopic level.
-
-If Subtopic grouping is selected:
-
-- Questions classified to Descriptors are flattened into the parent Subtopic;
-- no separate Descriptor section is emitted;
-- ordering should still respect Descriptor order, then deterministic Question
-  order.
-
-The persisted curriculum classification is not rewritten by this presentation
-choice.
-
-### Multipart provenance presentation
-
-Origin: application-use review, 17 September 2026.
-
-For multipart output with one shared preamble, repeated decorations such as
-`Source part 26a` and `Source part 26b` are unnecessary.
-
-Prefer a single source/original-classification provenance block for the multipart
-presentation while retaining traceability to source parts.
-
-Do not change persisted multipart identity merely to simplify display.
-
-### MCQ before written-response Questions
-
-Origin: application-use review, 17 September 2026.
-
-Within an output curriculum bucket, present multiple-choice Questions before
-written-response Questions while retaining deterministic ordering within each
-response-type group.
-
-### Optional MCQ and Written Response sections
-
-Origin: application-use review, 17 September 2026.
-
-Consider explicit `Multiple Choice` and `Written Response` sections beneath each
-Subtopic/output bucket. Decide this together with grouping-depth and ordering
-semantics.
+The current student HTML/SCORM pipeline already supports grouping, response-type
+sections, page-local numbering, selected Units, empty-branch pruning,
+Question-specific exclusions and generation metadata.
 
 ## Capture / correction follow-on work
 
-### General shared-context capture for independent Questions
+### Remove empty managed directories after Exam relocation
 
-Origin: real capture use during Sprint 09, 20 September 2026.
+Sprint 09 correctly relocates managed exam/answer PDF files and updates
+persisted `SourceDocument` paths when corrected provider/year metadata changes
+the authoritative storage directory. The relocation service does not remove
+source directories that become empty after a successful move.
 
-The domain already separates `SharedQuestionContext` from `SourceQuestion`, so
-otherwise independent Questions may legitimately share one stimulus/context.
-This includes successive MCQs using the same graph, table, passage or diagram.
+Future housekeeping may safely prune empty managed year/provider directories,
+working upwards only within the managed PDF root and stopping at the first
+non-empty or protected directory.
 
-The current normal capture UI still makes convenient shared-context capture/reuse
-primarily part of multipart/preamble workflows.
+### Multi-page automatic shared-context capture
 
-Future behaviour should provide an explicit general control such as:
+Persistence supports several ordered `SharedQuestionContextRegion` records. The
+automatic independent-MCQ continuation workflow currently captures one context
+region.
 
-```text
-Shared context:
-    None
-    Capture new
-    Reuse existing
-```
-
-Requirements:
-
-- do not invent a `SourceQuestion` relationship merely to share context;
-- support Multiple Choice and Written Response equally;
-- allow a later independent Question to reuse a previously captured context;
-- do not silently carry context forward to the next Question;
-- preserve current multipart automatic behaviour;
-- add persistence/reload and UI workflow regressions.
-
-### Multi-page automatic shared-preamble capture
-
-Origin: Sprint 07 preamble-aware Question capture.
-
-Persistence supports multiple ordered `SharedQuestionContextRegion` records.
-The automatic imported-question preamble workflow currently completes after one
-accepted source region.
-
-Future work should:
-
-- allow multiple ordered shared-context regions;
-- allow page navigation between accepted preamble regions;
-- provide an explicit finish action before ordinary Question-region capture;
-- preserve the single-page workflow;
-- retain shared-context reuse for later source parts;
-- keep regions in source/page order;
-- add multi-page regressions.
+Future work should allow multiple ordered context regions across pages, explicit
+finish, source-order preservation and regression coverage while keeping the
+single-page path efficient.
 
 ### MCQ explanation capture
 
-Origin: Sprint 07 Answer-capture review.
+Retain A/B/C/D as the primary MCQ Answer, but optionally allow one or more
+marking-PDF regions as explanation material for revision output.
 
-Future behaviour:
+Explanation regions must remain supplementary and must not become required for
+corpus completeness.
 
-- retain A/B/C/D as the primary Answer;
-- optionally capture one or more Answer-PDF regions as explanation;
-- render the correct option plus explanation in revision output.
+### Additional capture efficiency
 
-Explanation regions are supplementary and must not be required for corpus
-completeness.
+Possible later assistance:
+
+- PDF Question-boundary suggestions;
+- multipart/dependency suggestions;
+- further keyboard/efficiency improvements.
+
+Suggestions remain non-authoritative until confirmed.
 
 ## Curriculum authoring follow-on work
 
-### Curriculum code entry can leave hierarchy controls visually out of sync
-
-Origin: real application use during Sprint 09.
-
-Entering a valid hierarchy code such as `3.1` / `3.1.1` can correctly update the
-underlying curriculum selection while the Topic ComboBox displays blank even
-though a child Subtopic is selected.
-
-Required work:
-
-- identify the model-to-control synchronisation path;
-- ensure displayed ComboBox values match the actual selected hierarchy;
-- add UI-level assertions for visible ComboBox values, not only selection-model
-  state;
-- preserve current code-entry behaviour where the model is already correct.
-
-### Curriculum capture refinements
-
-Origin: Sprint 08 curriculum authoring.
-
-Deferred assistance:
+Deferred assistance includes:
 
 - PDF region-based text extraction;
 - detection/highlighting of embedded images and diagrams;
 - manual exclusion regions for maths/figures;
 - Markdown/LaTeX maths editing and rendered preview;
-- maths-authoring helper buttons and eventual equation-recognition assistance;
+- maths-authoring helper buttons and later equation-recognition assistance;
 - further keyboard/efficiency improvements.
 
 Curriculum hierarchy remains expert-authored; assistance must not infer
@@ -155,22 +75,15 @@ authoritative structure.
 
 ## Remaining Question-model decisions
 
-### Decide whether `Question` requires multiple original classifications
-
-Origin: Batching Exam Questions / early metadata design.
+### Multiple original classifications
 
 Current `Question` stores one best-fit Subtopic or Descriptor. Decide whether to
-affirm that policy or implement multiple original classifications.
+affirm that policy or implement multiple direct original classifications.
 
 If changed, review schema/repositories, capture/import UI, applicability,
 retrieval duplicate semantics, export placement, provenance and tests.
 
-Do not confuse multiple original classifications with one historical node
-mapping to several current nodes.
-
-### Decide whether source-question processing needs an explicit out-of-scope disposition
-
-Origin: Batching Exam Questions prototype.
+### Explicit out-of-scope source disposition
 
 A later ingestion/audit workflow may need to distinguish:
 
@@ -180,46 +93,22 @@ captured/classified
 explicitly out of scope
 ```
 
-without forcing out-of-scope source Questions into the bank.
+without forcing deliberately out-of-scope source Questions into the bank.
 
-### Support Question-level applicability exceptions after curriculum mapping
-
-Origin: historical-to-current curriculum mapping / Question review.
-
-A curriculum mapping can remain valid while one historical Question tests only
-content that did not carry forward.
-
-Future behaviour may:
-
-- preserve original historical classification and mapping;
-- allow explicit exclusion from a mapped current target;
-- show a clear viewer marker;
-- make retrieval/revision/export respect the exclusion;
-- distinguish applicable, not applicable and, if required, not yet reviewed.
-
-Prefer node-specific exceptions where one historical node maps to several target
-nodes.
+This is distinct from the implemented Question-specific output exclusion, which
+suppresses one current revision placement for an otherwise stored Question.
 
 ## Import / reconciliation
 
-### Managed document content hashing and duplicate detection
+### Managed document hashing and duplicate detection
 
-Origin: managed-document storage review.
+Consider persisted SHA-256 content hashing so identical files can be recognised
+independently of filename/storage path. Current collision handling compares file
+content where needed but no hash is persisted.
 
-Consider SHA-256 content hashing so identical files can be recognised
-independently of filename/storage path.
+### Import audit and reconciliation reporting
 
-Current exam/answer import already compares bytes where destination names
-collide; no document hash is persisted.
-
-Potential uses include duplicate detection, safe content reuse and
-backup/integrity verification.
-
-### Add import audit and reconciliation reporting
-
-Origin: Legacy Metadata Import follow-on work.
-
-Report:
+Potential reporting:
 
 - records created;
 - records already identical;
@@ -232,20 +121,16 @@ Report:
 
 A dry-run mode may later reuse the same validation.
 
-### Validate additional real-world legacy workbook variants
+### Additional real-world workbook variants
 
-Origin: Legacy Metadata Import follow-on work.
-
-Test representative files for multiple Subjects/providers, unexpected formatting,
-blank/formula-driven cells, duplicate conflicting rows, unusual Question codes,
-missing MCQ answers, preamble evidence and relocated source PDFs.
+Test representative legacy files for multiple Subjects/providers, unexpected
+formatting, blank/formula-driven cells, conflicting duplicates, unusual Question
+codes, missing MCQ answers, shared-context evidence and relocated source PDFs.
 
 Do not infer multipart/shared-context relationships merely because workbook data
-appears to contain a pattern.
+appears patterned.
 
-### Decide whether legacy image-snip import/support is still required
-
-Origin: Batching Exam Questions.
+### Legacy image-snip import/support decision
 
 Determine whether irreplaceable legacy Questions/Answers exist only as image
 snips and therefore require one-time attachment import or managed-file
@@ -255,33 +140,32 @@ compatibility.
 
 ### Strengthen retrieval-domain invariants
 
-Review `QuestionApplicabilityMatch` and `QuestionRetrievalResult` rules,
-including compatible curriculum levels, same-Subject enforcement, duplicate
-handling and rejection of invalid applicability levels.
+Review applicability/result rules including compatible curriculum levels,
+same-Subject enforcement, duplicate handling and invalid-level rejection.
 
-### Extend retrieval integration coverage
+### Extend SQLite retrieval integration coverage
 
-Add realistic SQLite integration cases for Subject-wide retrieval, one-to-many
-mapped Subtopics, same-Subject isolation, empty Subtopics, Topic-level Descriptor
-structures and database reopen reconstruction.
+Add realistic Subject-wide retrieval, one-to-many mapped Subtopics, same-Subject
+isolation, empty Subtopics, direct-Descriptor Topic structures and database
+reopen cases.
 
-### Benchmark broad Question searches
+### Benchmark broad searches
 
 Measure Subject/Unit/Topic-wide searches, query plans, reconstruction cost and
 deterministic ordering before adding indexes or redesigning queries.
 
-### Measure preview image conversion and superseded render overlap
+### Measure preview rendering overlap
 
-Measure realistic large/multi-region previews and rapid selection changes before
-changing threading or serialisation.
+Measure large/multi-region previews and rapid selection changes before changing
+threading or serialisation.
 
 ## Curriculum mapping hardening
 
-### Decide whether mapping invariants need database enforcement
+### Database enforcement decision
 
 Application writers enforce same Subject, different versions, same level and
-allowed direction. Decide whether direct-SQL bypass risk justifies triggers or
-other database enforcement.
+allowed mapping direction. Decide whether direct-SQL bypass risk justifies DB
+triggers or other enforcement.
 
 ### Mapping workflow extensions
 
@@ -291,167 +175,110 @@ Possible later work:
 - assisted review of gaps;
 - improved similarity scoring;
 - optional AI-assisted suggestions;
-- broader coverage reporting where justified.
+- broader coverage reporting.
 
-Any assisted mechanism must still require explicit confirmation.
+Any assisted mechanism must still require explicit teacher confirmation.
 
-### Decide whether richer curriculum mapping relation metadata should be persisted
+### Richer mapping-relation metadata
 
-The standalone mapping work distinguishes direct/reworded, split, merged,
-partial, removed and new content. Decide whether relation type/confidence/notes
-should remain external review/audit metadata or become persisted application
-data.
-
-## UI / usability — later polish
-
-Spacing, alignment, sizing, label wording and visual consistency should remain
-separate from functional work unless they block workflow or create incorrect
-data. Workflow-critical items discovered in real use can be promoted into a
-sprint.
-
-Possible assistance later:
-
-- PDF Question-boundary suggestions;
-- multipart/dependency suggestions;
-- additional keyboard/efficiency improvements.
-
-Suggestions remain non-authoritative until confirmed.
-
-## Output / future sprint inputs
-
-### Later printable output — preserve vector source content
-
-For print-oriented PDF generation, evaluate direct source-PDF page/viewport
-clipping rather than rasterising web assets. Preserve generated numbering,
-solution alignment and source attribution.
+Decide whether relation type/confidence/notes such as split, merged, partial,
+removed and new should remain external review metadata or become persisted
+application data.
 
 ## Future content sources
 
 ### Clipboard / image-attachment Questions
 
-Support an eventual workflow such as:
+Support an eventual workflow such as Windows Snipping Tool -> system clipboard ->
+Paste Image / Ctrl+V -> Question attachment.
 
-```text
-Windows Snipping Tool / copied image
-        -> system clipboard
-        -> Paste Image / Ctrl+V
-        -> Question content attachment
-```
-
-Design requirements:
-
-- Question content can be text plus zero or more images;
-- optional drag/drop PNG/JPEG;
-- choose SQLite BLOB versus application-managed file storage;
-- define provenance metadata;
-- include images in backup/restore;
-- render consistently to HTML/PDF/SCORM;
-- avoid separate mutually exclusive text/image Question hierarchies unless
-  evidence requires it.
-
-OCR is optional later work.
+Design requirements include text plus zero or more images, optional PNG/JPEG
+drag/drop, storage choice, provenance, backup/restore and consistent HTML/PDF/
+SCORM rendering. OCR is optional later work.
 
 ## Packaging / deployment
 
 ### Self-contained desktop packaging
 
-Investigate `jpackage` once deployment becomes a priority.
-
-Requirements include reproducible Maven packaging, bundled runtime/dependencies,
-writable data outside installed application files and migration/backup safety.
+Investigate `jpackage` when deployment becomes a priority. Keep writable data
+outside installed application files and retain migration/backup safety.
 
 ### Shared faculty operation
 
 Do not treat a live SQLite database on SharePoint/network sync as a safe
-concurrently edited datastore.
-
-Possible later models include local SQLite plus controlled import/export/merge
-or an IT-supported central database.
+concurrently edited datastore. Possible later models include local SQLite plus
+controlled import/export/merge or an IT-supported central database.
 
 ## Testing / reliability
 
-### Add SQLite-backed revision-export integration coverage
-
-Origin: Sprint 05 merge-readiness review.
+### SQLite-backed revision-export integration coverage
 
 Add a temporary-SQLite end-to-end export test using fresh production
 repository/service instances to cover persisted curriculum reconstruction,
 confirmed mapping retrieval, ordered regions, Answer reconstruction,
-SourceQuestion/shared-context reconstruction and complete export after reopen.
+SourceQuestion/shared-context reconstruction, Question-specific exclusions and
+complete export after reopen.
 
-Real Chemistry acceptance has exercised the production path manually, so this
-remains hardening rather than a current release blocker.
+Existing integration output tests use in-memory curriculum/retrieval boundaries,
+and real Chemistry acceptance has exercised the production path manually. This
+remains hardening rather than a current blocker.
 
-### Public API documentation
+### Pre-v13 backup restore/startup regression
 
-Javadoc/doclint has passed at earlier sprint closeouts. Continue reviewing
-semantic API documentation where contracts change; this item concerns
-documentation completeness rather than warning cleanup.
+Add one composed regression beginning with a populated pre-v13 backup snapshot,
+restoring through the production restore path and then starting/reopening the
+database at the current schema.
 
-## Repository governance
+Existing migration tests cover populated v12 -> v13 upgrade, and restore
+compatibility probing already migrates a disposable copy. The missing composed
+scenario is therefore hardening rather than a current blocker.
 
-### Protect `main` with required CI checks
+## Repository housekeeping
 
-Origin: CI hardening discussion during Sprint 09.
+Protected `main` is established and has been exercised through pull request #1.
 
-The CI workflow now runs on feature/refactor/chore branches and pull requests to
-`main`, with separate non-UI, remaining-UI and workflow-UI matrix jobs.
+Sprint 10 is in final protected-main merge closeout on
+`feature/capture-output`. Merge requires the final feature-branch GitHub Actions
+checks to be green.
 
-After Sprint 09 is merged:
-
-- configure a `main` branch ruleset/protection policy;
-- require the intended successful CI checks before merge;
-- prevent accidental direct changes that bypass the normal feature-branch
-  workflow;
-- keep the exact required-check names aligned with the workflow.
-
-This is repository governance, not unfinished Sprint 09 product behaviour.
+Feature/chore branch cleanup may follow merge when convenient; branch cleanup is
+repository housekeeping rather than product scope.
 
 ## Completed / not backlog
 
-Do not re-add these as unimplemented work:
+Do not re-add completed Sprint 04–10 work, including:
 
-- Sprint 04 backup/restore/data safety;
-- Sprint 05 deterministic revision corpus/static HTML foundation;
-- Sprint 06 SCORM 1.2 generation and QLearn acceptance;
-- Sprint 07 persisted SourceQuestion/shared-context semantics and preamble-aware
-  capture;
-- Sprint 08 curriculum authoring/lifecycle, mapping coverage, response-type and
-  corpus-completion tooling;
-- existing Question and Answer correction;
-- syllabus-sensitive capture/classification;
-- guarded transient selection ownership;
-- resizable capture workspace;
-- Descriptor-aware classification controls;
-- multipart/shared-context HTML and SCORM presentation foundation;
-- asynchronous Question/Answer saves and Answer-PDF transitions;
-- Sprint 09 responsive Question/Answer controls;
-- Sprint 09 natural/source Answer queue ordering;
-- Sprint 09 selection-owner action enablement;
-- Sprint 09 Question response-type radio buttons;
-- Sprint 09 Imported Questions activation performance fix;
-- Sprint 09 shared-preamble recapture;
-- Sprint 09 known-PDF metadata reuse;
-- Sprint 09 Exam metadata correction;
-- Sprint 09 managed-PDF relocation when corrected provider/year changes;
-- Sprint 09 legacy single-Question -> multipart split workflow;
-- Sprint 09 Search Questions `All Questions` versus `Current syllabus`;
-- Sprint 09 Corpus Audit deterministic source order;
-- Sprint 09 numeric Corpus Audit year ordering;
-- Sprint 09 removal of redundant Capture New Questions menu navigation;
-- Sprint 09 Search dialog resize persistence;
-- Sprint 09 MCQ Answer-PDF visibility/reuse;
-- Sprint 09 UI package refactoring and CI workflow hardening.
+- backup/restore and deterministic revision/SCORM foundations;
+- SourceQuestion/shared-context semantics and correction;
+- curriculum authoring, response-type persistence and Corpus Audit;
+- Sprint 09 shared-context recapture, known-PDF reuse, Exam correction,
+  managed-PDF relocation, legacy split, Search scope and CI hardening;
+- Working Subject capture filtering;
+- booklet Question format and booklet-specific AnswerFile assignment;
+- independent-MCQ Shared Context continuation;
+- Search dialog size and position restoration;
+- Search classification display/refinement, native-window dirty-close protection
+  and stored-region edit navigation;
+- safe Subtopic/Descriptor revision grouping with automatic Subtopic fallback
+  where direct Subtopic placements prevent Descriptor grouping;
+- response-type section ordering/headings;
+- page-local numbering;
+- empty-branch pruning;
+- selected-Unit Revision HTML and SCORM export;
+- student-facing revision-question counts and generated timestamp;
+- sticky curriculum breadcrumb navigation on generated revision pages;
+- Question-specific revision-output exclusions;
+- Shared Context live-schema terminology migration;
+- public API Javadoc closeout with strict warning-free generation.
 
 ## Backlog rules
 
-- Include an origin for material user-observed items.
-- Preserve completed sprint documents as history.
-- Keep every known user-observed requirement represented until implemented,
+- Keep every known deferred requirement represented until implemented,
   deliberately rejected or superseded.
-- Remove completed work from future/scheduled sections at sprint closeout.
+- Do not keep completed sprint items duplicated as future work.
+- Preserve completed sprint documents as history.
 - Keep performance work measurement-driven.
-- Prefer behaviour-focused tests over coverage percentages.
-- Do not implement unresolved ownership/semantics by inventing placeholder data.
+- Prefer behaviour-focused regressions over coverage percentages.
+- Do not invent placeholder data to resolve unclear ownership/semantics.
 - Do not promote chat prototypes or standalone mapping artefacts to application
   implementation without repository/persistence evidence.

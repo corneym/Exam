@@ -26,6 +26,7 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
@@ -140,6 +141,10 @@ public final class AnswerCapturePane extends VBox {
 	private AnswerRegion currentAnswerSelection;
 	private boolean restoringUnansweredQuestionSelection;
 
+	// Working Subject is transient workspace state. A null value retains the
+	// existing all-subject behaviour until the workspace selector is introduced.
+	private Subject workingSubject;
+
 	// A question-save snapshot may predate an answer committed while it was
 	// loading.
 	private final Set<Long> locallyAnsweredQuestionIds = new HashSet<>();
@@ -151,6 +156,21 @@ public final class AnswerCapturePane extends VBox {
 
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
+	 *
+	 * @param stage                       owner used by PDF selection
+	 * @param questionRepository          source of persisted Questions
+	 * @param answerWriter                writer for Answer persistence
+	 * @param pdfFilePicker               managed PDF-selection service
+	 * @param answerPdfHandler            callback that registers a selected Answer
+	 *                                    PDF
+	 * @param answerDocumentHandler       callback that displays the Answer document
+	 * @param answerTransitionAllowed     guard for changing Answer targets
+	 * @param selectionClearHandler       callback that clears the shared PDF
+	 *                                    selection
+	 * @param questionExtractor           extractor used to preview accepted regions
+	 * @param answerPdfSessionSupplier    supplier of the active Answer PDF session
+	 * @param answerPageNavigationHandler callback that navigates Answer pages
+	 * @param answerPdfLoader             asynchronous Answer PDF loader
 	 */
 	public AnswerCapturePane(Stage stage, QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
 			PdfFilePicker pdfFilePicker, Consumer<SelectedPdf> answerPdfHandler, Runnable answerDocumentHandler,
@@ -208,23 +228,34 @@ public final class AnswerCapturePane extends VBox {
 		setStyle(BORDER_STYLE);
 	}
 
+	static List<Question> unansweredQuestionsInSourceOrder(List<Question> questions,
+			Set<Long> locallyAnsweredQuestionIds) {
+
+		// Preserve the existing bank-wide behaviour for callers that do not yet supply
+		// a Working Subject.
+		return unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds, null);
+	}
+
 	/**
-	 * Returns Questions still awaiting Answers in deterministic source order.
+	 * Returns Questions still awaiting Answers in deterministic source order,
+	 * optionally restricted to one Working Subject.
 	 *
 	 * @param questions                  current Question snapshot
 	 * @param locallyAnsweredQuestionIds Questions answered after an older snapshot
 	 *                                   was loaded
+	 * @param workingSubject             active Working Subject, or {@code null} for
+	 *                                   all Subjects
 	 * @return unanswered Questions in provider/year/booklet/natural-code order
 	 */
 	static List<Question> unansweredQuestionsInSourceOrder(List<Question> questions,
-			Set<Long> locallyAnsweredQuestionIds) {
+			Set<Long> locallyAnsweredQuestionIds, Subject workingSubject) {
 		Objects.requireNonNull(questions, "questions");
 		Objects.requireNonNull(locallyAnsweredQuestionIds, "locallyAnsweredQuestionIds");
 
-		// Exclude both persisted Answers and Questions known to have been answered
-		// locally since the supplied snapshot was obtained, then apply the common
-		// source-order policy used by other corpus work queues.
+		// Subject filtering is transient workspace state. It removes unrelated
+		// Questions from the active queue without altering any persisted Question.
 		return questions.stream()
+				.filter(question -> workingSubject == null || question.getExam().getSubject().equals(workingSubject))
 				.filter(question -> !question.hasAnswer() && !locallyAnsweredQuestionIds.contains(question.getId()))
 				.sorted(QuestionSourceOrder.comparator()).toList();
 	}
@@ -258,11 +289,22 @@ public final class AnswerCapturePane extends VBox {
 		refreshSaveButtonState();
 	}
 
+	/**
+	 * Returns whether a region can currently be captured for the selected answer.
+	 *
+	 * @return {@code true} when a written-response target and Answer PDF are ready
+	 */
 	public boolean canCaptureRegions() {
 		return !answerSaveInProgress && answerFile != null
 				&& isWrittenResponseQuestion(unansweredQuestionField.getValue());
 	}
 
+	/**
+	 * Starts Answer capture for an unanswered Question.
+	 *
+	 * @param question Question to capture
+	 * @return {@code true} when the transition into capture was accepted
+	 */
 	public boolean captureAnswer(Question question) {
 		if (answerSaveInProgress) {
 			return false;
@@ -368,6 +410,8 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Returns whether accepted Answer regions are held in transient capture state.
+	 *
 	 * @return whether accepted answer regions are loaded in the current capture or
 	 *         edit
 	 */
@@ -376,6 +420,8 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Returns whether Answer persistence is in progress.
+	 *
 	 * @return whether answer persistence is currently running
 	 */
 	public boolean isSaveInProgress() {
@@ -389,13 +435,21 @@ public final class AnswerCapturePane extends VBox {
 		refreshQuestions(questionRepository.findAll());
 	}
 
+	/**
+	 * Rebuilds the unanswered queue from a supplied Question snapshot.
+	 *
+	 * @param questions complete Questions to filter and order
+	 */
 	public void refreshQuestions(List<Question> questions) {
 		Question editTarget = editingAnswerQuestion;
 		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;
 
 		// Build the Answer work queue independently of repository insertion order so
 		// that sustained Answer capture follows the examination's natural source order.
-		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds);
+		// Apply the transient Working Subject while constructing the visible Answer
+		// queue. No persisted Question or Answer data is changed by this filter.
+		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds,
+				workingSubject);
 		Question matching = editTarget;
 		if (matching == null && selected != null) {
 			for (Question question : unansweredQuestions) {
@@ -442,6 +496,28 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Changes the transient Subject used to filter the Answer-capture work queue.
+	 *
+	 * @param workingSubject Subject to display, or {@code null} to display all
+	 *                       Subjects
+	 */
+	public void setWorkingSubject(Subject workingSubject) {
+		Question previouslySelected = unansweredQuestionField.getValue();
+		this.workingSubject = workingSubject;
+
+		// Rebuild the queue from persistence so changing workspace focus cannot alter
+		// Question or Answer data.
+		refreshQuestions();
+		if (previouslySelected != null && unansweredQuestionField.getValue() == null) {
+
+			// The previous target is no longer part of the active Subject queue. Reset
+			// its presentation state as well as the ComboBox so the pane cannot continue
+			// to look as though that Question is active.
+			applyUnansweredQuestionChange(null, false);
+		}
+	}
+
+	/**
 	 * @return whether an answer PDF has been selected or restored for the current
 	 *         question
 	 */
@@ -463,13 +539,19 @@ public final class AnswerCapturePane extends VBox {
 			throw new NullPointerException("selectedPdf");
 		}
 		try {
-			answerFile = answerWriter.findOrCreateAnswerFile(question.getExam(), selectedPdf.file().getName(),
+
+			// Register or reuse the AnswerFile and persist its relationship to this
+			// specific ExamBooklet. Several booklets may legitimately share one file.
+			answerFile = answerWriter.findOrCreateAnswerFile(question.getBooklet(), selectedPdf.file().getName(),
 					selectedPdf.relativePath());
 		} catch (SQLException e) {
 			throw new IllegalStateException("Unable to save answer PDF", e);
 		}
+
+		// The persisted mapping is established before the document becomes the active
+		// Answer source in the workspace.
 		answerPdfHandler.accept(selectedPdf);
-		selectedAnswerPdfLabel.setText(selectedPdf.file().getName());
+		selectedAnswerPdfLabel.setText(answerFile.getName());
 		updateAnswerPdfControlsVisibility(question);
 	}
 
@@ -512,6 +594,10 @@ public final class AnswerCapturePane extends VBox {
 		clearPendingAnswerRegions();
 		clearMultipleChoiceAnswer();
 		if (question == null) {
+
+			// No active Question means no booklet-specific AnswerFile can remain current.
+			answerFile = null;
+			selectedAnswerPdfLabel.setText("No PDF selected");
 			selectedAnswerQuestionLabel.setText("No question selected");
 			updateMultipleChoiceAnswerVisibility(null);
 			updateAnswerRegionControlsVisibility(null);
@@ -523,53 +609,43 @@ public final class AnswerCapturePane extends VBox {
 			updateAnswerPdfControlsVisibility(null);
 			return;
 		}
-		if (answerFile != null && answerFile.getExam().getId() != question.getExam().getId()) {
+		boolean usesAnswerDocument = usesAnswerDocument(question);
+
+		// UNKNOWN Questions cannot own an AnswerFile until their response type has been
+		// resolved.
+		if (!usesAnswerDocument) {
 			answerFile = null;
 			selectedAnswerPdfLabel.setText("No PDF selected");
 		}
-		boolean writtenResponse = isWrittenResponseQuestion(question);
-		boolean usesAnswerDocument = usesAnswerDocument(question);
-		boolean openedAnswerPdf = false;
 		if (question.hasAnswer()) {
 			Answer answer = question.getAnswer();
 			selectMultipleChoiceAnswer(answer.getAnswerText());
 
-			// Preserve any historical regions regardless of response type. MCQ mode simply
-			// does not display or require them.
+			// Persisted Answer regions remain authoritative Answer content. The booklet
+			// mapping determines which document is displayed for those regions.
 			pendingAnswerRegions.addAll(answer.getRegions());
-			if (writtenResponse && !answer.getRegions().isEmpty()) {
-				AnswerFile storedAnswerFile = answer.getRegions().getFirst().answerFile();
-				Path pdfPath = resolveRegisteredAnswerFile(storedAnswerFile);
-				if (pdfPath != null) {
-					openedAnswerPdf = openRegisteredAnswerFile(storedAnswerFile, pdfPath);
-				}
-			} else if (usesAnswerDocument && loadDocument && answerFile == null) {
-
-				// MCQs still need the registered answer booklet visible so the teacher can
-				// read the authoritative answer letter.
-				openedAnswerPdf = loadRegisteredAnswerFile(question);
-			}
-			refreshAnswerRegionList();
-			showAcceptedRegionStatus();
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — answer stored");
 			saveAnswerButton.setText("Update Answer");
 		} else {
-			if (usesAnswerDocument && loadDocument && answerFile == null) {
-
-				// Open a uniquely registered answer document for either supported response
-				// type. Region capture remains controlled separately below.
-				openedAnswerPdf = loadRegisteredAnswerFile(question);
-			}
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
 			saveAnswerButton.setText("Save Answer");
 			answerRegionCountLabel.setText("Regions: 0");
 			answerRegionStatusLabel.setText("");
 		}
+		if (loadDocument && usesAnswerDocument) {
+
+			// Resolve the active Answer PDF from the Question's booklet, never merely
+			// from another Question belonging to the same Exam.
+			loadAssignedAnswerFile(question);
+		}
+		refreshAnswerRegionList();
+		if (question.hasAnswer()) {
+			showAcceptedRegionStatus();
+		}
 		updateMultipleChoiceAnswerVisibility(question);
 		updateAnswerRegionControlsVisibility(question);
 
-		// UNKNOWN questions cannot be answered until their response type is resolved.
-		// MCQ and written-response Questions may both choose an answer PDF.
+		// MCQ and written-response Questions may both have an assigned answer document.
 		chooseAnswerPdfButton.setDisable(!usesAnswerDocument);
 		updateAnswerPdfControlsVisibility(question);
 		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
@@ -577,12 +653,6 @@ public final class AnswerCapturePane extends VBox {
 					+ "use Edit Metadata before capturing an answer.");
 		}
 		refreshSaveButtonState();
-		if (loadDocument && usesAnswerDocument && answerFile != null && !openedAnswerPdf) {
-
-			// Reuse the already-known answer document when moving between Questions from
-			// the same Exam instead of requiring the teacher to reopen it.
-			answerDocumentHandler.run();
-		}
 	}
 
 	private void cancelAnswerEdit() {
@@ -943,24 +1013,81 @@ public final class AnswerCapturePane extends VBox {
 		return question != null && question.getResponseType() == QuestionResponseType.WRITTEN_RESPONSE;
 	}
 
+	private boolean loadAssignedAnswerFile(Question question) {
+		AnswerFile assignedAnswerFile;
+		try {
+
+			// The ExamBooklet mapping is authoritative. Do not infer the file from the
+			// number of AnswerFiles registered for the surrounding Exam.
+			assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
+		} catch (SQLException e) {
+			answerFile = null;
+			selectedAnswerPdfLabel.setText("Choose an answer PDF");
+			showAnswerFileError("Could not read the answer PDF assigned to this booklet.", e.getMessage());
+			updateAnswerPdfControlsVisibility(question);
+			return false;
+		}
+		if (assignedAnswerFile == null) {
+
+			// An unresolved booklet must never inherit the previously displayed file merely
+			// because that file belongs to the same Exam.
+			answerFile = null;
+			selectedAnswerPdfLabel.setText("Choose an answer PDF");
+			updateAnswerPdfControlsVisibility(question);
+			return false;
+		}
+		if (answerFile != null && answerFile.getId() == assignedAnswerFile.getId()) {
+
+			// MCQ and Paper 1 may deliberately share one AnswerFile. Reuse the already
+			// loaded document rather than reopening the same PDF on every manual selection.
+			answerFile = assignedAnswerFile;
+			selectedAnswerPdfLabel.setText(assignedAnswerFile.getName());
+			try {
+				answerDocumentHandler.run();
+			} catch (RuntimeException e) {
+				answerFile = null;
+				selectedAnswerPdfLabel.setText("Choose an answer PDF");
+				showAnswerFileError("The assigned answer PDF could not be displayed.", e.getMessage());
+				updateAnswerPdfControlsVisibility(question);
+				return false;
+			}
+			updateAnswerPdfControlsVisibility(question);
+			return true;
+		}
+
+		// A different booklet may point at a different AnswerFile. Clear the old file
+		// before attempting to open the newly assigned document.
+		answerFile = null;
+		Path pdfPath = resolveRegisteredAnswerFile(assignedAnswerFile);
+		if (pdfPath == null) {
+			selectedAnswerPdfLabel.setText("Choose an answer PDF");
+			updateAnswerPdfControlsVisibility(question);
+			return false;
+		}
+		boolean opened = openRegisteredAnswerFile(assignedAnswerFile, pdfPath);
+		updateAnswerPdfControlsVisibility(question);
+		return opened;
+	}
+
 	private void loadNextAnswerDocument(Question question) {
 		if (question == null || !usesAnswerDocument(question)) {
+
+			// Nothing remains that can legitimately retain the previous booklet's Answer
+			// source.
+			answerFile = null;
+			selectedAnswerPdfLabel.setText("No PDF selected");
 			finishAnswerSaveTransition(null);
 			return;
 		}
 		answerRegionStatusLabel.setText("Answer saved — loading next question...");
-		if (answerFile != null) {
-
-			// The next Question belongs to the same Exam when answerFile survives the
-			// selection change. Reopen that document for MCQ or written-response work.
-			openNextAnswerDocument(answerFile);
-			return;
-		}
-		Task<List<AnswerFile>> task = new Task<>() {
+		Task<AnswerFile> task = new Task<>() {
 
 			@Override
-			protected List<AnswerFile> call() throws SQLException {
-				return answerWriter.findAnswerFiles(question.getExam());
+			protected AnswerFile call() throws SQLException {
+
+				// The next Question may belong to another booklet in the same Exam, so its
+				// own persisted mapping must be resolved before choosing a document.
+				return answerWriter.findAnswerFile(question.getBooklet());
 			}
 		};
 		task.setOnSucceeded(_ -> {
@@ -968,39 +1095,30 @@ public final class AnswerCapturePane extends VBox {
 				finishAnswerSaveTransition(new CancellationException("Answer selection changed"));
 				return;
 			}
-			AnswerFile file = selectRegisteredAnswerFile(task.getValue());
+			AnswerFile file = task.getValue();
 			if (file == null) {
-				finishAnswerSaveTransition(null);
-			} else {
-				openNextAnswerDocument(file);
-			}
-		});
-		task.setOnFailed(_ -> finishAnswerSaveTransition(task.getException()));
-		Thread.ofVirtual().name("next-answer-file").start(task);
-	}
 
-	private boolean loadRegisteredAnswerFile(Question question) {
-		List<AnswerFile> answerFiles;
-		try {
-			answerFiles = answerWriter.findAnswerFiles(question.getExam());
-		} catch (SQLException e) {
-			showAnswerFileError("Could not read the registered answer files.", e.getMessage());
-			updateAnswerPdfControlsVisibility(question);
-			return false;
-		}
-		AnswerFile registeredAnswerFile = selectRegisteredAnswerFile(answerFiles);
-		if (registeredAnswerFile == null) {
-			updateAnswerPdfControlsVisibility(question);
-			return false;
-		}
-		Path pdfPath = resolveRegisteredAnswerFile(registeredAnswerFile);
-		if (pdfPath == null) {
-			updateAnswerPdfControlsVisibility(question);
-			return false;
-		}
-		boolean opened = openRegisteredAnswerFile(registeredAnswerFile, pdfPath);
-		updateAnswerPdfControlsVisibility(question);
-		return opened;
+				// Never carry the preceding booklet's PDF into an unresolved booklet.
+				answerFile = null;
+				selectedAnswerPdfLabel.setText("Choose an answer PDF");
+				finishAnswerSaveTransition(null);
+				return;
+			}
+
+			// Keep the existing asynchronous PDF-loading path even when the next booklet
+			// shares the same AnswerFile. Existing save-transition and failure handling
+			// relies on this callback completing before capture is re-enabled.
+			openNextAnswerDocument(file);
+		});
+		task.setOnFailed(_ -> {
+
+			// A failed lookup must not leave the preceding booklet's AnswerFile appearing
+			// to belong to the new Question.
+			answerFile = null;
+			selectedAnswerPdfLabel.setText("Choose an answer PDF");
+			finishAnswerSaveTransition(task.getException());
+		});
+		Thread.ofVirtual().name("next-answer-file").start(task);
 	}
 
 	private void openNextAnswerDocument(AnswerFile file) {
@@ -1212,18 +1330,6 @@ public final class AnswerCapturePane extends VBox {
 		preservedAnswerText = answerText;
 	}
 
-	private AnswerFile selectRegisteredAnswerFile(List<AnswerFile> answerFiles) {
-		if (answerFiles.isEmpty()) {
-			selectedAnswerPdfLabel.setText("No PDF selected");
-			return null;
-		}
-		if (answerFiles.size() > 1) {
-			selectedAnswerPdfLabel.setText("Multiple answer PDFs registered — choose PDF...");
-			return null;
-		}
-		return answerFiles.get(0);
-	}
-
 	private void setMultipleChoiceAnswerEnabled(boolean enabled) {
 		answerAButton.setDisable(!enabled);
 		answerBButton.setDisable(!enabled);
@@ -1293,23 +1399,18 @@ public final class AnswerCapturePane extends VBox {
 		if (question == null || answerSaveInProgress || !usesAnswerDocument(question)) {
 			return;
 		}
-		if (answerFile != null && answerFile.getExam().getId() == question.getExam().getId()) {
 
-			// MCQ and written-response work may both reuse the currently registered
-			// answer document for this Exam.
-			answerDocumentHandler.run();
-			return;
-		}
-		loadRegisteredAnswerFile(question);
+		// Opening the Answer selector must resolve the current booklet's mapping rather
+		// than assuming the currently loaded same-Exam PDF is suitable.
+		loadAssignedAnswerFile(question);
 	}
 
 	private void updateAnswerPdfControlsVisibility(Question question) {
 		boolean usesAnswerDocument = usesAnswerDocument(question);
-		boolean answerPdfKnown = usesAnswerDocument && answerFile != null
-				&& answerFile.getExam().getId() == question.getExam().getId();
 
-		// The PDF chooser is needed for both MCQ and written-response Questions when
-		// this Exam does not yet have one unambiguous AnswerFile selected.
+		// answerFile is maintained as the file resolved for the currently selected
+		// booklet. A null value therefore means this booklet still needs a PDF choice.
+		boolean answerPdfKnown = usesAnswerDocument && answerFile != null;
 		boolean visible = usesAnswerDocument && !answerPdfKnown;
 		answerPdfControls.setVisible(visible);
 		answerPdfControls.setManaged(visible);

@@ -6,7 +6,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 
@@ -14,11 +18,21 @@ import au.edu.eq.questionbank.model.SourceQuestion;
  * Converts a revision corpus into deterministic student-facing question
  * presentations.
  * <p>
- * Multipart grouping happens only within one final current-curriculum bucket
- * and depends on persisted SourceQuestion identity. Shared-context identity
- * alone never creates a multipart group.
+ * Curriculum grouping is an output decision. The source corpus continues to
+ * retain the actual current-curriculum applicability of every Question.
+ * Multipart grouping happens only after the final output bucket has been
+ * chosen.
  */
 public final class RevisionPresentationPlanner {
+
+	private static final Comparator<Question> MEMBER_ORDER = Comparator.comparing(Question::getQuestionCode)
+			.thenComparingLong(Question::getId);
+
+	// Revision output is chronological within one curriculum bucket. Once year is
+	// equal, reuse the application's established deterministic source ordering.
+	private static final Comparator<RevisionQuestionPlacement> REVISION_SOURCE_ORDER = Comparator
+			.comparingInt((RevisionQuestionPlacement placement) -> placement.getQuestion().getExam().getYear())
+			.thenComparing(RevisionQuestionPlacement::getQuestion, QuestionSourceOrder.comparator());
 
 	/**
 	 * Creates a planner for curriculum-grouped, multipart revision presentations.
@@ -26,30 +40,90 @@ public final class RevisionPresentationPlanner {
 	public RevisionPresentationPlanner() {
 	}
 
-	private static final Comparator<Question> MEMBER_ORDER = Comparator.comparing(Question::getQuestionCode)
-			.thenComparingLong(Question::getId);
+	/**
+	 * Returns whether Descriptor grouping can represent the complete renderable
+	 * corpus without dropping broader Subtopic-level applicability.
+	 * <p>
+	 * The rule is intentionally all-or-nothing. One renderable Subtopic-level
+	 * placement disables Descriptor grouping for the export.
+	 *
+	 * @param corpus source revision corpus
+	 * @return true when all renderable placements are Descriptor-level
+	 */
+	public boolean isDescriptorGroupingAvailable(RevisionCorpus corpus) {
+		if (corpus == null) {
+			throw new NullPointerException("corpus");
+		}
+		for (RevisionCorpusNode root : corpus.getRootNodes()) {
+			if (!hasCompleteDescriptorCoverage(root)) {
+				return false;
+			}
+		}
+		return true;
+	}
 
 	/**
-	 * Groups renderable corpus placements into numbered student-facing
-	 * presentations.
+	 * Plans the corpus using the finest safe grouping mode.
+	 * <p>
+	 * Descriptor grouping is used only when every renderable placement is at
+	 * Descriptor level. Otherwise the corpus automatically falls back to Subtopic
+	 * grouping.
 	 *
 	 * @param corpus source corpus organised by current curriculum
-	 * @return presentation hierarchy with source-question parts grouped within each
-	 *         bucket
+	 * @return presentation hierarchy using the finest safe grouping mode
 	 */
 	public RevisionPresentationPlan plan(RevisionCorpus corpus) {
 		if (corpus == null) {
 			throw new NullPointerException("corpus");
 		}
-		RevisionNumberSequence revisionNumbers = new RevisionNumberSequence();
+		RevisionGroupingMode groupingMode = isDescriptorGroupingAvailable(corpus) ? RevisionGroupingMode.DESCRIPTOR
+				: RevisionGroupingMode.SUBTOPIC;
+		return plan(corpus, groupingMode);
+	}
 
-		// Number the grouped presentations afresh; corpus placement numbers may
-		// collapse into one group.
-		List<RevisionPresentationNode> roots = new ArrayList<>();
-		for (RevisionCorpusNode root : corpus.getRootNodes()) {
-			roots.add(planNode(root, revisionNumbers));
+	/**
+	 * Plans the corpus using an explicit transient export grouping mode.
+	 *
+	 * @param corpus       source corpus organised by current curriculum
+	 * @param groupingMode requested grouping depth
+	 * @return student-facing presentation hierarchy
+	 * @throws IllegalArgumentException if Descriptor grouping is requested while
+	 *                                  any renderable placement exists only at
+	 *                                  Subtopic level
+	 */
+	public RevisionPresentationPlan plan(RevisionCorpus corpus, RevisionGroupingMode groupingMode) {
+		if (corpus == null) {
+			throw new NullPointerException("corpus");
 		}
-		return new RevisionPresentationPlan(corpus, roots);
+		if (groupingMode == null) {
+			throw new NullPointerException("groupingMode");
+		}
+		if (groupingMode == RevisionGroupingMode.DESCRIPTOR && !isDescriptorGroupingAvailable(corpus)) {
+			throw new IllegalArgumentException(
+					"Descriptor grouping requires every renderable revision placement to be Descriptor-level");
+		}
+		RevisionNumberSequence revisionNumbers = new RevisionNumberSequence();
+		List<RevisionPresentationNode> roots = new ArrayList<>();
+
+		// Number grouped presentations afresh. Corpus placement numbers are diagnostic
+		// source state and may collapse when final output buckets are rolled up.
+		for (RevisionCorpusNode root : corpus.getRootNodes()) {
+			roots.add(planNode(root, groupingMode, revisionNumbers));
+		}
+		return new RevisionPresentationPlan(corpus, roots, groupingMode);
+	}
+
+	private void addOrderedPlacements(List<RevisionQuestionPlacement> source, List<RevisionQuestionPlacement> target,
+			Set<Long> emittedQuestionIds) {
+		for (RevisionQuestionPlacement placement : orderedPlacements(source)) {
+
+			// A Question may map to several Descriptors beneath one final Subtopic. The
+			// rolled-up Subtopic presentation must show that Question once, at the first
+			// Descriptor encountered in curriculum order.
+			if (emittedQuestionIds.add(placement.getQuestion().getId())) {
+				target.add(placement);
+			}
+		}
 	}
 
 	private boolean contextsMatch(SharedQuestionContext first, SharedQuestionContext second) {
@@ -61,8 +135,8 @@ public final class RevisionPresentationPlanner {
 
 	private List<PresentationDraft> createDrafts(List<RevisionQuestionPlacement> placements) {
 
-		// Uncaptured parts remain in corpus statistics but cannot join a rendered
-		// presentation.
+		// Uncaptured Questions remain in corpus statistics but cannot join rendered
+		// student presentations.
 		List<RevisionQuestionPlacement> renderablePlacements = new ArrayList<>();
 		for (RevisionQuestionPlacement placement : placements) {
 			if (placement.isRenderable()) {
@@ -72,8 +146,8 @@ public final class RevisionPresentationPlanner {
 		List<PresentationDraft> drafts = new ArrayList<>();
 		Set<SourceKey> emittedSources = new HashSet<>();
 
-		// Emit a multipart group where its first member occurs, preserving the
-		// surrounding question order.
+		// Form multipart Questions before response-type ordering so a multipart
+		// Question remains one student-facing presentation.
 		for (RevisionQuestionPlacement placement : renderablePlacements) {
 			Question question = placement.getQuestion();
 			if (!question.hasSourceQuestion()) {
@@ -86,6 +160,10 @@ public final class RevisionPresentationPlanner {
 			}
 			drafts.add(createSourceQuestionDraft(renderablePlacements, sourceKey));
 		}
+
+		// List.sort is stable. This moves MCQ before written response before unknown
+		// while preserving Descriptor/year/source order inside each response type.
+		drafts.sort(Comparator.comparingInt(this::responseRank));
 		return drafts;
 	}
 
@@ -115,34 +193,86 @@ public final class RevisionPresentationPlanner {
 		return new PresentationDraft(members, sourceQuestion, sharedContext);
 	}
 
-	private RevisionPresentationNode planNode(RevisionCorpusNode corpusNode, RevisionNumberSequence revisionNumbers) {
+	private boolean hasCompleteDescriptorCoverage(RevisionCorpusNode node) {
 
-		// Group only this bucket's placements so shared source identity cannot cross
-		// curriculum boundaries.
-		List<RevisionQuestionPresentation> presentations = planPresentations(corpusNode, revisionNumbers);
+		// Metadata-only placements do not affect an export choice because they cannot
+		// appear in the generated student resource.
+		if (node.getCurriculumNode().getLevel() == CurriculumLevel.SUBTOPIC) {
+			for (RevisionQuestionPlacement placement : node.getQuestionPlacements()) {
+				if (placement.isRenderable()) {
+					return false;
+				}
+			}
+		}
+		for (RevisionCorpusNode child : node.getChildren()) {
+			if (!hasCompleteDescriptorCoverage(child)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private List<RevisionQuestionPlacement> orderedPlacements(List<RevisionQuestionPlacement> placements) {
+		List<RevisionQuestionPlacement> ordered = new ArrayList<>(placements);
+		ordered.sort(REVISION_SOURCE_ORDER);
+		return ordered;
+	}
+
+	private RevisionPresentationNode planNode(RevisionCorpusNode corpusNode, RevisionGroupingMode groupingMode,
+			RevisionNumberSequence revisionNumbers) {
+		List<RevisionQuestionPresentation> presentations = presentationsForNode(corpusNode, groupingMode,
+				revisionNumbers);
 		List<RevisionPresentationNode> children = new ArrayList<>();
 		for (RevisionCorpusNode child : corpusNode.getChildren()) {
-			children.add(planNode(child, revisionNumbers));
+			children.add(planNode(child, groupingMode, revisionNumbers));
 		}
 		return new RevisionPresentationNode(corpusNode.getCurriculumNode(), children, presentations);
 	}
 
-	private List<RevisionQuestionPresentation> planPresentations(RevisionCorpusNode corpusNode,
-			RevisionNumberSequence revisionNumbers) {
-		List<PresentationDraft> drafts = createDrafts(corpusNode.getQuestionPlacements());
+	private List<RevisionQuestionPresentation> planPresentations(CurriculumNode outputBucket,
+			List<RevisionQuestionPlacement> placements, RevisionNumberSequence revisionNumbers) {
+		List<PresentationDraft> drafts = createDrafts(placements);
 		List<RevisionQuestionPresentation> presentations = new ArrayList<>();
 		ContextKey previousContext = null;
 		for (PresentationDraft draft : drafts) {
 			ContextKey currentContext = ContextKey.from(draft.sharedContext());
 
-			// Render again after a different context (including none), and at the start of
-			// each bucket.
+			// Shared context is emitted at the start of an adjacent sequence using that
+			// context. A different context, including no context, starts a new sequence.
 			boolean renderSharedContext = currentContext != null && !currentContext.equals(previousContext);
-			presentations.add(new RevisionQuestionPresentation(revisionNumbers.next(), corpusNode.getCurriculumNode(),
-					draft.members(), draft.sourceQuestion(), draft.sharedContext(), renderSharedContext));
+			presentations.add(new RevisionQuestionPresentation(revisionNumbers.next(), outputBucket, draft.members(),
+					draft.sourceQuestion(), draft.sharedContext(), renderSharedContext));
 			previousContext = currentContext;
 		}
 		return List.copyOf(presentations);
+	}
+
+	private List<RevisionQuestionPresentation> presentationsForNode(RevisionCorpusNode corpusNode,
+			RevisionGroupingMode groupingMode, RevisionNumberSequence revisionNumbers) {
+		CurriculumLevel level = corpusNode.getCurriculumNode().getLevel();
+		if (groupingMode == RevisionGroupingMode.DESCRIPTOR) {
+
+			// Descriptor mode is all-or-nothing, so only Descriptor nodes are final
+			// presentation buckets.
+			if (level != CurriculumLevel.DESCRIPTOR) {
+				return List.of();
+			}
+			return planPresentations(corpusNode.getCurriculumNode(),
+					orderedPlacements(corpusNode.getQuestionPlacements()), revisionNumbers);
+		}
+		if (level == CurriculumLevel.SUBTOPIC) {
+			return planPresentations(corpusNode.getCurriculumNode(), rollUpSubtopicPlacements(corpusNode),
+					revisionNumbers);
+		}
+		if (level == CurriculumLevel.TOPIC && topicUsesDirectDescriptors(corpusNode)) {
+
+			// A three-level curriculum has no Subtopic node. In Subtopic mode the Topic
+			// therefore becomes the practical roll-up bucket rather than inventing a
+			// synthetic curriculum node.
+			return planPresentations(corpusNode.getCurriculumNode(), rollUpDirectDescriptorTopicPlacements(corpusNode),
+					revisionNumbers);
+		}
+		return List.of();
 	}
 
 	private SharedQuestionContext resolveConsistentSharedContext(List<Question> members,
@@ -153,7 +283,7 @@ public final class RevisionPresentationPlanner {
 		SharedQuestionContext expected = members.getFirst().getSharedContext();
 
 		// Missing versus linked context is also a conflict; choosing one would hide
-		// inconsistent source data.
+		// inconsistent persisted source data.
 		for (Question member : members) {
 			if (!contextsMatch(expected, member.getSharedContext())) {
 				throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()
@@ -161,6 +291,79 @@ public final class RevisionPresentationPlanner {
 			}
 		}
 		return expected;
+	}
+
+	private int responseRank(PresentationDraft draft) {
+		boolean allMultipleChoice = true;
+		boolean hasWrittenResponse = false;
+		for (Question question : draft.members()) {
+			QuestionResponseType responseType = question.getResponseType();
+			if (responseType != QuestionResponseType.MULTIPLE_CHOICE) {
+				allMultipleChoice = false;
+			}
+			if (responseType == QuestionResponseType.WRITTEN_RESPONSE) {
+				hasWrittenResponse = true;
+			}
+		}
+		if (allMultipleChoice) {
+			return 0;
+		}
+		if (hasWrittenResponse) {
+			return 1;
+		}
+		return 2;
+	}
+
+	private List<RevisionQuestionPlacement> rollUpDirectDescriptorTopicPlacements(RevisionCorpusNode topicNode) {
+		List<RevisionQuestionPlacement> rolledUp = new ArrayList<>();
+		Set<Long> emittedQuestionIds = new HashSet<>();
+
+		// Descriptor child order is curriculum order. Within each Descriptor, Questions
+		// are oldest-to-newest and ties use deterministic source order.
+		for (RevisionCorpusNode descriptorNode : topicNode.getChildren()) {
+			if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
+				throw new IllegalStateException("Three-level Topic roll-up requires only Descriptor children");
+			}
+			addOrderedPlacements(descriptorNode.getQuestionPlacements(), rolledUp, emittedQuestionIds);
+		}
+		return List.copyOf(rolledUp);
+	}
+
+	private List<RevisionQuestionPlacement> rollUpSubtopicPlacements(RevisionCorpusNode subtopicNode) {
+		List<RevisionQuestionPlacement> rolledUp = new ArrayList<>();
+		Set<Long> emittedQuestionIds = new HashSet<>();
+
+		// Questions classified directly to the broader Subtopic come first. These are
+		// followed by Descriptor groups in curriculum order.
+		addOrderedPlacements(subtopicNode.getQuestionPlacements(), rolledUp, emittedQuestionIds);
+		for (RevisionCorpusNode descriptorNode : subtopicNode.getChildren()) {
+			if (descriptorNode.getCurriculumNode().getLevel() != CurriculumLevel.DESCRIPTOR) {
+				throw new IllegalStateException("Subtopic corpus children must be Descriptor nodes");
+			}
+			addOrderedPlacements(descriptorNode.getQuestionPlacements(), rolledUp, emittedQuestionIds);
+		}
+		return List.copyOf(rolledUp);
+	}
+
+	private boolean topicUsesDirectDescriptors(RevisionCorpusNode topicNode) {
+		List<RevisionCorpusNode> children = topicNode.getChildren();
+		if (children.isEmpty()) {
+			return false;
+		}
+		CurriculumLevel childLevel = children.getFirst().getCurriculumNode().getLevel();
+		for (RevisionCorpusNode child : children) {
+			if (child.getCurriculumNode().getLevel() != childLevel) {
+				throw new IllegalStateException(
+						"Topic presentation children must not mix Subtopic and Descriptor nodes");
+			}
+		}
+		if (childLevel == CurriculumLevel.DESCRIPTOR) {
+			return true;
+		}
+		if (childLevel == CurriculumLevel.SUBTOPIC) {
+			return false;
+		}
+		throw new IllegalStateException("Topic presentation children must be Subtopic or Descriptor nodes");
 	}
 
 	private record ContextKey(long bookletId, long contextId) {

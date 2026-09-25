@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.output.revision;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
@@ -21,9 +22,9 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
-import au.edu.eq.questionbank.model.PreambleStatus;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -34,6 +35,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -66,8 +68,8 @@ class RevisionMultipartExportIntegrationTest {
 		Exam exam = new Exam(1, chemistry, provider, 2022, "Chemistry examination");
 		SourceDocument sourceDocument = new SourceDocument(1, "question.pdf");
 		ExamBooklet booklet = new ExamBooklet(1, exam, "Paper 1", sourceDocument);
-		SourceQuestion sourceQuestion = new SourceQuestion(24, booklet, "24", PreambleStatus.PRESENT);
-		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Question 24 preamble",
+		SourceQuestion sourceQuestion = new SourceQuestion(24, booklet, "24", SharedContextStatus.PRESENT);
+		SharedQuestionContext sharedContext = new SharedQuestionContext(50, booklet, "Question 24 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 0.25)));
 		Question partA = new Question(4, booklet, "24a", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.0, 0.25, 1.0, 0.25)), historicalDescriptor, false,
@@ -86,7 +88,10 @@ class RevisionMultipartExportIntegrationTest {
 				_ -> List.of(new QuestionApplicabilityMatch(partA, currentDescriptor),
 						new QuestionApplicabilityMatch(partB, currentDescriptor)),
 				expansionService);
-		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService);
+
+		// Both source parts remain included in this multipart export fixture.
+		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
+				new InMemoryQuestionOutputApplicabilityRepository());
 		PdfStore pdfStore = new PdfStore(pdfRoot);
 		QuestionExtractor extractor = new QuestionExtractor();
 		RevisionExportService service = new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
@@ -96,20 +101,31 @@ class RevisionMultipartExportIntegrationTest {
 		Path destination = tempDir.resolve("revision-output");
 		RevisionExportResult result = service.export(new RevisionExportRequest(chemistry, destination));
 		Path topicFile = destination.resolve(Path.of("units", "unit-10", "topic-11.html"));
+		Path subjectIndex = destination.resolve("index.html");
 		Path contextImage = destination.resolve(Path.of("assets", "contexts", "context-50.png"));
 		Path partAImage = destination.resolve(Path.of("assets", "questions", "question-4.png"));
 		Path partBImage = destination.resolve(Path.of("assets", "questions", "question-5.png"));
 		assertTrue(Files.isRegularFile(topicFile));
+		assertTrue(Files.isRegularFile(subjectIndex));
 		assertTrue(Files.isRegularFile(contextImage));
 		assertTrue(Files.isRegularFile(partAImage));
 		assertTrue(Files.isRegularFile(partBImage));
 		String html = Files.readString(topicFile);
+		String subjectHtml = Files.readString(subjectIndex);
+
+		// Two persisted source parts form one student-facing revision Question.
+		assertTrue(subjectHtml.contains("<strong>1</strong>"));
+		assertTrue(subjectHtml.contains("Revision question"));
+		assertFalse(subjectHtml.contains("Applicable questions"));
+		assertFalse(subjectHtml.contains("Exportable questions"));
+		assertFalse(subjectHtml.contains("Awaiting question capture"));
 		assertEquals(1, countOccurrences(html, "context-50.png"));
 		assertEquals(1, countOccurrences(html, "<summary>Reveal answer</summary>"));
 		assertTrue(html.contains("Question 1"));
 		assertTrue(html.contains("5 marks"));
-		assertTrue(html.contains("Source part 24a"));
-		assertTrue(html.contains("Source part 24b"));
+		assertFalse(html.contains("Source part 24a"));
+		assertFalse(html.contains("Source part 24b"));
+		assertTrue(html.contains("Questions 24a, 24b"));
 		assertTrue(html.contains("question-4.png"));
 		assertTrue(html.contains("question-5.png"));
 		assertTrue(html.contains("Answer A"));

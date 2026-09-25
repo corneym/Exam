@@ -6,6 +6,10 @@ import java.nio.file.Path;
 /**
  * A PDF selected beneath the configured data root, retaining both file-system
  * and JavaFX file-chooser representations.
+ *
+ * @param file     file-chooser representation of the selected PDF
+ * @param path     normalised absolute path to the selected PDF
+ * @param dataRoot normalised absolute root used to derive stored relative paths
  */
 public record SelectedPdf(File file, Path path, Path dataRoot) {
 

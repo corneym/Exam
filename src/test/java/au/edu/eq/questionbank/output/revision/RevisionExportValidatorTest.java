@@ -21,6 +21,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
@@ -54,6 +55,29 @@ class RevisionExportValidatorTest {
 				Path.of("assets", "questions", "question-1.png"));
 		RevisionExportValidator validator = new RevisionExportValidator();
 		validator.validate(root, fixture.corpus, List.of(index), List.of(questionAsset), List.of(), List.of());
+	}
+
+	@Test
+	void acceptsLocalFragmentReferenceWhenTargetExists() throws Exception {
+		Fixture fixture = new Fixture();
+		Path root = tempDir.resolve("export");
+		Files.createDirectories(root);
+		Path index = root.resolve("index.html");
+		Files.writeString(index, """
+				<!DOCTYPE html>
+				<html>
+				<body>
+				    <nav>
+				        <a href="#multiple-choice">Multiple choice</a>
+				    </nav>
+				    <section id="multiple-choice">
+				        <h2>Multiple choice</h2>
+				    </section>
+				</body>
+				</html>
+				""");
+		new RevisionExportValidator().validate(root, fixture.emptyCorpus, List.of(index), List.of(), List.of(),
+				List.of());
 	}
 
 	@Test
@@ -154,8 +178,12 @@ class RevisionExportValidatorTest {
 			QuestionRetrievalService withQuestion = new QuestionRetrievalService(
 					_ -> List.of(new QuestionApplicabilityMatch(question, currentDescriptor)), expansion);
 			QuestionRetrievalService empty = new QuestionRetrievalService(_ -> List.of(), expansion);
-			corpus = new RevisionCorpusBuilder(repository, withQuestion).build(chemistry);
-			emptyCorpus = new RevisionCorpusBuilder(repository, empty).build(chemistry);
+
+			// Validator fixtures contain no explicit per-Question output exclusions.
+			corpus = new RevisionCorpusBuilder(repository, withQuestion,
+					new InMemoryQuestionOutputApplicabilityRepository()).build(chemistry);
+			emptyCorpus = new RevisionCorpusBuilder(repository, empty,
+					new InMemoryQuestionOutputApplicabilityRepository()).build(chemistry);
 		}
 	}
 }

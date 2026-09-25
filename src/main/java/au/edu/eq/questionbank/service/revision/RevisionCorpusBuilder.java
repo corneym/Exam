@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.assessment.QuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
@@ -26,24 +27,32 @@ public final class RevisionCorpusBuilder {
 
 	private final CurriculumRepository curriculumRepository;
 	private final QuestionRetrievalService questionRetrievalService;
+	private final QuestionOutputApplicabilityRepository outputApplicabilityRepository;
 
 	/**
-	 * Creates a builder combining current curriculum structure with applicable
-	 * questions.
+	 * Creates a builder combining current curriculum structure, derived Question
+	 * applicability and explicit per-Question output exclusions.
 	 *
-	 * @param curriculumRepository     subject and curriculum hierarchy lookup
-	 * @param questionRetrievalService current-curriculum question retrieval
+	 * @param curriculumRepository          subject and curriculum hierarchy lookup
+	 * @param questionRetrievalService      current-curriculum Question retrieval
+	 * @param outputApplicabilityRepository persisted per-Question output exclusions
+	 * @throws NullPointerException if any dependency is {@code null}
 	 */
 	public RevisionCorpusBuilder(CurriculumRepository curriculumRepository,
-			QuestionRetrievalService questionRetrievalService) {
+			QuestionRetrievalService questionRetrievalService,
+			QuestionOutputApplicabilityRepository outputApplicabilityRepository) {
 		if (curriculumRepository == null) {
 			throw new NullPointerException("curriculumRepository");
 		}
 		if (questionRetrievalService == null) {
 			throw new NullPointerException("questionRetrievalService");
 		}
+		if (outputApplicabilityRepository == null) {
+			throw new NullPointerException("outputApplicabilityRepository");
+		}
 		this.curriculumRepository = curriculumRepository;
 		this.questionRetrievalService = questionRetrievalService;
+		this.outputApplicabilityRepository = outputApplicabilityRepository;
 	}
 
 	/**
@@ -113,8 +122,8 @@ public final class RevisionCorpusBuilder {
 
 			// Preserve the legacy review signal even when shared context has since been
 			// captured.
-			if (question.isPreambleCaptureRequired()) {
-				accumulator.preambleReviewQuestionIds.add(questionId);
+			if (question.isSharedContextCaptureRequired()) {
+				accumulator.sharedContextReviewQuestionIds.add(questionId);
 			}
 		}
 		for (MutableCorpusNode child : node.children) {
@@ -147,7 +156,7 @@ public final class RevisionCorpusBuilder {
 		return new RevisionCorpusStatistics(accumulator.applicablePlacements, accumulator.uniqueQuestionIds.size(),
 				accumulator.renderableQuestionIds.size(), accumulator.missingRegionQuestionIds.size(),
 				accumulator.questionIdsWithAnswers.size(), accumulator.questionIdsWithoutAnswers.size(),
-				accumulator.preambleReviewQuestionIds.size());
+				accumulator.sharedContextReviewQuestionIds.size());
 	}
 
 	private SyllabusVersion findCurrentVersion(Subject subject) {
@@ -223,14 +232,39 @@ public final class RevisionCorpusBuilder {
 			if (!subject.equals(question.getExam().getSubject())) {
 				throw new IllegalStateException("Retrieved question belongs to another subject");
 			}
+			Set<Long> excludedCurrentNodeIds = outputApplicabilityRepository.findExcludedCurrentNodeIds(question);
+			if (excludedCurrentNodeIds == null) {
+				throw new IllegalStateException("Question output applicability repository returned null");
+			}
 			for (CurriculumNode currentNode : result.getCurrentApplicability()) {
-				MutableCorpusNode target = requirePlacementTarget(currentNode, currentVersion, nodesById);
 
-				// Deduplicate within a bucket while allowing the same question in other
-				// applicable buckets.
+				// Validate every derived placement before applying the Question-specific
+				// exclusion. An exclusion must not conceal malformed retrieval data.
+				MutableCorpusNode target = requirePlacementTarget(currentNode, currentVersion, nodesById);
+				if (excludedCurrentNodeIds.contains(currentNode.getId())) {
+
+					// The curriculum mapping remains intact. This exception suppresses
+					// only this Question/current-node placement from revision output.
+					continue;
+				}
+
+				// Deduplicate within a bucket while allowing the same Question to remain
+				// independently applicable at other non-excluded current nodes.
 				target.questionsById.putIfAbsent(question.getId(), question);
 			}
 		}
+	}
+
+	private List<CurriculumNode> requireNodes(List<CurriculumNode> nodes, String message) {
+		if (nodes == null) {
+			throw new IllegalStateException(message);
+		}
+		for (CurriculumNode node : nodes) {
+			if (node == null) {
+				throw new IllegalStateException("Curriculum repository returned a null curriculum node");
+			}
+		}
+		return nodes;
 	}
 
 	private MutableCorpusNode requirePlacementTarget(CurriculumNode currentNode, SyllabusVersion currentVersion,
@@ -248,18 +282,6 @@ public final class RevisionCorpusBuilder {
 			throw new IllegalStateException("Questions may be placed only at Subtopic or Descriptor level");
 		}
 		return target;
-	}
-
-	private List<CurriculumNode> requireNodes(List<CurriculumNode> nodes, String message) {
-		if (nodes == null) {
-			throw new IllegalStateException(message);
-		}
-		for (CurriculumNode node : nodes) {
-			if (node == null) {
-				throw new IllegalStateException("Curriculum repository returned a null curriculum node");
-			}
-		}
-		return nodes;
 	}
 
 	private void validateChildren(CurriculumNode parent, List<CurriculumNode> children,
@@ -343,6 +365,6 @@ public final class RevisionCorpusBuilder {
 		private final Set<Long> missingRegionQuestionIds = new HashSet<Long>();
 		private final Set<Long> questionIdsWithAnswers = new HashSet<Long>();
 		private final Set<Long> questionIdsWithoutAnswers = new HashSet<Long>();
-		private final Set<Long> preambleReviewQuestionIds = new HashSet<Long>();
+		private final Set<Long> sharedContextReviewQuestionIds = new HashSet<Long>();
 	}
 }

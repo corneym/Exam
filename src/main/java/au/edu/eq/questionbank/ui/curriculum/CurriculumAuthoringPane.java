@@ -100,6 +100,16 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 	private boolean changingTree;
 	private final Label lifecycleLabel = new Label();
 
+	/**
+	 * Creates a persistent curriculum-authoring pane.
+	 *
+	 * @param ownerStage         owner used for file choosers and alerts
+	 * @param curriculumDataRoot managed curriculum-data root
+	 * @param authoringSession   persistent authoring session
+	 * @param authoringWriter    writer used to save the session
+	 * @param sourcePdfService   managed syllabus-PDF service
+	 * @param lifecycleService   service for finalising and reopening the syllabus
+	 */
 	public CurriculumAuthoringPane(Stage ownerStage, Path curriculumDataRoot,
 			CurriculumAuthoringSession authoringSession, CurriculumAuthoringWriter authoringWriter,
 			CurriculumSourcePdfService sourcePdfService, CurriculumLifecycleService lifecycleService) {
@@ -160,6 +170,7 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 		return session.draft();
 	}
 
+	/** Closes the PDF workspace owned by this authoring pane. */
 	@Override
 	public void close() throws Exception {
 		pdfWorkspace.close();
@@ -196,11 +207,24 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 		statusLabel.setText("Curriculum marked Final.");
 	}
 
+	/**
+	 * Returns whether persistent authoring state contains unapplied or unsaved
+	 * work.
+	 *
+	 * @return {@code true} when closing requires save protection
+	 */
 	public boolean hasUnsavedChanges() {
 		return isPersistentMode() && (dirty || hasPendingEditorText());
 	}
 
-	/** Includes FINAL views, because they can be reopened for editing in place. */
+	/**
+	 * Returns whether this persistent pane represents a syllabus version.
+	 * <p>
+	 * Final views are included because they can be reopened for editing in place.
+	 *
+	 * @param syllabusVersionId persistent syllabus-version identifier
+	 * @return {@code true} when this pane owns that syllabus version
+	 */
 	public boolean isForSyllabus(long syllabusVersionId) {
 		return isPersistentMode() && authoringSession.syllabusVersion().getId() == syllabusVersionId;
 	}
@@ -228,6 +252,12 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 		statusLabel.setText("Curriculum reopened for editing.");
 	}
 
+	/**
+	 * Applies pending editor text and persists the current authoring session.
+	 *
+	 * @throws IllegalStateException if the pane is transient or the curriculum is
+	 *                               final
+	 */
 	public void saveCurriculum() {
 		requirePersistentMode();
 		if (!isEditable()) {

@@ -19,9 +19,11 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
@@ -44,20 +46,109 @@ import javafx.stage.Stage;
 class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
+	void acceptedQuestionRegionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject chemistry = workingSubjectBox.getValue();
+		Subject physics = workingSubjectBox.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		CurriculumNode originalClassification = field(application, "curriculumSelectionModel",
+				CurriculumSelectionModel.class).getClassification();
+		TextField curriculumCode = lookup(robot, "#curriculum-code", TextField.class);
+		String originalCode = curriculumCode.getText();
+
+		// Accept a Question region. The PDF rectangle is no longer pending, but the
+		// accepted region is still unsaved Question-capture work.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertFalse(selectionState.hasPendingSelection());
+
+		// Attempting to leave Chemistry must be rejected because the accepted region
+		// still depends on the current Exam and curriculum context.
+		Platform.runLater(() -> workingSubjectBox.setValue(physics));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
+		fireDialogButton(robot, "OK");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Rejection must preserve both the accepted region and the complete
+		// classification context that will be used when the Question is saved.
+		assertEquals(chemistry, workingSubjectBox.getValue());
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals(originalCode, curriculumCode.getText());
+		assertEquals(originalClassification,
+				field(application, "curriculumSelectionModel", CurriculumSelectionModel.class).getClassification());
+		assertClassificationControlShows(robot, originalClassification);
+	}
+
+	@Test
 	void acceptedQuestionRegionDoesNotLockNewQuestionNumber(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(marks).write("2");
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertFalse(questionCode.isDisable(), "Accepted regions must not lock the question number for a new question");
 		robot.clickOn(questionCode).write("27");
-		robot.clickOn("#save-question");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		fireControl(robot, "#save-question");
+
+		// Persisted Question appearance proves that the save completed.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "27".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
-				.filter(question -> "27".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		Question restored = repository.findAll().stream().filter(question -> "27".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
 		assertEquals(1, restored.getRegions().size());
+	}
+
+	@Test
+	void activatingAnotherBookletClearsPreviousQuestionCaptureState(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		Label regionCount = lookup(robot, "#question-region-count", Label.class);
+		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+		robot.clickOn(questionCode).write("31");
+		robot.clickOn(marks).write("2");
+
+		// Accept one region so the Question pane contains unsaved capture belonging to
+		// the currently active booklet.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertEquals("Regions: 1", regionCount.getText());
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+
+		// Leave a second rectangle unaccepted as well. This proves that booklet
+		// activation clears both accepted Question state and the single pending PDF
+		// selection.
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		assertFalse(saveStatus.getText().isBlank());
+		ExamBooklet firstBooklet = examMetadataPane().getBooklet();
+
+		// A distinct booklet identity is sufficient because this test exercises the
+		// successful activation boundary rather than booklet persistence.
+		ExamBooklet secondBooklet = new ExamBooklet(firstBooklet.getId() + 1000, firstBooklet.getExam(), "Paper 2",
+				firstBooklet.getSourceDocument(), firstBooklet.getQuestionFormat());
+		robot.interact(() -> examMetadataPane().activateExistingBooklet(secondBooklet, examPdf));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(secondBooklet.getId(), examMetadataPane().getBooklet().getId());
+		assertEquals("", questionCode.getText());
+		assertEquals("", marks.getText());
+		assertEquals("Regions: 0", regionCount.getText());
+		assertFalse(questionCapturePane().hasAcceptedRegions());
+		assertFalse(selectionState.hasPendingSelection());
+		assertEquals("", saveStatus.getText());
+		assertTrue(save.isDisabled());
 	}
 
 	@Test
@@ -82,7 +173,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(legacyControls.isManaged());
 
 		// Imported-question capture remains available directly from its pane button.
-		robot.clickOn(importedMode);
+		fireControl(robot, importedMode);
 		assertFalse(newMode.isSelected());
 		assertTrue(importedMode.isSelected());
 		assertTrue(legacyControls.isVisible());
@@ -90,7 +181,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Returning to new capture uses the other pane button rather than a menu
 		// action.
-		robot.clickOn(newMode);
+		fireControl(robot, newMode);
 		assertTrue(newMode.isSelected());
 		assertFalse(importedMode.isSelected());
 		assertFalse(legacyControls.isVisible());
@@ -113,7 +204,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn(lookup(robot, "#question-code", TextField.class)).write("29");
 		robot.clickOn(lookup(robot, "#question-marks", TextField.class)).write("1");
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
 		AtomicInteger reads = new AtomicInteger();
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
@@ -128,14 +219,11 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				return stored.findAll();
 			}
 		});
-		robot.clickOn("#save-question");
+		fireControl(robot, "#save-question");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("Question saved; lists could not be fully refreshed.").tryQuery().isPresent());
 		assertEquals(1, stored.findAll().size());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+		fireDialogButton(robot, "OK");
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		assertEquals("", lookup(robot, "#question-code", TextField.class).getText());
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText().contains("list refresh failed"));
@@ -143,37 +231,97 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void curriculumSubjectBecomesWorkingSubjectForBothCaptureQueues(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject workingSubject = workingSubjectBox.getValue();
+		QuestionCapturePane questionPane = field(application, "questionCapturePane", QuestionCapturePane.class);
+		AnswerCapturePane answerPane = field(application, "answerCapturePane", AnswerCapturePane.class);
+
+		// One workspace Subject must drive both capture queues so Question capture and
+		// Answer capture cannot silently operate against different Subjects.
+		assertEquals(workingSubject, field(questionPane, "workingSubject", Subject.class));
+		assertEquals(workingSubject, field(answerPane, "workingSubject", Subject.class));
+	}
+
+	@Test
 	void duplicateQuestionCodeIsRejectedWithoutLosingAcceptedRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		captureQuestion(robot, "Q7");
+
+		// Prepare another otherwise valid Question and accept a region before changing
+		// its code to a duplicate. This proves duplicate detection does not discard
+		// work
+		// already completed for the current capture.
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
 		TextField questionCodeField = lookup(robot, "#question-code", TextField.class);
 		TextField marksField = lookup(robot, "#question-marks", TextField.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
-		robot.clickOn(questionCodeField).write("Q7");
+		Label duplicateStatus = lookup(robot, "#question-code-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+		robot.clickOn(questionCodeField).write("Q8");
 		robot.clickOn(marksField).write("1");
-
-		// Saving the first Q7 resets the response type, so explicitly select Written
-		// response again for the duplicate capture attempt.
-		robot.clickOn(writtenResponse);
+		fireControl(robot, writtenResponse);
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
-		robot.clickOn("#save-question");
+		assertFalse(save.isDisabled());
+
+		// Changing only the Question number to an already-persisted code now produces
+		// immediate non-modal feedback. Save is disabled before any persistence
+		// attempt, so no warning dialog is expected.
+		robot.interact(() -> questionCodeField.setText("Q7"));
 		WaitForAsyncUtils.waitForFxEvents();
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.clickOn(okButton);
-		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(duplicateStatus.isVisible());
+		assertTrue(duplicateStatus.isManaged());
+		assertEquals("Question Q7 has already been captured in this booklet.", duplicateStatus.getText());
+		assertTrue(save.isDisabled());
+
+		// Duplicate detection must not discard the accepted region or other metadata.
 		assertEquals("Q7", questionCodeField.getText());
 		assertEquals("1", marksField.getText());
 		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
-		assertFalse(lookup(robot, "#save-question", Button.class).isDisabled());
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		long matchingQuestions = repository.findAll().stream()
 				.filter(question -> question.getQuestionCode().equals("Q7")).count();
 		assertEquals(1, matchingQuestions);
+
+		// Correcting the number removes the warning and makes the intact capture
+		// saveable again.
+		robot.interact(() -> questionCodeField.setText("Q8"));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(duplicateStatus.isVisible());
+		assertFalse(duplicateStatus.isManaged());
+		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertFalse(save.isDisabled());
+	}
+
+	@Test
+	void duplicateQuestionCodeIsReportedBeforeClassificationOrCapture(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		captureQuestion(robot, "29");
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		Label duplicateStatus = lookup(robot, "#question-code-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+
+		// The previous save resets classification below Subject. Typing the duplicate
+		// code must therefore detect the problem before the teacher repeats any
+		// classification or region work.
+		robot.clickOn(questionCode).write("29");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(duplicateStatus.isVisible());
+		assertTrue(duplicateStatus.isManaged());
+		assertEquals("Question 29 has already been captured in this booklet.", duplicateStatus.getText());
+		assertTrue(save.isDisabled());
+
+		// Correcting the Question number removes the warning immediately.
+		robot.interact(() -> questionCode.setText("30"));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(duplicateStatus.isVisible());
+		assertFalse(duplicateStatus.isManaged());
 	}
 
 	@Test
@@ -188,23 +336,40 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question second = stored.save(booklet, "42", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
+
+		// Enter imported-Question capture through the production pane workflow.
 		robot.interact(() -> showImportedQuestionCaptureForTest(pane));
 		ComboBox<Question> imported = comboBox(robot, "#imported-question");
+
+		// Select the first imported Question directly because pointer behaviour is not
+		// part of what this workflow test is verifying.
 		robot.interact(() -> imported.getSelectionModel().selectFirst());
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+
+		// Accept the selected PDF region through the real JavaFX control action.
+		fireControl(robot, "#add-question-region");
 		AtomicInteger reads = new AtomicInteger();
 		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
 
 			@Override
 			public List<Question> findAll() {
+
+				// Post-save queue refresh must remain off the JavaFX thread and reuse the
+				// loaded snapshot rather than performing an extra bank reload.
 				assertFalse(Platform.isFxApplicationThread(), "Advancing the queue must reuse the loaded questions");
 				reads.incrementAndGet();
 				return stored.findAll();
 			}
 		});
-		robot.clickOn("#save-question");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+
+		// Saving should advance imported capture directly to Question 42. No dialog is
+		// part of the successful workflow.
+		fireControl(robot, "#save-question");
+
+		// Wait for the observable queue transition rather than merely waiting for the
+		// transient save-in-progress flag to become false.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> imported.getValue() != null && imported.getValue().getId() == second.getId());
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(second.getId(), imported.getValue().getId());
 		assertEquals(1, imported.getItems().size());
@@ -221,14 +386,53 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void pendingQuestionSelectionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject chemistry = workingSubjectBox.getValue();
+		Subject physics = workingSubjectBox.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		TextField curriculumCode = lookup(robot, "#curriculum-code", TextField.class);
+		String originalCode = curriculumCode.getText();
+		CurriculumNode originalClassification = field(application, "curriculumSelectionModel",
+				CurriculumSelectionModel.class).getClassification();
+
+		// Create an unaccepted PDF selection owned by Question capture.
+		dragRegionOnDisplayedPage(robot);
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+
+		// Schedule the Subject change without blocking the test thread because the
+		// rejection deliberately opens a modal warning dialog.
+		Platform.runLater(() -> workingSubjectBox.setValue(physics));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
+		Button okButton = robot.lookup("OK").queryButton();
+		robot.interact(okButton::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The rejected transition must preserve the complete workspace context, not
+		// merely restore the Subject name.
+		assertEquals(chemistry, workingSubjectBox.getValue());
+		assertEquals(chemistry, field(questionCapturePane(), "workingSubject", Subject.class));
+		assertEquals(chemistry, field(answerCapturePane(), "workingSubject", Subject.class));
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		assertEquals(originalCode, curriculumCode.getText());
+		assertEquals(originalClassification,
+				field(application, "curriculumSelectionModel", CurriculumSelectionModel.class).getClassification());
+		assertClassificationControlShows(robot, originalClassification);
+	}
+
+	@Test
 	void questionSaveKeepsFxThreadResponsiveDuringValidationAndRefresh(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		robot.clickOn(lookup(robot, "#question-code", TextField.class)).write("24a");
 		robot.clickOn(lookup(robot, "#question-marks", TextField.class)).write("2");
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
 		CountDownLatch[] entered = { new CountDownLatch(1), new CountDownLatch(1) };
 		CountDownLatch[] release = { new CountDownLatch(1), new CountDownLatch(1) };
@@ -252,14 +456,14 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		try {
-			robot.interact(() -> lookup(robot, "#save-question", Button.class).fire());
+			fireControl(robot, "#save-question");
 			for (int index = 0; index < 2; index++) {
 				assertTrue(entered[index].await(5, TimeUnit.SECONDS));
 				CountDownLatch pulse = new CountDownLatch(1);
 				Platform.runLater(pulse::countDown);
 				assertTrue(pulse.await(2, TimeUnit.SECONDS), "FX events must run while repository I/O waits");
 				if (index == 0) {
-					robot.interact(() -> lookup(robot, "#next-pdf-page", Button.class).fire());
+					fireControl(robot, "#next-pdf-page");
 					PdfWorkspacePane workspace = field(application, "pdfWorkspace", PdfWorkspacePane.class);
 					assertEquals(2, field(workspace, "currentPageNumber", Integer.class));
 				}
@@ -292,11 +496,10 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn(marks).write("2");
 		assertTrue(save.isDisabled());
 		dragRegionOnDisplayedPage(robot);
-		/*
-		 * A rectangle exists, but it has not yet been accepted.
-		 */
+
+		// A rectangle exists, but it has not yet been accepted.
 		assertTrue(save.isDisabled());
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertFalse(save.isDisabled());
 	}
 
@@ -304,5 +507,28 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	@Test
+	void workingSubjectChangesWhenNoCaptureWorkIsPending(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject physics = workingSubjectBox.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+
+		// With no pending selection or accepted regions, changing Working Subject is a
+		// valid workspace transition and must update both capture queues.
+		robot.interact(() -> workingSubjectBox.setValue(physics));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(physics, workingSubjectBox.getValue());
+		assertEquals(physics, field(questionCapturePane(), "workingSubject", Subject.class));
+		assertEquals(physics, field(answerCapturePane(), "workingSubject", Subject.class));
+
+		// A different Subject cannot retain the previous Chemistry classification.
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		assertEquals(physics, model.getSubject());
+		assertEquals(null, model.getClassification());
+		assertEquals("", lookup(robot, "#curriculum-code", TextField.class).getText());
 	}
 }

@@ -88,19 +88,63 @@ public class CurriculumSelectorPaneTest {
 
 	@Test
 	public void codeEntrySelectsHierarchyProgressively(FxRobot robot) {
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+
+		// Each progressively completed code level must update both the model and the
+		// visible hierarchy control for that level.
 		robot.clickOn("#curriculum-code").write("3");
+		assertEquals(unit3, units.getValue());
 		assertEquals(unit3, model.getUnit());
+		assertNull(topics.getValue());
 		assertNull(model.getTopic());
 		assertNull(model.getClassification());
 		robot.write(".1");
+		assertEquals(topic31, topics.getValue());
 		assertEquals(topic31, model.getTopic());
+		assertNull(subtopics.getValue());
 		assertNull(model.getClassification());
 		robot.write(".1");
+		assertEquals(subtopic311, subtopics.getValue());
 		assertEquals(subtopic311, model.getSubtopic());
 		assertEquals(subtopic311, model.getClassification());
 		robot.write(".1");
+		assertEquals(descriptor3111, descriptors.getValue());
 		assertEquals(descriptor3111, model.getDescriptor());
 		assertEquals(descriptor3111, model.getClassification());
+	}
+
+	@Test
+	public void completeCodeDisplaysCompleteHierarchyPath(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+
+		// Entering one complete classification code must synchronise every visible
+		// hierarchy control, not merely resolve the final classification in the model.
+		robot.interact(() -> codeField.setText("3.1.1.1"));
+		assertEquals(unit3, units.getValue());
+		assertEquals(topic31, topics.getValue());
+		assertEquals(subtopic311, subtopics.getValue());
+		assertEquals(descriptor3111, descriptors.getValue());
+
+		// The backing model must describe the same path shown by the controls.
+		assertEquals(unit3, model.getUnit());
+		assertEquals(topic31, model.getTopic());
+		assertEquals(subtopic311, model.getSubtopic());
+		assertEquals(descriptor3111, model.getDescriptor());
 	}
 
 	@Test
@@ -170,11 +214,60 @@ public class CurriculumSelectorPaneTest {
 
 	@Test
 	public void selectingExistingClassificationSynchronisesCodeField(FxRobot robot) {
-		robot.interact(() -> pane.selectClassificationPath(descriptor3111));
 		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+
+		// Restoring a persisted classification must reconstruct the complete visible
+		// path, not merely the final model classification and code field.
+		robot.interact(() -> pane.selectClassificationPath(descriptor3111));
 		assertEquals("3.1.1.1", codeField.getText());
+		assertEquals(unit3, units.getValue());
+		assertEquals(topic31, topics.getValue());
+		assertEquals(subtopic311, subtopics.getValue());
+		assertEquals(descriptor3111, descriptors.getValue());
+		assertEquals(unit3, model.getUnit());
+		assertEquals(topic31, model.getTopic());
 		assertEquals(subtopic311, model.getSubtopic());
 		assertEquals(descriptor3111, model.getDescriptor());
+	}
+
+	@Test
+	public void shorteningCompleteCodeToUnitClearsPreviousTopicAndClassification(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+
+		// Establish the stale-state scenario reported during real Question capture.
+		robot.interact(() -> codeField.setText("3.1.1.1"));
+		assertEquals(topic31, topics.getValue());
+		assertEquals(descriptor3111, descriptors.getValue());
+
+		// Replacing the complete path with its Unit must retain only that Unit. No
+		// value from the previous deeper path may survive in a ComboBox or the model.
+		robot.interact(() -> codeField.setText("3"));
+		assertEquals("3", codeField.getText());
+		assertEquals(unit3, units.getValue());
+		assertNull(topics.getValue());
+		assertNull(subtopics.getValue());
+		assertNull(descriptors.getValue());
+		assertEquals(unit3, model.getUnit());
+		assertNull(model.getTopic());
+		assertNull(model.getSubtopic());
+		assertNull(model.getDescriptor());
+		assertNull(model.getClassification());
 	}
 
 	@Start

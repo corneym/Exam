@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -29,12 +30,15 @@ import org.junit.jupiter.api.io.TempDir;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
+import org.testfx.util.WaitForAsyncUtils;
 
 import javafx.event.ActionEvent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
+import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -48,6 +52,27 @@ class PdfWorkspacePaneAsyncTest {
 	@AfterEach
 	void close() throws Exception {
 		pane.close();
+	}
+
+	@Test
+	void closesManagedDocumentsIndependently(FxRobot robot) throws Exception {
+		Path examPath = createPdf("temporary-exam.pdf");
+		Path answerPath = createPdf("temporary-answer.pdf");
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.openAnswerPdf(answerPath);
+		});
+		assertNotNull(pane.getExamPdfSession());
+		assertNotNull(pane.getAnswerPdfSession());
+		robot.interact(pane::closeAnswerPdf);
+
+		// Closing a temporary Answer edit must not inadvertently close an Exam session
+		// that happens to be open independently.
+		assertNull(pane.getAnswerPdfSession());
+		assertNotNull(pane.getExamPdfSession());
+		robot.interact(() -> pane.showDocument(PdfWorkspacePane.DocumentMode.EXAM));
+		robot.interact(pane::closeExamPdf);
+		assertNull(pane.getExamPdfSession());
 	}
 
 	@Test
@@ -97,6 +122,33 @@ class PdfWorkspacePaneAsyncTest {
 		assertNotNull(failure.get());
 		assertSame(session, pane.getAnswerPdfSession());
 		assertEquals(2, session.getPageCount());
+	}
+
+	@Test
+	void focusesStoredRegionAndKeepsHighlightAligned(FxRobot robot) throws Exception {
+		Path path = createTallPdf("stored-region-focus.pdf");
+		robot.interact(() -> {
+			pane.openExamPdf(path);
+			pane.focusStoredRegions(List.of(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1,
+					0.10, 0.70, 0.80, 0.10)));
+		});
+		ScrollPane scrollPane = robot.lookup("#pdf-page-scroll").queryAs(ScrollPane.class);
+		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
+
+		// Wait for a genuine tall-page layout and for the pending focus request to
+		// move the viewport; draining runLater callbacks alone does not imply a pulse.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> pageView.getBoundsInLocal().getHeight() > scrollPane.getViewportBounds().getHeight()
+						&& scrollPane.getVvalue() > 0);
+		Rectangle highlight = robot.lookup(".pdf-stored-region-highlight").queryAs(Rectangle.class);
+
+		// The grey stored-region overlay uses the same proportional coordinates as
+		// persisted capture data.
+		assertEquals(pageView.getBoundsInLocal().getWidth() * 0.10, highlight.getX(), 1.0);
+		assertEquals(pageView.getBoundsInLocal().getHeight() * 0.70, highlight.getY(), 1.0);
+		assertEquals(pageView.getBoundsInLocal().getWidth() * 0.80, highlight.getWidth(), 1.0);
+		assertTrue(scrollPane.getVvalue() > 0,
+				"A lower stored region should be brought towards the top of the viewport");
 	}
 
 	@Test
@@ -184,6 +236,18 @@ class PdfWorkspacePaneAsyncTest {
 		try (PDDocument document = new PDDocument()) {
 			document.addPage(new PDPage());
 			document.addPage(new PDPage());
+			document.save(path.toFile());
+		}
+		return path;
+	}
+
+	private Path createTallPdf(String name) throws Exception {
+		Path path = tempDir.resolve(name);
+		try (PDDocument document = new PDDocument()) {
+
+			// A tall page ensures the region can sit below the initial viewport and
+			// therefore exercises real ScrollPane positioning.
+			document.addPage(new PDPage(new PDRectangle(300, 900)));
 			document.save(path.toFile());
 		}
 		return path;

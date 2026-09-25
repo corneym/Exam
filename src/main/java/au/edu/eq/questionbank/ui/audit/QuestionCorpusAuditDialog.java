@@ -24,6 +24,12 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 	private static final int DIALOG_HEIGHT = 700;
 	private final QuestionCorpusAuditPane auditPane;
 
+	/**
+	 * Creates an audit dialog for the supplied Question snapshot.
+	 *
+	 * @param owner     owner window
+	 * @param questions Questions to audit
+	 */
 	public QuestionCorpusAuditDialog(Window owner, List<Question> questions) {
 		if (owner == null) {
 			throw new NullPointerException("owner");
@@ -81,10 +87,21 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		return null;
 	}
 
+	/**
+	 * Replaces the audited Questions and attempts to restore one selection.
+	 *
+	 * @param questions           refreshed Question snapshot
+	 * @param preferredQuestionId Question identifier to reselect when present
+	 */
 	public void refreshQuestions(List<Question> questions, long preferredQuestionId) {
 		auditPane.refreshQuestions(questions, preferredQuestionId);
 	}
 
+	/**
+	 * Installs the operation used after a confirmed bulk response-type update.
+	 *
+	 * @param handler consumer of selected Questions and their new response type
+	 */
 	public void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -111,12 +128,25 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		});
 	}
 
+	/** Resolution workflow to launch for an incomplete Question. */
 	public enum ResolutionTarget {
-		QUESTION, METADATA, ANSWER
+		/** Question source or shared-context correction. */
+		QUESTION,
+		/** Question metadata correction. */
+		METADATA,
+		/** Answer capture or correction. */
+		ANSWER
 	}
 
+	/**
+	 * Requested Question and correction workflow selected by the audit dialog.
+	 *
+	 * @param question Question to correct
+	 * @param target   correction workflow to launch
+	 */
 	public record ResolutionRequest(Question question, ResolutionTarget target) {
 
+		/** Validates a resolution request. */
 		public ResolutionRequest {
 			if (question == null) {
 				throw new NullPointerException("question");
