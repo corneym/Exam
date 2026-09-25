@@ -1,88 +1,92 @@
 # Exam Question Bank Documentation
 
-This directory contains the canonical project documentation for the Exam Question
-Bank application. GitHub repository state, implemented code and tests remain the
-source of truth when documentation and remembered chat context disagree.
+This directory contains the canonical project documentation for the Exam
+Question Bank application. GitHub repository state, implemented code and
+tests remain the source of truth when documentation and remembered chat
+context disagree.
 
-## Core documents
+## Canonical documents
 
-- [`project-history.md`](project-history.md) — chronological development history
-  and major implementation transitions.
-- [`current-status.md`](current-status.md) — authoritative statement of current
-  implemented capability, known defects and current development position.
-- [`DEVELOPMENT_ROADMAP.md`](DEVELOPMENT_ROADMAP.md) — canonical forward roadmap.
-- [`design/architecture-evolution.md`](design/architecture-evolution.md) — major
-  architectural decisions, including superseded and adopted directions.
-- [`design/backlog.md`](design/backlog.md) — authoritative deferred/unresolved work
-  that is not part of completed sprint scope.
-- `design/sprint-*.md` — canonical sprint-specific design and final-state records.
+-   [`development-roadmap.md`](development-roadmap.md) --- durable
+    project history, architectural evolution and forward roadmap.
+-   [`design/backlog.md`](design/backlog.md) --- deliberately
+    deferred/unresolved work that is not active sprint scope or
+    committed next-sprint scope.
+-   [`design/sprint-*.md`](design/) --- detailed sprint design and
+    evidence. The active sprint document also carries current status
+    during that sprint.
+-   [`Working-Instructions.md`](Working-Instructions.md) --- working
+    rules for repository-guided development.
 
-## Current sprint-document state
+The former `project-history.md`, `current-status.md` and
+`design/architecture-evolution.md` are retired after consolidation into
+the roadmap and active-sprint model. They should be removed from the
+repository once these replacement documents are adopted.
 
-Sprints 01 through 09 are complete historical records and are merged to `main`.
+## Current development position
 
-Sprint 09 — Capture Workflow and Corpus Correction — merged to `main` on
-20 September 2026 in merge commit `2533586`. Protected-main workflow was then
-exercised through pull request #1, leaving `main` at `5a1e5a9` at Sprint 10
-start.
+Sprints 01--10 are complete.
 
-Sprint 10 — Capture Hardening and Revision Output Refinement — has completed
-implementation and verification on:
+Sprint 10 merged to protected `main` through pull request #2. Merge
+commit: `a3dfda7e`. Post-merge GitHub Actions run 64 was successful.
 
-`feature/capture-output`
+Sprint 11 --- Release 0.1 --- is the active sprint on:
 
-Sprint 10 implementation is complete and verified on the feature branch. 
-Sprint 10 merged to main via pull request #2.
-Merge commit: a3dfda7e
-Post-merge GitHub Actions run 64: successful.
+`feature/sprint-11-release-0.1`
 
-Git/GitHub is authoritative for the current feature-branch head and CI state;
-this documentation does not duplicate a moving closeout commit identifier.
+Its canonical design/current-status record is:
 
-This head includes the final native Search-window dirty-close guard and public
-API Javadoc closeout. GitHub Actions CI run 61 completed successfully for that
-head. Sprint 10 has not yet been merged to `main`; documentation therefore
-records implementation complete / verified on the feature branch, with protected
-main merge closeout still pending.
+`design/sprint-11-release-0.1.md`
 
-The canonical Sprint 10 final-state record is:
+Sprint 11 sequence:
 
-`design/sprint-10-capture-output.md`
+1.  composed integration regressions;
+2.  clipboard/Snipping Tool Question capture;
+3.  Question Search Dialog redesign;
+4.  application tooltips;
+5.  documented Help system;
+6.  Help -\> About and authoritative version infrastructure;
+7.  deployment/package build;
+8.  release 0.1.
 
-The latest supported SQLite schema on the Sprint 10 branch is version 13.
+Sprint 12 is reserved for Corpus Audit -\> Corpus Dashboard redesign and
+richer Question filtering.
+
+The latest supported SQLite schema at Sprint 11 start is version 13.
 
 ## Status vocabulary
 
-- **IMPLEMENTED** — coded and supported by repository/test evidence.
-- **VERIFIED** — implemented and exercised by relevant automated or explicit
-  manual verification.
-- **DECIDED** — adopted design or architectural rule.
-- **PLANNED** — agreed work not yet implemented.
-- **PROPOSED** — discussed future work not yet adopted as active scope.
-- **SUPERSEDED** — earlier implementation/design replaced or deliberately not
-  adopted.
-- **CURRENT** — newest known implementation or design position.
+-   **IMPLEMENTED** --- coded and supported by repository/test evidence.
+-   **VERIFIED** --- implemented and exercised by relevant automated or
+    explicit manual verification.
+-   **DECIDED** --- adopted design or architectural rule.
+-   **PLANNED** --- agreed work not yet implemented.
+-   **PROPOSED** --- discussed future work not yet adopted as active
+    scope.
+-   **SUPERSEDED** --- earlier implementation/design replaced.
+-   **REJECTED** --- deliberately not to be implemented as a forward
+    direction.
+-   **CURRENT** --- newest known implementation or design position.
 
 ## Evidence rule
 
 Do not promote a chat prototype, standalone workbook, planned feature or
-user-observed desired behaviour into current application functionality without
+desired behaviour into current application functionality without
 repository, persistence or test evidence.
 
-The standalone Chemistry 2019 -> 2025 mapping workbook remains reference
-material, not authoritative application state. Mapping decisions come from the
-application's human-reviewed SQLite workflow.
+The standalone Chemistry 2019 -\> 2025 mapping workbook remains
+reference material, not authoritative application state. Mapping
+decisions come from the application's human-reviewed SQLite workflow.
 
-Short-lived working defects are tracked as Eclipse task markers while they are
-being investigated or implemented. A requirement or defect belongs in
-`design/backlog.md` only when it is deliberately deferred beyond the current
-work.
+Short-lived working defects are tracked as Eclipse task markers. A
+requirement or defect belongs in `design/backlog.md` only when
+deliberately deferred beyond active/committed sprint work.
 
 ## Automated tests and CI
 
 Useful local commands are:
 
-```text
+``` text
 .\mvnw.cmd test
 .\mvnw.cmd -Pheadless-ui-tests test
 .\mvnw.cmd -Pui-tests test
@@ -91,24 +95,26 @@ Useful local commands are:
 
 Use the platform-appropriate `./mvnw` form on Unix-like systems.
 
-GitHub Actions runs separate non-UI, remaining-UI and workflow-UI jobs. The
-current feature-branch checks must be green before protected-main merge.
+GitHub Actions runs separate non-UI, remaining-UI and workflow-UI jobs.
+The current feature-branch checks must be green before protected-main
+merge.
 
-## Maintenance rules
+## Documentation lifecycle
 
-1. Update `current-status.md` only for implemented state, known current defects
-   and clearly labelled near-term work.
-2. Append durable completed transitions to `project-history.md`.
-3. Record major replaced or adopted architectural directions in
-   `design/architecture-evolution.md`.
-4. Keep `DEVELOPMENT_ROADMAP.md` aligned with the current development position
-   and remove stale "next" steps after implementation or merge closeout.
-5. Preserve one canonical sprint record after each sprint closes.
-6. Move deliberately deferred work into `design/backlog.md`; do not leave
-   completed sprint items duplicated there as future work.
-7. Keep standalone data artefacts distinct from application integration.
-8. Preserve explicit unresolved gaps rather than silently assuming them away.
-9. Use Eclipse task markers for short-lived working issues; deliberately deferred
-   work belongs in the sprint design or backlog.
-10. Re-run regression, Javadoc and whitespace checks after final documentation
-    edits before protected-main merge.
+1.  Keep the active sprint document current as work is designed,
+    implemented and verified.
+2.  At sprint closeout, preserve that sprint document as the detailed
+    immutable record.
+3.  Fold durable history, architecture changes and forward sequencing
+    into `development-roadmap.md`.
+4.  Make the next sprint document the current-status record.
+5.  Keep deliberately deferred work in `design/backlog.md`.
+6.  Do not duplicate active or committed next-sprint scope in the
+    backlog.
+7.  Preserve explicit rejected/superseded decisions where they prevent
+    stale ideas returning as future work.
+8.  Keep standalone data artefacts distinct from application
+    integration.
+9.  Use Eclipse task markers for short-lived working issues.
+10. Re-run appropriate regression, Javadoc and whitespace checks after
+    final documentation edits before protected-main merge.
