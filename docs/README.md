@@ -31,8 +31,10 @@ implementation and verification on:
 
 `feature/capture-output`
 
-Sprint 10 implementation is complete and verified on the feature branch. It has
-not yet been merged to `main`.
+Sprint 10 implementation is complete and verified on the feature branch. 
+Sprint 10 merged to main via pull request #2.
+Merge commit: a3dfda7e
+Post-merge GitHub Actions run 64: successful.
 
 Git/GitHub is authoritative for the current feature-branch head and CI state;
 this documentation does not duplicate a moving closeout commit identifier.

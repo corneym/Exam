@@ -3,7 +3,9 @@
 > **Authoritative deferred/unresolved-work list:** 25 September 2026.  
 > Sprints 01–09 are complete and merged.  
 > Sprint 10 implementation is complete and verified on `feature/capture-output`;
-> merge to `main` is pending.  
+> Sprint 10 merged to main via pull request #2.
+> Merge commit: a3dfda7e
+> Post-merge GitHub Actions run 64: successful.
 > Completed Sprint 10 work is not duplicated below as future work.
 
 ## Revision-output follow-on work

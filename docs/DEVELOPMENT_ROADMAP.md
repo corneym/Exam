@@ -53,9 +53,10 @@ Exam Builder + printable output
 Packaging / deployment / assisted automation
 ```
 
-Sprint 10 implementation is complete on `feature/capture-output`. `main` remains
-`5a1e5a9` until protected-main merge closeout. Git/GitHub is authoritative for
-the current feature-branch head and CI state.
+Sprint 10 merged to main via pull request #2.
+Merge commit: a3dfda7e
+Post-merge GitHub Actions run 64: successful.
+Git/GitHub is authoritative for the current feature-branch head and CI state.
 
 ## 3. Current architecture constraints
 

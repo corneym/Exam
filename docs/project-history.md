@@ -376,7 +376,11 @@ Final verified Sprint 10 feature-branch head:
 `810601c8` — `Javadoc updated`
 
 At this history point Sprint 10 implementation and closeout validation are
-complete on `feature/capture-output`; protected-main merge has not yet occurred.
+complete on `feature/capture-output`;
+Sprint 10 merged to main via pull request #2.
+Merge commit: `a3dfda7e`
+Post-merge GitHub Actions run 64: successful.
+
 
 ## 26. Future content-source extension
 
