@@ -5,7 +5,9 @@
 > **Implementation closeout:** 25 September 2026  
 > **Branch:** `feature/capture-output`  
 > **Starting `main`:** `5a1e5a9`  
-> **Merge state:** pending protected-main merge
+> **Sprint 10 merged to main:** via pull request #2.
+> ** Merge commit:** a3dfda7e
+> **Post-merge GitHub Actions run 64:** successful.
 
 ## 1. Purpose
 

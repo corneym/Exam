@@ -3,8 +3,10 @@
 > **Authoritative status date:** 25 September 2026.  
 > Sprints 01 through 09 are complete and merged.  
 > Sprint 10 implementation is complete and verified on `feature/capture-output`.  
-> Current `main`: `5a1e5a9`.  
-> Sprint 10 merge to `main` is still pending.
+> Sprint 10 merged to main via pull request #2.
+> Merge commit: a3dfda7e
+> Post-merge GitHub Actions run 64: successful.
+
 
 ## Status summary
 
