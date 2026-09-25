@@ -1,6 +1,6 @@
 # Architecture Evolution
 
-> Updated 24 September 2026.  
+> Updated 25 September 2026.  
 > This document records why major design directions changed. It distinguishes
 > implemented architecture from deferred/proposed work.
 
@@ -250,10 +250,16 @@ Presentation configuration is separate from persisted curriculum semantics:
 
 - choose Subtopic or Descriptor grouping at export time;
 - roll Descriptor-classified Questions upward for Subtopic presentation;
-- retain directly Subtopic-classified Questions under Descriptor grouping;
+- permit Descriptor grouping only when every renderable placement has
+  Descriptor-level coverage;
+- if any renderable placement exists directly at Subtopic level, make Descriptor
+  grouping unavailable and automatically fall back to Subtopic grouping rather
+  than dropping that broader placement;
 - order Multiple Choice before Written Response, with an Other section for
   unresolved renderable material;
 - use explicit response-type sections/navigation where useful;
+- keep the curriculum breadcrumb sticky at the top of Unit, Topic and Subtopic
+  pages while the larger page heading and Question content scroll normally;
 - number Questions locally per generated question page;
 - omit empty navigation branches and unnecessary pages;
 - export all non-empty Units by default or an explicit Unit subset;
@@ -420,7 +426,9 @@ Search now shows the selected Question's stored classification path separately
 from the active Search filters.
 
 A stored Subtopic may be refined inline to one child Descriptor with explicit
-dirty state and Save/Discard/Cancel navigation behaviour. Broader
+dirty state and Save/Discard/Cancel navigation behaviour. That protection applies to
+result navigation, the Dialog Close button and the native title-bar close
+request, so closing Search cannot silently discard a pending refinement. Broader
 reclassification remains the responsibility of `Edit Question`.
 
 `Edit Metadata` no longer contains classification controls.

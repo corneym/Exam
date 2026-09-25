@@ -276,9 +276,11 @@ class RevisionHtmlRendererTest {
 		Path subjectIndex = outputRoot.resolve("index.html");
 		Path unitIndex = outputRoot.resolve(Path.of("units", "unit-10", "index.html"));
 		Path descriptorTopic = outputRoot.resolve(Path.of("units", "unit-10", "topic-11.html"));
+		Path stylesheetFile = outputRoot.resolve(Path.of("assets", "revision.css"));
 		assertTrue(Files.isRegularFile(subjectIndex));
 		assertTrue(Files.isRegularFile(unitIndex));
 		assertTrue(Files.isRegularFile(descriptorTopic));
+		assertTrue(Files.isRegularFile(stylesheetFile));
 		assertTrue(htmlFiles.contains(subjectIndex.toAbsolutePath().normalize()));
 		assertTrue(htmlFiles.contains(unitIndex.toAbsolutePath().normalize()));
 		assertTrue(htmlFiles.contains(descriptorTopic.toAbsolutePath().normalize()));
@@ -295,11 +297,28 @@ class RevisionHtmlRendererTest {
 		assertFalse(subjectHtml.contains("Awaiting question capture"));
 		assertFalse(subjectHtml.contains("Revision corpus status"));
 		String unitHtml = Files.readString(unitIndex);
+		assertTrue(unitHtml.contains("<nav class=\"breadcrumbs\" aria-label=\"Breadcrumb\">"));
 		assertTrue(unitHtml.contains("href=\"../../index.html\""));
 		assertTrue(unitHtml.contains("href=\"topic-11.html\""));
 		String topicHtml = Files.readString(descriptorTopic);
+		assertTrue(topicHtml.contains("<nav class=\"breadcrumbs\" aria-label=\"Breadcrumb\">"));
 		assertTrue(topicHtml.contains("href=\"../../index.html\""));
 		assertTrue(topicHtml.contains("href=\"index.html\""));
+		String stylesheet = Files.readString(stylesheetFile);
+		int breadcrumbRuleStart = stylesheet.indexOf(".breadcrumbs {");
+		int breadcrumbRuleEnd = stylesheet.indexOf('}', breadcrumbRuleStart);
+		assertTrue(breadcrumbRuleStart >= 0);
+		assertTrue(breadcrumbRuleEnd > breadcrumbRuleStart);
+		String breadcrumbRule = stylesheet.substring(breadcrumbRuleStart, breadcrumbRuleEnd);
+
+		// The breadcrumb itself, rather than the large page title, remains visible
+		// while students scroll a long revision-question page.
+		assertTrue(breadcrumbRule.contains("position: sticky;"));
+		assertTrue(breadcrumbRule.contains("top: 0;"));
+		assertTrue(breadcrumbRule.contains("z-index: 10;"));
+		assertTrue(breadcrumbRule.contains("background: #f5f6f7;"));
+		assertTrue(stylesheet.contains(".breadcrumbs [aria-current=\"page\"]"));
+		assertTrue(stylesheet.contains("scroll-margin-top: 5rem;"));
 	}
 
 	@Test
@@ -323,6 +342,10 @@ class RevisionHtmlRendererTest {
 		assertTrue(topicHtml.contains("1 revision question"));
 		assertFalse(topicHtml.contains("question-2.png"));
 		String subtopicHtml = Files.readString(subtopicFile);
+
+		// Subtopic pages use the same persistent curriculum breadcrumb as Topic and
+		// Unit pages.
+		assertTrue(subtopicHtml.contains("<nav class=\"breadcrumbs\" aria-label=\"Breadcrumb\">"));
 		assertTrue(subtopicHtml.contains("2.1.1 Subtopic classification"));
 		assertTrue(subtopicHtml.contains("src=\"../../../assets/questions/question-2.png\""));
 		assertTrue(subtopicHtml.contains("href=\"../topic-20.html\""));

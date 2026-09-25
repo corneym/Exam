@@ -2,11 +2,9 @@
 
 > **Status:** IMPLEMENTATION COMPLETE / VERIFIED ON FEATURE BRANCH  
 > **Start date:** 20 September 2026  
-> **Implementation closeout:** 24 September 2026  
+> **Implementation closeout:** 25 September 2026  
 > **Branch:** `feature/capture-output`  
 > **Starting `main`:** `5a1e5a9`  
-> **Verified branch head:** `07b7b337` (`question applicability updated`)  
-> **CI:** GitHub Actions run 59 successful  
 > **Merge state:** pending protected-main merge
 
 ## 1. Purpose
@@ -330,6 +328,8 @@ Implemented behaviour includes:
 - optional child-Descriptor selection when stored classification is a Subtopic;
 - dirty-state tracking and a separate inline `Save`;
 - Save / Discard Changes / Cancel protection when navigating away dirty;
+- equivalent Save / Discard Changes / Cancel protection for the Dialog Close
+  button and native title-bar close request;
 - broader classification correction delegated to `Edit Question`;
 - Classification removed from `Edit Metadata`.
 
@@ -411,10 +411,17 @@ roll-up page.
 
 ### Descriptor mode
 
-Descriptor-classified Questions remain beneath Descriptor headings.
+Descriptor grouping is available only when every renderable placement in the
+selected export scope has Descriptor-level coverage.
 
-A Question classified directly to a Subtopic remains visible rather than
-disappearing when Descriptor grouping is chosen.
+If any renderable placement exists directly at Subtopic level:
+
+- the export UI does not offer Descriptor grouping for that scope;
+- an explicit Descriptor plan request is rejected; and
+- automatic planning falls back to Subtopic grouping.
+
+This all-or-nothing rule prevents a directly Subtopic-classified Question from
+being silently omitted merely to preserve Descriptor headings.
 
 Grouping never rewrites persisted classification/mapping.
 
@@ -474,6 +481,28 @@ Unit scope is transient output configuration and is applied consistently to:
 - SCORM.
 
 Grouping availability is recalculated for the selected Unit set.
+
+## 13A. Persistent breadcrumb navigation
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+Generated Unit, Topic and Subtopic pages retain their existing hierarchical
+breadcrumb trail as persistent student navigation.
+
+Only the breadcrumb trail is sticky. The larger page title and Question content
+scroll normally.
+
+The current page remains the final non-link breadcrumb element and is visually
+emphasised. The breadcrumb has an opaque background and stacking order so
+Question content does not show through it while scrolling.
+
+Response-type anchor targets use sufficient scroll margin that the sticky
+breadcrumb does not cover the target section heading.
+
+The Subject index remains the root page and therefore does not require a parent
+breadcrumb.
 
 ## 14. Slice 10 — generated-site status information
 
@@ -535,6 +564,43 @@ completed during Sprint 10 and therefore are not backlog:
 - SCORM grouping/Unit-selection parity;
 - Question-level output applicability exceptions.
 
+## 16A. Public API Javadoc closeout
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+A final API-documentation pass added or corrected Javadoc across the public
+Sprint 09/10 production boundaries, including revision export, SCORM, corpus and
+presentation APIs; capture/correction/curriculum/exam/PDF/audit/Search surfaces;
+repository classification operations; backup manifest metadata; public records,
+constructors, callbacks, validation and optional-state contracts.
+
+`RevisionCorpusScope` now has an explicit documented public constructor
+equivalent to its previous implicit constructor; this is an API-documentation
+change, not a behaviour change.
+
+Strict Javadoc generation completed without warnings.
+
+## 16A. Public API Javadoc closeout
+
+### Status
+
+**IMPLEMENTED / VERIFIED**
+
+A final API-documentation pass added or corrected Javadoc across the public
+Sprint 09/10 production boundaries, including revision export, SCORM, corpus and
+presentation APIs; capture, correction, curriculum, exam, PDF, audit and Search
+surfaces; repository classification operations; backup manifest metadata; and
+public records, constructors, callbacks, validation and optional-state
+contracts.
+
+`RevisionCorpusScope` now has an explicit documented public constructor
+equivalent to its previous implicit public constructor. This is an
+API-documentation change and does not alter behaviour.
+
+Strict Javadoc generation completed without warnings.
+
 ## 17. Verification evidence
 
 Automated coverage includes:
@@ -556,7 +622,12 @@ Automated coverage includes:
 - fixed/injected generated timestamps;
 - Question-specific exclusion persistence/corpus filtering;
 - Subject-wide output applicability independent of narrowed Search scope;
+- native Search-window close protection for dirty Descriptor refinement;
+- sticky breadcrumb CSS and breadcrumb markup on generated revision pages;
+- response-type anchor clearance beneath the sticky breadcrumb;
 - Search classification dirty/save/navigation behaviour;
+- native Search-window close protection for dirty Descriptor refinement,
+  including Cancel retaining the edit and Discard allowing close;
 - stored-region edit overlay/navigation;
 - Search geometry restoration;
 - v12 -> v13 populated migration;
@@ -571,10 +642,12 @@ Manual verification includes:
 - out-of-sequence protection;
 - booklet-switch reset behaviour.
 
-The full Maven suite was green at final implementation checkpoint.
+The full Maven suite was green at the latest completed implementation
+checkpoint. Strict Javadoc generation completed without warnings and
+`git diff --check` passed.
 
-GitHub Actions CI run 59 completed successfully for final branch head
-`07b7b337`.
+Protected-main merge requires green GitHub Actions checks for the final
+feature-branch state.
 
 ## 18. Closeout state
 
@@ -584,9 +657,12 @@ record for the feature branch.
 Repository merge state is deliberately recorded separately:
 
 ```text
-feature/capture-output: 07b7b337  (verified, CI green)
-main:                   5a1e5a9   (Sprint 10 not yet merged)
+feature/capture-output: implementation complete; protected-main merge pending
+main:                   5a1e5a9
 ```
 
-After protected-main merge, only merge-state references need updating; no
+Git/GitHub is authoritative for the moving feature-branch head and CI state, so
+those values are not duplicated here.
+
+After protected-main merge, only the merge-state references need updating; no
 additional Sprint 10 implementation is currently planned.

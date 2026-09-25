@@ -1,6 +1,6 @@
 # Exam Question Bank Backlog
 
-> **Authoritative deferred/unresolved-work list:** 24 September 2026.  
+> **Authoritative deferred/unresolved-work list:** 25 September 2026.  
 > Sprints 01–09 are complete and merged.  
 > Sprint 10 implementation is complete and verified on `feature/capture-output`;
 > merge to `main` is pending.  
@@ -223,15 +223,24 @@ Existing integration output tests use in-memory curriculum/retrieval boundaries,
 and real Chemistry acceptance has exercised the production path manually. This
 remains hardening rather than a current blocker.
 
-### Public API documentation
+### Pre-v13 backup restore/startup regression
 
-Continue reviewing Javadoc/doclint where public or semantic contracts change.
+Add one composed regression beginning with a populated pre-v13 backup snapshot,
+restoring through the production restore path and then starting/reopening the
+database at the current schema.
+
+Existing migration tests cover populated v12 -> v13 upgrade, and restore
+compatibility probing already migrates a disposable copy. The missing composed
+scenario is therefore hardening rather than a current blocker.
 
 ## Repository housekeeping
 
 Protected `main` is established and has been exercised through pull request #1.
 
-Sprint 10 is ready for protected-main merge from `feature/capture-output`.
+Sprint 10 is in final protected-main merge closeout on
+`feature/capture-output`. Merge requires the final feature-branch GitHub Actions
+checks to be green.
+
 Feature/chore branch cleanup may follow merge when convenient; branch cleanup is
 repository housekeeping rather than product scope.
 
@@ -248,15 +257,19 @@ Do not re-add completed Sprint 04–10 work, including:
 - booklet Question format and booklet-specific AnswerFile assignment;
 - independent-MCQ Shared Context continuation;
 - Search dialog size and position restoration;
-- Search classification display/refinement and stored-region edit navigation;
-- Subtopic/Descriptor revision grouping;
+- Search classification display/refinement, native-window dirty-close protection
+  and stored-region edit navigation;
+- safe Subtopic/Descriptor revision grouping with automatic Subtopic fallback
+  where direct Subtopic placements prevent Descriptor grouping;
 - response-type section ordering/headings;
 - page-local numbering;
 - empty-branch pruning;
 - selected-Unit Revision HTML and SCORM export;
 - student-facing revision-question counts and generated timestamp;
+- sticky curriculum breadcrumb navigation on generated revision pages;
 - Question-specific revision-output exclusions;
-- Shared Context live-schema terminology migration.
+- Shared Context live-schema terminology migration;
+- public API Javadoc closeout with strict warning-free generation.
 
 ## Backlog rules
 

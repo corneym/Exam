@@ -16,8 +16,6 @@ source of truth when documentation and remembered chat context disagree.
 - [`design/backlog.md`](design/backlog.md) — authoritative deferred/unresolved work
   that is not part of completed sprint scope.
 - `design/sprint-*.md` — canonical sprint-specific design and final-state records.
-- [`issues.txt`](issues.txt) — short-lived working defect notes. It is not the
-  authoritative long-term backlog.
 
 ## Current sprint-document state
 
@@ -33,13 +31,17 @@ implementation and verification on:
 
 `feature/capture-output`
 
-The final verified implementation head is:
+Sprint 10 implementation is complete and verified on the feature branch. It has
+not yet been merged to `main`.
 
-`07b7b337` — `question applicability updated`
+Git/GitHub is authoritative for the current feature-branch head and CI state;
+this documentation does not duplicate a moving closeout commit identifier.
 
-GitHub Actions CI run 59 completed successfully for that head. Sprint 10 has not
-yet been merged to `main`; documentation therefore records implementation
-complete / verified on the feature branch, with merge closeout still pending.
+This head includes the final native Search-window dirty-close guard and public
+API Javadoc closeout. GitHub Actions CI run 61 completed successfully for that
+head. Sprint 10 has not yet been merged to `main`; documentation therefore
+records implementation complete / verified on the feature branch, with protected
+main merge closeout still pending.
 
 The canonical Sprint 10 final-state record is:
 
@@ -69,8 +71,10 @@ The standalone Chemistry 2019 -> 2025 mapping workbook remains reference
 material, not authoritative application state. Mapping decisions come from the
 application's human-reviewed SQLite workflow.
 
-A user-observed defect belongs in `issues.txt` while actively being worked, and
-in `design/backlog.md` only when deliberately deferred.
+Short-lived working defects are tracked as Eclipse task markers while they are
+being investigated or implemented. A requirement or defect belongs in
+`design/backlog.md` only when it is deliberately deferred beyond the current
+work.
 
 ## Automated tests and CI
 
@@ -85,9 +89,8 @@ Useful local commands are:
 
 Use the platform-appropriate `./mvnw` form on Unix-like systems.
 
-GitHub Actions runs separate non-UI, remaining-UI and workflow-UI jobs. Sprint 10
-feature-branch head `07b7b337` completed CI successfully before documentation
-closeout.
+GitHub Actions runs separate non-UI, remaining-UI and workflow-UI jobs. The
+current feature-branch checks must be green before protected-main merge.
 
 ## Maintenance rules
 
@@ -103,7 +106,7 @@ closeout.
    completed sprint items duplicated there as future work.
 7. Keep standalone data artefacts distinct from application integration.
 8. Preserve explicit unresolved gaps rather than silently assuming them away.
-9. Keep `issues.txt` concise; long-term work belongs in the sprint design or
-   backlog.
+9. Use Eclipse task markers for short-lived working issues; deliberately deferred
+   work belongs in the sprint design or backlog.
 10. Re-run regression, Javadoc and whitespace checks after final documentation
     edits before protected-main merge.

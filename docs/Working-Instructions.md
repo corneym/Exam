@@ -165,6 +165,19 @@ If I paste a Codex review here:
 If fixes are made after a review begins, treat that review as potentially stale
 and verify the current branch state before drawing conclusions.
 
+### Issue tracking
+
+Short-lived working issues are recorded as Eclipse task markers.
+
+Do not create or reintroduce `docs/issues.txt`.
+
+When a defect is being handled as part of the current sprint/work item, resolve
+it through the normal implementation and regression-test workflow rather than
+adding it to the project backlog merely for tracking.
+
+Only deliberately deferred or unresolved work that must survive the current
+development session belongs in `docs/design/backlog.md`.
+
 ### Documentation
 
 Treat the repository documentation as part of the implementation.

@@ -58,9 +58,20 @@ public final class RevisionHtmlRenderer {
 			}
 
 			.breadcrumbs {
-			    margin-bottom: 1.5rem;
+			    position: sticky;
+			    top: 0;
+			    z-index: 10;
+			    margin: 0 0 1.5rem;
+			    padding: 0.75rem 0;
+			    border-bottom: 1px solid #dadce0;
+			    background: #f5f6f7;
 			    font-size: 0.9rem;
 			    color: #5f6368;
+			}
+
+			.breadcrumbs [aria-current="page"] {
+			    color: #202124;
+			    font-weight: 700;
 			}
 
 			.page-header {
@@ -109,7 +120,7 @@ public final class RevisionHtmlRenderer {
 
 			.question-type-section {
 			    margin: 2rem 0;
-			    scroll-margin-top: 1rem;
+			    scroll-margin-top: 5rem;
 			}
 
 			.question-type-section > h2 {

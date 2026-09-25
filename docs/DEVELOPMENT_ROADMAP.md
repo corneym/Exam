@@ -1,7 +1,7 @@
 # Exam Question Bank — Development Roadmap
 
-> **Reference date:** 24 September 2026  
-> **Version:** 16  
+> **Reference date:** 25 September 2026  
+> **Version:** 17  
 > **Repository location:** `docs/DEVELOPMENT_ROADMAP.md`
 >
 > This is the single canonical project roadmap.
@@ -53,8 +53,9 @@ Exam Builder + printable output
 Packaging / deployment / assisted automation
 ```
 
-Sprint 10 implementation is complete on `feature/capture-output`, final verified
-head `07b7b337`. `main` remains `5a1e5a9` until protected-main merge closeout.
+Sprint 10 implementation is complete on `feature/capture-output`. `main` remains
+`5a1e5a9` until protected-main merge closeout. Git/GitHub is authoritative for
+the current feature-branch head and CI state.
 
 ## 3. Current architecture constraints
 
@@ -204,8 +205,6 @@ started from `main` commit `5a1e5a9`.
 
 Implementation complete and verified on `feature/capture-output`.
 
-Final verified head: `07b7b337`.
-
 Delivered:
 
 - pending-selection and booklet-transition state hardening;
@@ -214,15 +213,27 @@ Delivered:
 - persisted booklet Question format;
 - booklet-specific AnswerFile assignment;
 - sequence-aware independent-MCQ Shared Context continuation;
-- student-facing revision grouping/order/numbering/navigation/status;
+- student-facing revision grouping/order/numbering/navigation/status, including
+  safe Descriptor-grouping availability and automatic Subtopic fallback;
 - selected-Unit export for both Revision HTML and SCORM;
-- Search classification refinement and stored-region edit navigation;
+- persistent breadcrumb navigation on generated Unit, Topic and Subtopic pages;
+- Search classification refinement, native-window dirty-close protection and
+  stored-region edit navigation;
 - Question-specific revision-output exclusions;
 - live schema terminology migration to Shared Context;
-- deterministic generated-site timestamp metadata.
+- deterministic generated-site timestamp metadata;
+- public API Javadoc completion across the Sprint 09/10 production boundaries.
 
-GitHub Actions CI run 59 completed successfully for final feature-branch head.
-Protected-main merge remains the only Sprint 10 repository closeout step.
+- deterministic generated-site timestamp metadata;
+- public API Javadoc completion across Sprint 09/10 production boundaries.
+
+Protected-main merge remains the only Sprint 10 repository closeout step. The
+final feature-branch GitHub Actions checks must be green before merge.
+
+The full Maven suite and strict Javadoc generation were green at final local
+validation. GitHub Actions CI run 61 completed successfully for final
+feature-branch head `810601c8`. Protected-main merge remains the only Sprint 10
+repository closeout step.
 
 ## 5. Immediate next development position
 

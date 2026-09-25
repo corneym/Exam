@@ -1,10 +1,9 @@
 # Current Status
 
-> **Authoritative status date:** 24 September 2026.  
+> **Authoritative status date:** 25 September 2026.  
 > Sprints 01 through 09 are complete and merged.  
 > Sprint 10 implementation is complete and verified on `feature/capture-output`.  
 > Current `main`: `5a1e5a9`.  
-> Verified Sprint 10 feature-branch head: `07b7b337`.  
 > Sprint 10 merge to `main` is still pending.
 
 ## Status summary
@@ -244,12 +243,17 @@ source ordering and stored Question preview.
 
 Sprint 10 Search refinements include:
 
+- export-time grouping by Subtopic or Descriptor;
+- Topic roll-up for curricula whose Topics contain Descriptors directly;
+- Descriptor grouping only when every renderable placement has Descriptor-level
+  coverage; a direct Subtopic placement makes Descriptor grouping unavailable
+  and automatic planning falls back to Subtopic grouping;
 - a functional minimum dialog width and reliable width/height/X/Y restoration
   across edit hide/show cycles, including full-height snapped windows;
 - a separate selected-Question classification display rather than conflating
   stored classification with search filters;
-- inline refinement of a stored Subtopic to one of its child Descriptors, with
-  dirty state, Save, Discard Changes and navigation protection;
+- export-time grouping by Subtopic or Descriptor;
+- Topic roll-up for curricula whose Topics contain Descriptors directly;
 - broader classification changes remaining in `Edit Question`;
 - classification removed from `Edit Metadata`;
 - Edit Question reopening the stored PDF at the saved region and showing a
@@ -271,13 +275,16 @@ rendering.
 
 Sprint 10 adds:
 
-- export-time grouping by Subtopic or Descriptor;
-- Topic roll-up for curricula whose Topics contain Descriptors directly;
-- preservation of directly Subtopic-classified Questions when Descriptor grouping
-  is used;
+
+- Descriptor grouping only when every renderable placement has Descriptor-level
+  coverage; if any renderable placement exists directly at Subtopic level,
+  Descriptor grouping is unavailable and automatic planning falls back to
+  Subtopic grouping rather than dropping the broader placement;
 - Multiple Choice before Written Response, with `Other questions` for unresolved
   renderable material;
 - response-type section headings and navigation where useful;
+- a sticky curriculum breadcrumb on Unit, Topic and Subtopic pages so the current
+  location remains visible while long Question pages scroll;
 - page-local Question numbering beginning at 1 on every generated question page;
 - multipart presentations counted and numbered as one student-facing card;
 - omission of empty Unit/Topic/Subtopic/Descriptor branches and unnecessary
@@ -310,12 +317,11 @@ Sprint 09 merged to `main` on 20 September 2026 (`2533586`). Protected-main
 workflow was then tested using pull request #1, producing current `main`
 `5a1e5a9`.
 
-Sprint 10 remains on `feature/capture-output`. The final verified implementation
-head is `07b7b337` (`question applicability updated`). GitHub Actions CI run 59
-completed successfully for that head.
+Sprint 10 remains on `feature/capture-output`. Git/GitHub is authoritative for
+the current branch head and CI result.
 
-Sprint 10 implementation is therefore complete and verified, but the sprint is
-not yet recorded as merged to `main`.
+Sprint 10 implementation is complete, but the sprint is not yet recorded as
+merged to `main`.
 
 ## Sprint 10 implementation status
 
@@ -327,16 +333,20 @@ All planned Sprint 10 slices are implemented and verified:
 4. persisted booklet Question format and response-type capture rules;
 5. booklet-specific AnswerFile persistence and automatic Answer-PDF switching;
 6. independent-MCQ Shared Context capture and sequence-aware continuation;
-7. Subtopic/Descriptor revision-output grouping;
+7. safe Subtopic/Descriptor revision-output grouping with automatic Subtopic
+   fallback when direct Subtopic placements prevent complete Descriptor coverage;
 8. MCQ-before-written ordering and response-type sections;
 9. page-local numbering;
 10. empty-branch pruning and selected-Unit HTML/SCORM export;
-11. generated-site timestamp and student-facing presentation counts.
+11. generated-site timestamp and student-facing presentation counts;
+12. persistent sticky breadcrumb navigation on generated Unit, Topic and Subtopic
+    pages.
 
 Additional Sprint 10 work completed during sustained use includes Search
 classification refinement, stored-region edit navigation, Question-specific
-revision-output exclusions, Search dialog geometry hardening and live database
-Shared Context terminology migration.
+revision-output exclusions, Search dialog geometry hardening, native-window
+dirty-close protection, live database Shared Context terminology migration and
+public API Javadoc completion across the affected production boundaries.
 
 ## Verification evidence
 
@@ -348,15 +358,19 @@ Sprint 10 verification includes:
 - direct populated v12 -> v13 migration verification;
 - TestFX/Xvfb hardening for modal-dialog lifecycle and reusable hidden Dialog
   nodes;
-- regression coverage for Subject-wide output applicability when Search is
-  narrowed to one Descriptor;
-- manual real-application verification of shared/separate answer PDFs across
+- regression coverage proving native Search-window closing cannot silently
+  discard an unsaved Descriptor refinement;
+- renderer regression coverage for persistent breadcrumb styling, current-page
+  breadcrumb marking and sticky-header anchor clearance;- manual real-application verification of shared/separate answer PDFs across
   multiple booklets;
 - manual verification of Q5/Q6/Q7 Shared Context continuation, restart
   persistence, different classifications, out-of-sequence protection and
   booklet-switch reset behaviour;
-- local full Maven suite green before final push;
-- GitHub Actions CI success on final feature-branch head `07b7b337`.
+-- student at the latest completed closeout checkpoint;
+- strict Javadoc generation completed without warnings;
+- `git diff --check` passed at the latest completed closeout checkpoint;
+- protected-main merge remains conditional on green GitHub Actions checks for
+  the final feature-branch state.
 
 ## Active limitations and backlog themes
 

@@ -1,6 +1,6 @@
 # Exam Question Bank — Project History
 
-> Consolidated factual development history through 24 September 2026.  
+> Consolidated factual development history through 25 September 2026.  
 > This is historical evidence, not the authority for current branch capability.
 > Use `current-status.md` for current implementation and the active/final sprint
 > record for sprint-specific state.
@@ -257,7 +257,9 @@ lifecycle races.
 
 The revision renderer/presentation pipeline was refined to support:
 
-- Subtopic or Descriptor grouping;
+- Subtopic or Descriptor grouping, with Descriptor mode available only when all
+  renderable placements have Descriptor-level coverage and Subtopic fallback
+  otherwise;
 - Multiple Choice before Written Response;
 - response-type section headings/navigation;
 - page-local numbering from Question 1;
@@ -331,7 +333,7 @@ Migration hardening found and corrected stale runtime SQL, stale latest-schema
 tests and a semicolon-sensitive migration-comment issue. Populated migration,
 snapshot, legacy import and repository tests were brought back to green.
 
-## 24. 24 September 2026 — generated-site timestamp and Sprint 10 implementation closeout
+## 24. 24 September 2026 — generated-site timestamp and initial Sprint 10 closeout
 
 Revision export now captures one generation timestamp and renders it on the
 student site. Tests inject/fix time so wall-clock variability does not make
@@ -340,24 +342,49 @@ output tests nondeterministic.
 The student-facing subject count uses presentation semantics, so multipart source
 members displayed as one card count once.
 
-The local full Maven suite was green at the final implementation checkpoint.
+Commit `07b7b337` completed the planned Question-applicability implementation and
+passed GitHub Actions CI run 59. Documentation closeout followed in `27f9fd2`.
 
-Final Sprint 10 feature-branch head:
+An independent pre-merge review then found one remaining behavioural defect:
+closing Search Questions through the native title-bar could bypass the dirty
+Descriptor Save / Discard Changes / Cancel guard.
 
-`07b7b337` — `question applicability updated`
+## 25. 25 September 2026 — native Search-close guard and public API Javadoc closeout
 
-GitHub Actions CI run 59 completed successfully for that head.
+`QuestionSearchDialog` now guards the Dialog close request as well as the
+DialogPane Close button. A dirty Descriptor refinement therefore cannot be
+silently lost through the native window close control. Regression coverage
+verifies Cancel preserves the dirty edit and Discard permits the close.
 
-At this history point Sprint 10 implementation is complete and verified on
-`feature/capture-output`; protected-main merge has not yet occurred.
+A final public API documentation pass added or corrected Javadoc across 31
+production files spanning export, revision, capture, correction, curriculum,
+exam, PDF, audit, Search, repository and backup boundaries.
 
-## 25. Future content-source extension
+`RevisionCorpusScope` gained an explicit documented public constructor equivalent
+to its previous implicit public constructor; behaviour is unchanged.
+
+Final validation reported:
+
+- focused Search tests green;
+- full Maven suite green;
+- strict Javadoc generation with no warnings;
+- `git diff --check` green;
+- GitHub Actions CI run 61 successful.
+
+Final verified Sprint 10 feature-branch head:
+
+`810601c8` — `Javadoc updated`
+
+At this history point Sprint 10 implementation and closeout validation are
+complete on `feature/capture-output`; protected-main merge has not yet occurred.
+
+## 26. Future content-source extension
 
 A later workflow may allow clipboard/Windows Snipping Tool images and other
 managed attachments for Questions whose source is not a durable PDF. Storage,
 provenance, backup and output integration remain future design decisions.
 
-## 26. Development discipline
+## 27. Development discipline
 
 Git/GitHub branches, commits, sprint records, tests and CI are implementation
 evidence. Current repository code must be inspected before exact implementation
