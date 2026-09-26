@@ -39,6 +39,8 @@ For every Java code-change instruction, always give:
 - exact copy/paste-ready code.
 - there is no need to give the filename when it can be inferred from the class name.
 
+There is no need to give placement.  No need to give import instructions.  Eclipse sorts methods and adds imports.
+
 Do not use vague instructions such as "put this near..." or "add this somewhere
 below...".
 

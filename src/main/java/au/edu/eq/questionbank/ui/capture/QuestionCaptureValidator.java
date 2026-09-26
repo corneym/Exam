@@ -5,12 +5,7 @@ package au.edu.eq.questionbank.ui.capture;
  */
 final class QuestionCaptureValidator {
 
-	/**
-	 * Values required to decide whether the current question can be saved.
-	 */
-	record State(boolean examSet, String questionCode, String marks, boolean subjectSelected, boolean unitSelected,
-			boolean topicSelected, boolean classificationSelected, boolean currentSelectionPending,
-			int acceptedRegionCount) {
+	private QuestionCaptureValidator() {
 	}
 
 	/**
@@ -41,8 +36,8 @@ final class QuestionCaptureValidator {
 		if (state.currentSelectionPending()) {
 			return "The current selection has not been added to Accepted regions.";
 		}
-		if (state.acceptedRegionCount() == 0) {
-			return "Add at least one question region.";
+		if (state.acceptedContentCount() == 0) {
+			return "Add at least one question region or pasted image.";
 		}
 		if (state.marks().isBlank()) {
 			return "Enter marks.";
@@ -57,6 +52,21 @@ final class QuestionCaptureValidator {
 		return null;
 	}
 
-	private QuestionCaptureValidator() {
+	/**
+	 * Values required to decide whether the current Question can be saved.
+	 *
+	 * @param examSet                 whether an Exam booklet is active
+	 * @param questionCode            entered Question code
+	 * @param marks                   entered mark value
+	 * @param subjectSelected         whether Subject is selected
+	 * @param unitSelected            whether Unit is selected
+	 * @param topicSelected           whether Topic is selected
+	 * @param classificationSelected  whether the final classification is selected
+	 * @param currentSelectionPending whether an unaccepted PDF rectangle exists
+	 * @param acceptedContentCount    number of accepted Question body parts
+	 */
+	record State(boolean examSet, String questionCode, String marks, boolean subjectSelected, boolean unitSelected,
+			boolean topicSelected, boolean classificationSelected, boolean currentSelectionPending,
+			int acceptedContentCount) {
 	}
 }

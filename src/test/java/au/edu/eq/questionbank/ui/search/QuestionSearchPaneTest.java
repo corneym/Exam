@@ -349,7 +349,7 @@ public class QuestionSearchPaneTest {
 		};
 		QuestionRetrievalService service = new QuestionRetrievalService(repository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(question.getId());
+		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(question.getRegions().getFirst());
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
 		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
@@ -879,7 +879,7 @@ public class QuestionSearchPaneTest {
 		};
 		QuestionRetrievalService service = new QuestionRetrievalService(repository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(first.getId());
+		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(first.getRegions().getFirst());
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
 		replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
@@ -1341,33 +1341,38 @@ public class QuestionSearchPaneTest {
 
 	private static final class DelayedQuestionExtractor extends QuestionExtractor {
 
-		private final long delayedQuestionId;
-		private volatile CountDownLatch delayStarted = new CountDownLatch(1);
-		private volatile CountDownLatch delayRelease = new CountDownLatch(1);
-		private volatile CountDownLatch delayFinished = new CountDownLatch(1);
+		private final QuestionRegion delayedRegion;
+		private final CountDownLatch delayStarted = new CountDownLatch(1);
+		private final CountDownLatch delayRelease = new CountDownLatch(1);
+		private final CountDownLatch delayFinished = new CountDownLatch(1);
 
-		private DelayedQuestionExtractor(long delayedQuestionId) {
-			this.delayedQuestionId = delayedQuestionId;
+		private DelayedQuestionExtractor(QuestionRegion delayedRegion) {
+			this.delayedRegion = delayedRegion;
 		}
 
 		@Override
-		public BufferedImage extractQuestion(PdfSession session, Question question) throws IOException {
-			if (question.getId() == delayedQuestionId) {
+		public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
+			if (sameRegion(region, delayedRegion)) {
 				delayStarted.countDown();
 				boolean released = false;
 				while (!released) {
 					try {
 						delayRelease.await();
 						released = true;
-					} catch (InterruptedException e) {
+					} catch (InterruptedException exception) {
 
-						// Ignore cancellation deliberately so the old preview can finish after the
-						// newer UI state.
+						// Ignore cancellation deliberately so the obsolete preview can finish
+						// after a newer selection or disposal has already invalidated it.
 					}
 				}
 				delayFinished.countDown();
+
+				// The delayed preview is deliberately distinguishable from the newer one.
 				return new BufferedImage(11, 11, BufferedImage.TYPE_INT_RGB);
 			}
+
+			// Non-delayed Question content completes immediately with a distinguishable
+			// size so stale-preview tests can prove which result reached the ImageView.
 			return new BufferedImage(22, 22, BufferedImage.TYPE_INT_RGB);
 		}
 
@@ -1381,6 +1386,13 @@ public class QuestionSearchPaneTest {
 
 		private void releaseDelayedExtraction() {
 			delayRelease.countDown();
+		}
+
+		private boolean sameRegion(QuestionRegion first, QuestionRegion second) {
+			return first.booklet().getId() == second.booklet().getId() && first.pageNumber() == second.pageNumber()
+					&& Double.compare(first.x(), second.x()) == 0 && Double.compare(first.y(), second.y()) == 0
+					&& Double.compare(first.width(), second.width()) == 0
+					&& Double.compare(first.height(), second.height()) == 0;
 		}
 	}
 

@@ -7,13 +7,6 @@ import org.junit.jupiter.api.Test;
 
 class QuestionCaptureValidatorTest {
 
-	private QuestionCaptureValidator.State state(boolean examSet, String questionCode, boolean subjectSelected,
-			boolean unitSelected, boolean topicSelected, boolean classificationSelected,
-			boolean currentSelectionPending, int acceptedRegionCount) {
-		return new QuestionCaptureValidator.State(examSet, questionCode, "1", subjectSelected, unitSelected,
-				topicSelected, classificationSelected, currentSelectionPending, acceptedRegionCount);
-	}
-
 	@Test
 	void acceptsCompleteQuestionCaptureState() {
 		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, false, 1);
@@ -37,9 +30,9 @@ class QuestionCaptureValidatorTest {
 	}
 
 	@Test
-	void requiresAtLeastOneAcceptedRegion() {
+	void requiresAtLeastOneAcceptedContentPart() {
 		QuestionCaptureValidator.State state = state(true, "Q1", true, true, true, true, false, 0);
-		assertEquals("Add at least one question region.", QuestionCaptureValidator.findError(state));
+		assertEquals("Add at least one question region or pasted image.", QuestionCaptureValidator.findError(state));
 	}
 
 	@Test
@@ -57,5 +50,12 @@ class QuestionCaptureValidatorTest {
 				.findError(new QuestionCaptureValidator.State(true, "Q1", "0", true, true, true, true, false, 1)));
 		assertEquals("Marks must be a positive whole number.", QuestionCaptureValidator
 				.findError(new QuestionCaptureValidator.State(true, "Q1", "abc", true, true, true, true, false, 1)));
+	}
+
+	private QuestionCaptureValidator.State state(boolean examSet, String questionCode, boolean subjectSelected,
+			boolean unitSelected, boolean topicSelected, boolean classificationSelected,
+			boolean currentSelectionPending, int acceptedRegionCount) {
+		return new QuestionCaptureValidator.State(examSet, questionCode, "1", subjectSelected, unitSelected,
+				topicSelected, classificationSelected, currentSelectionPending, acceptedRegionCount);
 	}
 }

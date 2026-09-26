@@ -286,9 +286,9 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Label questionRegionCount = lookup(robot, "#question-region-count", Label.class);
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-		assertEquals("Saved Q1 (1 mark(s), 1 region(s))", saveStatus.getText());
+		assertEquals("Saved Q1 (1 mark(s), 1 content part(s))", saveStatus.getText());
 		assertEquals("", questionCode.getText());
-		assertEquals("Regions: 0", questionRegionCount.getText());
+		assertEquals("Content parts: 0", questionRegionCount.getText());
 		assertEquals(1, unansweredQuestions.getItems().size());
 		assertEquals(savedQuestion, unansweredQuestions.getItems().getFirst());
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(savedQuestion));

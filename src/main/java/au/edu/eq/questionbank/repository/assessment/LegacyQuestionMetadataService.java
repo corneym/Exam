@@ -29,12 +29,12 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  * historical shared context-capture-required flag. Booklet and source-document
  * identity remain fixed.
  * <p>
- * When a resulting single-part question changes from requiring a legacy shared
- * context to not requiring one, an attached shared context is converted into
- * leading ordinary question regions. Existing question regions follow those
- * converted regions in their original order. The question is then unlinked from
- * the shared context, which is deleted only when no other question still
- * references it.
+ * When a resulting single-part Question changes from requiring a legacy Shared
+ * Context to not requiring one, the attached Shared Context is converted into
+ * leading PDF-backed Question content. Existing Question content follows in its
+ * original authoritative order, including any stored image parts. The Question
+ * is then unlinked from the Shared Context, which is deleted only when no other
+ * Question still references it.
  * <p>
  * A captured shared context cannot be removed from only one part of a multipart
  * question. Such a true-to-false correction is rejected while the resulting
@@ -217,9 +217,6 @@ public final class LegacyQuestionMetadataService {
 				sharedContextCaptureRequired, responseType);
 	}
 
-	// TODO Sprint 11.2: when mixed IMAGE/PDF Questions can enter legacy metadata
-	// correction, preserve existing mixed content while converting Shared Context.
-	// The current conversion intentionally rebuilds a PDF-only Question body.
 	private void convertSharedContextToQuestionRegions(Connection connection, long questionId, long bookletId,
 			long sharedContextId) throws SQLException {
 		verifySharedContextBooklet(connection, sharedContextId, bookletId);
@@ -227,15 +224,38 @@ public final class LegacyQuestionMetadataService {
 		if (sharedRegions.isEmpty()) {
 			throw new IllegalStateException("Linked shared context has no regions: " + sharedContextId);
 		}
-		List<StoredRegion> existingQuestionRegions = readQuestionRegions(connection, questionId, bookletId);
-		List<StoredRegion> replacementRegions = new ArrayList<>(sharedRegions.size() + existingQuestionRegions.size());
+		List<StoredContentPart> existingContentParts = readQuestionContentParts(connection, questionId, bookletId);
+		List<StoredContentPart> replacementContentParts = new ArrayList<>(
+				sharedRegions.size() + existingContentParts.size());
 
-		// Place the shared context first, preserving the captured order within both
-		// groups.
-		replacementRegions.addAll(sharedRegions);
-		replacementRegions.addAll(existingQuestionRegions);
+		// Shared Context becomes leading PDF-backed Question content. The previously
+		// stored mixed Question body follows without changing its internal order.
+		for (StoredRegion sharedRegion : sharedRegions) {
+			replacementContentParts.add(StoredContentPart.pdf(sharedRegion));
+		}
+		replacementContentParts.addAll(existingContentParts);
+
+		// Remove composition rows before deleting PDF-region rows so foreign-key
+		// cascades cannot disturb the image rows that will be reused below.
+		deleteQuestionContentParts(connection, questionId);
 		deleteQuestionRegions(connection, questionId);
-		insertQuestionRegions(connection, questionId, bookletId, replacementRegions);
+
+		// Rebuild PDF-region identity and complete mixed assembly order while retaining
+		// the existing question_images rows and their durable ids.
+		insertQuestionContentParts(connection, questionId, bookletId, replacementContentParts);
+	}
+
+	private void deleteQuestionContentParts(Connection connection, long questionId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM question_content_parts
+				WHERE question_id = ?
+				""")) {
+			statement.setLong(1, questionId);
+
+			// Delete only assembly references. Stored image rows remain available for
+			// reinsertion into the rebuilt mixed sequence.
+			statement.executeUpdate();
+		}
 	}
 
 	private void deleteQuestionRegions(Connection connection, long questionId) throws SQLException {
@@ -352,8 +372,8 @@ public final class LegacyQuestionMetadataService {
 		}
 	}
 
-	private void insertQuestionRegions(Connection connection, long questionId, long bookletId,
-			List<StoredRegion> regions) throws SQLException {
+	private void insertQuestionContentParts(Connection connection, long questionId, long bookletId,
+			List<StoredContentPart> contentParts) throws SQLException {
 		try (PreparedStatement regionStatement = connection.prepareStatement("""
 				INSERT INTO question_regions
 				    (question_id,
@@ -372,59 +392,100 @@ public final class LegacyQuestionMetadataService {
 				     content_type,
 				     region_order,
 				     image_id)
-				VALUES (?, ?, 'PDF_REGION', ?, NULL)
+				VALUES (?, ?, ?, ?, ?)
 				""")) {
-			for (int index = 0; index < regions.size(); index++) {
-				StoredRegion region = regions.get(index);
+			int regionOrder = 0;
+			for (int contentOrder = 0; contentOrder < contentParts.size(); contentOrder++) {
+				StoredContentPart part = contentParts.get(contentOrder);
+				if (part.region() != null) {
+					StoredRegion region = part.region();
 
-				// Persist the PDF-specific source region.
-				regionStatement.setLong(1, questionId);
-				regionStatement.setInt(2, index);
-				regionStatement.setLong(3, bookletId);
-				regionStatement.setInt(4, region.pageNumber());
-				regionStatement.setDouble(5, region.x());
-				regionStatement.setDouble(6, region.y());
-				regionStatement.setDouble(7, region.width());
-				regionStatement.setDouble(8, region.height());
-				regionStatement.executeUpdate();
+					// PDF-region identity remains a compact projection of PDF parts in
+					// encounter order within the complete mixed Question body.
+					regionStatement.setLong(1, questionId);
+					regionStatement.setInt(2, regionOrder);
+					regionStatement.setLong(3, bookletId);
+					regionStatement.setInt(4, region.pageNumber());
+					regionStatement.setDouble(5, region.x());
+					regionStatement.setDouble(6, region.y());
+					regionStatement.setDouble(7, region.width());
+					regionStatement.setDouble(8, region.height());
+					regionStatement.executeUpdate();
+					contentStatement.setLong(1, questionId);
+					contentStatement.setInt(2, contentOrder);
+					contentStatement.setString(3, "PDF_REGION");
+					contentStatement.setInt(4, regionOrder);
+					contentStatement.setNull(5, Types.BIGINT);
+					contentStatement.executeUpdate();
+					regionOrder++;
+					continue;
+				}
 
-				// This legacy conversion produces a PDF-only replacement body. Mirror the
-				// same ordering into the v14 authoritative Question-content sequence.
+				// Image bytes remain in question_images. Reconnect the existing durable
+				// image row at its preserved position in the rebuilt content sequence.
 				contentStatement.setLong(1, questionId);
-				contentStatement.setInt(2, index);
-				contentStatement.setInt(3, index);
+				contentStatement.setInt(2, contentOrder);
+				contentStatement.setString(3, "IMAGE");
+				contentStatement.setNull(4, Types.INTEGER);
+				contentStatement.setLong(5, part.imageId().longValue());
 				contentStatement.executeUpdate();
 			}
 		}
 	}
 
-	private List<StoredRegion> readQuestionRegions(Connection connection, long questionId, long expectedBookletId)
-			throws SQLException {
-		List<StoredRegion> regions = new ArrayList<>();
+	private List<StoredContentPart> readQuestionContentParts(Connection connection, long questionId,
+			long expectedBookletId) throws SQLException {
+		List<StoredContentPart> contentParts = new ArrayList<>();
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
-				    booklet_id,
-				    page_number,
-				    x,
-				    y,
-				    width,
-				    height
-				FROM question_regions
-				WHERE question_id = ?
-				ORDER BY region_order
+				    qcp.content_type,
+				    qr.booklet_id,
+				    qr.page_number,
+				    qr.x,
+				    qr.y,
+				    qr.width,
+				    qr.height,
+				    qi.id AS stored_image_id
+				FROM question_content_parts qcp
+				LEFT JOIN question_regions qr
+				    ON qr.question_id = qcp.question_id
+				   AND qr.region_order = qcp.region_order
+				LEFT JOIN question_images qi
+				    ON qi.question_id = qcp.question_id
+				   AND qi.id = qcp.image_id
+				WHERE qcp.question_id = ?
+				ORDER BY qcp.content_order
 				""")) {
 			statement.setLong(1, questionId);
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
-					if (result.getLong("booklet_id") != expectedBookletId) {
-						throw new IllegalStateException("Stored question region belongs to another booklet");
+					String contentType = result.getString("content_type");
+					if ("PDF_REGION".equals(contentType)) {
+						long bookletId = result.getLong("booklet_id");
+						if (result.wasNull()) {
+							throw new IllegalStateException("Question PDF content has no stored region");
+						}
+						if (bookletId != expectedBookletId) {
+							throw new IllegalStateException("Stored question region belongs to another booklet");
+						}
+						StoredRegion region = new StoredRegion(result.getInt("page_number"), result.getDouble("x"),
+								result.getDouble("y"), result.getDouble("width"), result.getDouble("height"));
+						contentParts.add(StoredContentPart.pdf(region));
+						continue;
 					}
-					regions.add(new StoredRegion(result.getInt("page_number"), result.getDouble("x"),
-							result.getDouble("y"), result.getDouble("width"), result.getDouble("height")));
+					if ("IMAGE".equals(contentType)) {
+						long imageId = result.getLong("stored_image_id");
+						if (result.wasNull()) {
+							throw new IllegalStateException("Question image content has no stored image");
+						}
+						contentParts.add(StoredContentPart.image(imageId));
+						continue;
+					}
+					throw new IllegalStateException("Unsupported Question content type: " + contentType);
 				}
 			}
 		}
-		return List.copyOf(regions);
+		return List.copyOf(contentParts);
 	}
 
 	private List<StoredRegion> readSharedContextRegions(Connection connection, long sharedContextId)
@@ -678,6 +739,28 @@ public final class LegacyQuestionMetadataService {
 					throw new IllegalStateException("Linked shared context belongs to another booklet");
 				}
 			}
+		}
+	}
+
+	private record StoredContentPart(StoredRegion region, Long imageId) {
+
+		private StoredContentPart {
+
+			// Each persisted content part represents exactly one backing source.
+			if ((region == null) == (imageId == null)) {
+				throw new IllegalArgumentException("Stored content part must contain exactly one source");
+			}
+			if (imageId != null && imageId.longValue() < 1) {
+				throw new IllegalArgumentException("Stored image id must be positive");
+			}
+		}
+
+		private static StoredContentPart pdf(StoredRegion region) {
+			return new StoredContentPart(Objects.requireNonNull(region), null);
+		}
+
+		private static StoredContentPart image(long imageId) {
+			return new StoredContentPart(null, Long.valueOf(imageId));
 		}
 	}
 

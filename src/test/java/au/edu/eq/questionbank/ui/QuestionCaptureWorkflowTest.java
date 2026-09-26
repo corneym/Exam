@@ -17,6 +17,8 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
@@ -39,6 +41,10 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
+import javafx.scene.image.WritableImage;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -63,7 +69,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
 		assertTrue(questionCapturePane().hasAcceptedRegions());
-		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 		assertFalse(selectionState.hasPendingSelection());
 
@@ -79,7 +85,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// classification context that will be used when the Question is saved.
 		assertEquals(chemistry, workingSubjectBox.getValue());
 		assertTrue(questionCapturePane().hasAcceptedRegions());
-		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		assertEquals(originalCode, curriculumCode.getText());
 		assertEquals(originalClassification,
 				field(application, "curriculumSelectionModel", CurriculumSelectionModel.class).getClassification());
@@ -123,7 +129,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// the currently active booklet.
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-		assertEquals("Regions: 1", regionCount.getText());
+		assertEquals("Content parts: 1", regionCount.getText());
 		assertTrue(questionCapturePane().hasAcceptedRegions());
 
 		// Leave a second rectangle unaccepted as well. This proves that booklet
@@ -144,7 +150,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(secondBooklet.getId(), examMetadataPane().getBooklet().getId());
 		assertEquals("", questionCode.getText());
 		assertEquals("", marks.getText());
-		assertEquals("Regions: 0", regionCount.getText());
+		assertEquals("Content parts: 0", regionCount.getText());
 		assertFalse(questionCapturePane().hasAcceptedRegions());
 		assertFalse(selectionState.hasPendingSelection());
 		assertEquals("", saveStatus.getText());
@@ -267,7 +273,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, writtenResponse);
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		assertFalse(save.isDisabled());
 
 		// Changing only the Question number to an already-persisted code now produces
@@ -283,7 +289,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Duplicate detection must not discard the accepted region or other metadata.
 		assertEquals("Q7", questionCodeField.getText());
 		assertEquals("1", marksField.getText());
-		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		long matchingQuestions = repository.findAll().stream()
 				.filter(question -> question.getQuestionCode().equals("Q7")).count();
@@ -295,7 +301,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(duplicateStatus.isVisible());
 		assertFalse(duplicateStatus.isManaged());
-		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		assertFalse(save.isDisabled());
 	}
 
@@ -383,6 +389,63 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
 		assertFalse(legacyControls.isVisible());
 		assertFalse(legacyControls.isManaged());
+	}
+
+	@Test
+	void pastedImageCanBeOrderedWithPdfRegionAndSavedAsMixedQuestion(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.clickOn(questionCode).write("Q40");
+		robot.clickOn(marks).write("2");
+
+		// Start with a PDF part.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// Place a deterministic image on the real JavaFX clipboard, matching the path
+		// used by Snipping Tool.
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(40, 20);
+			for (int y = 0; y < 20; y++) {
+				for (int x = 0; x < 40; x++) {
+					image.getPixelWriter().setColor(x, y, Color.ORANGE);
+				}
+			}
+			ClipboardContent clipboardContent = new ClipboardContent();
+			clipboardContent.putImage(image);
+			Clipboard.getSystemClipboard().setContent(clipboardContent);
+		});
+		fireControl(robot, "#paste-question-image");
+		assertEquals("Content parts: 2", lookup(robot, "#question-region-count", Label.class).getText());
+		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isPresent());
+		assertTrue(robot.lookup("#question-content-part-1").tryQuery().isPresent());
+
+		// The image was appended after the PDF region. Move it ahead of the PDF part.
+		fireControl(robot, "#question-content-move-up-1");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Prove removal operates on the mixed assembly rather than only PDF regions.
+		fireControl(robot, "#question-content-remove-1");
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// Add a fresh PDF part after the retained image. The final assembly is
+		// therefore
+		// IMAGE -> PDF_REGION.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertEquals("Content parts: 2", lookup(robot, "#question-region-count", Label.class).getText());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "Q40".equals(question.getQuestionCode())));
+		Question reloaded = repository.findAll().stream().filter(question -> "Q40".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
+		assertEquals(2, reloaded.getContentParts().size());
+		assertTrue(reloaded.getContentParts().get(0) instanceof ImageQuestionContentPart);
+		assertTrue(reloaded.getContentParts().get(1) instanceof PdfQuestionContentPart);
+		assertEquals(1, reloaded.getRegions().size());
 	}
 
 	@Test

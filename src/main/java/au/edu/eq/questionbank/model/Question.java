@@ -6,16 +6,20 @@ import java.util.List;
 /**
  * An examination question belonging to one source booklet.
  * <p>
- * The original source regions are authoritative; question text is supplementary
- * metadata. A question imported from legacy metadata may exist before any
- * source regions have been captured. Questions created through normal PDF
- * capture must contain at least one region before they are saved.
+ * The ordered {@link QuestionContentPart} list is the authoritative
+ * student-facing Question body. It may contain PDF-backed regions, stored
+ * raster images, or both. {@link #getRegions()} remains a compatibility
+ * projection of the PDF-backed parts only. Question text is supplementary
+ * metadata.
  * <p>
- * Each question has one best-fit syllabus classification, which must be a
+ * A Question imported from legacy metadata may exist before any body content
+ * has been captured.
+ * <p>
+ * Each Question has one best-fit syllabus classification, which must be a
  * {@link CurriculumLevel#SUBTOPIC subtopic} or
- * {@link CurriculumLevel#DESCRIPTOR descriptor}. Every captured region must
- * belong to the question's {@link ExamBooklet}. The classification must belong
- * to the same subject as the booklet's exam.
+ * {@link CurriculumLevel#DESCRIPTOR descriptor}. Every PDF-backed content part
+ * must belong to the Question's {@link ExamBooklet}. The classification must
+ * belong to the same subject as the booklet's exam.
  */
 public class Question {
 
@@ -388,10 +392,14 @@ public class Question {
 	}
 
 	/**
-	 * Returns the source regions used to assemble this question.
+	 * Returns the PDF-backed source regions contributing to this Question.
+	 * <p>
+	 * This is a compatibility projection of {@link #getContentParts()} and
+	 * therefore excludes stored image parts. Region order is their encounter order
+	 * within the complete Question body.
 	 *
-	 * @return an immutable list in assembly order; empty for metadata-only
-	 *         questions
+	 * @return immutable PDF-region list; empty for image-only or metadata-only
+	 *         Questions
 	 */
 	public List<QuestionRegion> getRegions() {
 		return regions;

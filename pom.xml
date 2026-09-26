@@ -176,8 +176,8 @@
 				<headless.test.jvm.args>
 					--add-exports javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
 					--add-opens javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
-					--add-exports
-					javafx.graphics/com.sun.javafx.util=ALL-UNNAMED
+					--add-exports javafx.graphics/com.sun.glass.ui.delegate=ALL-UNNAMED
+					--add-exports javafx.graphics/com.sun.javafx.util=ALL-UNNAMED
 					--add-exports javafx.base/com.sun.javafx.logging=ALL-UNNAMED
 				</headless.test.jvm.args>
 			</properties>

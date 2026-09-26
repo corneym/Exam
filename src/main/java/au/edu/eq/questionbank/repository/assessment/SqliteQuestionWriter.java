@@ -216,17 +216,19 @@ public final class SqliteQuestionWriter {
 	 * Stores a new Question whose body may mix PDF regions and encoded images.
 	 *
 	 * @param booklet                      source booklet
-	 * @param questionCode                 question code
+	 * @param questionCode                 non-blank Question code
 	 * @param questionText                 supplementary text
 	 * @param marks                        positive mark value
-	 * @param contentParts                 ordered mixed Question body
+	 * @param contentParts                 non-empty ordered mixed Question body
 	 * @param classification               original curriculum classification
 	 * @param sharedContextCaptureRequired historical shared-context evidence
-	 * @param sourceQuestion               source-question identity, or null
-	 * @param sharedContext                shared context, or null
+	 * @param sourceQuestion               source-question identity, or {@code null}
+	 * @param sharedContext                shared context, or {@code null}
 	 * @param responseType                 authoritative response type
 	 * @return stored Question
-	 * @throws SQLException if persistence fails
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if required input is {@code null}
+	 * @throws IllegalArgumentException if Question content or metadata is invalid
 	 */
 	public Question insertQuestionWithContent(ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionContentPart> contentParts, CurriculumNode classification, boolean sharedContextCaptureRequired,
@@ -235,22 +237,18 @@ public final class SqliteQuestionWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				validateContentParts(booklet, contentParts);
-				long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks,
-						classification, sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
-				List<QuestionRegion> regions = insertContentParts(connection, questionId, booklet, contentParts);
-				Question question = new Question(questionId, booklet, questionCode, questionText, marks, regions,
-						classification, sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType,
-						contentParts);
+				Question question = insertQuestionWithContent(connection, booklet, questionCode, questionText, marks,
+						contentParts, classification, sharedContextCaptureRequired, sourceQuestion, sharedContext,
+						responseType);
 				connection.commit();
 				return question;
-			} catch (SQLException | RuntimeException e) {
+			} catch (SQLException | RuntimeException exception) {
 				try {
 					connection.rollback();
 				} catch (SQLException rollbackFailure) {
-					e.addSuppressed(rollbackFailure);
+					exception.addSuppressed(rollbackFailure);
 				}
-				throw e;
+				throw exception;
 			}
 		}
 	}
@@ -374,6 +372,32 @@ public final class SqliteQuestionWriter {
 		return updateSourceQuestionSharedContexts(connection, sourceQuestion, sharedContext);
 	}
 
+	void attachContent(Connection connection, long questionId, ExamBooklet booklet,
+			List<QuestionContentPart> contentParts, CurriculumNode classification, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		validateContentParts(booklet, contentParts);
+		if (contentParts.isEmpty()) {
+			throw new IllegalArgumentException("Question content must not be empty");
+		}
+		validateClassificationForBooklet(booklet, classification);
+		verifyQuestionBooklet(connection, questionId, booklet);
+		verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+		verifySharedContextRelationship(connection, booklet, sharedContext);
+		verifyQuestionCanAcceptContent(connection, questionId, booklet);
+		updateQuestionCaptureDetails(connection, questionId, classification, sourceQuestion, sharedContext);
+		insertContentParts(connection, questionId, booklet, contentParts);
+	}
+
 	void attachRegions(Connection connection, long questionId, List<QuestionRegion> regions,
 			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
 			throws SQLException {
@@ -434,6 +458,54 @@ public final class SqliteQuestionWriter {
 		insertRegions(connection, questionId, regions);
 		return new Question(questionId, booklet, questionCode, questionText, marks, regions, classification,
 				sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
+	}
+
+	Question insertQuestionWithContent(Connection connection, ExamBooklet booklet, String questionCode,
+			String questionText, int marks, List<QuestionContentPart> contentParts, CurriculumNode classification,
+			boolean sharedContextCaptureRequired, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
+			QuestionResponseType responseType) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (questionCode == null || questionCode.isBlank()) {
+			throw new IllegalArgumentException("questionCode must not be blank");
+		}
+		if (questionText == null) {
+			throw new NullPointerException("questionText");
+		}
+		if (marks < 1) {
+			throw new IllegalArgumentException("marks must be positive");
+		}
+		if (classification == null) {
+			throw new NullPointerException("classification");
+		}
+		if (responseType == null) {
+			throw new NullPointerException("responseType");
+		}
+		if (responseType == QuestionResponseType.MULTIPLE_CHOICE && marks != 1) {
+			throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
+		}
+		validateContentParts(booklet, contentParts);
+		if (contentParts.isEmpty()) {
+			throw new IllegalArgumentException("Question content must not be empty");
+		}
+		validateClassificationForBooklet(booklet, classification);
+		if (sourceQuestion != null && sourceQuestion.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Source question must belong to the question's booklet");
+		}
+		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
+		}
+		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+		verifySharedContextRelationship(connection, booklet, sharedContext);
+		long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks, classification,
+				sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
+		List<QuestionRegion> regions = insertContentParts(connection, questionId, booklet, contentParts);
+		return new Question(questionId, booklet, questionCode, questionText, marks, regions, classification,
+				sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType, contentParts);
 	}
 
 	void updateCaptureRelationships(Connection connection, long questionId, ExamBooklet booklet,
@@ -538,6 +610,42 @@ public final class SqliteQuestionWriter {
 		// Replace region order within the same transaction as the metadata update.
 		deleteQuestionRegions(connection, questionId);
 		insertRegions(connection, questionId, regions);
+	}
+
+	void updateQuestionWithContent(Connection connection, long questionId, ExamBooklet booklet, String questionCode,
+			int marks, List<QuestionContentPart> contentParts, CurriculumNode classification,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (questionCode == null || questionCode.isBlank()) {
+			throw new IllegalArgumentException("questionCode must not be blank");
+		}
+		if (marks < 1) {
+			throw new IllegalArgumentException("marks must be positive");
+		}
+		validateContentParts(booklet, contentParts);
+		if (contentParts.isEmpty()) {
+			throw new IllegalArgumentException("Question content must not be empty");
+		}
+		validateClassificationForBooklet(booklet, classification);
+		verifyQuestionBooklet(connection, questionId, booklet);
+		verifyClassificationSyllabusUnchanged(connection, questionId, classification);
+		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
+		verifySharedContextRelationship(connection, booklet, sharedContext);
+		updateQuestionEditableDetails(connection, questionId, questionCode, marks, classification, sourceQuestion,
+				sharedContext);
+
+		// Replace the complete body atomically, including image rows and PDF-region
+		// projection.
+		deleteQuestionRegions(connection, questionId);
+		insertContentParts(connection, questionId, booklet, contentParts);
 	}
 
 	void updateResponseType(Connection connection, long questionId, ExamBooklet booklet,
@@ -1014,6 +1122,33 @@ public final class SqliteQuestionWriter {
 				}
 				if (result.getLong("booklet_id") != booklet.getId()) {
 					throw new IllegalArgumentException("Capture relationships must belong to the question's booklet");
+				}
+			}
+		}
+	}
+
+	private void verifyQuestionCanAcceptContent(Connection connection, long questionId, ExamBooklet booklet)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    q.booklet_id,
+				    COUNT(qcp.question_id) AS content_count
+				FROM questions q
+				LEFT JOIN question_content_parts qcp
+				    ON qcp.question_id = q.id
+				WHERE q.id = ?
+				GROUP BY q.id, q.booklet_id
+				""")) {
+			statement.setLong(1, questionId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Question does not exist: " + questionId);
+				}
+				if (result.getLong("booklet_id") != booklet.getId()) {
+					throw new IllegalArgumentException("Question content must belong to the question's booklet");
+				}
+				if (result.getInt("content_count") != 0) {
+					throw new IllegalArgumentException("Question already has captured content");
 				}
 			}
 		}

@@ -4,12 +4,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextStatus;
@@ -341,45 +344,49 @@ public final class SqliteQuestionCaptureService {
 	private Question persistQuestion(Connection connection, Request request, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
 		if (request.operation() == Operation.NEW) {
-			return questionWriter.insertQuestion(connection, request.booklet(), request.questionCode(), "",
-					request.marks(), request.regions(), request.classification(), false, sourceQuestion, sharedContext,
-					request.responseType());
+			return questionWriter.insertQuestionWithContent(connection, request.booklet(), request.questionCode(), "",
+					request.marks(), request.contentParts(), request.classification(), false, sourceQuestion,
+					sharedContext, request.responseType());
 		}
 		Question existing = request.existingQuestion();
-
-		// Imported questions keep previously captured regions; only empty captures
-		// receive new ones.
 		if (request.operation() == Operation.IMPORTED) {
-			if (existing.getRegions().isEmpty()) {
-				questionWriter.attachRegions(connection, existing.getId(), request.regions(), request.classification(),
-						sourceQuestion, sharedContext);
+			boolean existingHasContent = !existing.getContentParts().isEmpty();
+			if (!existingHasContent) {
+				questionWriter.attachContent(connection, existing.getId(), existing.getBooklet(),
+						request.contentParts(), request.classification(), sourceQuestion, sharedContext);
 			} else {
+
+				// Imported Questions whose body is already captured may still resolve
+				// classification/shared-context state without replacing that body.
 				questionWriter.updateCaptureRelationships(connection, existing.getId(), existing.getBooklet(),
 						request.classification(), sourceQuestion, sharedContext);
 			}
 			questionWriter.updateResponseType(connection, existing.getId(), existing.getBooklet(),
 					request.responseType());
-			List<QuestionRegion> resultingRegions = existing.getRegions().isEmpty() ? request.regions()
-					: existing.getRegions();
+			List<QuestionContentPart> resultingContent = existingHasContent ? existing.getContentParts()
+					: request.contentParts();
+			List<QuestionRegion> resultingRegions = existingHasContent ? existing.getRegions() : request.regions();
 			return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), resultingRegions,
-					request.classification(), sourceQuestion, sharedContext, request.responseType());
+					resultingContent, request.classification(), sourceQuestion, sharedContext, request.responseType());
 		}
-		questionWriter.updateQuestion(connection, existing.getId(), existing.getBooklet(), request.questionCode(),
-				request.marks(), request.regions(), request.classification(), sourceQuestion, sharedContext);
+		questionWriter.updateQuestionWithContent(connection, existing.getId(), existing.getBooklet(),
+				request.questionCode(), request.marks(), request.contentParts(), request.classification(),
+				sourceQuestion, sharedContext);
 		questionWriter.updateResponseType(connection, existing.getId(), existing.getBooklet(), request.responseType());
 		return rebuildQuestion(existing, request.questionCode(), request.marks(), request.regions(),
-				request.classification(), sourceQuestion, sharedContext, request.responseType());
+				request.contentParts(), request.classification(), sourceQuestion, sharedContext,
+				request.responseType());
 	}
 
 	private Question rebuildQuestion(Question existing, String questionCode, int marks, List<QuestionRegion> regions,
-			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
-			QuestionResponseType responseType) {
+			List<QuestionContentPart> contentParts, CurriculumNode classification, SourceQuestion sourceQuestion,
+			SharedQuestionContext sharedContext, QuestionResponseType responseType) {
 
-		// Rebuild editable fields while retaining identity, legacy evidence and the
-		// answer.
+		// Rebuild editable state while retaining identity, supplementary text,
+		// historical evidence and any associated Answer.
 		Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
 				existing.getQuestionText(), marks, regions, classification, existing.isSharedContextCaptureRequired(),
-				sourceQuestion, sharedContext, responseType);
+				sourceQuestion, sharedContext, responseType, contentParts);
 		if (existing.hasAnswer()) {
 			updated.setAnswer(existing.getAnswer());
 		}
@@ -558,47 +565,78 @@ public final class SqliteQuestionCaptureService {
 	}
 
 	/**
-	 * Validated inputs for an atomic question-capture operation.
+	 * Validated inputs for an atomic Question-capture operation.
+	 * <p>
+	 * {@code contentParts} is the authoritative complete Question-body ordering.
+	 * {@code regions} remains the PDF-only compatibility projection used by older
+	 * callers.
 	 *
 	 * @param operation                      new, imported or edit capture
 	 * @param booklet                        source examination booklet
-	 * @param existingQuestion               stored question for imported or edit
-	 *                                       capture; null for new capture
-	 * @param questionCode                   non-blank examination question or part
+	 * @param existingQuestion               stored Question for imported or edit
+	 *                                       capture; {@code null} for new capture
+	 * @param questionCode                   non-blank examination Question or part
 	 *                                       code
 	 * @param marks                          positive mark value
-	 * @param regions                        ordered ordinary question regions
+	 * @param regions                        ordered PDF-region compatibility view
+	 * @param contentParts                   complete ordered Question body
 	 * @param classification                 original syllabus Subtopic or
 	 *                                       Descriptor
-	 * @param responseType                   authoritative response type, including
-	 *                                       UNKNOWN when unresolved
+	 * @param responseType                   authoritative response type
 	 * @param selectedSharedContext          existing reusable context, or null
 	 * @param pendingSharedContext           newly captured context to persist, or
 	 *                                       null
 	 * @param continueSharedContextToNextMcq whether this independent MCQ's context
-	 *                                       should also be applied to the next
-	 *                                       independent MCQ
+	 *                                       continues to its immediate successor
 	 */
 	public record Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
-			int marks, List<QuestionRegion> regions, CurriculumNode classification, QuestionResponseType responseType,
+			int marks, List<QuestionRegion> regions, List<QuestionContentPart> contentParts,
+			CurriculumNode classification, QuestionResponseType responseType,
 			SharedQuestionContext selectedSharedContext, PendingSharedContext pendingSharedContext,
 			boolean continueSharedContextToNextMcq) {
 
 		/**
-		 * Preserves the existing response-type-aware constructor for callers that do
-		 * not yet participate in independent-MCQ context continuation.
+		 * Creates mixed-content capture input while deriving the PDF-region
+		 * compatibility projection automatically.
 		 *
-		 * @param operation             new, imported or edit capture
-		 * @param booklet               source examination booklet
-		 * @param existingQuestion      stored question for imported or edit capture;
-		 *                              null for new capture
-		 * @param questionCode          non-blank examination question or part code
-		 * @param marks                 positive mark value
-		 * @param regions               ordered ordinary question regions
-		 * @param classification        original syllabus Subtopic or Descriptor
-		 * @param responseType          authoritative response type
-		 * @param selectedSharedContext existing reusable context, or null
-		 * @param pendingSharedContext  newly captured context to persist, or null
+		 * @param operation                      new, imported or edit capture
+		 * @param booklet                        capture booklet
+		 * @param existingQuestion               existing Question, or null for new
+		 * @param questionCode                   Question code
+		 * @param marks                          positive marks
+		 * @param contentParts                   authoritative ordered body content
+		 * @param classification                 original classification
+		 * @param responseType                   authoritative response type
+		 * @param selectedSharedContext          existing shared context, or null
+		 * @param pendingSharedContext           newly captured shared context, or null
+		 * @param continueSharedContextToNextMcq whether MCQ context should continue
+		 * @return validated mixed-content request
+		 */
+		public static Request withContent(Operation operation, ExamBooklet booklet, Question existingQuestion,
+				String questionCode, int marks, List<QuestionContentPart> contentParts, CurriculumNode classification,
+				QuestionResponseType responseType, SharedQuestionContext selectedSharedContext,
+				PendingSharedContext pendingSharedContext, boolean continueSharedContextToNextMcq) {
+			return new Request(operation, booklet, existingQuestion, questionCode, marks,
+					regionsFromContentParts(contentParts), contentParts, classification, responseType,
+					selectedSharedContext, pendingSharedContext, continueSharedContextToNextMcq);
+		}
+
+		/**
+		 * Preserves the existing response-type-aware constructor including MCQ
+		 * continuation for PDF-only callers.
+		 */
+		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
+				int marks, List<QuestionRegion> regions, CurriculumNode classification,
+				QuestionResponseType responseType, SharedQuestionContext selectedSharedContext,
+				PendingSharedContext pendingSharedContext, boolean continueSharedContextToNextMcq) {
+			this(operation, booklet, existingQuestion, questionCode, marks, regions, pdfContentParts(regions),
+					classification, responseType, selectedSharedContext, pendingSharedContext,
+					continueSharedContextToNextMcq);
+		}
+
+		/**
+		 * Preserves the existing response-type-aware constructor for PDF-only callers
+		 * that do not use independent-MCQ continuation.
 		 */
 		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
 				int marks, List<QuestionRegion> regions, CurriculumNode classification,
@@ -609,22 +647,8 @@ public final class SqliteQuestionCaptureService {
 		}
 
 		/**
-		 * Compatibility constructor used by callers that predate explicit response-type
-		 * input.
-		 * <p>
-		 * Existing Questions retain their stored response type. A new Question created
-		 * through this compatibility form remains UNKNOWN.
-		 *
-		 * @param operation             new, imported or edit capture
-		 * @param booklet               source examination booklet
-		 * @param existingQuestion      stored question for imported or edit capture;
-		 *                              null for new capture
-		 * @param questionCode          non-blank examination question or part code
-		 * @param marks                 positive mark value
-		 * @param regions               ordered ordinary question regions
-		 * @param classification        original syllabus Subtopic or Descriptor
-		 * @param selectedSharedContext existing reusable context, or null
-		 * @param pendingSharedContext  newly captured context to persist, or null
+		 * Compatibility constructor for PDF-only callers that predate explicit
+		 * response-type input.
 		 */
 		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
 				int marks, List<QuestionRegion> regions, CurriculumNode classification,
@@ -635,8 +659,7 @@ public final class SqliteQuestionCaptureService {
 		}
 
 		/**
-		 * Validates capture state and retains an immutable copy of the ordinary
-		 * regions.
+		 * Validates capture state and copies both body representations.
 		 */
 		public Request {
 			if (operation == null) {
@@ -654,37 +677,36 @@ public final class SqliteQuestionCaptureService {
 			if (regions == null) {
 				throw new NullPointerException("regions");
 			}
+			if (contentParts == null) {
+				throw new NullPointerException("contentParts");
+			}
 			if (classification == null) {
 				throw new NullPointerException("classification");
 			}
 			if (responseType == null) {
 				throw new NullPointerException("responseType");
 			}
-			if (responseType == QuestionResponseType.MULTIPLE_CHOICE && marks != 1) {
+			regions = List.copyOf(regions);
+			contentParts = List.copyOf(contentParts);
+			for (QuestionContentPart part : contentParts) {
+				if (part == null) {
+					throw new NullPointerException("contentParts contains null");
+				}
+			}
 
-				// Reject inconsistent capture metadata before any persistence transaction can
-				// begin, including edit and imported-question workflows.
+			// The legacy region list must remain exactly the PDF projection of the
+			// authoritative mixed body.
+			if (!regions.equals(regionsFromContentParts(contentParts))) {
+				throw new IllegalArgumentException("regions must match the PDF content-part projection");
+			}
+			for (QuestionRegion region : regions) {
+				if (region.booklet().getId() != booklet.getId()) {
+					throw new IllegalArgumentException("Question PDF content must belong to the capture booklet");
+				}
+			}
+			if (responseType == QuestionResponseType.MULTIPLE_CHOICE && marks != 1) {
 				throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
 			}
-			if (continueSharedContextToNextMcq && operation != Operation.NEW) {
-
-				// Continuation is capture workflow state for newly encountered independent
-				// MCQs, never an edit/import side effect.
-				throw new IllegalArgumentException(
-						"MCQ shared-context continuation is only valid for new Question capture");
-			}
-			if (continueSharedContextToNextMcq && responseType != QuestionResponseType.MULTIPLE_CHOICE) {
-				throw new IllegalArgumentException(
-						"Shared-context continuation to the next MCQ requires a Multiple Choice Question");
-			}
-			if (continueSharedContextToNextMcq && SourceQuestionCodeParser.derive(questionCode) != null) {
-
-				// Multipart Questions already obtain context through SourceQuestion identity.
-				// Never create a second continuation mechanism for those Questions.
-				throw new IllegalArgumentException(
-						"MCQ shared-context continuation is only valid for independent Question codes");
-			}
-			regions = List.copyOf(regions);
 			if (operation == Operation.NEW && existingQuestion != null) {
 				throw new IllegalArgumentException("New capture must not have an existing question");
 			}
@@ -697,11 +719,48 @@ public final class SqliteQuestionCaptureService {
 			if (selectedSharedContext != null && selectedSharedContext.getBooklet().getId() != booklet.getId()) {
 				throw new IllegalArgumentException("Shared context must belong to the capture booklet");
 			}
-			boolean regionsRequired = operation == Operation.NEW || operation == Operation.EDIT
-					|| (operation == Operation.IMPORTED && existingQuestion.getRegions().isEmpty());
-			if (regionsRequired && regions.isEmpty()) {
-				throw new IllegalArgumentException("Question regions must not be empty");
+			if (continueSharedContextToNextMcq && operation != Operation.NEW) {
+				throw new IllegalArgumentException(
+						"MCQ shared-context continuation is only valid for new Question capture");
 			}
+			if (continueSharedContextToNextMcq && responseType != QuestionResponseType.MULTIPLE_CHOICE) {
+				throw new IllegalArgumentException(
+						"Shared-context continuation to the next MCQ requires a Multiple Choice Question");
+			}
+			if (continueSharedContextToNextMcq && SourceQuestionCodeParser.derive(questionCode) != null) {
+				throw new IllegalArgumentException(
+						"MCQ shared-context continuation is only valid for independent Question codes");
+			}
+			boolean existingHasContent = existingQuestion != null && !existingQuestion.getContentParts().isEmpty();
+			boolean contentRequired = operation == Operation.NEW || operation == Operation.EDIT
+					|| (operation == Operation.IMPORTED && !existingHasContent);
+			if (contentRequired && contentParts.isEmpty()) {
+				throw new IllegalArgumentException("Question content must not be empty");
+			}
+		}
+
+		private static List<QuestionContentPart> pdfContentParts(List<QuestionRegion> regions) {
+			if (regions == null) {
+				return null;
+			}
+			List<QuestionContentPart> contentParts = new ArrayList<>();
+			for (QuestionRegion region : regions) {
+				contentParts.add(new PdfQuestionContentPart(region));
+			}
+			return List.copyOf(contentParts);
+		}
+
+		private static List<QuestionRegion> regionsFromContentParts(List<QuestionContentPart> contentParts) {
+			if (contentParts == null) {
+				return null;
+			}
+			List<QuestionRegion> regions = new ArrayList<>();
+			for (QuestionContentPart part : contentParts) {
+				if (part instanceof PdfQuestionContentPart pdfPart) {
+					regions.add(pdfPart.region());
+				}
+			}
+			return List.copyOf(regions);
 		}
 	}
 }

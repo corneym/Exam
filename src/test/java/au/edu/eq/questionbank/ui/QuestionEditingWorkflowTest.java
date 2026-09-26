@@ -225,7 +225,7 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Recapture starts with no transient replacement regions.
-		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(lookup(robot, "#save-question", Button.class).isDisable());
 		assertTrue(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
 

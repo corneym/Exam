@@ -1,8 +1,10 @@
 package au.edu.eq.questionbank.ui.capture;
 
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -13,7 +15,10 @@ import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextStatus;
@@ -54,6 +59,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
+import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -127,13 +133,15 @@ public final class QuestionCapturePane extends VBox {
 	private final Label sharedContextStatusLabel = new Label();
 	private final VBox sharedContextControlsBox = new VBox(COMPACT_SPACING);
 
-	// Pending and accepted region controls.
+	// Pending PDF selection and accepted mixed Question-content controls.
 	private final Button addRegionButton = new Button("Add Region");
+	private final Button pasteImageButton = new Button("Paste Image");
 	private final Button removeCurrentSelectionButton = new Button("Clear");
-	private final Button clearRegionsButton = new Button("Clear Regions");
-	private final Label regionCountLabel = new Label("Regions: 0");
+	private final Button clearRegionsButton = new Button("Clear Content");
+	private final Label regionCountLabel = new Label("Content parts: 0");
 	private final VBox regionPreviewBox = new VBox(SECTION_SPACING);
 	private final ScrollPane regionsScrollPane = new ScrollPane(regionPreviewBox);
+	private final QuestionClipboardImageReader clipboardImageReader = new QuestionClipboardImageReader();
 
 	// Save and edit controls.
 	private final Button saveQuestionButton = new Button("Save Question");
@@ -157,7 +165,11 @@ public final class QuestionCapturePane extends VBox {
 	private boolean refreshingImportedQuestions;
 	private boolean importedCaptureMode;
 	private QuestionRegion currentSelection;
-	private final List<QuestionRegion> pendingRegions = new ArrayList<>();
+
+	// This list is the authoritative transient assembly order for the Question
+	// body.
+	// PDF selections and pasted images can therefore be interleaved arbitrarily.
+	private final List<QuestionContentPart> pendingContentParts = new ArrayList<>();
 	private Question editingQuestion;
 	private boolean loadingQuestionEdit;
 	private Runnable questionEditCompletedHandler = () -> {
@@ -238,7 +250,7 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
-	 * Returns imported Questions still requiring Question-region or shared-context
+	 * Returns imported Questions still requiring Question-body or shared-context
 	 * capture, optionally restricted to one Working Subject.
 	 *
 	 * @param questions      current Question snapshot
@@ -261,7 +273,7 @@ public final class QuestionCapturePane extends VBox {
 
 			// Imported Questions remain in this queue until ordinary regions are captured
 			// and any unresolved shared-context requirement has also been resolved.
-			if (question.getRegions().isEmpty() || question.isSharedContextUnresolved()) {
+			if (question.getContentParts().isEmpty() || question.isSharedContextUnresolved()) {
 				awaitingCapture.add(question);
 			}
 		}
@@ -274,10 +286,10 @@ public final class QuestionCapturePane extends VBox {
 	 * @param selection the selected exam-page rectangle
 	 */
 	public void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
-		if (importedQuestion != null && !importedQuestion.getRegions().isEmpty()) {
+		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
 			clearCurrentSelection();
-			showAlert(Alert.AlertType.INFORMATION, "Question regions already captured.",
-					"This imported question already has its question regions. "
+			showAlert(Alert.AlertType.INFORMATION, "Question content already captured.",
+					"This imported question already has its question content. "
 							+ "Only the unresolved shared context needs to be captured.");
 			return;
 		}
@@ -512,9 +524,12 @@ public final class QuestionCapturePane extends VBox {
 		questionEditCompletedHandler = editCompletedHandler;
 		sharedContextCapturePane.refreshForCurrentBooklet();
 		loadQuestionEditFields(question);
-		pendingRegions.addAll(question.getRegions());
+
+		// Editing loads the complete persisted assembly rather than only its PDF
+		// subset.
+		pendingContentParts.addAll(question.getContentParts());
 		refreshRegionPreviews();
-		setRegionCountLabel(pendingRegions.size());
+		setRegionCountLabel(pendingContentParts.size());
 		questionCodeField.setDisable(false);
 		marksField.setDisable(false);
 		setResponseTypeDisabled(false);
@@ -530,21 +545,25 @@ public final class QuestionCapturePane extends VBox {
 		showCaptureHint(
 				"Editing stored question " + question.getQuestionCode() + ". Exam and booklet cannot be changed.");
 		refreshSharedContextControls();
-		saveStatusLabel.setText(
-				"Editing " + question.getQuestionCode() + " — " + pendingRegions.size() + " stored region(s) loaded");
+		saveStatusLabel.setText("Editing " + question.getQuestionCode() + " — " + pendingContentParts.size()
+				+ " stored content part(s) loaded");
 		refreshSaveButtonState();
 		return true;
 	}
 
 	/**
-	 * Indicates whether accepted question or automatic context regions would be
-	 * discarded by a workflow transition.
+	 * Indicates whether accepted Question content or automatic context regions
+	 * would be discarded by a workflow transition.
+	 * <p>
+	 * The retained method name is preserved for existing callers, but accepted
+	 * Question content may now contain PDF regions, pasted images, or both.
 	 *
-	 * @return {@code true} when accepted transient regions exist
+	 * @return {@code true} when accepted transient Question content exists
 	 */
 	public boolean hasAcceptedRegions() {
 		boolean splitPartsStaged = legacySplitCaptureState != null && !legacySplitCaptureState.completedParts.isEmpty();
-		return !pendingRegions.isEmpty() || sharedContextCapturePane.hasPendingAutomaticRegion() || splitPartsStaged;
+		return !pendingContentParts.isEmpty() || sharedContextCapturePane.hasPendingAutomaticRegion()
+				|| splitPartsStaged;
 	}
 
 	/**
@@ -777,6 +796,55 @@ public final class QuestionCapturePane extends VBox {
 		clearImportedQuestionSelection();
 	}
 
+	private void addContentPreview(QuestionContentPart part, int contentIndex) {
+		ImageView imageView;
+		String description;
+		if (part instanceof PdfQuestionContentPart pdfPart) {
+			QuestionRegion region = pdfPart.region();
+			try {
+				BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
+				imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
+			} catch (IOException exception) {
+				throw new RuntimeException("Unable to preview PDF Question content", exception);
+			}
+			description = String.format("Part %d — PDF page %d", contentIndex + 1, region.pageNumber());
+		} else if (part instanceof ImageQuestionContentPart imagePart) {
+			Image image = new Image(new ByteArrayInputStream(imagePart.pngBytes()));
+			if (image.isError()) {
+				throw new IllegalStateException("Unable to preview stored Question image", image.getException());
+			}
+			imageView = new ImageView(image);
+			description = String.format("Part %d — Pasted image", contentIndex + 1);
+		} else {
+			throw new IllegalStateException("Unsupported Question content part: " + part.getClass().getName());
+		}
+		imageView.setPreserveRatio(true);
+
+		// Keep the current stable width behaviour; scrollbar appearance must not start
+		// a resize loop.
+		imageView.fitWidthProperty()
+				.bind(Bindings.createDoubleBinding(
+						() -> Math.max(0.0, regionsScrollPane.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
+						regionsScrollPane.widthProperty()));
+		imageView.setSmooth(true);
+		Label label = new Label(description);
+		Button moveUpButton = new Button("Up");
+		moveUpButton.setId("question-content-move-up-" + contentIndex);
+		moveUpButton.setDisable(contentIndex == 0);
+		moveUpButton.setOnAction(_ -> moveContentPart(contentIndex, -1));
+		Button moveDownButton = new Button("Down");
+		moveDownButton.setId("question-content-move-down-" + contentIndex);
+		moveDownButton.setDisable(contentIndex == pendingContentParts.size() - 1);
+		moveDownButton.setOnAction(_ -> moveContentPart(contentIndex, 1));
+		Button removeButton = new Button("Remove");
+		removeButton.setId("question-content-remove-" + contentIndex);
+		removeButton.setOnAction(_ -> removeContentPart(contentIndex));
+		HBox header = new HBox(SECTION_SPACING, label, moveUpButton, moveDownButton, removeButton);
+		VBox preview = new VBox(REGION_PREVIEW_ITEM_SPACING, header, imageView);
+		preview.setId("question-content-part-" + contentIndex);
+		regionPreviewBox.getChildren().add(preview);
+	}
+
 	private void addCurrentRegion() {
 		if (sharedContextCapturePane.isCaptureMode()) {
 			if (!sharedContextCapturePane.hasCurrentSelection()) {
@@ -787,10 +855,10 @@ public final class QuestionCapturePane extends VBox {
 			}
 			updateQuestionCodeLock();
 			hideSharedContextStatus();
-			if (importedQuestion != null && !importedQuestion.getRegions().isEmpty()) {
+			if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
 				saveStatusLabel.setText("Shared context captured — save the resolution.");
 			} else {
-				saveStatusLabel.setText("Shared context captured — select the question region(s).");
+				saveStatusLabel.setText("Shared context captured — add the question content.");
 			}
 			refreshSaveButtonState();
 			return;
@@ -798,44 +866,22 @@ public final class QuestionCapturePane extends VBox {
 		if (currentSelection == null) {
 			return;
 		}
-		pendingRegions.add(currentSelection);
+
+		// PDF selections become one content part at their current assembly position.
+		pendingContentParts.add(new PdfQuestionContentPart(currentSelection));
 		clearCurrentSelection();
 		refreshRegionPreviews();
-		setRegionCountLabel(pendingRegions.size());
+		setRegionCountLabel(pendingContentParts.size());
 		showQuestionPendingStatus();
 		updateQuestionCodeLock();
 		refreshSaveButtonState();
-	}
-
-	private void addRegionPreview(QuestionRegion region, int regionIndex) {
-		try {
-			BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
-			ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
-			imageView.setPreserveRatio(true);
-
-			// Do not bind the image width to the viewport width. The viewport changes width
-			// when its vertical scrollbar appears or disappears, which can otherwise cause
-			// continuous resizing.
-			imageView.fitWidthProperty()
-					.bind(Bindings.createDoubleBinding(
-							() -> Math.max(0.0, regionsScrollPane.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
-							regionsScrollPane.widthProperty()));
-			imageView.setSmooth(true);
-			Label label = new Label(String.format("Region %d - Page %d", regionIndex + 1, region.pageNumber()));
-			Button removeButton = new Button("Remove");
-			removeButton.setOnAction(_ -> removeRegion(regionIndex));
-			HBox header = new HBox(SECTION_SPACING, label, removeButton);
-			regionPreviewBox.getChildren().add(new VBox(REGION_PREVIEW_ITEM_SPACING, header, imageView));
-		} catch (IOException e) {
-			throw new RuntimeException("Unable to preview region", e);
-		}
 	}
 
 	private void advanceLegacyQuestionSplit() {
 		LegacySplitCaptureState state = legacySplitCaptureState;
 		LegacyQuestionSplitDialog.PartDefinition definition = state.activeDefinition();
 		SplitPart capturedPart = new SplitPart(definition.questionCode(), definition.marks(),
-				definition.classification(), definition.responseType(), List.copyOf(pendingRegions));
+				definition.classification(), definition.responseType(), pendingQuestionRegions());
 		if (!state.isLastPart()) {
 
 			// Completed parts remain only in memory. SQLite still contains the original
@@ -961,7 +1007,7 @@ public final class QuestionCapturePane extends VBox {
 		sharedContextCapturePane.setManaged(false);
 		getChildren().addAll(createSectionLabel("Question"), createCaptureModeControls(), legacyCaptureBox,
 				createQuestionControls(), sharedContextControlsBox, saveStatusLabel, createCurrentSelectionControls(),
-				new Separator(), new Label("Accepted regions"), regionCountLabel, createRegionsScrollPane(),
+				new Separator(), new Label("Accepted Question content"), regionCountLabel, createRegionsScrollPane(),
 				sharedContextCapturePane);
 	}
 
@@ -1037,7 +1083,9 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void clearRegions() {
-		pendingRegions.clear();
+
+		// Clear both PDF-backed and pasted-image content.
+		pendingContentParts.clear();
 		clearCurrentSelection();
 		refreshRegionPreviews();
 		setRegionCountLabel(0);
@@ -1075,7 +1123,7 @@ public final class QuestionCapturePane extends VBox {
 	// Publish the committed result on the FX thread before handing control back to
 	// an edit caller.
 	private void completeQuestionSave(QuestionSaveResult result, boolean editing, boolean imported,
-			int previousImportedIndex, boolean hadStoredRegions) {
+			int previousImportedIndex, boolean hadStoredContent) {
 		completionQuestions = result.questions();
 		Runnable editCompletedHandler = null;
 		try {
@@ -1095,7 +1143,7 @@ public final class QuestionCapturePane extends VBox {
 			if (editing) {
 				action = "Updated";
 			} else if (imported) {
-				action = hadStoredRegions ? "Resolved" : "Captured";
+				action = hadStoredContent ? "Resolved" : "Captured";
 			}
 			showSavedQuestionStatus(action, question);
 			if (result.refreshFailure() != null) {
@@ -1119,6 +1167,7 @@ public final class QuestionCapturePane extends VBox {
 
 	private void configureActions() {
 		addRegionButton.setOnAction(_ -> addCurrentRegion());
+		pasteImageButton.setOnAction(_ -> pasteClipboardImage());
 		clearRegionsButton.setOnAction(_ -> clearQuestionRegions());
 		removeCurrentSelectionButton.setOnAction(_ -> clearPendingSelection());
 		saveQuestionButton.setOnAction(_ -> validateQuestionForSave());
@@ -1179,6 +1228,9 @@ public final class QuestionCapturePane extends VBox {
 		saveStatusLabel.setMaxWidth(Double.MAX_VALUE);
 		regionCountLabel.setId("question-region-count");
 		addRegionButton.setId("add-question-region");
+		pasteImageButton.setId("paste-question-image");
+		pasteImageButton.setTooltip(new Tooltip("Paste an image from the clipboard into the Question body."));
+		clearRegionsButton.setId("clear-question-content");
 		removeCurrentSelectionButton.setId("clear-question-selection");
 
 		// Keep Question-capture action labels fully readable at the minimum
@@ -1189,6 +1241,10 @@ public final class QuestionCapturePane extends VBox {
 		cancelQuestionEditButton.setMinWidth(Region.USE_PREF_SIZE);
 		addRegionButton.setPadding(COMPACT_BUTTON_PADDING);
 		removeCurrentSelectionButton.setPadding(COMPACT_BUTTON_PADDING);
+		pasteImageButton.setMinWidth(Region.USE_PREF_SIZE);
+		clearRegionsButton.setMinWidth(Region.USE_PREF_SIZE);
+		pasteImageButton.setPadding(COMPACT_BUTTON_PADDING);
+		clearRegionsButton.setPadding(COMPACT_BUTTON_PADDING);
 
 		// Region actions are meaningful only while an unaccepted compatible PDF
 		// selection is pending. Selection acceptance will enable them as required.
@@ -1251,19 +1307,22 @@ public final class QuestionCapturePane extends VBox {
 
 	private VBox createCurrentSelectionControls() {
 
-		// Keep pending-selection actions together on their own row.
+		// PDF-selection actions remain together because they operate on the rectangle
+		// currently owned by Question capture.
 		HBox selectionControls = new HBox(CONTROL_SPACING, addRegionButton, removeCurrentSelectionButton);
 		selectionControls.setAlignment(Pos.CENTER_LEFT);
 
-		// Keep persistence actions on a separate row so Save/Update and Cancel
-		// cannot be squeezed by the selection controls.
+		// Clipboard and whole-body actions do not depend on a PDF rectangle.
+		HBox contentControls = new HBox(CONTROL_SPACING, pasteImageButton, clearRegionsButton);
+		contentControls.setAlignment(Pos.CENTER_LEFT);
+
+		// Persistence actions stay on their own row so they remain readable in the
+		// narrow capture workspace.
 		Region spacer = new Region();
 		HBox.setHgrow(spacer, Priority.ALWAYS);
 		HBox saveControls = new HBox(CONTROL_SPACING, spacer, saveQuestionButton, cancelQuestionEditButton);
 		saveControls.setAlignment(Pos.CENTER_LEFT);
-
-		// Two short rows remain readable at the minimum supported pane width.
-		VBox controls = new VBox(COMPACT_SPACING, selectionControls, saveControls);
+		VBox controls = new VBox(COMPACT_SPACING, selectionControls, contentControls, saveControls);
 		controls.setFillWidth(true);
 		return controls;
 	}
@@ -1428,15 +1487,15 @@ public final class QuestionCapturePane extends VBox {
 		if (duplicate != null) {
 			return "Question " + duplicate.getQuestionCode() + " already exists for this booklet.";
 		}
-		int effectiveRegionCount = pendingRegions.size();
-		if (importedQuestion != null && !importedQuestion.getRegions().isEmpty()) {
-			effectiveRegionCount = importedQuestion.getRegions().size();
+		int effectiveContentCount = pendingContentParts.size();
+		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
+			effectiveContentCount = importedQuestion.getContentParts().size();
 		}
 		String validationError = QuestionCaptureValidator.findError(new QuestionCaptureValidator.State(
 				bookletSupplier.get() != null, questionCodeField.getText().trim(), marksField.getText().trim(),
 				curriculumSelectionModel.getSubject() != null, curriculumSelectionModel.getUnit() != null,
 				curriculumSelectionModel.getTopic() != null, curriculumSelectionModel.getClassification() != null,
-				currentSelection != null, effectiveRegionCount));
+				currentSelection != null, effectiveContentCount));
 		if (validationError != null) {
 			return validationError;
 		}
@@ -1702,7 +1761,7 @@ public final class QuestionCapturePane extends VBox {
 		// Only ordinary Question regions are cleared between parts. Any newly captured
 		// shared shared context remains staged until the final atomic split
 		// transaction.
-		pendingRegions.clear();
+		pendingContentParts.clear();
 		clearCurrentSelection();
 		refreshRegionPreviews();
 		setRegionCountLabel(0);
@@ -1777,11 +1836,91 @@ public final class QuestionCapturePane extends VBox {
 		selectResponseType(question.getResponseType());
 	}
 
+	private void moveContentPart(int contentIndex, int offset) {
+		int targetIndex = contentIndex + offset;
+		if (contentIndex < 0 || contentIndex >= pendingContentParts.size() || targetIndex < 0
+				|| targetIndex >= pendingContentParts.size()) {
+			return;
+		}
+
+		// Reordering the transient list directly changes the authoritative assembly
+		// order that will later be persisted.
+		Collections.swap(pendingContentParts, contentIndex, targetIndex);
+		refreshRegionPreviews();
+		showQuestionPendingStatus();
+		refreshSaveButtonState();
+	}
+
 	private String newMcqSharedContextLabel() {
 
 		// The label is internal persistence metadata. Teachers should not need to name
 		// routine MCQ stimulus/context during capture.
 		return "CTX-" + UUID.randomUUID().toString().substring(0, 8);
+	}
+
+	private void pasteClipboardImage() {
+		if (bookletSupplier.get() == null) {
+			showAlert(Alert.AlertType.WARNING, "Exam details have not been set.",
+					"Enter the exam and booklet details before pasting Question content.");
+			return;
+		}
+		if (sharedContextCapturePane.isCaptureMode()) {
+			showAlert(Alert.AlertType.INFORMATION, "Shared context capture is active.",
+					"Finish or cancel shared context capture before pasting Question content.");
+			return;
+		}
+		if (currentSelection != null) {
+			showAlert(Alert.AlertType.INFORMATION, "PDF selection pending.",
+					"Add or clear the current PDF selection before pasting an image.");
+			return;
+		}
+		if (legacySplitCaptureState != null) {
+
+			// Legacy split persistence intentionally remains PDF-region-only. Clipboard
+			// images stay outside this workflow until mixed split capture is explicitly
+			// implemented.
+			showAlert(Alert.AlertType.INFORMATION, "Clipboard images are unavailable during legacy split capture.",
+					"Complete this legacy split using PDF regions.");
+			return;
+		}
+		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
+			showAlert(Alert.AlertType.INFORMATION, "Question content already captured.",
+					"This imported Question already has body content.");
+			return;
+		}
+		try {
+			byte[] pngBytes = clipboardImageReader.readPng().orElse(null);
+			if (pngBytes == null) {
+				showAlert(Alert.AlertType.INFORMATION, "No image on clipboard.",
+						"Copy or snip an image, then click Paste Image again.");
+				return;
+			}
+
+			// Insert at the end of the current assembly. Move controls can subsequently
+			// place the image anywhere within the Question body.
+			pendingContentParts.add(new ImageQuestionContentPart(pngBytes));
+			refreshRegionPreviews();
+			setRegionCountLabel(pendingContentParts.size());
+			showQuestionPendingStatus();
+			updateQuestionCodeLock();
+			refreshSaveButtonState();
+		} catch (IOException exception) {
+			showAlert(Alert.AlertType.ERROR, "Clipboard image could not be added.",
+					"The clipboard image could not be converted to PNG.");
+		}
+	}
+
+	private List<QuestionRegion> pendingQuestionRegions() {
+		List<QuestionRegion> regions = new ArrayList<>();
+
+		// Legacy split capture still persists only PDF-backed regions. Ordinary capture
+		// uses the complete mixed-content list.
+		for (QuestionContentPart part : pendingContentParts) {
+			if (part instanceof PdfQuestionContentPart pdfPart) {
+				regions.add(pdfPart.region());
+			}
+		}
+		return List.copyOf(regions);
 	}
 
 	private SqliteQuestionCaptureService.PendingSharedContext pendingSharedContextForSave() {
@@ -1933,8 +2072,8 @@ public final class QuestionCapturePane extends VBox {
 
 	private void refreshRegionPreviews() {
 		regionPreviewBox.getChildren().clear();
-		for (int i = 0; i < pendingRegions.size(); i++) {
-			addRegionPreview(pendingRegions.get(i), i);
+		for (int index = 0; index < pendingContentParts.size(); index++) {
+			addContentPreview(pendingContentParts.get(index), index);
 		}
 		updateRegionsScrollPane();
 	}
@@ -1946,13 +2085,20 @@ public final class QuestionCapturePane extends VBox {
 		boolean compatibleSelectionPending = sharedContextCapturePane.isCaptureMode()
 				? sharedContextCapturePane.hasCurrentSelection()
 				: currentSelection != null;
-
-		// Add and Clear must never appear actionable without a compatible pending
-		// rectangle, and no capture action may run while Question persistence is
-		// active.
 		boolean selectionActionsEnabled = !questionSaveInProgress && compatibleSelectionPending;
 		addRegionButton.setDisable(!selectionActionsEnabled);
 		removeCurrentSelectionButton.setDisable(!selectionActionsEnabled);
+		boolean importedContentAlreadyStored = importedQuestion != null
+				&& !importedQuestion.getContentParts().isEmpty();
+
+		// Pasting is ordinary Question-body capture. Do not permit it while a PDF
+		// rectangle is unresolved, during shared-context capture, or during the
+		// still-PDF-only legacy split workflow.
+		boolean pasteAllowed = !questionSaveInProgress && currentSelection == null
+				&& !sharedContextCapturePane.isCaptureMode() && legacySplitCaptureState == null
+				&& !importedContentAlreadyStored;
+		pasteImageButton.setDisable(!pasteAllowed);
+		clearRegionsButton.setDisable(questionSaveInProgress || pendingContentParts.isEmpty());
 		if (questionSaveInProgress) {
 			saveQuestionButton.setDisable(true);
 			return;
@@ -1961,10 +2107,9 @@ public final class QuestionCapturePane extends VBox {
 		boolean ready;
 		try {
 			ready = findValidationError() == null;
-		} catch (IllegalStateException e) {
+		} catch (IllegalStateException exception) {
 
-			// An inconsistent stored relationship must never make Save available. Save-time
-			// validation remains the defensive backstop.
+			// Inconsistent persisted relationships must never make Save available.
 			ready = false;
 		}
 		saveQuestionButton.setDisable(!ready);
@@ -2021,10 +2166,13 @@ public final class QuestionCapturePane extends VBox {
 		showSharedContextOption(sourceCode, required);
 	}
 
-	private void removeRegion(int regionIndex) {
-		pendingRegions.remove(regionIndex);
+	private void removeContentPart(int contentIndex) {
+		if (contentIndex < 0 || contentIndex >= pendingContentParts.size()) {
+			return;
+		}
+		pendingContentParts.remove(contentIndex);
 		refreshRegionPreviews();
-		setRegionCountLabel(pendingRegions.size());
+		setRegionCountLabel(pendingContentParts.size());
 		showQuestionPendingStatus();
 		updateQuestionCodeLock();
 		refreshSaveButtonState();
@@ -2095,7 +2243,7 @@ public final class QuestionCapturePane extends VBox {
 
 	private void saveQuestion() {
 		int previousImportedIndex = -1;
-		boolean hadStoredRegions = false;
+		boolean hadStoredContent = false;
 		Question existingQuestion = null;
 		boolean editing = editingQuestion != null;
 		boolean imported = importedQuestion != null;
@@ -2104,30 +2252,30 @@ public final class QuestionCapturePane extends VBox {
 		} else if (imported) {
 			existingQuestion = importedQuestion;
 			previousImportedIndex = selectedImportedQuestionIndex();
-			hadStoredRegions = !importedQuestion.getRegions().isEmpty();
+			hadStoredContent = !importedQuestion.getContentParts().isEmpty();
 		}
-		SqliteQuestionCaptureService.Request request = new SqliteQuestionCaptureService.Request(captureOperation(),
-				bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(),
-				Integer.parseInt(marksField.getText().trim()), List.copyOf(pendingRegions),
+		SqliteQuestionCaptureService.Request request = SqliteQuestionCaptureService.Request.withContent(
+				captureOperation(), bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(),
+				Integer.parseInt(marksField.getText().trim()), List.copyOf(pendingContentParts),
 				curriculumSelectionModel.getClassification(), selectedResponseType(),
 				sharedContextCapturePane.getSelectedContext(), pendingSharedContextForSave(),
 				continueSharedContextToNextMcq());
 		int savedPreviousImportedIndex = previousImportedIndex;
-		boolean savedHadStoredRegions = hadStoredRegions;
+		boolean savedHadStoredContent = hadStoredContent;
 		questionSaveInProgress = true;
 		setDisable(true);
 		saveStatusLabel.setText("Saving " + request.questionCode() + "...");
 		Task<QuestionSaveResult> saveTask = createTaskList(request);
 		saveTask.setOnSucceeded(_ -> {
 			QuestionSaveResult result = saveTask.getValue();
-			completeQuestionSave(result, editing, imported, savedPreviousImportedIndex, savedHadStoredRegions);
+			completeQuestionSave(result, editing, imported, savedPreviousImportedIndex, savedHadStoredContent);
 		});
 		saveTask.setOnFailed(_ -> {
 			questionSaveInProgress = false;
 			setDisable(false);
 			saveStatusLabel.setText("Save failed — current question retained");
 			showAlert(Alert.AlertType.ERROR, "Question could not be saved.", "The question was not saved. "
-					+ "Your current question details and accepted regions " + "have been retained.");
+					+ "Your current question details and accepted content " + "have been retained.");
 		});
 		Thread saveThread = new Thread(saveTask, "question-save");
 		saveThread.setDaemon(true);
@@ -2184,7 +2332,7 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void setRegionCountLabel(int count) {
-		regionCountLabel.setText(String.format("Regions: %d", count));
+		regionCountLabel.setText(String.format("Content parts: %d", count));
 	}
 
 	private void setResponseTypeDisabled(boolean disabled) {
@@ -2314,12 +2462,12 @@ public final class QuestionCapturePane extends VBox {
 		loadResponseType(question);
 		setResponseTypeDisabled(false);
 		refreshSharedContextControls();
-		if (question.getRegions().isEmpty()) {
+		if (question.getContentParts().isEmpty()) {
 			saveQuestionButton.setText("Save Question");
 			if (question.isSharedContextUnresolved()) {
 				hideCaptureHint();
 			} else {
-				showCaptureHint("Capture the question region(s).");
+				showCaptureHint("Capture or paste the question content.");
 			}
 		} else {
 			saveQuestionButton.setText("Save Resolution");
@@ -2417,12 +2565,12 @@ public final class QuestionCapturePane extends VBox {
 	private void showQuestionPendingStatus() {
 		String questionCode = questionCodeField.getText().trim();
 		String prefix = questionCode.isBlank() ? "Question pending" : "Pending " + questionCode;
-		saveStatusLabel.setText(String.format("%s — %d region(s) accepted", prefix, pendingRegions.size()));
+		saveStatusLabel.setText(String.format("%s — %d content part(s) accepted", prefix, pendingContentParts.size()));
 	}
 
 	private void showSavedQuestionStatus(String action, Question question) {
-		saveStatusLabel.setText(String.format("%s %s (%d mark(s), %d region(s))", action, question.getQuestionCode(),
-				question.getMarks(), question.getRegions().size()));
+		saveStatusLabel.setText(String.format("%s %s (%d mark(s), %d content part(s))", action,
+				question.getQuestionCode(), question.getMarks(), question.getContentParts().size()));
 	}
 
 	private void showSelectedImportedQuestionDocument() {
@@ -2554,9 +2702,9 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void updateRegionsScrollPane() {
-		boolean hasRegions = !pendingRegions.isEmpty();
-		regionsScrollPane.setVisible(hasRegions);
-		regionsScrollPane.setManaged(hasRegions);
+		boolean hasContent = !pendingContentParts.isEmpty();
+		regionsScrollPane.setVisible(hasContent);
+		regionsScrollPane.setManaged(hasContent);
 	}
 
 	private void validateDependencies(QuestionRepository questionRepository,

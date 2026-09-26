@@ -1,14 +1,19 @@
 package au.edu.eq.questionbank.repository.assessment;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
+
+import javax.imageio.ImageIO;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,7 +21,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -304,6 +312,50 @@ class LegacyQuestionMetadataServiceTest {
 		List<SharedQuestionContext> contexts = contextRepository.findByBooklet(booklet);
 		assertEquals(1, contexts.size());
 		assertEquals(context.getId(), contexts.getFirst().getId());
+	}
+
+	@Test
+	void changingSinglePartLegacyHintToFalsePreservesMixedQuestionContentOrder() throws Exception {
+		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext context = contextRepository.save(booklet, "Q17 introductory material",
+				List.of(new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.20)));
+		QuestionRegion existingPdfRegion = new QuestionRegion(booklet, 2, 0.10, 0.40, 0.80, 0.30);
+		byte[] imageBytes = createTestPng();
+		List<QuestionContentPart> originalContent = List.of(new ImageQuestionContentPart(imageBytes),
+				new PdfQuestionContentPart(existingPdfRegion));
+		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
+		Question question = writer.insertQuestionWithContent(booklet, "Q17", "", 2, originalContent,
+				historicalSubtopicOne, true, null, context, QuestionResponseType.WRITTEN_RESPONSE);
+		LegacyQuestionMetadataUpdateResult result = service.updateMetadataWithResult(question, "Q17", 2,
+				historicalSubtopicOne, false);
+		Question updated = result.question();
+		assertEquals(
+				LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS,
+				result.sharedContextOutcome());
+		assertFalse(updated.hasSharedContext());
+		assertFalse(updated.isSharedContextCaptureRequired());
+		assertEquals(3, updated.getContentParts().size());
+
+		// Converted Shared Context becomes the leading PDF-backed body content.
+		assertTrue(updated.getContentParts().get(0) instanceof PdfQuestionContentPart);
+		PdfQuestionContentPart convertedContextPart = (PdfQuestionContentPart) updated.getContentParts().get(0);
+		assertEquals(0.10, convertedContextPart.region().y(), 0.000001);
+
+		// The existing image remains immediately before the existing PDF region.
+		assertTrue(updated.getContentParts().get(1) instanceof ImageQuestionContentPart);
+		ImageQuestionContentPart retainedImage = (ImageQuestionContentPart) updated.getContentParts().get(1);
+		assertArrayEquals(imageBytes, retainedImage.pngBytes());
+		assertTrue(updated.getContentParts().get(2) instanceof PdfQuestionContentPart);
+		PdfQuestionContentPart retainedPdfPart = (PdfQuestionContentPart) updated.getContentParts().get(2);
+		assertEquals(0.40, retainedPdfPart.region().y(), 0.000001);
+
+		// The PDF-only compatibility projection also remains in encounter order.
+		assertEquals(2, updated.getRegions().size());
+		assertEquals(0.10, updated.getRegions().get(0).y(), 0.000001);
+		assertEquals(0.40, updated.getRegions().get(1).y(), 0.000001);
+
+		// This context belonged only to Q17, so conversion leaves no orphaned context.
+		assertTrue(contextRepository.findByBooklet(booklet).isEmpty());
 	}
 
 	@Test
@@ -640,5 +692,16 @@ class LegacyQuestionMetadataServiceTest {
 		List<SharedQuestionContext> contexts = contextRepository.findByBooklet(booklet);
 		assertEquals(1, contexts.size());
 		assertEquals(context.getId(), contexts.getFirst().getId());
+	}
+
+	private byte[] createTestPng() throws Exception {
+		BufferedImage image = new BufferedImage(8, 4, BufferedImage.TYPE_INT_RGB);
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+
+			// Persist genuine PNG data so this regression represents the same image
+			// content produced by clipboard capture.
+			assertTrue(ImageIO.write(image, "png", output));
+			return output.toByteArray();
+		}
 	}
 }
