@@ -20,7 +20,10 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextStatus;
@@ -293,6 +296,33 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		}
 	}
 
+	/**
+	 * Persists a Question whose body may contain both PDF regions and stored
+	 * images.
+	 *
+	 * @param booklet                      source booklet
+	 * @param questionCode                 question code
+	 * @param questionText                 supplementary text
+	 * @param marks                        positive mark value
+	 * @param contentParts                 authoritative mixed body order
+	 * @param classification               original classification
+	 * @param sharedContextCaptureRequired historical shared-context evidence
+	 * @param sourceQuestion               source identity, or null
+	 * @param sharedContext                shared context, or null
+	 * @param responseType                 authoritative response type
+	 * @return persisted Question
+	 */
+	public Question saveWithContent(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionContentPart> contentParts, CurriculumNode classification, boolean sharedContextCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
+		try {
+			return writer.insertQuestionWithContent(booklet, questionCode, questionText, marks, contentParts,
+					classification, sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
+		} catch (SQLException e) {
+			throw new IllegalStateException("Could not save mixed-content question", e);
+		}
+	}
+
 	@Override
 	public Question updateCaptureRelationships(long questionId, CurriculumNode classification,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext) {
@@ -418,37 +448,56 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		return regions;
 	}
 
-	private List<QuestionRegion> findRegions(Connection connection, long questionId, ExamBooklet questionBooklet)
-			throws SQLException {
-		List<QuestionRegion> regions = new ArrayList<>();
+	private List<QuestionContentPart> findContentParts(Connection connection, long questionId,
+			ExamBooklet questionBooklet) throws SQLException {
+		List<QuestionContentPart> contentParts = new ArrayList<>();
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
+				    qcp.content_type,
 				    qr.page_number,
 				    qr.x,
 				    qr.y,
 				    qr.width,
 				    qr.height,
-				    eb.id AS booklet_id
-				FROM question_regions qr
-				JOIN exam_booklets eb
-				    ON eb.id = qr.booklet_id
-				WHERE qr.question_id = ?
-				ORDER BY qr.region_order
+				    qr.booklet_id,
+				    qi.image_png
+				FROM question_content_parts qcp
+				LEFT JOIN question_regions qr
+				    ON qr.question_id = qcp.question_id
+				   AND qr.region_order = qcp.region_order
+				LEFT JOIN question_images qi
+				    ON qi.question_id = qcp.question_id
+				   AND qi.id = qcp.image_id
+				WHERE qcp.question_id = ?
+				ORDER BY qcp.content_order
 				""")) {
 			statement.setLong(1, questionId);
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
-					if (result.getLong("booklet_id") != questionBooklet.getId()) {
-						throw new IllegalStateException("Question region belongs to a different booklet");
+					String contentType = result.getString("content_type");
+					if ("PDF_REGION".equals(contentType)) {
+						if (result.getLong("booklet_id") != questionBooklet.getId()) {
+							throw new IllegalStateException("Question PDF content belongs to a different booklet");
+						}
+						QuestionRegion region = new QuestionRegion(questionBooklet, result.getInt("page_number"),
+								result.getDouble("x"), result.getDouble("y"), result.getDouble("width"),
+								result.getDouble("height"));
+						contentParts.add(new PdfQuestionContentPart(region));
+						continue;
 					}
-					QuestionRegion region = new QuestionRegion(questionBooklet, result.getInt("page_number"),
-							result.getDouble("x"), result.getDouble("y"), result.getDouble("width"),
-							result.getDouble("height"));
-					regions.add(region);
+					if ("IMAGE".equals(contentType)) {
+						byte[] imageBytes = result.getBytes("image_png");
+						if (imageBytes == null || imageBytes.length == 0) {
+							throw new IllegalStateException("Question image content has no stored PNG data");
+						}
+						contentParts.add(new ImageQuestionContentPart(imageBytes));
+						continue;
+					}
+					throw new IllegalStateException("Unsupported Question content type: " + contentType);
 				}
 			}
 		}
-		return regions;
+		return List.copyOf(contentParts);
 	}
 
 	private SharedQuestionContext findSharedQuestionContext(Connection connection, long sharedContextId,
@@ -546,7 +595,8 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		String curriculumCode = result.getString("curriculum_code");
 		CurriculumNode classification = curriculumRepository.findByCode(syllabusVersion, curriculumCode)
 				.orElseThrow(() -> new IllegalStateException("Missing curriculum node " + curriculumCode));
-		List<QuestionRegion> regions = findRegions(connection, questionId, booklet);
+		List<QuestionContentPart> contentParts = findContentParts(connection, questionId, booklet);
+		List<QuestionRegion> regions = regionsFromContentParts(contentParts);
 		long sourceQuestionId = result.getLong("source_question_id");
 		SourceQuestion sourceQuestion = result.wasNull() ? null
 				: findSourceQuestion(connection, sourceQuestionId, booklet);
@@ -556,7 +606,8 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		QuestionResponseType responseType = QuestionResponseType.valueOf(result.getString("response_type"));
 		Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
 				result.getString("question_text"), result.getInt("marks"), regions, classification,
-				result.getInt("shared_context_capture_required") != 0, sourceQuestion, sharedContext, responseType);
+				result.getInt("shared_context_capture_required") != 0, sourceQuestion, sharedContext, responseType,
+				contentParts);
 		Answer answer = findAnswer(connection, questionId, exam);
 		if (answer != null) {
 			question.setAnswer(answer);
@@ -585,6 +636,19 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 			matches.add(new QuestionApplicabilityMatch(question, currentNode));
 		}
 		return List.copyOf(matches);
+	}
+
+	private List<QuestionRegion> regionsFromContentParts(List<QuestionContentPart> contentParts) {
+		List<QuestionRegion> regions = new ArrayList<>();
+
+		// Preserve the legacy getRegions() view by projecting only PDF fragments from
+		// the authoritative mixed content sequence.
+		for (QuestionContentPart part : contentParts) {
+			if (part instanceof PdfQuestionContentPart pdfPart) {
+				regions.add(pdfPart.region());
+			}
+		}
+		return List.copyOf(regions);
 	}
 
 	private Map<Long, CurriculumNode> validateRetrievalNodes(List<CurriculumNode> currentNodes) {

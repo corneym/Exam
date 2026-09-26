@@ -217,6 +217,9 @@ public final class LegacyQuestionMetadataService {
 				sharedContextCaptureRequired, responseType);
 	}
 
+	// TODO Sprint 11.2: when mixed IMAGE/PDF Questions can enter legacy metadata
+	// correction, preserve existing mixed content while converting Shared Context.
+	// The current conversion intentionally rebuilds a PDF-only Question body.
 	private void convertSharedContextToQuestionRegions(Connection connection, long questionId, long bookletId,
 			long sharedContextId) throws SQLException {
 		verifySharedContextBooklet(connection, sharedContextId, bookletId);
@@ -351,7 +354,7 @@ public final class LegacyQuestionMetadataService {
 
 	private void insertQuestionRegions(Connection connection, long questionId, long bookletId,
 			List<StoredRegion> regions) throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
+		try (PreparedStatement regionStatement = connection.prepareStatement("""
 				INSERT INTO question_regions
 				    (question_id,
 				     region_order,
@@ -362,18 +365,35 @@ public final class LegacyQuestionMetadataService {
 				     width,
 				     height)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				"""); PreparedStatement contentStatement = connection.prepareStatement("""
+				INSERT INTO question_content_parts
+				    (question_id,
+				     content_order,
+				     content_type,
+				     region_order,
+				     image_id)
+				VALUES (?, ?, 'PDF_REGION', ?, NULL)
 				""")) {
 			for (int index = 0; index < regions.size(); index++) {
 				StoredRegion region = regions.get(index);
-				statement.setLong(1, questionId);
-				statement.setInt(2, index);
-				statement.setLong(3, bookletId);
-				statement.setInt(4, region.pageNumber());
-				statement.setDouble(5, region.x());
-				statement.setDouble(6, region.y());
-				statement.setDouble(7, region.width());
-				statement.setDouble(8, region.height());
-				statement.executeUpdate();
+
+				// Persist the PDF-specific source region.
+				regionStatement.setLong(1, questionId);
+				regionStatement.setInt(2, index);
+				regionStatement.setLong(3, bookletId);
+				regionStatement.setInt(4, region.pageNumber());
+				regionStatement.setDouble(5, region.x());
+				regionStatement.setDouble(6, region.y());
+				regionStatement.setDouble(7, region.width());
+				regionStatement.setDouble(8, region.height());
+				regionStatement.executeUpdate();
+
+				// This legacy conversion produces a PDF-only replacement body. Mirror the
+				// same ordering into the v14 authoritative Question-content sequence.
+				contentStatement.setLong(1, questionId);
+				contentStatement.setInt(2, index);
+				contentStatement.setInt(3, index);
+				contentStatement.executeUpdate();
 			}
 		}
 	}

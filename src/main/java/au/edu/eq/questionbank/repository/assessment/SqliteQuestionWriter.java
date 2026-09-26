@@ -10,7 +10,10 @@ import java.util.List;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -196,6 +199,49 @@ public final class SqliteQuestionWriter {
 			try {
 				Question question = insertQuestion(connection, booklet, questionCode, questionText, marks, regions,
 						classification, sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
+				connection.commit();
+				return question;
+			} catch (SQLException | RuntimeException e) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					e.addSuppressed(rollbackFailure);
+				}
+				throw e;
+			}
+		}
+	}
+
+	/**
+	 * Stores a new Question whose body may mix PDF regions and encoded images.
+	 *
+	 * @param booklet                      source booklet
+	 * @param questionCode                 question code
+	 * @param questionText                 supplementary text
+	 * @param marks                        positive mark value
+	 * @param contentParts                 ordered mixed Question body
+	 * @param classification               original curriculum classification
+	 * @param sharedContextCaptureRequired historical shared-context evidence
+	 * @param sourceQuestion               source-question identity, or null
+	 * @param sharedContext                shared context, or null
+	 * @param responseType                 authoritative response type
+	 * @return stored Question
+	 * @throws SQLException if persistence fails
+	 */
+	public Question insertQuestionWithContent(ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionContentPart> contentParts, CurriculumNode classification, boolean sharedContextCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType)
+			throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				validateContentParts(booklet, contentParts);
+				long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks,
+						classification, sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType);
+				List<QuestionRegion> regions = insertContentParts(connection, questionId, booklet, contentParts);
+				Question question = new Question(questionId, booklet, questionCode, questionText, marks, regions,
+						classification, sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType,
+						contentParts);
 				connection.commit();
 				return question;
 			} catch (SQLException | RuntimeException e) {
@@ -603,6 +649,26 @@ public final class SqliteQuestionWriter {
 	}
 
 	private void deleteQuestionRegions(Connection connection, long questionId) throws SQLException {
+
+		// Composition rows reference PDF regions. Remove the complete composition
+		// before replacing the legacy PDF-region subset.
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM question_content_parts
+				WHERE question_id = ?
+				""")) {
+			statement.setLong(1, questionId);
+			statement.executeUpdate();
+		}
+
+		// Image rows belong only to this Question and become unreachable once its
+		// composition has been cleared.
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM question_images
+				WHERE question_id = ?
+				""")) {
+			statement.setLong(1, questionId);
+			statement.executeUpdate();
+		}
 		try (PreparedStatement statement = connection.prepareStatement("""
 				DELETE FROM question_regions
 				WHERE question_id = ?
@@ -610,6 +676,85 @@ public final class SqliteQuestionWriter {
 			statement.setLong(1, questionId);
 			statement.executeUpdate();
 		}
+	}
+
+	private List<QuestionRegion> insertContentParts(Connection connection, long questionId, ExamBooklet booklet,
+			List<QuestionContentPart> contentParts) throws SQLException {
+		List<QuestionRegion> regions = new java.util.ArrayList<>();
+		int regionOrder = 0;
+		try (PreparedStatement regionStatement = connection.prepareStatement("""
+				INSERT INTO question_regions
+				    (question_id,
+				     region_order,
+				     booklet_id,
+				     page_number,
+				     x,
+				     y,
+				     width,
+				     height)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				"""); PreparedStatement imageStatement = connection.prepareStatement("""
+				INSERT INTO question_images
+				    (question_id, image_png)
+				VALUES (?, ?)
+				RETURNING id
+				"""); PreparedStatement contentStatement = connection.prepareStatement("""
+				INSERT INTO question_content_parts
+				    (question_id,
+				     content_order,
+				     content_type,
+				     region_order,
+				     image_id)
+				VALUES (?, ?, ?, ?, ?)
+				""")) {
+			for (int contentOrder = 0; contentOrder < contentParts.size(); contentOrder++) {
+				QuestionContentPart part = contentParts.get(contentOrder);
+				if (part instanceof PdfQuestionContentPart pdfPart) {
+					QuestionRegion region = pdfPart.region();
+
+					// Persist PDF-specific source identity independently from mixed assembly
+					// order.
+					regionStatement.setLong(1, questionId);
+					regionStatement.setInt(2, regionOrder);
+					regionStatement.setLong(3, booklet.getId());
+					regionStatement.setInt(4, region.pageNumber());
+					regionStatement.setDouble(5, region.x());
+					regionStatement.setDouble(6, region.y());
+					regionStatement.setDouble(7, region.width());
+					regionStatement.setDouble(8, region.height());
+					regionStatement.executeUpdate();
+					contentStatement.setLong(1, questionId);
+					contentStatement.setInt(2, contentOrder);
+					contentStatement.setString(3, "PDF_REGION");
+					contentStatement.setInt(4, regionOrder);
+					contentStatement.setNull(5, Types.BIGINT);
+					contentStatement.executeUpdate();
+					regions.add(region);
+					regionOrder++;
+					continue;
+				}
+				ImageQuestionContentPart imagePart = (ImageQuestionContentPart) part;
+
+				// Store the encoded PNG first so the composition row can reference its
+				// generated durable identity.
+				imageStatement.setLong(1, questionId);
+				imageStatement.setBytes(2, imagePart.pngBytes());
+				long imageId;
+				try (ResultSet result = imageStatement.executeQuery()) {
+					if (!result.next()) {
+						throw new SQLException("Question image insert did not return an id");
+					}
+					imageId = result.getLong("id");
+				}
+				contentStatement.setLong(1, questionId);
+				contentStatement.setInt(2, contentOrder);
+				contentStatement.setString(3, "IMAGE");
+				contentStatement.setNull(4, Types.INTEGER);
+				contentStatement.setLong(5, imageId);
+				contentStatement.executeUpdate();
+			}
+		}
+		return List.copyOf(regions);
 	}
 
 	private long insertQuestionRow(Connection connection, ExamBooklet booklet, String questionCode, String questionText,
@@ -658,7 +803,7 @@ public final class SqliteQuestionWriter {
 
 	private void insertRegions(Connection connection, long questionId, List<QuestionRegion> regions)
 			throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
+		try (PreparedStatement regionStatement = connection.prepareStatement("""
 				INSERT INTO question_regions
 				    (question_id,
 				     region_order,
@@ -669,20 +814,36 @@ public final class SqliteQuestionWriter {
 				     width,
 				     height)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				"""); PreparedStatement contentStatement = connection.prepareStatement("""
+				INSERT INTO question_content_parts
+				    (question_id,
+				     content_order,
+				     content_type,
+				     region_order,
+				     image_id)
+				VALUES (?, ?, 'PDF_REGION', ?, NULL)
 				""")) {
 
-			// Store assembly order separately from the unchanged one-based PDF page number.
+			// Existing PDF capture uses the same list order for both the region identity
+			// and complete Question-content order.
 			for (int i = 0; i < regions.size(); i++) {
 				QuestionRegion region = regions.get(i);
-				statement.setLong(1, questionId);
-				statement.setInt(2, i);
-				statement.setLong(3, region.booklet().getId());
-				statement.setInt(4, region.pageNumber());
-				statement.setDouble(5, region.x());
-				statement.setDouble(6, region.y());
-				statement.setDouble(7, region.width());
-				statement.setDouble(8, region.height());
-				statement.executeUpdate();
+				regionStatement.setLong(1, questionId);
+				regionStatement.setInt(2, i);
+				regionStatement.setLong(3, region.booklet().getId());
+				regionStatement.setInt(4, region.pageNumber());
+				regionStatement.setDouble(5, region.x());
+				regionStatement.setDouble(6, region.y());
+				regionStatement.setDouble(7, region.width());
+				regionStatement.setDouble(8, region.height());
+				regionStatement.executeUpdate();
+
+				// Keep composition persistence in the same transaction as the source region
+				// so a partial Question body can never be committed.
+				contentStatement.setLong(1, questionId);
+				contentStatement.setInt(2, i);
+				contentStatement.setInt(3, i);
+				contentStatement.executeUpdate();
 			}
 		}
 	}
@@ -795,6 +956,24 @@ public final class SqliteQuestionWriter {
 		}
 		if (!classification.getSyllabusVersion().getSubject().equals(booklet.getExam().getSubject())) {
 			throw new IllegalArgumentException("Question classification must belong to the exam's subject");
+		}
+	}
+
+	private void validateContentParts(ExamBooklet booklet, List<QuestionContentPart> contentParts) {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (contentParts == null) {
+			throw new NullPointerException("contentParts");
+		}
+		for (QuestionContentPart part : contentParts) {
+			if (part == null) {
+				throw new NullPointerException("contentParts contains null");
+			}
+			if (part instanceof PdfQuestionContentPart pdfPart
+					&& pdfPart.region().booklet().getId() != booklet.getId()) {
+				throw new IllegalArgumentException("PDF question content must belong to the question's booklet");
+			}
 		}
 	}
 

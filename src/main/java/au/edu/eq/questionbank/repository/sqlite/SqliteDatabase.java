@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -22,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	static final int LATEST_SCHEMA_VERSION = 13;
+	static final int LATEST_SCHEMA_VERSION = 14;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -415,6 +416,51 @@ public final class SqliteDatabase {
 		return count;
 	}
 
+	private boolean hasExactCompositeForeignKey(Connection connection, String tableName, List<String> fromColumns,
+			String targetTable, List<String> targetColumns) throws SQLException {
+		if (fromColumns.size() != targetColumns.size()) {
+			throw new IllegalArgumentException("Composite foreign-key column counts must match");
+		}
+
+		// PRAGMA foreign_key_list assigns one id to every column participating in one
+		// composite relationship. Collect candidates by that id before comparing their
+		// complete ordered column lists.
+		Map<Integer, List<ForeignKeyColumn>> columnsByForeignKey = new java.util.LinkedHashMap<>();
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(" + tableName + ")")) {
+			while (result.next()) {
+				if (!targetTable.equals(result.getString("table"))) {
+					continue;
+				}
+				int foreignKeyId = result.getInt("id");
+				columnsByForeignKey.computeIfAbsent(foreignKeyId, _ -> new ArrayList<>()).add(
+						new ForeignKeyColumn(result.getInt("seq"), result.getString("from"), result.getString("to")));
+			}
+		}
+		for (List<ForeignKeyColumn> candidate : columnsByForeignKey.values()) {
+			candidate.sort(Comparator.comparingInt(ForeignKeyColumn::sequence));
+
+			// Reject both incomplete prefix matches and larger relationships containing
+			// the requested columns.
+			if (candidate.size() != fromColumns.size()) {
+				continue;
+			}
+			boolean matches = true;
+			for (int index = 0; index < candidate.size(); index++) {
+				ForeignKeyColumn column = candidate.get(index);
+				if (!fromColumns.get(index).equals(column.fromColumn())
+						|| !targetColumns.get(index).equals(column.targetColumn())) {
+					matches = false;
+					break;
+				}
+			}
+			if (matches) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private boolean hasExactSingleColumnForeignKey(Connection connection, String tableName, String fromColumn,
 			String targetTable, String targetColumn) throws SQLException {
 		try (Statement statement = connection.createStatement();
@@ -542,6 +588,13 @@ public final class SqliteDatabase {
 			// from the live schema without changing any stored semantics.
 			executeMigration(connection, "/db/migration-v12-to-v13.sql", 13);
 			return 13;
+		}
+		if (version == 13) {
+
+			// Version fourteen introduces one authoritative mixed Question-content order
+			// while retaining PDF regions as their established source representation.
+			executeMigration(connection, "/db/migration-v13-to-v14.sql", 14);
+			return 14;
 		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
@@ -769,6 +822,19 @@ public final class SqliteDatabase {
 						"Database schema version " + version + " is missing required table question_output_exclusions");
 			}
 			verifyVersion12QuestionOutputExclusionSchema(connection);
+		}
+		if (version >= 14) {
+
+			// Mixed Question content was introduced in version 14.
+			if (!tableExists(connection, "question_images")) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table question_images");
+			}
+			if (!tableExists(connection, "question_content_parts")) {
+				throw new SQLException(
+						"Database schema version " + version + " is missing required table question_content_parts");
+			}
+			verifyVersion14QuestionContentSchema(connection);
 		}
 	}
 
@@ -1150,6 +1216,37 @@ public final class SqliteDatabase {
 				List.of(foreignKey("question_id", "questions", "id"),
 						foreignKey("current_curriculum_node_id", "curriculum_nodes", "id")),
 				List.of());
+	}
+
+	private void verifyVersion14QuestionContentSchema(Connection connection) throws SQLException {
+
+		// Stored images have their own identity because one content-order row refers to
+		// one particular persisted image.
+		verifyTableColumns(connection, "question_images",
+				List.of(column("id", false, 1), column("question_id", true, 0), column("image_png", true, 0)));
+		if (!hasExactSingleColumnForeignKey(connection, "question_images", "question_id", "questions", "id")) {
+			throw new SQLException("question_images is missing exact foreign key question_id -> questions(id)");
+		}
+
+		// The composition table owns ordering across all supported content types.
+		verifyTableColumns(connection, "question_content_parts",
+				List.of(column("question_id", true, 1), column("content_order", true, 2),
+						column("content_type", true, 0), column("region_order", false, 0),
+						column("image_id", false, 0)));
+		if (!hasExactSingleColumnForeignKey(connection, "question_content_parts", "question_id", "questions", "id")) {
+			throw new SQLException("question_content_parts is missing exact foreign key question_id -> questions(id)");
+		}
+		if (!hasExactCompositeForeignKey(connection, "question_content_parts", List.of("question_id", "region_order"),
+				"question_regions", List.of("question_id", "region_order"))) {
+			throw new SQLException("question_content_parts is missing PDF-region composite foreign key");
+		}
+		if (!hasExactCompositeForeignKey(connection, "question_content_parts", List.of("question_id", "image_id"),
+				"question_images", List.of("question_id", "id"))) {
+			throw new SQLException("question_content_parts is missing image composite foreign key");
+		}
+	}
+
+	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {
 	}
 
 	private record ColumnRequirement(String name, boolean notNull, int primaryKeyPosition) {

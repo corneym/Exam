@@ -160,6 +160,11 @@ class DefaultRestoreExecutorTest {
 		assertEquals("Legacy Chemistry", readOnlySubjectName(targetConfig.databasePath()));
 		assertTrue(tableExists(reopenedDatabase, "question_output_exclusions"));
 
+		// Version 14 must be reached through the real restore-and-startup migration
+		// path, not merely when creating a new database.
+		assertTrue(tableExists(reopenedDatabase, "question_images"));
+		assertTrue(tableExists(reopenedDatabase, "question_content_parts"));
+
 		// Version 13 renamed the two remaining physical "preamble" columns without
 		// changing their stored values.
 		assertTrue(columnExists(reopenedDatabase, "questions", "shared_context_capture_required"));
@@ -287,8 +292,10 @@ class DefaultRestoreExecutorTest {
 					VALUES (1, 1, 'Q1', '', 2, 1, 'WRITTEN_RESPONSE', 1)
 					""");
 
-			// Reverse only migrations 12 and 13 so the fixture is a structurally valid
-			// version-11 database containing real legacy data.
+			// Reverse migrations 12, 13 and 14 so the synthetic fixture contains only
+			// structures that genuinely existed in schema version 11.
+			statement.execute("DROP TABLE question_content_parts");
+			statement.execute("DROP TABLE question_images");
 			statement.execute("""
 					ALTER TABLE questions
 					RENAME COLUMN shared_context_capture_required

@@ -107,7 +107,10 @@ public final class RevisionCorpusBuilder {
 			if (!accumulator.uniqueQuestionIds.add(questionId)) {
 				continue;
 			}
-			if (question.getRegions().isEmpty()) {
+			if (question.getContentParts().isEmpty()) {
+
+				// No PDF region or stored image means the Question has no student-facing body
+				// content and remains a diagnostic-only corpus entry.
 				accumulator.missingRegionQuestionIds.add(questionId);
 			} else {
 				accumulator.renderableQuestionIds.add(questionId);
@@ -193,10 +196,11 @@ public final class RevisionCorpusBuilder {
 		List<RevisionQuestionPlacement> placements = new ArrayList<RevisionQuestionPlacement>();
 		for (Question question : mutableNode.questionsById.values()) {
 
-			// Retain uncaptured questions for diagnostics without consuming a revision
-			// number.
+			// Retain metadata-only Questions for diagnostics without consuming a revision
+			// number. Any persisted body content, including image-only content, is
+			// student-facing and therefore receives a revision number.
 			int revisionNumber = 0;
-			if (!question.getRegions().isEmpty()) {
+			if (!question.getContentParts().isEmpty()) {
 				revisionNumber = revisionNumbers.next();
 			}
 			placements.add(new RevisionQuestionPlacement(question, mutableNode.curriculumNode, revisionNumber));

@@ -407,7 +407,7 @@ class SqliteSchemaV5Test {
 	}
 
 	@Test
-	void migratesPopulatedVersion12DatabaseToVersion13WithoutChangingSharedContextSemantics() throws Exception {
+	void migratesPopulatedVersion12DatabaseThroughVersion13WithoutChangingSharedContextSemantics() throws Exception {
 		Path databasePath = tempDir.resolve("version-twelve-to-thirteen.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		createVersion12Schema(database);
@@ -500,7 +500,7 @@ class SqliteSchemaV5Test {
 		// Version 13 renames physical fields only. It must retain values, constraints,
 		// Questions and the independently persisted output-exclusion relationship.
 		database.initialiseSchema();
-		assertEquals(13, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			boolean hasSharedContextCaptureRequired = false;
 			boolean hasLegacyPreambleCaptureRequired = false;
@@ -564,7 +564,7 @@ class SqliteSchemaV5Test {
 		// validation path rather than only through the migration transaction.
 		SqliteDatabase reopened = new SqliteDatabase(databasePath);
 		reopened.initialiseSchema();
-		assertEquals(13, reopened.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), reopened.schemaVersion());
 		reopened.verifySchema();
 	}
 

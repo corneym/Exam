@@ -23,8 +23,9 @@ public final class RevisionQuestionPlacement {
 		}
 
 		// Zero denotes an unnumbered diagnostic placement, never a displayed question
-		// number.
-		boolean renderable = !question.getRegions().isEmpty();
+		// number. Any persisted body content is renderable, including an image-only
+		// Question.
+		boolean renderable = !question.getContentParts().isEmpty();
 		if (renderable && revisionNumber < 1) {
 			throw new IllegalArgumentException("Renderable placement must have a positive revision number");
 		}
@@ -96,13 +97,13 @@ public final class RevisionQuestionPlacement {
 	}
 
 	/**
-	 * Returns whether this question has source regions from which student-facing
-	 * content can be rendered.
+	 * Returns whether this Question contains student-facing body content.
 	 *
-	 * @return {@code true} when at least one question region is available
+	 * @return {@code true} when at least one PDF region or stored image is
+	 *         available
 	 */
 	public boolean isRenderable() {
-		return !question.getRegions().isEmpty();
+		return !question.getContentParts().isEmpty();
 	}
 
 	/**

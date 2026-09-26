@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,8 +28,11 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -52,7 +57,7 @@ class RevisionQuestionAssetRendererTest {
 	Path tempDir;
 
 	@Test
-	void doesNotRenderMetadataOnlyQuestionWithoutRegions() throws Exception {
+	void doesNotRenderMetadataOnlyQuestionWithoutContent() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
 		QuestionRetrievalRepository retrievalRepository = _ -> List
 				.of(new QuestionApplicabilityMatch(fixture.metadataOnlyQuestion, fixture.firstDescriptor));
@@ -105,6 +110,60 @@ class RevisionQuestionAssetRendererTest {
 	}
 
 	@Test
+	void rendersImageOnlyQuestionWithoutSourcePdf() throws Exception {
+		Fixture fixture = new Fixture(tempDir);
+		ExamBooklet booklet = fixture.renderableQuestion.getBooklet();
+		byte[] imageBytes = createPng(80, 40, Color.ORANGE);
+		Question imageQuestion = new Question(20, booklet, "Image", "", 2, List.of(),
+				fixture.renderableQuestion.getClassification(), false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE, List.of(new ImageQuestionContentPart(imageBytes)));
+
+		// Prove that revision rendering does not unnecessarily depend on the original
+		// PDF when the entire Question body is persisted as an image.
+		Files.delete(fixture.pdfStore.resolve(booklet.getSourceDocument().getRelativePath()));
+		QuestionRetrievalRepository retrievalRepository = _ -> List
+				.of(new QuestionApplicabilityMatch(imageQuestion, fixture.firstDescriptor));
+		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
+		Path outputRoot = tempDir.resolve("image-only-output");
+		RevisionQuestionAssetRenderer renderer = new RevisionQuestionAssetRenderer(fixture.pdfStore,
+				new QuestionExtractor());
+		List<RevisionQuestionAsset> assets = renderer.render(corpus, outputRoot);
+		assertEquals(1, assets.size());
+		Path renderedFile = outputRoot.resolve(assets.getFirst().getRelativePath());
+		BufferedImage image = ImageIO.read(renderedFile.toFile());
+		assertEquals(80, image.getWidth());
+		assertEquals(40, image.getHeight());
+		assertEquals(Color.ORANGE.getRGB(), image.getRGB(40, 20));
+	}
+
+	@Test
+	void rendersMixedImageAndPdfQuestionBodyInStoredOrder() throws Exception {
+		Fixture fixture = new Fixture(tempDir);
+		ExamBooklet booklet = fixture.renderableQuestion.getBooklet();
+		QuestionRegion pdfRegion = new QuestionRegion(booklet, 1, 0.0, 0.5, 1.0, 0.5);
+		byte[] replacementCopyrightImage = createPng(100, 30, Color.RED);
+		Question mixedQuestion = new Question(21, booklet, "Mixed", "", 1, List.of(pdfRegion),
+				fixture.renderableQuestion.getClassification(), false, null, null, QuestionResponseType.MULTIPLE_CHOICE,
+				List.of(new ImageQuestionContentPart(replacementCopyrightImage),
+						new PdfQuestionContentPart(pdfRegion)));
+		QuestionRetrievalRepository retrievalRepository = _ -> List
+				.of(new QuestionApplicabilityMatch(mixedQuestion, fixture.firstDescriptor));
+		RevisionCorpus corpus = fixture.createCorpus(retrievalRepository);
+		Path outputRoot = tempDir.resolve("mixed-output");
+		RevisionQuestionAssetRenderer renderer = new RevisionQuestionAssetRenderer(fixture.pdfStore,
+				new QuestionExtractor());
+		List<RevisionQuestionAsset> assets = renderer.render(corpus, outputRoot);
+		assertEquals(1, assets.size());
+		BufferedImage rendered = ImageIO.read(outputRoot.resolve(assets.getFirst().getRelativePath()).toFile());
+
+		// The stored clipboard image is first and the PDF crop follows it.
+		assertEquals(150, rendered.getWidth());
+		assertEquals(105, rendered.getHeight());
+		assertEquals(Color.RED.getRGB(), rendered.getRGB(50, 15));
+		assertEquals(Color.WHITE.getRGB(), rendered.getRGB(75, 70));
+	}
+
+	@Test
 	void rendersOneDeterministicAssetPerUniqueRenderableQuestion() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of(
@@ -153,6 +212,21 @@ class RevisionQuestionAssetRendererTest {
 		BufferedImage image = ImageIO.read(renderedFile.toFile());
 		assertEquals(150, image.getWidth());
 		assertEquals(75, image.getHeight());
+	}
+
+	private byte[] createPng(int width, int height, Color color) throws Exception {
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+		Graphics2D graphics = image.createGraphics();
+		try {
+			graphics.setColor(color);
+			graphics.fillRect(0, 0, width, height);
+		} finally {
+			graphics.dispose();
+		}
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			assertTrue(ImageIO.write(image, "png", output));
+			return output.toByteArray();
+		}
 	}
 
 	private static final class Fixture {
