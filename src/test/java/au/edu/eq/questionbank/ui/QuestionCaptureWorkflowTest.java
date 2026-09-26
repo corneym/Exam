@@ -36,6 +36,7 @@ import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
@@ -389,6 +390,49 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
 		assertFalse(legacyControls.isVisible());
 		assertFalse(legacyControls.isManaged());
+	}
+
+	@Test
+	void mouseSelectingImportedQuestionMayActivateSubjectWithoutRebuildingOpenPopup(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question importedQuestion = stored.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubject = lookup(robot, "#curriculum-subject", ComboBox.class);
+
+		// Remove the active Working Subject so selecting the imported Question must
+		// reactivate its booklet Subject, matching the live imported-capture workflow.
+		robot.interact(() -> workingSubject.setValue(null));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(null, examMetadataPane().getBooklet());
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(() -> showImportedQuestionCaptureForTest(pane));
+		ComboBox<Question> imported = comboBox(robot, "#imported-question");
+		assertEquals(1, imported.getItems().size());
+
+		// This test deliberately uses the real popup mouse path because the regression
+		// occurs while JavaFX's internal ListView is completing a pointer selection.
+		robot.clickOn(imported);
+		WaitForAsyncUtils.waitForFxEvents();
+		Node importedCell = robot.lookup(".list-cell").match(node -> {
+			if (!(node instanceof ListCell<?> cell) || !node.isVisible()) {
+				return false;
+			}
+			Object item = cell.getItem();
+			return item instanceof Question question && question.getId() == importedQuestion.getId();
+		}).query();
+		robot.clickOn(importedCell);
+
+		// Processing all queued FX work also surfaces any exception raised by the
+		// ComboBox/ListView selection transition.
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(importedQuestion.getId(), imported.getValue().getId());
+		assertEquals(booklet.getExam().getSubject(), workingSubject.getValue());
+		assertEquals(booklet.getId(), examMetadataPane().getBooklet().getId());
 	}
 
 	@Test

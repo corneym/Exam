@@ -41,6 +41,7 @@ import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog.SharedCont
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
+import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
@@ -1055,9 +1056,32 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void checkImportedQuestionBox() {
-		if (!refreshingImportedQuestions) {
-			loadImportedQuestion(importedQuestionBox.getValue());
+		if (refreshingImportedQuestions) {
+			return;
 		}
+		Question requestedQuestion = importedQuestionBox.getValue();
+
+		// A mouse selection is still being completed by the ComboBox popup's internal
+		// ListView when this action fires. Defer booklet/Subject activation until that
+		// selection transaction has finished, because activation can rebuild this
+		// queue.
+		Platform.runLater(() -> {
+			if (refreshingImportedQuestions) {
+				return;
+			}
+			Question currentQuestion = importedQuestionBox.getValue();
+
+			// Ignore a deferred action if the teacher has selected another Question before
+			// this callback runs.
+			if (requestedQuestion == null) {
+				if (currentQuestion != null) {
+					return;
+				}
+			} else if (currentQuestion == null || currentQuestion.getId() != requestedQuestion.getId()) {
+				return;
+			}
+			loadImportedQuestion(requestedQuestion);
+		});
 	}
 
 	private void clearImportedQuestionSelection() {
@@ -1795,14 +1819,29 @@ public final class QuestionCapturePane extends VBox {
 			restoreImportedQuestionSelection(previousQuestion);
 			return;
 		}
-		if (question != null && !importedQuestionActivationHandler.test(question)) {
-			restoreImportedQuestionSelection(previousQuestion);
-			return;
+		if (question != null) {
+
+			// Publish the intended target before booklet activation. Activating a different
+			// Working Subject refreshes the imported queue, which must preserve this
+			// Question rather than temporarily clearing the ComboBox value.
+			importedQuestion = question;
+			if (!importedQuestionActivationHandler.test(question)) {
+				importedQuestion = previousQuestion;
+				restoreImportedQuestionSelection(previousQuestion);
+				return;
+			}
+
+			// Subject activation may have rebuilt the queue with freshly loaded Question
+			// instances. Keep that refreshed matching instance when one was supplied.
+			if (importedQuestion == null || importedQuestion.getId() != question.getId()) {
+				importedQuestion = question;
+			}
+		} else {
+			importedQuestion = null;
 		}
 		clearRegions();
-		importedQuestion = question;
 		sharedContextCapturePane.refreshForCurrentBooklet();
-		if (question == null) {
+		if (importedQuestion == null) {
 			resetQuestionEntry();
 			if (importedCaptureMode) {
 				showImportedQueueMode();
@@ -1812,7 +1851,7 @@ public final class QuestionCapturePane extends VBox {
 			refreshSaveButtonState();
 			return;
 		}
-		showImportedQuestionMode(question);
+		showImportedQuestionMode(importedQuestion);
 	}
 
 	private void loadQuestionEditFields(Question question) {
