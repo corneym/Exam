@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ApplicationPaths;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
@@ -181,7 +182,7 @@ public class QuestionBankApplication extends Application {
 	private static final double SCENE_HEIGHT = 840.0;
 	private static final double INITIAL_WORKSPACE_DIVIDER_POSITION = PREVIEW_PANE_INITIAL_WIDTH / SCENE_WIDTH;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
-	private static final Path PROPERTIES_FILE = Path.of("questionbank.properties");
+	private static final Path LEGACY_PROPERTIES_FILE = Path.of("questionbank.properties").toAbsolutePath().normalize();
 	private QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor = new QuestionExtractor();
 	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
@@ -225,14 +226,20 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void start(Stage stage) throws Exception {
+		Path propertiesFile = ApplicationPaths.propertiesFile();
 		ApplicationConfig config;
 		try {
-			config = ApplicationConfig.load(PROPERTIES_FILE);
+
+			// Installed builds store writable configuration under the user's application
+			// directory. During the transition, an existing working-directory
+			// questionbank.properties file is copied there once and remains untouched.
+			config = ApplicationConfig.loadOrCreate(propertiesFile, LEGACY_PROPERTIES_FILE,
+					ApplicationPaths.defaultDataRoot());
 		} catch (ConfigurationException e) {
 			showStartupError("Configuration Error", e.getMessage());
 			return;
 		} catch (IOException e) {
-			showStartupError("Configuration Error", "Could not read questionbank.properties:\n" + e.getMessage());
+			showStartupError("Configuration Error", "Could not prepare application configuration:\n" + e.getMessage());
 			return;
 		}
 		try {
@@ -1807,7 +1814,10 @@ public class QuestionBankApplication extends Application {
 			if (dataRoot.equals(config.dataRoot())) {
 				return;
 			}
-			ApplicationConfig.saveDataRoot(PROPERTIES_FILE, dataRoot);
+
+			// Options always updates the same user-writable configuration used at
+			// application startup, never a file beside the installed executable.
+			ApplicationConfig.saveDataRoot(ApplicationPaths.propertiesFile(), dataRoot);
 			showAlert(Alert.AlertType.INFORMATION, "Options", "Options saved.",
 					"The new data location will be used after the application is restarted.");
 		} catch (IllegalArgumentException e) {
