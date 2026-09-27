@@ -31,6 +31,7 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -389,6 +390,8 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 
 	private void configureCaptureButton(Button button, String id, CurriculumLevel level) {
 		button.setId(id);
+		button.setTooltip(new Tooltip("Add the highlighted syllabus text as a " + level.toString().toLowerCase()
+				+ " under the selected parent; it is not persisted until Save."));
 		button.setMnemonicParsing(true);
 		button.setOnAction(_ -> captureSelectedText(level));
 	}
@@ -497,10 +500,14 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 
 	private void configurePersistenceControls() {
 		saveButton.setId("save-curriculum");
+		saveButton.setTooltip(new Tooltip("Persist the current curriculum draft and its attached source PDF."));
 		saveButton.setOnAction(_ -> saveFromUi());
 		finaliseButton.setId("finalise-curriculum");
+		finaliseButton.setTooltip(
+				new Tooltip("Validate and mark this curriculum final, preventing edits until it is reopened."));
 		finaliseButton.setOnAction(_ -> finaliseFromUi());
 		reopenButton.setId("reopen-curriculum");
+		reopenButton.setTooltip(new Tooltip("Return a final curriculum to draft status so it can be edited again."));
 		reopenButton.setOnAction(_ -> reopenFromUi());
 		lifecycleLabel.setId("curriculum-lifecycle");
 		lifecycleLabel.setWrapText(true);

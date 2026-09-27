@@ -8,11 +8,12 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import javafx.beans.binding.Bindings;
-import javafx.scene.Node;
 import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.Tooltip;
 import javafx.stage.Window;
 
 /**
@@ -45,8 +46,10 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		ButtonType resolveButtonType = new ButtonType("Resolve Selected", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(resolveButtonType, ButtonType.CLOSE);
 		getDialogPane().setContent(auditPane);
-		Node resolveButton = getDialogPane().lookupButton(resolveButtonType);
+		Button resolveButton = (Button) getDialogPane().lookupButton(resolveButtonType);
 		resolveButton.setId("corpus-resolve-selected");
+		resolveButton.setTooltip(
+				new Tooltip("Open the correction workflow for the selected Question's next unresolved problem."));
 		resolveButton.disableProperty()
 				.bind(Bindings.createBooleanBinding(
 						() -> auditPane.selectedWorkItems().size() != 1

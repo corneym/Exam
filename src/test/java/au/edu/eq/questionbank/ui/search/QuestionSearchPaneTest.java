@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui.search;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
@@ -90,6 +91,19 @@ public class QuestionSearchPaneTest {
 	private QuestionRetrievalService retrievalService;
 	private InMemoryQuestionOutputApplicabilityRepository outputApplicabilityRepository;
 	private Stage stage;
+
+	@Test
+	public void explainsSearchScopeAndOutputApplicabilityWithoutChangingClassification(FxRobot robot) {
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
+		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
+		assertNotNull(scopeBox.getTooltip());
+		assertTrue(scopeBox.getTooltip().getText().contains("complete stored Question bank"));
+		assertNotNull(includeButton.getTooltip());
+		assertTrue(includeButton.getTooltip().getText().contains("does not alter Question classification"));
+		assertNotNull(excludeButton.getTooltip());
+		assertTrue(excludeButton.getTooltip().getText().contains("does not alter Question classification"));
+	}
 
 	@Test
 	public void allQuestionsCanBeFilteredBySubject(FxRobot robot) throws TimeoutException {

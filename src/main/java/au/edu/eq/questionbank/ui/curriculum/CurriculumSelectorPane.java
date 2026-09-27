@@ -15,6 +15,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
@@ -347,6 +348,8 @@ public class CurriculumSelectorPane extends VBox {
 	private void configureControls() {
 		codeField.setId("curriculum-code");
 		codeField.setPromptText("e.g. 3.1.2");
+		codeField.setTooltip(new Tooltip(
+				"Enter a complete curriculum code to select its Unit, Topic, Subtopic and Descriptor path."));
 		codeField.setMaxWidth(Double.MAX_VALUE);
 		codeField.setMinWidth(0);
 		configureHierarchyBox(subjectBox, "curriculum-subject", "Select subject");

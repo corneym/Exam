@@ -1238,6 +1238,10 @@ public final class QuestionCapturePane extends VBox {
 		writtenResponseButton.setToggleGroup(responseTypeGroup);
 		multipleChoiceResponseButton.setUserData(QuestionResponseType.MULTIPLE_CHOICE);
 		writtenResponseButton.setUserData(QuestionResponseType.WRITTEN_RESPONSE);
+		multipleChoiceResponseButton.setTooltip(new Tooltip(
+				"Store this as a multiple-choice Question; it must be worth one mark and its Answer is an A-D choice."));
+		writtenResponseButton.setTooltip(new Tooltip(
+				"Store this as a written-response Question whose Answer may be captured from an Answer PDF."));
 
 		// Keep both labels fully readable at the minimum supported workspace width.
 		multipleChoiceResponseButton.setMinWidth(Region.USE_PREF_SIZE);
@@ -1252,9 +1256,13 @@ public final class QuestionCapturePane extends VBox {
 		saveStatusLabel.setMaxWidth(Double.MAX_VALUE);
 		regionCountLabel.setId("question-region-count");
 		addRegionButton.setId("add-question-region");
+		addRegionButton.setTooltip(new Tooltip(
+				"Accept the current PDF selection as Question content; it is persisted when the Question is saved."));
 		pasteImageButton.setId("paste-question-image");
-		pasteImageButton.setTooltip(new Tooltip("Paste an image from the clipboard into the Question body."));
+		pasteImageButton.setTooltip(new Tooltip(
+				"Paste clipboard image content into the Question; it is persisted when the Question is saved."));
 		clearRegionsButton.setId("clear-question-content");
+		clearRegionsButton.setTooltip(new Tooltip("Remove all staged Question regions and pasted images."));
 		removeCurrentSelectionButton.setId("clear-question-selection");
 
 		// Keep Question-capture action labels fully readable at the minimum
@@ -1277,6 +1285,8 @@ public final class QuestionCapturePane extends VBox {
 		saveStatusLabel.setStyle(SUCCESS_STATUS_STYLE);
 		importedQuestionBox.setId("imported-question");
 		importedQuestionBox.setPromptText("Select imported question");
+		importedQuestionBox.setTooltip(
+				new Tooltip("Select an imported Question to attach source regions and complete its capture."));
 		importedQuestionBox.setMaxWidth(Double.MAX_VALUE);
 		importedQuestionBox.setConverter(createImportedQuestionConverter());
 		importedQuestionBox.setOnShowing(_ -> showSelectedImportedQuestionDocument());
@@ -1286,6 +1296,9 @@ public final class QuestionCapturePane extends VBox {
 		importedClassificationLabel.setManaged(false);
 		newQuestionsModeButton.setId("capture-mode-new");
 		importedQuestionsModeButton.setId("capture-mode-imported");
+		newQuestionsModeButton.setTooltip(new Tooltip("Capture a new Question from the open Exam PDF."));
+		importedQuestionsModeButton.setTooltip(
+				new Tooltip("Complete source-region capture for a Question imported from a legacy workbook."));
 
 		// Capture-mode actions must keep their complete labels at supported pane
 		// widths.

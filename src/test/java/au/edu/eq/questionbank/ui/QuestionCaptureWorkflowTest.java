@@ -461,6 +461,9 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			clipboardContent.putImage(image);
 			Clipboard.getSystemClipboard().setContent(clipboardContent);
 		});
+		Button pasteImageButton = lookup(robot, "#paste-question-image", Button.class);
+		assertEquals("Paste clipboard image content into the Question; it is persisted when the Question is saved.",
+				pasteImageButton.getTooltip().getText());
 		fireControl(robot, "#paste-question-image");
 		assertEquals("Content parts: 2", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isPresent());

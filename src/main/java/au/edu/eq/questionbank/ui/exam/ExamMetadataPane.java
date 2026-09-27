@@ -527,6 +527,8 @@ public final class ExamMetadataPane extends VBox {
 		questionFormatField.setId("exam-question-format");
 		questionFormatField.setPrefWidth(QUESTION_FORMAT_FIELD_WIDTH);
 		questionFormatField.setPromptText("Select format");
+		questionFormatField.setTooltip(new Tooltip(
+				"Sets the booklet format used to infer response types for newly captured Questions; existing Questions are unchanged."));
 
 		// UNSPECIFIED is migration-only metadata. New booklets must use one of the
 		// three explicit formats presented to the user.

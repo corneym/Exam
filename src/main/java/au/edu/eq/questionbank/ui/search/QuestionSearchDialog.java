@@ -20,6 +20,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.Tooltip;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -146,6 +147,17 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		editExamButton.setId("question-search-edit-exam");
 		recaptureSharedContextButton.setId("question-search-recapture-shared-context");
 		editAnswerButton.setId("question-search-edit-answer");
+		editQuestionButton.setTooltip(
+				new Tooltip("Edit Question content, source regions, classification and response metadata."));
+		splitQuestionButton.setTooltip(
+				new Tooltip("Convert one legacy Question into multipart Questions after capturing every part."));
+		editMetadataButton.setTooltip(
+				new Tooltip("Correct this Question's code, marks, response type and Shared Context requirement."));
+		editExamButton.setTooltip(
+				new Tooltip("Correct the owning Exam's identity and relocate its managed source PDFs if required."));
+		recaptureSharedContextButton
+				.setTooltip(new Tooltip("Replace the reusable Shared Context linked to this Question."));
+		editAnswerButton.setTooltip(new Tooltip("Replace this Question's stored Answer content."));
 	}
 
 	private void configureActionButtons() {

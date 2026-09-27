@@ -23,6 +23,7 @@ import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -126,6 +127,8 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		groupingBox.setId("scorm-export-grouping");
 		groupingBox.setPromptText("Select grouping");
 		groupingBox.setMaxWidth(Double.MAX_VALUE);
+		groupingBox.setTooltip(new Tooltip(
+				"Choose how Questions are organised in the generated SCORM package; stored curriculum and Question data are unchanged."));
 		destinationField.setId("scorm-export-destination");
 		destinationField.setEditable(false);
 		destinationField.setPromptText("Choose destination folder");
@@ -288,6 +291,8 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 			}
 			CheckBox checkBox = new CheckBox(unit.toString());
 			checkBox.setId("scorm-export-unit-" + unit.getId());
+			checkBox.setTooltip(new Tooltip(
+					"Include this Unit in the generated SCORM package; the selection also limits available grouping options."));
 			checkBox.setUserData(unit);
 			checkBox.setSelected(true);
 			checkBox.selectedProperty().addListener((_, _, _) -> {

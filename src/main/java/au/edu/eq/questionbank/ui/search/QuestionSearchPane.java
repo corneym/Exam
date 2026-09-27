@@ -36,6 +36,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
@@ -614,8 +615,14 @@ public class QuestionSearchPane extends BorderPane {
 		// selected Question.
 		outputApplicabilityList.setPrefHeight(110);
 		outputApplicabilityList.setCellFactory(_ -> new DisplayListCell<>(this::outputApplicabilityText));
+		outputApplicabilityList.setTooltip(new Tooltip(
+				"Current-curriculum placements used for Revision Output; changes here do not alter Question classification."));
 		includeOutputApplicabilityButton.setId("question-search-output-include");
 		excludeOutputApplicabilityButton.setId("question-search-output-exclude");
+		includeOutputApplicabilityButton.setTooltip(new Tooltip(
+				"Include the selected placement in Revision Output; this does not alter Question classification."));
+		excludeOutputApplicabilityButton.setTooltip(new Tooltip(
+				"Exclude the selected placement from Revision Output; this does not alter Question classification."));
 
 		// Action labels must remain readable when the right-hand column is narrow.
 		includeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
@@ -667,6 +674,11 @@ public class QuestionSearchPane extends BorderPane {
 		topicBox.setPromptText("Select topic");
 		classificationBox.setPromptText("Select subtopic or descriptor");
 		descriptorBox.setPromptText("Select descriptor");
+		String hierarchyTooltip = "Narrows results within the current Syllabus; it does not change stored Question classifications.";
+		unitBox.setTooltip(new Tooltip(hierarchyTooltip));
+		topicBox.setTooltip(new Tooltip(hierarchyTooltip));
+		classificationBox.setTooltip(new Tooltip(hierarchyTooltip));
+		descriptorBox.setTooltip(new Tooltip(hierarchyTooltip));
 		configurePromptDisplay(subjectBox);
 		configurePromptDisplay(unitBox);
 		configurePromptDisplay(topicBox);
@@ -692,6 +704,8 @@ public class QuestionSearchPane extends BorderPane {
 		searchScopeBox.getItems().setAll(QuestionSearchScope.values());
 		searchScopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS);
 		searchScopeBox.setMaxWidth(Double.MAX_VALUE);
+		searchScopeBox.setTooltip(new Tooltip(
+				"Current Syllabus searches by current curriculum; All Questions searches the complete stored Question bank."));
 
 		// Search scope owns its user-facing wording rather than exposing enum names.
 		searchScopeBox.setButtonCell(new DisplayListCell<>(QuestionSearchScope::displayText));
@@ -709,6 +723,8 @@ public class QuestionSearchPane extends BorderPane {
 		selectedTopicBox.setPromptText("No topic");
 		selectedSubtopicBox.setPromptText("No subtopic");
 		selectedDescriptorBox.setPromptText("No descriptor");
+		selectedDescriptorBox.setTooltip(new Tooltip(
+				"Refine a Subtopic-classified Question to a child Descriptor; the change is not stored until Save."));
 		configurePromptDisplay(selectedUnitBox);
 		configurePromptDisplay(selectedTopicBox);
 		configurePromptDisplay(selectedSubtopicBox);
@@ -725,6 +741,8 @@ public class QuestionSearchPane extends BorderPane {
 		selectedSubtopicBox.setDisable(true);
 		selectedDescriptorBox.setDisable(true);
 		saveClassificationButton.setId("question-search-save-classification");
+		saveClassificationButton
+				.setTooltip(new Tooltip("Persist the selected Descriptor as this Question's classification."));
 
 		// Keep the complete action label visible beside the Descriptor selector.
 		saveClassificationButton.setMinWidth(Region.USE_PREF_SIZE);
