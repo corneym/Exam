@@ -12,13 +12,14 @@ module au.edu.eq.questionbank {
 	requires java.prefs;
 	requires java.sql;
 	requires java.xml;
-	requires org.apache.pdfbox;
-	requires org.apache.poi.ooxml;
-	requires org.apache.logging.log4j.core;
-	requires javafx.graphics;
 	requires javafx.base;
 	requires javafx.controls;
+	requires javafx.graphics;
 	requires javafx.swing;
+	requires javafx.web;
+	requires org.apache.logging.log4j.core;
+	requires org.apache.pdfbox;
+	requires org.apache.poi.ooxml;
 	requires org.apache.poi.poi;
 
 	opens au.edu.eq.questionbank;
@@ -46,6 +47,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.ui.curriculum;
 	opens au.edu.eq.questionbank.ui.exam;
 	opens au.edu.eq.questionbank.ui.export;
+	opens au.edu.eq.questionbank.ui.help;
 	opens au.edu.eq.questionbank.ui.model;
 	opens au.edu.eq.questionbank.ui.pdf;
 	opens au.edu.eq.questionbank.ui.search;

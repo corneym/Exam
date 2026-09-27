@@ -1,0 +1,133 @@
+:root {
+	font-family: Arial, Helvetica, sans-serif;
+	line-height: 1.55;
+	color: #202124;
+	background: #f5f6f7;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+}
+
+.help-page {
+	width: min(100% - 3rem, 960px);
+	margin: 0 auto;
+	padding: 2rem 0 4rem;
+}
+
+.help-header {
+	margin-bottom: 2rem;
+	padding-bottom: 1.25rem;
+	border-bottom: 1px solid #dadce0;
+}
+
+.eyebrow {
+	margin: 0 0 0.35rem;
+	font-size: 0.9rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: #5f6368;
+}
+
+h1,
+h2,
+h3 {
+	line-height: 1.25;
+}
+
+h1 {
+	margin-top: 0;
+}
+
+section {
+	margin: 2rem 0;
+}
+
+a {
+	color: #185abc;
+}
+
+.breadcrumbs {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	display: flex;
+	gap: 0.5rem;
+	margin: -2rem 0 2rem;
+	padding: 0.85rem 0;
+	border-bottom: 1px solid #dadce0;
+	background: #f5f6f7;
+	font-size: 0.9rem;
+}
+
+.breadcrumbs [aria-current="page"] {
+	font-weight: 700;
+}
+
+.topic-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+	gap: 1rem;
+	margin: 2rem 0;
+}
+
+.topic-card {
+	display: block;
+	padding: 1.25rem;
+	border: 1px solid #c7c9cc;
+	border-radius: 0.5rem;
+	background: #ffffff;
+	text-decoration: none;
+}
+
+.topic-card:hover,
+.topic-card:focus {
+	border-color: #185abc;
+}
+
+.topic-card strong {
+	display: block;
+	margin-bottom: 0.4rem;
+	font-size: 1.05rem;
+}
+
+.topic-card span {
+	color: #3c4043;
+}
+
+dl {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 0.5rem 1.25rem;
+}
+
+dt {
+	font-weight: 700;
+}
+
+dd {
+	margin: 0;
+}
+
+li + li {
+	margin-top: 0.45rem;
+}
+
+.note,
+.warning {
+	padding: 1rem;
+	background: #ffffff;
+}
+
+.note {
+	border-left: 4px solid #5f6368;
+}
+
+.warning {
+	border-left: 4px solid #b06000;
+}

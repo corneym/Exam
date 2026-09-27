@@ -130,6 +130,7 @@ import au.edu.eq.questionbank.ui.export.RevisionExportDialog;
 import au.edu.eq.questionbank.ui.export.RevisionExportTask;
 import au.edu.eq.questionbank.ui.export.ScormExportDialog;
 import au.edu.eq.questionbank.ui.export.ScormExportTask;
+import au.edu.eq.questionbank.ui.help.HelpDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
@@ -717,7 +718,8 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createHelpMenu(ApplicationConfig config) {
 		Menu helpMenu = createMenu("_Help");
-		helpMenu.getItems().addAll(createMenuItem("_About...", this::showAbout),
+		helpMenu.getItems().addAll(createMenuItem("_Help Contents...", this::showHelpContents), new SeparatorMenuItem(),
+				createMenuItem("_About...", this::showAbout),
 				createMenuItem("_Version Information...", () -> showVersionInformation(config)));
 		return helpMenu;
 	}
@@ -1460,6 +1462,17 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(true);
 	}
 
+	private Window primaryWindow() {
+		if (workspaceSplitPane == null || workspaceSplitPane.getScene() == null
+				|| workspaceSplitPane.getScene().getWindow() == null) {
+			throw new IllegalStateException("Primary application window is not available");
+		}
+
+		// Resolve ownership from the live scene graph rather than retaining another
+		// Stage reference solely for Help presentation.
+		return workspaceSplitPane.getScene().getWindow();
+	}
+
 	private void requestApplicationExit(Stage primaryStage) {
 		if (blockWhileCaptureSaveInProgress(primaryStage, "closing the application")) {
 			return;
@@ -1759,6 +1772,15 @@ public class QuestionBankApplication extends Application {
 		examMetadataPane.refreshSubjects();
 		examMetadataPane.beginImport();
 		examImportDialog.showAndWait();
+	}
+
+	private void showHelpContents() {
+		Window owner = primaryWindow();
+
+		// Help is application documentation rather than mutable workflow state, so
+		// each invocation opens a fresh viewer owned by the current application window.
+		HelpDialog dialog = new HelpDialog(owner);
+		dialog.showAndWait();
 	}
 
 	private void showLegacyQuestionImportResult(int importedBooklets, LegacyQuestionImportResult importResult) {

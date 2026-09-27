@@ -18,29 +18,6 @@ class HtmlQuestionRendererTest {
 	private final HtmlQuestionRenderer renderer = new HtmlQuestionRenderer();
 
 	@Test
-	void rendersImagesUsingRelativeWebPathsInOrder() throws Exception {
-		Path output = tempDir.resolve("questions.html");
-		Path first = tempDir.resolve("images/question1.png");
-		Path second = tempDir.resolve("question2.png");
-		renderer.render(List.of(first, second), output);
-		String html = Files.readString(output);
-		assertTrue(html.contains("<meta charset=\"UTF-8\">"));
-		assertTrue(html.contains("<img src=\"images/question1.png\">"));
-		assertTrue(html.contains("<img src=\"question2.png\">"));
-		assertTrue(html.indexOf("images/question1.png") < html.indexOf("question2.png"));
-	}
-
-	@Test
-	void rendersAValidDocumentWhenThereAreNoQuestions() throws Exception {
-		Path output = tempDir.resolve("empty.html");
-		renderer.render(List.of(), output);
-		String html = Files.readString(output);
-		assertTrue(html.contains("<!DOCTYPE html>"));
-		assertTrue(html.contains("</html>"));
-		assertFalse(html.contains("<img"));
-	}
-
-	@Test
 	void escapesImagePathsUsedInHtmlAttributes() throws Exception {
 		Path output = tempDir.resolve("questions.html");
 		Path image = tempDir.resolve("question&answer.png");
@@ -54,5 +31,38 @@ class HtmlQuestionRendererTest {
 		Path image = tempDir.resolve("question.png");
 		assertThrows(NullPointerException.class,
 				() -> renderer.render(List.of(image), Path.of("questions-without-parent.html")));
+	}
+
+	@Test
+	void rendersAValidDocumentWhenThereAreNoQuestions() throws Exception {
+		Path output = tempDir.resolve("empty.html");
+		renderer.render(List.of(), output);
+		String html = Files.readString(output);
+		assertTrue(html.contains("<!DOCTYPE html>"));
+		assertTrue(html.contains("</html>"));
+		assertFalse(html.contains("<img"));
+	}
+
+	@Test
+	void rendersImagesUsingRelativeWebPathsInOrder() throws Exception {
+		Path output = tempDir.resolve("questions.html");
+		Path first = tempDir.resolve("images/question1.png");
+		Path second = tempDir.resolve("question2.png");
+		renderer.render(List.of(first, second), output);
+		String html = Files.readString(output);
+		assertTrue(html.contains("<meta charset=\"UTF-8\">"));
+		assertTrue(html.contains("<img src=\"images/question1.png\">"));
+		assertTrue(html.contains("<img src=\"question2.png\">"));
+		assertTrue(html.indexOf("images/question1.png") < html.indexOf("question2.png"));
+		String packagedStylesheet;
+		try (java.io.InputStream input = HtmlQuestionRenderer.class
+				.getResourceAsStream("/au/edu/eq/questionbank/output/question/question.css")) {
+			assertTrue(input != null);
+
+			// The HTML must use the maintained packaged stylesheet rather than a
+			// separate CSS definition embedded in the Java renderer.
+			packagedStylesheet = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+		}
+		assertTrue(html.contains(packagedStylesheet));
 	}
 }
