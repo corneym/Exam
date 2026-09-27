@@ -1,6 +1,6 @@
 # Sprint 11 --- Release 0.1
 
-> **Status:** IMPLEMENTED / VERIFIED --- final branch CI and protected-main merge pending\
+> **Status:** COMPLETED / VERIFIED / MERGED\
 > **Branch:** `feature/sprint-11-release-0.1`\
 > **Prepared:** 26 September 2026\
 > **Closeout updated:** 27 September 2026
@@ -306,7 +306,7 @@ and configured external data root survive MSI uninstall.
 
 ### 11.8 --- Release 0.1
 
-**Status: IMPLEMENTED / VERIFIED LOCALLY --- final CI/PR merge pending**
+**Status: COMPLETED / VERIFIED**
 
 `build-release.ps1` is the release gate.
 
@@ -355,8 +355,10 @@ Eclipse, launched from the Start menu and manually verified for:
 The exact MSI was then uninstalled and the user configuration was verified to
 remain present with its existing `data.root`.
 
-The remaining closeout step is final feature-branch CI followed by the
-protected-main pull-request merge.
+Feature-branch GitHub Actions CI run 81 completed successfully. Pull request
+#39 then merged Sprint 11 to protected `main` on 27 September 2026.
+
+Merge commit: `1ccbb350a693568231bd14582ffbecc7684fb79a`.
 
 ## 4. Explicitly outside Sprint 11
 
@@ -397,7 +399,8 @@ Final local release verification established:
 - uninstall: green;
 - user configuration survival after uninstall: green.
 
-GitHub CI remains the final branch gate before protected-main merge.
+GitHub Actions CI run 81 completed successfully on the final Sprint 11
+feature-branch head before protected-main merge.
 
 ## 6. Durable design decisions from Sprint 11
 
@@ -431,6 +434,7 @@ The repeatable Windows release procedure is documented in
 
 `docs/design/backlog.md` remains the canonical deliberately deferred-work list.
 
-After final feature-branch CI and protected-main merge, this Sprint 11 document
-is an immutable detailed record apart from adding final merge/CI identifiers if
-desired.
+Sprint 11 merged through pull request #39 after successful GitHub Actions CI
+run 81. Merge commit `1ccbb350a693568231bd14582ffbecc7684fb79a`.
+
+This document is now the immutable detailed Sprint 11 final-state record.

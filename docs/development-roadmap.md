@@ -40,9 +40,7 @@ Completed Sprint 09 sustained-use capture/correction
         ↓
 Completed Sprint 10 capture/output hardening
         ↓
-Completed Sprint 11 implementation + Release 0.1 verification
-        ↓
-Protected-main Sprint 11 merge
+Completed Sprint 11 — Release 0.1
         ↓
 Sprint 12 — Corpus Dashboard + richer Question filtering
         ↓
@@ -54,9 +52,11 @@ Exam Builder + printable output when prioritised
 Sprint 10 merged to `main` through pull request #2. Merge commit:
 `a3dfda7e`. Post-merge GitHub Actions run 64 was successful.
 
-Sprint 11 implementation and local Release 0.1 verification are complete on
-`feature/sprint-11-release-0.1`. Final feature-branch CI and protected-main merge
-remain the closeout gate.
+Sprint 11 merged to protected `main` through pull request #39 on
+27 September 2026. Merge commit:
+`1ccbb350a693568231bd14582ffbecc7684fb79a`.
+
+Final feature-branch GitHub Actions CI run 81 completed successfully.
 
 Git/GitHub remains authoritative for moving branch heads, pull-request state and
 CI state.
@@ -386,8 +386,9 @@ Eclipse.
 
 Detailed evidence remains in `docs/design/sprint-11-release-0.1.md`.
 
-Final feature-branch CI and protected-main merge are the remaining Sprint 11
-closeout steps.
+Sprint 11 merged to protected `main` through pull request #39 after final
+feature-branch GitHub Actions CI run 81 completed successfully. Merge commit:
+`1ccbb350a693568231bd14582ffbecc7684fb79a`.
 
 ## 5. Sprint 12 --- Corpus Dashboard and richer Question filtering
 

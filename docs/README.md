@@ -24,12 +24,14 @@ roadmap and active-sprint model.
 
 ## Current development position
 
-Sprints 01--10 are complete and merged.
+Sprints 01--11 are complete and merged.
 
-Sprint 11 --- Release 0.1 --- has completed implementation and local release
-verification on:
+Sprint 11 --- Release 0.1 --- merged to protected `main` through pull request
+#39 on 27 September 2026.
 
-`feature/sprint-11-release-0.1`
+Merge commit: `1ccbb350a693568231bd14582ffbecc7684fb79a`.
+
+Final feature-branch GitHub Actions CI run 81 completed successfully.
 
 Its detailed final-state record is:
 
@@ -47,8 +49,8 @@ Sprint 11 delivered:
 7. self-contained Windows app-image/MSI packaging;
 8. a gated Release 0.1 build and install/uninstall verification.
 
-The final Sprint 11 closeout gates are feature-branch CI and the protected-main
-pull-request merge.
+Sprint 11 closeout is complete. Release 0.1 implementation, local release
+verification, feature-branch CI and protected-main merge are all complete.
 
 Sprint 12 is reserved for Corpus Audit -> Corpus Dashboard redesign and richer
 Question filtering.
