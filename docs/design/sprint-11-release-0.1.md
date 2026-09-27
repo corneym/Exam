@@ -1,30 +1,30 @@
 # Sprint 11 --- Release 0.1
 
-> **Status:** PLANNED / ACTIVE DESIGN\
+> **Status:** IMPLEMENTED / VERIFIED --- final branch CI and protected-main merge pending\
 > **Branch:** `feature/sprint-11-release-0.1`\
-> **Prepared:** 26 September 2026
+> **Prepared:** 26 September 2026\
+> **Closeout updated:** 27 September 2026
 >
-> This document is the canonical Sprint 11 design and current-status
-> record. During the sprint it should be updated as slices move from
-> planned to implemented/verified. At closeout, durable history and
-> architecture changes are folded into `docs/development-roadmap.md`.
+> This document is the detailed Sprint 11 final-state record. Durable
+> architecture and forward-plan changes are also reflected in
+> `docs/development-roadmap.md`.
 
 ## 1. Sprint objective
 
 Move the Exam Question Bank from the completed Sprint 10 capture/output
 foundation to a usable, documented, installable **version 0.1**.
 
-Sprint 11 deliberately combines a small amount of integration hardening
-with one new content-source capability, targeted UI/documentation
-improvements and deployment/release work.
+The implemented sprint combines integration hardening, clipboard image
+Question capture, targeted Search/UI improvements, maintained in-application
+Help, authoritative version infrastructure and a repeatable Windows release
+pipeline.
 
-Bank-management expansion is not part of this sprint. Corpus Dashboard
-and richer Question filtering are reserved for Sprint 12.
+Bank-management expansion remains outside this sprint. Corpus Dashboard and
+richer Question filtering remain reserved for Sprint 12.
 
 ## 2. Starting state
 
-Sprint 10 is complete and merged to protected `main` through pull
-request #2.
+Sprint 10 was complete and merged to protected `main` through pull request #2.
 
 Merge commit: `a3dfda7e`.
 
@@ -32,288 +32,405 @@ Post-merge GitHub Actions run 64: successful.
 
 At Sprint 11 start:
 
--   Java/JavaFX/Maven application is operational;
--   SQLite is the runtime datastore;
--   latest supported schema version is 13;
--   Question/Answer PDF-region capture is operational;
--   historical/current curriculum mapping and retrieval are operational;
--   Revision HTML and SCORM output are operational;
--   backup/restore is operational;
--   Corpus Audit and Search are operational;
--   public API Javadoc passed strict generation at Sprint 10 closeout.
+- Java/JavaFX/Maven application was operational;
+- SQLite was the runtime datastore;
+- latest supported schema version was 13;
+- Question/Answer PDF-region capture was operational;
+- historical/current curriculum mapping and retrieval were operational;
+- Revision HTML and SCORM output were operational;
+- backup/restore was operational;
+- Corpus Audit and Search were operational;
+- public API Javadoc passed strict generation at Sprint 10 closeout.
 
-Git/GitHub remains authoritative for current branch head and CI state.
+Git/GitHub remains authoritative for moving branch heads and CI state.
 
-## 3. Scope and sequence
+## 3. Implemented scope
 
 ### 11.1 --- Composed integration regressions
 
-**Status: PLANNED**
+**Status: IMPLEMENTED / VERIFIED**
 
-Add two integration regressions before new feature work.
+Two cross-boundary regressions were added before feature work.
 
-#### A. SQLite -\> mappings/exclusions -\> corpus -\> HTML/SCORM
+#### A. SQLite -> mappings/exclusions -> corpus -> HTML/SCORM
 
-Use a temporary real SQLite database and production repository/service
-boundaries to prove the persisted path works as one system.
+`SqliteRevisionOutputPipelineIntegrationTest` builds a real temporary SQLite
+fixture containing historical/current curriculum, a persisted Question,
+confirmed one-to-many mapping and one Question-specific output exclusion. It
+reopens the database through production repositories, proves retrieval retains
+both current applicability placements, then proves the persisted exclusion
+removes only the intended revision-output placement.
 
-The scenario should remain deliberately small. It should establish
-historical/current curriculum data, persisted Questions, confirmed
-mapping state and a Question-specific output exclusion; reopen through
-real SQLite repositories; build the revision corpus; verify
-included/excluded placements; and generate Revision HTML and SCORM from
-that corpus.
+The same corpus is exported through production Revision HTML and SCORM services.
+The regression verifies the included Descriptor is represented and the excluded
+Descriptor is absent from generated output.
 
-The test is intended to protect the seams between already-tested
-components, not duplicate every renderer/export assertion.
+No production defect was required to implement this regression.
 
-Repository inspection before Sprint 11 confirmed that the necessary
-component-level fixtures and production paths already exist. This should
-therefore be a test-only composition unless the regression exposes a
-genuine production defect.
+#### B. Pre-v13 backup -> restore -> migrate -> reopen
 
-#### B. Pre-v13 backup -\> restore -\> migrate -\> reopen
+`DefaultRestoreExecutorTest#restoresVersion11BackupThenMigratesAndReopensAtLatestSchema`
+constructs a valid schema-v11 database and backup, prepares and applies the
+restore through production restore services, verifies the restored database
+remains at v11 until normal application initialisation, then performs the real
+sequential migration and reopens the result.
 
-Construct a valid populated pre-v13 database/backup, restore it through
-the production restore path, then exercise normal database
-initialisation/migration and reopen at the current schema.
+The regression now reaches schema **v14** and verifies:
 
-Prefer schema v11 as the starting point so one composed scenario crosses
-both recent migrations:
-
-``` text
-v11
-  -> v12 question_output_exclusions
-  -> v13 Shared Context physical-column rename
-```
-
-The test must respect the existing restore contract: restore preparation
-verifies migration compatibility on a disposable copy; restoration
-itself preserves the backed-up schema version; subsequent normal
-database initialisation performs the real migration.
-
-Verify important pre-existing data survives and the reopened database is
-at the latest schema with the expected v12/v13 structures/semantics.
-
-Again, this should be test-only unless it exposes a defect.
+- pre-existing data survives;
+- v12 `question_output_exclusions` exists;
+- v13 Shared Context physical-column renames are present and retain values;
+- v14 `question_images` and `question_content_parts` exist;
+- final schema and integrity verification pass.
 
 ### 11.2 --- Clipboard / Snipping Tool Question capture
 
-**Status: PLANNED**
+**Status: IMPLEMENTED / VERIFIED**
 
-Add support for capturing Question content from an image placed on the
-system clipboard, with Windows Snipping Tool as the primary workflow.
+Question content now supports an authoritative ordered sequence of mixed content
+parts:
 
-Design requirements:
+``` text
+PDF_REGION
+IMAGE
+```
 
--   detect supported image content on the clipboard;
--   create Question content without requiring a durable source PDF;
--   persist the image as authoritative Question source content;
--   retain sufficient provenance to distinguish clipboard/image source
-    from PDF-region source;
--   survive application restart/reload;
--   participate in backup/restore;
--   render consistently in Question preview, Revision HTML and SCORM;
--   preserve existing PDF-region behaviour unchanged;
--   define failure/unsupported-clipboard behaviour explicitly.
+Schema v14 adds:
 
-Storage representation must be designed against the live domain/schema
-before implementation. Do not assume BLOB versus managed image file
-without that inspection.
+- `question_images`, storing authoritative PNG image bytes as SQLite BLOBs;
+- `question_content_parts`, storing the authoritative assembly order across
+  PDF regions and pasted images.
 
-OCR is not part of Sprint 11.
+Existing PDF-only Questions are migrated by creating one `PDF_REGION` content
+part for each existing `question_regions` row in its existing order.
+
+Implemented domain/runtime boundaries include:
+
+- `QuestionContentPart`;
+- `PdfQuestionContentPart`;
+- `ImageQuestionContentPart`;
+- `QuestionContentRenderer`;
+- `QuestionClipboardImageReader`;
+- SQLite writer/repository/capture-service support for mixed content.
+
+Question capture can paste supported image content from the system clipboard,
+including Windows Snipping Tool images. Clipboard images can be interleaved with
+PDF regions in capture order. Persisted order is authoritative and survives
+database reload.
+
+Preview, Revision HTML and SCORM use the mixed-content rendering path. Database
+backup/restore naturally includes image BLOBs because they are part of the
+SQLite database.
+
+`LegacyClipboardCaptureWorkflowIntegrationTest` verifies a real imported legacy
+Question can be completed with an image followed by a PDF region, saved,
+reloaded, removed from the unresolved capture queue and rendered in the same
+authoritative order.
+
+OCR is not implemented.
 
 ### 11.3 --- Question Search Dialog redesign
 
-**Status: PLANNED**
+**Status: IMPLEMENTED / VERIFIED**
 
-Redesign the existing Search dialog to reduce excessive vertical use
-while preserving current Search/edit semantics.
+Question Search was redesigned into a two-column working layout that reduces
+vertical growth while retaining the existing Search/edit semantics.
 
-Target layout:
+The left side carries Search, matching Questions and Question details. The right
+side carries selected-Question classification, Revision Output Applicability
+and preview.
 
-``` text
-LEFT
-Question Search
-Matching Questions
-Question Details
+The redesign preserved:
 
-RIGHT
-Selected Question Classification
-Revision Output Applicability
-Question Preview
-```
+- current Search/retrieval semantics;
+- dirty-state protection;
+- selected-Question edit transfer;
+- classification refinement;
+- Question-specific output-applicability editing;
+- preview behaviour;
+- geometry persistence/hardening.
 
-This is a layout/usability change. Do not use it to introduce richer
-Search filters or redesign retrieval semantics.
+Search implementation was also decomposed with focused helper types including
+`BackgroundTask`, `DisplayListCell`, `QuestionClassificationPath`,
+`QuestionOutputApplicabilityRow` and `SubjectNavigation`.
 
-Preserve existing dirty-state protection, edit transfer, classification
-refinement, output-applicability behaviour, preview behaviour and
-geometry handling.
-
-Tests should verify structural/behavioural outcomes rather than brittle
-pixel positions.
+Richer Search filtering was deliberately not added and remains Sprint 12 work.
 
 ### 11.4 --- Application tooltips
 
-**Status: PLANNED**
+**Status: IMPLEMENTED / VERIFIED**
 
-Add useful tooltips to application controls after the Sprint 11 Search
-layout is stable.
+Purpose/consequence tooltips were added across the main capture, curriculum,
+audit, export, PDF and Search surfaces after the Search layout stabilised.
 
-Tooltips should explain purpose, consequence or non-obvious behaviour
-rather than merely repeat visible labels.
-
-This is suitable for a repository-wide assisted implementation/review
-pass, followed by focused human review of ambiguous controls.
+Tooltips were kept focused on non-obvious purpose or consequence rather than
+repeating visible labels. Focused UI regressions cover representative controls.
 
 ### 11.5 --- Documented Help system
 
-**Status: PLANNED**
+**Status: IMPLEMENTED / VERIFIED**
 
-Establish an in-application Help system backed by maintained
-documentation.
+A maintained in-application Help system was added using packaged HTML/CSS
+resources displayed in JavaFX `WebView`.
 
-Requirements:
+Implemented resources cover:
 
--   clear UI entry point;
--   documented user-facing workflows appropriate to version 0.1;
--   maintainable source rather than ad hoc hard-coded dialog text;
--   Help content and application behaviour kept aligned;
--   architecture chosen only after inspecting the existing
-    documentation/resources and JavaFX application structure.
+- Help index/navigation;
+- getting started;
+- Question capture;
+- Question Search;
+- curriculum;
+- revision output;
+- data safety.
 
-Help must include access to About, but version-source infrastructure is
-handled explicitly in 11.6.
+`HelpDialog` loads packaged `/au/edu/eq/questionbank/help/index.html`, is owned
+by the application window, resizable and independently closable.
 
-### 11.6 --- Help -\> About and authoritative version infrastructure
+JavaFX WebView support was added through `javafx-web` and module configuration.
 
-**Status: PLANNED**
+As part of the same maintainability work, large output CSS blocks were removed
+from Java source:
 
-Add Help -\> About and establish one authoritative application version
-source.
+- Revision HTML uses packaged `output/revision/revision.css`;
+- single-file Question HTML loads packaged `output/question/question.css` and
+  embeds it into the generated document.
 
-Requirements:
+`HelpResourcesTest`, `HelpDialogTest`, lifecycle Help-menu coverage and output
+CSS regressions verify the packaged resources and entry points.
 
--   About displays application version;
--   version is not independently hard-coded in the About UI;
--   packaging/release artefacts derive from the same authoritative
-    version where practical;
--   tests protect version retrieval/display without depending on
-    environment-specific packaging behaviour.
+### 11.6 --- Help -> About and authoritative version infrastructure
 
-Sprint 11 release target is version **0.1**. The exact Maven version
-representation is to be decided after inspecting the current `pom.xml`
-and packaging approach.
+**Status: IMPLEMENTED / VERIFIED**
+
+Maven project version **0.1** is the authoritative application version.
+
+`src/main/resources/au/edu/eq/questionbank/application.properties` is Maven
+filtered during the build and receives:
+
+``` text
+application.version=${project.version}
+```
+
+`ApplicationVersion.current()` loads and validates the packaged value.
+Application About, Version Information, backup metadata and packaging therefore
+share the same Maven-derived release identity rather than independent hard-coded
+versions.
+
+The Help menu provides:
+
+- Help Contents;
+- About;
+- Version Information.
+
+About displays the application description and authoritative version.
+Version Information also reports Java, JavaFX, operating system, SQLite and
+database schema information.
+
+`ApplicationVersionTest` and application lifecycle UI regressions protect
+version retrieval/display.
 
 ### 11.7 --- Deployment/package build
 
-**Status: PLANNED**
+**Status: IMPLEMENTED / VERIFIED**
 
-Add the Maven/POM and packaging configuration required to produce an
-installable desktop application.
+Windows packaging is implemented through three PowerShell scripts:
 
-Investigate/use `jpackage` if it fits the live toolchain and application
-layout.
+- `scripts/package-windows-app-image.ps1`;
+- `scripts/package-windows-installer.ps1`;
+- `scripts/build-release.ps1`.
 
-Requirements include:
+#### Application image
 
--   self-contained or appropriately bundled runtime strategy;
--   writable application data remains outside installed application
-    files;
--   existing migration/backup safety remains intact;
--   repeatable build command;
--   installation and launch tested independently of Eclipse;
--   release/build procedure documented.
+`package-windows-app-image.ps1`:
 
-Do not treat a runnable development JAR alone as completion of this
-slice.
+- reads artifact/version metadata from `pom.xml`;
+- requires Java 25 `jpackage`;
+- runs a clean Maven package build with tests skipped because release testing is
+  a separate gate;
+- collects runtime dependencies;
+- packages `au.edu.eq.questionbank.Launcher` as a class-path application;
+- creates a private Java runtime;
+- strips native launcher commands, debug data, man pages and headers;
+- retries removal of a previously launched app image when Windows retains a
+  short-lived executable handle.
+
+The generated runtime was verified independently of Eclipse. The bundled
+`runtime/release` reports Java 25.0.4 and the private JVM library is present.
+
+#### MSI installer
+
+`package-windows-installer.ps1` always rebuilds a fresh app image before creating
+the MSI.
+
+The MSI is:
+
+- per-user;
+- added to the Windows Start menu;
+- versioned from the Maven project version;
+- built with a fixed Windows Installer upgrade UUID
+  `29eeeeb7-cbe8-5d98-a67f-36240572d76c`.
+
+That UUID is release infrastructure and must remain unchanged for future
+upgrades.
+
+The tested packaging toolchain is Java 25 `jpackage` plus WiX Toolset 7.0.0 with
+`WixToolset.Util.wixext` 7.0.0 available.
+
+#### Writable configuration/data separation
+
+Installed application files and user-owned mutable state are deliberately
+separate.
+
+On Windows:
+
+``` text
+Configuration:
+%LOCALAPPDATA%\Exam Question Bank Data\questionbank.properties
+
+Default data root:
+%LOCALAPPDATA%\Exam Question Bank Data\data
+```
+
+The sibling `Exam Question Bank Data` directory is intentionally distinct from
+the per-user jpackage installation directory. This was introduced after an MSI
+uninstall test exposed that storing configuration under the installer-owned
+product directory allowed uninstall to remove the configuration file.
+
+`ApplicationPaths` owns these locations. `ApplicationConfig.loadOrCreate(...)`
+loads the user-specific configuration, migrates a legacy working-directory
+`questionbank.properties` when appropriate, or creates a first-run configuration
+and default data directories.
+
+After the fix, install/launch/uninstall testing verified the configuration file
+and configured external data root survive MSI uninstall.
 
 ### 11.8 --- Release 0.1
 
-**Status: PLANNED**
+**Status: IMPLEMENTED / VERIFIED LOCALLY --- final CI/PR merge pending**
 
-Complete the first installable application release.
+`build-release.ps1` is the release gate.
 
-Release gate:
+Version rules:
 
--   all Sprint 11 slices intended for 0.1 complete;
--   focused regressions green;
--   full configured Maven test suites green;
--   strict Javadoc generation green;
--   documentation aligned with implemented behaviour;
--   CI green on the final feature branch;
--   installer/package generated with the authoritative 0.1 version;
--   install and launch verified outside Eclipse;
--   basic post-install data-root/startup behaviour verified.
+- accepted release form is `major.minor`;
+- leading zeroes are rejected except the literal `0`;
+- an explicit `-Version` selects a release version;
+- without `-Version`, the normal release path increments the current minor
+  version automatically;
+- a failed release restores `pom.xml` if the script changed the version;
+- a real release requires a clean Git working tree;
+- `-AllowDirty` exists for release-script development/validation only.
 
-Protected-main merge follows the established pull-request workflow after
-the final branch state is green.
+The Release 0.1 candidate was built explicitly with:
+
+``` powershell
+.\scripts\build-release.ps1 -AllowDirty -Version 0.1
+```
+
+The complete gate passed:
+
+1. Spotless source-format check;
+2. non-UI Maven suite;
+3. headless UI Maven suite;
+4. strict Javadoc generation with doclint and warnings treated as failures;
+5. Windows app-image/MSI generation.
+
+Release test gates use Surefire first-failure stopping so an already-invalid
+candidate does not continue through the rest of a large suite.
+
+During release-gate validation, one suite-only TestFX race was found in
+`AnswerCaptureWorkflowTest`. The test was changed to use the shared
+native-window/DialogPane helper rather than traversing the scene graph while a
+modal dialog was being constructed. The focused class and full headless UI suite
+then passed.
+
+The generated `Exam Question Bank-0.1.msi` was installed independently of
+Eclipse, launched from the Start menu and manually verified for:
+
+- existing question-bank data;
+- Help;
+- About/version 0.1;
+- normal shutdown.
+
+The exact MSI was then uninstalled and the user configuration was verified to
+remain present with its existing `data.root`.
+
+The remaining closeout step is final feature-branch CI followed by the
+protected-main pull-request merge.
 
 ## 4. Explicitly outside Sprint 11
 
-The following are not Sprint 11 work:
+The following remain outside Sprint 11:
 
--   Corpus Audit -\> Corpus Dashboard redesign;
--   richer Question Search filtering;
--   explicit resolved-but-intentionally-incomplete dispositions;
--   systematic mapping-review completion tooling;
--   speculative capture-workflow queue/productivity expansion;
--   Exam Builder;
--   printable/vector-preserving assessment/solution generation;
--   major import/reconciliation systems;
--   OCR;
--   multi-page Shared Context capture.
+- Corpus Audit -> Corpus Dashboard redesign;
+- richer Question Search filtering;
+- explicit resolved-but-intentionally-incomplete dispositions;
+- systematic mapping-review completion tooling;
+- speculative capture-workflow queue/productivity expansion;
+- Exam Builder;
+- printable/vector-preserving assessment/solution generation;
+- major import/reconciliation systems;
+- OCR;
+- multi-page Shared Context capture.
 
-Corpus Dashboard and richer Question filtering are reserved for Sprint
-12.
+Corpus Dashboard and richer Question filtering are reserved for Sprint 12.
 
-The remaining uncertain ideas belong in `docs/design/backlog.md` under
+The remaining uncertain ideas stay in `docs/design/backlog.md` under
 low-priority/some-day-maybe work.
 
-Multi-page Shared Context is not backlog: it is a rejected design
-direction.
+Multi-page Shared Context is not backlog: it is a rejected design direction.
 
-## 5. Testing approach
+## 5. Verification summary
 
-Testing remains part of each slice rather than a final clean-up phase.
+Sprint 11 verification includes focused regressions for each slice plus broader
+checkpoints.
 
-Implementation proceeds in small testable slices. Run focused tests
-after each change. Broader non-UI/UI suites are checkpoints rather than
-the default after every edit.
+Final local release verification established:
 
-TestFX workflow tests must follow the deterministic control-activation
-and modal-dialog rules in `docs/Working-Instructions.md`.
+- Spotless formatting check: green;
+- full non-UI Maven suite: green;
+- full headless UI Maven suite: green;
+- strict Javadoc generation: green;
+- application image creation: green;
+- MSI creation: green;
+- install/launch outside Eclipse: green;
+- uninstall: green;
+- user configuration survival after uninstall: green.
 
-A passing test is evidence only for behaviour it actually exercises.
+GitHub CI remains the final branch gate before protected-main merge.
 
-## 6. Documentation during Sprint 11
+## 6. Durable design decisions from Sprint 11
 
-This document carries the current Sprint 11 implementation status.
+1. Question content may be an ordered mixture of authoritative PDF regions and
+   authoritative clipboard images.
+2. Clipboard images are persisted in SQLite as PNG BLOBs and participate in the
+   same backup/restore boundary as the rest of the database.
+3. Schema v14 owns mixed Question-content persistence.
+4. Search layout and Search semantics remain separate concerns.
+5. Help is maintained as packaged HTML/CSS, not large hard-coded dialog text.
+6. Maven `project.version` is the single authoritative application/release
+   version source.
+7. Release versions use a validated `major.minor` scheme; ordinary future
+   releases automatically advance the minor component.
+8. A release build verifies source state; it does not auto-format source.
+9. Windows release packaging uses a self-contained jpackage application image
+   and per-user MSI.
+10. Mutable user configuration/data must never live in an installer-owned
+    application directory.
+11. The MSI upgrade UUID is stable release infrastructure and must not change
+    between releases.
+12. Multi-page Shared Context remains rejected.
 
-When a slice completes:
+## 7. Documentation closeout
 
--   change its status to IMPLEMENTED / VERIFIED only after relevant
-    evidence exists;
--   record important design decisions and deviations from the plan;
--   record meaningful verification evidence without duplicating moving
-    branch hashes unnecessarily;
--   update `docs/design/backlog.md` when work is deliberately
-    deferred/rejected;
--   update `docs/development-roadmap.md` only when a durable
-    architecture/history/forward-plan change occurs.
+Durable Sprint 11 architecture/history is reflected in
+`docs/development-roadmap.md`.
 
-At Sprint 11 closeout, fold durable Sprint 11 history and architecture
-changes into the roadmap. The Sprint 11 document then becomes the
-immutable detailed final-state record, while the Sprint 12 document
-becomes the current-status record.
+The repeatable Windows release procedure is documented in
+`docs/release-build.md`.
 
-## 7. Initial implementation order
+`docs/design/backlog.md` remains the canonical deliberately deferred-work list.
 
-Begin with **11.1A only**: compose the SQLite -\> mapping/exclusion -\>
-corpus -\> output integration regression and run its focused test.
-
-If green, proceed to **11.1B**.
-
-Do not begin clipboard persistence design until 11.1 is complete or an
-integration regression has exposed a defect that must first be resolved.
+After final feature-branch CI and protected-main merge, this Sprint 11 document
+is an immutable detailed record apart from adding final merge/CI identifiers if
+desired.
