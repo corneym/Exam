@@ -48,6 +48,8 @@ For new methods, DO NOT tell me where to insert them within the class. Eclipse
 can organise methods. Only say that the change is at class scope when that
 matters.
 
+Be strict about adding code: use smaller methods, explicit responsibilities, fewer anonymous classes, and less “just one more thing” inside existing methods.
+
 If a change is inside an `if`, loop, callback, `try` block, lambda, or other
 nested structure, identify the exact block being changed.
 

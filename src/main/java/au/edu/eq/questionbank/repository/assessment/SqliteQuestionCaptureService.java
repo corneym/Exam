@@ -624,6 +624,19 @@ public final class SqliteQuestionCaptureService {
 		/**
 		 * Preserves the existing response-type-aware constructor including MCQ
 		 * continuation for PDF-only callers.
+		 *
+		 * @param operation                      new, imported or edit capture
+		 * @param booklet                        capture booklet
+		 * @param existingQuestion               existing Question, or null for new
+		 * @param questionCode                   Question code
+		 * @param marks                          positive marks
+		 * @param regions                        ordered PDF regions forming the
+		 *                                       Question
+		 * @param classification                 original classification
+		 * @param responseType                   authoritative response type
+		 * @param selectedSharedContext          existing shared context, or null
+		 * @param pendingSharedContext           newly captured shared context, or null
+		 * @param continueSharedContextToNextMcq whether MCQ context should continue
 		 */
 		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
 				int marks, List<QuestionRegion> regions, CurriculumNode classification,
@@ -637,6 +650,17 @@ public final class SqliteQuestionCaptureService {
 		/**
 		 * Preserves the existing response-type-aware constructor for PDF-only callers
 		 * that do not use independent-MCQ continuation.
+		 *
+		 * @param operation             new, imported or edit capture
+		 * @param booklet               capture booklet
+		 * @param existingQuestion      existing Question, or null for new
+		 * @param questionCode          Question code
+		 * @param marks                 positive marks
+		 * @param regions               ordered PDF regions forming the Question
+		 * @param classification        original classification
+		 * @param responseType          authoritative response type
+		 * @param selectedSharedContext existing shared context, or null
+		 * @param pendingSharedContext  newly captured shared context, or null
 		 */
 		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
 				int marks, List<QuestionRegion> regions, CurriculumNode classification,
@@ -649,6 +673,16 @@ public final class SqliteQuestionCaptureService {
 		/**
 		 * Compatibility constructor for PDF-only callers that predate explicit
 		 * response-type input.
+		 *
+		 * @param operation             new, imported or edit capture
+		 * @param booklet               capture booklet
+		 * @param existingQuestion      existing Question, or null for new
+		 * @param questionCode          Question code
+		 * @param marks                 positive marks
+		 * @param regions               ordered PDF regions forming the Question
+		 * @param classification        original classification
+		 * @param selectedSharedContext existing shared context, or null
+		 * @param pendingSharedContext  newly captured shared context, or null
 		 */
 		public Request(Operation operation, ExamBooklet booklet, Question existingQuestion, String questionCode,
 				int marks, List<QuestionRegion> regions, CurriculumNode classification,

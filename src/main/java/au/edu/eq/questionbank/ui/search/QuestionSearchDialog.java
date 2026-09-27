@@ -29,7 +29,7 @@ import javafx.stage.Window;
  */
 public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.EditRequest> {
 
-	private static final int DIALOG_WIDTH = 900;
+	private static final int DIALOG_WIDTH = 1100;
 	private static final int DIALOG_HEIGHT = 700;
 	private final QuestionSearchPane searchPane;
 	private final BiFunction<Long, CurriculumNode, Question> classificationUpdater;

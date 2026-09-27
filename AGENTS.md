@@ -93,6 +93,27 @@ Do not put PDFBox-specific implementation details into the domain model.
 
 Keep diffs focused on the requested task.
 
+### Readability and decomposition
+
+Treat readability and maintainability as part of correctness.
+
+Prefer small methods with one clear responsibility over large methods that
+configure, calculate, persist, render, and coordinate unrelated concerns.
+
+When a method becomes difficult to scan or contains several distinct areas of
+concern, refactor it into well-named private methods.
+
+Avoid anonymous and nested implementation classes when a small named top-level
+class would make the behaviour clearer and reusable.
+
+Do not allow incremental feature work to continually enlarge already complex
+methods. Refactor surrounding code when necessary to keep responsibilities
+clear.
+
+Do not dismiss a readability refactor merely because existing code is
+functionally correct. Refactoring is appropriate when it materially improves
+clarity, responsibility boundaries, testability, or future maintainability.
+
 ## Question Extraction Model
 
 The original PDF is the authoritative source for an examination question.
@@ -248,7 +269,9 @@ Pay particular attention to:
 - coupling between UI and PDF implementation
 - decisions that would make visual region selection unnecessarily difficult
 
-Do not refactor working code merely for stylistic reasons.
+Avoid purely cosmetic refactors that create noisy diffs without improving the
+code. Refactor working code when doing so materially improves readability,
+responsibility boundaries, testability, or maintainability.
 
 For significant architectural changes, explain the reason before implementing
 them unless explicitly instructed otherwise.

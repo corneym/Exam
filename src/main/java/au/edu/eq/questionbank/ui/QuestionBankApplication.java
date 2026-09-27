@@ -2115,15 +2115,6 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
-		startRevisionExport(primaryStage, config, subject, destination, null, null);
-	}
-
-	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
-			RevisionGroupingMode groupingMode) {
-		startRevisionExport(primaryStage, config, subject, destination, groupingMode, null);
-	}
-
 	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
 			RevisionGroupingMode groupingMode, Set<Long> selectedUnitIds) {
 		if (revisionExportRunning) {
@@ -2144,15 +2135,6 @@ public class QuestionBankApplication extends Application {
 		Thread thread = new Thread(task, "revision-html-export");
 		thread.setDaemon(true);
 		thread.start();
-	}
-
-	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination) {
-		startScormExport(primaryStage, config, subject, destination, null, null);
-	}
-
-	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
-			RevisionGroupingMode groupingMode) {
-		startScormExport(primaryStage, config, subject, destination, groupingMode, null);
 	}
 
 	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
