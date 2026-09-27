@@ -35,6 +35,31 @@ import javafx.stage.WindowEvent;
 class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
+	void aboutDisplaysAuthoritativeApplicationVersion(FxRobot robot) throws Exception {
+		MenuItem aboutItem = helpAboutMenuItem();
+
+		// About is modal, so queue the menu action and leave the JUnit thread free to
+		// inspect and close the resulting Alert.
+		Platform.runLater(aboutItem::fire);
+		waitForDialogShowing(robot, "About Exam Question Bank");
+		javafx.scene.control.DialogPane dialog = showingDialogPane(robot, "About Exam Question Bank");
+		AtomicReference<String> contentText = new AtomicReference<>();
+		robot.interact(() -> {
+			javafx.scene.Node contentLabel = dialog.lookup(".content.label");
+			if (!(contentLabel instanceof javafx.scene.control.Label label)) {
+				throw new AssertionError("About dialog content label not found");
+			}
+			contentText.set(label.getText());
+		});
+		assertEquals("""
+				An application for importing, classifying, capturing and managing examination questions.
+
+				Version: 0.1
+				""".strip(), contentText.get());
+		fireDialogButton(robot, "OK");
+	}
+
+	@Test
 	void fileExitCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
 		AtomicInteger exitCount = new AtomicInteger();
 		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
@@ -85,7 +110,7 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 			// WebEngine state is confined to the JavaFX application thread. Mirror
 			// transitions into thread-safe state for the JUnit wait below.
 			loadState.set(loadWorker.getState());
-			loadWorker.stateProperty().addListener((observable, oldState, newState) -> loadState.set(newState));
+			loadWorker.stateProperty().addListener((_, _, newState) -> loadState.set(newState));
 		});
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> loadState.get() == Worker.State.SUCCEEDED
 				|| loadState.get() == Worker.State.FAILED || loadState.get() == Worker.State.CANCELLED);
@@ -167,6 +192,22 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 			}
 		}
 		throw new AssertionError("File -> Restore Backup menu item not found");
+	}
+
+	private MenuItem helpAboutMenuItem() {
+		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
+		MenuBar menuBar = (MenuBar) root.getTop();
+		for (Menu menu : menuBar.getMenus()) {
+			if (!"_Help".equals(menu.getText())) {
+				continue;
+			}
+			for (MenuItem item : menu.getItems()) {
+				if ("_About...".equals(item.getText())) {
+					return item;
+				}
+			}
+		}
+		throw new AssertionError("Help -> About menu item not found");
 	}
 
 	private MenuItem helpContentsMenuItem() {

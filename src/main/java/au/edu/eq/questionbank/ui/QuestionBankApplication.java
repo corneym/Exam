@@ -383,11 +383,10 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private String applicationVersion() {
-		String applicationVersion = getClass().getPackage().getImplementationVersion();
-		if (applicationVersion == null || applicationVersion.isBlank()) {
-			return "Development build";
-		}
-		return applicationVersion;
+
+		// Read the Maven-filtered application metadata so About, backups, version
+		// information and later packaging all use the same authoritative version.
+		return au.edu.eq.questionbank.ApplicationVersion.current();
 	}
 
 	private void backupNow(Stage primaryStage, ApplicationConfig config) {
@@ -1685,12 +1684,15 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showAbout() {
+		String version = applicationVersion();
 		Alert alert = new Alert(Alert.AlertType.INFORMATION);
 		alert.setTitle("About Exam Question Bank");
 		alert.setHeaderText("Exam Question Bank");
 		alert.setContentText("""
 				An application for importing, classifying, capturing and managing examination questions.
-				""");
+
+				Version: %s
+				""".formatted(version).strip());
 		alert.showAndWait();
 	}
 

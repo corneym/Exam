@@ -6,7 +6,7 @@
 
 	<groupId>au.edu.eq</groupId>
 	<artifactId>exam-question-bank</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>0.1</version>
 	<name>Exam Question Bank</name>
 
 	<properties>
@@ -90,6 +90,23 @@
 	</dependencies>
 
 	<build>
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>false</filtering>
+				<excludes>
+					<exclude>au/edu/eq/questionbank/application.properties</exclude>
+				</excludes>
+			</resource>
+
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>true</filtering>
+				<includes>
+					<include>au/edu/eq/questionbank/application.properties</include>
+				</includes>
+			</resource>
+		</resources>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
@@ -107,18 +124,29 @@
 					</includes>
 
 					<argLine>
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank=ALL-UNNAMED
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank.model=ALL-UNNAMED
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank.pdf=ALL-UNNAMED
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank.repository.sqlite=ALL-UNNAMED
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank.repository.curriculum=ALL-UNNAMED
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank.repository.assessment=ALL-UNNAMED
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank.output=ALL-UNNAMED
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank.importer.curriculum=ALL-UNNAMED
-						--add-opens au.edu.eq.questionbank/au.edu.eq.questionbank.ui=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.model=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.pdf=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.repository.sqlite=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.repository.curriculum=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.repository.assessment=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.output=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.importer.curriculum=ALL-UNNAMED
+						--add-opens
+						au.edu.eq.questionbank/au.edu.eq.questionbank.ui=ALL-UNNAMED
 						${headless.test.jvm.args}
-						--add-exports javafx.graphics/com.sun.javafx.application=ALL-UNNAMED
-						--add-opens javafx.graphics/com.sun.javafx.application=ALL-UNNAMED
+						--add-exports
+						javafx.graphics/com.sun.javafx.application=ALL-UNNAMED
+						--add-opens
+						javafx.graphics/com.sun.javafx.application=ALL-UNNAMED
 						--enable-native-access=javafx.web
 						--enable-native-access=javafx.graphics,ALL-UNNAMED
 					</argLine>
@@ -172,8 +200,10 @@
 				<headless.test.jvm.args>
 					--add-exports javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
 					--add-opens javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
-					--add-exports javafx.graphics/com.sun.glass.ui.delegate=ALL-UNNAMED
-					--add-exports javafx.graphics/com.sun.javafx.util=ALL-UNNAMED
+					--add-exports
+					javafx.graphics/com.sun.glass.ui.delegate=ALL-UNNAMED
+					--add-exports
+					javafx.graphics/com.sun.javafx.util=ALL-UNNAMED
 					--add-exports javafx.base/com.sun.javafx.logging=ALL-UNNAMED
 				</headless.test.jvm.args>
 			</properties>
