@@ -1,7 +1,7 @@
 # Exam Question Bank --- Development Roadmap
 
-> **Reference date:** 27 September 2026\
-> **Version:** 19\
+> **Reference date:** 28 September 2026\
+> **Version:** 20\
 > **Repository location:** `docs/development-roadmap.md`
 >
 > This is the canonical durable project record: project history,
@@ -42,7 +42,9 @@ Completed Sprint 10 capture/output hardening
         ↓
 Completed Sprint 11 — Release 0.1
         ↓
-Sprint 12 — Corpus Dashboard + richer Question filtering
+Sprint 12 — Exam intake, capture workflow, MCQ explanations
+            and Corpus Dashboard
+            target Release 0.2
         ↓
 Real-corpus use and evidence-driven refinement
         ↓
@@ -57,6 +59,9 @@ Sprint 11 merged to protected `main` through pull request #39 on
 `1ccbb350a693568231bd14582ffbecc7684fb79a`.
 
 Final feature-branch GitHub Actions CI run 81 completed successfully.
+
+Sprint 12 design is recorded in `docs/design/sprint-12-release-0.2.md`.
+The implementation branch is `feature/sprint-12`.
 
 Git/GitHub remains authoritative for moving branch heads, pull-request state and
 CI state.
@@ -206,8 +211,12 @@ classification and revision-output applicability describe/edit the stored
 Question.
 
 Sprint 10 separated those responsibilities. Sprint 11 redesigned Search into a
-more compact two-column layout without changing retrieval semantics. Richer
-bank-management filters remain reserved for Sprint 12.
+more compact two-column layout without changing retrieval semantics.
+
+Richer retrieval-oriented Search filtering is deliberately deferred beyond
+Sprint 12 and is tracked in `docs/design/backlog.md`. Operational completeness
+and correction filtering belongs in Corpus Dashboard rather than being mixed
+into Search.
 
 ### 3.13 Presentation choices do not rewrite curriculum data
 
@@ -237,6 +246,10 @@ Release versions use a validated `major.minor` form. The normal release command
 automatically advances the minor version; an explicit `-Version` selects a
 specific version or major-version transition. A failed release restores the POM
 when the release script changed it.
+
+Sprint 12 targets Release **0.2** because it is expected to make substantial
+user-facing workflow changes. That target remains provisional until the normal
+release gate is run at sprint closeout.
 
 ### 3.16 Self-contained Windows deployment
 
@@ -390,43 +403,120 @@ Sprint 11 merged to protected `main` through pull request #39 after final
 feature-branch GitHub Actions CI run 81 completed successfully. Merge commit:
 `1ccbb350a693568231bd14582ffbecc7684fb79a`.
 
-## 5. Sprint 12 --- Corpus Dashboard and richer Question filtering
+## 5. Sprint 12 --- Exam intake, capture workflow and Corpus Dashboard
 
-Sprint 12 is reserved for bank-management work rather than being allowed to
-expand Sprint 11.
+Sprint 12 is the active designed sprint on branch `feature/sprint-12` and
+targets Release 0.2.
 
-### Corpus Audit -> Corpus Dashboard
+Its design is deliberately organised into four dependent slices rather than an
+uncontrolled collection of UI changes.
 
-Redesign the existing Corpus Audit into an operational Corpus Dashboard. It
-should answer:
+### Slice 1 --- Exam setup, assets, hashes and safe correction
+
+Question capture begins from an explicitly selected/configured Exam and Question
+booklet.
+
+The Exam-level setup workflow is designed to:
+
+- select or create an Exam;
+- manage all Question booklets and Answer/marking assets in one place;
+- display a selected Question booklet PDF in inspection-only mode while the user
+  records its expected top-level Question count;
+- preserve booklet format metadata;
+- persist managed source-document hashes for duplicate detection and future
+  reconciliation;
+- assign AnswerFiles to Question booklets;
+- record whether an AnswerFile contains optional MCQ explanation material;
+- replace incorrectly selected Question/Answer assets without silently remapping
+  old region coordinates;
+- let the user declare an Exam `COMPLETE` and explicitly reactivate it later.
+
+Expected Question count refers to top-level numbered Questions. Multipart parts
+such as `21a`, `21b` and `21c` collectively represent source Question 21 for
+counting purposes.
+
+Exam completeness is user-declared. Audit findings remain advisory and do not
+automatically alter the declared state.
+
+A completed Exam locks structural change while ordinary content correction and
+enrichment remain available.
+
+### Slice 2 --- Streamlined Question capture
+
+After Slice 1 establishes the active Exam/booklet, capture is simplified around
+the real sustained-use workflow.
+
+Planned behaviour includes:
+
+- workspace-level Working Subject;
+- clear active Exam/booklet context;
+- one bounded capture workspace containing Classification, Question and Answer;
+- explicit `Start New Question Capture`;
+- sequential new-Question capture after save;
+- only `Add Region` and `Add From Clipboard` as Question-content creation
+  actions;
+- existing click-away cancellation for an unaccepted PDF selection;
+- individual removal/reordering of accepted Question content;
+- existing `21a`, `21b`, etc. multipart detection;
+- reuse of existing SourceQuestion and Shared Context semantics;
+- imported/incomplete Question controls only when relevant work exists.
+
+### Slice 3 --- MCQ explanation regions
+
+Optional marking-PDF explanation material may be attached to MCQ Answers.
+
+The A/B/C/D choice remains authoritative and sufficient for MCQ Answer
+completeness. Explanation regions are supplementary.
+
+AnswerFiles may record that they contain MCQ explanation material. New Answer
+capture and a retrofit workflow may then attach explanation regions to existing
+MCQ Answers without changing the stored answer letter.
+
+Explanation coverage remains separate from ordinary Answer completeness.
+
+### Slice 4 --- Corpus Dashboard / Audit refinement
+
+The existing Corpus Audit evolves into an Exam -> booklet -> Question operational
+Dashboard.
+
+The Dashboard distinguishes:
 
 ``` text
-What work remains?
-Why does it need attention?
-Take me to the existing workflow that can resolve it.
+declared Exam state
+    ACTIVE / COMPLETE
+
+calculated audit findings
+    clear / work requiring attention
 ```
 
-The Dashboard should reuse existing audit/domain truth rather than invent
-parallel completeness rules. It is intended as an operational work queue, not a
-graph-heavy reporting dashboard.
+It uses Slice 1 expected-count and asset metadata while retaining useful
+Question-level audit semantics.
 
-Detailed scope will be designed against the then-current code before
-implementation.
+Expected Question counts are compared with top-level/source Questions, not
+multipart Question-row count.
 
-### Richer Question filtering
+The current PDF-region-only Question-source audit must be corrected so
+clipboard/image-only Questions count as having authoritative Question content.
 
-Extend Question Search as the principal bank-management/search surface with
-practical filters justified by real corpus use. Candidate dimensions include
-exam/provider/year, response type, source/Answer presence, Shared Context state,
-current applicability and revision-output exclusion state.
+The Dashboard should provide useful tables, summary counts, filtering,
+correction routing and refresh after work is completed. Curriculum mapping
+review coverage remains a separate reporting dimension.
 
-The Search Dialog layout redesign is complete from Sprint 11; richer search
-semantics remain Sprint 12.
+Detailed working design and implementation status are maintained in
+`docs/design/sprint-12-release-0.2.md`.
+
+### Deferred from Sprint 12
+
+Richer retrieval-oriented Question Search filtering has returned to
+`docs/design/backlog.md`.
+
+The Dashboard owns operational completeness/correction filtering; Search remains
+a retrieval/edit surface.
 
 ## 6. Later product direction
 
 Exam Builder and printable assessment/solution output remain later product areas.
-Their priority should be determined by real use after the 0.1 release and
+Their priority should be determined by real use after Release 0.2 and
 corpus-management work.
 
 Exam Builder should consume the bank rather than become a dependency of
@@ -434,6 +524,9 @@ revision/SCORM output.
 
 Print-oriented output may later require vector-preserving clipping from
 authoritative source PDFs.
+
+Portable offline collection packages remain a planned future capability rather
+than Sprint 12 scope.
 
 ## 7. Development discipline
 

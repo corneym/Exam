@@ -1,9 +1,10 @@
 # Exam Question Bank Backlog
 
-> **Authoritative deferred/unresolved-work list:** 27 September 2026.\
-> Sprint 11 is complete and merged.\
-> Sprint 12 Corpus Dashboard and richer Question filtering are committed roadmap
-> work and are not duplicated here.
+> **Authoritative deferred/unresolved-work list:** 28 September 2026.\
+> Sprint 11 Release 0.1 is complete and merged.\
+> Sprint 12 is designed on branch `feature/sprint-12` and targets Exam setup /
+> asset management, streamlined Question capture, MCQ explanation capture and
+> Corpus Dashboard refinement. Those active items are not duplicated here.
 >
 > Priority in this document means priority among deferred/unresolved work. It does
 > not make an item active sprint scope until it is explicitly promoted into a
@@ -11,159 +12,42 @@
 
 ## High priority
 
-These items should be considered early because they address data integrity,
-repeated capture friction, or durable infrastructure that will support later
-work.
+These items should be considered early because they address durable usability,
+retrieval or data-maintenance needs that remain outside Sprint 12.
 
-### Capture workspace UI and state cleanup
+### Richer Question Search filtering
 
-The main capture workspace should better distinguish workspace context from the
-Question currently being captured.
+Extend Question Search with retrieval-oriented filters justified by real corpus
+use.
 
-Working Subject is workspace-level state because it controls the active Subject
-and filters Question/Answer work queues. It should therefore be removed from the
-`CLASSIFICATION` pane and placed in its own pane above the capture controls.
+Candidate dimensions include:
 
-The preferred layout is conceptually:
+- Exam provider;
+- Exam year;
+- assessment/Exam;
+- booklet;
+- response type;
+- current applicability;
+- revision-output exclusion state.
 
-``` text
-WORKING SUBJECT
-
-CAPTURE WORKSPACE
-    CLASSIFICATION
-    QUESTION
-    ANSWER
-```
-
-`CLASSIFICATION`, `QUESTION` and `ANSWER` should visually belong to one bordered
-capture-workspace container. Working Subject should remain outside and above that
-container.
-
-Classification controls should be disabled until a Question capture/edit
-workflow has actually begun. Merely opening the application or choosing a Working
-Subject should not make Question-classification controls appear active.
-
-The Question capture-mode controls also need simplification:
-
-- `Capture New Questions` currently provides little visible effect when new
-  capture is already selected by default. New Question capture should have an
-  explicit inactive -> active transition, with a clearer label such as
-  `Capture New Question` or `Start New Question Capture`.
-- after saving a new Question, remaining in new-question capture mode is
-  desirable for efficient sequential capture;
-- imported-question capture controls should be shown only when the current
-  Working Subject actually has imported Questions awaiting capture/resolution;
-- when no imported work exists, both the imported-capture action and imported
-  Question ComboBox should be hidden or otherwise absent from the normal
-  workflow;
-- `Capture Imported Questions` should use task-oriented wording such as
-  `Complete Imported Question`.
-
-Question content actions should use labels that describe their different scopes.
-The current two Clear actions are semantically different and should not look
-interchangeable:
+Keep Search conceptually distinct from Corpus Dashboard:
 
 ``` text
-Add Region             Discard Selection
-Add Clipboard Image    Clear All Content
+Dashboard
+    operational work:
+    what is incomplete/problematic and where to fix it
+
+Search
+    retrieval work:
+    which Questions do I want to inspect or use
 ```
 
-`Discard Selection` clears only the current unaccepted PDF rectangle.
-`Clear All Content` clears all accepted staged Question content, including PDF
-regions and clipboard images.
+Do not duplicate Dashboard-oriented "missing Answer", "missing Question content"
+or other operational work-queue filters into Search unless later real use shows
+a genuine retrieval need.
 
-`Add Clipboard Image` is preferred over `Paste Image` because the operation adds
-a first-class ordered Question content part rather than merely pasting into a
-field.
-
-### Correct an incorrectly assigned booklet Answer PDF
-
-The application needs an explicit correction workflow for a booklet whose
-assigned Answer/marking PDF is wrong.
-
-This belongs at `ExamBooklet`/AnswerFile level rather than being hidden inside
-`Edit Answer`, because the Answer PDF is assigned to the booklet and may serve
-many Questions.
-
-A suitable task-oriented action is:
-
-``` text
-Change Booklet Answer PDF...
-```
-
-Required behaviour:
-
-- select/import the replacement Answer PDF;
-- if the booklet has no persisted Answer regions, replace the booklet's
-  AnswerFile assignment directly;
-- if persisted written-response Answer regions already refer to the old file,
-  do not silently remap them to the new PDF;
-- warn that the stored page/rectangle coordinates belong to the old PDF;
-- require explicit confirmation before invalidating those regions;
-- after confirmation, remove the affected Answer regions, assign the correct
-  AnswerFile and return the affected Questions to Answer capture;
-- preserve Question content, classifications, marks and any independent MCQ
-  answer letters.
-
-The existing repository protection against assigning a new AnswerFile while old
-regions refer to another file should remain. The correction workflow must work
-with that invariant rather than bypass it.
-
-### First-time Exam intake and asset checklist
-
-When an Exam is being added for the first time, provide an optional intake
-dialog that helps establish what source material is expected before detailed
-capture begins.
-
-The dialog could collect planning information such as:
-
-- expected number of Question booklets;
-- expected/approximate number of Questions in each booklet;
-- expected number of Answer/marking booklets or PDFs;
-- which Question and Answer PDFs are already available;
-- any immediately known missing source material.
-
-This is an intake/checklist concept, not permission to invent authoritative
-Questions, booklets or Answers. Expected counts may be planning metadata until
-the corresponding real assets are confirmed.
-
-The same information should feed an Exam-level asset/completeness view so the
-application can report whether all expected source assets have been captured.
-
-### Exam asset audit and reconciliation reporting
-
-Extend import/reconciliation reporting into an Exam-level asset audit rather
-than treating it only as a legacy-import report.
-
-Useful reporting may include:
-
-- expected versus present Question booklets;
-- expected versus present Answer/marking documents;
-- Questions created or already present;
-- Questions still needing Question content;
-- Questions still needing Answers;
-- unresolved response types;
-- unresolved classifications;
-- unresolved Shared Context requirements;
-- source-document conflicts or duplicates;
-- records rejected because they conflict with authoritative data.
-
-Where practical, use the same validation/reconciliation model for first-time Exam
-intake, later correction, legacy import and future portable work-package import.
-
-A dry-run/preview mode may later reuse the same validation.
-
-### Managed document hashing and duplicate detection
-
-Persist SHA-256 or equivalent content hashes for managed source documents so
-identical files can be recognised independently of filename or storage path.
-
-Current collision handling can compare file bytes when needed, but persisted
-hashes would make duplicate detection, Exam intake, reconciliation and future
-distributed work-package import cheaper and more reliable.
-
-Hashing should support, rather than replace, existing path and ownership
-validation.
+The Sprint 11 two-column Search layout is already complete. This backlog item is
+about retrieval semantics, not another layout redesign.
 
 ### Remove empty managed directories after Exam relocation
 
@@ -173,24 +57,10 @@ managed directories left behind.
 Work upwards only within the configured managed PDF root and stop at the first
 non-empty or protected directory. Never delete outside the managed root.
 
-### MCQ explanation regions
-
-Support optional marking-PDF explanation material for multiple-choice Questions.
-
-The stored A/B/C/D choice remains the primary MCQ Answer. One or more Answer PDF
-regions may optionally be attached as explanation/working material for revision
-output.
-
-Explanation regions must remain supplementary:
-
-- they are not required for MCQ completeness;
-- absence of explanation material must not block capture or output;
-- the ordinary MCQ answer letter remains authoritative.
-
 ## Planned future capability
 
-These items are more concrete than "some day/maybe", but are not yet active
-sprint work.
+These items are more concrete than "some day/maybe", but are not active Sprint
+12 work.
 
 ### Portable collection packages / offline distributed collection
 
@@ -292,8 +162,8 @@ completely new stable ID
     -> import candidate
 ```
 
-Managed document hashing should be used where appropriate to help identify
-duplicate source material.
+Managed document hashes introduced by Sprint 12 should be used where appropriate
+to help identify duplicate source material.
 
 #### Provenance
 
@@ -354,13 +224,11 @@ complexity of a shared live database.
 
 ### Additional capture-workflow productivity features
 
-Possible improvements include:
+Possible later improvements include:
 
-- next unresolved Question;
-- automatic advance after save;
-- skip/defer;
-- previous item;
-- direct entry from bank-management tools into the relevant capture workflow.
+- skip/defer current work;
+- previous unresolved item;
+- additional keyboard/efficiency shortcuts.
 
 Promote these only when real corpus use demonstrates a repeated workflow cost.
 
@@ -371,8 +239,10 @@ states distinguishing unresolved work from deliberately accepted exceptions
 such as source unavailable, Answer unavailable or deliberately out-of-scope
 material.
 
-Do not conflate this with the implemented Question-specific revision-output
-exclusion mechanism.
+Do not conflate this with:
+
+- user-declared Exam `COMPLETE` state introduced by Sprint 12;
+- implemented Question-specific revision-output exclusion.
 
 ## Retrieval / performance hardening
 
@@ -405,7 +275,7 @@ Application writers enforce same Subject, different versions, same level and
 allowed mapping direction. Decide later whether direct-SQL bypass risk justifies
 database triggers or other enforcement.
 
-Mapping-review completion should otherwise be reported through the corpus
+Mapping-review completion should otherwise be reported through corpus
 reporting/dashboard work. No separate mapping-review workflow extension is
 currently required.
 
@@ -510,10 +380,15 @@ Do not re-add:
 - Sprint 11 tooltips;
 - Sprint 11 Help/About/version work;
 - Sprint 11 packaging/deployment and Release 0.1;
-- Sprint 12 Corpus Dashboard;
-- Sprint 12 richer Question filtering;
+- Sprint 12 Exam setup / asset management;
+- Sprint 12 managed source-document hashing;
+- Sprint 12 safe Question/Answer asset replacement;
+- Sprint 12 capture-workspace/state cleanup;
+- Sprint 12 streamlined sequential Question capture;
+- Sprint 12 MCQ explanation regions;
+- Sprint 12 Corpus Dashboard / Audit refinement;
 - standalone mapping-review completion tooling beyond reporting remaining
-  mapping work in the corpus dashboard/reporting tools.
+  mapping work in corpus/dashboard reporting.
 
 The following former backlog directions have been deliberately removed and
 should not be reintroduced without new evidence:
@@ -531,8 +406,8 @@ should not be reintroduced without new evidence:
 - Keep performance work measurement-driven.
 - Prefer behaviour-focused regressions over coverage percentages.
 - Do not invent placeholder data to resolve unclear ownership/semantics.
-- Intake estimates and expected asset counts are planning/checklist data, not
-  permission to create fictitious authoritative Questions, booklets or Answers.
+- Expected asset/question counts are planning and audit metadata, not permission
+  to create fictitious authoritative Questions, booklets or Answers.
 - Do not promote chat prototypes or standalone mapping artefacts to implemented
   capability without repository/persistence evidence.
 - Prefer safe, reviewable import/reconciliation over direct cross-database
