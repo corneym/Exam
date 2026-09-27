@@ -10,6 +10,7 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -19,6 +20,18 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
 class QuestionCapturePaneQueueTest {
+
+	@Test
+	void imageOnlyQuestionDoesNotRemainInAwaitingCaptureQueue() {
+		ExamProvider provider = new ExamProvider(1, "QCAA");
+		Subject chemistry = new Subject(2, "Chemistry");
+		Question imported = question(10, chemistry, provider, "Chemistry/2024/paper.pdf", "1");
+		Question imageOnly = new Question(imported.getId(), imported.getBooklet(), imported.getQuestionCode(),
+				imported.getQuestionText(), imported.getMarks(), List.of(), imported.getClassification(), false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE, List.of(new ImageQuestionContentPart(new byte[] { 1 })));
+		List<Question> awaiting = QuestionCapturePane.awaitingCaptureForWorkingSubject(List.of(imageOnly), chemistry);
+		assertEquals(List.of(), awaiting);
+	}
 
 	@Test
 	void workingSubjectExcludesImportedQuestionsFromOtherSubjects() {

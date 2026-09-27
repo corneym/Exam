@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Tag;
@@ -18,17 +19,45 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import javafx.application.Platform;
+import javafx.concurrent.Worker;
 import javafx.event.Event;
 import javafx.scene.control.Button;
+import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.web.WebView;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
 
 @Tag("ui")
 @Tag("workflow-ui")
 class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	@Test
+	void aboutDisplaysAuthoritativeApplicationVersion(FxRobot robot) throws Exception {
+		MenuItem aboutItem = helpAboutMenuItem();
+
+		// About is modal, so queue the menu action and leave the JUnit thread free to
+		// inspect and close the resulting Alert.
+		Platform.runLater(aboutItem::fire);
+		waitForDialogShowing(robot, "About Exam Question Bank");
+		javafx.scene.control.DialogPane dialog = showingDialogPane(robot, "About Exam Question Bank");
+		AtomicReference<String> contentText = new AtomicReference<>();
+		robot.interact(() -> {
+			javafx.scene.Node contentLabel = dialog.lookup(".content.label");
+			if (!(contentLabel instanceof javafx.scene.control.Label label)) {
+				throw new AssertionError("About dialog content label not found");
+			}
+			contentText.set(label.getText());
+		});
+		assertEquals("""
+				An application for importing, classifying, capturing and managing examination questions.
+
+				Version: 0.1
+				""".strip(), contentText.get());
+		fireDialogButton(robot, "OK");
+	}
 
 	@Test
 	void fileExitCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
@@ -63,6 +92,36 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 		} finally {
 			setField(pane, "questionSaveInProgress", false);
 		}
+	}
+
+	@Test
+	void helpContentsOpensPackagedHelp(FxRobot robot) throws Exception {
+		MenuItem helpContents = helpContentsMenuItem();
+
+		// The Help action uses showAndWait(). Queue it without blocking the JUnit
+		// thread so the test can interact with the modal dialog while it is open.
+		Platform.runLater(helpContents::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("#help-web-view").tryQuery().isPresent());
+		WebView helpWebView = robot.lookup("#help-web-view").queryAs(WebView.class);
+		AtomicReference<Worker.State> loadState = new AtomicReference<>();
+		robot.interact(() -> {
+			Worker<Void> loadWorker = helpWebView.getEngine().getLoadWorker();
+
+			// WebEngine state is confined to the JavaFX application thread. Mirror
+			// transitions into thread-safe state for the JUnit wait below.
+			loadState.set(loadWorker.getState());
+			loadWorker.stateProperty().addListener((_, _, newState) -> loadState.set(newState));
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> loadState.get() == Worker.State.SUCCEEDED
+				|| loadState.get() == Worker.State.FAILED || loadState.get() == Worker.State.CANCELLED);
+		assertEquals(Worker.State.SUCCEEDED, loadState.get());
+		robot.interact(() -> {
+
+			// Closing the modal Help window releases the nested showAndWait event
+			// loop and leaves the primary application window running.
+			helpWebView.getScene().getWindow().hide();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
 	}
 
 	@Test
@@ -133,5 +192,37 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 			}
 		}
 		throw new AssertionError("File -> Restore Backup menu item not found");
+	}
+
+	private MenuItem helpAboutMenuItem() {
+		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
+		MenuBar menuBar = (MenuBar) root.getTop();
+		for (Menu menu : menuBar.getMenus()) {
+			if (!"_Help".equals(menu.getText())) {
+				continue;
+			}
+			for (MenuItem item : menu.getItems()) {
+				if ("_About...".equals(item.getText())) {
+					return item;
+				}
+			}
+		}
+		throw new AssertionError("Help -> About menu item not found");
+	}
+
+	private MenuItem helpContentsMenuItem() {
+		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
+		MenuBar menuBar = (MenuBar) root.getTop();
+		for (Menu menu : menuBar.getMenus()) {
+			if (!"_Help".equals(menu.getText())) {
+				continue;
+			}
+			for (MenuItem item : menu.getItems()) {
+				if ("_Help Contents...".equals(item.getText())) {
+					return item;
+				}
+			}
+		}
+		throw new AssertionError("Help -> Help Contents menu item not found");
 	}
 }

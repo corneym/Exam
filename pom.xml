@@ -6,7 +6,7 @@
 
 	<groupId>au.edu.eq</groupId>
 	<artifactId>exam-question-bank</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>0.1</version>
 	<name>Exam Question Bank</name>
 
 	<properties>
@@ -22,6 +22,7 @@
 		<sqlite.jdbc.version>3.53.2.1</sqlite.jdbc.version>
 		<test.suite>**/NonUITests.java</test.suite>
 		<headless.test.jvm.args></headless.test.jvm.args>
+		<maven.javadoc.plugin.version>3.12.0</maven.javadoc.plugin.version>
 	</properties>
 
 	<dependencies>
@@ -36,6 +37,12 @@
 			<artifactId>junit-jupiter</artifactId>
 			<version>${junit.version}</version>
 			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.openjfx</groupId>
+			<artifactId>javafx-web</artifactId>
+			<version>${javafx.version}</version>
 		</dependency>
 
 		<dependency>
@@ -84,11 +91,39 @@
 	</dependencies>
 
 	<build>
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>false</filtering>
+				<excludes>
+					<exclude>au/edu/eq/questionbank/application.properties</exclude>
+				</excludes>
+			</resource>
+
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>true</filtering>
+				<includes>
+					<include>au/edu/eq/questionbank/application.properties</include>
+				</includes>
+			</resource>
+		</resources>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>${maven.compiler.plugin.version}</version>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>${maven.javadoc.plugin.version}</version>
+
+				<configuration>
+					<doclint>all</doclint>
+					<failOnWarnings>true</failOnWarnings>
+				</configuration>
 			</plugin>
 
 			<plugin>
@@ -124,6 +159,7 @@
 						javafx.graphics/com.sun.javafx.application=ALL-UNNAMED
 						--add-opens
 						javafx.graphics/com.sun.javafx.application=ALL-UNNAMED
+						--enable-native-access=javafx.web
 						--enable-native-access=javafx.graphics,ALL-UNNAMED
 					</argLine>
 				</configuration>
@@ -177,6 +213,8 @@
 					--add-exports javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
 					--add-opens javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
 					--add-exports
+					javafx.graphics/com.sun.glass.ui.delegate=ALL-UNNAMED
+					--add-exports
 					javafx.graphics/com.sun.javafx.util=ALL-UNNAMED
 					--add-exports javafx.base/com.sun.javafx.logging=ALL-UNNAMED
 				</headless.test.jvm.args>
@@ -187,6 +225,12 @@
 					<groupId>org.testfx</groupId>
 					<artifactId>openjfx-monocle</artifactId>
 					<version>21.0.2</version>
+					<scope>test</scope>
+				</dependency>
+				<dependency>
+					<groupId>org.hamcrest</groupId>
+					<artifactId>hamcrest</artifactId>
+					<version>2.1</version>
 					<scope>test</scope>
 				</dependency>
 			</dependencies>

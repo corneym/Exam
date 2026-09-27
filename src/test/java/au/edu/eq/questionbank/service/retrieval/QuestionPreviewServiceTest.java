@@ -4,10 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+
+import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -21,8 +25,11 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -33,6 +40,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.service.render.QuestionContentRenderer;
 
 class QuestionPreviewServiceTest {
 
@@ -47,6 +55,54 @@ class QuestionPreviewServiceTest {
 		Question question = new Question(11, booklet, "Q2", "", 1, List.of(), classification, false);
 		Optional<BufferedImage> preview = service.loadPreview(question);
 		assertTrue(preview.isEmpty());
+	}
+
+	@Test
+	void loadsMixedImageAndPdfPreviewInContentOrder() throws Exception {
+		createPdf(tempDir.resolve("exam.pdf"), Color.BLUE);
+		byte[] imageBytes = createPng(50, 20, Color.RED);
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.0, 0.0, 1.0, 1.0);
+		Question question = new Question(15, booklet, "Q4", "", 1, List.of(region), classification, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE,
+				List.of(new ImageQuestionContentPart(imageBytes), new PdfQuestionContentPart(region)));
+
+		// The domain object must retain the authoritative mixed-content sequence before
+		// the preview layer attempts to render it.
+		assertEquals(2, question.getContentParts().size());
+		assertTrue(question.getContentParts().get(0) instanceof ImageQuestionContentPart);
+		assertTrue(question.getContentParts().get(1) instanceof PdfQuestionContentPart);
+
+		// Isolate the mixed-content renderer from the preview-service wrapper.
+		QuestionContentRenderer contentRenderer = new QuestionContentRenderer(new PdfStore(tempDir),
+				new QuestionExtractor());
+		BufferedImage directlyRendered = contentRenderer.renderQuestionPreview(question);
+		assertEquals(150, directlyRendered.getWidth());
+		assertEquals(170, directlyRendered.getHeight());
+		assertEquals(Color.RED.getRGB(), directlyRendered.getRGB(25, 10));
+		assertEquals(Color.BLUE.getRGB(), directlyRendered.getRGB(75, 95));
+		BufferedImage image = service.loadPreview(question).orElseThrow();
+		assertEquals(150, image.getWidth());
+		assertEquals(170, image.getHeight());
+
+		// Stored image appears before the captured PDF question region.
+		assertEquals(Color.RED.getRGB(), image.getRGB(25, 10));
+		assertEquals(Color.BLUE.getRGB(), image.getRGB(75, 95));
+	}
+
+	@Test
+	void loadsPreviewFromStoredImageWithoutSourcePdf() throws Exception {
+		byte[] imageBytes = createPng(60, 30, Color.MAGENTA);
+		Question question = new Question(14, booklet, "Q3", "", 2, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE, List.of(new ImageQuestionContentPart(imageBytes)));
+
+		// No exam.pdf exists. An image-only Question must preview entirely from its
+		// persisted content.
+		Optional<BufferedImage> preview = service.loadPreview(question);
+		assertTrue(preview.isPresent());
+		BufferedImage image = preview.orElseThrow();
+		assertEquals(60, image.getWidth());
+		assertEquals(30, image.getHeight());
+		assertEquals(Color.MAGENTA.getRGB(), image.getRGB(30, 15));
 	}
 
 	@Test
@@ -105,6 +161,21 @@ class QuestionPreviewServiceTest {
 				}
 			}
 			document.save(path.toFile());
+		}
+	}
+
+	private byte[] createPng(int width, int height, Color color) throws Exception {
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+		Graphics2D graphics = image.createGraphics();
+		try {
+			graphics.setColor(color);
+			graphics.fillRect(0, 0, width, height);
+		} finally {
+			graphics.dispose();
+		}
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			assertTrue(ImageIO.write(image, "png", output));
+			return output.toByteArray();
 		}
 	}
 }

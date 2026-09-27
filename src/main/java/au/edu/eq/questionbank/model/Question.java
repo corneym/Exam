@@ -1,20 +1,25 @@
 package au.edu.eq.questionbank.model;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * An examination question belonging to one source booklet.
  * <p>
- * The original source regions are authoritative; question text is supplementary
- * metadata. A question imported from legacy metadata may exist before any
- * source regions have been captured. Questions created through normal PDF
- * capture must contain at least one region before they are saved.
+ * The ordered {@link QuestionContentPart} list is the authoritative
+ * student-facing Question body. It may contain PDF-backed regions, stored
+ * raster images, or both. {@link #getRegions()} remains a compatibility
+ * projection of the PDF-backed parts only. Question text is supplementary
+ * metadata.
  * <p>
- * Each question has one best-fit syllabus classification, which must be a
+ * A Question imported from legacy metadata may exist before any body content
+ * has been captured.
+ * <p>
+ * Each Question has one best-fit syllabus classification, which must be a
  * {@link CurriculumLevel#SUBTOPIC subtopic} or
- * {@link CurriculumLevel#DESCRIPTOR descriptor}. Every captured region must
- * belong to the question's {@link ExamBooklet}. The classification must belong
- * to the same subject as the booklet's exam.
+ * {@link CurriculumLevel#DESCRIPTOR descriptor}. Every PDF-backed content part
+ * must belong to the Question's {@link ExamBooklet}. The classification must
+ * belong to the same subject as the booklet's exam.
  */
 public class Question {
 
@@ -30,6 +35,7 @@ public class Question {
 	private final SharedQuestionContext sharedContext;
 	private Answer answer;
 	private final QuestionResponseType responseType;
+	private final List<QuestionContentPart> contentParts;
 
 	/**
 	 * Creates a question through the normal capture workflow.
@@ -128,6 +134,34 @@ public class Question {
 	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
 			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType) {
+		this(id, booklet, questionCode, questionText, marks, regions, classification, sharedContextCaptureRequired,
+				sourceQuestion, sharedContext, responseType, pdfContentParts(regions));
+	}
+
+	/**
+	 * Creates a question with explicit ordered mixed source content.
+	 * <p>
+	 * {@code regions} remains the compatibility view containing every PDF content
+	 * part in encounter order. {@code contentParts} is the authoritative complete
+	 * body ordering and may also contain stored image parts.
+	 *
+	 * @param id                           persistent identifier
+	 * @param booklet                      source booklet
+	 * @param questionCode                 question code
+	 * @param questionText                 supplementary searchable text
+	 * @param marks                        positive mark value
+	 * @param regions                      PDF-region compatibility view
+	 * @param classification               original classification
+	 * @param sharedContextCaptureRequired historical shared-context evidence
+	 * @param sourceQuestion               source-question identity, or null
+	 * @param sharedContext                shared context, or null
+	 * @param responseType                 authoritative response type
+	 * @param contentParts                 complete ordered Question body
+	 */
+	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType,
+			List<QuestionContentPart> contentParts) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -152,24 +186,25 @@ public class Question {
 		if (responseType == null) {
 			throw new NullPointerException("responseType");
 		}
+		if (contentParts == null) {
+			throw new NullPointerException("contentParts");
+		}
 		if (responseType == QuestionResponseType.MULTIPLE_CHOICE && marks != 1) {
 
-			// Multiple-choice Questions are always worth exactly one mark. Enforce the
-			// invariant in the domain model rather than relying only on the capture UI.
+			// Multiple-choice Questions are always worth exactly one mark.
 			throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark");
 		}
-
-		// Check classification and source ownership before retaining the supplied
-		// relationships.
 		validateClassification(booklet, classification);
 		validateSourceOwnership(booklet, regions, sourceQuestion, sharedContext);
+		validateContentParts(booklet, regions, contentParts);
 		this.id = id;
 		this.booklet = booklet;
 		this.questionCode = questionCode;
 		this.questionText = questionText;
 
-		// Preserve assembly order independently of later changes to the caller's list.
+		// Retain immutable compatibility and complete-content views independently.
 		this.regions = List.copyOf(regions);
+		this.contentParts = List.copyOf(contentParts);
 		this.marks = marks;
 		this.classification = classification;
 		this.sharedContextCaptureRequired = sharedContextCaptureRequired;
@@ -202,6 +237,16 @@ public class Question {
 		return booklet;
 	}
 
+	private static List<QuestionContentPart> pdfContentParts(List<QuestionRegion> regions) {
+		if (regions == null) {
+			throw new NullPointerException("regions");
+		}
+
+		// Existing callers describe PDF-only Questions, so preserve their current list
+		// order while exposing each region through the new composition abstraction.
+		return regions.stream().map(PdfQuestionContentPart::new).map(QuestionContentPart.class::cast).toList();
+	}
+
 	private static void validateClassification(ExamBooklet booklet, CurriculumNode classification) {
 
 		// Accept either supported classification level, including descriptors directly
@@ -212,6 +257,32 @@ public class Question {
 		}
 		if (!classification.getSyllabusVersion().getSubject().equals(booklet.getExam().getSubject())) {
 			throw new IllegalArgumentException("Question classification must belong to the exam's subject");
+		}
+	}
+
+	private static void validateContentParts(ExamBooklet booklet, List<QuestionRegion> regions,
+			List<QuestionContentPart> contentParts) {
+		List<QuestionRegion> contentRegions = new ArrayList<>();
+		for (QuestionContentPart part : contentParts) {
+			if (part == null) {
+				throw new NullPointerException("contentParts contains null");
+			}
+			if (part instanceof PdfQuestionContentPart pdfPart) {
+				QuestionRegion region = pdfPart.region();
+
+				// PDF content must remain tied to the Question's source booklet.
+				if (region.booklet().getId() != booklet.getId()) {
+					throw new IllegalArgumentException(
+							"PDF question content must belong to the question's exam booklet");
+				}
+				contentRegions.add(region);
+			}
+		}
+
+		// getRegions() remains a compatibility projection of exactly the PDF content
+		// parts, so duplicated model state cannot silently diverge.
+		if (!contentRegions.equals(regions)) {
+			throw new IllegalArgumentException("Question regions must match the PDF content parts in encounter order");
 		}
 	}
 
@@ -266,6 +337,15 @@ public class Question {
 	}
 
 	/**
+	 * Returns all source fragments contributing to the Question body.
+	 *
+	 * @return immutable mixed-content list in authoritative assembly order
+	 */
+	public List<QuestionContentPart> getContentParts() {
+		return contentParts;
+	}
+
+	/**
 	 * Returns the examination from which this question was captured.
 	 *
 	 * @return the exam owning the source booklet
@@ -312,10 +392,14 @@ public class Question {
 	}
 
 	/**
-	 * Returns the source regions used to assemble this question.
+	 * Returns the PDF-backed source regions contributing to this Question.
+	 * <p>
+	 * This is a compatibility projection of {@link #getContentParts()} and
+	 * therefore excludes stored image parts. Region order is their encounter order
+	 * within the complete Question body.
 	 *
-	 * @return an immutable list in assembly order; empty for metadata-only
-	 *         questions
+	 * @return immutable PDF-region list; empty for image-only or metadata-only
+	 *         Questions
 	 */
 	public List<QuestionRegion> getRegions() {
 		return regions;

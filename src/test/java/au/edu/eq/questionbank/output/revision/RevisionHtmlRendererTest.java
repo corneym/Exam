@@ -305,6 +305,16 @@ class RevisionHtmlRendererTest {
 		assertTrue(topicHtml.contains("href=\"../../index.html\""));
 		assertTrue(topicHtml.contains("href=\"index.html\""));
 		String stylesheet = Files.readString(stylesheetFile);
+		String packagedStylesheet;
+		try (java.io.InputStream input = RevisionHtmlRenderer.class
+				.getResourceAsStream("/au/edu/eq/questionbank/output/revision/revision.css")) {
+			assertTrue(input != null);
+
+			// The exported stylesheet must be the maintained packaged resource rather
+			// than a second CSS definition embedded in Java.
+			packagedStylesheet = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+		}
+		assertEquals(packagedStylesheet, stylesheet);
 		int breadcrumbRuleStart = stylesheet.indexOf(".breadcrumbs {");
 		int breadcrumbRuleEnd = stylesheet.indexOf('}', breadcrumbRuleStart);
 		assertTrue(breadcrumbRuleStart >= 0);

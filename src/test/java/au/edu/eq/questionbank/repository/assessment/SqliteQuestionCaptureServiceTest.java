@@ -1,20 +1,28 @@
 package au.edu.eq.questionbank.repository.assessment;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
 
+import javax.imageio.ImageIO;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextStatus;
@@ -51,6 +59,29 @@ class SqliteQuestionCaptureServiceTest {
 		Question reloaded = repository.findById(original.getId()).orElseThrow();
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, reloaded.getResponseType());
 		assertEquals(1, reloaded.getMarks());
+	}
+
+	@Test
+	void editCapturePreservesAndReordersMixedQuestionContent() throws Exception {
+		Fixture fixture = createFixture("mixed-question-edit.db");
+		QuestionRegion region = new QuestionRegion(fixture.booklet(), 1, 0.10, 0.20, 0.70, 0.20);
+		byte[] pngBytes = createTestPng();
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
+		Question original = service.save(SqliteQuestionCaptureService.Request.withContent(
+				SqliteQuestionCaptureService.Operation.NEW, fixture.booklet(), null, "Q10", 2,
+				List.of(new ImageQuestionContentPart(pngBytes), new PdfQuestionContentPart(region)),
+				fixture.classification(), QuestionResponseType.WRITTEN_RESPONSE, null, null, false));
+		Question updated = service.save(SqliteQuestionCaptureService.Request.withContent(
+				SqliteQuestionCaptureService.Operation.EDIT, fixture.booklet(), original, "Q10", 2,
+				List.of(new PdfQuestionContentPart(region), new ImageQuestionContentPart(pngBytes)),
+				fixture.classification(), QuestionResponseType.WRITTEN_RESPONSE, null, null, false));
+		assertTrue(updated.getContentParts().get(0) instanceof PdfQuestionContentPart);
+		assertTrue(updated.getContentParts().get(1) instanceof ImageQuestionContentPart);
+		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(original.getId()).orElseThrow();
+		assertTrue(reloaded.getContentParts().get(0) instanceof PdfQuestionContentPart);
+		assertTrue(reloaded.getContentParts().get(1) instanceof ImageQuestionContentPart);
+		ImageQuestionContentPart imagePart = (ImageQuestionContentPart) reloaded.getContentParts().get(1);
+		assertArrayEquals(pngBytes, imagePart.pngBytes());
 	}
 
 	@Test
@@ -315,6 +346,27 @@ class SqliteQuestionCaptureServiceTest {
 	}
 
 	@Test
+	void newCapturePersistsMixedImageAndPdfContentInOrder() throws Exception {
+		Fixture fixture = createFixture("mixed-question-capture.db");
+		QuestionRegion region = new QuestionRegion(fixture.booklet(), 2, 0.10, 0.20, 0.70, 0.20);
+		byte[] pngBytes = createTestPng();
+		List<QuestionContentPart> contentParts = List.of(new ImageQuestionContentPart(pngBytes),
+				new PdfQuestionContentPart(region));
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
+		Question saved = service.save(SqliteQuestionCaptureService.Request.withContent(
+				SqliteQuestionCaptureService.Operation.NEW, fixture.booklet(), null, "Q9", 2, contentParts,
+				fixture.classification(), QuestionResponseType.WRITTEN_RESPONSE, null, null, false));
+		Question reloaded = new SqliteQuestionRepository(fixture.database()).findById(saved.getId()).orElseThrow();
+		assertEquals(2, reloaded.getContentParts().size());
+		assertTrue(reloaded.getContentParts().get(0) instanceof ImageQuestionContentPart);
+		assertTrue(reloaded.getContentParts().get(1) instanceof PdfQuestionContentPart);
+		ImageQuestionContentPart imagePart = (ImageQuestionContentPart) reloaded.getContentParts().get(0);
+		assertArrayEquals(pngBytes, imagePart.pngBytes());
+		assertEquals(1, reloaded.getRegions().size());
+		assertEquals(2, reloaded.getRegions().getFirst().pageNumber());
+	}
+
+	@Test
 	void pendingIndependentMcqContextDoesNotLeakToAnotherBooklet() throws Exception {
 		Fixture fixture = createFixture("independent-mcq-booklet-scope.db");
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
@@ -407,6 +459,14 @@ class SqliteQuestionCaptureServiceTest {
 		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
 				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
 		return new Fixture(database, booklet, classification);
+	}
+
+	private byte[] createTestPng() throws Exception {
+		BufferedImage image = new BufferedImage(8, 4, BufferedImage.TYPE_INT_RGB);
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			assertTrue(ImageIO.write(image, "png", output));
+			return output.toByteArray();
+		}
 	}
 
 	private record Fixture(SqliteDatabase database, ExamBooklet booklet, Subtopic classification) {

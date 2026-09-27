@@ -1,14 +1,20 @@
 package au.edu.eq.questionbank.repository.assessment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+
+import javax.imageio.ImageIO;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -18,7 +24,10 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
@@ -211,12 +220,28 @@ class SqliteQuestionRepositoryTest {
 		ReconstructionFixture fixture = createReconstructionFixture("invalid-question-reconstruction.db");
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
+
+			// Deleting the original PDF region also removes its v14 composition row
+			// through the content-part foreign key.
 			statement.execute("DELETE FROM question_regions WHERE question_id = " + fixture.question().getId());
+
+			// Persist a deliberately invalid PDF source region belonging to a different
+			// booklet.
 			statement.execute("""
 					INSERT INTO question_regions
-					    (question_id, region_order, booklet_id, page_number, x, y, width, height)
+					    (question_id, region_order, booklet_id,
+					     page_number, x, y, width, height)
 					VALUES (%d, 0, %d, 1, 0.10, 0.10, 0.50, 0.20)
 					""".formatted(fixture.question().getId(), fixture.otherBooklet().getId()));
+
+			// Version 14 uses question_content_parts as the authoritative Question-body
+			// sequence, so reconnect the corrupt PDF region to the Question.
+			statement.execute("""
+					INSERT INTO question_content_parts
+					    (question_id, content_order, content_type,
+					     region_order, image_id)
+					VALUES (%d, 0, 'PDF_REGION', 0, NULL)
+					""".formatted(fixture.question().getId()));
 		}
 		assertThrows(IllegalStateException.class,
 				() -> new SqliteQuestionRepository(fixture.database()).findById(fixture.question().getId()));
@@ -306,6 +331,70 @@ class SqliteQuestionRepositoryTest {
 	}
 
 	@Test
+	void savesAndReloadsMixedImageAndPdfQuestionContentInOrder() throws Exception {
+		Path databasePath = tempDirectory.resolve("mixed-question-content.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
+				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
+		byte[] stimulusPng = createTestPng();
+		QuestionRegion questionRegion = new QuestionRegion(booklet, 4, 0.05, 0.55, 0.90, 0.35);
+		List<QuestionContentPart> contentParts = List.of(new ImageQuestionContentPart(stimulusPng),
+				new PdfQuestionContentPart(questionRegion));
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question saved = repository.saveWithContent(booklet, "Q5", "", 1, contentParts, subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+
+		// Reload through a fresh repository so assertions prove database
+		// reconstruction,
+		// not merely retention of the original Java objects.
+		Question loaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
+		assertEquals(2, loaded.getContentParts().size());
+		assertTrue(loaded.getContentParts().get(0) instanceof ImageQuestionContentPart);
+		assertTrue(loaded.getContentParts().get(1) instanceof PdfQuestionContentPart);
+		ImageQuestionContentPart loadedImage = (ImageQuestionContentPart) loaded.getContentParts().get(0);
+		assertTrue(java.util.Arrays.equals(stimulusPng, loadedImage.pngBytes()));
+		PdfQuestionContentPart loadedPdf = (PdfQuestionContentPart) loaded.getContentParts().get(1);
+		assertEquals(4, loadedPdf.region().pageNumber());
+
+		// Existing PDF-oriented code must still see exactly the PDF subset.
+		assertEquals(1, loaded.getRegions().size());
+		QuestionRegion loadedRegion = loaded.getRegions().getFirst();
+
+		// Reload reconstructs a new ExamBooklet object, so compare persistent ownership
+		// and region geometry rather than Java object identity.
+		assertEquals(booklet.getId(), loadedRegion.booklet().getId());
+		assertEquals(questionRegion.pageNumber(), loadedRegion.pageNumber());
+		assertEquals(questionRegion.x(), loadedRegion.x());
+		assertEquals(questionRegion.y(), loadedRegion.y());
+		assertEquals(questionRegion.width(), loadedRegion.width());
+		assertEquals(questionRegion.height(), loadedRegion.height());
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT content_order, content_type
+						FROM question_content_parts
+						WHERE question_id = %d
+						ORDER BY content_order
+						""".formatted(saved.getId()))) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt("content_order"));
+			assertEquals("IMAGE", result.getString("content_type"));
+			assertTrue(result.next());
+			assertEquals(1, result.getInt("content_order"));
+			assertEquals("PDF_REGION", result.getString("content_type"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
 	void savesAndReloadsQuestion() throws Exception {
 		Path databasePath = tempDirectory.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -360,6 +449,17 @@ class SqliteQuestionRepositoryTest {
 		AnswerFile otherAnswerFile = answerWriter.findOrCreateAnswerFile(otherBooklet.getExam(), "Answers",
 				"Chemistry/2024/answers.pdf");
 		return new ReconstructionFixture(database, question, otherBooklet, otherAnswerFile);
+	}
+
+	private byte[] createTestPng() throws Exception {
+
+		// A tiny real PNG is enough to prove binary persistence without coupling the
+		// repository test to JavaFX clipboard behaviour.
+		BufferedImage image = new BufferedImage(4, 3, BufferedImage.TYPE_INT_RGB);
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			assertTrue(ImageIO.write(image, "png", output));
+			return output.toByteArray();
+		}
 	}
 
 	private record ReconstructionFixture(SqliteDatabase database, Question question, ExamBooklet otherBooklet,

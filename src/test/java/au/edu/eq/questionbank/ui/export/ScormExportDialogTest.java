@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui.export;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -111,6 +112,10 @@ class ScormExportDialogTest {
 		CheckBox incompleteUnitBox = unitBox.getChildren().stream()
 				.filter(node -> "scorm-export-unit-20".equals(node.getId())).map(node -> (CheckBox) node).findFirst()
 				.orElseThrow();
+		assertNotNull(groupingBox.getTooltip());
+		assertTrue(groupingBox.getTooltip().getText().contains("stored curriculum and Question data are unchanged"));
+		assertNotNull(incompleteUnitBox.getTooltip());
+		assertTrue(incompleteUnitBox.getTooltip().getText().contains("generated SCORM package"));
 		org.testfx.api.FxToolkit.setupFixture(() -> incompleteUnitBox.setSelected(false));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(Set.of(completeUnit.getId()), dialog.getSelectedUnitIds());

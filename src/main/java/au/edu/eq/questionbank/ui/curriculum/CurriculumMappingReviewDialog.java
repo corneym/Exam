@@ -40,6 +40,7 @@ import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
@@ -273,9 +274,15 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 
 	private void configureReviewControls() {
 		noMatchCheckBox.setDisable(true);
+		noMatchCheckBox.setTooltip(new Tooltip(
+				"Record a reviewed source node with no target equivalent; Confirm removes any accepted targets for it."));
 		noMatchCheckBox.setOnAction(_ -> handleNoMatchSelection());
+		showReviewedCheckBox.setTooltip(
+				new Tooltip("Limit the source list to nodes whose mapping review has already been confirmed."));
 		showReviewedCheckBox.setOnAction(_ -> loadSourceDescriptors());
 		editReviewButton.setDisable(true);
+		editReviewButton.setTooltip(new Tooltip(
+				"Unlock the confirmed mapping so its target selections can be changed and confirmed again."));
 		editReviewButton.setOnAction(_ -> toggleReviewEditing());
 		sourceNodeHeading.setPadding(new Insets(HEADING_TOP_PADDING, 0, 0, 0));
 		GridPane.setValignment(sourceNodeHeading, VPos.TOP);
@@ -313,6 +320,8 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		setSelectorWidth(reviewLevelBox);
 		reviewLevelBox.getItems().setAll(CurriculumLevel.DESCRIPTOR, CurriculumLevel.SUBTOPIC);
 		reviewLevelBox.setValue(CurriculumLevel.DESCRIPTOR);
+		reviewLevelBox.setTooltip(new Tooltip(
+				"Review Subtopic and Descriptor mappings separately; each level has its own confirmed state."));
 		updateLevelLabels();
 		targetVersionBox.setDisable(true);
 		setSelectorWidth(sourceDescriptorBox);

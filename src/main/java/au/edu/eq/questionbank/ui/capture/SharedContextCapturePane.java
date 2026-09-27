@@ -25,6 +25,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -523,9 +524,13 @@ public final class SharedContextCapturePane extends VBox {
 		contextLabelField.setId("shared-context-label");
 		contextLabelField.setPromptText("Context label, e.g. Question 24 context");
 		addRegionButton.setId("add-shared-context-region");
+		addRegionButton
+				.setTooltip(new Tooltip("Accept the current PDF selection as another reusable Shared Context region."));
 		clearSelectionButton.setId("clear-shared-context-selection");
 		clearRegionsButton.setId("clear-shared-context-regions");
 		saveContextButton.setId("save-shared-context");
+		saveContextButton
+				.setTooltip(new Tooltip("Persist the captured regions as reusable Shared Context for this booklet."));
 		cancelContextButton.setId("cancel-shared-context");
 		regionCountLabel.setId("shared-context-region-count");
 		currentPreview.setId("shared-context-current-preview");
@@ -568,6 +573,8 @@ public final class SharedContextCapturePane extends VBox {
 	private void configureExistingContextField() {
 		existingContextField.setId("shared-context");
 		existingContextField.setPromptText("No shared context");
+		existingContextField.setTooltip(
+				new Tooltip("Reuse Shared Context already captured for independent Questions in this booklet."));
 		existingContextField.setPrefWidth(CONTEXT_SELECTOR_WIDTH);
 		existingContextField.setConverter(new StringConverter<>() {
 
@@ -585,6 +592,8 @@ public final class SharedContextCapturePane extends VBox {
 			}
 		});
 		newContextButton.setId("new-shared-context");
+		newContextButton.setTooltip(new Tooltip(
+				"Capture reusable source regions that can be linked to more than one independent Question."));
 	}
 
 	private HBox createCurrentSelectionControls() {

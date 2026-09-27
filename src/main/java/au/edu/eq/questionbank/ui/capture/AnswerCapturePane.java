@@ -48,6 +48,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -763,6 +764,8 @@ public final class AnswerCapturePane extends VBox {
 	private void configureControls() {
 		unansweredQuestionField.setId("unanswered-question");
 		unansweredQuestionField.setPromptText("Select unanswered question");
+		unansweredQuestionField
+				.setTooltip(new Tooltip("Lists Questions without an Answer in source order for the current booklet."));
 		unansweredQuestionField.setMaxWidth(Double.MAX_VALUE);
 		unansweredQuestionField.setConverter(QUESTION_CODE_CONVERTER);
 		unansweredQuestionField.setOnShowing(_ -> showSelectedAnswerDocument());
@@ -789,6 +792,11 @@ public final class AnswerCapturePane extends VBox {
 		answerBButton.setUserData("B");
 		answerCButton.setUserData("C");
 		answerDButton.setUserData("D");
+		String choiceTooltip = "Store the selected A-D choice as this multiple-choice Question's Answer.";
+		answerAButton.setTooltip(new Tooltip(choiceTooltip));
+		answerBButton.setTooltip(new Tooltip(choiceTooltip));
+		answerCButton.setTooltip(new Tooltip(choiceTooltip));
+		answerDButton.setTooltip(new Tooltip(choiceTooltip));
 		clearMultipleChoiceAnswerButton.setId("clear-answer-choice");
 		multipleChoiceAnswerGroup.selectedToggleProperty().addListener((_, _, newToggle) -> {
 			if (newToggle != null) {
@@ -800,9 +808,15 @@ public final class AnswerCapturePane extends VBox {
 		saveAnswerButton.setId("save-answer");
 		saveAnswerButton.setDisable(true);
 		saveAnswerButton.setText("Save Answer");
+		saveAnswerButton.setTooltip(
+				new Tooltip("Persist the selected choice or accepted Answer PDF regions for this Question."));
 		chooseAnswerPdfButton.setDisable(true);
 		chooseAnswerPdfButton.setId("choose-answer-pdf");
+		chooseAnswerPdfButton.setTooltip(new Tooltip(
+				"Choose the Answer PDF assigned to this booklet before capturing written-response regions."));
 		addAnswerRegionButton.setId("add-answer-region");
+		addAnswerRegionButton
+				.setTooltip(new Tooltip("Accept the current Answer PDF selection as part of this Question's Answer."));
 		clearAnswerSelectionButton.setId("clear-answer-selection");
 		answerRegionCountLabel.setId("answer-region-count");
 		answerRegionStatusLabel.setId("answer-region-status");

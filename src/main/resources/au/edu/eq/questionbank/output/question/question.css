@@ -1,0 +1,15 @@
+body {
+	font-family: Arial, sans-serif;
+	max-width: 900px;
+	margin: 40px auto;
+}
+
+.question {
+	margin-bottom: 30px;
+	page-break-inside: avoid;
+}
+
+.question img {
+	width: 100%;
+	height: auto;
+}

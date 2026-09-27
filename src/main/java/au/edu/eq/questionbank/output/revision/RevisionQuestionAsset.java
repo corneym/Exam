@@ -5,7 +5,10 @@ import java.nio.file.Path;
 import au.edu.eq.questionbank.model.Question;
 
 /**
- * One rendered question image in a static revision export.
+ * One rendered Question-body image in a static revision export.
+ * <p>
+ * The rendered body may be assembled from PDF regions, stored images, or a
+ * mixture of both in the Question's authoritative content order.
  */
 public final class RevisionQuestionAsset {
 
@@ -19,8 +22,11 @@ public final class RevisionQuestionAsset {
 		if (relativePath == null) {
 			throw new NullPointerException("relativePath");
 		}
-		if (question.getRegions().isEmpty()) {
-			throw new IllegalArgumentException("Question asset requires at least one question region");
+		if (question.getContentParts().isEmpty()) {
+
+			// A revision asset requires student-facing Question body content. That content
+			// may be PDF-backed, image-backed, or a mixture of both.
+			throw new IllegalArgumentException("Question asset requires at least one content part");
 		}
 		if (relativePath.isAbsolute() || relativePath.getRoot() != null) {
 			throw new IllegalArgumentException("Question asset path must be relative");

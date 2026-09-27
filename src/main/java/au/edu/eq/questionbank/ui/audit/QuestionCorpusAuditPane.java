@@ -27,6 +27,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.SelectionMode;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -277,6 +278,12 @@ final class QuestionCorpusAuditPane extends VBox {
 		selectAllUnknownButton.setId("corpus-select-all-unknown");
 		setSelectedMultipleChoiceButton.setId("corpus-set-multiple-choice");
 		setSelectedWrittenResponseButton.setId("corpus-set-written-response");
+		selectAllUnknownButton
+				.setTooltip(new Tooltip("Select every currently shown Question whose response type is Unknown."));
+		setSelectedMultipleChoiceButton.setTooltip(new Tooltip(
+				"Persist Multiple choice for the selected Questions without changing their other metadata."));
+		setSelectedWrittenResponseButton.setTooltip(new Tooltip(
+				"Persist Written response for the selected Questions without changing their other metadata."));
 		workItems.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 		setSelectedMultipleChoiceButton.setDisable(true);
 		setSelectedWrittenResponseButton.setDisable(true);

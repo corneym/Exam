@@ -59,6 +59,60 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 	}
 
 	/**
+	 * Loads the user configuration, migrating an existing legacy configuration or
+	 * creating a default configuration when this is the first application run.
+	 *
+	 * @param propertiesFile       user-writable configuration file
+	 * @param legacyPropertiesFile former working-directory configuration file
+	 * @param defaultDataRoot      data root to use when no configuration exists
+	 * @return loaded application configuration
+	 * @throws IOException          if configuration migration, creation or loading
+	 *                              fails
+	 * @throws NullPointerException if any argument is {@code null}
+	 */
+	public static ApplicationConfig loadOrCreate(Path propertiesFile, Path legacyPropertiesFile, Path defaultDataRoot)
+			throws IOException {
+		if (propertiesFile == null) {
+			throw new NullPointerException("propertiesFile");
+		}
+		if (legacyPropertiesFile == null) {
+			throw new NullPointerException("legacyPropertiesFile");
+		}
+		if (defaultDataRoot == null) {
+			throw new NullPointerException("defaultDataRoot");
+		}
+		Path normalisedPropertiesFile = propertiesFile.toAbsolutePath().normalize();
+		Path normalisedLegacyFile = legacyPropertiesFile.toAbsolutePath().normalize();
+		Path normalisedDefaultDataRoot = defaultDataRoot.toAbsolutePath().normalize();
+		if (Files.isRegularFile(normalisedPropertiesFile)) {
+
+			// Once the user-specific configuration exists it is authoritative. A legacy
+			// working-directory file must never overwrite later Options changes.
+			return load(normalisedPropertiesFile);
+		}
+		Path configurationDirectory = normalisedPropertiesFile.getParent();
+		if (configurationDirectory == null) {
+			throw new IllegalArgumentException("Configuration file must have a parent directory");
+		}
+		Files.createDirectories(configurationDirectory);
+		if (!normalisedLegacyFile.equals(normalisedPropertiesFile) && Files.isRegularFile(normalisedLegacyFile)) {
+
+			// Preserve the existing file verbatim so legacy explicit path properties are
+			// not silently converted or lost during the location migration.
+			Files.copy(normalisedLegacyFile, normalisedPropertiesFile);
+			return load(normalisedPropertiesFile);
+		}
+		ApplicationConfig config = fromDataRoot(normalisedDefaultDataRoot);
+
+		// A fresh installation needs the data directories to exist before SQLite or
+		// managed PDF/curriculum storage attempts to use them.
+		Files.createDirectories(config.pdfDataRoot());
+		Files.createDirectories(config.curriculumDataRoot());
+		saveDataRoot(normalisedPropertiesFile, normalisedDefaultDataRoot);
+		return config;
+	}
+
+	/**
 	 * Loads configuration from a Java properties file.
 	 * <p>
 	 * When {@code data.root} is present, the PDF root, curriculum root, and

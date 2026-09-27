@@ -105,17 +105,17 @@ class QuestionSearchDialogTest {
 		robot.interact(dialog::show);
 		WaitForAsyncUtils.waitForFxEvents();
 
-		// The native Dialog window must not become narrow enough to collapse its
-		// selector labels or inline actions.
-		robot.interact(() -> dialog.setWidth(600));
+		// The new two-column Search workspace requires enough horizontal room for
+		// both task columns to remain usable.
+		robot.interact(() -> dialog.setWidth(700));
 		WaitForAsyncUtils.waitForFxEvents();
-		assertTrue(dialog.getWidth() >= 900);
+		assertTrue(dialog.getWidth() >= 1100);
 		robot.interact(() -> {
-			dialog.setWidth(1120);
+			dialog.setWidth(1220);
 			dialog.setHeight(810);
 		});
 		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals(1120, dialog.getWidth(), 1.0);
+		assertEquals(1220, dialog.getWidth(), 1.0);
 		assertEquals(810, dialog.getHeight(), 1.0);
 
 		// Edit actions hide Search before the application later shows the same Dialog
@@ -124,7 +124,7 @@ class QuestionSearchDialogTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		robot.interact(dialog::show);
 		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals(1120, dialog.getWidth(), 1.0);
+		assertEquals(1220, dialog.getWidth(), 1.0);
 		assertEquals(810, dialog.getHeight(), 1.0);
 		robot.interact(dialog::close);
 	}

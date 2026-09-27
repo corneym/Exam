@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui.export;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.testfx.api.FxToolkit.setupFixture;
@@ -115,6 +116,10 @@ class RevisionExportDialogTest {
 		CheckBox incompleteUnitBox = unitBox.getChildren().stream()
 				.filter(node -> "revision-export-unit-20".equals(node.getId())).map(node -> (CheckBox) node).findFirst()
 				.orElseThrow();
+		assertNotNull(groupingBox.getTooltip());
+		assertTrue(groupingBox.getTooltip().getText().contains("stored curriculum and Question data are unchanged"));
+		assertNotNull(incompleteUnitBox.getTooltip());
+		assertTrue(incompleteUnitBox.getTooltip().getText().contains("generated revision site"));
 		setupFixture(() -> incompleteUnitBox.setSelected(false));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(Set.of(completeUnit.getId()), dialog.getSelectedUnitIds());

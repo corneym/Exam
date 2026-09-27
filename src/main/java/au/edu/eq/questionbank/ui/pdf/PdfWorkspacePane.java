@@ -23,6 +23,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
@@ -893,6 +894,8 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pagePane.getChildren().add(pageView);
 		pagePane.setCursor(Cursor.DEFAULT);
 		fullWidthSelectionCheckBox.setSelected(true);
+		fullWidthSelectionCheckBox.setTooltip(new Tooltip(
+				"Extend each PDF selection across the full page width; changing this mode clears the pending selection."));
 	}
 
 	private void configureSelectionHandlers() {

@@ -39,12 +39,16 @@ For every Java code-change instruction, always give:
 - exact copy/paste-ready code.
 - there is no need to give the filename when it can be inferred from the class name.
 
+There is no need to give placement.  No need to give import instructions.  Eclipse sorts methods and adds imports.
+
 Do not use vague instructions such as "put this near..." or "add this somewhere
 below...".
 
 For new methods, DO NOT tell me where to insert them within the class. Eclipse
 can organise methods. Only say that the change is at class scope when that
 matters.
+
+Be strict about adding code: use smaller methods, explicit responsibilities, fewer anonymous classes, and less “just one more thing” inside existing methods.
 
 If a change is inside an `if`, loop, callback, `try` block, lambda, or other
 nested structure, identify the exact block being changed.

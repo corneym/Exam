@@ -11,6 +11,8 @@ import java.util.List;
  */
 public class HtmlQuestionRenderer {
 
+	private static final String STYLESHEET_RESOURCE = "/au/edu/eq/questionbank/output/question/question.css";
+
 	/**
 	 * Creates a renderer for question images in HTML documents.
 	 */
@@ -31,6 +33,7 @@ public class HtmlQuestionRenderer {
 	 *                                  the output directory
 	 */
 	public void render(List<Path> questionImages, Path outputFile) throws IOException {
+		String stylesheet = loadStylesheet();
 		StringBuilder html = new StringBuilder();
 		html.append("""
 				<!DOCTYPE html>
@@ -39,21 +42,15 @@ public class HtmlQuestionRenderer {
 				    <meta charset="UTF-8">
 				    <title>Exam Questions</title>
 				    <style>
-				        body {
-				            font-family: Arial, sans-serif;
-				            max-width: 900px;
-				            margin: 40px auto;
-				        }
+				""");
 
-				        .question {
-				            margin-bottom: 30px;
-				            page-break-inside: avoid;
-				        }
-
-				        .question img {
-				            width: 100%;
-				            height: auto;
-				        }
+		// CSS remains embedded in the generated document so this simple HTML export
+		// stays self-contained, while its maintained source lives in resources.
+		html.append(stylesheet);
+		if (!stylesheet.endsWith(System.lineSeparator()) && !stylesheet.endsWith("\n")) {
+			html.append(System.lineSeparator());
+		}
+		html.append("""
 				    </style>
 				</head>
 				<body>
@@ -79,5 +76,17 @@ public class HtmlQuestionRenderer {
 
 	private String escapeAttribute(String value) {
 		return value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;");
+	}
+
+	private String loadStylesheet() throws IOException {
+		try (java.io.InputStream input = HtmlQuestionRenderer.class.getResourceAsStream(STYLESHEET_RESOURCE)) {
+			if (input == null) {
+
+				// The stylesheet is a required packaged application resource. Missing
+				// CSS therefore indicates an invalid application build or package.
+				throw new IllegalStateException("Packaged question stylesheet not found: " + STYLESHEET_RESOURCE);
+			}
+			return new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+		}
 	}
 }

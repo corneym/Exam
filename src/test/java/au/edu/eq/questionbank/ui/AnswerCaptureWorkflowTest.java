@@ -83,19 +83,17 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Attempting to leave Chemistry must be rejected while unsaved Answer regions
 		// remain in the active capture workflow.
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
-		AtomicReference<DialogPane> warningDialog = new AtomicReference<>();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
-			DialogPane dialog = robot.lookup(".dialog-pane").queryAll().stream().filter(DialogPane.class::isInstance)
-					.map(DialogPane.class::cast).filter(DialogPane::isVisible)
-					.filter(candidate -> "Capture work is in progress".equals(candidate.getHeaderText())).findFirst()
-					.orElse(null);
 
-			// Retain the exact visible dialog so its real OK button can be fired without
-			// relying on TestFX text lookup in the virtual display.
-			warningDialog.set(dialog);
-			return dialog != null;
-		});
-		robot.interact(() -> ((Button) warningDialog.get().lookupButton(ButtonType.OK)).fire());
+		// Wait for the actual JavaFX warning window rather than asking TestFX to
+		// traverse
+		// the scene graph while the modal dialog is still being constructed.
+		waitForDialogShowing(robot, "Working Subject");
+		DialogPane warningDialog = showingDialogPane(robot, "Working Subject");
+		assertNotNull(warningDialog);
+		assertEquals("Capture work is in progress", warningDialog.getHeaderText());
+
+		// Fire the real DialogPane-owned OK button without TestFX scene-graph lookup.
+		robot.interact(() -> ((Button) warningDialog.lookupButton(ButtonType.OK)).fire());
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// The rejected change must leave the Answer target and its accepted regions
@@ -286,9 +284,9 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Label questionRegionCount = lookup(robot, "#question-region-count", Label.class);
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
-		assertEquals("Saved Q1 (1 mark(s), 1 region(s))", saveStatus.getText());
+		assertEquals("Saved Q1 (1 mark(s), 1 content part(s))", saveStatus.getText());
 		assertEquals("", questionCode.getText());
-		assertEquals("Regions: 0", questionRegionCount.getText());
+		assertEquals("Content parts: 0", questionRegionCount.getText());
 		assertEquals(1, unansweredQuestions.getItems().size());
 		assertEquals(savedQuestion, unansweredQuestions.getItems().getFirst());
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(savedQuestion));

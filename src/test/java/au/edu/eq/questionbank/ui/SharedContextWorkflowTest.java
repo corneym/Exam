@@ -227,14 +227,14 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// The already-drawn rectangle is now accepted as the shared context rather than
 		// as an ordinary question region.
 		robot.clickOn("#add-question-region");
-		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(save.isDisabled());
 
 		// Now capture the actual 24a question region.
 		dragRegionOnDisplayedPage(robot);
 		assertTrue(save.isDisabled());
 		robot.clickOn("#add-question-region");
-		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		assertFalse(save.isDisabled());
 		robot.clickOn(save);
 		WaitForAsyncUtils.waitForFxEvents();
@@ -291,7 +291,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("Add Context", addRegion.getText());
 		fireControl(robot, addRegion);
 		assertFalse(questionCapturePane().isCapturingSharedContext());
-		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, addRegion);
 		fireControl(robot, "#save-question");
@@ -498,7 +498,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
 		assertEquals("63", lookup(robot, "#question-code", TextField.class).getText());
 		assertEquals("2", lookup(robot, "#question-marks", TextField.class).getText());
-		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(lookup(robot, "#save-question", Button.class).isDisable());
 
 		// Starting recapture has not deleted the safely converted regions.
@@ -644,7 +644,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		dragRegionOnDisplayedPage(robot);
 		assertEquals("Add Context", lookup(robot, "#add-question-region", Button.class).getText());
 		robot.clickOn("#add-question-region");
-		assertEquals("Regions: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(save.isDisabled());
 
 		// The shared context is still transient. Nothing has been added to SQLite.
@@ -655,7 +655,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		dragRegionOnDisplayedPage(robot);
 		assertEquals("Add Region", lookup(robot, "#add-question-region", Button.class).getText());
 		fireControl(robot, "#add-question-region");
-		assertEquals("Regions: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		assertFalse(save.isDisabled());
 		fireControl(robot, save);
 		WaitForAsyncUtils.waitForFxEvents();

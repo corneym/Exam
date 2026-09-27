@@ -19,6 +19,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -122,6 +123,8 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		sharedContextChoiceBox.setCellFactory(_ -> createSharedContextChoiceCell());
 		sharedContextChoiceBox.setButtonCell(createSharedContextChoiceCell());
 		sharedContextChoiceBox.setMaxWidth(Double.MAX_VALUE);
+		sharedContextChoiceBox.setTooltip(new Tooltip(
+				"Choose whether the resulting parts have no Shared Context, capture new context, or reuse the existing context."));
 		sharedContextChoiceBox.valueProperty().addListener((_, _, _) -> refreshContinueState());
 		retainedAnswerPartBox.setId("legacy-split-answer-part");
 		retainedAnswerPartBox.setMaxWidth(Double.MAX_VALUE);

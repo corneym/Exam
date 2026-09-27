@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -17,6 +18,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.scene.control.Button;
 import javafx.scene.control.MenuBar;
@@ -57,8 +59,9 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> {
 			try {
 				invoke(application, "startScormExport",
-						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
-						primaryStage, applicationConfig, chemistry, destination);
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class,
+								RevisionGroupingMode.class, Set.class },
+						primaryStage, applicationConfig, chemistry, destination, null, null);
 				disabledWhileStarting.set(exportItem.isDisable());
 			} catch (Exception e) {
 				throw new RuntimeException(e);
@@ -98,8 +101,9 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> {
 			try {
 				invoke(application, "startRevisionExport",
-						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
-						primaryStage, applicationConfig, chemistry, destination);
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class,
+								RevisionGroupingMode.class, Set.class },
+						primaryStage, applicationConfig, chemistry, destination, null, null);
 			} catch (Exception e) {
 				throw new RuntimeException(e);
 			}
@@ -120,8 +124,9 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> {
 			try {
 				invoke(application, "startRevisionExport",
-						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
-						primaryStage, applicationConfig, chemistry, destination);
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class,
+								RevisionGroupingMode.class, Set.class },
+						primaryStage, applicationConfig, chemistry, destination, null, null);
 				disabledWhileStarting.set(exportItem.isDisable());
 			} catch (Exception e) {
 				throw new RuntimeException(e);
@@ -157,8 +162,9 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> {
 			try {
 				invoke(application, "startScormExport",
-						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
-						primaryStage, applicationConfig, chemistry, destination);
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class,
+								RevisionGroupingMode.class, Set.class },
+						primaryStage, applicationConfig, chemistry, destination, null, null);
 				disabledWhileStarting.set(exportItem.isDisable());
 			} catch (Exception e) {
 				throw new RuntimeException(e);
@@ -200,8 +206,9 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> {
 			try {
 				invoke(application, "startScormExport",
-						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class },
-						primaryStage, applicationConfig, chemistry, destination);
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Subject.class, Path.class,
+								RevisionGroupingMode.class, Set.class },
+						primaryStage, applicationConfig, chemistry, destination, null, null);
 				disabledAfterAttempt.set(exportItem.isDisable());
 			} catch (Exception e) {
 				throw new RuntimeException(e);

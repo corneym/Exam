@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui.search;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
@@ -50,6 +51,7 @@ import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionSer
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.application.Platform;
+import javafx.geometry.Orientation;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -59,9 +61,13 @@ import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
@@ -85,6 +91,19 @@ public class QuestionSearchPaneTest {
 	private QuestionRetrievalService retrievalService;
 	private InMemoryQuestionOutputApplicabilityRepository outputApplicabilityRepository;
 	private Stage stage;
+
+	@Test
+	public void explainsSearchScopeAndOutputApplicabilityWithoutChangingClassification(FxRobot robot) {
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
+		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
+		assertNotNull(scopeBox.getTooltip());
+		assertTrue(scopeBox.getTooltip().getText().contains("complete stored Question bank"));
+		assertNotNull(includeButton.getTooltip());
+		assertTrue(includeButton.getTooltip().getText().contains("does not alter Question classification"));
+		assertNotNull(excludeButton.getTooltip());
+		assertTrue(excludeButton.getTooltip().getText().contains("does not alter Question classification"));
+	}
 
 	@Test
 	public void allQuestionsCanBeFilteredBySubject(FxRobot robot) throws TimeoutException {
@@ -152,8 +171,8 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
-		ListView<QuestionSearchPane.QuestionOutputApplicabilityRow> outputList = robot
-				.lookup("#question-search-output-applicability").queryListView();
+		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
+				.queryListView();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 
@@ -171,7 +190,7 @@ public class QuestionSearchPaneTest {
 		// failed current-curriculum mapping.
 		assertTrue(detailsArea.getText().contains("Not evaluated in All Questions scope."));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
-		QuestionSearchPane.QuestionOutputApplicabilityRow outputRow = outputList.getItems().getFirst();
+		QuestionOutputApplicabilityRow outputRow = outputList.getItems().getFirst();
 
 		// All Questions itself still carries no inferred applicability, but selecting
 		// a Question performs a separate current-curriculum lookup for revision-output
@@ -349,7 +368,7 @@ public class QuestionSearchPaneTest {
 		};
 		QuestionRetrievalService service = new QuestionRetrievalService(repository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(question.getId());
+		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(question.getRegions().getFirst());
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
 		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
@@ -538,8 +557,8 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		ListView<QuestionSearchPane.QuestionOutputApplicabilityRow> outputList = robot
-				.lookup("#question-search-output-applicability").queryListView();
+		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
+				.queryListView();
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
@@ -617,6 +636,22 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void questionPreviewFitsAvailableColumnWidth(FxRobot robot) throws TimeoutException {
+		ScrollPane previewPane = robot.lookup("#question-search-preview-scroll").queryAs(ScrollPane.class);
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+
+		// Wait until the ScrollPane skin has established a real viewport before
+		// comparing the image sizing contract.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> previewPane.getViewportBounds().getWidth() > 0);
+		assertEquals(previewPane.getViewportBounds().getWidth(), preview.getFitWidth(), 1.0);
+
+		// A wide Question must be scaled into the available column rather than
+		// requiring horizontal scrolling.
+		assertEquals(ScrollPane.ScrollBarPolicy.NEVER, previewPane.getHbarPolicy());
+		assertTrue(preview.isPreserveRatio());
+	}
+
+	@Test
 	public void refreshAfterEditRetainsAllQuestionsScopeAndReselectsUpdatedQuestion(FxRobot robot)
 			throws TimeoutException {
 		AtomicReference<List<Question>> allQuestions = new AtomicReference<>(List.of(historicalQuestion));
@@ -680,8 +715,8 @@ public class QuestionSearchPaneTest {
 		replaceSearchPane(robot, curriculumRepository, multipleApplicabilityService);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		ListView<QuestionSearchPane.QuestionOutputApplicabilityRow> outputList = robot
-				.lookup("#question-search-output-applicability").queryListView();
+		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
+				.queryListView();
 		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
 		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
 		Label outputStatus = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
@@ -689,7 +724,7 @@ public class QuestionSearchPaneTest {
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
-		QuestionSearchPane.QuestionOutputApplicabilityRow firstPlacement = outputList.getItems().stream()
+		QuestionOutputApplicabilityRow firstPlacement = outputList.getItems().stream()
 				.filter(row -> row.currentNode().equals(currentDescriptor)).findFirst().orElseThrow();
 		robot.interact(() -> outputList.getSelectionModel().select(firstPlacement));
 
@@ -700,7 +735,7 @@ public class QuestionSearchPaneTest {
 		robot.clickOn("#question-search-output-exclude");
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> outputList.getItems().stream().filter(row -> row.currentNode().equals(currentDescriptor))
-						.anyMatch(QuestionSearchPane.QuestionOutputApplicabilityRow::excluded));
+						.anyMatch(QuestionOutputApplicabilityRow::excluded));
 		assertEquals(Set.of(currentDescriptor.getId()),
 				outputApplicabilityRepository.findExcludedCurrentNodeIds(historicalQuestion));
 
@@ -713,13 +748,49 @@ public class QuestionSearchPaneTest {
 		robot.clickOn("#question-search-output-include");
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> outputList.getItems().stream().filter(row -> row.currentNode().equals(currentDescriptor))
-						.noneMatch(QuestionSearchPane.QuestionOutputApplicabilityRow::excluded));
+						.noneMatch(QuestionOutputApplicabilityRow::excluded));
 
 		// Removing the exception restores normal curriculum-derived applicability.
 		assertEquals(Set.of(), outputApplicabilityRepository.findExcludedCurrentNodeIds(historicalQuestion));
 		assertEquals("2 current placements: 2 included, 0 excluded.", outputStatus.getText());
 		assertTrue(includeButton.isDisable());
 		assertFalse(excludeButton.isDisable());
+	}
+
+	@Test
+	public void rightColumnGivesRemainingHeightToPreview(FxRobot robot) {
+		VBox rightColumn = robot.lookup("#question-search-right-column").queryAs(VBox.class);
+		Node selectedClassification = robot.lookup("#question-search-selected-classification").query();
+		Node outputApplicability = robot.lookup("#question-search-output-section").query();
+		Node preview = robot.lookup("#question-search-preview-section").query();
+
+		// The right column is a simple task sequence. Classification and output
+		// applicability keep their natural height while Preview receives spare space.
+		assertEquals(List.of(selectedClassification, outputApplicability, preview), rightColumn.getChildren());
+		assertFalse(Priority.ALWAYS.equals(VBox.getVgrow(outputApplicability)));
+		assertEquals(Priority.ALWAYS, VBox.getVgrow(preview));
+	}
+
+	@Test
+	public void searchSectionsUseTwoColumnTaskLayout(FxRobot robot) {
+		SplitPane workspace = robot.lookup("#question-search-workspace").queryAs(SplitPane.class);
+		Node leftColumn = robot.lookup("#question-search-left-column").query();
+		Node rightColumn = robot.lookup("#question-search-right-column").query();
+		assertEquals(Orientation.HORIZONTAL, workspace.getOrientation());
+
+		// Search uses a narrower navigation/results column and gives the larger share
+		// of horizontal space to classification, applicability and Question preview.
+		assertEquals(0.35, workspace.getDividerPositions()[0], 0.01);
+
+		// Search, results and basic Question details belong together on the left.
+		assertTrue(isDescendantOf(robot.lookup("#question-search-filter-section").query(), leftColumn));
+		assertTrue(isDescendantOf(robot.lookup("#question-search-results-section").query(), leftColumn));
+		assertTrue(isDescendantOf(robot.lookup("#question-search-details-section").query(), leftColumn));
+
+		// Selected-Question decisions and visual output belong together on the right.
+		assertTrue(isDescendantOf(robot.lookup("#question-search-selected-classification").query(), rightColumn));
+		assertTrue(isDescendantOf(robot.lookup("#question-search-output-section").query(), rightColumn));
+		assertTrue(isDescendantOf(robot.lookup("#question-search-preview-section").query(), rightColumn));
 	}
 
 	@Test
@@ -746,14 +817,14 @@ public class QuestionSearchPaneTest {
 		outputApplicabilityRepository.setExcluded(historicalQuestion, currentDescriptor, true);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		ListView<QuestionSearchPane.QuestionOutputApplicabilityRow> outputList = robot
-				.lookup("#question-search-output-applicability").queryListView();
+		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
+				.queryListView();
 		Label outputStatus = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
 		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
-		QuestionSearchPane.QuestionOutputApplicabilityRow row = outputList.getItems().getFirst();
+		QuestionOutputApplicabilityRow row = outputList.getItems().getFirst();
 		assertEquals(currentDescriptor, row.currentNode());
 		assertTrue(row.excluded());
 
@@ -879,7 +950,7 @@ public class QuestionSearchPaneTest {
 		};
 		QuestionRetrievalService service = new QuestionRetrievalService(repository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(first.getId());
+		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(first.getRegions().getFirst());
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
 		replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
 		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
@@ -1108,6 +1179,17 @@ public class QuestionSearchPaneTest {
 		WaitForAsyncUtils.waitForFxEvents();
 	}
 
+	private boolean isDescendantOf(Node node, Node ancestor) {
+		Node current = node;
+		while (current != null) {
+			if (current == ancestor) {
+				return true;
+			}
+			current = current.getParent();
+		}
+		return false;
+	}
+
 	private void linkPaneToWindow(String dialogTitle, AtomicReference<DialogPane> dialogPane) {
 		for (Window window : Window.getWindows()) {
 			if (!window.isShowing() || window.getScene() == null || !(window instanceof Stage showingStage)
@@ -1229,7 +1311,6 @@ public class QuestionSearchPaneTest {
 		private volatile boolean delaySubjectLoading;
 		private volatile CountDownLatch subjectDelayStarted = new CountDownLatch(0);
 		private volatile CountDownLatch subjectDelayRelease = new CountDownLatch(0);
-		private volatile CountDownLatch subjectDelayFinished = new CountDownLatch(0);
 
 		private DelayedCurriculumRepository(List<Subject> subjects, List<SyllabusVersion> syllabusVersions,
 				List<CurriculumNode> curriculumNodes) {
@@ -1254,11 +1335,10 @@ public class QuestionSearchPaneTest {
 					// stale Subject load is discarded after Search scope changes.
 				}
 			}
-			try {
-				return super.findAllSubjects();
-			} finally {
-				subjectDelayFinished.countDown();
-			}
+
+			// The test observes the replacement Subject list in the UI, so a separate
+			// completion latch for this background lookup is unnecessary.
+			return super.findAllSubjects();
 		}
 
 		@Override
@@ -1302,7 +1382,6 @@ public class QuestionSearchPaneTest {
 			delaySubjectLoading = true;
 			subjectDelayStarted = new CountDownLatch(1);
 			subjectDelayRelease = new CountDownLatch(1);
-			subjectDelayFinished = new CountDownLatch(1);
 		}
 
 		private void failChildrenFor(CurriculumNode parent) {
@@ -1315,10 +1394,6 @@ public class QuestionSearchPaneTest {
 
 		private boolean hasDelayStarted() {
 			return delayStarted.getCount() == 0;
-		}
-
-		private boolean hasSubjectDelayFinished() {
-			return subjectDelayFinished.getCount() == 0;
 		}
 
 		private boolean hasSubjectDelayStarted() {
@@ -1341,33 +1416,38 @@ public class QuestionSearchPaneTest {
 
 	private static final class DelayedQuestionExtractor extends QuestionExtractor {
 
-		private final long delayedQuestionId;
-		private volatile CountDownLatch delayStarted = new CountDownLatch(1);
-		private volatile CountDownLatch delayRelease = new CountDownLatch(1);
-		private volatile CountDownLatch delayFinished = new CountDownLatch(1);
+		private final QuestionRegion delayedRegion;
+		private final CountDownLatch delayStarted = new CountDownLatch(1);
+		private final CountDownLatch delayRelease = new CountDownLatch(1);
+		private final CountDownLatch delayFinished = new CountDownLatch(1);
 
-		private DelayedQuestionExtractor(long delayedQuestionId) {
-			this.delayedQuestionId = delayedQuestionId;
+		private DelayedQuestionExtractor(QuestionRegion delayedRegion) {
+			this.delayedRegion = delayedRegion;
 		}
 
 		@Override
-		public BufferedImage extractQuestion(PdfSession session, Question question) throws IOException {
-			if (question.getId() == delayedQuestionId) {
+		public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
+			if (sameRegion(region, delayedRegion)) {
 				delayStarted.countDown();
 				boolean released = false;
 				while (!released) {
 					try {
 						delayRelease.await();
 						released = true;
-					} catch (InterruptedException e) {
+					} catch (InterruptedException exception) {
 
-						// Ignore cancellation deliberately so the old preview can finish after the
-						// newer UI state.
+						// Ignore cancellation deliberately so the obsolete preview can finish
+						// after a newer selection or disposal has already invalidated it.
 					}
 				}
 				delayFinished.countDown();
+
+				// The delayed preview is deliberately distinguishable from the newer one.
 				return new BufferedImage(11, 11, BufferedImage.TYPE_INT_RGB);
 			}
+
+			// Non-delayed Question content completes immediately with a distinguishable
+			// size so stale-preview tests can prove which result reached the ImageView.
 			return new BufferedImage(22, 22, BufferedImage.TYPE_INT_RGB);
 		}
 
@@ -1381,6 +1461,13 @@ public class QuestionSearchPaneTest {
 
 		private void releaseDelayedExtraction() {
 			delayRelease.countDown();
+		}
+
+		private boolean sameRegion(QuestionRegion first, QuestionRegion second) {
+			return first.booklet().getId() == second.booklet().getId() && first.pageNumber() == second.pageNumber()
+					&& Double.compare(first.x(), second.x()) == 0 && Double.compare(first.y(), second.y()) == 0
+					&& Double.compare(first.width(), second.width()) == 0
+					&& Double.compare(first.height(), second.height()) == 0;
 		}
 	}
 

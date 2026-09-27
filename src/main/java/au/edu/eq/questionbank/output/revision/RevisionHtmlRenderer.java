@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.output.revision;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZonedDateTime;
@@ -35,257 +36,7 @@ public final class RevisionHtmlRenderer {
 
 	private static final DateTimeFormatter GENERATED_AT_FORMAT = DateTimeFormatter.ofPattern("d MMM uuuu, HH:mm z",
 			Locale.ENGLISH);
-	private static final String STYLESHEET = """
-			:root {
-			    font-family: Arial, Helvetica, sans-serif;
-			    line-height: 1.5;
-			    color: #202124;
-			    background: #f5f6f7;
-			}
-
-			* {
-			    box-sizing: border-box;
-			}
-
-			body {
-			    margin: 0;
-			}
-
-			.page {
-			    width: min(100% - 2rem, 960px);
-			    margin: 0 auto;
-			    padding: 2rem 0 4rem;
-			}
-
-			.breadcrumbs {
-			    position: sticky;
-			    top: 0;
-			    z-index: 10;
-			    margin: 0 0 1.5rem;
-			    padding: 0.75rem 0;
-			    border-bottom: 1px solid #dadce0;
-			    background: #f5f6f7;
-			    font-size: 0.9rem;
-			    color: #5f6368;
-			}
-
-			.breadcrumbs [aria-current="page"] {
-			    color: #202124;
-			    font-weight: 700;
-			}
-
-			.page-header {
-			    margin-bottom: 2rem;
-			}
-
-			.generated-at {
-			    margin: 0.75rem 0 0;
-			    color: #5f6368;
-			    font-size: 0.9rem;
-			}
-
-			.eyebrow {
-			    margin: 0 0 0.35rem;
-			    font-size: 0.9rem;
-			    font-weight: 700;
-			    text-transform: uppercase;
-			    letter-spacing: 0.04em;
-			    color: #5f6368;
-			}
-
-			h1,
-			h2,
-			h3 {
-			    line-height: 1.2;
-			}
-
-			.curriculum-section {
-			    margin: 2rem 0;
-			}
-
-			.question-type-nav {
-			    display: flex;
-			    flex-wrap: wrap;
-			    gap: 0.75rem;
-			    margin: 1rem 0 2rem;
-			}
-
-			.question-type-nav a {
-			    padding: 0.5rem 0.75rem;
-			    border: 1px solid #c7c9cc;
-			    border-radius: 0.35rem;
-			    background: #ffffff;
-			    font-weight: 700;
-			}
-
-			.question-type-section {
-			    margin: 2rem 0;
-			    scroll-margin-top: 5rem;
-			}
-
-			.question-type-section > h2 {
-			    margin-bottom: 1.25rem;
-			}
-
-			.question-metadata {
-			    margin-top: 1rem;
-			    padding-top: 0.75rem;
-			    border-top: 1px solid #eceff1;
-			}
-
-			.descriptor {
-			    margin-top: 1.5rem;
-			}
-
-			.question-card {
-			    margin: 1.25rem 0 2rem;
-			    padding: 1.25rem;
-			    border: 1px solid #c7c9cc;
-			    border-radius: 0.5rem;
-			    background: #ffffff;
-			}
-
-			.question-heading {
-			    display: flex;
-			    justify-content: space-between;
-			    gap: 1rem;
-			    align-items: baseline;
-			    margin-bottom: 1rem;
-			}
-
-			.question-number {
-			    margin: 0;
-			    font-size: 1.1rem;
-			    font-weight: 700;
-			}
-
-			.question-member + .question-member {
-			    margin-top: 1.5rem;
-			    padding-top: 1rem;
-			    border-top: 1px solid #dadce0;
-			}
-			.marks {
-			    white-space: nowrap;
-			    font-weight: 700;
-			}
-
-			.shared-context-image,
-			.question-image,
-			.answer-image {
-			    display: block;
-			    max-width: 100%;
-			    height: auto;
-			    margin: 1rem 0;
-			}
-
-			.source,
-			.provenance {
-			    margin: 0.5rem 0;
-			    font-size: 0.875rem;
-			    color: #5f6368;
-			}
-
-			.answer {
-			    margin-top: 1.25rem;
-			    border-top: 1px solid #dadce0;
-			    padding-top: 1rem;
-			}
-
-			.answer summary {
-			    width: fit-content;
-			    padding: 0.55rem 0.8rem;
-			    border: 1px solid #8a8d91;
-			    border-radius: 0.35rem;
-			    font-weight: 700;
-			    cursor: pointer;
-			    background: #f8f9fa;
-			}
-
-			.answer summary:hover {
-			    background: #eceff1;
-			}
-
-			.answer summary:focus-visible {
-			    outline: 3px solid #5f6368;
-			    outline-offset: 2px;
-			}
-
-			.answer-content {
-			    margin-top: 1rem;
-			    padding: 1rem;
-			    border-left: 4px solid #c7c9cc;
-			    background: #f8f9fa;
-			}
-
-			.answer-text {
-			    white-space: pre-wrap;
-			}
-
-			.answer-unavailable,
-			.empty-state {
-			    color: #5f6368;
-			    font-style: italic;
-			}
-
-						.breadcrumbs a {
-			    color: inherit;
-			}
-
-			.navigation-list {
-			    list-style: none;
-			    margin: 1.5rem 0;
-			    padding: 0;
-			}
-
-			.navigation-list li {
-			    margin: 0.75rem 0;
-			    padding: 1rem;
-			    border: 1px solid #dadce0;
-			    border-radius: 0.4rem;
-			    background: #ffffff;
-			}
-
-			.navigation-list a {
-			    font-weight: 700;
-			}
-
-			.resource-count {
-			    margin-left: 0.5rem;
-			    color: #5f6368;
-			    font-size: 0.9rem;
-			}
-
-			.statistics {
-			    display: grid;
-			    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-			    gap: 1rem;
-			    margin: 1.5rem 0 2rem;
-			}
-
-			.statistic {
-			    margin: 0;
-			    padding: 1rem;
-			    border: 1px solid #dadce0;
-			    border-radius: 0.4rem;
-			    background: #ffffff;
-			}
-
-			.statistic strong {
-			    display: block;
-			    font-size: 1.5rem;
-			}
-
-			@media (max-width: 600px) {
-			    .page {
-			        width: min(100% - 1rem, 960px);
-			        padding-top: 1rem;
-			    }
-
-			    .question-card {
-			        padding: 1rem;
-			    }
-			}
-			""";
+	private static final String STYLESHEET_RESOURCE = "/au/edu/eq/questionbank/output/revision/revision.css";
 	private final RevisionPresentationPlan presentationPlan;
 	private final Map<Long, RevisionQuestionAsset> questionAssetsByQuestionId;
 	private final Map<Long, List<RevisionAnswerAsset>> answerAssetsByQuestionId;
@@ -1236,7 +987,18 @@ public final class RevisionHtmlRenderer {
 	private void writeStylesheet(Path outputRoot) throws IOException {
 		Path stylesheet = outputRoot.resolve(Path.of("assets", "revision.css"));
 		Files.createDirectories(stylesheet.getParent());
-		Files.writeString(stylesheet, STYLESHEET);
+		try (InputStream input = RevisionHtmlRenderer.class.getResourceAsStream(STYLESHEET_RESOURCE)) {
+			if (input == null) {
+
+				// The stylesheet is part of the packaged application. Its absence is a
+				// build/package defect rather than a recoverable export condition.
+				throw new IllegalStateException("Packaged revision stylesheet not found: " + STYLESHEET_RESOURCE);
+			}
+
+			// Export a standalone stylesheet so generated revision HTML remains portable
+			// and does not depend on the installed application's resource location.
+			Files.write(stylesheet, input.readAllBytes());
+		}
 	}
 
 	private static final class PageQuestionNumberSequence {

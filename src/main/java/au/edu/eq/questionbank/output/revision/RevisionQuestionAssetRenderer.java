@@ -12,24 +12,33 @@ import java.util.function.BiConsumer;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
+import au.edu.eq.questionbank.service.render.QuestionContentRenderer;
 import au.edu.eq.questionbank.service.revision.RevisionCorpus;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusNode;
 import au.edu.eq.questionbank.service.revision.RevisionQuestionPlacement;
 
 /**
- * Renders unique question images required by a revision corpus.
+ * Renders unique Question-body image assets required by a revision corpus.
+ * <p>
+ * Question bodies may contain ordered PDF regions, stored PNG images, or a
+ * mixture of both. Linked shared context is deliberately excluded because
+ * revision output renders it separately through
+ * {@link RevisionSharedContextAssetRenderer}.
  */
 public final class RevisionQuestionAssetRenderer {
 
-	private final PdfStore pdfStore;
-	private final QuestionExtractor questionExtractor;
+	private final QuestionContentRenderer contentRenderer;
 
 	/**
-	 * Creates an asset renderer using the configured source PDF store.
+	 * Creates a revision Question-asset renderer.
+	 * <p>
+	 * PDF-backed content is resolved through the supplied {@link PdfStore} and
+	 * cropped through the supplied {@link QuestionExtractor}. Stored image content
+	 * is rendered directly from the Question's persisted mixed-content sequence.
 	 *
-	 * @param pdfStore          the source path resolver
-	 * @param questionExtractor the PDF region renderer
-	 * @throws NullPointerException if either dependency is null
+	 * @param pdfStore          resolver for managed source PDFs
+	 * @param questionExtractor renderer for PDF-backed Question regions
+	 * @throws NullPointerException if either dependency is {@code null}
 	 */
 	public RevisionQuestionAssetRenderer(PdfStore pdfStore, QuestionExtractor questionExtractor) {
 		if (pdfStore == null) {
@@ -38,8 +47,10 @@ public final class RevisionQuestionAssetRenderer {
 		if (questionExtractor == null) {
 			throw new NullPointerException("questionExtractor");
 		}
-		this.pdfStore = pdfStore;
-		this.questionExtractor = questionExtractor;
+
+		// Preserve the existing construction API while delegating body rendering to the
+		// mixed-content boundary.
+		this.contentRenderer = new QuestionContentRenderer(pdfStore, questionExtractor);
 	}
 
 	/**
@@ -58,15 +69,20 @@ public final class RevisionQuestionAssetRenderer {
 	}
 
 	/**
-	 * Renders unique question-body images required by a revision corpus. Shared
-	 * context is rendered separately by {@link RevisionSharedContextAssetRenderer}.
+	 * Renders one PNG per unique renderable Question in persistent Question-id
+	 * order.
+	 * <p>
+	 * Each generated asset contains the Question's own ordered body content, which
+	 * may consist of PDF regions, stored images, or both. Shared context is
+	 * rendered separately.
 	 *
-	 * @param corpus     the revision corpus
-	 * @param outputRoot the generated-site root
-	 * @param progress   completed and total asset counts, invoked on the caller
-	 *                   thread
-	 * @return the generated assets
-	 * @throws IOException if a source cannot be read or an image cannot be written
+	 * @param corpus     revision corpus containing Question placements
+	 * @param outputRoot root directory of the static export
+	 * @return rendered Question assets in deterministic Question-id order
+	 * @throws NullPointerException if {@code corpus} or {@code outputRoot} is
+	 *                              {@code null}
+	 * @throws IOException          if required source content cannot be read or an
+	 *                              asset cannot be written
 	 */
 	List<RevisionQuestionAsset> render(RevisionCorpus corpus, Path outputRoot, BiConsumer<Integer, Integer> progress)
 			throws IOException {
@@ -97,19 +113,21 @@ public final class RevisionQuestionAssetRenderer {
 				throw new IOException("Question asset path escapes the export root: " + relativePath);
 			}
 			Files.createDirectories(outputFile.getParent());
-			String sourceRelativePath = question.getBooklet().getSourceDocument().getRelativePath();
-			Path sourcePdf = pdfStore.resolve(sourceRelativePath);
-			if (!Files.isRegularFile(sourcePdf)) {
-				throw new IOException(
-						"Question source PDF is not available for question " + question.getId() + ": " + sourcePdf);
-			}
 			try {
 
-				// Keep the shared context separate so multipart presentation can display it
-				// once per group.
-				questionExtractor.extractQuestionBody(sourcePdf, question, outputFile.toFile());
-			} catch (Exception e) {
-				throw new IOException("Could not render question " + question.getId() + " from " + sourcePdf, e);
+				// Render only the Question body here. Shared context remains a separate
+				// revision
+				// asset so multipart presentation can display it once per group.
+				contentRenderer.writeQuestionBody(question, outputFile);
+			} catch (IOException e) {
+
+				// Preserve specific source and image decoding diagnostics supplied by the
+				// mixed-content renderer.
+				throw e;
+			} catch (RuntimeException e) {
+
+				// Unexpected domain or rendering failures still identify the affected Question.
+				throw new IOException("Could not render question " + question.getId(), e);
 			}
 			if (!Files.isRegularFile(outputFile) || Files.size(outputFile) == 0) {
 				throw new IOException("Question image was not written for question " + question.getId());
