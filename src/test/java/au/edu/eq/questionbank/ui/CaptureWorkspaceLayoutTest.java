@@ -228,6 +228,14 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void mainWorkspaceUsesExpandedInitialHeight() {
+
+		// The additional application and Exam context introduced above the capture
+		// panes requires more initial vertical space than the former 840 px layout.
+		assertEquals(900.0, primaryStage.getScene().getHeight(), 1.0);
+	}
+
+	@Test
 	void multipleChoiceControlsRemainReadableAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 

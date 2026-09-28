@@ -341,37 +341,44 @@ Changing the expected Question count is structural Exam planning. A COMPLETE
 Exam must be reactivated before that value can be changed.
 
 ### 4.4 Preview-only booklet inspection
-Question-booklet inspection uses the existing shared PDF workspace in
-VIEWER mode.
+
+Question-booklet inspection uses the existing shared PDF workspace in `VIEWER` mode.
+
 Inspection provides:
+
 - normal page navigation;
 - review of the complete managed Question booklet;
 - no Question-region selection;
 - no Question-content creation;
-- no change to the active capture booklet merely because another booklet is
-  being inspected.
-Exam Setup opens the authoritative managed PDF belonging to the selected
-ExamBooklet; an arbitrary external copy is not used for inspection.
-Unsaved Question, Shared Context or Answer capture work blocks entry into
-inspection because changing the displayed PDF would otherwise invalidate
-transient capture state.
-Closing an inspected booklet opens an Expected Question Count step. The user
-is explicitly reminded that multipart parts such as 21a, 21b and 21c
-count as one top-level Question.
-The count must be a positive whole number. Saving it uses the existing
-SqliteExamWriter.updateExamBookletPlanning(...) structural-planning boundary.
-If the inspected booklet is also the active capture booklet, its in-memory
-planning metadata is refreshed immediately after persistence.
-After the count step, the application returns to Exam Setup with the refreshed
-booklet information visible.
-A previously recorded expected count is pre-populated during later inspection,
-allowing the value to be reviewed or corrected.
+- no change to the active capture booklet merely because another booklet is being inspected.
+
+Exam Setup opens the authoritative managed PDF belonging to the selected `ExamBooklet`; an arbitrary external copy is not used for inspection.
+
+Unsaved Question, Shared Context or Answer capture work blocks entry into inspection because changing the displayed PDF would otherwise invalidate transient capture state.
+
+Booklet inspection provides an explicit `Finish Inspection` action beside the PDF navigation controls. The user does not need to discover the generic `File -> Close PDF` command to complete the workflow.
+
+`Finish Inspection` is available only for the Exam-booklet inspection workflow. Ordinary PDFs opened in read-only viewer mode do not display this action.
+
+Completing inspection closes the read-only booklet view and opens an `Expected Question Count` step. The user is explicitly reminded that multipart parts such as `21a`, `21b` and `21c` count as one top-level Question.
+
+The count must be a positive whole number. Saving it uses the existing `SqliteExamWriter.updateExamBookletPlanning(...)` structural-planning boundary.
+
+If the inspected booklet is also the active capture booklet, its in-memory planning metadata is refreshed immediately after persistence.
+
+After the count step is completed or cancelled, the application returns to Exam Setup with the refreshed booklet information visible.
+
+A previously recorded expected count is pre-populated during later inspection, allowing the value to be reviewed or corrected.
+
 TestFX regressions verify that:
-- inspection uses read-only VIEWER mode;
+
+- inspection uses read-only `VIEWER` mode;
 - PDF dragging during inspection does not create a pending capture selection;
 - existing booklets can have expected counts recorded retrospectively;
 - saved counts are persisted and reflected in the active booklet;
-- newly added booklets enter inspection before capture.
+- newly added booklets enter inspection before capture;
+- `Finish Inspection` is available during booklet inspection;
+- ordinary read-only PDF viewing does not expose the inspection-only completion action.
 
 ### 4.5 Expected-but-not-yet-available assets
 
@@ -711,7 +718,7 @@ capture.
 The capture workflow inherits the selected Subject and clearly identifies the
 active Exam and Question booklet.
 
-The implemented layout is:
+The implemented layout is conceptually:
 
 ```text
 WORKING SUBJECT
@@ -721,35 +728,35 @@ ACTIVE EXAM / BOOKLET
     QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]
     [Change Exam / Assets...]
 
-CAPTURE WORKSPACE
-    CLASSIFICATION
-        [classification controls]
-
-    QUESTION
-        [Question capture controls]
-
-    ANSWER
-        [Answer capture controls]
+    +--------------------------------------+
+    | Classification                       |
+    |     [classification controls]         |
+    |                                      |
+    | Question                             |
+    |     [Question capture controls]       |
+    |                                      |
+    | Answer                               |
+    |     [Answer capture controls]         |
+    +--------------------------------------+
 ```
 
 `WORKING SUBJECT` is application-level context and is visually separate from
 Question classification.
 
-`ACTIVE EXAM / BOOKLET` is also outside the Capture Workspace. It shows the
-currently active persisted Exam and booklet, including the Exam lifecycle
-state.
+`ACTIVE EXAM / BOOKLET` is also separate from the Question-capture panes. It
+shows the currently active persisted Exam and booklet, including the Exam
+lifecycle state.
 
 `Change Exam / Assets...` returns directly to the ordinary Exam Setup /
-asset-management workflow introduced in Slice 1.
+asset-management workflow.
 
-The `CAPTURE WORKSPACE` is one larger visual container. Within it,
-`CLASSIFICATION`, `QUESTION` and `ANSWER` remain separate bordered sections.
-The outer container expresses that these three sections participate in one
-Question-capture workflow without removing their individual responsibilities.
+`Classification`, `Question` and `Answer` remain separate bordered panes. They
+are visually grouped inside a larger, unobtrusive bordered container without
+adding another visible heading.
 
 The Classification controls continue to use the existing
-`CurriculumSelectorPane` and `CurriculumSelectionModel`; moving the visible
-Classification section does not create another curriculum-selection state.
+`CurriculumSelectorPane` and `CurriculumSelectionModel`; restructuring the
+visible layout does not create another curriculum-selection state.
 
 Changing Working Subject continues to change application context and therefore
 the available Exam and capture work. If the previous active Exam belongs to a
@@ -762,6 +769,10 @@ The active Exam/booklet display is refreshed when:
 - Exam identity metadata changes;
 - the Exam is marked `COMPLETE`;
 - the Exam is reactivated.
+
+The main application window now opens at 900 px high rather than 840 px to
+accommodate the additional Working Subject and active Exam/booklet context
+without forcing unnecessary initial vertical scrolling.
 
 The workspace restructuring changes presentation and navigation only. It does
 not introduce parallel Exam, booklet, curriculum or capture state.

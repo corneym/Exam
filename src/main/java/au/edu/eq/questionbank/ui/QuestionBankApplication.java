@@ -188,7 +188,7 @@ public class QuestionBankApplication extends Application {
 	private static final double PREVIEW_PANE_INITIAL_WIDTH = 525.0;
 	private static final double PREVIEW_PANE_MIN_WIDTH = 400.0;
 	private static final double SCENE_WIDTH = 1400.0;
-	private static final double SCENE_HEIGHT = 840.0;
+	private static final double SCENE_HEIGHT = 900.0;
 	private static final double INITIAL_WORKSPACE_DIVIDER_POSITION = PREVIEW_PANE_INITIAL_WIDTH / SCENE_WIDTH;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 	private static final Path LEGACY_PROPERTIES_FILE = Path.of("questionbank.properties").toAbsolutePath().normalize();
