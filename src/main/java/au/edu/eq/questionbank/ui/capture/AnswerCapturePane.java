@@ -423,12 +423,47 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Returns whether an existing Answer is currently open for editing.
+	 *
+	 * @return whether Answer edit state is active
+	 */
+	public boolean isEditingAnswer() {
+		return editingAnswerQuestion != null;
+	}
+
+	/**
 	 * Returns whether Answer persistence is in progress.
 	 *
 	 * @return whether answer persistence is currently running
 	 */
 	public boolean isSaveInProgress() {
 		return answerSaveInProgress;
+	}
+
+	/**
+	 * Reloads Answer capture after a booklet-level AnswerFile correction.
+	 * <p>
+	 * A correction may have deleted region-only Answers that were previously added
+	 * to the local answered-ID suppression set, so persistence becomes
+	 * authoritative again before rebuilding the queue.
+	 */
+	public void refreshAfterAnswerFileCorrection() {
+		if (answerSaveInProgress || editingAnswerQuestion != null || !pendingAnswerRegions.isEmpty()
+				|| currentAnswerSelection != null) {
+			throw new IllegalStateException("Cannot refresh Answer capture while Answer work is in progress");
+		}
+
+		// Persisted correction may have made previously answered written-response
+		// Questions unanswered again.
+		locallyAnsweredQuestionIds.clear();
+		answerFile = null;
+		selectedAnswerPdfLabel.setText("No PDF selected");
+		refreshQuestions();
+
+		// refreshQuestions deliberately suppresses its selection listener, so
+		// explicitly
+		// rebuild the presentation and reopen the newly assigned booklet AnswerFile.
+		applyUnansweredQuestionChange(unansweredQuestionField.getValue());
 	}
 
 	/**

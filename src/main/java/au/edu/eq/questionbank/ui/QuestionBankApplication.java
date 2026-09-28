@@ -47,6 +47,8 @@ import au.edu.eq.questionbank.output.scorm.ScormZipWriter;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
+import au.edu.eq.questionbank.repository.assessment.AnswerFileReassignmentService;
+import au.edu.eq.questionbank.repository.assessment.AnswerPdfReplacementService;
 import au.edu.eq.questionbank.repository.assessment.ExamMetadataCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataUpdateResult;
@@ -354,6 +356,23 @@ public class QuestionBankApplication extends Application {
 		return result.isPresent() && result.get() == discardButton;
 	}
 
+	private boolean allowAnswerPdfReplacement() {
+		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
+				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
+				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
+				|| answerCapturePane.isSaveInProgress() || answerCapturePane.isEditingAnswer();
+		if (!captureWorkInProgress) {
+			return true;
+		}
+
+		// AnswerFile correction can invalidate persisted Answer regions and rebuild the
+		// unanswered queue. No transient Answer edit or capture may survive that
+		// change.
+		showAlert(Alert.AlertType.WARNING, "Replace Answer PDF", "Capture work is in progress",
+				"Save, clear or cancel the current Question, Shared Context or Answer work before replacing the Answer PDF.");
+		return false;
+	}
+
 	private boolean allowExamImportConfirmation() {
 		if (captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION)) {
 
@@ -556,6 +575,42 @@ public class QuestionBankApplication extends Application {
 				new AutomaticBackupRetention(), pdfWorkspace);
 	}
 
+	private boolean confirmAnswerPdfReplacement(Stage primaryStage, ExamBooklet booklet,
+			AnswerFileReassignmentService.Impact impact) {
+		ButtonType replaceButton = new ButtonType("Replace Answer PDF", ButtonBar.ButtonData.OK_DONE);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Replace Answer PDF");
+		alert.getButtonTypes().setAll(replaceButton, cancelButton);
+		if (impact.answerRegionCount() > 0) {
+			alert.setHeaderText("Existing Answer regions will be invalidated.");
+			alert.setContentText("""
+					Booklet: %s
+
+					Questions affected: %d
+					Answer regions removed: %d
+					Answers retaining independent text: %d
+					Region-only Answers returned to capture: %d
+
+					Independent Answer text, including stored MCQ A/B/C/D letters, will be retained.
+
+					Continue only if the currently assigned Answer PDF is incorrect.
+					""".formatted(booklet.getName(), impact.affectedQuestionCount(), impact.answerRegionCount(),
+					impact.preservedTextAnswerCount(), impact.regionOnlyAnswerCount()));
+		} else {
+			alert.setHeaderText("Replace the assigned Answer PDF?");
+			alert.setContentText("""
+					Booklet: %s
+
+					No persisted Answer regions currently depend on the assigned PDF.
+					""".formatted(booklet.getName()));
+		}
+
+		// Closing or dismissing the confirmation never performs structural correction.
+		return alert.showAndWait().orElse(cancelButton) == replaceButton;
+	}
+
 	private boolean confirmCurriculumAuthoringClose(Stage authoringStage, CurriculumAuthoringPane authoringPane) {
 		if (!authoringPane.hasUnsavedChanges()) {
 			return true;
@@ -732,16 +787,20 @@ public class QuestionBankApplication extends Application {
 		MenuItem openForCaptureItem = createMenuItem("_Open Exam for Capture...", this::showExamImport);
 		openForCaptureItem.setId("open-exam-for-capture");
 
-		// Until the Sprint 12 Exam Setup dialog becomes the central asset surface,
-		// expose
-		// safe replacement directly from the Exam workflow. The underlying service is
-		// UI-independent and can later be reused by Exam Setup unchanged.
 		MenuItem replaceQuestionPdfItem = createMenuItem("_Replace Active Question PDF...",
 				() -> replaceActiveQuestionPdf(primaryStage, config));
 		replaceQuestionPdfItem.setId("replace-active-question-pdf");
+
+		// Answer correction is booklet-scoped even when several booklets share one
+		// AnswerFile. The old shared asset itself is never overwritten.
+		MenuItem replaceAnswerPdfItem = createMenuItem("Replace Active _Answer PDF...",
+				() -> replaceActiveAnswerPdf(primaryStage, config));
+		replaceAnswerPdfItem.setId("replace-active-answer-pdf");
+
 		MenuItem legacyImportItem = createMenuItem("Import _Legacy Question Metadata...",
 				() -> importLegacyQuestionMetadata(primaryStage, config));
-		examMenu.getItems().addAll(openForCaptureItem, replaceQuestionPdfItem, legacyImportItem);
+
+		examMenu.getItems().addAll(openForCaptureItem, replaceQuestionPdfItem, replaceAnswerPdfItem, legacyImportItem);
 		return examMenu;
 	}
 
@@ -1557,6 +1616,95 @@ public class QuestionBankApplication extends Application {
 		// Resolve ownership from the live scene graph rather than retaining another
 		// Stage reference solely for Help presentation.
 		return workspaceSplitPane.getScene().getWindow();
+	}
+
+	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {
+		if (!allowAnswerPdfReplacement()) {
+			return;
+		}
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet == null) {
+			showAlert(Alert.AlertType.WARNING, "Replace Answer PDF", "No Exam booklet is active.",
+					"Open the Exam booklet whose Answer PDF you want to correct.");
+			return;
+		}
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		try {
+			if (answerWriter.findAnswerFile(activeBooklet) == null) {
+				showAlert(Alert.AlertType.WARNING, "Replace Answer PDF", "No Answer PDF is assigned to this booklet.",
+						"Assign an Answer PDF through Answer capture before using the replacement workflow.");
+				return;
+			}
+		} catch (SQLException exception) {
+			showAlert(Alert.AlertType.ERROR, "Replace Answer PDF", "The assigned Answer PDF could not be read.",
+					exception.getMessage());
+			return;
+		}
+		PdfFilePicker picker = new PdfFilePicker(config.pdfDataRoot());
+		Path replacementPath = picker.chooseAnyPdf(primaryStage, "Choose replacement Answer PDF");
+		if (replacementPath == null) {
+			return;
+		}
+
+		// Keep native file selection out of the destructive method so workflow tests
+		// can
+		// exercise the real confirmation and persistence path deterministically.
+		replaceActiveAnswerPdf(primaryStage, config, replacementPath);
+	}
+
+	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config, Path replacementPath) {
+		if (replacementPath == null) {
+			throw new NullPointerException("replacementPath");
+		}
+		if (!allowAnswerPdfReplacement()) {
+			return;
+		}
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet == null) {
+			showAlert(Alert.AlertType.WARNING, "Replace Answer PDF", "No Exam booklet is active.",
+					"Open the Exam booklet whose Answer PDF you want to correct.");
+			return;
+		}
+		AnswerPdfReplacementService replacementService = new AnswerPdfReplacementService(
+				new SqliteDatabase(config.databasePath()), config.pdfDataRoot());
+		try {
+			AnswerFileReassignmentService.Impact impact = replacementService.assess(activeBooklet);
+			if (!confirmAnswerPdfReplacement(primaryStage, activeBooklet, impact)) {
+				return;
+			}
+
+			// Release any PDFBox handle on the old marking guide before changing the active
+			// AnswerFile. The old managed file itself remains intact.
+			pdfWorkspace.closeAnswerPdf();
+			AnswerPdfReplacementService.Result result = replacementService.replace(activeBooklet, replacementPath);
+
+			// Region-only written Answers may now be absent again. Rebuild from persistence
+			// rather than retaining the pane's local "answered" suppression cache.
+			answerCapturePane.refreshAfterAnswerFileCorrection();
+			if (!result.changed()) {
+				showAlert(Alert.AlertType.INFORMATION, "Answer PDF Replaced", "The selected PDF is already current.",
+						"The selected file has the same content as the assigned Answer PDF. No Answer regions were invalidated.");
+				return;
+			}
+			showAlert(Alert.AlertType.INFORMATION, "Answer PDF Replaced", "The Answer PDF assignment was corrected.",
+					"""
+							Invalidated Answer regions: %d
+							Affected Questions: %d
+							Answers retaining independent text: %d
+							Region-only Answers returned to capture: %d
+
+							Independent MCQ answer letters and other textual Answer content were preserved.
+							""".formatted(result.impact().answerRegionCount(), result.impact().affectedQuestionCount(),
+							result.impact().preservedTextAnswerCount(), result.impact().regionOnlyAnswerCount()));
+		} catch (IOException | SQLException | RuntimeException exception) {
+			String message = exception.getMessage();
+			if (message == null || message.isBlank()) {
+				message = exception.getClass().getSimpleName();
+			}
+			showAlert(Alert.AlertType.ERROR, "Replace Answer PDF", "The Answer PDF could not be replaced.", message);
+		}
 	}
 
 	private void replaceActiveQuestionPdf(Stage primaryStage, ApplicationConfig config) {
