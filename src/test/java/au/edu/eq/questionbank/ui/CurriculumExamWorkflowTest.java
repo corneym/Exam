@@ -33,6 +33,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -401,6 +402,11 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		ExamBooklet original = examMetadataPane().getBooklet();
 		assertNotNull(original);
+
+		// This fixture was imported through the normal v16 workflow, so external-copy
+		// recognition should exercise persisted hash identity rather than the legacy
+		// byte-comparison fallback.
+		assertNotNull(original.getSourceDocument().getContentSha256());
 		Path storedPdf = new PdfStore(pdfDataRoot).resolve(original.getSourceDocument().getRelativePath());
 		assertTrue(Files.isRegularFile(storedPdf));
 
@@ -460,6 +466,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		assertNotNull(booklet);
 		assertEquals(pdfDataRoot.relativize(expectedPath).toString(), booklet.getSourceDocument().getRelativePath());
+
+		// Fresh Exam import records the SHA-256 identity of the final managed PDF.
+		String expectedHash = new SourceDocumentHashService().sha256(expectedPath);
+		assertEquals(expectedHash, booklet.getSourceDocument().getContentSha256());
 	}
 
 	@Test

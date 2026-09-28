@@ -285,6 +285,8 @@ class SqliteDatabaseInspectionTest {
 			// The fixture starts from the current latest schema. Remove later-version
 			// structures in reverse order so the resulting database genuinely matches
 			// version 13 before exercising the real forward migration path.
+			// Version 16 did not exist in the historical v13 fixture.
+			statement.execute("ALTER TABLE source_documents DROP COLUMN content_sha256");
 			statement.execute("ALTER TABLE exam_booklets DROP COLUMN expected_question_count");
 			statement.execute("ALTER TABLE exams DROP COLUMN capture_state");
 			statement.execute("DROP TABLE question_content_parts");
@@ -330,6 +332,8 @@ class SqliteDatabaseInspectionTest {
 
 			// Remove only the version-15 additions so the fixture represents the exact
 			// structural state immediately before the new migration.
+			// Remove the later v16 hash metadata before constructing the v14 fixture.
+			statement.execute("ALTER TABLE source_documents DROP COLUMN content_sha256");
 			statement.execute("ALTER TABLE exam_booklets DROP COLUMN expected_question_count");
 			statement.execute("ALTER TABLE exams DROP COLUMN capture_state");
 			statement.execute("UPDATE schema_version SET version = 14");
@@ -377,7 +381,7 @@ class SqliteDatabaseInspectionTest {
 		// Run the production sequential migration rather than reproducing its SQL in
 		// the test.
 		database.initialiseSchema();
-		assertEquals(15, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 		assertDoesNotThrow(database::verifyIntegrity);
 		try (Connection connection = database.openConnection();
@@ -431,6 +435,93 @@ class SqliteDatabaseInspectionTest {
 			assertEquals("COMPLETE", result.getString("capture_state"));
 			assertEquals(20, result.getInt("expected_question_count"));
 			assertFalse(result.next());
+		}
+	}
+
+	@Test
+	void version15MigrationAddsNullableNonUniqueSourceDocumentHash() throws Exception {
+		Path databasePath = tempDir.resolve("version-15-source-document-hash.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Seed an existing document before reconstructing the exact v15 schema.
+			statement.execute("""
+					INSERT INTO source_documents (id, relative_path)
+					VALUES (1, 'Chemistry/QCAA/2025/paper1.pdf')
+					""");
+
+			// The fixture is manufactured from the current schema, so remove only the
+			// structure introduced by v16 before claiming that it is version 15.
+			statement.execute("ALTER TABLE source_documents DROP COLUMN content_sha256");
+			statement.execute("UPDATE schema_version SET version = 15");
+		}
+		assertEquals(15, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+
+		// Exercise the real production migration path.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+		assertDoesNotThrow(database::verifyIntegrity);
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("""
+						SELECT content_sha256
+						FROM source_documents
+						WHERE id = 1
+						""")) {
+			assertTrue(result.next());
+
+			// Migration must not invent a hash for a document whose bytes were not read.
+			assertEquals(null, result.getObject("content_sha256"));
+			assertFalse(result.next());
+		}
+		String validHash = "a".repeat(64);
+		String invalidHash = "g".repeat(64);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// A canonical lower-case SHA-256 hex digest is accepted.
+			statement.executeUpdate("""
+					UPDATE source_documents
+					SET content_sha256 = '%s'
+					WHERE id = 1
+					""".formatted(validHash));
+
+			// Identical content is deliberately legal at the database level so the
+			// application can detect and resolve duplicates explicitly.
+			statement.executeUpdate("""
+					INSERT INTO source_documents (
+					    relative_path,
+					    content_sha256
+					)
+					VALUES (
+					    'Chemistry/QCAA/2025/duplicate-paper.pdf',
+					    '%s'
+					)
+					""".formatted(validHash));
+			try (var duplicateCount = statement.executeQuery("""
+					SELECT COUNT(*)
+					FROM source_documents
+					WHERE content_sha256 = '%s'
+					""".formatted(validHash))) {
+				assertTrue(duplicateCount.next());
+				assertEquals(2, duplicateCount.getInt(1));
+			}
+
+			// Stored hashes must have the exact SHA-256 hexadecimal width.
+			assertThrows(SQLException.class, () -> statement.executeUpdate("""
+					UPDATE source_documents
+					SET content_sha256 = 'abc'
+					WHERE id = 1
+					"""));
+
+			// Sixty-four characters alone are insufficient when they are not hexadecimal.
+			assertThrows(SQLException.class, () -> statement.executeUpdate("""
+					UPDATE source_documents
+					SET content_sha256 = '%s'
+					WHERE id = 1
+					""".formatted(invalidHash)));
 		}
 	}
 }

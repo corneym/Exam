@@ -511,6 +511,7 @@ public final class LegacyQuestionMetadataImporter {
 		for (LegacyQuestionSheet sheet : sheets) {
 			for (LegacyQuestionRow row : sheet.questions()) {
 				long bookletId = findBookletId(connection, context.subjectId(), sheet.providerName(), row);
+
 				// Legacy import establishes Question/source-question structure. A completed
 				// Exam must therefore be explicitly reactivated before importing it.
 				requireBookletExamActive(connection, bookletId);

@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 15;
+	private static final int LATEST_SCHEMA_VERSION = 16;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -603,6 +603,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v14-to-v15.sql", 15);
 			return 15;
 		}
+		if (version == 15) {
+
+			// Version sixteen records an optional SHA-256 content identity for each
+			// managed source document without making duplicate content illegal.
+			executeMigration(connection, "/db/migration-v15-to-v16.sql", 16);
+			return 16;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -848,6 +855,11 @@ public final class SqliteDatabase {
 			// Exam capture state and expected booklet Question counts were introduced
 			// together in schema version 15.
 			verifyVersion15ExamCaptureSchema(connection);
+		}
+		if (version >= 16) {
+
+			// Source-document content hashes were introduced in schema version 16.
+			verifyVersion16SourceDocumentHashSchema(connection);
 		}
 	}
 
@@ -1297,6 +1309,28 @@ public final class SqliteDatabase {
 		}
 		if (!hasExpectedQuestionCount) {
 			throw new SQLException("exam_booklets is missing required column expected_question_count");
+		}
+	}
+
+	private void verifyVersion16SourceDocumentHashSchema(Connection connection) throws SQLException {
+		boolean hasContentSha256 = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(source_documents)")) {
+			while (result.next()) {
+				if (!"content_sha256".equals(result.getString("name"))) {
+					continue;
+				}
+				hasContentSha256 = true;
+
+				// Existing documents cannot be assigned hashes safely during a schema-only
+				// migration, so NULL remains a valid persisted value.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("source_documents column must be nullable: content_sha256");
+				}
+			}
+		}
+		if (!hasContentSha256) {
+			throw new SQLException("source_documents is missing required column content_sha256");
 		}
 	}
 

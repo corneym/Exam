@@ -85,7 +85,7 @@ At suitable checkpoints, especially before a pull request, compare
 
 ### Implementation workflow
 
-Work in small, testable slices.
+Work in testable slices.  Multiple changes can be propsed.  Make sure they are numbered. 
 
 When producing code, ensure it contains Javadoc if necessary, i.e. public API; algorithmic style comments using // and never /* comment */ style.
 

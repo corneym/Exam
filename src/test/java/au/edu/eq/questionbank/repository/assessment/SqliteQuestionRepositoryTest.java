@@ -286,21 +286,18 @@ class SqliteQuestionRepositoryTest {
 	void reloadsQuestionWithPersistedExamAndBookletPlanningState() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("question-exam-planning-state.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
 		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
 		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
 		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		ExamProvider provider = examWriter.insertExamProvider("QCAA");
 		Exam exam = examWriter.insertExam(chemistry, provider, 2025, "External Assessment");
 		SourceDocument sourceDocument = examWriter.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
 		ExamBooklet booklet = examWriter.insertExamBooklet(exam, sourceDocument, "Paper 1",
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20);
-
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
 		Question saved = repository.save(booklet, "Q1", "", 1,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
@@ -308,7 +305,6 @@ class SqliteQuestionRepositoryTest {
 		// Completion happens after Question capture and must still be visible when a
 		// Question later reconstructs its owning Exam.
 		examWriter.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
-
 		Question reloaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
 		assertEquals(ExamCaptureState.COMPLETE, reloaded.getExam().getCaptureState());
 		assertTrue(reloaded.getExam().isComplete());

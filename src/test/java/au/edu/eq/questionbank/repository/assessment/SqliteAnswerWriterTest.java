@@ -175,6 +175,27 @@ class SqliteAnswerWriterTest {
 	}
 
 	@Test
+	void persistsAndReloadsAnswerSourceHash() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("hashed-answer-source.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/QCAA/2025/paper1.pdf");
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		String hash = "0123456789abcdef".repeat(4);
+		AnswerFile stored = answerWriter.findOrCreateAnswerFile(booklet, "Marking guide",
+				"Chemistry/QCAA/2025/answers.pdf", hash);
+		assertEquals(hash, stored.getSourceDocument().getContentSha256());
+
+		// Reload through both answer-file lookup paths so persisted identity cannot be
+		// lost during reconstruction.
+		assertEquals(hash, answerWriter.findAnswerFile(booklet).getSourceDocument().getContentSha256());
+		assertEquals(hash,
+				answerWriter.findAnswerFiles(booklet.getExam()).getFirst().getSourceDocument().getContentSha256());
+	}
+
+	@Test
 	void rejectsAnswerFileAssignmentFromAnotherExam() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("cross-exam-booklet-answer-file.db"));
 		database.initialiseSchema();

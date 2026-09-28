@@ -38,7 +38,6 @@ class LegacyQuestionMetadataImporterTest {
 	@Test
 	void completeExamRejectsLegacyQuestionStructureImport() throws Exception {
 		Fixture fixture = createFixture("complete-exam-import.db", false);
-
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
 
@@ -49,13 +48,10 @@ class LegacyQuestionMetadataImporterTest {
 					SET capture_state = 'COMPLETE'
 					""");
 		}
-
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
-
 		IllegalStateException exception = assertThrows(IllegalStateException.class,
 				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
 		assertTrue(exception.getMessage().contains("reactivated"));
-
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
 

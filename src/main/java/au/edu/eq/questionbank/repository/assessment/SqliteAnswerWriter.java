@@ -118,7 +118,8 @@ public final class SqliteAnswerWriter {
 						    af.id AS answer_file_id,
 						    af.answer_file_name,
 						    sd.id AS source_document_id,
-						    sd.relative_path
+						    sd.relative_path,
+						    sd.content_sha256
 						FROM answer_files af
 						JOIN source_documents sd
 						    ON sd.id = af.source_document_id
@@ -128,8 +129,11 @@ public final class SqliteAnswerWriter {
 			statement.setLong(1, exam.getId());
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
+
+					// Reconstructed AnswerFiles must retain the persisted byte identity of
+					// their managed source document.
 					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
-							result.getString("relative_path"));
+							result.getString("relative_path"), result.getString("content_sha256"));
 					answerFiles.add(new AnswerFile(result.getLong("answer_file_id"), exam,
 							result.getString("answer_file_name"), sourceDocument));
 				}
@@ -150,6 +154,25 @@ public final class SqliteAnswerWriter {
 	 * @throws IllegalArgumentException if a string argument is null or blank
 	 */
 	public AnswerFile findOrCreateAnswerFile(Exam exam, String name, String relativePath) throws SQLException {
+
+		// Existing callers may register legacy answer documents whose hash is not yet
+		// known.
+		return findOrCreateAnswerFile(exam, name, relativePath, null);
+	}
+
+	/**
+	 * Finds or creates an AnswerFile while retaining the known identity of its
+	 * managed source bytes.
+	 *
+	 * @param exam          Exam whose answers the file contains
+	 * @param name          answer-file name
+	 * @param relativePath  managed source path
+	 * @param contentSha256 canonical SHA-256 digest, or {@code null}
+	 * @return existing or newly created AnswerFile
+	 * @throws SQLException if persistence fails
+	 */
+	public AnswerFile findOrCreateAnswerFile(Exam exam, String name, String relativePath, String contentSha256)
+			throws SQLException {
 		if (exam == null) {
 			throw new NullPointerException("exam");
 		}
@@ -164,7 +187,14 @@ public final class SqliteAnswerWriter {
 			try {
 				SourceDocument sourceDocument = examWriter.findSourceDocumentByPath(connection, relativePath);
 				if (sourceDocument == null) {
-					sourceDocument = examWriter.insertSourceDocument(connection, relativePath);
+
+					// New answer sources persist their byte identity at registration time.
+					sourceDocument = examWriter.insertSourceDocument(connection, relativePath, contentSha256);
+				} else if (contentSha256 != null) {
+
+					// Existing migrated sources can acquire their previously unknown hash,
+					// while conflicting bytes are rejected.
+					sourceDocument = examWriter.recordSourceDocumentHash(connection, sourceDocument, contentSha256);
 				}
 				AnswerFile answerFile = findAnswerFile(connection, exam, name, sourceDocument);
 				if (answerFile == null) {
@@ -172,9 +202,13 @@ public final class SqliteAnswerWriter {
 				}
 				connection.commit();
 				return answerFile;
-			} catch (SQLException | RuntimeException e) {
-				connection.rollback();
-				throw e;
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
 			}
 		}
 	}
@@ -192,6 +226,24 @@ public final class SqliteAnswerWriter {
 	 */
 	public AnswerFile findOrCreateAnswerFile(ExamBooklet booklet, String name, String relativePath)
 			throws SQLException {
+
+		// Preserve compatibility for callers that do not yet supply content identity.
+		return findOrCreateAnswerFile(booklet, name, relativePath, null);
+	}
+
+	/**
+	 * Finds or creates an AnswerFile, records its source hash when known, and
+	 * assigns it to one ExamBooklet atomically.
+	 *
+	 * @param booklet       booklet whose answers the file supplies
+	 * @param name          answer-file name
+	 * @param relativePath  managed source path
+	 * @param contentSha256 canonical SHA-256 digest, or {@code null}
+	 * @return existing or newly created AnswerFile
+	 * @throws SQLException if persistence fails
+	 */
+	public AnswerFile findOrCreateAnswerFile(ExamBooklet booklet, String name, String relativePath,
+			String contentSha256) throws SQLException {
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
@@ -207,15 +259,18 @@ public final class SqliteAnswerWriter {
 				Exam exam = booklet.getExam();
 				SourceDocument sourceDocument = examWriter.findSourceDocumentByPath(connection, relativePath);
 				if (sourceDocument == null) {
-					sourceDocument = examWriter.insertSourceDocument(connection, relativePath);
+
+					// Persist source identity before creating the AnswerFile relationship.
+					sourceDocument = examWriter.insertSourceDocument(connection, relativePath, contentSha256);
+				} else if (contentSha256 != null) {
+					sourceDocument = examWriter.recordSourceDocumentHash(connection, sourceDocument, contentSha256);
 				}
 				AnswerFile answerFile = findAnswerFile(connection, exam, name, sourceDocument);
 				if (answerFile == null) {
 					answerFile = insertAnswerFile(connection, exam, name, sourceDocument);
 				}
 
-				// File creation and booklet assignment belong to one transaction so a
-				// failed mapping cannot leave a partly registered answer document.
+				// AnswerFile registration and booklet assignment remain one transaction.
 				verifyNoConflictingBookletAnswerRegions(connection, booklet, answerFile.getId());
 				assignAnswerFile(connection, booklet, answerFile);
 				connection.commit();
@@ -433,7 +488,8 @@ public final class SqliteAnswerWriter {
 				    af.exam_id AS answer_file_exam_id,
 				    af.answer_file_name,
 				    sd.id AS source_document_id,
-				    sd.relative_path
+				    sd.relative_path,
+				    sd.content_sha256
 				FROM exam_booklets eb
 				LEFT JOIN answer_files af
 				    ON af.id = eb.answer_file_id
@@ -461,8 +517,10 @@ public final class SqliteAnswerWriter {
 				if (answerFileExamId != booklet.getExam().getId()) {
 					throw new SQLException("Exam booklet refers to an answer file belonging to another exam");
 				}
+
+				// Preserve content identity when an assigned AnswerFile is restored.
 				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
-						result.getString("relative_path"));
+						result.getString("relative_path"), result.getString("content_sha256"));
 				return new AnswerFile(answerFileId, booklet.getExam(), result.getString("answer_file_name"),
 						sourceDocument);
 			}

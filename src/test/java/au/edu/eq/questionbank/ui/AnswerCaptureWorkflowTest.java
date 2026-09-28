@@ -40,6 +40,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -380,15 +381,18 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		openAnswerPdfForTest(question);
 		WaitForAsyncUtils.waitForFxEvents();
 
-		// Selecting an Answer PDF is now also the explicit booklet-to-AnswerFile
-		// assignment operation.
+		// Selecting an Answer PDF is also the explicit booklet-to-AnswerFile mapping.
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(new SqliteDatabase(databasePath),
 				new SqliteExamWriter(new SqliteDatabase(databasePath)));
 		AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
 		assertNotNull(assignedAnswerFile);
 		assertEquals("exam.pdf", assignedAnswerFile.getName());
 
-		// Visibility and layout participation are controlled by the containing HBox.
+		// The managed Answer PDF must have its byte identity persisted at selection
+		// time, not only its filename and path.
+		Path managedAnswerPath = pdfDataRoot.resolve(assignedAnswerFile.getSourceDocument().getRelativePath());
+		String expectedHash = new SourceDocumentHashService().sha256(managedAnswerPath);
+		assertEquals(expectedHash, assignedAnswerFile.getSourceDocument().getContentSha256());
 		assertFalse(pdfControls.isVisible());
 		assertFalse(pdfControls.isManaged());
 	}

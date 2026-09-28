@@ -32,6 +32,7 @@ import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
@@ -90,6 +91,7 @@ public final class AnswerCapturePane extends VBox {
 					marksLabel(question.getMarks()), answerState);
 		}
 	};
+	private final SourceDocumentHashService sourceDocumentHashService = new SourceDocumentHashService();
 
 	// Workflow dependencies and application callbacks.
 	private final QuestionRepository questionRepository;
@@ -541,16 +543,19 @@ public final class AnswerCapturePane extends VBox {
 		}
 		try {
 
+			// Hash the managed Answer PDF before publishing its SourceDocument so the
+			// persisted identity always describes the authoritative stored bytes.
+			String contentSha256 = sourceDocumentHashService.sha256(selectedPdf.path());
+
 			// Register or reuse the AnswerFile and persist its relationship to this
-			// specific ExamBooklet. Several booklets may legitimately share one file.
+			// specific ExamBooklet.
 			answerFile = answerWriter.findOrCreateAnswerFile(question.getBooklet(), selectedPdf.file().getName(),
-					selectedPdf.relativePath());
-		} catch (SQLException e) {
-			throw new IllegalStateException("Unable to save answer PDF", e);
+					selectedPdf.relativePath(), contentSha256);
+		} catch (IOException | SQLException exception) {
+			throw new IllegalStateException("Unable to save answer PDF", exception);
 		}
 
-		// The persisted mapping is established before the document becomes the active
-		// Answer source in the workspace.
+		// Persistence succeeds before the document becomes active in the workspace.
 		answerPdfHandler.accept(selectedPdf);
 		selectedAnswerPdfLabel.setText(answerFile.getName());
 		updateAnswerPdfControlsVisibility(question);

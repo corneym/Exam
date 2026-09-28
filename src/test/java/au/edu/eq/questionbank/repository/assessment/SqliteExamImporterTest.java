@@ -41,6 +41,66 @@ class SqliteExamImporterTest {
 	}
 
 	@Test
+	void legacyStyleImportPersistsKnownSourceHash() throws Exception {
+		Path databasePath = tempDirectory.resolve("legacy-hashed-source.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		String hash = "abcdef0123456789".repeat(4);
+		ExamBooklet booklet = importer.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1",
+				"Chemistry/QCAA/2020/paper1.pdf", hash);
+
+		// Legacy booklet format can remain UNSPECIFIED without losing document
+		// identity.
+		assertEquals(hash, booklet.getSourceDocument().getContentSha256());
+		assertEquals(ExamBookletQuestionFormat.UNSPECIFIED, booklet.getQuestionFormat());
+	}
+
+	@Test
+	void persistsHashForNewSourceDocument() throws Exception {
+		Path databasePath = tempDirectory.resolve("hashed-source-import.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		String hash = "0123456789abcdef".repeat(4);
+		ExamBooklet imported = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Chemistry/QCAA/2025/paper1.pdf", ExamBookletQuestionFormat.MIXED, hash);
+
+		// The returned graph must carry the content identity that was persisted with
+		// the new SourceDocument.
+		assertEquals(hash, imported.getSourceDocument().getContentSha256());
+		ExamBooklet reloaded = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
+
+		// Reloading independently proves the hash was stored rather than existing only
+		// on the object returned by the importer.
+		assertEquals(hash, reloaded.getSourceDocument().getContentSha256());
+	}
+
+	@Test
+	void persistsHashWhenImportingNewSourceDocument() throws Exception {
+		Path databasePath = tempDirectory.resolve("hashed-source-import.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		String hash = "0123456789abcdef".repeat(4);
+		ExamBooklet imported = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Chemistry/QCAA/2025/paper1.pdf", ExamBookletQuestionFormat.MIXED, hash);
+
+		// The returned graph must already contain the persisted byte identity.
+		assertEquals(hash, imported.getSourceDocument().getContentSha256());
+		ExamBooklet reloaded = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
+
+		// A fresh reconstruction from SQLite proves the hash was actually persisted.
+		assertEquals(hash, reloaded.getSourceDocument().getContentSha256());
+	}
+
+	@Test
 	void reusesExistingExamMetadata() throws Exception {
 		Path databasePath = tempDirectory.resolve("questionbank.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);

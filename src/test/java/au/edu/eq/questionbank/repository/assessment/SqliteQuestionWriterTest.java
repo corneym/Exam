@@ -35,42 +35,35 @@ class SqliteQuestionWriterTest {
 	void completeExamAllowsQuestionCorrectionButRejectsQuestionCodeChange() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("complete-exam-question-update.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
 		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
 		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
 		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
 				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
-
 		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
 		QuestionRegion originalRegion = new QuestionRegion(booklet, 4, 0.10, 0.20, 0.50, 0.15);
 		Question question = writer.insertQuestion(booklet, "Q6", "", 3, List.of(originalRegion), subtopic, false);
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.executeUpdate("""
 					UPDATE exams
 					SET capture_state = 'COMPLETE'
 					""");
 		}
-
 		QuestionRegion correctedRegion = new QuestionRegion(booklet, 5, 0.10, 0.10, 0.60, 0.20);
 
 		// Marks and captured content are ordinary corrections, so retaining the same
 		// Question identity remains permitted on a COMPLETE Exam.
 		writer.updateQuestion(question.getId(), booklet, "Q6", 4, List.of(correctedRegion), subtopic, null, null);
-
 		QuestionRegion attemptedStructuralRegion = new QuestionRegion(booklet, 6, 0.10, 0.10, 0.60, 0.20);
 
 		// Changing Q6 to Q7 changes structural Question identity and therefore requires
 		// explicit Exam reactivation.
 		assertThrows(IllegalStateException.class, () -> writer.updateQuestion(question.getId(), booklet, "Q7", 5,
 				List.of(attemptedStructuralRegion), subtopic, null, null));
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
@@ -99,25 +92,21 @@ class SqliteQuestionWriterTest {
 	void completeExamRejectsNewQuestionInsertion() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("complete-exam-new-question.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
 		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
 		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
 		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
 				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.executeUpdate("""
 					UPDATE exams
 					SET capture_state = 'COMPLETE'
 					""");
 		}
-
 		QuestionRegion region = new QuestionRegion(booklet, 1, 0.10, 0.10, 0.60, 0.20);
 		SqliteQuestionWriter writer = new SqliteQuestionWriter(database);
 
@@ -125,7 +114,6 @@ class SqliteQuestionWriterTest {
 		// persisted Exam, regardless of the state held by the caller's domain object.
 		assertThrows(IllegalStateException.class,
 				() -> writer.insertQuestion(booklet, "Q1", "", 2, List.of(region), subtopic, false));
-
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM questions")) {

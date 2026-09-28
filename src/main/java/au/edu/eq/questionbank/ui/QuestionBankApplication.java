@@ -104,6 +104,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
+import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
@@ -758,14 +759,19 @@ public class QuestionBankApplication extends Application {
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		SourceDocumentHashService hashService = new SourceDocumentHashService();
 		Set<Long> importedAnswerFileExamIds = new HashSet<>();
 		for (LegacyBookletImportRequest request : requests) {
 			LegacyBookletRequirement requirement = request.requirement();
 			Path storedPath = pdfStore.importExamPdf(request.pdfPath(), subject.getName(), requirement.providerName(),
 					requirement.year());
 			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
+			String questionHash = hashService.sha256(storedPath);
+
+			// Legacy structure still enters the same authoritative model, while its
+			// managed PDF now receives the same content identity as fresh imports.
 			ExamBooklet booklet = examImporter.importExam(subject, requirement.providerName(), requirement.year(),
-					request.assessmentName(), requirement.bookletName(), relativePath);
+					request.assessmentName(), requirement.bookletName(), relativePath, questionHash);
 			if (request.answerPdfPath() == null) {
 				continue;
 			}
@@ -775,7 +781,11 @@ public class QuestionBankApplication extends Application {
 			Path storedAnswerPath = pdfStore.importExamPdf(request.answerPdfPath(), subject.getName(),
 					requirement.providerName(), requirement.year());
 			String answerRelativePath = config.pdfDataRoot().relativize(storedAnswerPath).toString();
-			answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide", answerRelativePath);
+			String answerHash = hashService.sha256(storedAnswerPath);
+
+			// The legacy marking guide is managed by the same hashed SourceDocument
+			// persistence used by normal Answer capture.
+			answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide", answerRelativePath, answerHash);
 		}
 	}
 
@@ -1219,6 +1229,7 @@ public class QuestionBankApplication extends Application {
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		SourceDocumentHashService hashService = new SourceDocumentHashService();
 		for (LegacyAnswerPdfImportDialog.AnswerPdfSelection selection : selections) {
 			Exam exam = examWriter.findExamByProviderAndYear(subject, selection.providerName(), selection.year());
 			if (exam == null) {
@@ -1228,7 +1239,11 @@ public class QuestionBankApplication extends Application {
 			Path storedPath = pdfStore.importExamPdf(selection.pdfPath(), subject.getName(), selection.providerName(),
 					selection.year());
 			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
-			answerWriter.findOrCreateAnswerFile(exam, "Marking guide", relativePath);
+			String contentSha256 = hashService.sha256(storedPath);
+
+			// Imported legacy Answer PDFs receive byte identity immediately rather than
+			// remaining indistinguishable from pre-v16 migrated documents.
+			answerWriter.findOrCreateAnswerFile(exam, "Marking guide", relativePath, contentSha256);
 		}
 	}
 

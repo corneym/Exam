@@ -450,6 +450,7 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
+
 		// Creating a Question changes Exam structure, so the persisted Exam state is
 		// authoritative even if the caller holds an older ACTIVE domain object.
 		requireExamActiveForBooklet(connection, booklet.getId());
@@ -503,6 +504,7 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
+
 		// Creating a Question is structural and therefore requires an ACTIVE Exam.
 		requireExamActiveForBooklet(connection, booklet.getId());
 		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
@@ -607,6 +609,7 @@ public final class SqliteQuestionWriter {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
 		verifyQuestionBooklet(connection, questionId, booklet);
+
 		// Ordinary Question correction remains available on COMPLETE Exams, but a
 		// Question-code change alters structural identity and requires reactivation.
 		requireExamActiveForQuestionCodeChange(connection, questionId, questionCode);
@@ -1010,7 +1013,6 @@ public final class SqliteQuestionWriter {
 				if (result.getString("question_code").equals(replacementQuestionCode)) {
 					return;
 				}
-
 				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
 				if (captureState == ExamCaptureState.COMPLETE) {
 					throw new IllegalStateException("Exam must be reactivated before changing Question structure");

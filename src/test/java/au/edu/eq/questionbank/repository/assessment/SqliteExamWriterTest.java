@@ -34,6 +34,30 @@ class SqliteExamWriterTest {
 	Path tempDirectory;
 
 	@Test
+	void backfillsMissingSourceHashAndRejectsConflictingIdentity() throws Exception {
+		Path databasePath = tempDirectory.resolve("source-hash-backfill.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SourceDocument source = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		String hash = "0123456789abcdef".repeat(4);
+		try (Connection connection = database.openConnection()) {
+			SourceDocument hashed = writer.recordSourceDocumentHash(connection, source, hash);
+
+			// A migrated NULL hash can be populated when the managed bytes are later
+			// inspected.
+			assertEquals(hash, hashed.getContentSha256());
+
+			// Re-recording the same identity is idempotent.
+			assertEquals(hash, writer.recordSourceDocumentHash(connection, hashed, hash).getContentSha256());
+
+			// The same persisted source path cannot silently become different bytes.
+			assertThrows(IllegalArgumentException.class,
+					() -> writer.recordSourceDocumentHash(connection, hashed, "b".repeat(64)));
+		}
+	}
+
+	@Test
 	void completedExamMustBeReactivatedBeforeMetadataCorrection() throws Exception {
 		Path databasePath = tempDirectory.resolve("completed-exam-correction.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -48,7 +72,6 @@ class SqliteExamWriterTest {
 		// the same user-declared lock as booklet planning.
 		assertThrows(IllegalStateException.class,
 				() -> writer.correctExamMetadata(completed, "QCAA", 2025, "External Assessment Revised"));
-
 		Exam reactivated = writer.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
 		Exam corrected = writer.correctExamMetadata(reactivated, "QCAA", 2025, "External Assessment Revised");
 		assertEquals("External Assessment Revised", corrected.getName());
@@ -301,6 +324,52 @@ class SqliteExamWriterTest {
 	}
 
 	@Test
+	void persistsAndFindsDuplicateSourceDocumentHashes() throws Exception {
+		Path databasePath = tempDirectory.resolve("source-document-hashes.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		String hash = "0123456789abcdef".repeat(4);
+		SourceDocument first = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf", hash);
+		SourceDocument second = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1-copy.pdf", hash);
+		SourceDocument unhashed = writer.insertSourceDocument("Chemistry/QCAA/2025/legacy.pdf");
+		assertEquals(hash, first.getContentSha256());
+		assertEquals(hash, second.getContentSha256());
+		assertNull(unhashed.getContentSha256());
+
+		// Duplicate byte content is deliberately discoverable rather than rejected by
+		// a uniqueness constraint.
+		List<SourceDocument> duplicates = writer.findSourceDocumentsByHash(hash);
+		assertEquals(2, duplicates.size());
+		assertEquals(List.of(first.getId(), second.getId()), duplicates.stream().map(SourceDocument::getId).toList());
+		assertEquals(hash, duplicates.getFirst().getContentSha256());
+
+		// A valid hash with no persisted match produces an empty result rather than an
+		// exceptional condition.
+		assertTrue(writer.findSourceDocumentsByHash("b".repeat(64)).isEmpty());
+		assertThrows(IllegalArgumentException.class, () -> writer.findSourceDocumentsByHash("not-a-sha-256"));
+		try (Connection connection = database.openConnection()) {
+			SourceDocument reloaded = writer.findSourceDocumentByPath(connection, "Chemistry/QCAA/2025/paper1.pdf");
+
+			// Reloading by the existing natural path must retain the persisted hash.
+			assertNotNull(reloaded);
+			assertEquals(hash, reloaded.getContentSha256());
+		}
+
+		// Normal Exam-booklet reconstruction must not discard source hash metadata.
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		writer.insertExamBooklet(exam, first, "Paper 1");
+		ExamBooklet reloadedBooklet = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
+		assertNotNull(reloadedBooklet);
+		assertEquals(hash, reloadedBooklet.getSourceDocument().getContentSha256());
+		List<ExamBooklet> allBooklets = writer.findAllExamBooklets();
+		assertEquals(1, allBooklets.size());
+		assertEquals(hash, allBooklets.getFirst().getSourceDocument().getContentSha256());
+	}
+
+	@Test
 	void persistsAndReloadsExplicitBookletQuestionFormat() throws Exception {
 		Path databasePath = tempDirectory.resolve("booklet-question-format.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -334,11 +403,9 @@ class SqliteExamWriterTest {
 		ExamProvider provider = writer.insertExamProvider("QCAA");
 		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
 		SourceDocument sourceDocument = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
-
 		ExamBooklet booklet = writer.insertExamBooklet(exam, sourceDocument, "Paper 1",
 				ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20);
 		assertEquals(20, booklet.getExpectedQuestionCount());
-
 		ExamBooklet changed = writer.updateExamBookletPlanning(booklet, ExamBookletQuestionFormat.MIXED, 18);
 		assertEquals(ExamBookletQuestionFormat.MIXED, changed.getQuestionFormat());
 		assertEquals(18, changed.getExpectedQuestionCount());
@@ -349,7 +416,6 @@ class SqliteExamWriterTest {
 		assertNotNull(reloaded);
 		assertEquals(ExamBookletQuestionFormat.MIXED, reloaded.getQuestionFormat());
 		assertEquals(18, reloaded.getExpectedQuestionCount());
-
 		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
 		assertTrue(completed.isComplete());
 
@@ -357,11 +423,9 @@ class SqliteExamWriterTest {
 		// structure and therefore require explicit reactivation.
 		assertThrows(IllegalStateException.class,
 				() -> writer.updateExamBookletPlanning(reloaded, ExamBookletQuestionFormat.WRITTEN_RESPONSE, 17));
-
 		SourceDocument secondSource = writer.insertSourceDocument("Chemistry/QCAA/2025/paper2.pdf");
 		assertThrows(IllegalStateException.class, () -> writer.insertExamBooklet(completed, secondSource, "Paper 2",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12));
-
 		Exam reactivated = writer.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
 		ExamBooklet paperTwo = writer.insertExamBooklet(reactivated, secondSource, "Paper 2",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12);
@@ -376,14 +440,12 @@ class SqliteExamWriterTest {
 		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		ExamProvider provider = writer.insertExamProvider("QCAA");
-
 		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
 
 		// New Exams remain structurally editable until the user explicitly completes
 		// them.
 		assertEquals(ExamCaptureState.ACTIVE, exam.getCaptureState());
 		assertFalse(exam.isComplete());
-
 		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
 		assertTrue(completed.isComplete());
 
@@ -392,10 +454,8 @@ class SqliteExamWriterTest {
 		Exam reloadedCompleted = writer.findExamByProviderAndYear(chemistry, "QCAA", 2025);
 		assertNotNull(reloadedCompleted);
 		assertEquals(ExamCaptureState.COMPLETE, reloadedCompleted.getCaptureState());
-
 		Exam reactivated = writer.setExamCaptureState(reloadedCompleted, ExamCaptureState.ACTIVE);
 		assertEquals(ExamCaptureState.ACTIVE, reactivated.getCaptureState());
-
 		Exam reloadedActive = writer.findExamByProviderAndYear(chemistry, "QCAA", 2025);
 		assertNotNull(reloadedActive);
 		assertEquals(ExamCaptureState.ACTIVE, reloadedActive.getCaptureState());
