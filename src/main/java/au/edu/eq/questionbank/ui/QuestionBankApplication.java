@@ -51,6 +51,7 @@ import au.edu.eq.questionbank.repository.assessment.ExamMetadataCorrectionServic
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataUpdateResult;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService;
+import au.edu.eq.questionbank.repository.assessment.QuestionBookletPdfReplacementService;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
@@ -373,6 +374,22 @@ public class QuestionBankApplication extends Application {
 		return false;
 	}
 
+	private boolean allowQuestionPdfReplacement() {
+		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
+				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
+				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
+				|| answerCapturePane.isSaveInProgress();
+		if (!captureWorkInProgress) {
+			return true;
+		}
+
+		// Replacing the Question PDF invalidates persisted source coordinates and may
+		// rebuild capture queues, so no unsaved capture state may remain active.
+		showAlert(Alert.AlertType.WARNING, "Replace Question PDF", "Capture work is in progress",
+				"Save, add, clear or cancel the current Question, Shared Context or Answer capture before replacing the Question PDF.");
+		return false;
+	}
+
 	private boolean allowWorkingSubjectChange() {
 		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
 				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
@@ -581,6 +598,45 @@ public class QuestionBankApplication extends Application {
 		return result.isPresent() && result.get() == ButtonType.OK;
 	}
 
+	private boolean confirmQuestionPdfReplacement(Stage primaryStage, ExamBooklet booklet,
+			QuestionBookletPdfReplacementService.Impact impact) {
+		ButtonType replaceButton = new ButtonType("Replace PDF", ButtonBar.ButtonData.OK_DONE);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Replace Question PDF");
+		alert.getButtonTypes().setAll(replaceButton, cancelButton);
+		if (impact.hasSourceDependentCapture()) {
+			alert.setHeaderText("Existing PDF-derived capture will be invalidated.");
+			alert.setContentText(
+					"""
+							Booklet: %s
+
+							Questions affected: %d
+							Question PDF regions removed: %d
+							Shared Contexts removed: %d
+							Stored image parts preserved: %d
+
+							Question identity, marks, classification, response type, Answer data and independent stored images will be retained.
+
+							Continue only if the currently managed Question PDF is incorrect.
+							"""
+							.formatted(booklet.getName(), impact.affectedQuestionCount(), impact.pdfRegionCount(),
+									impact.sharedContextCount(), impact.preservedImageCount()));
+		} else {
+			alert.setHeaderText("Replace the managed Question PDF?");
+			alert.setContentText("""
+					Booklet: %s
+
+					No persisted Question regions or Shared Contexts currently depend on this PDF.
+					Question metadata and other Exam data will be retained.
+					""".formatted(booklet.getName()));
+		}
+
+		// Replacement never occurs merely because the dialog was closed or dismissed.
+		return alert.showAndWait().orElse(cancelButton) == replaceButton;
+	}
+
 	private boolean confirmRestore(Stage primaryStage, RestorePreparation preparation) {
 		String restoredData;
 		if (preparation.manifest().kind() == BackupKind.FULL) {
@@ -672,11 +728,20 @@ public class QuestionBankApplication extends Application {
 	private Menu createExamMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu examMenu = createMenu("_Exam");
 
-		// Describe the user's task rather than the current persistence implementation.
+		// Open/import remains the entry point for selecting the active Exam booklet.
 		MenuItem openForCaptureItem = createMenuItem("_Open Exam for Capture...", this::showExamImport);
 		openForCaptureItem.setId("open-exam-for-capture");
-		examMenu.getItems().addAll(openForCaptureItem, createMenuItem("Import _Legacy Question Metadata...",
-				() -> importLegacyQuestionMetadata(primaryStage, config)));
+
+		// Until the Sprint 12 Exam Setup dialog becomes the central asset surface,
+		// expose
+		// safe replacement directly from the Exam workflow. The underlying service is
+		// UI-independent and can later be reused by Exam Setup unchanged.
+		MenuItem replaceQuestionPdfItem = createMenuItem("_Replace Active Question PDF...",
+				() -> replaceActiveQuestionPdf(primaryStage, config));
+		replaceQuestionPdfItem.setId("replace-active-question-pdf");
+		MenuItem legacyImportItem = createMenuItem("Import _Legacy Question Metadata...",
+				() -> importLegacyQuestionMetadata(primaryStage, config));
+		examMenu.getItems().addAll(openForCaptureItem, replaceQuestionPdfItem, legacyImportItem);
 		return examMenu;
 	}
 
@@ -1492,6 +1557,102 @@ public class QuestionBankApplication extends Application {
 		// Resolve ownership from the live scene graph rather than retaining another
 		// Stage reference solely for Help presentation.
 		return workspaceSplitPane.getScene().getWindow();
+	}
+
+	private void replaceActiveQuestionPdf(Stage primaryStage, ApplicationConfig config) {
+		if (!allowQuestionPdfReplacement()) {
+			return;
+		}
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet == null) {
+			showAlert(Alert.AlertType.WARNING, "Replace Question PDF", "No Exam booklet is active.",
+					"Open the Exam booklet whose Question PDF you want to replace.");
+			return;
+		}
+		PdfFilePicker picker = new PdfFilePicker(config.pdfDataRoot());
+		Path replacementPath = picker.chooseAnyPdf(primaryStage, "Choose replacement Question PDF");
+		if (replacementPath == null) {
+			return;
+		}
+
+		// File selection and actual replacement are separated so workflow tests can
+		// exercise the destructive operation without automating the native file
+		// chooser.
+		replaceActiveQuestionPdf(primaryStage, config, replacementPath);
+	}
+
+	private void replaceActiveQuestionPdf(Stage primaryStage, ApplicationConfig config, Path replacementPath) {
+		if (replacementPath == null) {
+			throw new NullPointerException("replacementPath");
+		}
+		if (!allowQuestionPdfReplacement()) {
+			return;
+		}
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet == null) {
+			showAlert(Alert.AlertType.WARNING, "Replace Question PDF", "No Exam booklet is active.",
+					"Open the Exam booklet whose Question PDF you want to replace.");
+			return;
+		}
+		QuestionBookletPdfReplacementService replacementService = new QuestionBookletPdfReplacementService(
+				new SqliteDatabase(config.databasePath()), config.pdfDataRoot());
+		try {
+			QuestionBookletPdfReplacementService.Impact impact = replacementService.assess(activeBooklet);
+			if (!confirmQuestionPdfReplacement(primaryStage, activeBooklet, impact)) {
+				return;
+			}
+
+			// PDFBox may hold the managed booklet open on Windows. Close the current Exam
+			// session only after the user has confirmed the destructive operation.
+			pdfWorkspace.closeExamPdf();
+			QuestionBookletPdfReplacementService.Result result;
+			try {
+				result = replacementService.replace(activeBooklet, replacementPath);
+			} catch (IOException | SQLException | RuntimeException exception) {
+
+				// The service restores old managed bytes when necessary. Reopen that
+				// authoritative source so a failed replacement does not strand the workspace.
+				try {
+					examMetadataPane.reopenActiveExamPdf();
+				} catch (RuntimeException reopenFailure) {
+					exception.addSuppressed(reopenFailure);
+				}
+				throw exception;
+			}
+			Path managedPath = new PdfStore(config.pdfDataRoot())
+					.resolve(result.booklet().getSourceDocument().getRelativePath());
+
+			// Refresh the in-memory booklet before reopening the managed source so the
+			// workspace and persistence expose the same SHA-256 identity.
+			examMetadataPane.activateExistingBooklet(result.booklet(), managedPath);
+			examMetadataPane.reopenActiveExamPdf();
+
+			// Replacement may have removed PDF-backed Question and Shared Context
+			// capture. Rebuild both work queues from the committed database state.
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			if (!result.contentChanged()) {
+				showAlert(Alert.AlertType.INFORMATION, "Question PDF Replaced", "The selected PDF is already current.",
+						"The selected file has the same content as the managed Question PDF. No Question or Shared Context capture was invalidated.");
+				return;
+			}
+			showAlert(Alert.AlertType.INFORMATION, "Question PDF Replaced", "The Question PDF was replaced.", """
+					Invalidated Question PDF regions: %d
+					Invalidated Shared Contexts: %d
+					Affected Questions: %d
+					Preserved stored image parts: %d
+
+					Question metadata, marks, classifications, response types and Answers were preserved.
+					""".formatted(result.impact().pdfRegionCount(), result.impact().sharedContextCount(),
+					result.impact().affectedQuestionCount(), result.impact().preservedImageCount()));
+		} catch (IOException | SQLException | RuntimeException exception) {
+			String message = exception.getMessage();
+			if (message == null || message.isBlank()) {
+				message = exception.getClass().getSimpleName();
+			}
+			showAlert(Alert.AlertType.ERROR, "Replace Question PDF", "The Question PDF could not be replaced.",
+					message);
+		}
 	}
 
 	private void requestApplicationExit(Stage primaryStage) {

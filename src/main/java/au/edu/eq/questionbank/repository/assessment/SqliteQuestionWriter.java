@@ -516,6 +516,34 @@ public final class SqliteQuestionWriter {
 				sharedContextCaptureRequired, sourceQuestion, sharedContext, responseType, contentParts);
 	}
 
+	void setSourceCaptureRequired(Connection connection, long questionId, ExamBooklet booklet, boolean required)
+			throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (questionId < 1) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE questions
+				SET source_capture_required = ?
+				WHERE id = ?
+				  AND booklet_id = ?
+				""")) {
+			statement.setInt(1, required ? 1 : 0);
+			statement.setLong(2, questionId);
+			statement.setLong(3, booklet.getId());
+
+			// A successful recapture must update exactly the Question being captured.
+			if (statement.executeUpdate() != 1) {
+				throw new IllegalArgumentException("Question does not exist in the supplied booklet: " + questionId);
+			}
+		}
+	}
+
 	void updateCaptureRelationships(Connection connection, long questionId, ExamBooklet booklet,
 			CurriculumNode classification, SourceQuestion sourceQuestion, SharedQuestionContext sharedContext)
 			throws SQLException {

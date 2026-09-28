@@ -217,6 +217,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 							q.question_text,
 							q.marks,
 							q.shared_context_capture_required,
+							q.source_capture_required,
 							q.response_type,
 							q.source_question_id,
 							q.shared_context_id,
@@ -227,6 +228,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 							eb.expected_question_count,
 							sd.id AS source_document_id,
 							sd.relative_path,
+							sd.content_sha256,
 							e.id AS exam_id,
 							e.exam_year,
 							e.exam_name,
@@ -422,7 +424,8 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				    af.exam_id AS answer_file_exam_id,
 				    af.answer_file_name,
 				    sd.id AS source_document_id,
-				    sd.relative_path
+				    sd.relative_path,
+				    sd.content_sha256
 				FROM answer_regions ar
 				JOIN answer_files af
 				    ON af.id = ar.answer_file_id
@@ -438,7 +441,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 						throw new IllegalStateException("Answer region file belongs to a different exam");
 					}
 					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
-							result.getString("relative_path"));
+							result.getString("relative_path"), result.getString("content_sha256"));
 					AnswerFile answerFile = new AnswerFile(result.getLong("answer_file_id"), exam,
 							result.getString("answer_file_name"), sourceDocument);
 					AnswerRegion region = new AnswerRegion(answerFile, result.getInt("page_number"),
@@ -581,20 +584,17 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
 		Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
 				result.getString("exam_name"), captureState);
-		SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
-				result.getString("relative_path"));
 
-		// Reconstruct all booklet planning metadata because the Question's booklet may
-		// later be used by capture, correction or Dashboard workflows.
+		// Question reload must retain managed-document byte identity rather than
+		// downgrading the SourceDocument to a path-only object.
+		SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
+				result.getString("relative_path"), result.getString("content_sha256"));
 		ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 				.valueOf(result.getString("question_format"));
 		int storedExpectedQuestionCount = result.getInt("expected_question_count");
 		Integer expectedQuestionCount = result.wasNull() ? null : storedExpectedQuestionCount;
 		ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
 				sourceDocument, questionFormat, expectedQuestionCount);
-
-		// Reconstruct the original classification even when retrieval matched a newer
-		// syllabus.
 		long syllabusVersionId = result.getLong("syllabus_version_id");
 		SyllabusVersion syllabusVersion = curriculumRepository.findVersionById(syllabusVersionId)
 				.orElseThrow(() -> new IllegalStateException("Missing syllabus version " + syllabusVersionId));
@@ -613,7 +613,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		Question question = new Question(result.getLong("id"), booklet, result.getString("question_code"),
 				result.getString("question_text"), result.getInt("marks"), regions, classification,
 				result.getInt("shared_context_capture_required") != 0, sourceQuestion, sharedContext, responseType,
-				contentParts);
+				contentParts, result.getInt("source_capture_required") != 0);
 		Answer answer = findAnswer(connection, questionId, exam);
 		if (answer != null) {
 			question.setAnswer(answer);

@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 16;
+	private static final int LATEST_SCHEMA_VERSION = 17;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -610,6 +610,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v15-to-v16.sql", 16);
 			return 16;
 		}
+		if (version == 16) {
+
+			// Version seventeen records whether Question PDF source capture was
+			// explicitly invalidated and must be recaptured.
+			executeMigration(connection, "/db/migration-v16-to-v17.sql", 17);
+			return 17;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -860,6 +867,12 @@ public final class SqliteDatabase {
 
 			// Source-document content hashes were introduced in schema version 16.
 			verifyVersion16SourceDocumentHashSchema(connection);
+		}
+		if (version >= 17) {
+
+			// Source-recapture state distinguishes replacement-invalidated Questions
+			// from valid image-only Questions.
+			verifyVersion17QuestionSourceRecaptureSchema(connection);
 		}
 	}
 
@@ -1331,6 +1344,28 @@ public final class SqliteDatabase {
 		}
 		if (!hasContentSha256) {
 			throw new SQLException("source_documents is missing required column content_sha256");
+		}
+	}
+
+	private void verifyVersion17QuestionSourceRecaptureSchema(Connection connection) throws SQLException {
+		boolean hasSourceCaptureRequired = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				if (!"source_capture_required".equals(result.getString("name"))) {
+					continue;
+				}
+				hasSourceCaptureRequired = true;
+
+				// Every Question has an explicit yes/no recapture state. Historical rows
+				// migrate to zero rather than SQL NULL.
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("questions column must be NOT NULL: source_capture_required");
+				}
+			}
+		}
+		if (!hasSourceCaptureRequired) {
+			throw new SQLException("questions is missing required column source_capture_required");
 		}
 	}
 

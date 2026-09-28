@@ -266,15 +266,21 @@ public final class QuestionCapturePane extends VBox {
 		List<Question> awaitingCapture = new ArrayList<>();
 		for (Question question : questions) {
 
-			// Working Subject is a transient workspace filter. Questions belonging to
-			// another Subject remain persisted but are excluded from the active queue.
+			// Working Subject is only a transient workspace filter. Questions belonging
+			// to another Subject remain persisted but are omitted from this queue.
 			if (workingSubject != null && !question.getExam().getSubject().equals(workingSubject)) {
 				continue;
 			}
 
-			// Imported Questions remain in this queue until ordinary regions are captured
-			// and any unresolved shared-context requirement has also been resolved.
-			if (question.getContentParts().isEmpty() || question.isSharedContextUnresolved()) {
+			// A Question belongs in the queue when any one of these independent
+			// conditions is unresolved:
+			//
+			// 1. it has no Question body yet;
+			// 2. replacement invalidated its PDF source capture, even if independent
+			// image content survived;
+			// 3. its Shared Context is still unresolved.
+			if (question.getContentParts().isEmpty() || question.isSourceCaptureRequired()
+					|| question.isSharedContextUnresolved()) {
 				awaitingCapture.add(question);
 			}
 		}
@@ -287,7 +293,8 @@ public final class QuestionCapturePane extends VBox {
 	 * @param selection the selected exam-page rectangle
 	 */
 	public void acceptSelection(PdfWorkspacePane.RegionSelection selection) {
-		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
+		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()
+				&& !importedQuestion.isSourceCaptureRequired()) {
 			clearCurrentSelection();
 			showAlert(Alert.AlertType.INFORMATION, "Question content already captured.",
 					"This imported question already has its question content. "
@@ -1524,6 +1531,13 @@ public final class QuestionCapturePane extends VBox {
 		if (duplicate != null) {
 			return "Question " + duplicate.getQuestionCode() + " already exists for this booklet.";
 		}
+		if (importedQuestion != null && importedQuestion.isSourceCaptureRequired()
+				&& pendingQuestionRegions().isEmpty()) {
+
+			// Preserved images remain valid, but they cannot by themselves resolve a
+			// requirement created specifically by Question-PDF replacement.
+			return "Capture at least one replacement PDF region for this question.";
+		}
 		int effectiveContentCount = pendingContentParts.size();
 		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
 			effectiveContentCount = importedQuestion.getContentParts().size();
@@ -1835,17 +1849,13 @@ public final class QuestionCapturePane extends VBox {
 		if (question != null) {
 
 			// Publish the intended target before booklet activation. Activating a different
-			// Working Subject refreshes the imported queue, which must preserve this
-			// Question rather than temporarily clearing the ComboBox value.
+			// Working Subject can rebuild this queue.
 			importedQuestion = question;
 			if (!importedQuestionActivationHandler.test(question)) {
 				importedQuestion = previousQuestion;
 				restoreImportedQuestionSelection(previousQuestion);
 				return;
 			}
-
-			// Subject activation may have rebuilt the queue with freshly loaded Question
-			// instances. Keep that refreshed matching instance when one was supplied.
 			if (importedQuestion == null || importedQuestion.getId() != question.getId()) {
 				importedQuestion = question;
 			}
@@ -1863,6 +1873,15 @@ public final class QuestionCapturePane extends VBox {
 			}
 			refreshSaveButtonState();
 			return;
+		}
+		if (importedQuestion.isSourceCaptureRequired()) {
+
+			// Replacement has already deleted obsolete PDF regions. Any remaining content
+			// is independent image content and must form the starting assembly for
+			// recapture rather than being discarded.
+			pendingContentParts.addAll(importedQuestion.getContentParts());
+			refreshRegionPreviews();
+			setRegionCountLabel(pendingContentParts.size());
 		}
 		showImportedQuestionMode(importedQuestion);
 	}
@@ -1935,7 +1954,8 @@ public final class QuestionCapturePane extends VBox {
 					"Complete this legacy split using PDF regions.");
 			return;
 		}
-		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
+		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()
+				&& !importedQuestion.isSourceCaptureRequired()) {
 			showAlert(Alert.AlertType.INFORMATION, "Question content already captured.",
 					"This imported Question already has body content.");
 			return;
@@ -2140,8 +2160,8 @@ public final class QuestionCapturePane extends VBox {
 		boolean selectionActionsEnabled = !questionSaveInProgress && compatibleSelectionPending;
 		addRegionButton.setDisable(!selectionActionsEnabled);
 		removeCurrentSelectionButton.setDisable(!selectionActionsEnabled);
-		boolean importedContentAlreadyStored = importedQuestion != null
-				&& !importedQuestion.getContentParts().isEmpty();
+		boolean importedContentAlreadyStored = importedQuestion != null && !importedQuestion.getContentParts().isEmpty()
+				&& !importedQuestion.isSourceCaptureRequired();
 
 		// Pasting is ordinary Question-body capture. Do not permit it while a PDF
 		// rectangle is unresolved, during shared-context capture, or during the
@@ -2514,7 +2534,14 @@ public final class QuestionCapturePane extends VBox {
 		loadResponseType(question);
 		setResponseTypeDisabled(false);
 		refreshSharedContextControls();
-		if (question.getContentParts().isEmpty()) {
+		if (question.isSourceCaptureRequired()) {
+			saveQuestionButton.setText("Save Recapture");
+
+			// Independent image content has already been loaded into the transient
+			// assembly. The teacher now supplies only replacement PDF-backed content.
+			showCaptureHint("The Question PDF was replaced. Preserved image content is shown below; "
+					+ "capture at least one replacement PDF region.");
+		} else if (question.getContentParts().isEmpty()) {
 			saveQuestionButton.setText("Save Question");
 			if (question.isSharedContextUnresolved()) {
 				hideCaptureHint();

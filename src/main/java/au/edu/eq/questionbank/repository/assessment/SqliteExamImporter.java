@@ -60,8 +60,7 @@ public final class SqliteExamImporter {
 	}
 
 	/**
-	 * Finds or creates Exam metadata while retaining a supplied source-document
-	 * SHA-256 identity.
+	 * Finds or creates Exam metadata with an explicit Question format.
 	 *
 	 * @param subject        persisted Subject being assessed
 	 * @param providerName   issuing organisation
@@ -70,7 +69,6 @@ public final class SqliteExamImporter {
 	 * @param bookletName    booklet name
 	 * @param relativePath   managed source-document path
 	 * @param questionFormat Question format for a newly created booklet
-	 * @param contentSha256  canonical SHA-256 digest, or {@code null} when unknown
 	 * @return existing or newly stored booklet
 	 * @throws SQLException             if persistence fails
 	 * @throws NullPointerException     if {@code subject} or {@code questionFormat}

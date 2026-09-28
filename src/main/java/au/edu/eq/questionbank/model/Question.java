@@ -36,6 +36,7 @@ public class Question {
 	private Answer answer;
 	private final QuestionResponseType responseType;
 	private final List<QuestionContentPart> contentParts;
+	private final boolean sourceCaptureRequired;
 
 	/**
 	 * Creates a question through the normal capture workflow.
@@ -162,6 +163,37 @@ public class Question {
 			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType,
 			List<QuestionContentPart> contentParts) {
+
+		// Existing constructors and callers describe ordinary captured or imported
+		// Questions whose PDF source has not been invalidated.
+		this(id, booklet, questionCode, questionText, marks, regions, classification, sharedContextCaptureRequired,
+				sourceQuestion, sharedContext, responseType, contentParts, false);
+	}
+
+	/**
+	 * Creates a Question with explicit ordered mixed content and persisted source
+	 * recapture state.
+	 *
+	 * @param id                           persistent identifier
+	 * @param booklet                      source booklet
+	 * @param questionCode                 Question code
+	 * @param questionText                 supplementary searchable text
+	 * @param marks                        positive mark value
+	 * @param regions                      PDF-region compatibility view
+	 * @param classification               original classification
+	 * @param sharedContextCaptureRequired whether Shared Context capture remains
+	 *                                     required
+	 * @param sourceQuestion               source-question identity, or null
+	 * @param sharedContext                shared context, or null
+	 * @param responseType                 authoritative response type
+	 * @param contentParts                 complete ordered Question body
+	 * @param sourceCaptureRequired        whether Question PDF source content must
+	 *                                     be recaptured
+	 */
+	public Question(long id, ExamBooklet booklet, String questionCode, String questionText, int marks,
+			List<QuestionRegion> regions, CurriculumNode classification, boolean sharedContextCaptureRequired,
+			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, QuestionResponseType responseType,
+			List<QuestionContentPart> contentParts, boolean sourceCaptureRequired) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -211,6 +243,7 @@ public class Question {
 		this.sourceQuestion = sourceQuestion;
 		this.sharedContext = sharedContext;
 		this.responseType = responseType;
+		this.sourceCaptureRequired = sourceCaptureRequired;
 	}
 
 	private static ExamBooklet bookletFromRegions(Exam exam, List<QuestionRegion> regions) {
@@ -478,6 +511,16 @@ public class Question {
 	 */
 	public boolean isSharedContextUnresolved() {
 		return sharedContextCaptureRequired && sharedContext == null;
+	}
+
+	/**
+	 * Returns whether PDF-backed Question source content was explicitly invalidated
+	 * and must be recaptured.
+	 *
+	 * @return whether Question PDF source capture is required
+	 */
+	public boolean isSourceCaptureRequired() {
+		return sourceCaptureRequired;
 	}
 
 	/**

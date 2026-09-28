@@ -13,6 +13,8 @@ import java.sql.PreparedStatement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
@@ -38,8 +40,11 @@ import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
 import javafx.stage.Stage;
@@ -650,6 +655,77 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void replacesActiveQuestionPdfAfterExplicitImpactConfirmation(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+		Question originalQuestion = captureQuestion(robot, "REPLACE1");
+		assertFalse(originalQuestion.getRegions().isEmpty());
+		long questionId = originalQuestion.getId();
+		long bookletId = originalBooklet.getId();
+		long sourceDocumentId = originalBooklet.getSourceDocument().getId();
+		Path replacementPdf = createReplacementQuestionPdf(
+				databasePath.getParent().resolve("replacement-question-booklet.pdf"));
+		String replacementHash = new SourceDocumentHashService().sha256(replacementPdf);
+		assertFalse(replacementHash.equals(originalBooklet.getSourceDocument().getContentSha256()));
+
+		// Invoke the production replacement workflow with an explicit path so this
+		// behavioural test does not automate the platform-native FileChooser.
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "replaceActiveQuestionPdf",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Path.class }, primaryStage,
+						applicationConfig, replacementPdf);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		waitForDialogShowing(robot, "Replace Question PDF");
+		DialogPane confirmation = showingDialogPane(robot, "Replace Question PDF");
+		assertNotNull(confirmation);
+		assertEquals("Existing PDF-derived capture will be invalidated.", confirmation.getHeaderText());
+		ButtonType replaceButton = confirmation.getButtonTypes().stream()
+				.filter(buttonType -> "Replace PDF".equals(buttonType.getText())).findFirst().orElseThrow();
+		Node replaceNode = confirmation.lookupButton(replaceButton);
+		assertTrue(replaceNode instanceof Button);
+
+		// Fire the DialogPane-owned semantic action rather than locating rendered text.
+		robot.interact(((Button) replaceNode)::fire);
+		waitForDialogShowing(robot, "Question PDF Replaced");
+		DialogPane success = showingDialogPane(robot, "Question PDF Replaced");
+		assertNotNull(success);
+		Node okNode = success.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Question PDF Replaced");
+		WaitForAsyncUtils.waitForFxEvents();
+		Question reloaded = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(questionId)
+				.orElseThrow();
+
+		// The old PDF coordinates are invalidated without deleting Question identity or
+		// ordinary metadata.
+		assertEquals(questionId, reloaded.getId());
+		assertEquals("REPLACE1", reloaded.getQuestionCode());
+		assertEquals(originalQuestion.getMarks(), reloaded.getMarks());
+		assertEquals(originalQuestion.getClassification().getId(), reloaded.getClassification().getId());
+		assertEquals(originalQuestion.getResponseType(), reloaded.getResponseType());
+		assertTrue(reloaded.getRegions().isEmpty());
+		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
+		assertNotNull(activeBooklet);
+
+		// Replacement does not manufacture a new Booklet or SourceDocument identity.
+		assertEquals(bookletId, activeBooklet.getId());
+		assertEquals(sourceDocumentId, activeBooklet.getSourceDocument().getId());
+		assertEquals(replacementHash, activeBooklet.getSourceDocument().getContentSha256());
+		Path managedPdf = new PdfStore(pdfDataRoot).resolve(activeBooklet.getSourceDocument().getRelativePath());
+
+		// The managed asset now contains the selected replacement bytes and the
+		// workspace has successfully reopened that valid PDF.
+		assertEquals(replacementHash, new SourceDocumentHashService().sha256(managedPdf));
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
+	}
+
+	@Test
 	void resettingClassificationWithoutSyllabusKeepsUnitsDisabled(FxRobot robot) throws Exception {
 		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
@@ -667,6 +743,19 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	private Path createReplacementQuestionPdf(Path path) throws Exception {
+		try (PDDocument document = new PDDocument()) {
+
+			// Use three blank pages so the replacement is a valid but byte-distinct PDF
+			// from the standard two-page Exam fixture.
+			document.addPage(new PDPage());
+			document.addPage(new PDPage());
+			document.addPage(new PDPage());
+			document.save(path.toFile());
+		}
+		return path;
 	}
 
 	private Question searchResultQuestion(Object result) {

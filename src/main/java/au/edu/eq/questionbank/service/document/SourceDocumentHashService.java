@@ -17,6 +17,15 @@ import java.util.HexFormat;
 public final class SourceDocumentHashService {
 
 	/**
+	 * Creates a stateless managed-document hashing service.
+	 */
+	public SourceDocumentHashService() {
+
+		// The service carries no mutable state; construction exists explicitly so the
+		// public API has a documented entry point.
+	}
+
+	/**
 	 * Calculates the SHA-256 digest of an existing regular file.
 	 *
 	 * @param sourcePath file whose bytes will be hashed

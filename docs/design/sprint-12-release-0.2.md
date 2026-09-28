@@ -1,6 +1,6 @@
 # Sprint 12 --- Exam Intake, Capture Workflow and Corpus Status
 
-> **Status:** DESIGNED / NOT YET IMPLEMENTED\
+> **Status:** IN IMPLEMENTATION\
 > **Branch:** `feature/sprint-12`\
 > **Prepared:** 28 September 2026\
 > **Target release:** 0.2
@@ -331,6 +331,27 @@ Hashes support:
 A matching hash is detection evidence, not automatic permission to overwrite or
 merge records.
 
+Implementation status as at 28 September 2026:
+
+- schema version 16 added nullable `source_documents.content_sha256`;
+- managed document identity uses lower-case SHA-256;
+- existing migrated source documents may legitimately retain `NULL` until their
+  bytes are inspected;
+- the hash is deliberately not unique because duplicate content must be
+  representable and surfaced to the application for review;
+- fresh Question and Answer PDF intake records the hash of the final managed
+  copy;
+- legacy Question and Answer PDF intake uses the same hashing path;
+- existing source-document rows with an unknown hash may be safely back-filled;
+- a conflicting hash for the same persisted source-document identity is rejected;
+- known Question documents may be recognised by content independently of
+  filename or external path;
+- ambiguous duplicate matches are reported rather than resolved arbitrarily.
+
+Hashing is also used by the Question-PDF replacement workflow described below.
+Answer-PDF replacement remains part of the subsequent Answer-asset correction
+work.
+
 ### 4.7 Answer/marking assets
 
 The Exam setup workflow must show the Exam's Answer/marking PDFs and their
@@ -378,6 +399,58 @@ including:
 Shared Context persistence must be handled deliberately because a persisted
 `SharedQuestionContext` currently requires region content. A replacement
 transaction must not leave structurally invalid empty context objects.
+
+Implementation status as at 28 September 2026:
+
+The Question-booklet replacement workflow is implemented through a dedicated
+replacement service and the current Exam workflow.
+
+Before replacement, the application reports the affected:
+
+- Questions;
+- Question PDF regions;
+- Shared Contexts;
+- independent stored image parts that will be preserved.
+
+Replacement requires explicit confirmation when source-dependent capture exists.
+
+The replacement transaction:
+
+1. verifies that the Exam is still `ACTIVE`;
+2. verifies the currently managed bytes against their persisted SHA-256 identity;
+3. rejects replacement content already owned by another managed source document;
+4. preserves the existing `ExamBooklet` and `SourceDocument` identities;
+5. replaces the managed PDF bytes and updates their SHA-256 hash;
+6. removes Question PDF regions whose coordinates belong to the old PDF;
+7. removes obsolete Shared Context region/context data;
+8. preserves Question identity, code, marks, classification, response type,
+   Answers and clipboard/image content;
+9. marks affected Questions as requiring source recapture;
+10. restores the previous managed bytes if persistence fails after filesystem
+    replacement.
+
+Schema version 17 introduced `questions.source_capture_required` so a mixed
+Question whose PDF regions were invalidated remains visible in the capture work
+queue even when independent image content survives.
+
+A normal image-only Question does not acquire this flag and therefore is not
+incorrectly classified as incomplete.
+
+For an affected Question, source recapture:
+
+- starts with its preserved image content still present;
+- requires at least one newly captured PDF region;
+- clears `source_capture_required` only after the recaptured Question is
+  successfully persisted;
+- preserves any associated Answer.
+
+Selecting a byte-identical replacement is non-destructive and may back-fill an
+older missing source-document hash without invalidating existing capture.
+
+The current user-facing action is `Replace Active Question PDF...` on the Exam
+menu. The replacement service is UI-independent so the same operation can be
+moved into the planned Exam Setup / Asset Management surface without changing
+its persistence semantics.
 
 ### 4.9 Safe replacement of a wrong Answer/marking PDF
 
@@ -807,6 +880,18 @@ For each slice:
 
 Cross-slice schema changes must preserve sequential migration from existing
 schema-v14 databases and backup/restore migration compatibility.
+
+Current implemented Sprint 12 schema progression is:
+
+```text
+v14
+  -> v15 Exam lifecycle and expected Question count
+  -> v16 managed SourceDocument SHA-256
+  -> v17 explicit Question source-recapture state
+```
+
+Migration, schema-verification and backup/restore compatibility regressions cover
+the new boundaries.
 
 Release 0.2 is not considered complete until the normal release gate succeeds,
 including formatting, non-UI tests, headless UI tests, strict Javadoc and

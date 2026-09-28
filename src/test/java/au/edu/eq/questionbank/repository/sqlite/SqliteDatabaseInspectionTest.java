@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -282,11 +283,15 @@ class SqliteDatabaseInspectionTest {
 					    (1, 1, 1, 5, 0.10, 0.10, 0.70, 0.25)
 					""");
 
+			// Version 17 did not exist in the historical v13 fixture.
+			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
+
+			// Version 16 did not exist in the historical v13 fixture.
+			statement.execute("ALTER TABLE source_documents DROP COLUMN content_sha256");
+
 			// The fixture starts from the current latest schema. Remove later-version
 			// structures in reverse order so the resulting database genuinely matches
 			// version 13 before exercising the real forward migration path.
-			// Version 16 did not exist in the historical v13 fixture.
-			statement.execute("ALTER TABLE source_documents DROP COLUMN content_sha256");
 			statement.execute("ALTER TABLE exam_booklets DROP COLUMN expected_question_count");
 			statement.execute("ALTER TABLE exams DROP COLUMN capture_state");
 			statement.execute("DROP TABLE question_content_parts");
@@ -330,10 +335,14 @@ class SqliteDatabaseInspectionTest {
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
-			// Remove only the version-15 additions so the fixture represents the exact
-			// structural state immediately before the new migration.
+			// Remove the later version-17 recapture marker before constructing v14.
+			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
+
 			// Remove the later v16 hash metadata before constructing the v14 fixture.
 			statement.execute("ALTER TABLE source_documents DROP COLUMN content_sha256");
+
+			// Remove only the version-15 additions so the fixture represents the exact
+			// structural state immediately before the new migration.
 			statement.execute("ALTER TABLE exam_booklets DROP COLUMN expected_question_count");
 			statement.execute("ALTER TABLE exams DROP COLUMN capture_state");
 			statement.execute("UPDATE schema_version SET version = 14");
@@ -451,6 +460,9 @@ class SqliteDatabaseInspectionTest {
 					VALUES (1, 'Chemistry/QCAA/2025/paper1.pdf')
 					""");
 
+			// Version 17 added Question source-recapture state after this fixture.
+			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
+
 			// The fixture is manufactured from the current schema, so remove only the
 			// structure introduced by v16 before claiming that it is version 15.
 			statement.execute("ALTER TABLE source_documents DROP COLUMN content_sha256");
@@ -523,5 +535,41 @@ class SqliteDatabaseInspectionTest {
 					WHERE id = 1
 					""".formatted(invalidHash)));
 		}
+	}
+
+	@Test
+	void version16MigrationAddsQuestionSourceRecaptureState() throws Exception {
+		Path databasePath = tempDir.resolve("version-16-question-source-recapture.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Manufacture the exact immediately preceding schema from the current one.
+			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
+			statement.execute("UPDATE schema_version SET version = 16");
+		}
+		assertEquals(16, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+		database.initialiseSchema();
+		assertEquals(17, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+		assertDoesNotThrow(database::verifyIntegrity);
+		boolean foundColumn = false;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				if (!"source_capture_required".equals(result.getString("name"))) {
+					continue;
+				}
+				foundColumn = true;
+
+				// The migration supplies an explicit false value for both existing and
+				// subsequently inserted Questions unless replacement marks them otherwise.
+				assertEquals(1, result.getInt("notnull"));
+				assertEquals("0", result.getString("dflt_value"));
+			}
+		}
+		assertTrue(foundColumn);
 	}
 }
