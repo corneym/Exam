@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -382,6 +383,23 @@ public class QuestionBankApplication extends Application {
 			return false;
 		}
 		return confirmDiscardAcceptedQuestionRegions();
+	}
+
+	private boolean allowExamLifecycleChange() {
+		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
+				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
+				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
+				|| answerCapturePane.isSaveInProgress() || answerCapturePane.isEditingAnswer();
+
+		if (!captureWorkInProgress) {
+			return true;
+		}
+
+		// Completing or reactivating changes which structural operations persistence
+		// will accept, so do not change lifecycle underneath unfinished capture work.
+		showAlert(Alert.AlertType.WARNING, "Exam State", "Capture work is in progress",
+				"Save, clear or cancel the current Question, Shared Context or Answer work before changing the Exam state.");
+		return false;
 	}
 
 	private boolean allowPdfPageNavigation() {
@@ -786,6 +804,14 @@ public class QuestionBankApplication extends Application {
 		// Open/import remains the entry point for selecting the active Exam booklet.
 		MenuItem openForCaptureItem = createMenuItem("_Open Exam for Capture...", this::showExamImport);
 		openForCaptureItem.setId("open-exam-for-capture");
+
+		MenuItem markCompleteItem = createMenuItem("_Mark Active Exam Complete...",
+				() -> markActiveExamComplete(primaryStage));
+		markCompleteItem.setId("mark-active-exam-complete");
+
+		MenuItem reactivateItem = createMenuItem("_Reactivate Active Exam", this::reactivateActiveExam);
+		reactivateItem.setId("reactivate-active-exam");
+
 		MenuItem replaceQuestionPdfItem = createMenuItem("_Replace Active Question PDF...",
 				() -> replaceActiveQuestionPdf(primaryStage, config));
 		replaceQuestionPdfItem.setId("replace-active-question-pdf");
@@ -795,9 +821,14 @@ public class QuestionBankApplication extends Application {
 		MenuItem replaceAnswerPdfItem = createMenuItem("Replace Active _Answer PDF...",
 				() -> replaceActiveAnswerPdf(primaryStage, config));
 		replaceAnswerPdfItem.setId("replace-active-answer-pdf");
+
 		MenuItem legacyImportItem = createMenuItem("Import _Legacy Question Metadata...",
 				() -> importLegacyQuestionMetadata(primaryStage, config));
-		examMenu.getItems().addAll(openForCaptureItem, replaceQuestionPdfItem, replaceAnswerPdfItem, legacyImportItem);
+
+		examMenu.getItems().addAll(openForCaptureItem, new SeparatorMenuItem(), markCompleteItem, reactivateItem,
+				new SeparatorMenuItem(), replaceQuestionPdfItem, replaceAnswerPdfItem, new SeparatorMenuItem(),
+				legacyImportItem);
+
 		return examMenu;
 	}
 
@@ -1486,6 +1517,61 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
 	}
 
+	private void markActiveExamComplete(Stage primaryStage) {
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet == null) {
+			showAlert(Alert.AlertType.WARNING, "Mark Exam Complete", "No Exam is active.",
+					"Open an Exam booklet before marking its Exam complete.");
+			return;
+		}
+
+		if (activeBooklet.getExam().isComplete()) {
+			showAlert(Alert.AlertType.INFORMATION, "Mark Exam Complete", "This Exam is already complete.",
+					"Reactivate it if structural correction is required.");
+			return;
+		}
+
+		if (!allowExamLifecycleChange()) {
+			return;
+		}
+
+		ButtonType completeButton = new ButtonType("Mark Complete", ButtonBar.ButtonData.OK_DONE);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Mark Exam Complete");
+		confirmation.setHeaderText("Mark this Exam complete?");
+		confirmation.setContentText("""
+				Completing the Exam locks structural changes such as:
+
+				• adding Question booklets or Questions
+				• changing Question or Answer source PDFs
+				• changing booklet format or expected counts
+				• changing Question structural identity
+				• adding or reassigning Answer files
+
+				Ordinary corrections to marks, classifications, regions, Answers and Shared Context remain available.
+
+				Use Reactivate Exam if structural correction is later required.
+				""");
+		confirmation.getButtonTypes().setAll(completeButton, cancelButton);
+
+		if (confirmation.showAndWait().orElse(cancelButton) != completeButton) {
+			return;
+		}
+
+		try {
+			examMetadataPane.setActiveExamCaptureState(ExamCaptureState.COMPLETE);
+
+			showAlert(Alert.AlertType.INFORMATION, "Exam State", "Exam marked complete.",
+					"Structural changes now require Reactivate Exam.");
+		} catch (SQLException | RuntimeException exception) {
+			showAlert(Alert.AlertType.ERROR, "Exam State", "The Exam state could not be changed.",
+					failureMessage(exception));
+		}
+	}
+
 	private void offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage, Question question,
 			Runnable completedHandler) {
 		if (question == null) {
@@ -1613,6 +1699,35 @@ public class QuestionBankApplication extends Application {
 		// Resolve ownership from the live scene graph rather than retaining another
 		// Stage reference solely for Help presentation.
 		return workspaceSplitPane.getScene().getWindow();
+	}
+
+	private void reactivateActiveExam() {
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet == null) {
+			showAlert(Alert.AlertType.WARNING, "Reactivate Exam", "No Exam is active.",
+					"Open an Exam booklet before reactivating its Exam.");
+			return;
+		}
+
+		if (!activeBooklet.getExam().isComplete()) {
+			showAlert(Alert.AlertType.INFORMATION, "Reactivate Exam", "This Exam is already active.",
+					"No lifecycle change is required.");
+			return;
+		}
+
+		if (!allowExamLifecycleChange()) {
+			return;
+		}
+
+		try {
+			examMetadataPane.setActiveExamCaptureState(ExamCaptureState.ACTIVE);
+
+			showAlert(Alert.AlertType.INFORMATION, "Exam State", "Exam reactivated.",
+					"Structural correction is available again.");
+		} catch (SQLException | RuntimeException exception) {
+			showAlert(Alert.AlertType.ERROR, "Exam State", "The Exam state could not be changed.",
+					failureMessage(exception));
+		}
 	}
 
 	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {

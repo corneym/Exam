@@ -970,44 +970,11 @@ public final class SqliteExamWriter {
 
 	ExamBooklet insertExamBooklet(Connection connection, Exam exam, SourceDocument sourceDocument, String name,
 			ExamBookletQuestionFormat questionFormat) throws SQLException {
-		if (connection == null) {
-			throw new NullPointerException("connection");
-		}
-		if (exam == null) {
-			throw new NullPointerException("exam");
-		}
-		if (sourceDocument == null) {
-			throw new NullPointerException("sourceDocument");
-		}
-		if (name == null || name.isBlank()) {
-			throw new IllegalArgumentException("name must not be blank");
-		}
-		if (questionFormat == null) {
-			throw new NullPointerException("questionFormat");
-		}
-		try (PreparedStatement statement = connection.prepareStatement("""
-				INSERT INTO exam_booklets
-				    (exam_id,
-				     source_document_id,
-				     booklet_name,
-				     question_format)
-				VALUES (?, ?, ?, ?)
-				RETURNING id
-				""")) {
-			statement.setLong(1, exam.getId());
-			statement.setLong(2, sourceDocument.getId());
-			statement.setString(3, name);
 
-			// Persist the enum name directly because the schema constrains the column to
-			// exactly the supported domain values.
-			statement.setString(4, questionFormat.name());
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new SQLException("Exam booklet insert did not return an id");
-				}
-				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument, questionFormat);
-			}
-		}
+		// Route transactional import through the structural-locking implementation.
+		// This prevents SqliteExamImporter from adding a booklet to a COMPLETE Exam
+		// merely because it uses the package-private writer API.
+		return insertExamBooklet(connection, exam, sourceDocument, name, questionFormat, null);
 	}
 
 	ExamBooklet insertExamBooklet(Connection connection, Exam exam, SourceDocument sourceDocument, String name,
@@ -1168,6 +1135,34 @@ public final class SqliteExamWriter {
 		}
 	}
 
+	void requireExamActive(Connection connection, long examId) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (examId < 1) {
+			throw new IllegalArgumentException("examId must be positive");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT capture_state
+				FROM exams
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, examId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Exam does not exist: " + examId);
+				}
+				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
+
+				// COMPLETE records a deliberate human decision. Structural writers must not
+				// silently override that decision.
+				if (captureState == ExamCaptureState.COMPLETE) {
+					throw new IllegalStateException("Exam is complete; reactivate it before changing Exam structure");
+				}
+			}
+		}
+	}
+
 	private Exam correctExamMetadata(Connection connection, Exam exam, String providerName, int year, String name)
 			throws SQLException {
 
@@ -1246,34 +1241,6 @@ public final class SqliteExamWriter {
 		// the value to a domain object where null has deliberate meaning.
 		int value = result.getInt(columnName);
 		return result.wasNull() ? null : value;
-	}
-
-	private void requireExamActive(Connection connection, long examId) throws SQLException {
-		if (connection == null) {
-			throw new NullPointerException("connection");
-		}
-		if (examId < 1) {
-			throw new IllegalArgumentException("examId must be positive");
-		}
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT capture_state
-				FROM exams
-				WHERE id = ?
-				""")) {
-			statement.setLong(1, examId);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new IllegalArgumentException("Exam does not exist: " + examId);
-				}
-				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
-
-				// COMPLETE records a deliberate human decision. Structural writers must not
-				// silently override that decision.
-				if (captureState == ExamCaptureState.COMPLETE) {
-					throw new IllegalStateException("Exam is complete; reactivate it before changing Exam structure");
-				}
-			}
-		}
 	}
 
 	private void updateSourceDocumentPaths(Connection connection, Map<Long, String> sourceDocumentPaths)

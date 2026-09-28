@@ -46,8 +46,9 @@ public final class SqliteAnswerWriter {
 	/**
 	 * Assigns an existing AnswerFile to an ExamBooklet.
 	 * <p>
-	 * Several booklets may share the same AnswerFile, but an AnswerFile from
-	 * another Exam can never be assigned.
+	 * Reasserting the existing assignment is non-structural and remains permitted
+	 * on a complete Exam. Changing or establishing the assignment requires the Exam
+	 * to be active.
 	 *
 	 * @param booklet    booklet whose answers are contained in the file
 	 * @param answerFile persisted answer file
@@ -55,19 +56,31 @@ public final class SqliteAnswerWriter {
 	 * @throws NullPointerException     if either argument is {@code null}
 	 * @throws IllegalArgumentException if the file belongs to another Exam or
 	 *                                  either persistent identity does not exist
-	 * @throws IllegalStateException    if existing answer regions for the booklet
-	 *                                  already use another AnswerFile
+	 * @throws IllegalStateException    if existing Answer regions contradict the
+	 *                                  assignment or the assignment would change a
+	 *                                  complete Exam
 	 */
 	public void assignAnswerFile(ExamBooklet booklet, AnswerFile answerFile) throws SQLException {
 		validateBookletAnswerFileOwnership(booklet, answerFile);
+
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+				AnswerFile current = findAssignedAnswerFile(connection, booklet);
 
-				// Do not create a booklet-level mapping that contradicts answer material
-				// already persisted for Questions in this booklet.
+				// Reasserting the already-authoritative relationship changes no Exam
+				// structure and is safe even after completion.
+				if (current != null && current.getId() == answerFile.getId()) {
+					connection.commit();
+					return;
+				}
+
+				// Establishing or changing a booklet-to-AnswerFile mapping is structural.
+				examWriter.requireExamActive(connection, booklet.getExam().getId());
+
 				verifyNoConflictingBookletAnswerRegions(connection, booklet, answerFile.getId());
 				assignAnswerFile(connection, booklet, answerFile);
+
 				connection.commit();
 			} catch (SQLException | RuntimeException exception) {
 				try {
@@ -163,13 +176,19 @@ public final class SqliteAnswerWriter {
 	/**
 	 * Finds or creates an AnswerFile while retaining the known identity of its
 	 * managed source bytes.
+	 * <p>
+	 * Reading an existing AnswerFile or back-filling the hash of its existing
+	 * SourceDocument is non-structural. Registering a new source or AnswerFile
+	 * requires an active Exam.
 	 *
 	 * @param exam          Exam whose answers the file contains
 	 * @param name          answer-file name
 	 * @param relativePath  managed source path
 	 * @param contentSha256 canonical SHA-256 digest, or {@code null}
 	 * @return existing or newly created AnswerFile
-	 * @throws SQLException if persistence fails
+	 * @throws SQLException          if persistence fails
+	 * @throws IllegalStateException if registration would change the structure of a
+	 *                               complete Exam
 	 */
 	public AnswerFile findOrCreateAnswerFile(Exam exam, String name, String relativePath, String contentSha256)
 			throws SQLException {
@@ -182,24 +201,33 @@ public final class SqliteAnswerWriter {
 		if (relativePath == null || relativePath.isBlank()) {
 			throw new IllegalArgumentException("relativePath must not be blank");
 		}
+
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
+
 			try {
 				SourceDocument sourceDocument = examWriter.findSourceDocumentByPath(connection, relativePath);
+
 				if (sourceDocument == null) {
 
-					// New answer sources persist their byte identity at registration time.
+					// A new managed source becomes part of the Exam's structural asset set.
+					examWriter.requireExamActive(connection, exam.getId());
 					sourceDocument = examWriter.insertSourceDocument(connection, relativePath, contentSha256);
 				} else if (contentSha256 != null) {
 
-					// Existing migrated sources can acquire their previously unknown hash,
-					// while conflicting bytes are rejected.
+					// Recording byte identity for an already-known source does not change
+					// which assets the Exam contains.
 					sourceDocument = examWriter.recordSourceDocumentHash(connection, sourceDocument, contentSha256);
 				}
+
 				AnswerFile answerFile = findAnswerFile(connection, exam, name, sourceDocument);
 				if (answerFile == null) {
+
+					// Creating the AnswerFile relationship changes the Exam's asset structure.
+					examWriter.requireExamActive(connection, exam.getId());
 					answerFile = insertAnswerFile(connection, exam, name, sourceDocument);
 				}
+
 				connection.commit();
 				return answerFile;
 			} catch (SQLException | RuntimeException exception) {
@@ -217,30 +245,39 @@ public final class SqliteAnswerWriter {
 	 * Finds or creates an AnswerFile and assigns it to one ExamBooklet atomically.
 	 *
 	 * @param booklet      booklet whose answers the file supplies
-	 * @param name         non-blank answer-file name
-	 * @param relativePath non-blank data-root-relative source path
+	 * @param name         non-blank Answer-file name
+	 * @param relativePath non-blank managed source path
 	 * @return existing or newly created AnswerFile
 	 * @throws SQLException             if persistence fails
 	 * @throws NullPointerException     if {@code booklet} is {@code null}
 	 * @throws IllegalArgumentException if a string argument is blank
+	 * @throws IllegalStateException    if the operation would structurally change a
+	 *                                  complete Exam
 	 */
 	public AnswerFile findOrCreateAnswerFile(ExamBooklet booklet, String name, String relativePath)
 			throws SQLException {
 
-		// Preserve compatibility for callers that do not yet supply content identity.
+		// Preserve the established convenience API. Callers that do not yet have a
+		// source hash delegate to the structurally guarded implementation.
 		return findOrCreateAnswerFile(booklet, name, relativePath, null);
 	}
 
 	/**
 	 * Finds or creates an AnswerFile, records its source hash when known, and
 	 * assigns it to one ExamBooklet atomically.
+	 * <p>
+	 * Existing registration and the existing booklet assignment may be reused on a
+	 * complete Exam. Creating a source, creating an AnswerFile, or establishing a
+	 * different booklet assignment requires an active Exam.
 	 *
 	 * @param booklet       booklet whose answers the file supplies
 	 * @param name          answer-file name
 	 * @param relativePath  managed source path
 	 * @param contentSha256 canonical SHA-256 digest, or {@code null}
 	 * @return existing or newly created AnswerFile
-	 * @throws SQLException if persistence fails
+	 * @throws SQLException          if persistence fails
+	 * @throws IllegalStateException if the operation would structurally change a
+	 *                               complete Exam
 	 */
 	public AnswerFile findOrCreateAnswerFile(ExamBooklet booklet, String name, String relativePath,
 			String contentSha256) throws SQLException {
@@ -253,26 +290,42 @@ public final class SqliteAnswerWriter {
 		if (relativePath == null || relativePath.isBlank()) {
 			throw new IllegalArgumentException("relativePath must not be blank");
 		}
+
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
+
 			try {
 				Exam exam = booklet.getExam();
+
 				SourceDocument sourceDocument = examWriter.findSourceDocumentByPath(connection, relativePath);
 				if (sourceDocument == null) {
 
-					// Persist source identity before creating the AnswerFile relationship.
+					// Registering another managed Answer source changes Exam structure.
+					examWriter.requireExamActive(connection, exam.getId());
 					sourceDocument = examWriter.insertSourceDocument(connection, relativePath, contentSha256);
 				} else if (contentSha256 != null) {
+
+					// Hash back-fill describes an existing asset and is not structural.
 					sourceDocument = examWriter.recordSourceDocumentHash(connection, sourceDocument, contentSha256);
 				}
+
 				AnswerFile answerFile = findAnswerFile(connection, exam, name, sourceDocument);
 				if (answerFile == null) {
+
+					// A new AnswerFile is another structural Exam asset.
+					examWriter.requireExamActive(connection, exam.getId());
 					answerFile = insertAnswerFile(connection, exam, name, sourceDocument);
 				}
 
-				// AnswerFile registration and booklet assignment remain one transaction.
-				verifyNoConflictingBookletAnswerRegions(connection, booklet, answerFile.getId());
-				assignAnswerFile(connection, booklet, answerFile);
+				AnswerFile assigned = findAssignedAnswerFile(connection, booklet);
+				if (assigned == null || assigned.getId() != answerFile.getId()) {
+
+					// Establishing or changing the booklet mapping is also structural.
+					examWriter.requireExamActive(connection, exam.getId());
+					verifyNoConflictingBookletAnswerRegions(connection, booklet, answerFile.getId());
+					assignAnswerFile(connection, booklet, answerFile);
+				}
+
 				connection.commit();
 				return answerFile;
 			} catch (SQLException | RuntimeException exception) {
@@ -440,9 +493,11 @@ public final class SqliteAnswerWriter {
 		if (regions.isEmpty()) {
 			return;
 		}
+
 		AnswerFile regionAnswerFile = regions.getFirst().answerFile();
 		ExamBooklet booklet = question.getBooklet();
 		AnswerFile assignedAnswerFile = findAssignedAnswerFile(connection, booklet);
+
 		if (assignedAnswerFile != null) {
 			if (assignedAnswerFile.getId() != regionAnswerFile.getId()) {
 				throw new IllegalArgumentException(
@@ -451,8 +506,11 @@ public final class SqliteAnswerWriter {
 			return;
 		}
 
-		// Existing UI paths predate the explicit booklet mapping. A first unambiguous
-		// region capture may therefore establish the relationship safely.
+		// Older capture workflows can establish the booklet mapping implicitly from
+		// the first unambiguous Answer region. That still changes Exam structure and
+		// therefore cannot happen after completion.
+		examWriter.requireExamActive(connection, booklet.getExam().getId());
+
 		verifyNoConflictingBookletAnswerRegions(connection, booklet, regionAnswerFile.getId());
 		assignAnswerFile(connection, booklet, regionAnswerFile);
 	}

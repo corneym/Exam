@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
@@ -324,6 +325,34 @@ public final class ExamMetadataPane extends VBox {
 		// the old authoritative path when correction fails and filesystem rollback
 		// runs.
 		examPdfHandler.accept(new SelectedPdf(currentPdfPath.toFile(), currentPdfPath, pdfDataRoot));
+	}
+
+	/**
+	 * Changes the lifecycle state of the Exam owning the active booklet and
+	 * refreshes the in-memory booklet around the persisted Exam state.
+	 *
+	 * @param captureState replacement Exam lifecycle state
+	 * @return the persisted Exam carrying the replacement state
+	 * @throws SQLException          if persistence fails
+	 * @throws NullPointerException  if {@code captureState} is {@code null}
+	 * @throws IllegalStateException if no Exam booklet is active
+	 */
+	public Exam setActiveExamCaptureState(ExamCaptureState captureState) throws SQLException {
+		if (captureState == null) {
+			throw new NullPointerException("captureState");
+		}
+		if (booklet == null) {
+			throw new IllegalStateException("No Exam booklet is active");
+		}
+
+		Exam updatedExam = examWriter.setExamCaptureState(booklet.getExam(), captureState);
+
+		// Keep the active capture object consistent with persisted lifecycle state
+		// without altering any booklet-level structure.
+		booklet = new ExamBooklet(booklet.getId(), updatedExam, booklet.getName(), booklet.getSourceDocument(),
+				booklet.getQuestionFormat(), booklet.getExpectedQuestionCount());
+
+		return updatedExam;
 	}
 
 	/**

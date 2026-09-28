@@ -1,6 +1,8 @@
 package au.edu.eq.questionbank.repository.assessment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
 
@@ -9,6 +11,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -17,6 +20,35 @@ class SqliteExamImporterTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void completeExamRejectsImportOfAnotherBooklet() throws Exception {
+		Path databasePath = tempDirectory.resolve("complete-exam-booklet-import.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		ExamBooklet firstBooklet = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Chemistry/QCAA/2025/paper1.pdf", ExamBookletQuestionFormat.MIXED);
+
+		// Completion records the user's decision that the Exam's structure is now
+		// authoritative.
+		writer.setExamCaptureState(firstBooklet.getExam(), ExamCaptureState.COMPLETE);
+
+		// A second booklet would change Exam structure and must therefore require
+		// explicit reactivation first.
+		assertThrows(IllegalStateException.class,
+				() -> importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
+						"Chemistry/QCAA/2025/paper2.pdf", ExamBookletQuestionFormat.WRITTEN_RESPONSE));
+
+		// The failed transactional import must not leave either a booklet or its
+		// proposed SourceDocument behind.
+		assertEquals(1, writer.findAllExamBooklets().size());
+		assertNull(writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper2.pdf"));
+	}
 
 	@Test
 	void importsAndReusesExplicitBookletQuestionFormat() throws Exception {
