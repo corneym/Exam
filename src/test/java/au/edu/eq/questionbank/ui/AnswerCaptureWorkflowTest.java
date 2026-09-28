@@ -432,9 +432,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void replacingActiveAnswerPdfReturnsRegionOnlyQuestionToAnswerQueue(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		Question question = captureQuestion(robot, "ANSWER-REPLACE");
-
 		ComboBox<Question> questions = unansweredQuestions(robot);
 		robot.interact(() -> questions.getSelectionModel().select(question));
 		openAnswerPdfForTest(question);
@@ -444,18 +442,13 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-answer-region");
 		fireControl(robot, "#save-answer");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question beforeReplacement = new SqliteQuestionRepository(new SqliteDatabase(databasePath))
 				.findById(question.getId()).orElseThrow();
-
 		assertTrue(beforeReplacement.hasAnswer());
 		assertEquals(1, beforeReplacement.getAnswer().getRegions().size());
-
 		Path replacementPdf = createReplacementAnswerPdf(databasePath.getParent().resolve("replacement-answer.pdf"));
-
 		String replacementHash = new SourceDocumentHashService().sha256(replacementPdf);
 
 		// Invoke the real application workflow with an explicit path so the test does
@@ -469,44 +462,32 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-
 		waitForDialogShowing(robot, "Replace Answer PDF");
-
 		DialogPane confirmation = showingDialogPane(robot, "Replace Answer PDF");
 		assertNotNull(confirmation);
 		assertEquals("Existing Answer regions will be invalidated.", confirmation.getHeaderText());
-
 		ButtonType replaceButton = confirmation.getButtonTypes().stream()
 				.filter(buttonType -> "Replace Answer PDF".equals(buttonType.getText())).findFirst().orElseThrow();
-
 		Node replaceNode = confirmation.lookupButton(replaceButton);
 		assertTrue(replaceNode instanceof Button);
 
 		// Fire the DialogPane-owned semantic action rather than relying on text lookup
 		// or pointer hit-testing.
 		robot.interact(((Button) replaceNode)::fire);
-
 		waitForDialogShowing(robot, "Answer PDF Replaced");
-
 		DialogPane success = showingDialogPane(robot, "Answer PDF Replaced");
 		assertNotNull(success);
-
 		Node okNode = success.lookupButton(ButtonType.OK);
 		assertTrue(okNode instanceof Button);
 		robot.interact(((Button) okNode)::fire);
-
 		waitForDialogHidden(robot, "Answer PDF Replaced");
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Question reloaded = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
 				.orElseThrow();
-
 		assertFalse(reloaded.hasAnswer());
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-
 		AnswerFile assigned = answerWriter.findAnswerFile(question.getBooklet());
 		assertNotNull(assigned);
 		assertEquals(replacementHash, assigned.getSourceDocument().getContentSha256());
@@ -716,7 +697,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			document.addPage(new PDPage());
 			document.save(path.toFile());
 		}
-
 		return path;
 	}
 

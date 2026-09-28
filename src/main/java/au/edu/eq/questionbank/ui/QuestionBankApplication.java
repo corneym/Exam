@@ -786,7 +786,6 @@ public class QuestionBankApplication extends Application {
 		// Open/import remains the entry point for selecting the active Exam booklet.
 		MenuItem openForCaptureItem = createMenuItem("_Open Exam for Capture...", this::showExamImport);
 		openForCaptureItem.setId("open-exam-for-capture");
-
 		MenuItem replaceQuestionPdfItem = createMenuItem("_Replace Active Question PDF...",
 				() -> replaceActiveQuestionPdf(primaryStage, config));
 		replaceQuestionPdfItem.setId("replace-active-question-pdf");
@@ -796,10 +795,8 @@ public class QuestionBankApplication extends Application {
 		MenuItem replaceAnswerPdfItem = createMenuItem("Replace Active _Answer PDF...",
 				() -> replaceActiveAnswerPdf(primaryStage, config));
 		replaceAnswerPdfItem.setId("replace-active-answer-pdf");
-
 		MenuItem legacyImportItem = createMenuItem("Import _Legacy Question Metadata...",
 				() -> importLegacyQuestionMetadata(primaryStage, config));
-
 		examMenu.getItems().addAll(openForCaptureItem, replaceQuestionPdfItem, replaceAnswerPdfItem, legacyImportItem);
 		return examMenu;
 	}

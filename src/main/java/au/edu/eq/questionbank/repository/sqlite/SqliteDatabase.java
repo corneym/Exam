@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 17;
+	private static final int LATEST_SCHEMA_VERSION = 18;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -617,6 +617,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v16-to-v17.sql", 17);
 			return 17;
 		}
+		if (version == 17) {
+
+			// Version eighteen adds Exam-level expected asset counts without creating
+			// placeholder Question booklets or Answer files.
+			executeMigration(connection, "/db/migration-v17-to-v18.sql", 18);
+			return 18;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -873,6 +880,12 @@ public final class SqliteDatabase {
 			// Source-recapture state distinguishes replacement-invalidated Questions
 			// from valid image-only Questions.
 			verifyVersion17QuestionSourceRecaptureSchema(connection);
+		}
+		if (version >= 18) {
+
+			// Asset expectations record planning without manufacturing authoritative
+			// ExamBooklet or AnswerFile rows.
+			verifyVersion18ExamAssetExpectationSchema(connection);
 		}
 	}
 
@@ -1366,6 +1379,41 @@ public final class SqliteDatabase {
 		}
 		if (!hasSourceCaptureRequired) {
 			throw new SQLException("questions is missing required column source_capture_required");
+		}
+	}
+
+	private void verifyVersion18ExamAssetExpectationSchema(Connection connection) throws SQLException {
+		boolean hasExpectedQuestionBookletCount = false;
+		boolean hasExpectedAnswerFileCount = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exams)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				if ("expected_question_booklet_count".equals(columnName)) {
+					hasExpectedQuestionBookletCount = true;
+
+					// NULL means that the user has not yet established an authoritative
+					// expectation.
+					if (result.getInt("notnull") != 0) {
+						throw new SQLException("exams column must be nullable: expected_question_booklet_count");
+					}
+				}
+				if ("expected_answer_file_count".equals(columnName)) {
+					hasExpectedAnswerFileCount = true;
+
+					// An unknown expected Answer-file count is distinct from explicitly
+					// expecting zero Answer files.
+					if (result.getInt("notnull") != 0) {
+						throw new SQLException("exams column must be nullable: expected_answer_file_count");
+					}
+				}
+			}
+		}
+		if (!hasExpectedQuestionBookletCount) {
+			throw new SQLException("exams is missing required column expected_question_booklet_count");
+		}
+		if (!hasExpectedAnswerFileCount) {
+			throw new SQLException("exams is missing required column expected_answer_file_count");
 		}
 	}
 

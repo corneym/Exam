@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
@@ -234,6 +235,57 @@ public final class SqliteExamWriter {
 						sourceDocument, questionFormat, expectedQuestionCount));
 			}
 			return List.copyOf(booklets);
+		}
+	}
+
+	/**
+	 * Reads user-declared Exam asset expectations together with currently available
+	 * authoritative assets.
+	 *
+	 * @param exam persisted Exam to inspect
+	 * @return expected and available Question/Answer asset counts
+	 * @throws SQLException             if persistence cannot be read
+	 * @throws NullPointerException     if {@code exam} is {@code null}
+	 * @throws IllegalArgumentException if the Exam identity does not exist
+	 */
+	public ExamAssetExpectations findExamAssetExpectations(Exam exam) throws SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    e.expected_question_booklet_count,
+						    e.expected_answer_file_count,
+						    (
+						        SELECT COUNT(*)
+						        FROM exam_booklets eb
+						        WHERE eb.exam_id = e.id
+						    ) AS available_question_booklet_count,
+						    (
+						        SELECT COUNT(*)
+						        FROM answer_files af
+						        WHERE af.exam_id = e.id
+						    ) AS available_answer_file_count
+						FROM exams e
+						WHERE e.id = ?
+						  AND e.subject_id = ?
+						""")) {
+			statement.setLong(1, exam.getId());
+			statement.setLong(2, exam.getSubject().getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Exam does not exist for its stored subject");
+				}
+				Integer expectedQuestionBookletCount = readNullableInteger(result, "expected_question_booklet_count");
+				Integer expectedAnswerFileCount = readNullableInteger(result, "expected_answer_file_count");
+
+				// Availability is derived from real persisted assets. Planning metadata
+				// therefore cannot make an unavailable PDF appear to exist.
+				return new ExamAssetExpectations(expectedQuestionBookletCount,
+						result.getInt("available_question_booklet_count"), expectedAnswerFileCount,
+						result.getInt("available_answer_file_count"));
+			}
 		}
 	}
 
@@ -629,6 +681,59 @@ public final class SqliteExamWriter {
 				return result.getBoolean("referenced_outside_exam");
 			}
 		}
+	}
+
+	/**
+	 * Updates user-declared Exam-level source-asset expectations.
+	 *
+	 * @param exam                         persisted active Exam
+	 * @param expectedQuestionBookletCount expected Question booklets, or
+	 *                                     {@code null} when unknown
+	 * @param expectedAnswerFileCount      expected Answer/marking files, or
+	 *                                     {@code null} when unknown
+	 * @return persisted expectations together with current available counts
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if {@code exam} is {@code null}
+	 * @throws IllegalArgumentException if supplied counts are invalid or the Exam
+	 *                                  does not exist
+	 * @throws IllegalStateException    if the Exam is complete
+	 */
+	public ExamAssetExpectations updateExamAssetExpectations(Exam exam, Integer expectedQuestionBookletCount,
+			Integer expectedAnswerFileCount) throws SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (expectedQuestionBookletCount != null && expectedQuestionBookletCount < 1) {
+			throw new IllegalArgumentException("expectedQuestionBookletCount must be positive when supplied");
+		}
+		if (expectedAnswerFileCount != null && expectedAnswerFileCount < 0) {
+			throw new IllegalArgumentException("expectedAnswerFileCount must not be negative when supplied");
+		}
+		try (Connection connection = database.openConnection()) {
+
+			// Expected asset counts describe Exam structure and are therefore locked once
+			// the user declares the Exam complete.
+			requireExamActive(connection, exam.getId());
+			try (PreparedStatement statement = connection.prepareStatement("""
+					UPDATE exams
+					SET expected_question_booklet_count = ?,
+					    expected_answer_file_count = ?
+					WHERE id = ?
+					  AND subject_id = ?
+					""")) {
+				statement.setObject(1, expectedQuestionBookletCount);
+				statement.setObject(2, expectedAnswerFileCount);
+				statement.setLong(3, exam.getId());
+				statement.setLong(4, exam.getSubject().getId());
+				if (statement.executeUpdate() != 1) {
+					throw new IllegalArgumentException("Exam does not exist for its stored subject");
+				}
+			}
+		}
+
+		// Reload so available counts reflect authoritative booklet/AnswerFile rows and
+		// cannot be confused with the declared expectations.
+		return findExamAssetExpectations(exam);
 	}
 
 	/**

@@ -292,7 +292,7 @@ class DefaultRestoreExecutorTest {
 					VALUES (1, 1, 'Q1', '', 2, 1, 'WRITTEN_RESPONSE', 1)
 					""");
 
-			// Reverse migrations 12 through 17 so the synthetic fixture contains only
+			// Reverse migrations 12 through 18 so the synthetic fixture contains only
 			// structures that genuinely existed in schema version 11.
 			statement.execute("DROP TABLE question_content_parts");
 			statement.execute("DROP TABLE question_images");
@@ -307,6 +307,10 @@ class DefaultRestoreExecutorTest {
 					TO preamble_status
 					""");
 			statement.execute("DROP TABLE question_output_exclusions");
+
+			// Version 18 added Exam-level asset expectations, which did not exist in v11.
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
 
 			// Version 17 added explicit Question source-recapture state.
 			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");

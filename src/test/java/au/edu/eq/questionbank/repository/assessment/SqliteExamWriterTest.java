@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
@@ -430,6 +431,51 @@ class SqliteExamWriterTest {
 		ExamBooklet paperTwo = writer.insertExamBooklet(reactivated, secondSource, "Paper 2",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12);
 		assertEquals(12, paperTwo.getExpectedQuestionCount());
+	}
+
+	@Test
+	void persistsExamAssetExpectationsWithoutCreatingPlaceholderAssets() throws Exception {
+		Path databasePath = tempDirectory.resolve("exam-asset-expectations.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		ExamAssetExpectations initial = writer.findExamAssetExpectations(exam);
+		assertNull(initial.expectedQuestionBookletCount());
+		assertEquals(0, initial.availableQuestionBookletCount());
+		assertNull(initial.expectedAnswerFileCount());
+		assertEquals(0, initial.availableAnswerFileCount());
+		ExamAssetExpectations planned = writer.updateExamAssetExpectations(exam, 2, 1);
+		assertEquals(2, planned.expectedQuestionBookletCount());
+		assertEquals(0, planned.availableQuestionBookletCount());
+		assertEquals(1, planned.expectedAnswerFileCount());
+		assertEquals(0, planned.availableAnswerFileCount());
+
+		// Planning alone must not manufacture authoritative source assets.
+		assertTrue(writer.findAllExamBooklets().isEmpty());
+		assertTrue(new SqliteAnswerWriter(database, writer).findAnswerFiles(exam).isEmpty());
+		SourceDocument questionSource = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		writer.insertExamBooklet(exam, questionSource, "Paper 1", ExamBookletQuestionFormat.WRITTEN_RESPONSE, 10);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
+		answerWriter.findOrCreateAnswerFile(exam, "Marking guide", "Chemistry/QCAA/2025/answers.pdf");
+		ExamAssetExpectations partiallyAvailable = writer.findExamAssetExpectations(exam);
+
+		// Expected values remain user-declared while availability follows real rows.
+		assertEquals(2, partiallyAvailable.expectedQuestionBookletCount());
+		assertEquals(1, partiallyAvailable.availableQuestionBookletCount());
+		assertEquals(1, partiallyAvailable.expectedAnswerFileCount());
+		assertEquals(1, partiallyAvailable.availableAnswerFileCount());
+		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+
+		// Changing expectations changes Exam structure and therefore requires explicit
+		// reactivation.
+		assertThrows(IllegalStateException.class, () -> writer.updateExamAssetExpectations(completed, 3, 2));
+		Exam reactivated = writer.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
+		ExamAssetExpectations changed = writer.updateExamAssetExpectations(reactivated, 3, 2);
+		assertEquals(3, changed.expectedQuestionBookletCount());
+		assertEquals(2, changed.expectedAnswerFileCount());
 	}
 
 	@Test

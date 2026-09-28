@@ -316,6 +316,40 @@ does not exist.
 The implementation design must preserve existing domain invariants unless there
 is a strong reason to change them.
 
+Implementation status as at 28 September 2026:
+
+Schema version 18 adds Exam-level planning expectations for source assets that
+may not yet be available:
+
+- `exams.expected_question_booklet_count`;
+- `exams.expected_answer_file_count`.
+
+These values are deliberately separate from authoritative asset rows.
+
+The application does not create placeholder `ExamBooklet`, `AnswerFile` or
+`SourceDocument` records merely to represent an expected future asset.
+
+Expected counts are nullable because an Exam may not yet have been reviewed
+sufficiently to establish them. When supplied:
+
+- expected Question booklet count must be positive;
+- expected Answer/marking file count may be zero.
+
+Available asset counts are derived independently from actual persisted
+`ExamBooklet` and `AnswerFile` rows.
+
+This allows later Exam Setup and Corpus Dashboard workflows to distinguish, for
+example:
+
+```text
+Question booklets: 1 available / 2 expected
+Answer files:      0 available / 1 expected
+```
+
+without treating unavailable source material as though it already exists.
+Changing these expectations is structural Exam planning and therefore requires
+an ACTIVE Exam.
+
 ### 4.6 Managed source-document hashes
 
 Managed Question and Answer/marking PDFs gain a persisted cryptographic content
@@ -474,6 +508,50 @@ If Answer regions depend on the old file:
 The existing repository invariant preventing assignment of a conflicting
 AnswerFile while old regions still refer to another file must remain. The
 correction workflow must work above that invariant rather than bypass it.
+
+Implementation status as at 28 September 2026:
+
+Answer-PDF correction is implemented as booklet-level AnswerFile reassignment.
+
+An existing AnswerFile is never overwritten in place because the same file may
+legitimately serve multiple booklets. Correcting one booklet therefore leaves
+other booklet assignments and the old managed asset unchanged.
+
+Before reassignment the workflow reports:
+
+- affected Questions;
+- Answer regions whose coordinates belong to the old PDF;
+- Answers with independent textual content that will be preserved;
+- region-only Answers that will become unanswered.
+
+Confirmed reassignment:
+
+1. requires the Exam to be `ACTIVE`;
+2. verifies that persisted Answer regions agree with the booklet's current
+   AnswerFile assignment;
+3. removes only Answer regions belonging to the old AnswerFile and corrected
+   booklet;
+4. preserves independent Answer text, including authoritative MCQ A/B/C/D
+   letters;
+5. removes Answer rows that contained only invalidated regions, causing those
+   written-response Questions to return naturally to the Answer-capture queue;
+6. reassigns the booklet to the replacement AnswerFile atomically.
+
+Newly selected replacement PDFs are copied into the managed Exam hierarchy and
+hashed before registration. If the normal managed filename already contains a
+different file, the replacement is stored under a hash-qualified filename
+rather than overwriting the old asset.
+
+When the selected bytes already identify one AnswerFile belonging to the same
+Exam, that existing managed AnswerFile is reused. Ambiguous or conflicting
+content matches are rejected.
+
+Selecting byte-identical content is non-destructive. Existing Answer regions
+remain valid and an older missing SourceDocument hash may be back-filled.
+
+The Answer-capture work queue is rebuilt from persistence after correction so a
+written-response Question whose region-only Answer was removed becomes
+immediately available for recapture.
 
 ### 4.10 Exam completion control
 
@@ -888,6 +966,7 @@ v14
   -> v15 Exam lifecycle and expected Question count
   -> v16 managed SourceDocument SHA-256
   -> v17 explicit Question source-recapture state
+  -> v18 Exam-level expected Question/Answer asset counts
 ```
 
 Migration, schema-verification and backup/restore compatibility regressions cover

@@ -283,6 +283,10 @@ class SqliteDatabaseInspectionTest {
 					    (1, 1, 1, 5, 0.10, 0.10, 0.70, 0.25)
 					""");
 
+			// Version 18 added Exam-level expected asset counts.
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
+
 			// Version 17 did not exist in the historical v13 fixture.
 			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
 
@@ -334,6 +338,10 @@ class SqliteDatabaseInspectionTest {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Version 18 added Exam-level expected asset counts.
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
 
 			// Remove the later version-17 recapture marker before constructing v14.
 			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
@@ -460,6 +468,10 @@ class SqliteDatabaseInspectionTest {
 					VALUES (1, 'Chemistry/QCAA/2025/paper1.pdf')
 					""");
 
+			// Version 18 added Exam-level expected asset counts.
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
+
 			// Version 17 added Question source-recapture state after this fixture.
 			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
 
@@ -544,14 +556,18 @@ class SqliteDatabaseInspectionTest {
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
-			// Manufacture the exact immediately preceding schema from the current one.
+			// Manufacture the exact version-16 schema from the current latest schema.
+			// Remove later additions in reverse migration order before changing the
+			// recorded version.
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
 			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
 			statement.execute("UPDATE schema_version SET version = 16");
 		}
 		assertEquals(16, database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 		database.initialiseSchema();
-		assertEquals(17, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 		assertDoesNotThrow(database::verifyIntegrity);
 		boolean foundColumn = false;
@@ -571,5 +587,97 @@ class SqliteDatabaseInspectionTest {
 			}
 		}
 		assertTrue(foundColumn);
+	}
+
+	@Test
+	void version17MigrationAddsExamAssetExpectations() throws Exception {
+		Path databasePath = tempDir.resolve("version-17-exam-asset-expectations.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Manufacture the exact immediately preceding schema from the current one.
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
+			statement.execute("UPDATE schema_version SET version = 17");
+		}
+		assertEquals(17, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+		database.initialiseSchema();
+		assertEquals(18, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+		assertDoesNotThrow(database::verifyIntegrity);
+		boolean foundQuestionBookletExpectation = false;
+		boolean foundAnswerFileExpectation = false;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exams)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				if ("expected_question_booklet_count".equals(columnName)) {
+					foundQuestionBookletExpectation = true;
+
+					// Existing Exams retain an unknown expectation rather than having their
+					// current asset count inferred during migration.
+					assertEquals(0, result.getInt("notnull"));
+				}
+				if ("expected_answer_file_count".equals(columnName)) {
+					foundAnswerFileExpectation = true;
+					assertEquals(0, result.getInt("notnull"));
+				}
+			}
+		}
+		assertTrue(foundQuestionBookletExpectation);
+		assertTrue(foundAnswerFileExpectation);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Seed the minimum persisted Exam relationships required to exercise the new
+			// column constraints against an actual row.
+			statement.execute("""
+					INSERT INTO subjects (id, subject_name)
+					VALUES (1, 'Chemistry')
+					""");
+			statement.execute("""
+					INSERT INTO exam_providers (id, provider_name)
+					VALUES (1, 'QCAA')
+					""");
+			statement.execute("""
+					INSERT INTO exams (
+					    id,
+					    subject_id,
+					    provider_id,
+					    exam_year,
+					    exam_name
+					)
+					VALUES (
+					    1,
+					    1,
+					    1,
+					    2025,
+					    'External Assessment'
+					)
+					""");
+
+			// Question booklet expectations, when known, must be positive.
+			assertThrows(SQLException.class, () -> statement.executeUpdate("""
+					UPDATE exams
+					SET expected_question_booklet_count = 0
+					WHERE id = 1
+					"""));
+
+			// Zero Answer files is a legitimate explicit expectation.
+			assertDoesNotThrow(() -> statement.executeUpdate("""
+					UPDATE exams
+					SET expected_answer_file_count = 0
+					WHERE id = 1
+					"""));
+
+			// Negative expected Answer-file counts are invalid.
+			assertThrows(SQLException.class, () -> statement.executeUpdate("""
+					UPDATE exams
+					SET expected_answer_file_count = -1
+					WHERE id = 1
+					"""));
+		}
 	}
 }
