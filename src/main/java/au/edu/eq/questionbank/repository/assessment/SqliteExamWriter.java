@@ -366,6 +366,80 @@ public final class SqliteExamWriter {
 	}
 
 	/**
+	 * Finds every persisted Question booklet belonging to one Exam.
+	 *
+	 * @param exam persisted Exam whose booklets should be listed
+	 * @return immutable booklets ordered by persistent identifier
+	 * @throws SQLException             if persistence cannot be read
+	 * @throws NullPointerException     if {@code exam} is {@code null}
+	 * @throws IllegalArgumentException if the Exam identity does not exist for its
+	 *                                  stored Subject
+	 */
+	public List<ExamBooklet> findExamBooklets(Exam exam) throws SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    eb.id AS booklet_id,
+						    eb.booklet_name,
+						    eb.question_format,
+						    eb.expected_question_count,
+						    sd.id AS source_document_id,
+						    sd.relative_path,
+						    sd.content_sha256,
+						    e.exam_year,
+						    e.exam_name,
+						    e.capture_state,
+						    p.id AS provider_id,
+						    p.provider_name
+						FROM exams e
+						JOIN exam_providers p
+						    ON p.id = e.provider_id
+						LEFT JOIN exam_booklets eb
+						    ON eb.exam_id = e.id
+						LEFT JOIN source_documents sd
+						    ON sd.id = eb.source_document_id
+						WHERE e.id = ?
+						  AND e.subject_id = ?
+						ORDER BY eb.id
+						""")) {
+			statement.setLong(1, exam.getId());
+			statement.setLong(2, exam.getSubject().getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Exam does not exist for its stored subject");
+				}
+				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
+						result.getString("provider_name"));
+				Exam authoritativeExam = new Exam(exam.getId(), exam.getSubject(), provider, result.getInt("exam_year"),
+						result.getString("exam_name"), ExamCaptureState.valueOf(result.getString("capture_state")));
+				List<ExamBooklet> booklets = new ArrayList<>();
+				do {
+
+					// A LEFT JOIN keeps an Exam with no source assets visible to Exam
+					// Setup; only real persisted booklet rows become domain objects.
+					long bookletId = result.getLong("booklet_id");
+					if (result.wasNull()) {
+						continue;
+					}
+					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
+							result.getString("relative_path"), result.getString("content_sha256"));
+					ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
+							.valueOf(result.getString("question_format"));
+					Integer expectedQuestionCount = readNullableInteger(result, "expected_question_count");
+					booklets.add(new ExamBooklet(bookletId, authoritativeExam, result.getString("booklet_name"),
+							sourceDocument, questionFormat, expectedQuestionCount));
+				} while (result.next());
+
+				// Return a stable repository snapshot for the Exam Setup UI.
+				return List.copyOf(booklets);
+			}
+		}
+	}
+
+	/**
 	 * Finds the single exam for a subject, provider, and year.
 	 *
 	 * @param subject      the persisted subject
@@ -423,6 +497,61 @@ public final class SqliteExamWriter {
 				}
 				return exam;
 			}
+		}
+	}
+
+	/**
+	 * Finds every persisted Exam belonging to one Subject.
+	 * <p>
+	 * Exams are returned independently of whether Question booklets or Answer files
+	 * have already been registered, so Exam Setup can also display planned Exams
+	 * whose source assets are not yet available.
+	 *
+	 * @param subject persisted Subject whose Exams should be listed
+	 * @return immutable Exams ordered by most recent year, then provider and name
+	 * @throws SQLException         if persistence cannot be read
+	 * @throws NullPointerException if {@code subject} is {@code null}
+	 */
+	public List<Exam> findExamsForSubject(Subject subject) throws SQLException {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    e.id AS exam_id,
+						    e.exam_year,
+						    e.exam_name,
+						    e.capture_state,
+						    p.id AS provider_id,
+						    p.provider_name
+						FROM exams e
+						JOIN exam_providers p
+						    ON p.id = e.provider_id
+						WHERE e.subject_id = ?
+						ORDER BY
+						    e.exam_year DESC,
+						    p.provider_name,
+						    e.exam_name,
+						    e.id
+						""")) {
+			statement.setLong(1, subject.getId());
+			List<Exam> exams = new ArrayList<>();
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
+							result.getString("provider_name"));
+					ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
+
+					// Reconstruct the persisted lifecycle state because Exam Setup must
+					// distinguish structurally editable and completed Exams.
+					exams.add(new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
+							result.getString("exam_name"), captureState));
+				}
+			}
+
+			// The setup UI receives a snapshot rather than a mutable repository result.
+			return List.copyOf(exams);
 		}
 	}
 

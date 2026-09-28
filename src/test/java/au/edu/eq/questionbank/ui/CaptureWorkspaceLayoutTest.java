@@ -11,8 +11,10 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.ui.exam.ExamSetupDialog;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -52,6 +54,31 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(expectedHeight, regionsPane.getPrefHeight(), 1.0);
 		assertTrue(regionsPane.getPrefHeight() < 300.0,
 				"One small Answer region must not claim the full maximum viewport");
+	}
+
+	@Test
+	void activeExamBookletIsVisibleAndCanReturnToExamSetup(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Label activeExam = lookup(robot, "#active-exam-booklet", Label.class);
+		Node activeContext = lookup(robot, "#active-exam-context", Node.class);
+		Button changeExam = lookup(robot, "#change-exam-assets", Button.class);
+
+		// The visible capture context identifies the authoritative Exam and booklet
+		// independently of the current curriculum classification.
+		// The standard workflow fixture creates QCAA 2024 External Assessment,
+		// Paper 1 MCQ. Assert the complete visible context so a missing or stale part
+		// of the active booklet identity cannot pass independently.
+		assertEquals("QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]", activeExam.getText());
+		assertTrue(isDescendantOf(activeExam, activeContext));
+		assertFalse(changeExam.isDisabled());
+		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
+
+		// The visible context action returns directly to the ordinary Exam Setup /
+		// asset-management workflow rather than opening another capture mechanism.
+		fireControlLater(changeExam);
+		WaitForAsyncUtils.waitFor(5, java.util.concurrent.TimeUnit.SECONDS, setupDialog::isShowing);
+		assertTrue(setupDialog.isShowing());
+		fireDialogButton(robot, "Close");
 	}
 
 	@Test
@@ -171,6 +198,33 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// the narrow workspace wider.
 		assertTrue(status.getWidth() <= answerCapturePane().getWidth() + 0.5,
 				"Answer question status must remain within the Answer pane width");
+	}
+
+	@Test
+	void captureWorkspaceContainsSeparateClassificationQuestionAndAnswerSections(FxRobot robot) {
+		Node captureWorkspace = lookup(robot, "#capture-workspace", Node.class);
+		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
+		Node activeExam = lookup(robot, "#active-exam-context", Node.class);
+		Node classification = lookup(robot, "#classification-context", Node.class);
+		Label classificationHeading = (Label) ((Parent) classification).lookup(".label");
+		assertEquals("Classification", classificationHeading.getText());
+
+		// Application-level Subject and Exam/booklet context deliberately remain
+		// outside the capture-workspace boundary.
+		assertFalse(isDescendantOf(workingSubject, captureWorkspace));
+		assertFalse(isDescendantOf(activeExam, captureWorkspace));
+
+		// Classification, Question and Answer are three distinct section containers
+		// directly grouped by the larger capture workspace.
+		assertEquals(captureWorkspace, classification.getParent());
+		assertEquals(captureWorkspace, questionCapturePane().getParent());
+		assertEquals(captureWorkspace, answerCapturePane().getParent());
+
+		// Re-parenting Classification must not move Working Subject with it.
+		ComboBox<?> subject = lookup(robot, "#curriculum-subject", ComboBox.class);
+		ComboBox<?> syllabus = lookup(robot, "#curriculum-syllabus", ComboBox.class);
+		assertTrue(isDescendantOf(subject, workingSubject));
+		assertTrue(isDescendantOf(syllabus, classification));
 	}
 
 	@Test
@@ -326,5 +380,33 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	@Test
+	void workingSubjectIsVisuallySeparateFromClassification(FxRobot robot) {
+		ComboBox<?> subject = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Node workingSubjectContext = lookup(robot, "#working-subject-context", Node.class);
+		Node classificationContext = lookup(robot, "#classification-context", Node.class);
+
+		// The Subject selector belongs to application context, not inside the
+		// Question-classification section.
+		assertTrue(isDescendantOf(subject, workingSubjectContext));
+		assertFalse(isDescendantOf(subject, classificationContext));
+		ComboBox<?> syllabus = lookup(robot, "#curriculum-syllabus", ComboBox.class);
+
+		// Syllabus selection still belongs to classification within the already
+		// selected Subject.
+		assertTrue(isDescendantOf(syllabus, classificationContext));
+	}
+
+	private boolean isDescendantOf(Node node, Node ancestor) {
+		Parent parent = node.getParent();
+		while (parent != null) {
+			if (parent == ancestor) {
+				return true;
+			}
+			parent = parent.getParent();
+		}
+		return false;
 	}
 }

@@ -261,47 +261,117 @@ correction of incorrectly selected assets.
 Starting new Question capture from a blank state opens an Exam setup /
 asset-management workflow.
 
-The workflow must support:
+The workflow supports:
 
 - selecting an existing Exam;
-- creating a new Exam;
+- creating a new Exam or Question booklet;
 - reviewing all Question booklets for that Exam;
 - reviewing all Answer/marking PDFs for that Exam;
+- inspecting an existing Question booklet;
 - selecting the Question booklet to use for capture;
 - returning later to correct or extend an active Exam.
 
 The dialog is an Exam-level management surface rather than a one-PDF import
 form.
 
+Implementation status as at 29 September 2026:
+
+`Exam Setup / Assets...` is the application-level entry point for Exam
+management.
+
+The setup surface is scoped to the current Working Subject and lists every
+persisted Exam for that Subject, including Exams that do not yet have source
+assets.
+
+For the selected Exam it shows:
+
+- Exam lifecycle state;
+- expected versus available Question-booklet counts;
+- expected versus available Answer-file counts;
+- persisted Question booklets;
+- booklet Question format;
+- booklet expected top-level Question count when known;
+- persisted Answer/marking assets;
+- booklet assignments for each AnswerFile.
+
+A shared AnswerFile is shown once while identifying each booklet that currently
+uses it.
+
+The user may either:
+
+```
+Inspect / Set Expected Questions...
+Open Selected Booklet for Capture
+Add Exam / Booklet...
+```
+
+Selecting a persisted booklet for capture resolves its authoritative managed
+Question PDF and activates the existing ExamBooklet. No duplicate Exam,
+booklet or SourceDocument record is created.
+New Exam/booklet intake continues to use the existing authoritative import
+workflow, but it is now subordinate to Exam Setup rather than being the main
+Exam-management surface.
+After a newly added booklet is persisted it enters booklet inspection before
+Question capture begins.
+
 ### 4.3 Question booklet setup
-
-For each Question booklet record:
-
+For each Question booklet the application records:
 - booklet name;
 - booklet format:
-  - `MULTIPLE_CHOICE`;
-  - `WRITTEN_RESPONSE`;
-  - `MIXED`;
+  - MULTIPLE_CHOICE;
+  - WRITTEN_RESPONSE;
+  - MIXED;
 - expected number of top-level Questions;
-- Question booklet PDF when available;
+- Question booklet PDF;
 - managed source-document hash.
+The expected count is the number of numbered top-level Questions, not the
+number of captured Question parts.
+For example:
+21a
+21b
+21c
 
-The expected count is the number of numbered Questions, not the number of
-captured Question parts.
+represents one top-level Question, Question 21.
+Expected Question count remains nullable until the source booklet has been
+reviewed. Legacy Question data is not used to infer the authoritative expected
+count.
+Existing and legacy-imported booklets can therefore be inspected
+retrospectively and have their expected counts recorded later.
+Changing the expected Question count is structural Exam planning. A COMPLETE
+Exam must be reactivated before that value can be changed.
 
 ### 4.4 Preview-only booklet inspection
-
-When a Question booklet PDF is selected during Exam setup, the PDF must be open
-for inspection before the user records the expected Question count.
-
-This viewer is inspection-only:
-
-- page navigation is available;
-- the user may inspect the complete booklet;
-- Question-region selection/capture is disabled;
-- no Question content is created from this view.
-
-This avoids asking the user to estimate the Question count from memory.
+Question-booklet inspection uses the existing shared PDF workspace in
+VIEWER mode.
+Inspection provides:
+- normal page navigation;
+- review of the complete managed Question booklet;
+- no Question-region selection;
+- no Question-content creation;
+- no change to the active capture booklet merely because another booklet is
+  being inspected.
+Exam Setup opens the authoritative managed PDF belonging to the selected
+ExamBooklet; an arbitrary external copy is not used for inspection.
+Unsaved Question, Shared Context or Answer capture work blocks entry into
+inspection because changing the displayed PDF would otherwise invalidate
+transient capture state.
+Closing an inspected booklet opens an Expected Question Count step. The user
+is explicitly reminded that multipart parts such as 21a, 21b and 21c
+count as one top-level Question.
+The count must be a positive whole number. Saving it uses the existing
+SqliteExamWriter.updateExamBookletPlanning(...) structural-planning boundary.
+If the inspected booklet is also the active capture booklet, its in-memory
+planning metadata is refreshed immediately after persistence.
+After the count step, the application returns to Exam Setup with the refreshed
+booklet information visible.
+A previously recorded expected count is pre-populated during later inspection,
+allowing the value to be reviewed or corrected.
+TestFX regressions verify that:
+- inspection uses read-only VIEWER mode;
+- PDF dragging during inspection does not create a pending capture selection;
+- existing booklets can have expected counts recorded retrospectively;
+- saved counts are persisted and reflected in the active booklet;
+- newly added booklets enter inspection before capture.
 
 ### 4.5 Expected-but-not-yet-available assets
 
@@ -509,13 +579,13 @@ The existing repository invariant preventing assignment of a conflicting
 AnswerFile while old regions still refer to another file must remain. The
 correction workflow must work above that invariant rather than bypass it.
 
-Implementation status as at 28 September 2026:
+Implementation status as at 29 September 2026:
 
 Answer-PDF correction is implemented as booklet-level AnswerFile reassignment.
 
 An existing AnswerFile is never overwritten in place because the same file may
 legitimately serve multiple booklets. Correcting one booklet therefore leaves
-other booklet assignments and the old managed asset unchanged.
+other booklet assignments unchanged.
 
 Before reassignment the workflow reports:
 
@@ -535,12 +605,22 @@ Confirmed reassignment:
    letters;
 5. removes Answer rows that contained only invalidated regions, causing those
    written-response Questions to return naturally to the Answer-capture queue;
-6. reassigns the booklet to the replacement AnswerFile atomically.
+6. reassigns the booklet to the replacement AnswerFile atomically;
+7. retires the old AnswerFile when no booklet or Answer region still refers to
+   it;
+8. retires the old SourceDocument when no Question booklet or remaining
+   AnswerFile refers to it.
+
+When the old SourceDocument is retired, its obsolete managed PDF is also removed
+from the managed Exam hierarchy.
+
+A shared old AnswerFile is retained together with its SourceDocument and managed
+PDF while another booklet still uses it.
 
 Newly selected replacement PDFs are copied into the managed Exam hierarchy and
 hashed before registration. If the normal managed filename already contains a
-different file, the replacement is stored under a hash-qualified filename
-rather than overwriting the old asset.
+different file, the replacement is first stored under a hash-qualified filename
+rather than overwriting bytes that may still be referenced.
 
 When the selected bytes already identify one AnswerFile belonging to the same
 Exam, that existing managed AnswerFile is reused. Ambiguous or conflicting
@@ -552,6 +632,11 @@ remain valid and an older missing SourceDocument hash may be back-filled.
 The Answer-capture work queue is rebuilt from persistence after correction so a
 written-response Question whose region-only Answer was removed becomes
 immediately available for recapture.
+
+Repository regression tests verify both cleanup cases:
+
+- an orphaned old AnswerFile, SourceDocument and managed PDF are removed;
+- a shared old AnswerFile, SourceDocument and managed PDF remain intact.
 
 ### 4.10 Exam completion control
 
@@ -626,29 +711,60 @@ capture.
 The capture workflow inherits the selected Subject and clearly identifies the
 active Exam and Question booklet.
 
-The preferred layout is conceptually:
+The implemented layout is:
 
-``` text
-APPLICATION CONTEXT
+```text
+WORKING SUBJECT
     Subject: Chemistry
-    [Change Subject...] [Add Subject...]
 
 ACTIVE EXAM / BOOKLET
-    QCAA 2025 External Assessment — Paper 1
+    QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]
     [Change Exam / Assets...]
 
 CAPTURE WORKSPACE
     CLASSIFICATION
+        [classification controls]
+
     QUESTION
+        [Question capture controls]
+
     ANSWER
+        [Answer capture controls]
 ```
 
-CLASSIFICATION, QUESTION and ANSWER visually belong to one capture
-workspace.
+`WORKING SUBJECT` is application-level context and is visually separate from
+Question classification.
 
-The Subject selector must not appear to be part of Question classification.
-Changing the Subject changes application context and therefore the Dashboard,
-available Exams and capture work.
+`ACTIVE EXAM / BOOKLET` is also outside the Capture Workspace. It shows the
+currently active persisted Exam and booklet, including the Exam lifecycle
+state.
+
+`Change Exam / Assets...` returns directly to the ordinary Exam Setup /
+asset-management workflow introduced in Slice 1.
+
+The `CAPTURE WORKSPACE` is one larger visual container. Within it,
+`CLASSIFICATION`, `QUESTION` and `ANSWER` remain separate bordered sections.
+The outer container expresses that these three sections participate in one
+Question-capture workflow without removing their individual responsibilities.
+
+The Classification controls continue to use the existing
+`CurriculumSelectorPane` and `CurriculumSelectionModel`; moving the visible
+Classification section does not create another curriculum-selection state.
+
+Changing Working Subject continues to change application context and therefore
+the available Exam and capture work. If the previous active Exam belongs to a
+different Subject, its visible active-Exam context is invalidated.
+
+The active Exam/booklet display is refreshed when:
+
+- a persisted booklet becomes active;
+- Working Subject changes;
+- Exam identity metadata changes;
+- the Exam is marked `COMPLETE`;
+- the Exam is reactivated.
+
+The workspace restructuring changes presentation and navigation only. It does
+not introduce parallel Exam, booklet, curriculum or capture state.
 
 ### 5.3 Explicit capture entry
 

@@ -29,10 +29,11 @@ public final class ExamImportDialog extends Dialog<Void> {
 
 		// Present this workflow as opening an exam for capture; persistence details
 		// remain an implementation concern of the existing metadata workflow.
-		setTitle("Open Exam for Capture");
-		setHeaderText("Exam Details");
+		// This dialog is now the creation/import step reached from Exam Setup.
+		setTitle("Add Exam / Booklet");
+		setHeaderText("Exam and Booklet Details");
 		getDialogPane().setContent(examMetadataPane);
-		ButtonType confirmButtonType = new ButtonType("Open for Capture", ButtonBar.ButtonData.OK_DONE);
+		ButtonType confirmButtonType = new ButtonType("Add and Inspect", ButtonBar.ButtonData.OK_DONE);
 		ButtonType cancelButtonType = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
 		getDialogPane().getButtonTypes().setAll(confirmButtonType, cancelButtonType);
 		Button confirmButton = (Button) getDialogPane().lookupButton(confirmButtonType);

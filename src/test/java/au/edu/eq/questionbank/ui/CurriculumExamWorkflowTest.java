@@ -611,17 +611,14 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void markingActiveExamCompletePersistsStateAndBlocksStructuralChange(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
 		assertNotNull(activeBooklet);
 		assertFalse(activeBooklet.getExam().isComplete());
-
 		MenuItem markComplete = examMenuItem("mark-active-exam-complete");
 
 		// The menu action opens a modal confirmation, so schedule it on the FX thread
 		// and let the test thread handle the resulting dialogs.
 		Platform.runLater(markComplete::fire);
-
 		waitForDialogShowing(robot, "Mark Exam Complete");
 		fireDialogButton(robot, "Mark Complete");
 
@@ -633,12 +630,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ExamBooklet completedBooklet = examMetadataPane().getBooklet();
 		assertNotNull(completedBooklet);
 		assertTrue(completedBooklet.getExam().isComplete());
-
 		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
-
 		ExamBooklet reloaded = writer
 				.findExamBookletBySourceDocumentPath(activeBooklet.getSourceDocument().getRelativePath());
-
 		assertNotNull(reloaded);
 
 		// A fresh read proves COMPLETE was persisted rather than existing only in the
@@ -674,41 +668,30 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void reactivatingCompletedExamRestoresStructuralEditing(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
-
 		MenuItem markComplete = examMenuItem("mark-active-exam-complete");
 
 		// First move the Exam through the real user-facing completion workflow.
 		Platform.runLater(markComplete::fire);
-
 		waitForDialogShowing(robot, "Mark Exam Complete");
 		fireDialogButton(robot, "Mark Complete");
-
 		waitForDialogShowing(robot, "Exam State");
 		fireDialogButton(robot, "OK");
-
 		assertTrue(examMetadataPane().getBooklet().getExam().isComplete());
-
 		MenuItem reactivate = examMenuItem("reactivate-active-exam");
 
 		// Reactivation itself does not require destructive confirmation, but the
 		// production action reports successful persistence with an information alert.
 		Platform.runLater(reactivate::fire);
-
 		waitForDialogShowing(robot, "Exam State");
 		fireDialogButton(robot, "OK");
-
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
 		assertNotNull(activeBooklet);
 		assertFalse(activeBooklet.getExam().isComplete());
-
 		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
-
 		ExamBooklet reloaded = writer
 				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
-
 		assertNotNull(reloaded);
 
 		// Reloading proves Reactivate persisted ACTIVE rather than merely changing the
@@ -717,7 +700,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Structural editing must work again after explicit reactivation.
 		ExamBooklet replanned = writer.updateExamBookletPlanning(reloaded, reloaded.getQuestionFormat(), 20);
-
 		assertEquals(Integer.valueOf(20), replanned.getExpectedQuestionCount());
 	}
 
@@ -860,7 +842,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// the real menu rather than invoking lifecycle persistence directly.
 		Menu examMenu = (Menu) invoke(application, "createExamMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
-
 		return examMenu.getItems().stream().filter(item -> itemId.equals(item.getId())).findFirst()
 				.orElseThrow(() -> new AssertionError("Exam menu item not found: " + itemId));
 	}

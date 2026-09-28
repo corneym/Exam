@@ -24,6 +24,10 @@ import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
  * may legitimately serve several booklets. A newly selected document therefore
  * becomes a separate managed asset unless its SHA-256 identity already resolves
  * unambiguously to an AnswerFile belonging to the same Exam.
+ * <p>
+ * After reassignment, an old AnswerFile that no longer has any persisted
+ * references is retired. If its SourceDocument is also no longer referenced,
+ * the obsolete managed PDF is removed from the managed file hierarchy.
  */
 public final class AnswerPdfReplacementService {
 
@@ -132,6 +136,10 @@ public final class AnswerPdfReplacementService {
 		AnswerFile existingMatch = findExistingManagedAnswerFile(booklet.getExam(), replacementHash);
 		if (existingMatch != null) {
 			AnswerFileReassignmentService.Result reassigned = reassignmentService.reassign(booklet, existingMatch);
+
+			// Database retirement proves whether the previous SourceDocument has become
+			// completely unreferenced. Only then may its managed bytes be removed.
+			cleanupRetiredManagedSource(reassigned.retiredSourceDocument());
 			Path managedPath = pdfStore.resolve(existingMatch.getSourceDocument().getRelativePath());
 			return new Result(reassigned.answerFile(), reassigned.impact(), reassigned.changed(), managedPath);
 		}
@@ -162,7 +170,30 @@ public final class AnswerPdfReplacementService {
 		// From this point the managed PDF is a legitimate registered Exam asset even if
 		// a later reassignment fails, so it must not be deleted as an orphan file.
 		AnswerFileReassignmentService.Result reassigned = reassignmentService.reassign(booklet, replacementFile);
+
+		// Once the replacement relationship has committed, remove obsolete managed
+		// bytes only when persistence has proved that their SourceDocument was retired.
+		cleanupRetiredManagedSource(reassigned.retiredSourceDocument());
 		return new Result(reassigned.answerFile(), reassigned.impact(), reassigned.changed(), managedCopy.path());
+	}
+
+	private void cleanupRetiredManagedSource(SourceDocument retiredSourceDocument) {
+		if (retiredSourceDocument == null) {
+			return;
+		}
+		Path retiredManagedPath = pdfStore.resolve(retiredSourceDocument.getRelativePath());
+		try {
+
+			// The database transaction has already proved that no persisted Question or
+			// Answer asset references this source, so its managed bytes are now obsolete.
+			Files.deleteIfExists(retiredManagedPath);
+		} catch (IOException exception) {
+
+			// Reassignment and database retirement have already committed. Reporting the
+			// whole replacement as failed would be misleading, so defer filesystem
+			// cleanup when the operating system temporarily keeps the file locked.
+			retiredManagedPath.toFile().deleteOnExit();
+		}
 	}
 
 	private void cleanupUnregisteredCopy(ManagedCopy managedCopy, Throwable failure) {

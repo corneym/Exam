@@ -66,9 +66,11 @@ class AnswerFileReassignmentServiceTest {
 		assertTrue(result.changed());
 		assertEquals(replacement.getId(), fixture.answerWriter().findAnswerFile(fixture.booklet()).getId());
 
-		// Reassignment is booklet-scoped. The shared AnswerFile remains authoritative
-		// for every other booklet that still uses it.
+		// Another booklet still owns the old AnswerFile, so neither that AnswerFile nor
+		// its SourceDocument may be retired.
 		assertEquals(sharedFile.getId(), fixture.answerWriter().findAnswerFile(secondBooklet).getId());
+		assertTrue(result.retiredSourceDocument() == null);
+		assertEquals(2, fixture.answerWriter().findAnswerFiles(fixture.booklet().getExam()).size());
 	}
 
 	@Test
@@ -103,6 +105,13 @@ class AnswerFileReassignmentServiceTest {
 		assertTrue(result.changed());
 		assertEquals(correctFile.getId(), result.answerFile().getId());
 		assertEquals(impact, result.impact());
+
+		// No other persisted asset uses the old AnswerFile, so reassignment retires the
+		// old AnswerFile and its now-orphaned SourceDocument in the same transaction.
+		assertTrue(result.retiredSourceDocument() != null);
+		assertEquals(oldFile.getSourceDocument().getId(), result.retiredSourceDocument().getId());
+		assertEquals(1, fixture.answerWriter().findAnswerFiles(fixture.booklet().getExam()).size());
+		assertTrue(fixture.examWriter().findSourceDocumentsByHash("1".repeat(64)).isEmpty());
 		AnswerFile assigned = fixture.answerWriter().findAnswerFile(fixture.booklet());
 		assertEquals(correctFile.getId(), assigned.getId());
 		Question reloadedWritten = fixture.questionRepository().findById(written.getId()).orElseThrow();

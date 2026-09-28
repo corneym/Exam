@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.pdf;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -187,6 +188,29 @@ class PdfWorkspacePaneAsyncTest {
 		assertSame(session, pane.getAnswerPdfSession());
 		assertSame(image, ((ImageView) pane.lookup("#pdf-page-view")).getImage());
 		assertTrue(pane.lookup("#next-pdf-page").isDisabled(), "Remain on page two");
+	}
+
+	@Test
+	void ordinaryViewerDoesNotRetainInspectionCompletionAction(FxRobot robot) throws Exception {
+		Path inspectionPath = createPdf("inspection.pdf");
+		Path ordinaryViewerPath = createPdf("ordinary-viewer.pdf");
+		Button finishInspection = robot.lookup("#finish-pdf-inspection").queryAs(Button.class);
+		robot.interact(() -> {
+			pane.openViewerPdf(inspectionPath);
+
+			// Simulate the specialised booklet-inspection workflow enabling its
+			// completion action.
+			pane.showViewerCompletionAction("Finish Inspection", () -> {
+			});
+		});
+		assertTrue(finishInspection.isVisible());
+		assertTrue(finishInspection.isManaged());
+		robot.interact(() -> pane.openViewerPdf(ordinaryViewerPath));
+
+		// Every ordinary viewer session resets workflow-specific actions. A
+		// Finish Inspection button must never leak into File > Open PDF viewing.
+		assertFalse(finishInspection.isVisible());
+		assertFalse(finishInspection.isManaged());
 	}
 
 	@Test

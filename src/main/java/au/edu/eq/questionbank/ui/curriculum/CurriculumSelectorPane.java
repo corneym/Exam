@@ -10,6 +10,7 @@ import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyBooleanWrapper;
 import javafx.beans.property.ReadOnlyObjectProperty;
+import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.geometry.Insets;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -40,7 +41,7 @@ public class CurriculumSelectorPane extends VBox {
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
 	private final CurriculumSelectionModel model;
 	private final ReadOnlyBooleanWrapper classificationSelected = new ReadOnlyBooleanWrapper();
-	private final javafx.beans.property.ReadOnlyObjectWrapper<CurriculumNode> selectedClassification = new javafx.beans.property.ReadOnlyObjectWrapper<>();
+	private final ReadOnlyObjectWrapper<CurriculumNode> selectedClassification = new ReadOnlyObjectWrapper<>();
 	private final TextField codeField = new TextField();
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
@@ -52,6 +53,7 @@ public class CurriculumSelectorPane extends VBox {
 	private final Label descriptorLabel = new Label("Descriptor");
 	private boolean refreshingSubjects;
 	private boolean refreshingCode;
+	private VBox classificationContext;
 
 	/**
 	 * Creates a selector bound to the supplied selection model.
@@ -94,6 +96,25 @@ public class CurriculumSelectorPane extends VBox {
 			refreshingCode = false;
 		}
 		refreshSelectedClassificationProperty();
+	}
+
+	/**
+	 * Detaches the Classification section so the application can place it inside
+	 * the larger capture-workspace container while Working Subject remains
+	 * application-level context.
+	 *
+	 * @return the existing Classification section and all of its live controls
+	 * @throws IllegalStateException if the Classification section has already been
+	 *                               detached
+	 */
+	public VBox detachClassificationContext() {
+		if (classificationContext == null || !getChildren().remove(classificationContext)) {
+			throw new IllegalStateException("Classification context has already been detached");
+		}
+
+		// The controls themselves are not recreated. Their listeners and selection
+		// model therefore continue operating exactly as before after re-parenting.
+		return classificationContext;
 	}
 
 	/**
@@ -249,9 +270,19 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void buildContent() {
-		Label classificationLabel = new Label("CLASSIFICATION");
-		classificationLabel.setStyle(HEADING_STYLE);
-		getChildren().addAll(classificationLabel, createGrid());
+		VBox subjectContext = new VBox(ROW_GAP, createSectionHeading("WORKING SUBJECT"), createSubjectGrid());
+		subjectContext.setId("working-subject-context");
+		subjectContext.setPadding(PANEL_PADDING);
+		subjectContext.setStyle(BORDER_STYLE);
+		classificationContext = new VBox(ROW_GAP, createSectionHeading("Classification"), createClassificationGrid());
+		classificationContext.setId("classification-context");
+		classificationContext.setPadding(PANEL_PADDING);
+		classificationContext.setStyle(BORDER_STYLE);
+
+		// Standalone CurriculumSelectorPane users retain both sections. The application
+		// composition root may later detach CLASSIFICATION into the larger capture
+		// workspace without moving Working Subject with it.
+		getChildren().addAll(subjectContext, classificationContext);
 	}
 
 	private SelectionSnapshot captureSelection() {
@@ -375,9 +406,10 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void configurePane() {
-		setSpacing(ROW_GAP);
-		setPadding(PANEL_PADDING);
-		setStyle(BORDER_STYLE);
+
+		// This pane now contains separate application-context and classification
+		// sections rather than presenting Working Subject as Question metadata.
+		setSpacing(ROW_GAP * 2);
 	}
 
 	private void configureSelectionHandlers() {
@@ -389,7 +421,43 @@ public class CurriculumSelectorPane extends VBox {
 		descriptorBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleDescriptorSelection());
 	}
 
-	private GridPane createGrid() {
+	private GridPane createClassificationGrid() {
+		GridPane grid = createTwoColumnGrid();
+
+		// Syllabus and hierarchy identify where the current Question belongs within
+		// the already-selected application-level Subject.
+		grid.addRow(0, new Label("Code"), codeField);
+		grid.addRow(1, new Label("Syllabus"), syllabusBox);
+		grid.addRow(2, new Label("Unit"), unitBox);
+		grid.addRow(3, new Label("Topic"), topicBox);
+		grid.addRow(4, subtopicLabel, subtopicBox);
+		grid.addRow(5, descriptorLabel, descriptorBox);
+		GridPane.setHgrow(codeField, Priority.ALWAYS);
+		GridPane.setHgrow(syllabusBox, Priority.ALWAYS);
+		GridPane.setHgrow(unitBox, Priority.ALWAYS);
+		GridPane.setHgrow(topicBox, Priority.ALWAYS);
+		GridPane.setHgrow(subtopicBox, Priority.ALWAYS);
+		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
+		return grid;
+	}
+
+	private Label createSectionHeading(String text) {
+		Label heading = new Label(text);
+		heading.setStyle(HEADING_STYLE);
+		return heading;
+	}
+
+	private GridPane createSubjectGrid() {
+		GridPane grid = createTwoColumnGrid();
+
+		// Subject controls the entire working context, including available Exams and
+		// both Question and Answer work queues.
+		grid.addRow(0, new Label("Subject"), subjectBox);
+		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
+		return grid;
+	}
+
+	private GridPane createTwoColumnGrid() {
 		GridPane grid = new GridPane();
 		grid.setHgap(COLUMN_GAP);
 		grid.setVgap(ROW_GAP);
@@ -401,23 +469,6 @@ public class CurriculumSelectorPane extends VBox {
 		controlColumn.setHgrow(Priority.ALWAYS);
 		controlColumn.setFillWidth(true);
 		grid.getColumnConstraints().addAll(labelColumn, controlColumn);
-		grid.addRow(0, new Label("Code"), codeField);
-
-		// Subject selection applies to the whole capture workspace, including Question
-		// and Answer work queues, rather than only to curriculum classification.
-		grid.addRow(1, new Label("Working Subject"), subjectBox);
-		grid.addRow(2, new Label("Syllabus"), syllabusBox);
-		grid.addRow(3, new Label("Unit"), unitBox);
-		grid.addRow(4, new Label("Topic"), topicBox);
-		grid.addRow(5, subtopicLabel, subtopicBox);
-		grid.addRow(6, descriptorLabel, descriptorBox);
-		GridPane.setHgrow(codeField, Priority.ALWAYS);
-		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
-		GridPane.setHgrow(syllabusBox, Priority.ALWAYS);
-		GridPane.setHgrow(unitBox, Priority.ALWAYS);
-		GridPane.setHgrow(topicBox, Priority.ALWAYS);
-		GridPane.setHgrow(subtopicBox, Priority.ALWAYS);
-		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
 		return grid;
 	}
 

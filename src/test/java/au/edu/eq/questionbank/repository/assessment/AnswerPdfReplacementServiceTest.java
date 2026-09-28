@@ -83,6 +83,45 @@ class AnswerPdfReplacementServiceTest {
 	}
 
 	@Test
+	void replacementRetainsOldManagedPdfWhileAnotherBookletStillUsesIt() throws Exception {
+		Path pdfRoot = tempDirectory.resolve("shared-pdf");
+		Path managedDirectory = pdfRoot.resolve("Chemistry/QCAA/2025");
+		Files.createDirectories(managedDirectory);
+		Path sharedManaged = managedDirectory.resolve("shared-answers.pdf");
+		Files.writeString(sharedManaged, "shared marking guide");
+		Path replacement = tempDirectory.resolve("paper1-correct-answers.pdf");
+		Files.writeString(replacement, "correct Paper 1 marking guide");
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("shared-replacement.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, examWriter);
+		ExamBooklet paper1 = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Chemistry/QCAA/2025/paper1.pdf");
+		ExamBooklet paper2 = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
+				"Chemistry/QCAA/2025/paper2.pdf");
+		SourceDocumentHashService hashService = new SourceDocumentHashService();
+		String sharedHash = hashService.sha256(sharedManaged);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile sharedFile = answerWriter.findOrCreateAnswerFile(paper1, "Shared marking guide",
+				"Chemistry/QCAA/2025/shared-answers.pdf", sharedHash);
+		answerWriter.assignAnswerFile(paper2, sharedFile);
+		AnswerPdfReplacementService service = new AnswerPdfReplacementService(database, pdfRoot);
+		AnswerPdfReplacementService.Result result = service.replace(paper1, replacement);
+		assertTrue(result.changed());
+
+		// Paper 2 still owns the original AnswerFile, so replacement of Paper 1 must
+		// not remove either the shared database asset or its managed bytes.
+		assertEquals(sharedFile.getId(), answerWriter.findAnswerFile(paper2).getId());
+		assertTrue(Files.isRegularFile(sharedManaged));
+		assertEquals(1, examWriter.findSourceDocumentsByHash(sharedHash).size());
+
+		// The Exam now legitimately contains the retained shared asset and Paper 1's
+		// new replacement asset.
+		assertEquals(2, answerWriter.findAnswerFiles(paper1.getExam()).size());
+	}
+
+	@Test
 	void replacementReusesUnambiguousMatchingAnswerFileAlreadyManagedForExam() throws Exception {
 		Path pdfRoot = tempDirectory.resolve("reuse-pdf");
 		Path managedDirectory = pdfRoot.resolve("Chemistry/QCAA/2025");
@@ -102,9 +141,10 @@ class AnswerPdfReplacementServiceTest {
 		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
 				"External Assessment", "Paper 1", "Chemistry/QCAA/2025/questions.pdf");
 		SourceDocumentHashService hashService = new SourceDocumentHashService();
+		String oldHash = hashService.sha256(oldManaged);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		AnswerFile oldFile = answerWriter.findOrCreateAnswerFile(booklet, "Old answers",
-				"Chemistry/QCAA/2025/old-answers.pdf", hashService.sha256(oldManaged));
+				"Chemistry/QCAA/2025/old-answers.pdf", oldHash);
 		AnswerFile knownCorrectFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Known correct answers",
 				"Chemistry/QCAA/2025/known-correct-answers.pdf", hashService.sha256(knownCorrectManaged));
 		assertEquals(2, answerWriter.findAnswerFiles(booklet.getExam()).size());
@@ -112,20 +152,20 @@ class AnswerPdfReplacementServiceTest {
 		AnswerPdfReplacementService.Result result = service.replace(booklet, externalCopy);
 		assertTrue(result.changed());
 
-		// Content identity resolves the external copy to the already-managed AnswerFile
-		// rather than manufacturing another SourceDocument or AnswerFile.
+		// Content identity resolves the external copy to the already-managed
+		// AnswerFile rather than manufacturing another replacement asset.
 		assertEquals(knownCorrectFile.getId(), result.answerFile().getId());
 		assertEquals(knownCorrectManaged.toAbsolutePath().normalize(),
 				result.managedPath().toAbsolutePath().normalize());
 		AnswerFile assigned = answerWriter.findAnswerFile(booklet);
 		assertEquals(knownCorrectFile.getId(), assigned.getId());
 
-		// The old AnswerFile remains a valid managed Exam asset and the matching
-		// replacement does not create a third AnswerFile.
-		assertEquals(2, answerWriter.findAnswerFiles(booklet.getExam()).size());
-		assertTrue(Files.isRegularFile(oldManaged));
-		assertEquals(oldFile.getId(), answerWriter.findAnswerFiles(booklet.getExam()).stream()
-				.filter(file -> "Old answers".equals(file.getName())).findFirst().orElseThrow().getId());
+		// The old AnswerFile has no remaining owner, so its row, SourceDocument and
+		// managed PDF are all retired rather than accumulating as obsolete data.
+		assertEquals(1, answerWriter.findAnswerFiles(booklet.getExam()).size());
+		assertFalse(Files.exists(oldManaged));
+		assertTrue(examWriter.findSourceDocumentsByHash(oldHash).isEmpty());
+		assertNotEquals(oldFile.getId(), answerWriter.findAnswerFiles(booklet.getExam()).getFirst().getId());
 	}
 
 	@Test
@@ -153,27 +193,30 @@ class AnswerPdfReplacementServiceTest {
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.60, 0.20)), subtopic, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
 		SourceDocumentHashService hashService = new SourceDocumentHashService();
+		String oldHash = hashService.sha256(oldManaged);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		AnswerFile oldFile = answerWriter.findOrCreateAnswerFile(booklet, "answers.pdf",
-				"Chemistry/QCAA/2025/answers.pdf", hashService.sha256(oldManaged));
+				"Chemistry/QCAA/2025/answers.pdf", oldHash);
 		answerWriter.insertAnswer(question, null, List.of(new AnswerRegion(oldFile, 2, 0.10, 0.20, 0.50, 0.12)));
 		AnswerPdfReplacementService service = new AnswerPdfReplacementService(database, pdfRoot);
 		AnswerPdfReplacementService.Result result = service.replace(booklet, replacement);
 		assertTrue(result.changed());
 		assertNotEquals(oldFile.getId(), result.answerFile().getId());
 
-		// The incorrect managed asset is retained because another booklet could still
-		// legitimately reference it.
-		assertEquals("wrong marking guide", Files.readString(oldManaged));
+		// The replacement receives its own collision-safe managed path, while the
+		// obsolete original file is removed once persistence proves it is unreferenced.
+		assertFalse(Files.exists(oldManaged));
 		assertTrue(Files.isRegularFile(result.managedPath()));
 		assertNotEquals(oldManaged, result.managedPath());
 		assertEquals("correct marking guide", Files.readString(result.managedPath()));
 		String expectedHash = hashService.sha256(replacement);
 		assertEquals(expectedHash, result.answerFile().getSourceDocument().getContentSha256());
+		assertTrue(examWriter.findSourceDocumentsByHash(oldHash).isEmpty());
+		assertEquals(1, answerWriter.findAnswerFiles(booklet.getExam()).size());
 		Question reloaded = questionRepository.findById(question.getId()).orElseThrow();
 
-		// Removing the region-only Answer returns the written Question to normal Answer
-		// capture rather than leaving an invalid empty Answer row.
+		// Removing the region-only Answer returns the written Question to normal
+		// Answer capture rather than leaving an invalid empty Answer row.
 		assertFalse(reloaded.hasAnswer());
 	}
 }

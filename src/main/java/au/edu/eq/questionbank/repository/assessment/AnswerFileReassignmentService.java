@@ -19,10 +19,13 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  * Answer regions are coordinates within a particular AnswerFile and therefore
  * cannot survive reassignment to another document. Independent textual answer
  * content is retained. Answers that consisted only of invalidated regions are
- * removed so their Questions return naturally to Answer capture.
+ * removed so their Questions return naturally to Answer capture. *
  * <p>
- * Reassignment changes only the selected booklet. The old AnswerFile itself is
- * not modified because it may legitimately remain assigned to other booklets.
+ * Reassignment changes only the selected booklet. The old AnswerFile is
+ * retained while another booklet or Answer region still refers to it. Once it
+ * becomes unreferenced, its AnswerFile row is retired. Its SourceDocument is
+ * also retired only when no Question booklet or other AnswerFile still refers
+ * to that source.
  */
 public final class AnswerFileReassignmentService {
 
@@ -74,6 +77,9 @@ public final class AnswerFileReassignmentService {
 	 * <p>
 	 * Regions captured from the old document are deleted. Answers retaining
 	 * non-blank independent text remain persisted; region-only Answers are removed.
+	 * An old AnswerFile that becomes completely unreferenced is retired in the same
+	 * transaction. Its SourceDocument is also retired when no other persisted asset
+	 * refers to it.
 	 *
 	 * @param booklet         booklet whose AnswerFile is being corrected
 	 * @param replacementFile replacement AnswerFile belonging to the same Exam
@@ -106,18 +112,17 @@ public final class AnswerFileReassignmentService {
 				}
 				AnswerFile replacement = findAnswerFile(connection, booklet, replacementFile.getId());
 
-				// Selecting the already assigned file is a no-op. It does not constitute a
-				// structural change and must not invalidate any persisted regions.
+				// Selecting the currently assigned file is recognition rather than a
+				// structural change. No source-dependent data or assets are retired.
 				if (current.getId() == replacement.getId()) {
 					Impact impact = readImpact(connection, booklet.getId(), current.getId());
 					connection.commit();
-					return new Result(replacement, impact, false);
+					return new Result(replacement, impact, false, null);
 				}
 				verifyExamActive(connection, booklet);
 
 				// Existing repository invariants require all regions for this booklet to
-				// agree with its current AnswerFile assignment. Do not use correction as a
-				// way to hide pre-existing contradictory data.
+				// agree with its current AnswerFile assignment before correction begins.
 				verifyAnswerRegionsMatchCurrentAssignment(connection, booklet.getId(), current.getId());
 				Impact impact = readImpact(connection, booklet.getId(), current.getId());
 				List<Long> regionOnlyAnswerIds = findRegionOnlyAnswerIds(connection, booklet.getId(), current.getId());
@@ -126,12 +131,15 @@ public final class AnswerFileReassignmentService {
 				deleteOldAnswerRegions(connection, booklet.getId(), current.getId());
 
 				// Once their only regions are gone, region-only Answers contain no answer
-				// content at all. Removing the Answer row returns those Questions to the
-				// existing unanswered queue without adding parallel state.
+				// content and must return naturally to the unanswered queue.
 				deleteRegionOnlyAnswers(connection, regionOnlyAnswerIds);
 				assignAnswerFile(connection, booklet, replacement);
+
+				// Retire the old database asset only after this booklet has been moved away
+				// from it. Shared AnswerFiles and shared SourceDocuments remain intact.
+				SourceDocument retiredSourceDocument = retireAnswerFileIfUnreferenced(connection, current);
 				connection.commit();
-				return new Result(replacement, impact, true);
+				return new Result(replacement, impact, true, retiredSourceDocument);
 			} catch (SQLException | RuntimeException exception) {
 				try {
 					connection.rollback();
@@ -344,6 +352,60 @@ public final class AnswerFileReassignmentService {
 		}
 	}
 
+	private SourceDocument retireAnswerFileIfUnreferenced(Connection connection, AnswerFile answerFile)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM answer_files
+				WHERE id = ?
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM exam_booklets
+				      WHERE answer_file_id = ?
+				  )
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM answer_regions
+				      WHERE answer_file_id = ?
+				  )
+				""")) {
+			statement.setLong(1, answerFile.getId());
+			statement.setLong(2, answerFile.getId());
+			statement.setLong(3, answerFile.getId());
+
+			// Another booklet or surviving Answer region still makes the old AnswerFile
+			// authoritative, so shared assets must remain untouched.
+			if (statement.executeUpdate() == 0) {
+				return null;
+			}
+		}
+		SourceDocument sourceDocument = answerFile.getSourceDocument();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM source_documents
+				WHERE id = ?
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM exam_booklets
+				      WHERE source_document_id = ?
+				  )
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM answer_files
+				      WHERE source_document_id = ?
+				  )
+				""")) {
+			statement.setLong(1, sourceDocument.getId());
+			statement.setLong(2, sourceDocument.getId());
+			statement.setLong(3, sourceDocument.getId());
+
+			// The physical managed PDF may be removed only when this deletion proves that
+			// no Question booklet or remaining AnswerFile still owns the source.
+			if (statement.executeUpdate() == 1) {
+				return sourceDocument;
+			}
+		}
+		return null;
+	}
+
 	private void verifyAnswerRegionsMatchCurrentAssignment(Connection connection, long bookletId,
 			long currentAnswerFileId) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
@@ -427,11 +489,15 @@ public final class AnswerFileReassignmentService {
 	/**
 	 * Result of an AnswerFile reassignment.
 	 *
-	 * @param answerFile replacement AnswerFile assigned to the booklet
-	 * @param impact     source-dependent content present before reassignment
-	 * @param changed    whether the booklet assignment actually changed
+	 * @param answerFile            replacement AnswerFile assigned to the booklet
+	 * @param impact                source-dependent content present before
+	 *                              reassignment
+	 * @param changed               whether the booklet assignment actually changed
+	 * @param retiredSourceDocument SourceDocument whose final persisted reference
+	 *                              was removed, or {@code null} when the old source
+	 *                              remains in use
 	 */
-	public record Result(AnswerFile answerFile, Impact impact, boolean changed) {
+	public record Result(AnswerFile answerFile, Impact impact, boolean changed, SourceDocument retiredSourceDocument) {
 
 		/**
 		 * Validates a reassignment result.
@@ -443,6 +509,9 @@ public final class AnswerFileReassignmentService {
 			if (impact == null) {
 				throw new NullPointerException("impact");
 			}
+
+			// retiredSourceDocument is deliberately nullable because a shared old asset
+			// remains authoritative after this booklet is reassigned.
 		}
 	}
 }

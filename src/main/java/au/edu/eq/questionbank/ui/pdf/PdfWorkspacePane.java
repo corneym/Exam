@@ -99,6 +99,9 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private DocumentMode anchoredSelectionDocument;
 	private boolean anchoredSelectionFullWidth;
 	private boolean storedRegionScrollPending;
+	private final Button viewerCompletionButton = new Button("Finish Inspection");
+	private Runnable viewerCompletionHandler = () -> {
+	};
 
 	// Report user-driven cancellation separately from programmatic clearSelection()
 	// so the application can clear the logical owner without creating a callback
@@ -252,6 +255,10 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 */
 	public void closeViewerPdf() {
 		documentRequest++;
+
+		// Workflow-specific viewer actions belong only to the viewer session being
+		// closed.
+		hideViewerCompletionAction();
 		closeExistingViewerPdfSession();
 		displayedDocument = viewerReturnDocument;
 		currentPageNumber = viewerReturnPageNumber;
@@ -364,6 +371,19 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 */
 	public boolean hasExamPdf() {
 		return examPdfSession != null;
+	}
+
+	/**
+	 * Removes any workflow-specific completion action from the PDF viewer.
+	 */
+	public void hideViewerCompletionAction() {
+
+		// Reset both presentation and callback so a later ordinary viewer session
+		// cannot accidentally retain an earlier inspection workflow.
+		viewerCompletionButton.setVisible(false);
+		viewerCompletionButton.setManaged(false);
+		viewerCompletionHandler = () -> {
+		};
 	}
 
 	/**
@@ -513,6 +533,10 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
+
+		// A viewer begins as an ordinary read-only viewer. A specialised workflow may
+		// explicitly add its own completion action after the PDF has opened.
+		hideViewerCompletionAction();
 		closeExistingViewerPdfSession();
 		try {
 			viewerPdfSession = PdfSession.open(path);
@@ -677,6 +701,31 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 		currentPageNumber = pageNumber;
 		showCurrentPage();
+	}
+
+	/**
+	 * Shows an explicit completion action for the current read-only viewer
+	 * workflow.
+	 *
+	 * @param buttonText visible action text
+	 * @param handler    action invoked when the user completes the viewer workflow
+	 * @throws NullPointerException     if either argument is {@code null}
+	 * @throws IllegalArgumentException if {@code buttonText} is blank
+	 */
+	public void showViewerCompletionAction(String buttonText, Runnable handler) {
+		if (buttonText == null) {
+			throw new NullPointerException("buttonText");
+		}
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+		if (buttonText.isBlank()) {
+			throw new IllegalArgumentException("buttonText must not be blank");
+		}
+		viewerCompletionHandler = handler;
+		viewerCompletionButton.setText(buttonText);
+		viewerCompletionButton.setManaged(true);
+		viewerCompletionButton.setVisible(true);
 	}
 
 	private void applyPageImage(Image image, PdfSession session) {
@@ -867,6 +916,17 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		previousButton.setDisable(true);
 		nextButton.setDisable(true);
 		nextButton.setId("next-pdf-page");
+		viewerCompletionButton.setId("finish-pdf-inspection");
+		viewerCompletionButton.setVisible(false);
+		viewerCompletionButton.setManaged(false);
+		viewerCompletionButton.setOnAction(_ -> {
+
+			// Finish the current JavaFX button event before the application closes VIEWER
+			// mode and opens the next modal workflow. Opening the count dialog directly
+			// inside this event can leave nested dialog processing in an invalid state.
+			Runnable completionHandler = viewerCompletionHandler;
+			Platform.runLater(completionHandler);
+		});
 		pageNumberField.setId("pdf-page-number");
 		pageNumberField.setPrefColumnCount(PAGE_FIELD_COLUMNS);
 		pageNumberField.setMaxWidth(PAGE_FIELD_MAX_WIDTH);
@@ -930,7 +990,7 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	private HBox createPageControls() {
 		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, new Label("Go to:"),
-				pageNumberField, nextButton, fullWidthSelectionCheckBox);
+				pageNumberField, nextButton, fullWidthSelectionCheckBox, viewerCompletionButton);
 		pageControls.setAlignment(Pos.CENTER);
 		pageControls.setPadding(PAGE_CONTROLS_PADDING);
 		return pageControls;

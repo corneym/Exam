@@ -237,15 +237,12 @@ class LegacyQuestionMetadataImporterTest {
 	@Test
 	void legacyQuestionEvidenceDoesNotBecomeAuthoritativeExamPlanning() throws Exception {
 		Fixture fixture = createFixture("legacy-planning-evidence.db", false);
-
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
-
 		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
 
 		// The workbook contains encountered Question records and may therefore provide
 		// evidence about Exam content, but those rows are not authoritative planning.
 		assertEquals(2, result.insertedQuestions());
-
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet exams = statement.executeQuery("""
@@ -256,7 +253,6 @@ class LegacyQuestionMetadataImporterTest {
 						FROM exams
 						ORDER BY id
 						""")) {
-
 			int examCount = 0;
 			while (exams.next()) {
 				examCount++;
@@ -272,7 +268,6 @@ class LegacyQuestionMetadataImporterTest {
 			}
 			assertEquals(1, examCount);
 		}
-
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet booklets = statement.executeQuery("""
@@ -282,7 +277,6 @@ class LegacyQuestionMetadataImporterTest {
 						FROM exam_booklets
 						ORDER BY booklet_name
 						""")) {
-
 			int bookletCount = 0;
 			while (booklets.next()) {
 				bookletCount++;

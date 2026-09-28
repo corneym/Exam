@@ -285,6 +285,31 @@ public final class ExamMetadataPane extends VBox {
 		}
 	}
 
+	/**
+	 * Refreshes the planning metadata carried by the currently active booklet when
+	 * that same persisted booklet has been updated elsewhere.
+	 *
+	 * @param updatedBooklet authoritative updated booklet
+	 * @throws NullPointerException     if {@code updatedBooklet} is {@code null}
+	 * @throws IllegalArgumentException if the replacement identity contradicts the
+	 *                                  active booklet's Exam
+	 */
+	public void refreshActiveBookletPlanning(ExamBooklet updatedBooklet) {
+		if (updatedBooklet == null) {
+			throw new NullPointerException("updatedBooklet");
+		}
+		if (booklet == null || booklet.getId() != updatedBooklet.getId()) {
+			return;
+		}
+		if (booklet.getExam().getId() != updatedBooklet.getExam().getId()) {
+			throw new IllegalArgumentException("Updated booklet belongs to a different Exam");
+		}
+
+		// Persistence remains authoritative for structural planning while the
+		// currently opened PDF and booklet identity remain unchanged.
+		booklet = updatedBooklet;
+	}
+
 	/** Reloads selectable Subjects while preserving the current selection by id. */
 	public void refreshSubjects() {
 		Subject selectedSubject = subjectField.getValue();
@@ -344,14 +369,12 @@ public final class ExamMetadataPane extends VBox {
 		if (booklet == null) {
 			throw new IllegalStateException("No Exam booklet is active");
 		}
-
 		Exam updatedExam = examWriter.setExamCaptureState(booklet.getExam(), captureState);
 
 		// Keep the active capture object consistent with persisted lifecycle state
 		// without altering any booklet-level structure.
 		booklet = new ExamBooklet(booklet.getId(), updatedExam, booklet.getName(), booklet.getSourceDocument(),
 				booklet.getQuestionFormat(), booklet.getExpectedQuestionCount());
-
 		return updatedExam;
 	}
 

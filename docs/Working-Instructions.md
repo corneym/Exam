@@ -162,6 +162,8 @@ slices.
 
 Do not silently introduce new architectural assumptions.
 
+whenever you give Markdown that itself contains fenced code blocks using three backticks, you will wrap the entire copyable Markdown snippet in a fence of four backticks. That keeps the inner triple-backtick fences intact and ensures the whole Markdown document stays inside one copy box.  use that convention consistently for documentation snippets.
+
 ### Git
 
 Do not tell me to commit, push, merge, rebase, delete branches, or otherwise

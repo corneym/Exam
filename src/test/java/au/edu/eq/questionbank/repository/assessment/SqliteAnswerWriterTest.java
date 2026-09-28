@@ -75,48 +75,36 @@ class SqliteAnswerWriterTest {
 		Path databasePath = tempDirectory.resolve("complete-exam-answer-structure.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
 		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
 		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
 		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-
 		ExamBooklet paper1 = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
 				"Chemistry/2025/paper1.pdf");
-
 		ExamBooklet paper2 = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
 				"Chemistry/2025/paper2.pdf");
-
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
-
 		Question question = questionRepository.save(paper1, "Q1", "", 2,
 				List.of(new QuestionRegion(paper1, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
-
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 
 		// Establish all structural Answer assets before completing the Exam.
 		AnswerFile answersA = answerWriter.findOrCreateAnswerFile(paper1.getExam(), "Answers A",
 				"Chemistry/2025/answers-a.pdf");
-
 		AnswerFile answersB = answerWriter.findOrCreateAnswerFile(paper1.getExam(), "Answers B",
 				"Chemistry/2025/answers-b.pdf");
-
 		answerWriter.assignAnswerFile(paper1, answersA);
 		answerWriter.assignAnswerFile(paper2, answersA);
-
 		assertEquals(2, countRows(database, "answer_files"));
-
 		Exam completedExam = examWriter.setExamCaptureState(paper1.getExam(), ExamCaptureState.COMPLETE);
 
 		// Reusing an already registered AnswerFile and its already-established booklet
 		// mapping is non-structural and must remain legal.
 		AnswerFile reused = answerWriter.findOrCreateAnswerFile(paper1, "Answers A", "Chemistry/2025/answers-a.pdf");
-
 		assertEquals(answersA.getId(), reused.getId());
 		assertEquals(answersA.getId(), answerWriter.findAnswerFile(paper1).getId());
 
@@ -124,10 +112,8 @@ class SqliteAnswerWriterTest {
 		// booklet's existing AnswerFile relationship.
 		Answer original = answerWriter.insertAnswer(question, "B",
 				List.of(new AnswerRegion(answersA, 4, 0.10, 0.20, 0.40, 0.10)));
-
 		Answer updated = answerWriter.updateAnswer(question, original.getId(), "C",
 				List.of(new AnswerRegion(answersA, 5, 0.15, 0.25, 0.45, 0.12)));
-
 		assertEquals(original.getId(), updated.getId());
 		assertEquals("C", updated.getAnswerText());
 		assertEquals(5, updated.getRegions().getFirst().pageNumber());
@@ -136,13 +122,11 @@ class SqliteAnswerWriterTest {
 		// rejected until the user explicitly reactivates the Exam.
 		assertThrows(IllegalStateException.class, () -> answerWriter.findOrCreateAnswerFile(completedExam,
 				"Late Answers", "Chemistry/2025/late-answers.pdf"));
-
 		assertEquals(2, countRows(database, "answer_files"));
 
 		// Paper 2 already points at Answers A. Redirecting it to Answers B is another
 		// structural change and must also be rejected.
 		assertThrows(IllegalStateException.class, () -> answerWriter.assignAnswerFile(paper2, answersB));
-
 		assertEquals(answersA.getId(), answerWriter.findAnswerFile(paper2).getId());
 
 		// The failed structural operations must not disturb the permitted Answer edit.
