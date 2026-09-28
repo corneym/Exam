@@ -61,6 +61,28 @@ All code written MUST contain inline comments explaining the algorithmic meaning
 When tests contain nested helper classes or fixtures, distinguish clearly
 between the outer test class and the nested class.
 
+### GitHub issue and project tracking during implementation
+
+GitHub Issues and the GitHub Project are part of the normal development workflow.
+
+As implementation progresses, ChatGPT must explicitly tell the user when the current work changes the appropriate GitHub tracking state.
+
+This includes identifying when an issue should:
+
+- move from `Sprint` to `In Progress`;
+- move from `In Progress` to `Ready for PR`;
+- move to `Done` after merge;
+- remain open because only part of its scope has been implemented;
+- be split because implementation reveals independently trackable work;
+- be closed as superseded, duplicate or not planned;
+- have its description or acceptance criteria updated because an implementation decision changed the design.
+
+Only issues on which implementation has actually begun should normally be moved to `In Progress`. Do not move an entire slice merely because one issue in that slice has started.
+
+When a code increment completes work associated with one or more issues, identify those issue numbers explicitly.
+
+At suitable checkpoints, especially before a pull request, compare
+
 ### Implementation workflow
 
 Work in small, testable slices.

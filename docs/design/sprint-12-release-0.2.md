@@ -24,6 +24,11 @@ Sprint 12 is deliberately limited to four related slices:
 3. MCQ explanation regions;
 4. Corpus Dashboard / Audit refinement.
 
+By Sprint 12 closeout, the selected Subject becomes application-level context
+and the Corpus Dashboard is intended to become the main application working
+surface for that Subject. A Subject with little or no data must present useful
+onboarding actions rather than an empty audit display.
+
 Richer Question Search filtering is not Sprint 12 work and has returned to the
 backlog.
 
@@ -50,7 +55,15 @@ At Sprint 12 design start:
 - Corpus Audit already reports Question-level source, Answer, response-type and
   Shared Context problems;
 - Search remains a retrieval/edit surface and is not expanded in this sprint.
-
+- legacy Question metadata import already reads the previous ExamBuilder workbook
+  format, identifies required Exam booklets, imports Question metadata and may
+  create missing booklet/Answer assets after user selection;
+- legacy workbook data may therefore supply much of the initial Exam catalogue
+  for a Subject, but it does not prove the authoritative expected number of
+  Questions in a booklet;
+- Subject creation currently exists indirectly through curriculum creation but
+  is not yet a first-class application-level workflow.
+  
 Current code and GitHub state remain authoritative during implementation.
 
 ## 3. Sprint-wide design principles
@@ -178,6 +191,62 @@ coordinates against the replacement document.
 Replacement operations must identify affected source-dependent capture, warn the
 user, require confirmation where data will be lost, and invalidate the affected
 regions before assigning the replacement asset.
+
+### 3.7 Subject is application-level context
+
+Subject selection is not merely Question-capture state.
+
+By Sprint 12 closeout the selected Subject is application-level context for:
+
+- Corpus Dashboard;
+- Exam setup and asset management;
+- Question and Answer capture;
+- curriculum workflows;
+- Search and other Subject-scoped operations where appropriate.
+
+The application should present the selected Subject independently from Question
+classification.
+
+A first-class `Add Subject...` workflow must allow a new Subject to be created
+without requiring an Exam or curriculum to be created at the same time.
+
+Changing Subject changes the corpus and work being displayed. Existing
+safeguards that prevent Subject changes while unsaved capture work is pending
+must remain.
+
+### 3.8 Legacy import and Exam Setup share one authoritative Exam model
+
+Legacy import is an intake source, not a separate long-term Exam-management
+model.
+
+Legacy-imported Exams and booklets must feed the same Exam Setup / Asset
+Management workflow used for newly entered Exams.
+
+Reliable legacy metadata may pre-populate known Exam structure, including:
+
+- provider;
+- year;
+- booklet identity;
+- Question codes;
+- marks;
+- classifications;
+- response-type evidence;
+- multipart/source-Question relationships;
+- existing MCQ Answer letters where supplied.
+
+Legacy Question records provide evidence about Questions already encountered.
+They must not establish the authoritative expected top-level Question count.
+
+For example, finding 19 distinct top-level Questions in a legacy workbook does
+not prove that the original booklet contained only 19 Questions. The expected
+count is confirmed separately against the source Question booklet.
+
+Legacy-imported Exams remain `ACTIVE` until the user deliberately reviews and
+declares their structure complete.
+
+Question PDFs, Answer/marking assets, booklet assignments, expected Question
+counts, booklet format and AnswerFile capability metadata are reviewed through
+the ordinary Exam Setup workflow.
 
 ## 4. Slice 1 --- Exam setup, assets, hashes and safe correction
 
@@ -357,15 +426,21 @@ established the active Exam and Question booklet.
 
 ### 5.2 Workspace structure
 
-Working Subject remains workspace-level state and is visually separated from the
-Question's classification.
+Subject is application-level context established before entering Question
+capture.
+
+The capture workflow inherits the selected Subject and clearly identifies the
+active Exam and Question booklet.
 
 The preferred layout is conceptually:
 
 ``` text
-WORKING SUBJECT
+APPLICATION CONTEXT
+    Subject: Chemistry
+    [Change Subject...] [Add Subject...]
 
 ACTIVE EXAM / BOOKLET
+    QCAA 2025 External Assessment — Paper 1
     [Change Exam / Assets...]
 
 CAPTURE WORKSPACE
@@ -374,8 +449,12 @@ CAPTURE WORKSPACE
     ANSWER
 ```
 
-`CLASSIFICATION`, `QUESTION` and `ANSWER` visually belong to one capture
+CLASSIFICATION, QUESTION and ANSWER visually belong to one capture
 workspace.
+
+The Subject selector must not appear to be part of Question classification.
+Changing the Subject changes application context and therefore the Dashboard,
+available Exams and capture work.
 
 ### 5.3 Explicit capture entry
 
@@ -652,6 +731,46 @@ completeness.
 An MCQ with a valid A/B/C/D answer remains complete even if no explanation
 region has been captured.
 
+### 7.10 Dashboard as the Subject home screen
+
+By Sprint 12 closeout the intended application flow is:
+
+``` text
+Application start
+    ↓
+Select Subject
+    ↓
+Corpus Dashboard
+```
+
+The Dashboard becomes the main working surface for the selected Subject rather
+than remaining only a modal audit dialog.
+The Dashboard must preserve access to the application's specialised workflows,
+including Exam setup, Question capture, Answer capture, Search, curriculum
+management and output.
+A Subject with little or no corpus data must not display only an empty work
+queue.
+Useful empty-state actions include at minimum:
+
+```
+No Exams have been added.
+    [Add Exam]
+
+No curriculum has been added.
+    [Add Curriculum]
+
+Application-level Subject context must also provide:
+[Add Subject...]
+```
+
+Creating a Subject does not require immediate creation of either an Exam or a
+curriculum.
+Exam setup may occur before curriculum entry. Question capture still requires a
+valid persisted Question classification and therefore cannot complete until
+usable curriculum data exists.
+The Dashboard should make such dependencies visible through actionable status
+rather than treating an empty Subject as an error.
+
 ## 8. Explicitly outside Sprint 12
 
 The following are not Sprint 12 work:
@@ -715,3 +834,10 @@ Windows packaging/installation verification.
 11. Richer Question Search filtering is deferred to the backlog.
 12. Sprint 12 targets Release 0.2 because the user-facing workflow changes are
     substantial.
+13. Subject is application-level context rather than Question-classification
+    state.
+14. The Corpus Dashboard is intended to become the main Subject working surface
+    by Sprint 12 closeout, including useful empty-state actions.
+15. New and legacy-imported Exams converge on the same Exam Setup / Asset
+    Management model; legacy Question counts are evidence, not authoritative
+    expected counts.

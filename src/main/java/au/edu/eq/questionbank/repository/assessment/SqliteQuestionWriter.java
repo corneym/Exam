@@ -10,6 +10,7 @@ import java.util.List;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
@@ -449,6 +450,9 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
+		// Creating a Question changes Exam structure, so the persisted Exam state is
+		// authoritative even if the caller holds an older ACTIVE domain object.
+		requireExamActiveForBooklet(connection, booklet.getId());
 		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
 		verifySharedContextRelationship(connection, booklet, sharedContext);
 
@@ -499,6 +503,8 @@ public final class SqliteQuestionWriter {
 		if (sharedContext != null && sharedContext.getBooklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
+		// Creating a Question is structural and therefore requires an ACTIVE Exam.
+		requireExamActiveForBooklet(connection, booklet.getId());
 		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
 		verifySharedContextRelationship(connection, booklet, sharedContext);
 		long questionId = insertQuestionRow(connection, booklet, questionCode, questionText, marks, classification,
@@ -601,6 +607,9 @@ public final class SqliteQuestionWriter {
 			throw new IllegalArgumentException("Shared question context must belong to the question's booklet");
 		}
 		verifyQuestionBooklet(connection, questionId, booklet);
+		// Ordinary Question correction remains available on COMPLETE Exams, but a
+		// Question-code change alters structural identity and requires reactivation.
+		requireExamActiveForQuestionCodeChange(connection, questionId, questionCode);
 		verifyClassificationSyllabusUnchanged(connection, questionId, classification);
 		verifySourceQuestionRelationship(connection, booklet, sourceQuestion);
 		verifySharedContextRelationship(connection, booklet, sharedContext);
@@ -952,6 +961,60 @@ public final class SqliteQuestionWriter {
 				contentStatement.setInt(2, i);
 				contentStatement.setInt(3, i);
 				contentStatement.executeUpdate();
+			}
+		}
+	}
+
+	private void requireExamActiveForBooklet(Connection connection, long bookletId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT e.capture_state
+				FROM exam_booklets eb
+				JOIN exams e
+				    ON e.id = eb.exam_id
+				WHERE eb.id = ?
+				""")) {
+			statement.setLong(1, bookletId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Exam booklet does not exist: " + bookletId);
+				}
+				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
+				if (captureState == ExamCaptureState.COMPLETE) {
+					throw new IllegalStateException("Exam must be reactivated before changing Question structure");
+				}
+			}
+		}
+	}
+
+	private void requireExamActiveForQuestionCodeChange(Connection connection, long questionId,
+			String replacementQuestionCode) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    q.question_code,
+				    e.capture_state
+				FROM questions q
+				JOIN exam_booklets eb
+				    ON eb.id = q.booklet_id
+				JOIN exams e
+				    ON e.id = eb.exam_id
+				WHERE q.id = ?
+				""")) {
+			statement.setLong(1, questionId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Question does not exist: " + questionId);
+				}
+
+				// A same-code update is ordinary content/metadata correction and remains
+				// permitted on a COMPLETE Exam.
+				if (result.getString("question_code").equals(replacementQuestionCode)) {
+					return;
+				}
+
+				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
+				if (captureState == ExamCaptureState.COMPLETE) {
+					throw new IllegalStateException("Exam must be reactivated before changing Question structure");
+				}
 			}
 		}
 	}

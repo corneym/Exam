@@ -21,6 +21,7 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
@@ -31,6 +32,28 @@ class SqliteExamWriterTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void completedExamMustBeReactivatedBeforeMetadataCorrection() throws Exception {
+		Path databasePath = tempDirectory.resolve("completed-exam-correction.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+
+		// Provider/year/name are structural identity, so normal correction must respect
+		// the same user-declared lock as booklet planning.
+		assertThrows(IllegalStateException.class,
+				() -> writer.correctExamMetadata(completed, "QCAA", 2025, "External Assessment Revised"));
+
+		Exam reactivated = writer.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
+		Exam corrected = writer.correctExamMetadata(reactivated, "QCAA", 2025, "External Assessment Revised");
+		assertEquals("External Assessment Revised", corrected.getName());
+		assertEquals(ExamCaptureState.ACTIVE, corrected.getCaptureState());
+	}
 
 	@Test
 	void correctsExamMetadataAndBookletAndAnswerSourcePathsAtomically() throws Exception {
@@ -299,6 +322,83 @@ class SqliteExamWriterTest {
 		ExamBooklet restored = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
 		assertNotNull(restored);
 		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, restored.getQuestionFormat());
+	}
+
+	@Test
+	void persistsBookletPlanningAndBlocksStructuralChangesWhenExamIsComplete() throws Exception {
+		Path databasePath = tempDirectory.resolve("booklet-planning-lock.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		SourceDocument sourceDocument = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+
+		ExamBooklet booklet = writer.insertExamBooklet(exam, sourceDocument, "Paper 1",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20);
+		assertEquals(20, booklet.getExpectedQuestionCount());
+
+		ExamBooklet changed = writer.updateExamBookletPlanning(booklet, ExamBookletQuestionFormat.MIXED, 18);
+		assertEquals(ExamBookletQuestionFormat.MIXED, changed.getQuestionFormat());
+		assertEquals(18, changed.getExpectedQuestionCount());
+
+		// Reopen through the normal lookup so neither value can be satisfied by the
+		// returned update object alone.
+		ExamBooklet reloaded = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
+		assertNotNull(reloaded);
+		assertEquals(ExamBookletQuestionFormat.MIXED, reloaded.getQuestionFormat());
+		assertEquals(18, reloaded.getExpectedQuestionCount());
+
+		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+		assertTrue(completed.isComplete());
+
+		// Both changing existing booklet planning and adding a new booklet alter Exam
+		// structure and therefore require explicit reactivation.
+		assertThrows(IllegalStateException.class,
+				() -> writer.updateExamBookletPlanning(reloaded, ExamBookletQuestionFormat.WRITTEN_RESPONSE, 17));
+
+		SourceDocument secondSource = writer.insertSourceDocument("Chemistry/QCAA/2025/paper2.pdf");
+		assertThrows(IllegalStateException.class, () -> writer.insertExamBooklet(completed, secondSource, "Paper 2",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12));
+
+		Exam reactivated = writer.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
+		ExamBooklet paperTwo = writer.insertExamBooklet(reactivated, secondSource, "Paper 2",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12);
+		assertEquals(12, paperTwo.getExpectedQuestionCount());
+	}
+
+	@Test
+	void persistsExamCaptureStateAndExplicitReactivation() throws Exception {
+		Path databasePath = tempDirectory.resolve("exam-capture-state.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+
+		// New Exams remain structurally editable until the user explicitly completes
+		// them.
+		assertEquals(ExamCaptureState.ACTIVE, exam.getCaptureState());
+		assertFalse(exam.isComplete());
+
+		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+		assertTrue(completed.isComplete());
+
+		// Reload through SQLite to prove completion is persisted rather than merely a
+		// replacement Java object.
+		Exam reloadedCompleted = writer.findExamByProviderAndYear(chemistry, "QCAA", 2025);
+		assertNotNull(reloadedCompleted);
+		assertEquals(ExamCaptureState.COMPLETE, reloadedCompleted.getCaptureState());
+
+		Exam reactivated = writer.setExamCaptureState(reloadedCompleted, ExamCaptureState.ACTIVE);
+		assertEquals(ExamCaptureState.ACTIVE, reactivated.getCaptureState());
+
+		Exam reloadedActive = writer.findExamByProviderAndYear(chemistry, "QCAA", 2025);
+		assertNotNull(reloadedActive);
+		assertEquals(ExamCaptureState.ACTIVE, reloadedActive.getCaptureState());
 	}
 
 	@Test

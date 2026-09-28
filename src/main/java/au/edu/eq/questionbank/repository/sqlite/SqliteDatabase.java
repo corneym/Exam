@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	static final int LATEST_SCHEMA_VERSION = 14;
+	private static final int LATEST_SCHEMA_VERSION = 15;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -596,6 +596,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v13-to-v14.sql", 14);
 			return 14;
 		}
+		if (version == 14) {
+
+			// Version fifteen records the user-declared Exam capture lifecycle and
+			// the expected top-level Question count for established booklets.
+			executeMigration(connection, "/db/migration-v14-to-v15.sql", 15);
+			return 15;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -835,6 +842,12 @@ public final class SqliteDatabase {
 						"Database schema version " + version + " is missing required table question_content_parts");
 			}
 			verifyVersion14QuestionContentSchema(connection);
+		}
+		if (version >= 15) {
+
+			// Exam capture state and expected booklet Question counts were introduced
+			// together in schema version 15.
+			verifyVersion15ExamCaptureSchema(connection);
 		}
 	}
 
@@ -1243,6 +1256,47 @@ public final class SqliteDatabase {
 		if (!hasExactCompositeForeignKey(connection, "question_content_parts", List.of("question_id", "image_id"),
 				"question_images", List.of("question_id", "id"))) {
 			throw new SQLException("question_content_parts is missing image composite foreign key");
+		}
+	}
+
+	private void verifyVersion15ExamCaptureSchema(Connection connection) throws SQLException {
+		boolean hasCaptureState = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exams)")) {
+			while (result.next()) {
+				if (!"capture_state".equals(result.getString("name"))) {
+					continue;
+				}
+				hasCaptureState = true;
+
+				// Every Exam must have an explicit persisted lifecycle state. Existing
+				// Exams are migrated to ACTIVE rather than represented by SQL NULL.
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("exams column must be NOT NULL: capture_state");
+				}
+			}
+		}
+		if (!hasCaptureState) {
+			throw new SQLException("exams is missing required column capture_state");
+		}
+		boolean hasExpectedQuestionCount = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"expected_question_count".equals(result.getString("name"))) {
+					continue;
+				}
+				hasExpectedQuestionCount = true;
+
+				// Legacy and not-yet-reviewed booklets have no authoritative expected
+				// Question count, so NULL is a meaningful persisted state.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("exam_booklets column must be nullable: expected_question_count");
+				}
+			}
+		}
+		if (!hasExpectedQuestionCount) {
+			throw new SQLException("exam_booklets is missing required column expected_question_count");
 		}
 	}
 

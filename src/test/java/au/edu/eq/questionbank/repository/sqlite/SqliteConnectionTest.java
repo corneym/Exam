@@ -51,7 +51,7 @@ class SqliteConnectionTest {
 						""");
 				ResultSet result = statement.executeQuery()) {
 			assertTrue(result.next());
-			assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
+			assertEquals(SqliteDatabase.latestSchemaVersion(), result.getInt("version"));
 			assertFalse(result.next());
 		}
 		assertTrue(tableExists(database, "subjects"));
@@ -166,7 +166,7 @@ class SqliteConnectionTest {
 						FROM schema_version
 						""")) {
 			assertTrue(result.next());
-			assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
+			assertEquals(SqliteDatabase.latestSchemaVersion(), result.getInt("version"));
 			assertFalse(result.next());
 		}
 		try (Connection connection = database.openConnection();
@@ -200,7 +200,7 @@ class SqliteConnectionTest {
 					FROM schema_version
 					""")) {
 				assertTrue(result.next());
-				assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
+				assertEquals(SqliteDatabase.latestSchemaVersion(), result.getInt("version"));
 			}
 			try (ResultSet result = statement.executeQuery("""
 					SELECT subject_name
@@ -267,7 +267,7 @@ class SqliteConnectionTest {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
 				assertTrue(result.next());
-				assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
+				assertEquals(SqliteDatabase.latestSchemaVersion(), result.getInt("version"));
 				assertFalse(result.next());
 			}
 			try (ResultSet result = statement.executeQuery("""
@@ -306,7 +306,7 @@ class SqliteConnectionTest {
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT version FROM schema_version")) {
 			assertTrue(result.next());
-			assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, result.getInt("version"));
+			assertEquals(SqliteDatabase.latestSchemaVersion(), result.getInt("version"));
 			assertFalse(result.next());
 		}
 	}
@@ -358,7 +358,7 @@ class SqliteConnectionTest {
 		}
 		assertEquals(6, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("""
 					SELECT
@@ -501,7 +501,7 @@ class SqliteConnectionTest {
 		}
 		assertEquals(7, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
@@ -564,7 +564,7 @@ class SqliteConnectionTest {
 		// A pre-existing booklet contains no reliable response-format metadata, so
 		// migration must preserve that uncertainty rather than infer from its name.
 		database.initialiseSchema();
-		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
@@ -682,7 +682,7 @@ class SqliteConnectionTest {
 		}
 		assertEquals(9, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
@@ -875,11 +875,11 @@ class SqliteConnectionTest {
 					)
 					""");
 			statement.execute(String.format("INSERT INTO schema_version (version) VALUES (%d)",
-					SqliteDatabase.LATEST_SCHEMA_VERSION + 1));
+					SqliteDatabase.latestSchemaVersion() + 1));
 		}
 		SQLException exception = assertThrows(SQLException.class, database::initialiseSchema);
 		assertTrue(exception.getMessage()
-				.contains("Unsupported database schema version " + (SqliteDatabase.LATEST_SCHEMA_VERSION + 1)));
+				.contains("Unsupported database schema version " + (SqliteDatabase.latestSchemaVersion() + 1)));
 	}
 
 	@Test

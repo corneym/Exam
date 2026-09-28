@@ -480,6 +480,27 @@ public final class LegacyQuestionMetadataImporter {
 		}
 	}
 
+	private void requireBookletExamActive(Connection connection, long bookletId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT e.capture_state
+				FROM exam_booklets eb
+				JOIN exams e
+				    ON e.id = eb.exam_id
+				WHERE eb.id = ?
+				""")) {
+			statement.setLong(1, bookletId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Exam booklet does not exist: " + bookletId);
+				}
+				if ("COMPLETE".equals(result.getString("capture_state"))) {
+					throw new IllegalStateException(
+							"Exam must be reactivated before importing legacy Question structure");
+				}
+			}
+		}
+	}
+
 	private List<ResolvedQuestion> resolveQuestions(Connection connection, List<LegacyQuestionSheet> sheets,
 			ImportContext context) throws SQLException {
 		List<ResolvedQuestion> resolved = new ArrayList<>();
@@ -490,6 +511,9 @@ public final class LegacyQuestionMetadataImporter {
 		for (LegacyQuestionSheet sheet : sheets) {
 			for (LegacyQuestionRow row : sheet.questions()) {
 				long bookletId = findBookletId(connection, context.subjectId(), sheet.providerName(), row);
+				// Legacy import establishes Question/source-question structure. A completed
+				// Exam must therefore be explicitly reactivated before importing it.
+				requireBookletExamActive(connection, bookletId);
 				long classificationNodeId = findClassificationNodeId(connection, context.syllabusVersionId(),
 						sheet.providerName(), row);
 				QuestionKey key = new QuestionKey(bookletId, row.questionCode());

@@ -36,6 +36,38 @@ class LegacyQuestionMetadataImporterTest {
 	Path tempDirectory;
 
 	@Test
+	void completeExamRejectsLegacyQuestionStructureImport() throws Exception {
+		Fixture fixture = createFixture("complete-exam-import.db", false);
+
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// Legacy Question import creates Question and SourceQuestion structure, so a
+			// completed Exam must be deliberately reactivated first.
+			statement.executeUpdate("""
+					UPDATE exams
+					SET capture_state = 'COMPLETE'
+					""");
+		}
+
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+
+		IllegalStateException exception = assertThrows(IllegalStateException.class,
+				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
+		assertTrue(exception.getMessage().contains("reactivated"));
+
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// Rejection occurs transactionally before legacy import can leave any Question,
+			// Answer or multipart source identity behind.
+			assertEquals(0, countRows(statement, "questions"));
+			assertEquals(0, countRows(statement, "answers"));
+			assertEquals(0, countRows(statement, "source_questions"));
+		}
+	}
+
+	@Test
 	void conflictingExistingAnswerIsPreservedOnReimport() throws Exception {
 		Fixture fixture = createFixture("answer-conflict.db", false);
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());

@@ -44,6 +44,26 @@ class SqlScriptExecutorTest {
 	}
 
 	@Test
+	void identifiesTheStatementThatFailed() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("script-diagnostic.db"));
+		try (Connection connection = database.openConnection()) {
+			SQLException failure = assertThrows(SQLException.class, () -> SqlScriptExecutor.execute(connection, """
+					CREATE TABLE example (
+					    id INTEGER PRIMARY KEY
+					);
+					INSERT INTO table_that_does_not_exist (id)
+					VALUES (1);
+					"""));
+
+			// Migration failures should identify which statement failed while retaining
+			// the SQLite exception as the underlying cause.
+			assertTrue(failure.getMessage().contains("statement 2"));
+			assertTrue(failure.getCause() instanceof SQLException);
+			assertTrue(failure.getCause().getMessage().contains("table_that_does_not_exist"));
+		}
+	}
+
+	@Test
 	void schemaChangesCanBeRolledBackWhenScriptFails() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("rollback.db"));
 		try (Connection connection = database.openConnection()) {

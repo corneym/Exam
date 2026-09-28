@@ -244,13 +244,13 @@ class SqliteSchemaV5Test {
 
 		// initialiseSchema() migrates the database all the way to the application's
 		// current supported schema.
-		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 
 		// Use a fresh database object after migration to simulate reopening the
 		// application against the upgraded database.
 		SqliteDatabase reopenedDatabase = new SqliteDatabase(databasePath);
 		reopenedDatabase.initialiseSchema();
-		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, reopenedDatabase.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), reopenedDatabase.schemaVersion());
 		Question reloaded = new SqliteQuestionRepository(reopenedDatabase).findById(100).orElseThrow();
 		assertEquals("24a", reloaded.getQuestionCode());
 		assertEquals("Stored question text", reloaded.getQuestionText());
@@ -632,7 +632,7 @@ class SqliteSchemaV5Test {
 		}
 		assertEquals(4, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(SqliteDatabase.LATEST_SCHEMA_VERSION, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			try (ResultSet result = statement.executeQuery("""
 					SELECT question_code, marks, shared_context_capture_required,

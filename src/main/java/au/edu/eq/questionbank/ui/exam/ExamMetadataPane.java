@@ -241,8 +241,10 @@ public final class ExamMetadataPane extends VBox {
 
 			// Exam correction changes Exam metadata only. Preserve the booklet's separate
 			// persisted Question-format classification in the refreshed in-memory object.
+			// Exam correction relocates the source but does not alter the booklet's
+			// structural planning metadata.
 			booklet = new ExamBooklet(booklet.getId(), corrected, booklet.getName(), correctedSourceDocument,
-					booklet.getQuestionFormat());
+					booklet.getQuestionFormat(), booklet.getExpectedQuestionCount());
 			currentPdfPath = pdfStore.resolve(correctedRelativePath);
 			providerField.setValue(corrected.getProvider().getName());
 			yearField.setValue(corrected.getYear());

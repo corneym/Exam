@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
@@ -223,11 +224,13 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 							eb.id AS booklet_id,
 							eb.booklet_name,
 							eb.question_format,
+							eb.expected_question_count,
 							sd.id AS source_document_id,
 							sd.relative_path,
 							e.id AS exam_id,
 							e.exam_year,
 							e.exam_name,
+							e.capture_state,
 							s.id AS subject_id,
 							s.subject_name,
 							p.id AS provider_id,
@@ -575,17 +578,20 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	private Question readQuestion(Connection connection, ResultSet result, long questionId) throws SQLException {
 		Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
 		ExamProvider provider = new ExamProvider(result.getLong("provider_id"), result.getString("provider_name"));
+		ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
 		Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
-				result.getString("exam_name"));
+				result.getString("exam_name"), captureState);
 		SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 				result.getString("relative_path"));
 
-		// Reconstruct the booklet with its persisted format so Question retrieval does
-		// not silently turn explicit booklet metadata back into UNSPECIFIED.
+		// Reconstruct all booklet planning metadata because the Question's booklet may
+		// later be used by capture, correction or Dashboard workflows.
 		ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 				.valueOf(result.getString("question_format"));
+		int storedExpectedQuestionCount = result.getInt("expected_question_count");
+		Integer expectedQuestionCount = result.wasNull() ? null : storedExpectedQuestionCount;
 		ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
-				sourceDocument, questionFormat);
+				sourceDocument, questionFormat, expectedQuestionCount);
 
 		// Reconstruct the original classification even when retrieval matched a newer
 		// syllabus.

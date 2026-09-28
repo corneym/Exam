@@ -282,8 +282,11 @@ class SqliteDatabaseInspectionTest {
 					    (1, 1, 1, 5, 0.10, 0.10, 0.70, 0.25)
 					""");
 
-			// Remove only structures introduced by version 14, leaving a structurally
-			// valid version-13 database containing legacy Question regions.
+			// The fixture starts from the current latest schema. Remove later-version
+			// structures in reverse order so the resulting database genuinely matches
+			// version 13 before exercising the real forward migration path.
+			statement.execute("ALTER TABLE exam_booklets DROP COLUMN expected_question_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN capture_state");
 			statement.execute("DROP TABLE question_content_parts");
 			statement.execute("DROP TABLE question_images");
 			statement.execute("UPDATE schema_version SET version = 13");
@@ -291,7 +294,7 @@ class SqliteDatabaseInspectionTest {
 		assertEquals(13, database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 		database.initialiseSchema();
-		assertEquals(14, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 		assertDoesNotThrow(database::verifyIntegrity);
 		try (Connection connection = database.openConnection();
@@ -314,6 +317,119 @@ class SqliteDatabaseInspectionTest {
 			assertEquals("PDF_REGION", result.getString("content_type"));
 			assertEquals(1, result.getInt("region_order"));
 			assertEquals(null, result.getObject("image_id"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
+	void version14MigrationAddsExamCapturePlanningMetadata() throws Exception {
+		Path databasePath = tempDir.resolve("version-14-exam-capture-metadata.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Remove only the version-15 additions so the fixture represents the exact
+			// structural state immediately before the new migration.
+			statement.execute("ALTER TABLE exam_booklets DROP COLUMN expected_question_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN capture_state");
+			statement.execute("UPDATE schema_version SET version = 14");
+
+			// Seed a real existing Exam and booklet whose v14 data contains no completion
+			// declaration and no expected Question count.
+			statement.execute("""
+					INSERT INTO subjects (id, subject_name)
+					VALUES (1, 'Chemistry')
+					""");
+			statement.execute("""
+					INSERT INTO exam_providers (id, provider_name)
+					VALUES (1, 'QCAA')
+					""");
+			statement.execute("""
+					INSERT INTO source_documents (id, relative_path)
+					VALUES (1, 'Chemistry/QCAA/2025/paper1.pdf')
+					""");
+			statement.execute("""
+					INSERT INTO exams (
+					    id, subject_id, provider_id, exam_year, exam_name
+					)
+					VALUES (1, 1, 1, 2025, 'External Assessment')
+					""");
+			statement.execute("""
+					INSERT INTO exam_booklets (
+					    id,
+					    exam_id,
+					    source_document_id,
+					    booklet_name,
+					    question_format
+					)
+					VALUES (
+					    1,
+					    1,
+					    1,
+					    'Paper 1',
+					    'MULTIPLE_CHOICE'
+					)
+					""");
+		}
+		assertEquals(14, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+
+		// Run the production sequential migration rather than reproducing its SQL in
+		// the test.
+		database.initialiseSchema();
+		assertEquals(15, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+		assertDoesNotThrow(database::verifyIntegrity);
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("""
+						SELECT
+						    e.capture_state,
+						    eb.expected_question_count
+						FROM exams e
+						JOIN exam_booklets eb
+						    ON eb.exam_id = e.id
+						WHERE e.id = 1
+						  AND eb.id = 1
+						""")) {
+			assertTrue(result.next());
+
+			// Existing Exams remain editable until the user explicitly declares them
+			// complete.
+			assertEquals("ACTIVE", result.getString("capture_state"));
+
+			// Migration must not invent an expected Question count for legacy data.
+			assertEquals(null, result.getObject("expected_question_count"));
+			assertFalse(result.next());
+		}
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// The database itself protects the small closed lifecycle vocabulary.
+			assertThrows(SQLException.class,
+					() -> statement.execute("UPDATE exams SET capture_state = 'UNKNOWN' WHERE id = 1"));
+
+			// An expected count is either unknown or a positive number of top-level
+			// Questions; zero and negative values are invalid planning data.
+			assertThrows(SQLException.class,
+					() -> statement.execute("UPDATE exam_booklets SET expected_question_count = 0 WHERE id = 1"));
+			statement.execute("UPDATE exams SET capture_state = 'COMPLETE' WHERE id = 1");
+			statement.execute("UPDATE exam_booklets SET expected_question_count = 20 WHERE id = 1");
+		}
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("""
+						SELECT
+						    e.capture_state,
+						    eb.expected_question_count
+						FROM exams e
+						JOIN exam_booklets eb
+						    ON eb.exam_id = e.id
+						WHERE e.id = 1
+						  AND eb.id = 1
+						""")) {
+			assertTrue(result.next());
+			assertEquals("COMPLETE", result.getString("capture_state"));
+			assertEquals(20, result.getInt("expected_question_count"));
 			assertFalse(result.next());
 		}
 	}

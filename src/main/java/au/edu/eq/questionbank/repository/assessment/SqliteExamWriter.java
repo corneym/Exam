@@ -11,6 +11,7 @@ import java.util.Map;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
@@ -62,24 +63,30 @@ public final class SqliteExamWriter {
 		if (questionFormat == ExamBookletQuestionFormat.UNSPECIFIED) {
 			throw new IllegalArgumentException("A legacy booklet must be assigned an explicit question format");
 		}
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						UPDATE exam_booklets
-						SET question_format = ?
-						WHERE id = ?
-						  AND question_format = 'UNSPECIFIED'
-						""")) {
-			statement.setString(1, questionFormat.name());
-			statement.setLong(2, booklet.getId());
+		try (Connection connection = database.openConnection()) {
 
-			// Only an existing legacy row may be classified by this operation.
-			if (statement.executeUpdate() != 1) {
-				throw new IllegalStateException(
-						"Legacy booklet question format could not be updated: " + booklet.getId());
+			// Booklet format is Exam structure, so a completed Exam must be explicitly
+			// reactivated before this metadata can change.
+			requireExamActive(connection, booklet.getExam().getId());
+
+			try (PreparedStatement statement = connection.prepareStatement("""
+					UPDATE exam_booklets
+					SET question_format = ?
+					WHERE id = ?
+					  AND question_format = 'UNSPECIFIED'
+					""")) {
+				statement.setString(1, questionFormat.name());
+				statement.setLong(2, booklet.getId());
+
+				// Only an existing legacy row may be classified by this operation.
+				if (statement.executeUpdate() != 1) {
+					throw new IllegalStateException(
+							"Legacy booklet question format could not be updated: " + booklet.getId());
+				}
 			}
 		}
 		return new ExamBooklet(booklet.getId(), booklet.getExam(), booklet.getName(), booklet.getSourceDocument(),
-				questionFormat);
+				questionFormat, booklet.getExpectedQuestionCount());
 	}
 
 	/**
@@ -184,11 +191,13 @@ public final class SqliteExamWriter {
 						    eb.id AS booklet_id,
 						    eb.booklet_name,
 						    eb.question_format,
+						    eb.expected_question_count,
 						    sd.id AS source_document_id,
 						    sd.relative_path,
 						    e.id AS exam_id,
 						    e.exam_year,
 						    e.exam_name,
+						    e.capture_state,
 						    s.id AS subject_id,
 						    s.subject_name,
 						    p.id AS provider_id,
@@ -210,17 +219,19 @@ public final class SqliteExamWriter {
 				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
 				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
 						result.getString("provider_name"));
+				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
 				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
-						result.getString("exam_name"));
+						result.getString("exam_name"), captureState);
 				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 						result.getString("relative_path"));
 
-				// Reconstruct the persisted booklet format rather than falling back to
-				// UNSPECIFIED through the legacy ExamBooklet constructor.
+				// Reconstruct both structural booklet values rather than allowing persisted
+				// planning metadata to disappear in memory.
 				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 						.valueOf(result.getString("question_format"));
+				Integer expectedQuestionCount = readNullableInteger(result, "expected_question_count");
 				booklets.add(new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
-						sourceDocument, questionFormat));
+						sourceDocument, questionFormat, expectedQuestionCount));
 			}
 			return List.copyOf(booklets);
 		}
@@ -246,11 +257,13 @@ public final class SqliteExamWriter {
 						    eb.id AS booklet_id,
 						    eb.booklet_name,
 						    eb.question_format,
+						    eb.expected_question_count,
 						    sd.id AS source_document_id,
 						    sd.relative_path,
 						    e.id AS exam_id,
 						    e.exam_year,
 						    e.exam_name,
+						    e.capture_state,
 						    s.id AS subject_id,
 						    s.subject_name,
 						    p.id AS provider_id,
@@ -275,16 +288,18 @@ public final class SqliteExamWriter {
 				Subject subject = new Subject(result.getLong("subject_id"), result.getString("subject_name"));
 				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
 						result.getString("provider_name"));
+				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
 				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
-						result.getString("exam_name"));
+						result.getString("exam_name"), captureState);
 				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 						result.getString("relative_path"));
 
-				// Schema validation guarantees one of the supported enum names is stored.
+				// Schema validation guarantees supported enum and expected-count values.
 				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 						.valueOf(result.getString("question_format"));
+				Integer expectedQuestionCount = readNullableInteger(result, "expected_question_count");
 				ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam,
-						result.getString("booklet_name"), sourceDocument, questionFormat);
+						result.getString("booklet_name"), sourceDocument, questionFormat, expectedQuestionCount);
 
 				// A source document should identify one capture booklet. If legacy or
 				// corrupted data makes that relationship ambiguous, do not guess.
@@ -324,6 +339,7 @@ public final class SqliteExamWriter {
 						SELECT
 						    e.id AS exam_id,
 						    e.exam_name,
+						    e.capture_state,
 						    p.id AS provider_id,
 						    p.provider_name
 						FROM exams e
@@ -343,7 +359,9 @@ public final class SqliteExamWriter {
 				}
 				ExamProvider provider = new ExamProvider(result.getLong("provider_id"),
 						result.getString("provider_name"));
-				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, year, result.getString("exam_name"));
+				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
+				Exam exam = new Exam(result.getLong("exam_id"), subject, provider, year, result.getString("exam_name"),
+						captureState);
 
 				// A year alone cannot select safely when the provider has multiple exams.
 				if (result.next()) {
@@ -411,11 +429,34 @@ public final class SqliteExamWriter {
 	 */
 	public ExamBooklet insertExamBooklet(Exam exam, SourceDocument sourceDocument, String name,
 			ExamBookletQuestionFormat questionFormat) throws SQLException {
+
+		// Existing callers do not yet know an expected count, so preserve that as
+		// deliberately unknown rather than inventing a value.
+		return insertExamBooklet(exam, sourceDocument, name, questionFormat, null);
+	}
+
+	/**
+	 * Inserts a booklet with explicit capture-planning metadata.
+	 *
+	 * @param exam                  the active Exam containing the booklet
+	 * @param sourceDocument        source PDF reference
+	 * @param name                  booklet name
+	 * @param questionFormat        expected Question format
+	 * @param expectedQuestionCount expected top-level Question count, or
+	 *                              {@code null} when not yet established
+	 * @return persisted booklet
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if required arguments are null
+	 * @throws IllegalArgumentException if supplied metadata is invalid
+	 * @throws IllegalStateException    if the Exam is complete
+	 */
+	public ExamBooklet insertExamBooklet(Exam exam, SourceDocument sourceDocument, String name,
+			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount) throws SQLException {
 		try (Connection connection = database.openConnection()) {
 
-			// Use the same transaction-aware implementation as internal import workflows
-			// so every booklet creation path stores the format consistently.
-			return insertExamBooklet(connection, exam, sourceDocument, name, questionFormat);
+			// Use the transaction-aware implementation so every creation path receives
+			// the same structural-lock and validation behaviour.
+			return insertExamBooklet(connection, exam, sourceDocument, name, questionFormat, expectedQuestionCount);
 		}
 	}
 
@@ -449,6 +490,42 @@ public final class SqliteExamWriter {
 		try (Connection connection = database.openConnection()) {
 			return insertSourceDocument(connection, relativePath);
 		}
+	}
+
+	/**
+	 * Changes the user-declared structural capture state of an Exam.
+	 *
+	 * @param exam         persisted Exam to update
+	 * @param captureState replacement lifecycle state
+	 * @return the same Exam identity carrying the persisted replacement state
+	 * @throws SQLException         if persistence fails
+	 * @throws NullPointerException if {@code exam} or {@code captureState} is null
+	 */
+	public Exam setExamCaptureState(Exam exam, ExamCaptureState captureState) throws SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (captureState == null) {
+			throw new NullPointerException("captureState");
+		}
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE exams
+						SET capture_state = ?
+						WHERE id = ?
+						  AND subject_id = ?
+						""")) {
+			statement.setString(1, captureState.name());
+			statement.setLong(2, exam.getId());
+			statement.setLong(3, exam.getSubject().getId());
+
+			// Never manufacture a lifecycle change for a stale or fabricated Exam.
+			if (statement.executeUpdate() != 1) {
+				throw new IllegalArgumentException("Exam does not exist for its stored subject");
+			}
+		}
+		return new Exam(exam.getId(), exam.getSubject(), exam.getProvider(), exam.getYear(), exam.getName(),
+				captureState);
 	}
 
 	/**
@@ -497,6 +574,61 @@ public final class SqliteExamWriter {
 		}
 	}
 
+	/**
+	 * Updates structural capture-planning metadata for an existing Exam booklet.
+	 *
+	 * @param booklet               persisted booklet
+	 * @param questionFormat        replacement booklet Question format
+	 * @param expectedQuestionCount expected top-level Question count, or
+	 *                              {@code null} when no count has been established
+	 * @return updated booklet with the same persistent identity
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if {@code booklet} or {@code questionFormat}
+	 *                                  is null
+	 * @throws IllegalArgumentException if a supplied expected count is not positive
+	 * @throws IllegalStateException    if the owning Exam is complete
+	 */
+	public ExamBooklet updateExamBookletPlanning(ExamBooklet booklet, ExamBookletQuestionFormat questionFormat,
+			Integer expectedQuestionCount) throws SQLException {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (questionFormat == null) {
+			throw new NullPointerException("questionFormat");
+		}
+		if (expectedQuestionCount != null && expectedQuestionCount < 1) {
+			throw new IllegalArgumentException("expectedQuestionCount must be positive when supplied");
+		}
+
+		try (Connection connection = database.openConnection()) {
+
+			// Format and expected count define Exam structure and therefore require an
+			// active Exam.
+			requireExamActive(connection, booklet.getExam().getId());
+
+			try (PreparedStatement statement = connection.prepareStatement("""
+					UPDATE exam_booklets
+					SET question_format = ?,
+					    expected_question_count = ?
+					WHERE id = ?
+					  AND exam_id = ?
+					""")) {
+				statement.setString(1, questionFormat.name());
+				statement.setObject(2, expectedQuestionCount);
+				statement.setLong(3, booklet.getId());
+				statement.setLong(4, booklet.getExam().getId());
+
+				// A planning update must not silently target a stale booklet identity.
+				if (statement.executeUpdate() != 1) {
+					throw new IllegalArgumentException("Exam booklet does not exist for its stored Exam");
+				}
+			}
+		}
+
+		return new ExamBooklet(booklet.getId(), booklet.getExam(), booklet.getName(), booklet.getSourceDocument(),
+				questionFormat, expectedQuestionCount);
+	}
+
 	Exam findExam(Connection connection, Subject subject, ExamProvider provider, int year, String name)
 			throws SQLException {
 		if (connection == null) {
@@ -509,7 +641,7 @@ public final class SqliteExamWriter {
 			throw new NullPointerException("provider");
 		}
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT id
+				SELECT id, capture_state
 				FROM exams
 				WHERE subject_id = ?
 				  AND provider_id = ?
@@ -524,7 +656,11 @@ public final class SqliteExamWriter {
 				if (!result.next()) {
 					return null;
 				}
-				return new Exam(result.getLong("id"), subject, provider, year, name);
+				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
+
+				// Transactional importer callers must receive the persisted lifecycle state,
+				// not an object silently defaulted to ACTIVE.
+				return new Exam(result.getLong("id"), subject, provider, year, name, captureState);
 			}
 		}
 	}
@@ -544,7 +680,8 @@ public final class SqliteExamWriter {
 				SELECT
 				    id,
 				    source_document_id,
-				    question_format
+				    question_format,
+				    expected_question_count
 				FROM exam_booklets
 				WHERE exam_id = ?
 				  AND booklet_name = ?
@@ -563,10 +700,13 @@ public final class SqliteExamWriter {
 					throw new SQLException("Existing exam booklet refers to a different source document");
 				}
 
-				// Existing persisted metadata is authoritative when reopening a booklet.
+				// Existing persisted planning metadata is authoritative when reopening a
+				// booklet.
 				ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
 						.valueOf(result.getString("question_format"));
-				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument, questionFormat);
+				Integer expectedQuestionCount = readNullableInteger(result, "expected_question_count");
+				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument, questionFormat,
+						expectedQuestionCount);
 			}
 		}
 	}
@@ -649,7 +789,10 @@ public final class SqliteExamWriter {
 				if (!result.next()) {
 					throw new SQLException("Exam insert did not return an id");
 				}
-				return new Exam(result.getLong("id"), subject, provider, year, name);
+
+				// Schema v15 defaults every newly created Exam to ACTIVE until the user
+				// deliberately completes it.
+				return new Exam(result.getLong("id"), subject, provider, year, name, ExamCaptureState.ACTIVE);
 			}
 		}
 	}
@@ -704,6 +847,58 @@ public final class SqliteExamWriter {
 		}
 	}
 
+	ExamBooklet insertExamBooklet(Connection connection, Exam exam, SourceDocument sourceDocument, String name,
+			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (sourceDocument == null) {
+			throw new NullPointerException("sourceDocument");
+		}
+		if (name == null || name.isBlank()) {
+			throw new IllegalArgumentException("name must not be blank");
+		}
+		if (questionFormat == null) {
+			throw new NullPointerException("questionFormat");
+		}
+		if (expectedQuestionCount != null && expectedQuestionCount < 1) {
+			throw new IllegalArgumentException("expectedQuestionCount must be positive when supplied");
+		}
+
+		// Adding a booklet changes the declared structure of the Exam.
+		requireExamActive(connection, exam.getId());
+
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO exam_booklets
+				    (exam_id,
+				     source_document_id,
+				     booklet_name,
+				     question_format,
+				     expected_question_count)
+				VALUES (?, ?, ?, ?, ?)
+				RETURNING id
+				""")) {
+			statement.setLong(1, exam.getId());
+			statement.setLong(2, sourceDocument.getId());
+			statement.setString(3, name);
+
+			// Enum names are persisted directly because the schema constrains the
+			// supported vocabulary.
+			statement.setString(4, questionFormat.name());
+			statement.setObject(5, expectedQuestionCount);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Exam booklet insert did not return an id");
+				}
+				return new ExamBooklet(result.getLong("id"), exam, name, sourceDocument, questionFormat,
+						expectedQuestionCount);
+			}
+		}
+	}
+
 	ExamProvider insertExamProvider(Connection connection, String name) throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");
@@ -752,6 +947,11 @@ public final class SqliteExamWriter {
 
 	private Exam correctExamMetadata(Connection connection, Exam exam, String providerName, int year, String name)
 			throws SQLException {
+
+		// Provider/year/name define Exam structure. A completed Exam must be
+		// deliberately reactivated before any of them are corrected.
+		requireExamActive(connection, exam.getId());
+
 		long previousProviderId = exam.getProvider().getId();
 
 		// Reuse an existing Provider rather than renaming a row that may still belong
@@ -787,7 +987,10 @@ public final class SqliteExamWriter {
 		if (previousProviderId != provider.getId()) {
 			deleteExamProviderIfUnreferenced(connection, previousProviderId);
 		}
-		return new Exam(exam.getId(), exam.getSubject(), provider, year, name);
+
+		// requireExamActive has established the authoritative persisted state even if
+		// the caller supplied an older in-memory Exam object.
+		return new Exam(exam.getId(), exam.getSubject(), provider, year, name, ExamCaptureState.ACTIVE);
 	}
 
 	private void deleteExamProviderIfUnreferenced(Connection connection, long providerId) throws SQLException {
@@ -812,6 +1015,42 @@ public final class SqliteExamWriter {
 			statement.setLong(1, providerId);
 			statement.setLong(2, providerId);
 			statement.executeUpdate();
+		}
+	}
+
+	private Integer readNullableInteger(ResultSet result, String columnName) throws SQLException {
+
+		// ResultSet#getInt maps SQL NULL to zero, so inspect wasNull before exposing
+		// the value to a domain object where null has deliberate meaning.
+		int value = result.getInt(columnName);
+		return result.wasNull() ? null : value;
+	}
+
+	private void requireExamActive(Connection connection, long examId) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (examId < 1) {
+			throw new IllegalArgumentException("examId must be positive");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT capture_state
+				FROM exams
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, examId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Exam does not exist: " + examId);
+				}
+				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
+
+				// COMPLETE records a deliberate human decision. Structural writers must not
+				// silently override that decision.
+				if (captureState == ExamCaptureState.COMPLETE) {
+					throw new IllegalStateException("Exam is complete; reactivate it before changing Exam structure");
+				}
+			}
 		}
 	}
 

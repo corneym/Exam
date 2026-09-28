@@ -292,7 +292,7 @@ class DefaultRestoreExecutorTest {
 					VALUES (1, 1, 'Q1', '', 2, 1, 'WRITTEN_RESPONSE', 1)
 					""");
 
-			// Reverse migrations 12, 13 and 14 so the synthetic fixture contains only
+			// Reverse migrations 12 through 15 so the synthetic fixture contains only
 			// structures that genuinely existed in schema version 11.
 			statement.execute("DROP TABLE question_content_parts");
 			statement.execute("DROP TABLE question_images");
@@ -307,6 +307,11 @@ class DefaultRestoreExecutorTest {
 					TO preamble_status
 					""");
 			statement.execute("DROP TABLE question_output_exclusions");
+
+			// Version 15 added Exam lifecycle and expected-count metadata that did not
+			// exist in the version-11 backup being simulated.
+			statement.execute("ALTER TABLE exam_booklets DROP COLUMN expected_question_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN capture_state");
 			statement.execute("UPDATE schema_version SET version = 11");
 		}
 
