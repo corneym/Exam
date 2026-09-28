@@ -235,6 +235,67 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void legacyQuestionEvidenceDoesNotBecomeAuthoritativeExamPlanning() throws Exception {
+		Fixture fixture = createFixture("legacy-planning-evidence.db", false);
+
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+
+		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+
+		// The workbook contains encountered Question records and may therefore provide
+		// evidence about Exam content, but those rows are not authoritative planning.
+		assertEquals(2, result.insertedQuestions());
+
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet exams = statement.executeQuery("""
+						SELECT
+						    capture_state,
+						    expected_question_booklet_count,
+						    expected_answer_file_count
+						FROM exams
+						ORDER BY id
+						""")) {
+
+			int examCount = 0;
+			while (exams.next()) {
+				examCount++;
+
+				// Legacy intake does not declare an Exam complete. Review and completion
+				// remain explicit user decisions in the ordinary Exam workflow.
+				assertEquals("ACTIVE", exams.getString("capture_state"));
+
+				// The workbook cannot establish how many assets ought to exist merely from
+				// the assets and Questions encountered in the legacy data.
+				assertNull(exams.getObject("expected_question_booklet_count"));
+				assertNull(exams.getObject("expected_answer_file_count"));
+			}
+			assertEquals(1, examCount);
+		}
+
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet booklets = statement.executeQuery("""
+						SELECT
+						    booklet_name,
+						    expected_question_count
+						FROM exam_booklets
+						ORDER BY booklet_name
+						""")) {
+
+			int bookletCount = 0;
+			while (booklets.next()) {
+				bookletCount++;
+
+				// Encountering Q1 in one booklet and Q21a in another must not be converted
+				// into an expected top-level Question count of one for either booklet.
+				assertNull(booklets.getObject("expected_question_count"));
+			}
+			assertEquals(2, bookletCount);
+		}
+	}
+
+	@Test
 	void mcqQuestionMayRequireSharedContextWithoutInventingMultipartIdentity() throws Exception {
 		Fixture fixture = createFixture("mcq-shared-context.db", false, true);
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",

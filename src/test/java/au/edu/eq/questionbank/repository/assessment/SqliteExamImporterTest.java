@@ -5,10 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
@@ -73,21 +76,57 @@ class SqliteExamImporterTest {
 	}
 
 	@Test
-	void legacyStyleImportPersistsKnownSourceHash() throws Exception {
+	void legacyStyleImportUsesOrdinaryActiveExamAssetModel() throws Exception {
 		Path databasePath = tempDirectory.resolve("legacy-hashed-source.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+
 		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
-		String hash = "abcdef0123456789".repeat(4);
-		ExamBooklet booklet = importer.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1",
-				"Chemistry/QCAA/2020/paper1.pdf", hash);
 
-		// Legacy booklet format can remain UNSPECIFIED without losing document
-		// identity.
-		assertEquals(hash, booklet.getSourceDocument().getContentSha256());
+		String questionHash = "abcdef0123456789".repeat(4);
+
+		// This is the import overload used when legacy intake knows the managed
+		// Question PDF hash but has not established authoritative booklet planning.
+		ExamBooklet booklet = importer.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1",
+				"Chemistry/QCAA/2020/paper1.pdf", questionHash);
+
+		// Legacy intake creates the same ordinary ExamBooklet model as fresh intake.
+		// Unknown planning metadata remains unknown rather than being inferred.
+		assertEquals(questionHash, booklet.getSourceDocument().getContentSha256());
 		assertEquals(ExamBookletQuestionFormat.UNSPECIFIED, booklet.getQuestionFormat());
+		assertNull(booklet.getExpectedQuestionCount());
+		assertEquals(ExamCaptureState.ACTIVE, booklet.getExam().getCaptureState());
+
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
+		String answerHash = "0123456789abcdef".repeat(4);
+
+		// A legacy marking guide enters the same AnswerFile model used by normal
+		// Answer capture and later Exam asset review.
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide",
+				"Chemistry/QCAA/2020/marking-guide.pdf", answerHash);
+
+		assertEquals(answerHash, answerFile.getSourceDocument().getContentSha256());
+
+		// Ordinary Exam queries must see both legacy-created assets. There is no
+		// separate legacy-only asset hierarchy.
+		List<ExamBooklet> booklets = writer.findAllExamBooklets();
+		List<AnswerFile> answerFiles = answerWriter.findAnswerFiles(booklet.getExam());
+
+		assertEquals(1, booklets.size());
+		assertEquals(booklet.getId(), booklets.getFirst().getId());
+		assertEquals(1, answerFiles.size());
+		assertEquals(answerFile.getId(), answerFiles.getFirst().getId());
+
+		ExamAssetExpectations expectations = writer.findExamAssetExpectations(booklet.getExam());
+
+		// Available counts come from the same persisted assets, while legacy intake
+		// deliberately leaves authoritative expected counts unset for later review.
+		assertNull(expectations.expectedQuestionBookletCount());
+		assertEquals(1, expectations.availableQuestionBookletCount());
+		assertNull(expectations.expectedAnswerFileCount());
+		assertEquals(1, expectations.availableAnswerFileCount());
 	}
 
 	@Test

@@ -568,6 +568,49 @@ constraint would be violated.
 
 A completed Exam is structurally locked until `Reactivate Exam` is selected.
 
+Implementation status as at 28 September 2026:
+
+Exam lifecycle is persisted as `ACTIVE` or `COMPLETE`.
+
+The Exam menu provides:
+
+- `Mark Active Exam Complete...`;
+- `Reactivate Active Exam`.
+
+Marking an Exam complete requires explicit confirmation. The active in-memory
+Exam is refreshed immediately after the persisted state changes.
+
+Repository-level structural locking uses persisted Exam state rather than
+trusting potentially stale domain objects.
+
+A `COMPLETE` Exam rejects structural operations including:
+
+- adding another Question booklet;
+- changing booklet format or expected Question counts;
+- changing Exam-level expected asset counts;
+- correcting Exam identity metadata;
+- replacing Question or Answer PDFs;
+- adding new Questions;
+- changing Question code/structural identity;
+- registering a new AnswerFile;
+- establishing or changing a booklet-to-AnswerFile assignment.
+
+Existing non-structural capture and correction remain available while complete,
+including:
+
+- Question marks, regions and classification;
+- existing Question content correction;
+- Answer text and Answer regions using the already assigned AnswerFile;
+- Shared Context correction and recapture.
+
+Reusing an already registered AnswerFile or reasserting an existing booklet
+assignment does not itself alter Exam structure and remains permitted.
+
+Explicit reactivation restores structural editing.
+
+Repository and TestFX regression tests cover completion persistence, structural
+rejection, permitted non-structural correction and reactivation.
+
 ## 5. Slice 2 --- Streamlined Question capture
 
 ### 5.1 Purpose
