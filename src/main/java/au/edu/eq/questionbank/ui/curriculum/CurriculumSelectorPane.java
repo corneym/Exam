@@ -215,6 +215,20 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
+	 * Enables or disables only the Question-classification section. Working Subject
+	 * remains application-level context and is not affected.
+	 *
+	 * @param disabled whether Classification controls are disabled
+	 */
+	public void setClassificationControlsDisabled(boolean disabled) {
+
+		// Classification may be re-parented into the application capture workspace,
+		// so control the retained section directly rather than disabling Working
+		// Subject as well.
+		classificationContext.setDisable(disabled);
+	}
+
+	/**
 	 * Locks subject and syllabus selection while allowing classification changes
 	 * within that syllabus during question editing.
 	 *

@@ -779,13 +779,25 @@ not introduce parallel Exam, booklet, curriculum or capture state.
 
 ### 5.3 Explicit capture entry
 
-Classification and Question controls remain inactive until a capture/edit
-workflow has begun.
+Question capture does not begin merely because an Exam booklet has been opened.
 
-`Start New Question Capture` explicitly enters new-Question capture.
+After a booklet becomes active:
 
-After saving a new Question, the application remains in new-Question capture
-mode and resets ready for the next Question.
+- Working Subject remains available as application-level context;
+- Classification is inactive;
+- ordinary Question controls are inactive;
+- no new-Question capture mode is selected;
+- dragging on the Exam PDF cannot create a Question-region selection.
+
+`Start New Question Capture` explicitly enters ordinary new-Question capture. It enables Classification and Question work and allows the Exam PDF to create Question selections.
+
+Imported-Question capture, Question editing, legacy split capture and Shared Context correction are separate explicit workflows. Entering one of those workflows activates only the controls required for that work.
+
+Completing or cancelling an edit or correction returns the Question workspace to its idle state. It does not silently start a new Question.
+
+A successful ordinary new-Question save is deliberately different. The saved Question is cleared from the transient controls, but new-Question capture remains active so the teacher can continue directly with the next Question.
+
+Changing the active booklet clears transient Question state and returns capture to idle, requiring `Start New Question Capture` again for the newly selected booklet.
 
 ### 5.4 Question content controls
 
@@ -827,17 +839,41 @@ than repeatedly asking the user the same question.
 
 ### 5.6 Imported/incomplete Question capture
 
-Imported/incomplete Question capture remains available, but controls appear only
-when relevant work exists for the current workspace context.
+Imported/incomplete Question capture is an operational work queue rather than a
+permanently visible capture mode.
 
-Use task-oriented wording such as:
+The existing Question-state rules determine whether a Question belongs in this
+queue. A Question is included when it has any of the following outstanding work:
+
+- no Question body content;
+- Question PDF replacement has marked source capture as required;
+- Shared Context remains unresolved.
+
+The queue is filtered by the current Working Subject. Filtering changes only
+workspace visibility; it does not alter or delete Questions belonging to another
+Subject.
+
+When at least one relevant Question exists, the Question pane exposes:
 
 ``` text
 Complete Imported Question
 ```
 
-When no relevant imported work exists, both the action and its Question selector
-should be absent from the normal workspace.
+The Question selector itself remains hidden until that action is chosen.
+
+When no relevant imported/incomplete work exists, both the action and its
+selector are absent from the normal workspace.
+
+If the final Question in the imported/incomplete queue is completed, the
+workflow closes automatically and returns the Question workspace to its explicit
+idle state. It does not silently begin ordinary new-Question capture.
+
+Changing Working Subject immediately recalculates this availability from the
+same persisted Question state. The action therefore appears or disappears as
+the filtered operational queue changes.
+
+This conditional presentation does not introduce a second definition of
+Question completeness. It reuses the existing imported/incomplete queue rules.
 
 ## 6. Slice 3 --- MCQ explanation regions
 

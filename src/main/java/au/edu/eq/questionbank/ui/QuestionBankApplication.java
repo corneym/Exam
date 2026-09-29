@@ -1660,7 +1660,9 @@ public class QuestionBankApplication extends Application {
 		if (documentMode == PdfWorkspacePane.DocumentMode.ANSWER) {
 			return answerCapturePane.canCaptureRegions();
 		}
-		return examMetadataPane.getBooklet() != null && !questionCapturePane.isSaveInProgress();
+
+		// An active booklet alone no longer implies that Question capture has begun.
+		return examMetadataPane.getBooklet() != null && questionCapturePane.canCaptureRegions();
 	}
 
 	private void markActiveExamComplete(Stage primaryStage) {

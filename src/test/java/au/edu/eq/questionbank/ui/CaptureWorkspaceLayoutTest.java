@@ -287,36 +287,39 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	void questionActionsKeepFullWidthAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 
-		// Create a pending Question selection so Add Region and Clear are in their
-		// normal actionable capture state.
+		// Create a pending Question selection so Add Region is in its ordinary
+		// actionable state.
 		dragRegionOnDisplayedPage(robot);
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
 		robot.interact(() -> {
 
-			// Force the capture workspace to its configured minimum width.
+			// Force the capture workspace to the application's configured minimum
+			// width before measuring the remaining Question actions.
 			splitPane.setDividerPosition(0, 0.0);
 			primaryStage.getScene().getRoot().applyCss();
 			primaryStage.getScene().getRoot().layout();
 		});
 		WaitForAsyncUtils.waitForFxEvents();
 		Button addRegion = lookup(robot, "#add-question-region", Button.class);
-		Button clearSelection = lookup(robot, "#clear-question-selection", Button.class);
+		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
 		Button saveQuestion = lookup(robot, "#save-question", Button.class);
+		assertEquals("Add Region", addRegion.getText());
+		assertEquals("Add From Clipboard", addFromClipboard.getText());
 
-		// Each action must retain at least its JavaFX minimum readable width.
+		// Both Question-content creation actions must remain fully readable.
 		assertTrue(addRegion.getWidth() + 0.5 >= addRegion.minWidth(addRegion.getHeight()),
 				"Add Region must remain fully readable at minimum workspace width");
-		assertTrue(clearSelection.getWidth() + 0.5 >= clearSelection.minWidth(clearSelection.getHeight()),
-				"Clear must remain fully readable at minimum workspace width");
+		assertTrue(addFromClipboard.getWidth() + 0.5 >= addFromClipboard.minWidth(addFromClipboard.getHeight()),
+				"Add From Clipboard must remain fully readable at minimum workspace width");
 		assertTrue(saveQuestion.getWidth() + 0.5 >= saveQuestion.minWidth(saveQuestion.getHeight()),
 				"Save Question must remain fully readable at minimum workspace width");
 
-		// Selection and persistence actions must be on separate rows so neither
-		// group can compress the other.
-		assertEquals(addRegion.getParent(), clearSelection.getParent());
+		// The two content-creation actions share a row, while persistence remains
+		// separate.
+		assertEquals(addRegion.getParent(), addFromClipboard.getParent());
 		assertFalse(addRegion.getParent() == saveQuestion.getParent(),
-				"Question selection actions must not share the Save row");
+				"Question content actions must not share the Save row");
 	}
 
 	@Test

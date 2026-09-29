@@ -430,6 +430,10 @@ abstract class QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
 
+		// Workflow fixtures deliberately enter new-Question capture. Production now
+		// requires the same explicit transition before Classification becomes editable.
+		fireControl(robot, "#capture-mode-new");
+
 		// Classification remains independent of booklet Question format.
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");

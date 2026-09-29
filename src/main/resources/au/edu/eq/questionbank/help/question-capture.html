@@ -20,30 +20,51 @@
 			<h2>Question capture modes</h2>
 			<p>
 				The Question pane supports capturing new Questions and completing
-				content for previously imported Questions.
+				outstanding work for previously imported or incomplete Questions.
 			</p>
 			<p>
-				Use <strong>Capture New Questions</strong> when creating new Question
-				records. Use <strong>Capture Imported Questions</strong> when adding
-				content to Questions whose metadata already exists.
+				Opening an Exam booklet does not automatically begin Question capture.
+				Use <strong>Start New Question Capture</strong> to activate Classification
+				and the Question controls for a new Question.
+			</p>
+			<p>
+				After a new Question is saved, new-Question capture remains active so the
+				next Question can be captured directly. Editing or correcting an existing
+				Question returns the workspace to its inactive state when that work is
+				finished.
+			</p>
+			<p>
+				<strong>Complete Imported Question</strong> appears only when the current
+				Working Subject contains imported or incomplete Questions requiring
+				Question content, replacement source capture or Shared Context resolution.
+				Selecting it exposes the Question selector for that outstanding work.
+			</p>
+			<p>
+				When no relevant imported/incomplete Questions remain, both the action and
+				its Question selector are removed from the normal capture workspace.
 			</p>
 		</section>
 
 		<section>
 			<h2>Capture from a PDF</h2>
 			<ol>
-				<li>Open the source PDF in the workspace.</li>
-				<li>Select the required Question area in the PDF.</li>
+				<li>Select the required Question area in the active Exam PDF.</li>
 				<li>Choose <strong>Add Region</strong>.</li>
 				<li>Repeat for additional regions if the Question contains multiple content parts.</li>
-				<li>Use the content list controls to reorder or remove parts when necessary.</li>
+				<li>Use the content list controls to reorder or remove accepted parts when necessary.</li>
 				<li>Complete the required Question details and classification.</li>
 				<li>Choose <strong>Save Question</strong>.</li>
 			</ol>
 
 			<p class="note">
 				A selected PDF area is not part of the Question until it has been
-				accepted with Add Region.
+				accepted with Add Region. Clicking elsewhere in the PDF abandons an
+				unaccepted selection; there is no separate discard-selection action.
+			</p>
+
+			<p>
+				Accepted content parts are removed individually from the content list.
+				There is no global Clear Content action.
 			</p>
 		</section>
 
@@ -63,7 +84,27 @@
 				<li>Save the Question normally.</li>
 			</ol>
 			<p>
-				Clipboard images are stored as Question content. They do not require
+				Clipboard images are stored as Question<section>
+					<h2>Capture from the clipboard</h2>
+					<p>
+						Use <strong>Add From Clipboard</strong> to add image content copied to
+						the system clipboard. This supports image capture from tools such as
+						Windows Snipping Tool.
+					</p>
+					<ol>
+						<li>Copy or snip the required Question content.</li>
+						<li>Return to Exam Question Bank.</li>
+						<li>Choose <strong>Add From Clipboard</strong>.</li>
+						<li>Confirm the image appears in the Question content list.</li>
+						<li>Add further PDF regions or clipboard images if required.</li>
+						<li>Save the Question normally.</li>
+					</ol>
+					<p>
+						Clipboard images are stored as Question content. They do not require
+						the original source image to remain available after the Question has
+						been saved.
+					</p>
+				</section> content. They do not require
 				the original source image to remain available after the Question has
 				been saved.
 			</p>

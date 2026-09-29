@@ -327,7 +327,8 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void captureEntryPointsUseTaskBasedLabels(FxRobot robot) throws Exception {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 
-		// Question capture modes belong only to the visible Question pane.
+		// Question capture entry points belong to the visible Question pane rather
+		// than duplicating navigation in the application menu.
 		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
 				.anyMatch(item -> "capture-new-questions".equals(item.getId())));
 		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
@@ -335,29 +336,27 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
 		ToggleButton importedMode = lookup(robot, "#capture-mode-imported", ToggleButton.class);
 		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
-		assertEquals("Capture New Questions", newMode.getText());
-		assertEquals("Capture Imported Questions", importedMode.getText());
+		assertEquals("Start New Question Capture", newMode.getText());
+		assertEquals("Complete Imported Question", importedMode.getText());
 
-		// New-question capture remains the initial Question-pane mode.
-		assertTrue(newMode.isSelected());
+		// Ordinary capture begins idle.
+		assertFalse(newMode.isSelected());
 		assertFalse(importedMode.isSelected());
+
+		// Imported capture is operational work and therefore does not clutter the
+		// workspace when its filtered queue is empty.
+		assertFalse(importedMode.isVisible());
+		assertFalse(importedMode.isManaged());
 		assertFalse(legacyControls.isVisible());
 		assertFalse(legacyControls.isManaged());
-		fireControl(robot, importedMode);
-		assertFalse(newMode.isSelected());
-		assertTrue(importedMode.isSelected());
-		assertTrue(legacyControls.isVisible());
-		assertTrue(legacyControls.isManaged());
 		fireControl(robot, newMode);
 		assertTrue(newMode.isSelected());
 		assertFalse(importedMode.isSelected());
-		assertFalse(legacyControls.isVisible());
-		assertFalse(legacyControls.isManaged());
 		MenuItem examSetupItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
 				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
 
-		// Exam structure and source assets are now reviewed before selecting a
-		// particular Question booklet for capture.
+		// Exam structure and source assets are reviewed before selecting a particular
+		// Question booklet for capture.
 		assertEquals("_Exam Setup / Assets...", examSetupItem.getText());
 		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
 		assertEquals("Exam Setup / Asset Management", setupDialog.getTitle());
@@ -366,8 +365,8 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("Add Exam / Booklet...", addExamButton.getText());
 		ExamImportDialog importDialog = field(application, "examImportDialog", ExamImportDialog.class);
 
-		// New Exam/booklet intake remains the existing authoritative import path but
-		// is now a subordinate action of Exam Setup.
+		// New Exam/booklet intake remains the authoritative import path but is a
+		// subordinate action of Exam Setup.
 		assertEquals("Add Exam / Booklet", importDialog.getTitle());
 		Button confirmButton = (Button) importDialog.getDialogPane()
 				.lookupButton(importDialog.getDialogPane().getButtonTypes().getFirst());
@@ -404,6 +403,46 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("", lookup(robot, "#question-code", TextField.class).getText());
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText().contains("list refresh failed"));
 		assertEquals(1, unansweredQuestions(robot).getItems().size());
+	}
+
+	@Test
+	void completingLastImportedQuestionHidesImportedWorkflow(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question incomplete = repository.save(booklet, "42", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(pane::refreshImportedQuestions);
+		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		Node importedControls = lookup(robot, "#legacy-question-capture", Node.class);
+		fireControl(robot, importedAction);
+		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
+
+		// Direct selection is appropriate because this regression concerns workflow
+		// availability rather than ComboBox pointer behaviour.
+		robot.interact(() -> importedQuestions.getSelectionModel().select(incomplete));
+		WaitForAsyncUtils.waitForFxEvents();
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+
+		// Completion of the only queued Question is the observable workflow result.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !importedAction.isVisible());
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(importedQuestions.getItems().isEmpty());
+		assertFalse(importedAction.isVisible());
+		assertFalse(importedAction.isManaged());
+		assertFalse(importedControls.isVisible());
+		assertFalse(importedControls.isManaged());
+
+		// Exhausting imported work returns to explicit idle rather than silently
+		// starting ordinary new-Question capture.
+		ToggleButton newQuestionAction = lookup(robot, "#capture-mode-new", ToggleButton.class);
+		assertFalse(newQuestionAction.isSelected());
+		assertFalse(pane.canCaptureRegions());
 	}
 
 	@Test
@@ -501,6 +540,31 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void finishingQuestionEditReturnsCaptureWorkspaceToIdle(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "32");
+		QuestionCapturePane pane = questionCapturePane();
+		boolean[] editStarted = { false };
+		robot.interact(() -> editStarted[0] = pane.editQuestion(question, () -> {
+		}));
+		assertTrue(editStarted[0]);
+		Node classification = lookup(robot, "#classification-context", Node.class);
+		Node questionWork = lookup(robot, "#question-capture-work", Node.class);
+		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
+		Button cancel = lookup(robot, "#cancel-question-edit", Button.class);
+		assertFalse(classification.isDisabled());
+		assertFalse(questionWork.isDisabled());
+		assertTrue(cancel.isVisible());
+		fireControl(robot, cancel);
+
+		// Ending the edit does not silently begin a new Question.
+		assertFalse(newMode.isSelected());
+		assertTrue(classification.isDisabled());
+		assertTrue(questionWork.isDisabled());
+		assertFalse(pane.canCaptureRegions());
+	}
+
+	@Test
 	void importedCaptureAdvancesUsingTheBackgroundSnapshot(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = field(application, "examMetadataPane", ExamMetadataPane.class).getBooklet();
@@ -555,6 +619,83 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void importedCaptureAppearsOnlyWhenCurrentContextHasWork(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		Node importedControls = lookup(robot, "#legacy-question-capture", Node.class);
+
+		// A normal workspace with no incomplete imported Questions does not expose
+		// imported capture at all.
+		assertFalse(importedAction.isVisible());
+		assertFalse(importedAction.isManaged());
+		assertFalse(importedControls.isVisible());
+		assertFalse(importedControls.isManaged());
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Persist metadata without Question content. The existing queue rules define
+		// this as relevant imported/incomplete work.
+		Question incomplete = repository.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(pane::refreshImportedQuestions);
+		assertTrue(importedAction.isVisible());
+		assertTrue(importedAction.isManaged());
+		assertEquals("Complete Imported Question", importedAction.getText());
+
+		// The selector is still kept out of the ordinary new-Question workspace until
+		// the imported workflow itself is chosen.
+		assertFalse(importedControls.isVisible());
+		fireControl(robot, importedAction);
+		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
+		assertTrue(importedControls.isVisible());
+		assertTrue(importedControls.isManaged());
+		assertEquals(1, importedQuestions.getItems().size());
+		assertEquals(incomplete.getId(), importedQuestions.getItems().getFirst().getId());
+	}
+
+	@Test
+	void importedCaptureAvailabilityTracksWorkingSubject(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject chemistry = workingSubjectBox.getValue();
+		Subject physics = workingSubjectBox.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		ExamBooklet chemistryBooklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Create outstanding work only for Chemistry. The imported-work action must
+		// therefore follow Working Subject rather than remaining globally visible.
+		repository.save(chemistryBooklet, "43", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		QuestionCapturePane pane = questionCapturePane();
+		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		robot.interact(pane::refreshImportedQuestions);
+		assertTrue(importedAction.isVisible());
+
+		// Changing to a Subject with no outstanding imported/incomplete work removes
+		// the operational entry point immediately.
+		robot.interact(() -> workingSubjectBox.setValue(physics));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(physics, workingSubjectBox.getValue());
+		assertFalse(importedAction.isVisible());
+		assertFalse(importedAction.isManaged());
+
+		// Returning to Chemistry restores the action because the persisted incomplete
+		// Question was filtered out, not deleted or otherwise modified.
+		robot.interact(() -> workingSubjectBox.setValue(chemistry));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(chemistry, workingSubjectBox.getValue());
+		assertTrue(importedAction.isVisible());
+		assertTrue(importedAction.isManaged());
+	}
+
+	@Test
 	void legacyQuestionControlsAreHiddenDuringNormalCapture(FxRobot robot) {
 		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
 		assertFalse(legacyControls.isVisible());
@@ -605,6 +746,44 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void newQuestionCaptureRequiresExplicitStart(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		QuestionCapturePane pane = questionCapturePane();
+
+		// Re-enter the state produced by activating a booklet before the teacher
+		// explicitly starts a Question.
+		robot.interact(pane::refreshForActiveBooklet);
+		ToggleButton startCapture = lookup(robot, "#capture-mode-new", ToggleButton.class);
+		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
+		Node classification = lookup(robot, "#classification-context", Node.class);
+		Node questionWork = lookup(robot, "#question-capture-work", Node.class);
+		Button addRegion = lookup(robot, "#add-question-region", Button.class);
+		assertEquals("Start New Question Capture", startCapture.getText());
+		assertFalse(startCapture.isSelected());
+
+		// Working Subject is application context and remains available.
+		assertFalse(workingSubject.isDisabled());
+		assertTrue(classification.isDisabled());
+		assertTrue(questionWork.isDisabled());
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+
+		// Merely drawing on the Exam PDF must not silently begin Question capture.
+		dragRegionOnDisplayedPage(robot);
+		assertFalse(selectionState.hasPendingSelection());
+		assertTrue(addRegion.isDisabled());
+		fireControl(robot, startCapture);
+		assertTrue(startCapture.isSelected());
+		assertFalse(classification.isDisabled());
+		assertFalse(questionWork.isDisabled());
+
+		// Once capture is explicitly active, the Exam PDF again accepts Question
+		// selections.
+		dragRegionOnDisplayedPage(robot);
+		assertTrue(selectionState.hasPendingSelection());
+		assertFalse(addRegion.isDisabled());
+	}
+
+	@Test
 	void pastedImageCanBeOrderedWithPdfRegionAndSavedAsMixedQuestion(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
@@ -631,7 +810,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			Clipboard.getSystemClipboard().setContent(clipboardContent);
 		});
 		Button pasteImageButton = lookup(robot, "#paste-question-image", Button.class);
-		assertEquals("Paste clipboard image content into the Question; it is persisted when the Question is saved.",
+		assertEquals("Add clipboard image content to the Question; it is persisted when the Question is saved.",
 				pasteImageButton.getTooltip().getText());
 		fireControl(robot, "#paste-question-image");
 		assertEquals("Content parts: 2", lookup(robot, "#question-region-count", Label.class).getText());
@@ -780,6 +959,38 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(save.isDisabled());
 		fireControl(robot, "#add-question-region");
 		assertFalse(save.isDisabled());
+	}
+
+	@Test
+	void savingNewQuestionKeepsNewCaptureActiveForNextQuestion(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		QuestionCapturePane pane = questionCapturePane();
+		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
+		Node classification = lookup(robot, "#classification-context", Node.class);
+		Node questionWork = lookup(robot, "#question-capture-work", Node.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		captureQuestion(robot, "31");
+
+		// A successful new-Question save deliberately keeps the capture session
+		// active so the teacher can proceed directly to the following Question.
+		assertTrue(newMode.isSelected());
+		assertFalse(classification.isDisabled());
+		assertFalse(questionWork.isDisabled());
+		assertTrue(pane.canCaptureRegions());
+
+		// The previous Question itself has been cleared ready for fresh metadata and
+		// content, while the new-Question workflow remains active.
+		assertEquals("", questionCode.getText());
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		dragRegionOnDisplayedPage(robot);
+		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+
+		// Leave no transient rectangle behind for test cleanup.
+		// Click away using the production cancellation path rather than a dedicated
+		// clear-selection action.
+		robot.clickOn("#pdf-page-view");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(selectionState.hasPendingSelection());
 	}
 
 	@Override
