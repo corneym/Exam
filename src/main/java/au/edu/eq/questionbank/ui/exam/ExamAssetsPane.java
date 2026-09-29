@@ -1,7 +1,9 @@
 package au.edu.eq.questionbank.ui.exam;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.time.Year;
 import java.util.List;
 
 import au.edu.eq.questionbank.model.AnswerFile;
@@ -9,6 +11,7 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import javafx.geometry.Insets;
@@ -17,9 +20,10 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
-import javafx.scene.control.TextField;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.util.StringConverter;
 
@@ -38,42 +42,53 @@ public final class ExamAssetsPane extends VBox {
 	private static final Insets SECTION_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
+	private static final int YEAR_LOOKBACK_YEARS = 15;
 	private final SqliteExamWriter examWriter;
 	private final SqliteAnswerWriter answerWriter;
-	private final Runnable cancelHandler;
+	private final ExamMetadataOptionsRepository optionsRepository;
+	private final ExamCorrectionHandler correctionHandler;
 	private final ComboBox<Exam> examBox = new ComboBox<>();
 	private final Label stateLabel = new Label("State: —");
-	private final TextField providerField = new TextField();
-	private final TextField yearField = new TextField();
-	private final TextField assessmentField = new TextField();
+	private final ComboBox<String> providerField = new ComboBox<>();
+	private final ComboBox<Integer> yearField = new ComboBox<>();
+	private final ComboBox<String> assessmentField = new ComboBox<>();
 	private final VBox questionBookletsBox = new VBox(ROW_SPACING);
 	private final VBox answerBookletsBox = new VBox(ROW_SPACING);
+	private final Button editExamButton = new Button("Edit");
 	private final Button cancelButton = new Button("Cancel");
+	private final Button saveButton = new Button("Save");
+	private boolean editingExamDetails;
 
 	/**
 	 * Creates the Exam/Assets workspace.
 	 *
-	 * @param examWriter    authoritative Exam/booklet persistence
-	 * @param answerWriter  authoritative AnswerFile persistence
-	 * @param cancelHandler action returning to Question Capture mode
+	 * @param examWriter        authoritative Exam/booklet persistence
+	 * @param answerWriter      authoritative AnswerFile persistence
+	 * @param optionsRepository reusable Exam metadata labels
+	 * @param correctionHandler authoritative Exam metadata correction
 	 * @throws NullPointerException if any argument is {@code null}
 	 */
-	public ExamAssetsPane(SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter, Runnable cancelHandler) {
+	public ExamAssetsPane(SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter,
+			ExamMetadataOptionsRepository optionsRepository, ExamCorrectionHandler correctionHandler) {
 		if (examWriter == null) {
 			throw new NullPointerException("examWriter");
 		}
 		if (answerWriter == null) {
 			throw new NullPointerException("answerWriter");
 		}
-		if (cancelHandler == null) {
-			throw new NullPointerException("cancelHandler");
+		if (optionsRepository == null) {
+			throw new NullPointerException("optionsRepository");
+		}
+		if (correctionHandler == null) {
+			throw new NullPointerException("correctionHandler");
 		}
 		this.examWriter = examWriter;
 		this.answerWriter = answerWriter;
-		this.cancelHandler = cancelHandler;
+		this.optionsRepository = optionsRepository;
+		this.correctionHandler = correctionHandler;
 
-		// Build one persistent workspace whose controls are refreshed from SQLite
-		// whenever the application enters Exam/Assets mode.
+		// Exam/Assets is now a persistent working mode. Leaving it for Capture will be
+		// an explicit booklet-selection operation rather than a side effect of Cancel.
 		configureControls();
 		buildContent();
 		setId("exam-assets-workspace");
@@ -91,6 +106,10 @@ public final class ExamAssetsPane extends VBox {
 		examBox.getSelectionModel().clearSelection();
 		examBox.getItems().clear();
 		clearSelectedExam();
+
+		// Suggestions may have changed elsewhere, but reload them while no Exam value
+		// is staged so they cannot erase persisted Provider or Assessment values.
+		refreshMetadataOptions();
 		if (subject == null) {
 			return;
 		}
@@ -102,8 +121,8 @@ public final class ExamAssetsPane extends VBox {
 		Exam selectedExam = null;
 		if (previousExamId != null) {
 
-			// Retain the selected Exam across refresh only when that persisted Exam is
-			// still available under the authoritative Working Subject.
+			// Preserve the selected persisted Exam whenever it still belongs to the
+			// authoritative Working Subject.
 			selectedExam = exams.stream().filter(exam -> exam.getId() == previousExamId.longValue()).findFirst()
 					.orElse(null);
 		}
@@ -113,6 +132,23 @@ public final class ExamAssetsPane extends VBox {
 			selectedExam = exams.getFirst();
 		}
 		examBox.getSelectionModel().select(selectedExam);
+	}
+
+	private void beginExamDetailsEdit() {
+		Exam selectedExam = examBox.getValue();
+		if (selectedExam == null) {
+			return;
+		}
+
+		// Reassert the persisted values directly into the editable ComboBox editors.
+		// This prevents suggestion-list state from clearing the metadata when Edit is
+		// entered.
+		providerField.setValue(selectedExam.getProvider().getName());
+		providerField.getEditor().setText(selectedExam.getProvider().getName());
+		yearField.setValue(selectedExam.getYear());
+		assessmentField.setValue(selectedExam.getName());
+		assessmentField.getEditor().setText(selectedExam.getName());
+		setExamDetailsEditing(true);
 	}
 
 	private void buildContent() {
@@ -126,24 +162,46 @@ public final class ExamAssetsPane extends VBox {
 		VBox examDetails = createExamDetailsSection();
 		VBox questionBooklets = createSection("QUESTION BOOKLETS", questionBookletsBox);
 		VBox answerBooklets = createSection("ANSWER BOOKLETS", answerBookletsBox);
+		Region actionSpacer = new Region();
+		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 
-		// Cancel is the only workflow action in this first read-only increment. Save,
-		// Clear and asset-edit actions are introduced only when they have real
-		// persistence semantics.
+		// Save now commits the active Exam Details edit. Later Slice 1 increments can
+		// extend the same workspace action row to other staged asset changes.
+		HBox actionRow = new HBox(SPACING, actionSpacer, cancelButton, saveButton);
 		getChildren().addAll(examHeading, examSelectorGrid, examDetails, questionBooklets, answerBooklets,
-				new Separator(), cancelButton);
+				new Separator(), actionRow);
+	}
+
+	private void cancelExamDetailsEdit() {
+		Exam selectedExam = examBox.getValue();
+		if (!editingExamDetails || selectedExam == null) {
+			return;
+		}
+
+		// Discard staged editor values by reloading the selected persisted Exam. This
+		// deliberately stays inside Exam/Assets mode.
+		loadSelectedExamSafely(selectedExam);
 	}
 
 	private void clearSelectedExam() {
 		stateLabel.setText("State: —");
-		providerField.clear();
-		yearField.clear();
-		assessmentField.clear();
 
-		// Empty sections explicitly describe the absence of a selected Exam rather
-		// than retaining stale asset rows from the previous selection.
+		providerField.getSelectionModel().clearSelection();
+		providerField.setValue(null);
+		providerField.getEditor().clear();
+
+		yearField.getSelectionModel().clearSelection();
+		yearField.setValue(null);
+
+		assessmentField.getSelectionModel().clearSelection();
+		assessmentField.setValue(null);
+		assessmentField.getEditor().clear();
+
+		// Never retain asset rows belonging to a previously selected Exam.
 		questionBookletsBox.getChildren().setAll(new Label("No Question booklets recorded."));
 		answerBookletsBox.getChildren().setAll(new Label("No Answer booklets recorded."));
+
+		setExamDetailsEditing(false);
 	}
 
 	private void configureControls() {
@@ -154,8 +212,7 @@ public final class ExamAssetsPane extends VBox {
 			@Override
 			public Exam fromString(String text) {
 
-				// Exam selection is persistence-backed only; free-text construction is
-				// not part of the existing-Exam workspace.
+				// Existing Exam selection is always persistence-backed.
 				return null;
 			}
 
@@ -166,24 +223,34 @@ public final class ExamAssetsPane extends VBox {
 		});
 		examBox.valueProperty().addListener((_, _, exam) -> loadSelectedExamSafely(exam));
 		stateLabel.setId("exam-assets-state");
-		configureReadOnlyField(providerField, "exam-assets-provider");
-		configureReadOnlyField(yearField, "exam-assets-year");
-		configureReadOnlyField(assessmentField, "exam-assets-assessment");
+
+		// Provider and Assessment use reusable suggestions but their persisted Exam
+		// values remain authoritative.
+		providerField.setId("exam-assets-provider");
+		providerField.setEditable(true);
+		providerField.setMaxWidth(Double.MAX_VALUE);
+		assessmentField.setId("exam-assets-assessment");
+		assessmentField.setEditable(true);
+		assessmentField.setMaxWidth(Double.MAX_VALUE);
+		yearField.setId("exam-assets-year");
+		yearField.setMaxWidth(Double.MAX_VALUE);
+		int currentYear = Year.now().getValue();
+		for (int year = currentYear; year >= currentYear - YEAR_LOOKBACK_YEARS; year--) {
+			yearField.getItems().add(year);
+		}
 		questionBookletsBox.setId("exam-assets-question-booklets");
 		answerBookletsBox.setId("exam-assets-answer-booklets");
+		editExamButton.setId("exam-assets-edit");
+		editExamButton.setOnAction(_ -> beginExamDetailsEdit());
+		saveButton.setId("exam-assets-save");
+		saveButton.setOnAction(_ -> saveExamDetails());
 		cancelButton.setId("exam-assets-cancel");
-		cancelButton.setOnAction(_ -> cancelHandler.run());
+
+		// Cancel discards only the staged Exam Details edit. Returning to Capture will
+		// later be performed by Use Selected Booklet for Capture.
+		cancelButton.setOnAction(_ -> cancelExamDetailsEdit());
+		refreshMetadataOptions();
 		clearSelectedExam();
-	}
-
-	private void configureReadOnlyField(TextField field, String id) {
-		field.setId(id);
-		field.setEditable(false);
-		field.setMaxWidth(Double.MAX_VALUE);
-
-		// These fields deliberately use the same visual form that later editing will
-		// use, while remaining read-only until #69 supplies correction behaviour.
-		field.setFocusTraversable(false);
 	}
 
 	private VBox createAnswerFileRow(AnswerFile answerFile) {
@@ -210,7 +277,13 @@ public final class ExamAssetsPane extends VBox {
 		GridPane.setHgrow(providerField, Priority.ALWAYS);
 		GridPane.setHgrow(yearField, Priority.ALWAYS);
 		GridPane.setHgrow(assessmentField, Priority.ALWAYS);
-		return createSection("Exam Details", details);
+		Region editSpacer = new Region();
+		HBox.setHgrow(editSpacer, Priority.ALWAYS);
+
+		// Edit remains an explicit Exam Details action as specified by the workspace
+		// design rather than making every field permanently editable.
+		HBox editRow = new HBox(SPACING, editSpacer, editExamButton);
+		return createSection("Exam Details", new VBox(ROW_SPACING, details, editRow));
 	}
 
 	private VBox createQuestionBookletRow(ExamBooklet booklet) {
@@ -238,6 +311,13 @@ public final class ExamAssetsPane extends VBox {
 		return section;
 	}
 
+	private String editedText(ComboBox<String> field) {
+
+		// Editable ComboBoxes keep newly typed values in their editor until committed,
+		// so read the editor rather than assuming getValue() has already changed.
+		return field.getEditor().getText().strip();
+	}
+
 	private String formatExam(Exam exam) {
 
 		// Match the agreed compact selector presentation: year, provider and
@@ -259,25 +339,45 @@ public final class ExamAssetsPane extends VBox {
 		if (exam == null) {
 			return;
 		}
+
 		stateLabel.setText("State: " + exam.getCaptureState());
-		providerField.setText(exam.getProvider().getName());
-		yearField.setText(Integer.toString(exam.getYear()));
-		assessmentField.setText(exam.getName());
+
+		// Editable ComboBoxes maintain both a selected value and editor text. Set both
+		// explicitly so persisted metadata remains visible while the controls are
+		// disabled and when Edit is subsequently entered.
+		String providerName = exam.getProvider().getName();
+		providerField.setValue(providerName);
+		providerField.getEditor().setText(providerName);
+
+		if (!yearField.getItems().contains(exam.getYear())) {
+
+			// Historical Exams outside the normal suggestion window must still display
+			// their exact persisted year.
+			yearField.getItems().add(exam.getYear());
+		}
+		yearField.setValue(exam.getYear());
+
+		String assessmentName = exam.getName();
+		assessmentField.setValue(assessmentName);
+		assessmentField.getEditor().setText(assessmentName);
+
 		List<ExamBooklet> booklets = examWriter.findExamBooklets(exam);
 		if (booklets.isEmpty()) {
 			questionBookletsBox.getChildren().setAll(new Label("No Question booklets recorded."));
 		} else {
 
-			// Rebuild rows directly from authoritative persistence for the selected
-			// Exam rather than carrying transient data from the old modal setup UI.
+			// Asset rows always come from authoritative persistence for the selected Exam.
 			questionBookletsBox.getChildren().setAll(booklets.stream().map(this::createQuestionBookletRow).toList());
 		}
+
 		List<AnswerFile> answerFiles = answerWriter.findAnswerFiles(exam);
 		if (answerFiles.isEmpty()) {
 			answerBookletsBox.getChildren().setAll(new Label("No Answer booklets recorded."));
 		} else {
 			answerBookletsBox.getChildren().setAll(answerFiles.stream().map(this::createAnswerFileRow).toList());
 		}
+
+		setExamDetailsEditing(false);
 	}
 
 	private void loadSelectedExamSafely(Exam exam) {
@@ -296,6 +396,72 @@ public final class ExamAssetsPane extends VBox {
 		}
 	}
 
+	private void refreshMetadataOptions() {
+
+		// Preferences supply suggestions only. Persisted Exam values remain
+		// authoritative even when they are not already present in these lists.
+		providerField.getItems().setAll(optionsRepository.getProviders());
+		assessmentField.getItems().setAll(optionsRepository.getAssessments());
+	}
+
+	private void saveExamDetails() {
+		Exam selectedExam = examBox.getValue();
+		if (!editingExamDetails || selectedExam == null) {
+			return;
+		}
+		String providerName = editedText(providerField);
+		Integer year = yearField.getValue();
+		String assessmentName = editedText(assessmentField);
+		if (providerName.isBlank() || year == null || assessmentName.isBlank()) {
+			showCorrectionError("Complete Provider, Year and Assessment before saving.");
+			return;
+		}
+		try {
+			Exam corrected = correctionHandler.correct(selectedExam, providerName, year.intValue(), assessmentName);
+
+			// Retain useful suggestions independently of the Exam identity itself.
+			optionsRepository.addProvider(corrected.getProvider().getName());
+			optionsRepository.addAssessment(corrected.getName());
+
+			// A fresh repository read proves the workspace is showing authoritative
+			// persisted values rather than only the object returned by the correction.
+			refresh(corrected.getSubject());
+			setExamDetailsEditing(false);
+		} catch (SQLException | IOException | IllegalArgumentException | IllegalStateException exception) {
+			showCorrectionError(exception.getMessage());
+		}
+	}
+
+	private void setExamDetailsEditing(boolean editing) {
+		editingExamDetails = editing;
+
+		// Metadata remains visible at all times. These controls become mutable only
+		// after the user explicitly chooses Edit.
+		providerField.setDisable(!editing);
+		yearField.setDisable(!editing);
+		assessmentField.setDisable(!editing);
+
+		editExamButton.setDisable(editing || examBox.getValue() == null);
+
+		// Cancel and Save apply only to a staged Exam Details edit.
+		cancelButton.setDisable(!editing);
+		saveButton.setDisable(!editing);
+
+		// Do not allow selection of another Exam while unsaved edits are present.
+		examBox.setDisable(editing);
+	}
+
+	private void showCorrectionError(String message) {
+
+		// Keep the user in edit mode after failure so the proposed correction can be
+		// adjusted without re-entering the workflow.
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.setTitle("Exam / Assets");
+		alert.setHeaderText("Exam metadata could not be saved.");
+		alert.setContentText(message);
+		alert.showAndWait();
+	}
+
 	private String sourceFileName(String relativePath) {
 		Path path = Path.of(relativePath);
 		Path fileName = path.getFileName();
@@ -303,5 +469,25 @@ public final class ExamAssetsPane extends VBox {
 		// Defensive fallback keeps a malformed-but-readable path visible rather than
 		// presenting an empty source label.
 		return fileName == null ? relativePath : fileName.toString();
+	}
+
+	/**
+	 * Performs one authoritative Exam metadata correction.
+	 */
+	@FunctionalInterface
+	public interface ExamCorrectionHandler {
+
+		/**
+		 * Corrects one persisted Exam.
+		 *
+		 * @param exam           Exam being corrected
+		 * @param providerName   corrected provider
+		 * @param year           corrected year
+		 * @param assessmentName corrected assessment name
+		 * @return corrected Exam with the same persistent identity
+		 * @throws SQLException if persistence fails
+		 * @throws IOException  if managed PDF relocation fails
+		 */
+		Exam correct(Exam exam, String providerName, int year, String assessmentName) throws SQLException, IOException;
 	}
 }

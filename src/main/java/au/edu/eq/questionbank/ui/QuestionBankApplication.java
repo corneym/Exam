@@ -1699,10 +1699,13 @@ public class QuestionBankApplication extends Application {
 
 		// Exam correction owns both filesystem relocation and the atomic Exam /
 		// SourceDocument database update.
+		// Both the transitional capture metadata pane and the new Exam/Assets workspace
+		// use one set of reusable metadata suggestions.
+		ExamMetadataOptionsRepository examMetadataOptionsRepository = new ExamMetadataOptionsRepository();
 		ExamMetadataCorrectionService examMetadataCorrectionService = new ExamMetadataCorrectionService(
 				config.pdfDataRoot(), examWriter, answerWriter);
 		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
-				new ExamMetadataOptionsRepository(), examImporter, examWriter, examMetadataCorrectionService,
+				examMetadataOptionsRepository, examImporter, examWriter, examMetadataCorrectionService,
 				this::allowExamImportConfirmation, this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled,
 				this::activateExamBookletSubject);
 
@@ -1718,7 +1721,14 @@ public class QuestionBankApplication extends Application {
 
 		// The new main-window Exam/Assets workspace reads the same authoritative
 		// repositories as the transitional modal Exam Setup workflow.
-		examAssetsPane = new ExamAssetsPane(examWriter, answerWriter, this::showCaptureWorkspaceMode);
+		// The new workspace owns Exam editing presentation while the application
+		// retains
+		// responsibility for correction, PDF-session handling and capture-state
+		// refresh.
+		// Returning to Capture is no longer coupled to Cancel. The later explicit
+		// Use Selected Booklet for Capture action will own that transition.
+		examAssetsPane = new ExamAssetsPane(examWriter, answerWriter, examMetadataOptionsRepository,
+				this::correctExamMetadataAndReloadCapture);
 
 		// The selector receives application-level Subject creation through the same
 		// database used by the rest of the capture workflow.

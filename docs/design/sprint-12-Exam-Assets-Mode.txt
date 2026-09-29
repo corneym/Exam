@@ -13,7 +13,7 @@ MAIN WINDOW — EXAM / ASSETS MODE
 │ │ Year        [ 2025               ▼]  │ │                                           │
 │ │ Assessment  [ External Assessment ▼] │ │                                           │
 │ │                                      │ │                                           │
-│ │                              [ Edit ]│ │                                           │
+│ │     [ Edit ] [ Cancel ] [ Save ]     │ │                                           │
 │ └──────────────────────────────────────┘ │                                           │
 │                                          │                                           │
 │ QUESTION BOOKLETS                        │                                           │
@@ -60,6 +60,6 @@ MAIN WINDOW — EXAM / ASSETS MODE
 │                                          │                                           │
 │ [ Use Selected Booklet for Capture ]     │                                           │
 │ [ Clear ]                                │                                           │
-│                   [ Cancel ] [ Save ]    │                                           │
+│                                          │                                           │
 │                                          │                                           │
 └──────────────────────────────────────────┴───────────────────────────────────────────┘

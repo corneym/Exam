@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Tag;
@@ -10,7 +11,11 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -94,7 +99,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void activeExamBookletIsVisibleAndCanOpenExamAssetsWorkspace(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		Label activeExam = lookup(robot, "#active-exam-booklet", Label.class);
 		Node activeContext = lookup(robot, "#active-exam-context", Node.class);
 		Button changeExam = lookup(robot, "#change-exam-assets", Button.class);
@@ -104,10 +108,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(isDescendantOf(activeExam, activeContext));
 		assertFalse(changeExam.isDisabled());
 		assertEquals("Change Exam", changeExam.getText());
-
 		VBox activeBox = (VBox) activeContext;
 		assertEquals(2, activeBox.getChildren().size());
-
 		Node headerRow = activeBox.getChildren().getFirst();
 		assertTrue(headerRow instanceof javafx.scene.layout.HBox);
 		assertEquals(headerRow, changeExam.getParent());
@@ -117,7 +119,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// main-window Exam/Assets workspace.
 		fireControl(robot, changeExam);
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Parent modeHost = lookup(robot, "#workspace-mode-host", Parent.class);
 		Node examAssets = lookup(robot, "#exam-assets-workspace", Node.class);
 		assertEquals(modeHost, examAssets.getParent());
@@ -126,12 +127,11 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// workspace.
 		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
 		assertFalse(isDescendantOf(workingSubject, examAssets));
-
 		ComboBox<?> examSelector = lookup(robot, "#exam-assets-exam", ComboBox.class);
 		Label state = lookup(robot, "#exam-assets-state", Label.class);
-		TextField provider = lookup(robot, "#exam-assets-provider", TextField.class);
-		TextField year = lookup(robot, "#exam-assets-year", TextField.class);
-		TextField assessment = lookup(robot, "#exam-assets-assessment", TextField.class);
+		ComboBox<?> provider = lookup(robot, "#exam-assets-provider", ComboBox.class);
+		ComboBox<?> year = lookup(robot, "#exam-assets-year", ComboBox.class);
+		ComboBox<?> assessment = lookup(robot, "#exam-assets-assessment", ComboBox.class);
 		VBox questionBooklets = lookup(robot, "#exam-assets-question-booklets", VBox.class);
 
 		// The screen must be populated from the persisted Exam hierarchy, not merely
@@ -139,19 +139,17 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(examSelector.getItems().isEmpty());
 		assertFalse(examSelector.getSelectionModel().isEmpty());
 		assertEquals("State: ACTIVE", state.getText());
-		assertEquals("QCAA", provider.getText());
-		assertEquals("2024", year.getText());
-		assertEquals("External Assessment", assessment.getText());
+
+		// Exam Details initially display persisted values but cannot be modified until
+		// the explicit Edit action is entered.
+		assertEquals("QCAA", provider.getValue());
+		assertEquals(2024, year.getValue());
+		assertEquals("External Assessment", assessment.getValue());
+		assertTrue(provider.isDisabled());
+		assertTrue(year.isDisabled());
+		assertTrue(assessment.isDisabled());
 		assertEquals(1, questionBooklets.getChildren().size());
 
-		Button cancel = lookup(robot, "#exam-assets-cancel", Button.class);
-		fireControl(robot, cancel);
-		WaitForAsyncUtils.waitForFxEvents();
-
-		// Cancel returns to the same live Capture mode rather than constructing a
-		// replacement set of capture controls.
-		Node captureMode = lookup(robot, "#capture-workspace-mode", Node.class);
-		assertEquals(modeHost, captureMode.getParent());
 		assertEquals("QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]", activeExam.getText());
 	}
 
@@ -275,6 +273,64 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void cancellingExamDetailsEditRestoresMetadataAndStaysInExamAssets(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		@SuppressWarnings("unchecked")
+		ComboBox<String> provider = lookup(robot, "#exam-assets-provider", ComboBox.class);
+
+		@SuppressWarnings("unchecked")
+		ComboBox<Integer> year = lookup(robot, "#exam-assets-year", ComboBox.class);
+
+		@SuppressWarnings("unchecked")
+		ComboBox<String> assessment = lookup(robot, "#exam-assets-assessment", ComboBox.class);
+
+		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
+		Button cancel = lookup(robot, "#exam-assets-cancel", Button.class);
+
+		// Persisted Exam metadata must be visible before editing begins.
+		assertEquals("QCAA", provider.getValue());
+		assertEquals("QCAA", provider.getEditor().getText());
+		assertEquals(Integer.valueOf(2024), year.getValue());
+		assertEquals("External Assessment", assessment.getValue());
+		assertEquals("External Assessment", assessment.getEditor().getText());
+
+		fireControl(robot, edit);
+
+		// Entering Edit must preserve rather than clear the existing Exam metadata.
+		assertEquals("QCAA", provider.getEditor().getText());
+		assertEquals(Integer.valueOf(2024), year.getValue());
+		assertEquals("External Assessment", assessment.getEditor().getText());
+
+		robot.interact(() -> {
+			provider.getEditor().setText("Temporary Provider");
+			assessment.getEditor().setText("Temporary Assessment");
+		});
+
+		fireControl(robot, cancel);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Cancel discards staged changes but remains in the Exam/Assets workspace.
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isEmpty());
+
+		assertEquals("QCAA", provider.getValue());
+		assertEquals("QCAA", provider.getEditor().getText());
+		assertEquals(Integer.valueOf(2024), year.getValue());
+		assertEquals("External Assessment", assessment.getValue());
+		assertEquals("External Assessment", assessment.getEditor().getText());
+
+		// Re-entering Edit must still begin from the persisted values.
+		fireControl(robot, edit);
+
+		assertEquals("QCAA", provider.getEditor().getText());
+		assertEquals(Integer.valueOf(2024), year.getValue());
+		assertEquals("External Assessment", assessment.getEditor().getText());
+	}
+
+	@Test
 	void captureModeIsHostedBelowApplicationSubject(FxRobot robot) {
 		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
 		Node modeHost = lookup(robot, "#workspace-mode-host", Node.class);
@@ -324,6 +380,42 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		ComboBox<?> syllabus = lookup(robot, "#curriculum-syllabus", ComboBox.class);
 		assertTrue(isDescendantOf(subject, workingSubject));
 		assertTrue(isDescendantOf(syllabus, classification));
+	}
+
+	@Test
+	void examAssetsCanCorrectAndReloadAssessment(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		@SuppressWarnings("unchecked")
+		ComboBox<String> assessment = lookup(robot, "#exam-assets-assessment", ComboBox.class);
+		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
+		Button save = lookup(robot, "#exam-assets-save", Button.class);
+
+		// Existing Exam metadata is protected until the explicit Edit action is chosen.
+		assertTrue(assessment.isDisabled());
+		assertTrue(save.isDisabled());
+		fireControl(robot, edit);
+		assertFalse(assessment.isDisabled());
+		assertFalse(save.isDisabled());
+
+		// Exercise the editable ComboBox editor because Assessment suggestions must not
+		// restrict the user to previously stored labels.
+		robot.interact(() -> assessment.getEditor().setText("Topic Test 1"));
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("Topic Test 1", assessment.getValue());
+		assertTrue(assessment.isDisabled());
+		assertTrue(save.isDisabled());
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject workingSubject = subjects.getValue();
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		Exam reloaded = writer.findExamByProviderAndYear(workingSubject, "QCAA", 2024);
+
+		// A fresh repository read proves Save corrected the persisted Exam rather than
+		// merely changing the visible field.
+		assertNotNull(reloaded);
+		assertEquals("Topic Test 1", reloaded.getName());
 	}
 
 	@Test

@@ -44,10 +44,13 @@ import javafx.event.Event;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.MenuBar;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
 import javafx.scene.control.TreeView;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -196,12 +199,33 @@ class CurriculumAuthoringApplicationRegressionTest {
 	@Test
 	void newlyAuthoredSubjectBecomesAvailableToCaptureWithoutRestart(FxRobot robot) throws Exception {
 		openAuthoringChooser(robot);
-		robot.clickOn("New Curriculum");
-		robot.clickOn("#new-curriculum-subject");
-		robot.clickOn("#new-curriculum-subject-name").write("Engineering");
-		robot.clickOn("#new-curriculum-version").write("2025");
-		robot.clickOn("#new-curriculum-current");
-		robot.clickOn("#create-curriculum");
+
+		// The chooser is a modal DialogPane. Fire its real button rather than using
+		// pointer hit-testing against visible button text under Xvfb.
+		fireDialogButton(robot, "Open or create a curriculum", "New Curriculum");
+		RadioButton createNewSubject = robot.lookup("#new-curriculum-subject").queryAs(RadioButton.class);
+		TextField subjectName = robot.lookup("#new-curriculum-subject-name").queryAs(TextField.class);
+		TextField versionName = robot.lookup("#new-curriculum-version").queryAs(TextField.class);
+		CheckBox currentVersion = robot.lookup("#new-curriculum-current").queryAs(CheckBox.class);
+		Button createCurriculum = robot.lookup("#create-curriculum").queryAs(Button.class);
+		robot.interact(() -> {
+
+			// Activate ordinary semantic controls directly so this workflow does not
+			// depend on screen coordinates or virtual-display hit-testing.
+			createNewSubject.fire();
+			subjectName.setText("Engineering");
+			versionName.setText("2025");
+			if (!currentVersion.isSelected()) {
+				currentVersion.fire();
+			}
+
+			// Submit through the actual DialogPane-owned Create control so validation and
+			// the production dialog result path are still exercised.
+			createCurriculum.fire();
+		});
+
+		// Wait for the observable result of Create rather than assuming the dialog
+		// transition completed synchronously.
 		awaitAuthoring(robot);
 		CurriculumAuthoringPane pane = (CurriculumAuthoringPane) robot.lookup("#curriculum-draft-tree").query()
 				.getScene().getRoot();
@@ -212,6 +236,9 @@ class CurriculumAuthoringApplicationRegressionTest {
 			} catch (Exception e) {
 				throw new RuntimeException(e);
 			}
+
+			// These helpers exercise the real authoring operations after the application
+			// has successfully transitioned out of the New Curriculum dialog.
 			captureText(robot, "Fundamentals", "#add-curriculum-unit");
 			captureText(robot, "Forces", "#add-curriculum-topic");
 			var tree = tree(robot);
@@ -226,6 +253,9 @@ class CurriculumAuthoringApplicationRegressionTest {
 		assertEquals("Resolve forces", repository.findByCode(version, "1.1.1").orElseThrow().getName());
 		Stage authoring = authoringStage(robot);
 		robot.interact(() -> Event.fireEvent(authoring, new WindowEvent(authoring, WindowEvent.WINDOW_CLOSE_REQUEST)));
+
+		// Closing the authoring window must refresh the already-running application's
+		// authoritative Subject selector without requiring an application restart.
 		assertTrue(subjects(robot, "#curriculum-subject").contains(engineering),
 				"Classification must offer the newly authored subject");
 	}

@@ -85,6 +85,12 @@ All code written MUST contain inline comments explaining the algorithmic meaning
 When tests contain nested helper classes or fixtures, distinguish clearly
 between the outer test class and the nested class.
 
+### TestFX
+
+When adding or modifying a TestFX workflow test, audit the complete test method and any helpers it uses for `robot.clickOn(...)` or other pointer-based activation of ordinary controls. Existing pointer-based code must be converted to deterministic semantic control activation unless pointer position, hit-testing, focus or gesture behaviour is itself under test.
+
+A TestFX test that passes on a local desktop is not considered deterministic merely for that reason. Tests must be written to run reliably under the GitHub Actions Xvfb virtual display. A CI-only visibility or hit-testing failure should first be investigated for inappropriate pointer-based activation before being treated as an application defect.
+
 ### GitHub issue and project tracking during implementation
 
 GitHub Issues and the GitHub Project are part of the normal development workflow.
