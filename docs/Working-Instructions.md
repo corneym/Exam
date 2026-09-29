@@ -32,7 +32,7 @@ The GitHub repository is:
 
 corneym/Exam
 
-The current code in GitHub is the source of truth.
+GitHub remains authoritative for established state, but during one continuous implementation sequence you can rely on the exact edits you have applied and reported green until the next checkpoint push.
 
 Before giving exact implementation instructions that depend on current classes,
 methods, schemas, tests, documentation, or branch state, inspect the current
