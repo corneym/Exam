@@ -824,6 +824,44 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(syllabuses.isDisabled());
 	}
 
+	@Test
+	void searchQuestionsRequiresWorkingSubject(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+
+		// Reproduce the production failure state explicitly: Search remains a valid
+		// menu action even though no authoritative Working Subject is selected.
+		robot.interact(() -> subjects.getSelectionModel().clearSelection());
+		WaitForAsyncUtils.waitForFxEvents();
+		assertNull(field(application, "workingSubject", Subject.class));
+
+		// Build and fire the real Questions menu action rather than calling the Search
+		// dialog constructor directly, because the defect occurred in application
+		// wiring.
+		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
+		MenuItem searchItem = questionMenu.getItems().stream().filter(item -> "_Search...".equals(item.getText()))
+				.findFirst().orElseThrow(() -> new AssertionError("Questions -> Search menu item not found"));
+
+		// Search normally enters a modal showAndWait() loop, so schedule the action and
+		// leave the test thread available to inspect the prerequisite warning.
+		Platform.runLater(searchItem::fire);
+		waitForDialogShowing(robot, "Search Questions");
+
+		DialogPane warning = showingDialogPane(robot, "Search Questions");
+		assertEquals("No Working Subject is selected.", warning.getHeaderText());
+
+		// Resolve the warning through its actual DialogPane button so the test remains
+		// deterministic under both desktop JavaFX and the headless CI harness.
+		Node okNode = warning.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// A missing Working Subject must stop before the actual Search surface is
+		// built.
+		assertTrue(robot.lookup("#question-search-results").tryQuery().isEmpty());
+	}
+
 	@Override
 	@Start
 	void start(Stage stage) throws Exception {

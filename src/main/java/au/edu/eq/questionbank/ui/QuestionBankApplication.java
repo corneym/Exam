@@ -2662,6 +2662,15 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showQuestionSearch(Stage primaryStage, ApplicationConfig config) {
+		if (workingSubject == null) {
+
+			// Search is scoped to the authoritative application Working Subject.
+			// Prevent the menu action from constructing a subject-less Search dialog.
+			showAlert(Alert.AlertType.WARNING, "Search Questions", "No Working Subject is selected.",
+					"Select a Working Subject before searching Questions.");
+			return;
+		}
+
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
