@@ -66,18 +66,15 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// schedule the control while leaving the test thread available to complete it.
 		Platform.runLater(addSubject::fire);
 		waitForDialogShowing(robot, "Add Subject");
-
 		DialogPane dialog = showingDialogPane(robot, "Add Subject");
 		Node editorNode = dialog.lookup("#new-subject-name");
 		assertTrue(editorNode instanceof TextField);
 		TextField subjectName = (TextField) editorNode;
 		robot.interact(() -> subjectName.setText("Geography"));
-
 		Node okNode = dialog.lookupButton(ButtonType.OK);
 		assertTrue(okNode instanceof Button);
 		robot.interact(((Button) okNode)::fire);
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Subject geography = subjects.getItems().stream().filter(subject -> "Geography".equals(subject.getName()))
 				.findFirst().orElseThrow(() -> new AssertionError("New Subject was not loaded into the selector"));
 
@@ -85,7 +82,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// application context.
 		assertEquals(geography, subjects.getValue());
 		assertEquals(geography, field(application, "workingSubject", Subject.class));
-
 		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(
 				new SqliteDatabase(databasePath));
 
@@ -889,7 +885,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// leave the test thread available to inspect the prerequisite warning.
 		Platform.runLater(searchItem::fire);
 		waitForDialogShowing(robot, "Search Questions");
-
 		DialogPane warning = showingDialogPane(robot, "Search Questions");
 		assertEquals("No Working Subject is selected.", warning.getHeaderText());
 

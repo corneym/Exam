@@ -11,7 +11,6 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Question;
-import au.edu.eq.questionbank.ui.exam.ExamSetupDialog;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -93,52 +92,67 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void activeExamBookletIsVisibleAndCanReturnToExamSetup(FxRobot robot) throws Exception {
+	void activeExamBookletIsVisibleAndCanOpenExamAssetsWorkspace(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
+
 		Label activeExam = lookup(robot, "#active-exam-booklet", Label.class);
 		Node activeContext = lookup(robot, "#active-exam-context", Node.class);
 		Button changeExam = lookup(robot, "#change-exam-assets", Button.class);
 
-		// The compact action names the operation rather than repeating the Assets
-		// terminology already represented by Exam Setup.
-		assertEquals("Change Exam", changeExam.getText());
-
-		// The visible capture context identifies the authoritative Exam and booklet
-		// independently of the current curriculum classification.
-		// The standard workflow fixture creates QCAA 2024 External Assessment,
-		// Paper 1 MCQ. Assert the complete visible context so a missing or stale part
-		// of the active booklet identity cannot pass independently.
+		// Capture mode continues to identify the authoritative active Exam/booklet.
 		assertEquals("QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]", activeExam.getText());
 		assertTrue(isDescendantOf(activeExam, activeContext));
 		assertFalse(changeExam.isDisabled());
 		assertEquals("Change Exam", changeExam.getText());
 
 		VBox activeBox = (VBox) activeContext;
-
-		// Active Exam must use exactly two rows: heading/action followed by the
-		// full-width Exam/booklet description.
 		assertEquals(2, activeBox.getChildren().size());
 
 		Node headerRow = activeBox.getChildren().getFirst();
 		assertTrue(headerRow instanceof javafx.scene.layout.HBox);
-
-		// Change Exam belongs beside the heading on row one.
 		assertEquals(headerRow, changeExam.getParent());
-
-		// The potentially long Exam/booklet identity owns row two by itself.
 		assertEquals(activeBox, activeExam.getParent());
-		assertEquals(activeExam, activeBox.getChildren().get(1));
 
-		assertTrue(((Parent) headerRow).getChildrenUnmodifiable().stream()
-				.anyMatch(node -> node instanceof Label label && "Active Exam / Booklet".equals(label.getText())));
-		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
+		// The production Change Exam action now replaces Capture mode with the
+		// main-window Exam/Assets workspace.
+		fireControl(robot, changeExam);
+		WaitForAsyncUtils.waitForFxEvents();
 
-		// The visible context action returns directly to the ordinary Exam Setup /
-		// asset-management workflow rather than opening another capture mechanism.
-		fireControlLater(changeExam);
-		WaitForAsyncUtils.waitFor(5, java.util.concurrent.TimeUnit.SECONDS, setupDialog::isShowing);
-		assertTrue(setupDialog.isShowing());
-		fireDialogButton(robot, "Close");
+		Parent modeHost = lookup(robot, "#workspace-mode-host", Parent.class);
+		Node examAssets = lookup(robot, "#exam-assets-workspace", Node.class);
+		assertEquals(modeHost, examAssets.getParent());
+
+		// Working Subject remains permanent application context outside the swappable
+		// workspace.
+		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
+		assertFalse(isDescendantOf(workingSubject, examAssets));
+
+		ComboBox<?> examSelector = lookup(robot, "#exam-assets-exam", ComboBox.class);
+		Label state = lookup(robot, "#exam-assets-state", Label.class);
+		TextField provider = lookup(robot, "#exam-assets-provider", TextField.class);
+		TextField year = lookup(robot, "#exam-assets-year", TextField.class);
+		TextField assessment = lookup(robot, "#exam-assets-assessment", TextField.class);
+		VBox questionBooklets = lookup(robot, "#exam-assets-question-booklets", VBox.class);
+
+		// The screen must be populated from the persisted Exam hierarchy, not merely
+		// display an empty shell.
+		assertFalse(examSelector.getItems().isEmpty());
+		assertFalse(examSelector.getSelectionModel().isEmpty());
+		assertEquals("State: ACTIVE", state.getText());
+		assertEquals("QCAA", provider.getText());
+		assertEquals("2024", year.getText());
+		assertEquals("External Assessment", assessment.getText());
+		assertEquals(1, questionBooklets.getChildren().size());
+
+		Button cancel = lookup(robot, "#exam-assets-cancel", Button.class);
+		fireControl(robot, cancel);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Cancel returns to the same live Capture mode rather than constructing a
+		// replacement set of capture controls.
+		Node captureMode = lookup(robot, "#capture-workspace-mode", Node.class);
+		assertEquals(modeHost, captureMode.getParent());
+		assertEquals("QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]", activeExam.getText());
 	}
 
 	@Test
@@ -488,7 +502,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Working Subject still consists of exactly one layout row after adding the
 		// compact Subject-creation action.
 		assertEquals(1, workingSubjectContext.getChildrenUnmodifiable().size());
-
 		Node subjectRow = workingSubjectContext.getChildrenUnmodifiable().getFirst();
 		assertTrue(subjectRow instanceof javafx.scene.layout.GridPane);
 		assertEquals(subjectRow, subjectLabel.getParent());

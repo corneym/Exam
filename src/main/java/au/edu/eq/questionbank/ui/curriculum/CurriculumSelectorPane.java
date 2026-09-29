@@ -59,6 +59,7 @@ public class CurriculumSelectorPane extends VBox {
 	private boolean refreshingSubjects;
 	private boolean refreshingCode;
 	private VBox classificationContext;
+
 	// Subject creation is an application-level action. The pane owns only its
 	// compact presentation; persistence is supplied by the containing application.
 	private final Button addSubjectButton = new Button("+");
@@ -315,21 +316,17 @@ public class CurriculumSelectorPane extends VBox {
 		Label subjectLabel = new Label("Subject");
 		subjectLabel.setId("working-subject-label");
 		subjectLabel.setStyle(HEADING_STYLE);
-
 		HBox subjectControls = new HBox(ROW_GAP, subjectBox, addSubjectButton);
 		subjectControls.setAlignment(Pos.CENTER_LEFT);
 		subjectControls.setMaxWidth(Double.MAX_VALUE);
 		HBox.setHgrow(subjectBox, Priority.ALWAYS);
-
 		GridPane subjectRow = createTwoColumnGrid();
 		subjectRow.addRow(0, subjectLabel, subjectControls);
 		GridPane.setHgrow(subjectControls, Priority.ALWAYS);
-
 		VBox subjectContext = new VBox(subjectRow);
 		subjectContext.setId("working-subject-context");
 		subjectContext.setPadding(PANEL_PADDING);
 		subjectContext.setStyle(BORDER_STYLE);
-
 		classificationContext = new VBox(ROW_GAP, createSectionHeading("Classification"), createClassificationGrid());
 		classificationContext.setId("classification-context");
 		classificationContext.setPadding(PANEL_PADDING);
@@ -438,7 +435,6 @@ public class CurriculumSelectorPane extends VBox {
 				"Enter a complete curriculum code to select its Unit, Topic, Subtopic and Descriptor path."));
 		codeField.setMaxWidth(Double.MAX_VALUE);
 		codeField.setMinWidth(0);
-
 		configureHierarchyBox(subjectBox, "curriculum-subject", "Select subject");
 		configureHierarchyBox(syllabusBox, "curriculum-syllabus", "Select syllabus");
 		configureHierarchyBox(unitBox, "curriculum-unit", "Select unit");
@@ -458,7 +454,6 @@ public class CurriculumSelectorPane extends VBox {
 		// Standalone selector instances do not own Subject persistence. The containing
 		// application enables this action when it supplies the persistence callback.
 		addSubjectButton.setDisable(true);
-
 		syllabusBox.setDisable(true);
 		unitBox.setDisable(true);
 		topicBox.setDisable(true);
@@ -524,7 +519,6 @@ public class CurriculumSelectorPane extends VBox {
 		// without a second WORKING SUBJECT heading above it.
 		grid.addRow(0, new Label("Subject"), subjectBox);
 		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
-
 		return grid;
 	}
 

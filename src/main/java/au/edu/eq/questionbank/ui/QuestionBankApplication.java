@@ -127,6 +127,7 @@ import au.edu.eq.questionbank.ui.curriculum.CurriculumImportDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumMappingReviewDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.curriculum.NewCurriculumDialog;
+import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.exam.ExamSetupDialog;
@@ -222,6 +223,7 @@ public class QuestionBankApplication extends Application {
 	private ExamBooklet inspectedBooklet;
 	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
 	private final Button changeExamAssetsButton = new Button("Change Exam");
+
 	// The application-level Subject remains outside this host so the left workspace
 	// can switch between Capture and Exam/Assets without replacing Working Subject.
 	private StackPane workspaceModeHost;
@@ -230,6 +232,11 @@ public class QuestionBankApplication extends Application {
 	// can restore the previous value without changing either capture queue.
 	private Subject workingSubject;
 	private boolean restoringWorkingSubject;
+
+	// Keep both left-side modes as stable nodes. Switching modes re-parents the
+	// existing pane rather than reconstructing capture controls and their state.
+	private VBox captureWorkspaceModePane;
+	private ExamAssetsPane examAssetsPane;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -365,19 +372,16 @@ public class QuestionBankApplication extends Application {
 		if (!allowWorkingSubjectChange()) {
 			return;
 		}
-
 		TextInputDialog dialog = new TextInputDialog();
 		dialog.initOwner(primaryStage);
 		dialog.setTitle("Add Subject");
 		dialog.setHeaderText("Create a new Subject");
 		dialog.setContentText("Subject name:");
 		dialog.getEditor().setId("new-subject-name");
-
 		Optional<String> result = dialog.showAndWait();
 		if (result.isEmpty()) {
 			return;
 		}
-
 		String subjectName = result.get().strip();
 		if (subjectName.isBlank()) {
 			showAlert(Alert.AlertType.WARNING, "Add Subject", "Subject name is required.",
@@ -394,7 +398,6 @@ public class QuestionBankApplication extends Application {
 					"Choose the existing Subject from the Subject list.");
 			return;
 		}
-
 		try {
 			Subject createdSubject = new SqliteCurriculumWriter(database).insertSubject(subjectName);
 
@@ -458,6 +461,22 @@ public class QuestionBankApplication extends Application {
 		// unsaved capture state still depends on the currently displayed source.
 		showAlert(Alert.AlertType.WARNING, "Inspect Question Booklet", "Capture work is in progress",
 				"Save, add, clear or cancel the current Question, Shared Context or Answer work before inspecting another booklet.");
+		return false;
+	}
+
+	private boolean allowExamAssetsTransition() {
+		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
+				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
+				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
+				|| answerCapturePane.isSaveInProgress() || answerCapturePane.isEditingAnswer();
+		if (!captureWorkInProgress) {
+			return true;
+		}
+
+		// Exam/Assets can later change the active source structure, so never leave
+		// Capture mode while unsaved work still depends on its current Exam or PDF.
+		showAlert(Alert.AlertType.WARNING, "Exam / Assets", "Capture work is in progress",
+				"Save, clear or cancel the current Question, Shared Context or Answer work before managing Exam assets.");
 		return false;
 	}
 
@@ -895,11 +914,9 @@ public class QuestionBankApplication extends Application {
 	private VBox createActiveExamContextPane() {
 		Label heading = new Label("Active Exam / Booklet");
 		heading.setStyle("-fx-font-weight: bold;");
-
 		activeExamBookletLabel.setId("active-exam-booklet");
 		activeExamBookletLabel.setWrapText(true);
 		activeExamBookletLabel.setMaxWidth(Double.MAX_VALUE);
-
 		changeExamAssetsButton.setId("change-exam-assets");
 		changeExamAssetsButton.setText("Change Exam");
 		changeExamAssetsButton.setDisable(workingSubject == null);
@@ -907,8 +924,10 @@ public class QuestionBankApplication extends Application {
 		// The action must remain fully readable rather than being compressed when the
 		// left workspace is narrow.
 		changeExamAssetsButton.setMinWidth(Region.USE_PREF_SIZE);
-		changeExamAssetsButton.setOnAction(_ -> showExamSetup());
 
+		// Main-window capture now transitions to the new Exam/Assets workspace rather
+		// than opening the transitional modal Exam Setup surface.
+		changeExamAssetsButton.setOnAction(_ -> showExamAssetsMode());
 		Region spacer = new javafx.scene.layout.Region();
 
 		// Heading and action share the first row. The spacer pushes Change Exam to the
@@ -922,7 +941,6 @@ public class QuestionBankApplication extends Application {
 		context.setId("active-exam-context");
 		context.setPadding(new Insets(8));
 		context.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
-
 		return context;
 	}
 
@@ -933,7 +951,6 @@ public class QuestionBankApplication extends Application {
 		// replace this whole unit without disturbing the application Working Subject.
 		VBox captureModePane = new VBox(SECTION_SPACING, createActiveExamContextPane(), createCaptureWorkspacePane());
 		captureModePane.setId("capture-workspace-mode");
-
 		return captureModePane;
 	}
 
@@ -971,7 +988,6 @@ public class QuestionBankApplication extends Application {
 		// to the question-bank database and then changes the authoritative Working
 		// Subject.
 		selectorPane.setAddSubjectAction(() -> addSubject(primaryStage, database, selectorPane));
-
 		return selectorPane;
 	}
 
@@ -1135,11 +1151,11 @@ public class QuestionBankApplication extends Application {
 	private VBox createPreviewPane() {
 
 		// Working Subject is permanent application context. Everything beneath it is
-		// hosted separately so Capture and Exam/Assets can later occupy the same
-		// left-hand workspace without rebuilding or duplicating Subject selection.
-		workspaceModeHost = new StackPane(createCaptureWorkspaceModePane());
+		// hosted separately so Capture and Exam/Assets can occupy the same left-hand
+		// workspace without rebuilding or duplicating Subject selection.
+		captureWorkspaceModePane = createCaptureWorkspaceModePane();
+		workspaceModeHost = new StackPane(captureWorkspaceModePane);
 		workspaceModeHost.setId("workspace-mode-host");
-
 		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, workspaceModeHost);
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
 		previewPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
@@ -1523,6 +1539,19 @@ public class QuestionBankApplication extends Application {
 		// Moving application Subject may invalidate an active Exam from the old
 		// Subject, so refresh the persistent workspace context immediately.
 		refreshActiveExamContext();
+
+		// Subject remains authoritative while Exam/Assets mode is open. Refresh that
+		// workspace immediately rather than leaving Exams from the previous Subject
+		// visible.
+		if (examAssetsPane != null && workspaceModeHost != null
+				&& workspaceModeHost.getChildren().contains(examAssetsPane)) {
+			try {
+				examAssetsPane.refresh(newSubject);
+			} catch (SQLException exception) {
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be refreshed.",
+						exception.getMessage());
+			}
+		}
 	}
 
 	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
@@ -1686,6 +1715,11 @@ public class QuestionBankApplication extends Application {
 		examSetupPane = new ExamSetupPane(examWriter, answerWriter,
 				booklet -> inspectBookletFromExamSetup(booklet, config),
 				booklet -> openBookletFromExamSetup(booklet, config));
+
+		// The new main-window Exam/Assets workspace reads the same authoritative
+		// repositories as the transitional modal Exam Setup workflow.
+		examAssetsPane = new ExamAssetsPane(examWriter, answerWriter, this::showCaptureWorkspaceMode);
+
 		// The selector receives application-level Subject creation through the same
 		// database used by the rest of the capture workflow.
 		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
@@ -2509,6 +2543,16 @@ public class QuestionBankApplication extends Application {
 		return BackupFailureDecision.EXIT_WITHOUT_BACKUP;
 	}
 
+	private void showCaptureWorkspaceMode() {
+
+		// Reattach the original live Capture controls rather than rebuilding them.
+		workspaceModeHost.getChildren().setAll(captureWorkspaceModePane);
+
+		// Any later Exam/Assets changes must be reflected immediately when the user
+		// returns to Capture mode.
+		refreshActiveExamContext();
+	}
+
 	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
@@ -2548,6 +2592,27 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		openCurriculumAuthoringWindow(primaryStage, config, database, session);
+	}
+
+	private void showExamAssetsMode() {
+		if (!allowExamAssetsTransition()) {
+			return;
+		}
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "No Working Subject is selected.",
+					"Select a Working Subject before managing Exam assets.");
+			return;
+		}
+		try {
+
+			// Re-read the current Subject's Exam hierarchy every time this workspace is
+			// entered so the screen never relies on stale modal-setup state.
+			examAssetsPane.refresh(workingSubject);
+			workspaceModeHost.getChildren().setAll(examAssetsPane);
+		} catch (SQLException exception) {
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
+					exception.getMessage());
+		}
 	}
 
 	private void showExamImport() {
@@ -2750,7 +2815,6 @@ public class QuestionBankApplication extends Application {
 					"Select a Working Subject before searching Questions.");
 			return;
 		}
-
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
