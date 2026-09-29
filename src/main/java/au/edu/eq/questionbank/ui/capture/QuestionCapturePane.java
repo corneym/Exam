@@ -314,7 +314,10 @@ public final class QuestionCapturePane extends VBox {
 		}
 		currentSelection = new QuestionRegion(booklet, selection.pageNumber(), selection.x(), selection.y(),
 				selection.width(), selection.height());
-		saveStatusLabel.setText("Selection pending — click Add Region or Clear");
+
+		// An unaccepted PDF rectangle is cancelled by clicking elsewhere in the PDF;
+		// there is no separate Clear action.
+		saveStatusLabel.setText("Selection pending — click Add Region or click elsewhere in the PDF to cancel");
 		refreshSaveButtonState();
 	}
 
@@ -325,7 +328,11 @@ public final class QuestionCapturePane extends VBox {
 	 */
 	public void acceptSharedContextSelection(PdfWorkspacePane.RegionSelection selection) {
 		sharedContextCapturePane.acceptSelection(selection);
-		saveStatusLabel.setText("Shared context selection pending — click Add Region or Clear");
+
+		// Shared Context uses the same click-away cancellation semantics as ordinary
+		// Question-region capture.
+		saveStatusLabel.setText(
+				"Shared context selection pending — click Add Context or click elsewhere in the PDF to cancel");
 		refreshSaveButtonState();
 	}
 
@@ -1066,7 +1073,11 @@ public final class QuestionCapturePane extends VBox {
 		}
 		boolean started = sharedContextCapturePane.beginAutomaticContext(label);
 		if (started) {
-			saveStatusLabel.setText("Shared context capture active — select a region");
+
+			// The transferred rectangle now belongs to Shared Context capture and uses the
+			// normal PDF click-away cancellation behaviour.
+			saveStatusLabel.setText(
+					"Shared context selection pending — click Add Context or click elsewhere in the PDF to cancel");
 		}
 		return started;
 	}
@@ -1118,7 +1129,7 @@ public final class QuestionCapturePane extends VBox {
 		}
 		if (currentSelection != null || sharedContextCapturePane.hasCurrentSelection()) {
 			showAlert(Alert.AlertType.WARNING, "Selection pending.",
-					"Add or clear the current selection before changing question capture mode.");
+					"Add the current selection or click elsewhere in the PDF to cancel it before changing question capture mode.");
 			return false;
 		}
 		if (hasAcceptedRegions() && !questionTargetChangeAllowed.getAsBoolean()) {
@@ -2088,7 +2099,7 @@ public final class QuestionCapturePane extends VBox {
 		}
 		if (currentSelection != null) {
 			showAlert(Alert.AlertType.INFORMATION, "PDF selection pending.",
-					"Add or clear the current PDF selection before pasting an image.");
+					"Add the current PDF selection or click elsewhere in the PDF to cancel it before pasting an image.");
 			return;
 		}
 		if (legacySplitCaptureState != null) {

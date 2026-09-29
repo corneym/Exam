@@ -820,22 +820,55 @@ If real use later demonstrates a need for bulk clearing it can be reconsidered.
 
 ### 5.5 Multipart and Shared Context behaviour
 
-Existing multipart detection remains based on codes such as `21a`, `21b`,
+Multipart detection remains based on Question codes such as `21a`, `21b` and
 `21c`.
 
-Entering a multipart code establishes or reuses the existing source identity,
-for example:
+Entering a multipart code derives the common persisted source identity. For
+example:
 
 ``` text
 Question code: 22a
 SourceQuestion: 22
 ```
 
-This indicates that shared context may be required.
+The existing `SourceQuestion` / `SharedQuestionContext` model remains
+authoritative.
 
-The existing SourceQuestion / Shared Context model remains authoritative.
-Sequential parts should reuse an already-resolved Shared Context decision rather
-than repeatedly asking the user the same question.
+The first captured part establishes the persisted Shared Context decision for
+the source Question:
+
+- `PRESENT` when Shared Context is captured;
+- `NONE` when the Question is explicitly saved without Shared Context.
+
+Later parts deriving the same `SourceQuestion` reuse that persisted decision.
+
+For `PRESENT`:
+
+- the existing Shared Context is reused automatically;
+- the Shared Context question is not presented again;
+- no duplicate `SharedQuestionContext` is created.
+
+For `NONE`:
+
+- the absence of Shared Context is reused automatically;
+- the Shared Context question is not presented again.
+
+Sequential capture therefore depends on persisted source-Question state rather
+than temporary UI state from the preceding capture.
+
+The same behaviour also applies when multipart Questions are revisited later;
+the relationship is not dependent on capturing all parts in one session.
+
+Implementation status as at 29 September 2026:
+
+- sequential multipart capture reuses persisted `PRESENT` decisions;
+- sequential multipart capture reuses persisted `NONE` decisions;
+- regression coverage verifies that later parts are not asked the same Shared
+  Context question again;
+- regression coverage verifies reuse of the same persisted source and Shared
+  Context identities;
+- existing `SourceQuestion` semantics were retained without introducing a second
+  multipart workflow model.
 
 ### 5.6 Imported/incomplete Question capture
 

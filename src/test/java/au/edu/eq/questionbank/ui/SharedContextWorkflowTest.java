@@ -209,52 +209,79 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		Button save = lookup(robot, "#save-question", Button.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Label sharedContextStatus = lookup(robot, "#shared-context-status", Label.class);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 
-		// Deliberately draw first. The eventual multipart intent must be allowed to
-		// reinterpret this pending rectangle as the shared context.
+		// Deliberately draw first. Entering multipart intent must be able to transfer
+		// this already-drawn rectangle to Shared Context capture.
 		dragRegionOnDisplayedPage(robot);
 		assertTrue(save.isDisabled());
 		robot.clickOn(questionCode).write("24a");
 		robot.clickOn(marks).write("2");
-		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
 		assertTrue(sharedContext.isVisible());
 		assertFalse(sharedContext.isSelected());
-		robot.clickOn(sharedContext);
+		fireControl(robot, sharedContext);
 		assertTrue(sharedContext.isSelected());
 		assertTrue(save.isDisabled());
 
-		// The already-drawn rectangle is now accepted as the shared context rather than
-		// as an ordinary question region.
-		robot.clickOn("#add-question-region");
+		// The already-drawn rectangle becomes Shared Context rather than ordinary
+		// Question content.
+		fireControl(robot, "#add-question-region");
 		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(save.isDisabled());
 
-		// Now capture the actual 24a question region.
+		// Capture the actual 24a body.
 		dragRegionOnDisplayedPage(robot);
-		assertTrue(save.isDisabled());
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		assertFalse(save.isDisabled());
-		robot.clickOn(save);
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "24a".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
-				.filter(question -> "24a".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		Question restored = repository.findAll().stream().filter(question -> "24a".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
 		assertTrue(restored.hasSourceQuestion());
 		assertEquals("24", restored.getSourceQuestion().getSourceQuestionCode());
 		assertEquals(SharedContextStatus.PRESENT, restored.getSourceQuestion().getSharedContextStatus());
 		assertTrue(restored.hasSharedContext());
 		assertEquals(1, restored.getSharedContext().getRegions().size());
 		assertEquals(1, restored.getRegions().size());
+
+		// New-Question capture remains active, but Classification is cleared between
+		// Questions.
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
-		Question secondPart = captureQuestion(robot, "24b");
-		Question restoredSecondPart = new SqliteQuestionRepository(new SqliteDatabase(databasePath))
-				.findById(secondPart.getId()).orElseThrow();
+		robot.interact(() -> {
+			questionCode.setText("24b");
+			marks.setText("2");
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// 24b resolves to the already-persisted SourceQuestion 24. The PRESENT
+		// decision must therefore be reused rather than asking the same question again.
+		assertFalse(sharedContext.isVisible());
+		assertFalse(sharedContext.isManaged());
+		assertTrue(sharedContextStatus.isVisible());
+		assertTrue(sharedContextStatus.getText().contains("Question 24"));
+		assertFalse(questionCapturePane().isCapturingSharedContext());
+
+		// Only the part-specific body remains to be captured.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "24b".equals(question.getQuestionCode())));
+		Question restoredSecondPart = repository.findAll().stream()
+				.filter(question -> "24b".equals(question.getQuestionCode())).findFirst().orElseThrow();
 		assertTrue(restoredSecondPart.hasSourceQuestion());
 		assertTrue(restoredSecondPart.hasSharedContext());
 		assertEquals(restored.getSourceQuestion().getId(), restoredSecondPart.getSourceQuestion().getId());
 		assertEquals(restored.getSharedContext().getId(), restoredSecondPart.getSharedContext().getId());
+
+		// Reuse of the persisted decision must not create duplicate context rows.
 		assertEquals(1, new SqliteSharedQuestionContextRepository(new SqliteDatabase(databasePath))
 				.findByBooklet(restored.getBooklet()).size());
 	}
@@ -534,20 +561,49 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		robot.clickOn(questionCode).write("25a");
 		robot.clickOn(marks).write("1");
-		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
 		assertTrue(sharedContext.isVisible());
 		assertFalse(sharedContext.isSelected());
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
-		robot.clickOn("#save-question");
-		WaitForAsyncUtils.waitForFxEvents();
-		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
-				.filter(question -> "25a".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "25a".equals(question.getQuestionCode())));
+		Question restored = repository.findAll().stream().filter(question -> "25a".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
 		assertTrue(restored.hasSourceQuestion());
 		assertEquals(SharedContextStatus.NONE, restored.getSourceQuestion().getSharedContextStatus());
 		assertFalse(restored.hasSharedContext());
+
+		// Prepare the next sequential part.
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+		robot.interact(() -> {
+			questionCode.setText("25b");
+			marks.setText("1");
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// SourceQuestion 25 has already recorded NONE. Do not ask the teacher the
+		// Shared Context question again for 25b.
+		assertFalse(sharedContext.isVisible());
+		assertFalse(sharedContext.isManaged());
+		assertFalse(questionCapturePane().isCapturingSharedContext());
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "25b".equals(question.getQuestionCode())));
+		Question secondPart = repository.findAll().stream().filter(question -> "25b".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
+		assertTrue(secondPart.hasSourceQuestion());
+		assertEquals(restored.getSourceQuestion().getId(), secondPart.getSourceQuestion().getId());
+		assertEquals(SharedContextStatus.NONE, secondPart.getSourceQuestion().getSharedContextStatus());
+		assertFalse(secondPart.hasSharedContext());
 	}
 
 	@Test
