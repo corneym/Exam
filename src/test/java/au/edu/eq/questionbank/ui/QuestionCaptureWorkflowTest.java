@@ -243,9 +243,14 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, setupDialog::isShowing);
 		@SuppressWarnings("unchecked")
-		ListView<ExamBooklet> booklets = (ListView<ExamBooklet>) robot.lookup("#exam-setup-booklets").query();
+		ListView<ExamBooklet> booklets = (ListView<ExamBooklet>) setupDialog.getDialogPane()
+				.lookup("#exam-setup-booklets");
+
+		// The Exam Setup controls belong to the modal dialog window, not necessarily
+		// the TestFX root currently associated with the main application scene.
 		robot.interact(() -> booklets.getSelectionModel().selectFirst());
-		fireControl(robot, "#exam-setup-inspect-booklet");
+		Button inspectBooklet = (Button) setupDialog.getDialogPane().lookup("#exam-setup-inspect-booklet");
+		fireControl(robot, inspectBooklet);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER);
 
@@ -281,7 +286,8 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Completing inspection returns to Exam Setup with the refreshed count visible.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, setupDialog::isShowing);
 		@SuppressWarnings("unchecked")
-		ListView<ExamBooklet> refreshedBooklets = (ListView<ExamBooklet>) robot.lookup("#exam-setup-booklets").query();
+		ListView<ExamBooklet> refreshedBooklets = (ListView<ExamBooklet>) setupDialog.getDialogPane()
+				.lookup("#exam-setup-booklets");
 		assertTrue(refreshedBooklets.getItems().stream().anyMatch(booklet -> booklet.getId() == activeBooklet.getId()
 				&& Integer.valueOf(12).equals(booklet.getExpectedQuestionCount())));
 		fireDialogButton(robot, "Close");
@@ -301,10 +307,15 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, setupDialog::isShowing);
 		@SuppressWarnings("unchecked")
-		ListView<ExamBooklet> booklets = (ListView<ExamBooklet>) robot.lookup("#exam-setup-booklets").query();
+		ListView<ExamBooklet> booklets = (ListView<ExamBooklet>) setupDialog.getDialogPane()
+				.lookup("#exam-setup-booklets");
 		assertFalse(booklets.getItems().isEmpty());
+
+		// Query the modal dialog directly so this workflow is independent of whichever
+		// JavaFX window TestFX currently treats as its lookup root.
 		robot.interact(() -> booklets.getSelectionModel().selectFirst());
-		fireControl(robot, "#exam-setup-inspect-booklet");
+		Button inspectBooklet = (Button) setupDialog.getDialogPane().lookup("#exam-setup-inspect-booklet");
+		fireControl(robot, inspectBooklet);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !setupDialog.isShowing());
 		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
 
