@@ -27,6 +27,18 @@ public final class QuestionClipboardImageReader {
 	}
 
 	/**
+	 * Reports whether the system clipboard currently exposes image content.
+	 *
+	 * @return {@code true} when JavaFX can read an image from the clipboard
+	 */
+	public boolean hasImage() {
+
+		// JavaFX performs the platform-specific conversion, including native image
+		// formats placed on the clipboard by tools such as Windows Snipping Tool.
+		return Clipboard.getSystemClipboard().hasImage();
+	}
+
+	/**
 	 * Reads the current clipboard image and encodes it as PNG.
 	 *
 	 * @return encoded PNG bytes, or empty when the clipboard contains no image

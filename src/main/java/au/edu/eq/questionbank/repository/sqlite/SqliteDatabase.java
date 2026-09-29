@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 18;
+	private static final int LATEST_SCHEMA_VERSION = 19;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -624,6 +624,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v17-to-v18.sql", 18);
 			return 18;
 		}
+		if (version == 18) {
+
+			// Version nineteen records explicit AnswerFile explanation metadata. Existing
+			// assets migrate conservatively to false until reviewed by the user.
+			executeMigration(connection, "/db/migration-v18-to-v19.sql", 19);
+			return 19;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -886,6 +893,12 @@ public final class SqliteDatabase {
 			// Asset expectations record planning without manufacturing authoritative
 			// ExamBooklet or AnswerFile rows.
 			verifyVersion18ExamAssetExpectationSchema(connection);
+		}
+		if (version >= 19) {
+
+			// AnswerFile explanation metadata is an explicit persisted yes/no value rather
+			// than an inference from the asset name or captured Answers.
+			verifyVersion19AnswerFileExplanationSchema(connection);
 		}
 	}
 
@@ -1414,6 +1427,28 @@ public final class SqliteDatabase {
 		}
 		if (!hasExpectedAnswerFileCount) {
 			throw new SQLException("exams is missing required column expected_answer_file_count");
+		}
+	}
+
+	private void verifyVersion19AnswerFileExplanationSchema(Connection connection) throws SQLException {
+		boolean hasContainsAnswerExplanations = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(answer_files)")) {
+			while (result.next()) {
+				if (!"contains_answer_explanations".equals(result.getString("name"))) {
+					continue;
+				}
+				hasContainsAnswerExplanations = true;
+
+				// Every AnswerFile must have an explicit persisted yes/no value. Existing
+				// rows migrate to zero rather than remaining unknown.
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("answer_files column must be NOT NULL: contains_answer_explanations");
+				}
+			}
+		}
+		if (!hasContainsAnswerExplanations) {
+			throw new SQLException("answer_files is missing required column contains_answer_explanations");
 		}
 	}
 

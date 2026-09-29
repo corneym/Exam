@@ -165,6 +165,41 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void addFromClipboardRequiresClipboardImage(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
+		robot.interact(() -> {
+			ClipboardContent textContent = new ClipboardContent();
+			textContent.putString("Clipboard text is not Question image content");
+			Clipboard.getSystemClipboard().setContent(textContent);
+
+			// Clipboard availability is refreshed explicitly here because this test does
+			// not leave and return to the application window.
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
+		assertTrue(addFromClipboard.isDisabled());
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(40, 20);
+			ClipboardContent imageContent = new ClipboardContent();
+			imageContent.putImage(image);
+			Clipboard.getSystemClipboard().setContent(imageContent);
+
+			// A readable JavaFX image is the only clipboard format that enables the
+			// Question-image action.
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
+		assertFalse(addFromClipboard.isDisabled());
+		robot.interact(() -> {
+			ClipboardContent textContent = new ClipboardContent();
+			textContent.putString("Restore a non-image clipboard state");
+			Clipboard.getSystemClipboard().setContent(textContent);
+
+			// Leave the shared test clipboard in a deterministic non-image state.
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
+	}
+
+	@Test
 	void addingBookletFromExamSetupImmediatelyStartsInspectionBeforePlanning(FxRobot robot) throws Exception {
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> workingSubjectBox = (ComboBox<Subject>) robot.lookup("#curriculum-subject").query();
@@ -819,8 +854,13 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			ClipboardContent clipboardContent = new ClipboardContent();
 			clipboardContent.putImage(image);
 			Clipboard.getSystemClipboard().setContent(clipboardContent);
+
+			// This test remains inside one application window, so explicitly perform the
+			// same availability refresh that window-focus restoration performs in use.
+			questionCapturePane().refreshClipboardImageAvailability();
 		});
 		Button pasteImageButton = lookup(robot, "#paste-question-image", Button.class);
+		assertFalse(pasteImageButton.isDisabled());
 		assertEquals("Add clipboard image content to the Question; it is persisted when the Question is saved.",
 				pasteImageButton.getTooltip().getText());
 		fireControl(robot, "#paste-question-image");

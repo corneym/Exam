@@ -2,6 +2,30 @@
 
 This chat is the working chat for the next sprint of the Exam Question Bank project.
 
+### Repository Working Rule
+
+Before giving me any code change for the Exam Question Bank:
+
+Read docs/Working-Instructions.md from the current working branch. Do this for every code-change response, even if you have read it earlier in the conversation.
+
+Re-read the requirements I gave for the current feature or slice. Treat my stated behaviour and layout requirements as acceptance criteria.
+
+Inspect the current implementation and relevant tests on the current branch. Do not rely only on conversation summaries, previous proposed code, or assumptions about what I have applied.
+
+Before writing code, check that the proposed change satisfies every relevant acceptance criterion. Do not silently reinterpret or weaken a requirement.
+
+Tests must verify the acceptance criteria, not merely verify the implementation you happened to choose.
+
+When I report that tests are green, do not automatically declare the slice complete. Compare the implemented behaviour against the original acceptance criteria first.
+
+If an earlier instruction from you was wrong or incomplete, explicitly correct it rather than building later work on top of it.
+
+Do not move on to the next feature while an earlier stated requirement remains unimplemented.
+
+Never give me code based solely on the conversation summary when the repository can be inspected.
+
+Follow the code-change format in docs/Working-Instructions.md exactly.
+
 ### Source of truth
 
 The GitHub repository is:

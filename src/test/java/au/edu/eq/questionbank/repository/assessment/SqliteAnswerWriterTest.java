@@ -242,6 +242,38 @@ class SqliteAnswerWriterTest {
 	}
 
 	@Test
+	void persistsAndReloadsAnswerExplanationMetadata() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("answer-explanations.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/QCAA/2025/paper1.pdf");
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		// Newly registered and migrated-style AnswerFiles default conservatively to
+		// having no recorded explanations.
+		AnswerFile original = answerWriter.findOrCreateAnswerFile(booklet, "Marking guide",
+				"Chemistry/QCAA/2025/marking-guide.pdf");
+		assertFalse(original.hasAnswerExplanations());
+		assertFalse(answerWriter.findAnswerFile(booklet).hasAnswerExplanations());
+
+		// Reviewing the asset updates descriptive metadata without changing its
+		// persistent AnswerFile identity or its booklet assignment.
+		AnswerFile updated = answerWriter.setContainsAnswerExplanations(original, true);
+		assertEquals(original.getId(), updated.getId());
+		assertTrue(updated.hasAnswerExplanations());
+
+		// Both normal lookup paths must reconstruct the persisted flag.
+		AnswerFile assigned = answerWriter.findAnswerFile(booklet);
+		assertTrue(assigned.hasAnswerExplanations());
+		List<AnswerFile> examFiles = answerWriter.findAnswerFiles(booklet.getExam());
+		assertEquals(1, examFiles.size());
+		assertEquals(original.getId(), examFiles.getFirst().getId());
+		assertTrue(examFiles.getFirst().hasAnswerExplanations());
+	}
+
+	@Test
 	void persistsAndReloadsAnswerSourceHash() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("hashed-answer-source.db"));
 		database.initialiseSchema();

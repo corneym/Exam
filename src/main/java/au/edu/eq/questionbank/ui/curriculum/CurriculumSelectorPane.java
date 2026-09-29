@@ -32,7 +32,8 @@ import javafx.scene.layout.VBox;
  */
 public class CurriculumSelectorPane extends VBox {
 
-	// Allow the workspace-level Working Subject label to remain readable.
+	// Keep Classification labels readable without forcing the hierarchy controls
+	// wider than the available capture workspace.
 	private static final int LABEL_COLUMN_WIDTH = 105;
 	private static final double ROW_GAP = 4.0;
 	private static final double COLUMN_GAP = 8.0;
@@ -284,7 +285,11 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void buildContent() {
-		VBox subjectContext = new VBox(ROW_GAP, createSectionHeading("WORKING SUBJECT"), createSubjectGrid());
+
+		// The Subject ComboBox is already the authoritative application-level
+		// selector, so additional WORKING SUBJECT and Subject labels add no
+		// information.
+		VBox subjectContext = new VBox(subjectBox);
 		subjectContext.setId("working-subject-context");
 		subjectContext.setPadding(PANEL_PADDING);
 		subjectContext.setStyle(BORDER_STYLE);
@@ -294,8 +299,7 @@ public class CurriculumSelectorPane extends VBox {
 		classificationContext.setStyle(BORDER_STYLE);
 
 		// Standalone CurriculumSelectorPane users retain both sections. The application
-		// composition root may later detach CLASSIFICATION into the larger capture
-		// workspace without moving Working Subject with it.
+		// composition root may detach Classification without moving Working Subject.
 		getChildren().addAll(subjectContext, classificationContext);
 	}
 
@@ -459,16 +463,6 @@ public class CurriculumSelectorPane extends VBox {
 		Label heading = new Label(text);
 		heading.setStyle(HEADING_STYLE);
 		return heading;
-	}
-
-	private GridPane createSubjectGrid() {
-		GridPane grid = createTwoColumnGrid();
-
-		// Subject controls the entire working context, including available Exams and
-		// both Question and Answer work queues.
-		grid.addRow(0, new Label("Subject"), subjectBox);
-		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
-		return grid;
 	}
 
 	private GridPane createTwoColumnGrid() {

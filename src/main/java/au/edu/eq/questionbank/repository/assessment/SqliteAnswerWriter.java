@@ -127,6 +127,7 @@ public final class SqliteAnswerWriter {
 						SELECT
 						    af.id AS answer_file_id,
 						    af.answer_file_name,
+						    af.contains_answer_explanations,
 						    sd.id AS source_document_id,
 						    sd.relative_path,
 						    sd.content_sha256
@@ -140,12 +141,13 @@ public final class SqliteAnswerWriter {
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
 
-					// Reconstructed AnswerFiles must retain the persisted byte identity of
-					// their managed source document.
+					// Reconstructed AnswerFiles retain both their source-byte identity and
+					// their explicitly reviewed explanation metadata.
 					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 							result.getString("relative_path"), result.getString("content_sha256"));
-					answerFiles.add(new AnswerFile(result.getLong("answer_file_id"), exam,
-							result.getString("answer_file_name"), sourceDocument));
+					answerFiles.add(
+							new AnswerFile(result.getLong("answer_file_id"), exam, result.getString("answer_file_name"),
+									sourceDocument, result.getBoolean("contains_answer_explanations")));
 				}
 			}
 		}
@@ -377,6 +379,49 @@ public final class SqliteAnswerWriter {
 	}
 
 	/**
+	 * Updates the descriptive explanation metadata for one persisted AnswerFile.
+	 * <p>
+	 * This does not add, remove or reassign an Exam asset, so it remains a
+	 * non-structural metadata correction even when the Exam is complete.
+	 *
+	 * @param answerFile                 persisted AnswerFile to update
+	 * @param containsAnswerExplanations whether explanatory answer material is
+	 *                                   present
+	 * @return updated AnswerFile with the same persistent identity
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if {@code answerFile} is {@code null}
+	 * @throws IllegalArgumentException if the AnswerFile does not exist for its
+	 *                                  Exam
+	 */
+	public AnswerFile setContainsAnswerExplanations(AnswerFile answerFile, boolean containsAnswerExplanations)
+			throws SQLException {
+		if (answerFile == null) {
+			throw new NullPointerException("answerFile");
+		}
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE answer_files
+						SET contains_answer_explanations = ?
+						WHERE id = ?
+						  AND exam_id = ?
+						""")) {
+
+			// SQLite stores the Java boolean as the schema's constrained 0/1 value.
+			statement.setBoolean(1, containsAnswerExplanations);
+			statement.setLong(2, answerFile.getId());
+			statement.setLong(3, answerFile.getExam().getId());
+			if (statement.executeUpdate() != 1) {
+				throw new IllegalArgumentException("Answer file does not exist for its stored Exam");
+			}
+		}
+
+		// The source asset itself is unchanged; expose only the revised descriptive
+		// metadata through a new immutable domain object.
+		return new AnswerFile(answerFile.getId(), answerFile.getExam(), answerFile.getName(),
+				answerFile.getSourceDocument(), containsAnswerExplanations);
+	}
+
+	/**
 	 * Replaces an existing answer's text and ordered regions while preserving its
 	 * persistent identity and question ownership.
 	 *
@@ -501,7 +546,10 @@ public final class SqliteAnswerWriter {
 	private AnswerFile findAnswerFile(Connection connection, Exam exam, String name, SourceDocument sourceDocument)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT id, source_document_id
+				SELECT
+				    id,
+				    source_document_id,
+				    contains_answer_explanations
 				FROM answer_files
 				WHERE exam_id = ?
 				  AND answer_file_name = ?
@@ -516,7 +564,11 @@ public final class SqliteAnswerWriter {
 				if (storedSourceDocumentId != sourceDocument.getId()) {
 					throw new SQLException("Existing answer file refers to a different source document");
 				}
-				return new AnswerFile(result.getLong("id"), exam, name, sourceDocument);
+
+				// Reusing an existing AnswerFile must preserve its reviewed explanation
+				// metadata rather than reverting to the constructor default.
+				return new AnswerFile(result.getLong("id"), exam, name, sourceDocument,
+						result.getBoolean("contains_answer_explanations"));
 			}
 		}
 	}
@@ -528,6 +580,7 @@ public final class SqliteAnswerWriter {
 				    af.id AS answer_file_id,
 				    af.exam_id AS answer_file_exam_id,
 				    af.answer_file_name,
+				    af.contains_answer_explanations,
 				    sd.id AS source_document_id,
 				    sd.relative_path,
 				    sd.content_sha256
@@ -560,10 +613,12 @@ public final class SqliteAnswerWriter {
 				}
 
 				// Preserve content identity when an assigned AnswerFile is restored.
+				// Preserve source identity and reviewed AnswerFile metadata when the booklet
+				// assignment is reconstructed.
 				SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 						result.getString("relative_path"), result.getString("content_sha256"));
 				return new AnswerFile(answerFileId, booklet.getExam(), result.getString("answer_file_name"),
-						sourceDocument);
+						sourceDocument, result.getBoolean("contains_answer_explanations"));
 			}
 		}
 	}
@@ -583,7 +638,10 @@ public final class SqliteAnswerWriter {
 				if (!result.next()) {
 					throw new SQLException("Answer file insert did not return an id");
 				}
-				return new AnswerFile(result.getLong("id"), exam, name, sourceDocument);
+
+				// New AnswerFiles begin conservatively with no explanation metadata until the
+				// user explicitly reviews the asset.
+				return new AnswerFile(result.getLong("id"), exam, name, sourceDocument, false);
 			}
 		}
 	}

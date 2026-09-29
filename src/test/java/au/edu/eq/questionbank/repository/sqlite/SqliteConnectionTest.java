@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -711,6 +712,74 @@ class SqliteConnectionTest {
 			assertTrue(result.next());
 			assertEquals(4, result.getLong("id"));
 			assertNull(result.getObject("answer_file_id"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
+	void migratesVersion18AnswerFilesToNoRecordedExplanations() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-eighteen-answer-file.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Construct the previous supported schema exactly through version 18.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			for (int version = 1; version < 18; version++) {
+				String migration = "/db/migration-v%02d-to-v%02d.sql".formatted(version, version + 1);
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load(migration));
+			}
+			try (Statement statement = connection.createStatement()) {
+
+				// Create the minimum persisted Exam structure required for an authentic
+				// pre-version-19 AnswerFile.
+				statement.execute("""
+						INSERT INTO subjects
+						    (id, subject_name)
+						VALUES
+						    (1, 'Chemistry')
+						""");
+				statement.execute("""
+						INSERT INTO exam_providers
+						    (id, provider_name)
+						VALUES
+						    (1, 'QCAA')
+						""");
+				statement.execute("""
+						INSERT INTO exams
+						    (id, subject_id, provider_id, exam_year, exam_name)
+						VALUES
+						    (1, 1, 1, 2025, 'External Assessment')
+						""");
+				statement.execute("""
+						INSERT INTO source_documents
+						    (id, relative_path)
+						VALUES
+						    (1, 'Chemistry/2025/answers.pdf')
+						""");
+				statement.execute("""
+						INSERT INTO answer_files
+						    (id, exam_id, source_document_id, answer_file_name)
+						VALUES
+						    (1, 1, 1, 'Marking guide')
+						""");
+			}
+			connection.commit();
+		}
+		assertEquals(18, database.schemaVersion());
+		database.initialiseSchema();
+		assertEquals(19, database.schemaVersion());
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT contains_answer_explanations
+						FROM answer_files
+						WHERE id = 1
+						""")) {
+			assertTrue(result.next());
+
+			// Migration cannot infer whether historical marking material contains worked
+			// explanations, so every existing AnswerFile begins conservatively at false.
+			assertEquals(0, result.getInt("contains_answer_explanations"));
 			assertFalse(result.next());
 		}
 	}
@@ -1585,6 +1654,61 @@ class SqliteConnectionTest {
 			assertEquals(2, result.getInt("version"));
 			assertFalse(result.next());
 		}
+	}
+
+	@Test
+	void rollsBackVersion19MigrationWhenVersionUpdateFails() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("version-nineteen-rollback.db"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			// Build an authentic version-18 database by applying the same migration
+			// scripts used by normal application startup.
+			SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/schema-v01.sql"));
+			for (int version = 1; version < 18; version++) {
+				String migration = "/db/migration-v%02d-to-v%02d.sql".formatted(version, version + 1);
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load(migration));
+			}
+
+			// Force the final version update to fail after the version-19 migration has
+			// attempted to add its AnswerFile metadata column.
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("""
+						CREATE TRIGGER reject_version_nineteen
+						BEFORE UPDATE ON schema_version
+						WHEN OLD.version = 18
+						BEGIN
+						    SELECT RAISE(ABORT, 'version nineteen rejected');
+						END
+						""");
+			}
+			connection.commit();
+		}
+		assertEquals(18, database.schemaVersion());
+
+		// The migration performs ALTER TABLE before updating schema_version. Failure of
+		// that final update must roll the complete migration transaction back.
+		assertThrows(SQLException.class, database::initialiseSchema);
+		assertEquals(18, database.schemaVersion());
+		boolean hasExplanationColumn = false;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(answer_files)")) {
+			while (result.next()) {
+				if ("contains_answer_explanations".equals(result.getString("name"))) {
+					hasExplanationColumn = true;
+					break;
+				}
+			}
+		}
+
+		// A failed migration must not leave a version-19 physical column behind in a
+		// database that still identifies itself as version 18.
+		assertFalse(hasExplanationColumn);
+
+		// The rolled-back database must remain a valid version-18 database rather than
+		// becoming structurally inconsistent.
+		assertDoesNotThrow(database::verifySchema);
 	}
 
 	@Test

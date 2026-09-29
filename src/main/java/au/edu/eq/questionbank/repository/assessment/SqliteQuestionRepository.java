@@ -423,6 +423,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				    af.id AS answer_file_id,
 				    af.exam_id AS answer_file_exam_id,
 				    af.answer_file_name,
+				    af.contains_answer_explanations,
 				    sd.id AS source_document_id,
 				    sd.relative_path,
 				    sd.content_sha256
@@ -442,8 +443,12 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 					}
 					SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 							result.getString("relative_path"), result.getString("content_sha256"));
+
+					// Question reconstruction must expose the same AnswerFile metadata as
+					// direct Exam/asset lookup.
 					AnswerFile answerFile = new AnswerFile(result.getLong("answer_file_id"), exam,
-							result.getString("answer_file_name"), sourceDocument);
+							result.getString("answer_file_name"), sourceDocument,
+							result.getBoolean("contains_answer_explanations"));
 					AnswerRegion region = new AnswerRegion(answerFile, result.getInt("page_number"),
 							result.getDouble("x"), result.getDouble("y"), result.getDouble("width"),
 							result.getDouble("height"));

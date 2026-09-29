@@ -308,6 +308,10 @@ class DefaultRestoreExecutorTest {
 					""");
 			statement.execute("DROP TABLE question_output_exclusions");
 
+			// Version 19 added AnswerFile explanation metadata, which did not exist in the
+			// version-11 backup being simulated.
+			statement.execute("ALTER TABLE answer_files DROP COLUMN contains_answer_explanations");
+
 			// Version 18 added Exam-level asset expectations, which did not exist in v11.
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");

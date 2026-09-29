@@ -51,6 +51,43 @@ import javafx.stage.Stage;
 class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
+	void acceptedQuestionContentShowsSharedContextBeforeQuestionParts(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+
+		// Begin with a source rectangle and then classify that rectangle as the
+		// multipart Question's Shared Context.
+		dragRegionOnDisplayedPage(robot);
+		robot.interact(() -> {
+			questionCode.setText("24a");
+			marks.setText("2");
+		});
+		fireControl(robot, sharedContext);
+		fireControl(robot, "#add-question-region");
+		WaitForAsyncUtils.waitForFxEvents();
+		javafx.scene.layout.VBox previewBox = field(questionCapturePane(), "regionPreviewBox",
+				javafx.scene.layout.VBox.class);
+
+		// Shared Context is visible immediately but deliberately does not increment the
+		// Question-specific content-part count.
+		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals(1, previewBox.getChildren().size());
+		assertEquals("question-shared-context-preview", previewBox.getChildren().getFirst().getId());
+
+		// Add the actual Question body. Shared Context must remain first while the
+		// Question region remains Part 1 of the editable content sequence.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals(2, previewBox.getChildren().size());
+		assertEquals("question-shared-context-preview", previewBox.getChildren().get(0).getId());
+		assertEquals("question-content-part-0", previewBox.getChildren().get(1).getId());
+	}
+
+	@Test
 	void activeSharedContextCaptureBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		@SuppressWarnings("unchecked")

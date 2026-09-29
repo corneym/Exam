@@ -282,6 +282,7 @@ class SqliteDatabaseInspectionTest {
 					    (1, 0, 1, 4, 0.10, 0.20, 0.70, 0.20),
 					    (1, 1, 1, 5, 0.10, 0.10, 0.70, 0.25)
 					""");
+			statement.execute("ALTER TABLE answer_files DROP COLUMN contains_answer_explanations");
 
 			// Version 18 added Exam-level expected asset counts.
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
@@ -338,6 +339,7 @@ class SqliteDatabaseInspectionTest {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("ALTER TABLE answer_files DROP COLUMN contains_answer_explanations");
 
 			// Version 18 added Exam-level expected asset counts.
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
@@ -467,6 +469,7 @@ class SqliteDatabaseInspectionTest {
 					INSERT INTO source_documents (id, relative_path)
 					VALUES (1, 'Chemistry/QCAA/2025/paper1.pdf')
 					""");
+			statement.execute("ALTER TABLE answer_files DROP COLUMN contains_answer_explanations");
 
 			// Version 18 added Exam-level expected asset counts.
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
@@ -559,6 +562,7 @@ class SqliteDatabaseInspectionTest {
 			// Manufacture the exact version-16 schema from the current latest schema.
 			// Remove later additions in reverse migration order before changing the
 			// recorded version.
+			statement.execute("ALTER TABLE answer_files DROP COLUMN contains_answer_explanations");
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
 			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
@@ -597,6 +601,7 @@ class SqliteDatabaseInspectionTest {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Manufacture the exact immediately preceding schema from the current one.
+			statement.execute("ALTER TABLE answer_files DROP COLUMN contains_answer_explanations");
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
 			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
 			statement.execute("UPDATE schema_version SET version = 17");
@@ -604,7 +609,7 @@ class SqliteDatabaseInspectionTest {
 		assertEquals(17, database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 		database.initialiseSchema();
-		assertEquals(18, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 		assertDoesNotThrow(database::verifyIntegrity);
 		boolean foundQuestionBookletExpectation = false;

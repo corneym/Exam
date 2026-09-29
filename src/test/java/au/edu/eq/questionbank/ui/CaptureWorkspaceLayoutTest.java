@@ -57,11 +57,50 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void acceptedQuestionContentKeepsPreferredHeightAcrossWorkspaceRelayout(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		robot.interact(() -> questionCapturePane().acceptSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.70, 0.05)));
+		fireControl(robot, "#add-question-region");
+		WaitForAsyncUtils.waitForFxEvents();
+		javafx.scene.control.ScrollPane regionsPane = field(questionCapturePane(), "regionsScrollPane",
+				javafx.scene.control.ScrollPane.class);
+		javafx.scene.layout.VBox regionList = field(questionCapturePane(), "regionPreviewBox",
+				javafx.scene.layout.VBox.class);
+
+		// A small accepted region must immediately establish a useful content-derived
+		// preferred height rather than collapsing to a few pixels.
+		double expectedHeight = Math.min(300.0, regionList.getLayoutBounds().getHeight() + 4.0);
+		assertTrue(expectedHeight > 4.0, "Accepted Question content must have a measurable preferred height");
+		assertEquals(expectedHeight, regionsPane.getPrefHeight(), 1.0);
+		assertEquals(regionsPane.prefHeight(regionsPane.getWidth()), regionsPane.minHeight(regionsPane.getWidth()),
+				1.0);
+		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
+				javafx.scene.control.SplitPane.class);
+		robot.interact(() -> {
+
+			// Force the horizontal workspace to perform the relayout that previously
+			// exposed the collapsed Content Parts viewport.
+			splitPane.setDividerPosition(0, 0.25);
+			primaryStage.getScene().getRoot().applyCss();
+			primaryStage.getScene().getRoot().layout();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		double requiredHeight = regionsPane.minHeight(regionsPane.getWidth());
+		assertTrue(regionsPane.getHeight() + 1.0 >= requiredHeight,
+				"Workspace relayout must not shrink accepted Question content below its preferred height");
+	}
+
+	@Test
 	void activeExamBookletIsVisibleAndCanReturnToExamSetup(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Label activeExam = lookup(robot, "#active-exam-booklet", Label.class);
 		Node activeContext = lookup(robot, "#active-exam-context", Node.class);
 		Button changeExam = lookup(robot, "#change-exam-assets", Button.class);
+
+		// The compact action names the operation rather than repeating the Assets
+		// terminology already represented by Exam Setup.
+		assertEquals("Change Exam", changeExam.getText());
 
 		// The visible capture context identifies the authoritative Exam and booklet
 		// independently of the current curriculum classification.
@@ -391,6 +430,17 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	@Test
+	void workingSubjectContextUsesOnlyTheAuthoritativeSelector(FxRobot robot) {
+		ComboBox<?> subject = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Parent workingSubjectContext = lookup(robot, "#working-subject-context", Parent.class);
+
+		// The authoritative ComboBox carries the Working Subject value by itself; the
+		// former heading and duplicate field label must not consume additional rows.
+		assertEquals(1, workingSubjectContext.getChildrenUnmodifiable().size());
+		assertEquals(subject, workingSubjectContext.getChildrenUnmodifiable().getFirst());
 	}
 
 	@Test

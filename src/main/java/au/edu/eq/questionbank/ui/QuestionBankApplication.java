@@ -165,6 +165,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
@@ -217,7 +218,7 @@ public class QuestionBankApplication extends Application {
 	private SqliteExamWriter examWriter;
 	private ExamBooklet inspectedBooklet;
 	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
-	private final Button changeExamAssetsButton = new Button("Change Exam / Assets...");
+	private final Button changeExamAssetsButton = new Button("Change Exam");
 
 	// Track the accepted workspace Subject separately so a rejected ComboBox change
 	// can restore the previous value without changing either capture queue.
@@ -625,6 +626,15 @@ public class QuestionBankApplication extends Application {
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
 		primaryStage.setOnCloseRequest(event -> handleCloseRequest(event, primaryStage));
+
+		// The system clipboard has no JavaFX change notification. Returning focus to
+		// the application is the reliable point at which a Snipping Tool capture can
+		// make Add From Clipboard newly available.
+		primaryStage.focusedProperty().addListener((_, _, focused) -> {
+			if (focused && questionCapturePane != null) {
+				questionCapturePane.refreshClipboardImageAvailability();
+			}
+		});
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
 		examSetupDialog = new ExamSetupDialog(primaryStage, examSetupPane, () -> showExamImportFromSetup(config));
@@ -834,6 +844,12 @@ public class QuestionBankApplication extends Application {
 		activeExamBookletLabel.setMaxWidth(Double.MAX_VALUE);
 		changeExamAssetsButton.setId("change-exam-assets");
 		changeExamAssetsButton.setDisable(workingSubject == null);
+
+		// The shortened action must remain fully readable when the capture column is
+		// narrowed by the workspace divider.// The shortened action must retain its
+		// preferred width when the capture column
+		// is narrowed by the workspace divider.
+		changeExamAssetsButton.setMinWidth(Region.USE_PREF_SIZE);
 		changeExamAssetsButton.setOnAction(_ -> showExamSetup());
 		VBox context = new VBox(6.0, heading, activeExamBookletLabel, changeExamAssetsButton);
 		context.setId("active-exam-context");
