@@ -286,13 +286,21 @@ public class CurriculumSelectorPane extends VBox {
 
 	private void buildContent() {
 
-		// The Subject ComboBox is already the authoritative application-level
-		// selector, so additional WORKING SUBJECT and Subject labels add no
-		// information.
-		VBox subjectContext = new VBox(subjectBox);
+		// Working Subject is a single compact row. The bold Subject label identifies
+		// the authoritative application-level selector without adding a heading row.
+		Label subjectLabel = new Label("Subject");
+		subjectLabel.setId("working-subject-label");
+		subjectLabel.setStyle(HEADING_STYLE);
+
+		GridPane subjectRow = createTwoColumnGrid();
+		subjectRow.addRow(0, subjectLabel, subjectBox);
+		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
+
+		VBox subjectContext = new VBox(subjectRow);
 		subjectContext.setId("working-subject-context");
 		subjectContext.setPadding(PANEL_PADDING);
 		subjectContext.setStyle(BORDER_STYLE);
+
 		classificationContext = new VBox(ROW_GAP, createSectionHeading("Classification"), createClassificationGrid());
 		classificationContext.setId("classification-context");
 		classificationContext.setPadding(PANEL_PADDING);
@@ -463,6 +471,17 @@ public class CurriculumSelectorPane extends VBox {
 		Label heading = new Label(text);
 		heading.setStyle(HEADING_STYLE);
 		return heading;
+	}
+
+	private GridPane createSubjectGrid() {
+		GridPane grid = createTwoColumnGrid();
+
+		// One compact row identifies the authoritative application-level Subject
+		// without a second WORKING SUBJECT heading above it.
+		grid.addRow(0, new Label("Subject"), subjectBox);
+		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
+
+		return grid;
 	}
 
 	private GridPane createTwoColumnGrid() {

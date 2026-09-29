@@ -165,6 +165,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
@@ -837,24 +838,36 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private VBox createActiveExamContextPane() {
-		Label heading = new Label("ACTIVE EXAM / BOOKLET");
+		Label heading = new Label("Active Exam / Booklet");
 		heading.setStyle("-fx-font-weight: bold;");
+
 		activeExamBookletLabel.setId("active-exam-booklet");
 		activeExamBookletLabel.setWrapText(true);
 		activeExamBookletLabel.setMaxWidth(Double.MAX_VALUE);
+
 		changeExamAssetsButton.setId("change-exam-assets");
+		changeExamAssetsButton.setText("Change Exam");
 		changeExamAssetsButton.setDisable(workingSubject == null);
 
-		// The shortened action must remain fully readable when the capture column is
-		// narrowed by the workspace divider.// The shortened action must retain its
-		// preferred width when the capture column
-		// is narrowed by the workspace divider.
+		// The action must remain fully readable rather than being compressed when the
+		// left workspace is narrow.
 		changeExamAssetsButton.setMinWidth(Region.USE_PREF_SIZE);
 		changeExamAssetsButton.setOnAction(_ -> showExamSetup());
-		VBox context = new VBox(6.0, heading, activeExamBookletLabel, changeExamAssetsButton);
+
+		Region spacer = new javafx.scene.layout.Region();
+
+		// Heading and action share the first row. The spacer pushes Change Exam to the
+		// right without competing with the longer Exam/booklet description below.
+		HBox headerRow = new javafx.scene.layout.HBox(6.0, heading, spacer, changeExamAssetsButton);
+		HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
+
+		// The Exam/booklet identity occupies the complete second row so it can wrap
+		// naturally without being squeezed by the action button.
+		VBox context = new VBox(4.0, headerRow, activeExamBookletLabel);
 		context.setId("active-exam-context");
 		context.setPadding(new Insets(8));
 		context.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
+
 		return context;
 	}
 

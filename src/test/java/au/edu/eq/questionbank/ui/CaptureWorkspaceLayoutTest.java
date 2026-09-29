@@ -20,6 +20,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -110,6 +111,26 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]", activeExam.getText());
 		assertTrue(isDescendantOf(activeExam, activeContext));
 		assertFalse(changeExam.isDisabled());
+		assertEquals("Change Exam", changeExam.getText());
+
+		VBox activeBox = (VBox) activeContext;
+
+		// Active Exam must use exactly two rows: heading/action followed by the
+		// full-width Exam/booklet description.
+		assertEquals(2, activeBox.getChildren().size());
+
+		Node headerRow = activeBox.getChildren().getFirst();
+		assertTrue(headerRow instanceof javafx.scene.layout.HBox);
+
+		// Change Exam belongs beside the heading on row one.
+		assertEquals(headerRow, changeExam.getParent());
+
+		// The potentially long Exam/booklet identity owns row two by itself.
+		assertEquals(activeBox, activeExam.getParent());
+		assertEquals(activeExam, activeBox.getChildren().get(1));
+
+		assertTrue(((Parent) headerRow).getChildrenUnmodifiable().stream()
+				.anyMatch(node -> node instanceof Label label && "Active Exam / Booklet".equals(label.getText())));
 		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
 
 		// The visible context action returns directly to the ordinary Exam Setup /
@@ -433,14 +454,26 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void workingSubjectContextUsesOnlyTheAuthoritativeSelector(FxRobot robot) {
+	void workingSubjectContextUsesSingleSubjectRow(FxRobot robot) {
 		ComboBox<?> subject = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Label subjectLabel = lookup(robot, "#working-subject-label", Label.class);
 		Parent workingSubjectContext = lookup(robot, "#working-subject-context", Parent.class);
 
-		// The authoritative ComboBox carries the Working Subject value by itself; the
-		// former heading and duplicate field label must not consume additional rows.
+		// Working Subject consists of exactly one layout row rather than a separate
+		// heading followed by a second Subject row.
 		assertEquals(1, workingSubjectContext.getChildrenUnmodifiable().size());
-		assertEquals(subject, workingSubjectContext.getChildrenUnmodifiable().getFirst());
+
+		Node subjectRow = workingSubjectContext.getChildrenUnmodifiable().getFirst();
+
+		assertTrue(subjectRow instanceof javafx.scene.layout.GridPane);
+		assertEquals(subjectRow, subject.getParent());
+		assertEquals(subjectRow, subjectLabel.getParent());
+		assertEquals("Subject", subjectLabel.getText());
+
+		// Subject is the visual heading for this compact application-level context,
+		// so it must use the same bold treatment as other section headings.
+		primaryStage.getScene().getRoot().applyCss();
+		assertTrue(subjectLabel.getFont().getStyle().contains("Bold"));
 	}
 
 	@Test

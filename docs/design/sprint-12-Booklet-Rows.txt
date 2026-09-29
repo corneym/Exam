@@ -1,0 +1,67 @@
+QUESTION BOOKLET ROW
+
+┌──────────────────────────────────────────────────────────────┐
+│ Paper 1                                                      │
+│ [paper1.pdf]                                  [ View ]       │
+│                                                              │
+│ Name       [ Paper 1                       ▼]                │
+│ Type       (●) MCQ  ( ) Written Response  ( ) Both           │
+│ Questions  [ 20 ]                                            │
+│ Answer     [ Marking Guide                ▼]                 │
+└──────────────────────────────────────────────────────────────┘
+
+[ No Answer Booklet ]
+[ Marking Guide ]
+[ Worked Solutions ]
+[ ... ]
+
+ANSWER BOOKLET ROW
+
+┌──────────────────────────────────────────────────────────────┐
+│ Marking Guide                                                │
+│ [marking-guide.pdf]                            [ View ]      │
+│                                                              │
+│ ☑ Contains answer explanations                              │
+└──────────────────────────────────────────────────────────────┘
+
+For a completed Exam, the top of Exam mode could become:
+EXAM
+
+[ 2025 QCAA External Assessment ▼ ]          State: COMPLETE
+
+                                             [ Reactivate ]
+
+
+For an active Exam:											 
+EXAM
+
+[ 2025 QCAA External Assessment ▼ ]          State: ACTIVE
+
+                                      [ Mark Exam Complete ]
+									  
+									  
+									  The intended mode transition is:
+QUESTION CAPTURE MODE
+        │
+        │ Manage Exam
+        ▼
+EXAM / ASSETS MODE
+        │
+        │ Use Selected Booklet for Capture
+        ▼
+QUESTION CAPTURE MODE
+
+And for a new Exam:
+QUESTION CAPTURE MODE
+        │
+        │ Add New Exam
+        ▼
+NEW EXAM MODE
+        │
+        │ Save Exam
+        ▼
+EXAM / ASSETS MODE
+        │
+        │ Use Selected Booklet for Capture
+        ▼
+QUESTION CAPTURE MODE
