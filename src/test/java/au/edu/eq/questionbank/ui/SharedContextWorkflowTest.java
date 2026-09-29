@@ -116,14 +116,17 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
+
+		// Search inherits the authoritative application Working Subject and starts its
+		// current-syllabus search automatically.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+
+		// The captured Question must become available without a Search-local Subject
+		// selection before the split workflow is started.
+		ListView<Object> searchResults = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> searchResults.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == original.getId()));
 
 		// Select the Search UI result by its wrapped persistent Question identity.
 		selectSearchResult(robot, original.getId());
@@ -414,12 +417,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		waitForDialogShowing(robot, "Search Questions");
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Select the persisted Question in the currently showing Search dialog.
 		selectSearchResult(robot, question.getId());
@@ -486,14 +483,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Select the Search UI result by its wrapped persistent Question identity.
 		selectSearchResult(robot, question.getId());
@@ -661,12 +650,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Search is a reusable Dialog, so retained controls from a hidden instance do
 		// not prove that the modal Search window is actually showing.
 		waitForDialogShowing(robot, "Search Questions");
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Select the Search UI result by its wrapped persistent Question identity.
 		selectSearchResult(robot, original.getId());
@@ -797,12 +780,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		waitForDialogShowing(robot, "Search Questions");
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Selection is scoped to the currently showing Search dialog.
 		selectSearchResult(robot, original.getId());
@@ -911,12 +888,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		waitForDialogShowing(robot, "Search Questions");
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Select the required Question in the showing Search dialog.
 		selectSearchResult(robot, question.getId());

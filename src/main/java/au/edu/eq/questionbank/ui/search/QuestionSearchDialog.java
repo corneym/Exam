@@ -7,6 +7,7 @@ import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.assessment.QuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
@@ -53,6 +54,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	 * Creates a question-search dialog owned by the supplied window.
 	 *
 	 * @param owner                         dialog owner
+	 * @param workingSubject                authoritative workspace Working Subject
 	 * @param curriculumRepository          current curriculum hierarchy lookup
 	 * @param retrievalService              curriculum-aware Question retrieval
 	 * @param allQuestionsSupplier          complete stored Question retrieval
@@ -63,7 +65,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	 *                                      classification-only Question update
 	 * @throws NullPointerException if any argument is {@code null}
 	 */
-	public QuestionSearchDialog(Window owner, CurriculumRepository curriculumRepository,
+	public QuestionSearchDialog(Window owner, Subject workingSubject, CurriculumRepository curriculumRepository,
 			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
 			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
 			BiFunction<Long, CurriculumNode, Question> classificationUpdater) {
@@ -72,7 +74,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 		// The Pane owns Search state and background retrieval. The Dialog owns modal
 		// decisions, persistence callbacks and edit-workflow actions.
-		searchPane = new QuestionSearchPane(Objects.requireNonNull(curriculumRepository, "curriculumRepository"),
+		searchPane = new QuestionSearchPane(Objects.requireNonNull(workingSubject, "workingSubject"),
+				Objects.requireNonNull(curriculumRepository, "curriculumRepository"),
 				Objects.requireNonNull(retrievalService, "retrievalService"),
 				Objects.requireNonNull(allQuestionsSupplier, "allQuestionsSupplier"),
 				Objects.requireNonNull(previewService, "previewService"),

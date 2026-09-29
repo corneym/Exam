@@ -2644,10 +2644,10 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
 				database);
 
-		// Search keeps curriculum-derived applicability separate from the persisted
-		// Question-specific exclusions that control revision output.
-		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, curriculumRepository, retrievalService,
-				questionRepository::findAll, previewService, outputApplicabilityRepository,
+		// Search inherits the authoritative workspace Working Subject. It does not
+		// establish a separate application-level Subject selection.
+		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, workingSubject, curriculumRepository,
+				retrievalService, questionRepository::findAll, previewService, outputApplicabilityRepository,
 				questionRepository::updateClassification);
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}

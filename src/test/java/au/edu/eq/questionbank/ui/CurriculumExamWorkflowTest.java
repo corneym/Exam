@@ -256,18 +256,15 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
 
-		// Search populates its curriculum controls asynchronously. Wait for the
-		// required Subject before retrieving it from the ComboBox.
+		// Search inherits the application-level Working Subject. The Search dialog
+		// therefore has no independent Subject-selection step.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
 		ListView<Object> results = listView(robot, "#question-search-results");
+
+		// The automatically started Working Subject search must expose the captured
+		// Question before its Exam metadata can be corrected.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId()));
 

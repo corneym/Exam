@@ -26,7 +26,6 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
-import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
@@ -265,15 +264,15 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
+
+		// Search inherits the application-level Working Subject. Wait for the real
+		// Search results control rather than for a redundant Subject selector.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
 		ListView<Object> results = listView(robot, "#question-search-results");
+
+		// The Working Subject search starts automatically and must expose the persisted
+		// metadata-only Question without further Subject interaction.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == metadataOnlyQuestion.getId()));
 
@@ -334,15 +333,15 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
+
+		// Search inherits the application-level Working Subject. Wait for its results
+		// control rather than for the removed Search-local Subject selector.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
 		ListView<Object> results = listView(robot, "#question-search-results");
+
+		// The Working Subject search starts automatically and must expose the captured
+		// Question before the edit workflow continues.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId()));
 		Object selectedResult = results.getItems().stream()
@@ -411,15 +410,15 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
+
+		// Search inherits the application-level Working Subject and begins searching
+		// without a second Subject-selection action.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
 		ListView<Object> results = listView(robot, "#question-search-results");
+
+		// Wait for the fully reconstructed persisted Question, including its Answer,
+		// before entering the split workflow.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == original.getId()));
 		Object selectedResult = results.getItems().stream()

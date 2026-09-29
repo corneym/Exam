@@ -15,6 +15,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
@@ -132,7 +133,11 @@ class QuestionSearchDialogTest {
 	private QuestionSearchDialog extracted(InMemoryCurriculumRepository curriculumRepository,
 			QuestionRetrievalService retrievalService, QuestionPreviewService previewService,
 			QuestionSearchDialog[] dialogHolder) {
-		return dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
+		Subject workingSubject = new Subject(1, "Chemistry");
+
+		// Geometry behaviour is independent of curriculum contents, but the production
+		// Dialog now always receives an authoritative workspace Working Subject.
+		return dialogHolder[0] = new QuestionSearchDialog(stage, workingSubject, curriculumRepository, retrievalService,
 				() -> List.of(), previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 
 					// Geometry tests must never attempt Question persistence.
@@ -143,8 +148,12 @@ class QuestionSearchDialogTest {
 	private void extracted(InMemoryCurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService,
 			QuestionPreviewService previewService, QuestionSearchDialog[] dialogHolder, Rectangle2D[] screenBounds) {
 		screenBounds[0] = Screen.getPrimary().getVisualBounds();
-		dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService, () -> List.of(),
-				previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
+		Subject workingSubject = new Subject(1, "Chemistry");
+
+		// Geometry behaviour is independent of curriculum contents, but production
+		// Search always receives its workspace Working Subject.
+		dialogHolder[0] = new QuestionSearchDialog(stage, workingSubject, curriculumRepository, retrievalService,
+				() -> List.of(), previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 
 					// Geometry tests must never attempt Question persistence.
 					throw new AssertionError("Classification update was not expected");
