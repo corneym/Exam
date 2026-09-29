@@ -32,7 +32,6 @@ import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextR
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
-import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
@@ -888,8 +887,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
-		CurriculumSelectorPane classificationPane = field(application, "curriculumSelectorPane",
-				CurriculumSelectorPane.class);
+		Node classificationContext = lookup(robot, "#classification-context", Node.class);
 
 		// The linked Question remains visible as read-only context.
 		assertEquals("64a", questionCode.getText());
@@ -899,7 +897,10 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(marks.isDisabled());
 		assertTrue(writtenResponse.isDisabled());
 		assertClassificationControlShows(robot, classification);
-		assertTrue(classificationPane.isDisabled());
+
+		// Shared Context correction makes Question classification read-only without
+		// disabling the application-level Working Subject container itself.
+		assertTrue(classificationContext.isDisabled());
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText()
 				.contains("Recapturing shared context used by Question 64a"));
 

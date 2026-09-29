@@ -225,6 +225,11 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
 		fireControl(robot, "#confirm-exam-details");
 		WaitForAsyncUtils.waitForFxEvents();
+
+		// Reopening establishes the booklet target but deliberately leaves Question
+		// capture idle. Enter new-Question capture before checking the booklet-format
+		// policy that applies to the next newly captured Question.
+		fireControl(robot, "#capture-mode-new");
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 
 		// The persisted MCQ-only booklet fixes the next genuinely new Question.

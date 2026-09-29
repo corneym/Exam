@@ -13,7 +13,6 @@ import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
@@ -66,7 +65,6 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
-import javafx.util.StringConverter;
 
 /**
  * Owns the question-capture controls, pending regions, previews, validation,
@@ -851,6 +849,30 @@ public final class QuestionCapturePane extends VBox {
 		clearImportedQuestionSelection();
 	}
 
+	private void activateImportedQuestionControls(Question question) {
+
+		// Selecting a queued imported/incomplete Question explicitly activates
+		// Question-side work without entering ordinary new-Question capture.
+		newQuestionCaptureActive = false;
+		questionWorkBox.setDisable(false);
+		questionCodeField.setText(question.getQuestionCode());
+		marksField.setText(Integer.toString(question.getMarks()));
+		if (question.hasSharedContext()) {
+			sharedContextCapturePane.selectContext(question.getSharedContext());
+		}
+		curriculumSelectorPane.selectClassificationPath(question.getClassification());
+		curriculumSelectorPane.setClassificationControlsDisabled(false);
+		curriculumSelectorPane.setSyllabusContextLocked(true);
+		cancelQuestionEditButton.setVisible(false);
+		cancelQuestionEditButton.setManaged(false);
+		showImportedClassification(question);
+		questionCodeField.setDisable(true);
+		marksField.setDisable(true);
+		loadResponseType(question);
+		setResponseTypeDisabled(false);
+		refreshSharedContextControls();
+	}
+
 	private void addContentPreview(QuestionContentPart part, int contentIndex) {
 		ImageView imageView;
 		String description;
@@ -1156,6 +1178,15 @@ public final class QuestionCapturePane extends VBox {
 		resetQuestionEntry();
 	}
 
+	private void clearIndependentMcqSharedContextState() {
+
+		// Leaving independent MCQ handling clears its transient continuation state.
+		sharedContextCapturePane.cancelAutomaticContext();
+		mcqSharedContextCaptureActive = false;
+		mcqContinuationSelected = false;
+		inheritedMcqSharedContext = null;
+	}
+
 	private void clearRegions() {
 
 		// Clear both PDF-backed and pasted-image content.
@@ -1240,35 +1271,139 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void configureActions() {
-		addRegionButton.setOnAction(_ -> addCurrentRegion());
-		pasteImageButton.setOnAction(_ -> pasteClipboardImage());
-		saveQuestionButton.setOnAction(_ -> validateQuestionForSave());
-		questionCodeField.textProperty().addListener((_, _, newCode) -> handleQuestionCodeChanged(newCode));
-		marksField.textProperty().addListener((_, _, _) -> {
 
-			// Mixed-book inference may become decisive when marks change, but marks
-			// changes caused by selecting MCQ must not recursively change the selection.
-			if (!updatingResponseTypeSelection) {
-				applyAutomaticResponseType();
-			}
-			refreshSaveButtonState();
-		});
-		responseTypeGroup.selectedToggleProperty().addListener((_, _, _) -> handleResponseTypeChanged());
+		// Keep event wiring separate from the behaviour executed by those events.
+		configureQuestionContentActions();
+		configureQuestionMetadataListeners();
+		configureResponseTypeActions();
+		configureCaptureWorkflowActions();
+	}
 
-		// Action events represent an explicit user override. Programmatic defaults and
-		// inference use selectResponseType() and therefore do not set this flag.
-		multipleChoiceResponseButton.setOnAction(_ -> responseTypeManuallySelected = true);
-		writtenResponseButton.setOnAction(_ -> responseTypeManuallySelected = true);
-		curriculumSelectorPane.selectedClassificationProperty().addListener((_, _, _) -> refreshSaveButtonState());
-		firstRegionSharedContextCheckBox.selectedProperty()
-				.addListener((_, _, selected) -> handleSharedContextOptionChanged(selected.booleanValue()));
+	private void configureCaptureModeControls() {
+
+		// Ordinary Question capture is explicit rather than a default-selected mode.
+		newQuestionsModeButton.setId("capture-mode-new");
+		importedQuestionsModeButton.setId("capture-mode-imported");
+		newQuestionsModeButton.setTooltip(new Tooltip("Start capture of a new Question from the active Exam PDF."));
+		importedQuestionsModeButton.setTooltip(new Tooltip(
+				"Complete outstanding Question content or Shared Context work for an imported/incomplete Question."));
+		newQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
+		importedQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
+		newQuestionsModeButton.setToggleGroup(captureModeGroup);
+		importedQuestionsModeButton.setToggleGroup(captureModeGroup);
+
+		// Imported capture is operational work. Do not expose its entry point until
+		// the filtered queue proves that relevant work exists.
+		importedQuestionsModeButton.setVisible(false);
+		importedQuestionsModeButton.setManaged(false);
+
+		// Opening the application does not implicitly begin Question capture.
+		captureModeGroup.selectToggle(null);
+		legacyCaptureBox.setId("legacy-question-capture");
+	}
+
+	private void configureCaptureWorkflowActions() {
 		importedQuestionBox.setOnAction(_ -> checkImportedQuestionBox());
 		newQuestionsModeButton.setOnAction(_ -> showNewQuestionCapture());
 		importedQuestionsModeButton.setOnAction(_ -> showImportedQuestionCapture());
-		cancelQuestionEditButton.setOnAction(_ -> cancelQuestionEdit());
 	}
 
 	private void configureControls() {
+
+		// Keep configuration grouped by the UI concern being established. Runtime
+		// workflow state changes remain in the existing transition methods.
+		configureQuestionMetadataControls();
+		configureResponseTypeControls();
+		configureQuestionContentControls();
+		configureImportedQuestionControls();
+		configureCaptureModeControls();
+		configureSharedContextControls();
+		configureStatusAndEditControls();
+	}
+
+	private void configureImportedQuestionControls() {
+
+		// The selector itself appears only after imported/incomplete work has been
+		// entered through its conditional capture action.
+		importedQuestionBox.setId("imported-question");
+		importedQuestionBox.setPromptText("Select imported question");
+		importedQuestionBox.setTooltip(new Tooltip(
+				"Select an imported or incomplete Question requiring outstanding Question content or Shared Context work."));
+		importedQuestionBox.setMaxWidth(Double.MAX_VALUE);
+		importedQuestionBox.setConverter(new ImportedQuestionStringConverter());
+		importedQuestionBox.setOnShowing(_ -> showSelectedImportedQuestionDocument());
+		importedClassificationLabel.setId("imported-classification");
+		importedClassificationLabel.setWrapText(true);
+		importedClassificationLabel.setVisible(false);
+		importedClassificationLabel.setManaged(false);
+	}
+
+	private void configureImportedQuestionSavePresentation(Question question) {
+		if (question.isSourceCaptureRequired()) {
+			saveQuestionButton.setText("Save Recapture");
+
+			// Independent image content remains valid after PDF replacement; only the
+			// source-dependent PDF content must be captured again.
+			showCaptureHint("The Question PDF was replaced. Preserved image content is shown below; "
+					+ "capture at least one replacement PDF region.");
+			return;
+		}
+		if (question.getContentParts().isEmpty()) {
+			saveQuestionButton.setText("Save Question");
+			if (question.isSharedContextUnresolved()) {
+				hideCaptureHint();
+			} else {
+				showCaptureHint("Capture or paste the question content.");
+			}
+			return;
+		}
+		saveQuestionButton.setText("Save Resolution");
+		hideCaptureHint();
+	}
+
+	private void configurePane() {
+		setSpacing(COMPACT_SPACING);
+		setPadding(PANEL_PADDING);
+		setStyle(BORDER_STYLE);
+	}
+
+	private void configureQuestionContentActions() {
+		addRegionButton.setOnAction(_ -> addCurrentRegion());
+		pasteImageButton.setOnAction(_ -> pasteClipboardImage());
+		saveQuestionButton.setOnAction(_ -> validateQuestionForSave());
+		cancelQuestionEditButton.setOnAction(_ -> cancelQuestionEdit());
+	}
+
+	private void configureQuestionContentControls() {
+
+		// These controls create or persist ordinary Question content.
+		addRegionButton.setId("add-question-region");
+		addRegionButton.setTooltip(new Tooltip(
+				"Accept the current PDF selection as Question content; it is persisted when the Question is saved."));
+		pasteImageButton.setId("paste-question-image");
+		pasteImageButton.setTooltip(new Tooltip(
+				"Add clipboard image content to the Question; it is persisted when the Question is saved."));
+		saveQuestionButton.setId("save-question");
+		saveQuestionButton.setDisable(true);
+		regionCountLabel.setId("question-region-count");
+
+		// Action labels must remain fully readable at the minimum supported capture
+		// workspace width.
+		addRegionButton.setMinWidth(Region.USE_PREF_SIZE);
+		pasteImageButton.setMinWidth(Region.USE_PREF_SIZE);
+		saveQuestionButton.setMinWidth(Region.USE_PREF_SIZE);
+		cancelQuestionEditButton.setMinWidth(Region.USE_PREF_SIZE);
+		addRegionButton.setPadding(COMPACT_BUTTON_PADDING);
+		pasteImageButton.setPadding(COMPACT_BUTTON_PADDING);
+
+		// Add Region has no meaning until a compatible unaccepted PDF selection exists.
+		addRegionButton.setDisable(true);
+	}
+
+	private void configureQuestionMetadataControls() {
+
+		// Question identity and marks form the compact metadata row used by every
+		// Question-side workflow.
 		questionCodeField.setId("question-code");
 		questionCodeField.setPromptText("Q1");
 		questionCodeField.setPrefWidth(QUESTION_CODE_FIELD_WIDTH);
@@ -1280,6 +1415,29 @@ public final class QuestionCapturePane extends VBox {
 		marksField.setId("question-marks");
 		marksField.setPromptText("1");
 		marksField.setPrefWidth(MARKS_FIELD_WIDTH);
+	}
+
+	private void configureQuestionMetadataListeners() {
+		questionCodeField.textProperty().addListener((_, _, newCode) -> handleQuestionCodeChanged(newCode));
+		marksField.textProperty().addListener((_, _, _) -> handleMarksChanged());
+		curriculumSelectorPane.selectedClassificationProperty().addListener((_, _, _) -> refreshSaveButtonState());
+	}
+
+	private void configureResponseTypeActions() {
+		responseTypeGroup.selectedToggleProperty().addListener((_, _, _) -> handleResponseTypeChanged());
+
+		// Action events identify an explicit user choice. Programmatic response-type
+		// selection does not set this flag.
+		multipleChoiceResponseButton.setOnAction(_ -> handleManualResponseTypeSelection());
+		writtenResponseButton.setOnAction(_ -> handleManualResponseTypeSelection());
+		firstRegionSharedContextCheckBox.selectedProperty()
+				.addListener((_, _, selected) -> handleSharedContextOptionChanged(selected.booleanValue()));
+	}
+
+	private void configureResponseTypeControls() {
+
+		// Both response-type controls share one ToggleGroup; booklet policy and
+		// workflow state decide later whether either control is editable.
 		multipleChoiceResponseButton.setId("question-response-type-multiple-choice");
 		writtenResponseButton.setId("question-response-type-written");
 		multipleChoiceResponseButton.setToggleGroup(responseTypeGroup);
@@ -1294,76 +1452,12 @@ public final class QuestionCapturePane extends VBox {
 		// Keep both labels fully readable at the minimum supported workspace width.
 		multipleChoiceResponseButton.setMinWidth(Region.USE_PREF_SIZE);
 		writtenResponseButton.setMinWidth(Region.USE_PREF_SIZE);
-		saveQuestionButton.setId("save-question");
-		saveQuestionButton.setDisable(true);
-		saveStatusLabel.setId("question-save-status");
+	}
 
-		// Capture, edit and context status messages can be longer than the narrow
-		// workspace width, so keep the complete message visible by wrapping it.
-		saveStatusLabel.setWrapText(true);
-		saveStatusLabel.setMaxWidth(Double.MAX_VALUE);
-		regionCountLabel.setId("question-region-count");
-		addRegionButton.setId("add-question-region");
-		addRegionButton.setTooltip(new Tooltip(
-				"Accept the current PDF selection as Question content; it is persisted when the Question is saved."));
-		pasteImageButton.setId("paste-question-image");
-		pasteImageButton.setTooltip(new Tooltip(
-				"Add clipboard image content to the Question; it is persisted when the Question is saved."));
+	private void configureSharedContextControls() {
 
-		// Keep Question-capture action labels fully readable at the minimum
-		// supported capture-workspace width.
-		// The only ordinary Question-content creation actions are Add Region and
-		// Add From Clipboard. Accepted content is managed individually in its preview.
-		addRegionButton.setMinWidth(Region.USE_PREF_SIZE);
-		pasteImageButton.setMinWidth(Region.USE_PREF_SIZE);
-		saveQuestionButton.setMinWidth(Region.USE_PREF_SIZE);
-		cancelQuestionEditButton.setMinWidth(Region.USE_PREF_SIZE);
-		addRegionButton.setPadding(COMPACT_BUTTON_PADDING);
-		pasteImageButton.setPadding(COMPACT_BUTTON_PADDING);
-
-		// Region actions are meaningful only while an unaccepted compatible PDF
-		// selection is pending. Selection acceptance will enable them as required.
-		// Add Region is meaningful only while an unaccepted compatible PDF selection
-		// is pending. A plain PDF click remains the cancellation path.
-		addRegionButton.setDisable(true);
-		saveStatusLabel.setStyle(SUCCESS_STATUS_STYLE);
-		importedQuestionBox.setId("imported-question");
-		importedQuestionBox.setPromptText("Select imported question");
-
-		// Imported work can involve missing body content, source recapture or
-		// unresolved
-		// Shared Context, so describe the complete operational queue rather than only
-		// legacy source-region capture.
-		importedQuestionBox.setTooltip(new Tooltip(
-				"\"Complete outstanding Question content or Shared Context work for an imported/incomplete Question."));
-		importedQuestionBox.setMaxWidth(Double.MAX_VALUE);
-		importedQuestionBox.setConverter(createImportedQuestionConverter());
-		importedQuestionBox.setOnShowing(_ -> showSelectedImportedQuestionDocument());
-		importedClassificationLabel.setId("imported-classification");
-		importedClassificationLabel.setWrapText(true);
-		importedClassificationLabel.setVisible(false);
-		importedClassificationLabel.setManaged(false);
-		newQuestionsModeButton.setId("capture-mode-new");
-		importedQuestionsModeButton.setId("capture-mode-imported");
-
-		// Imported capture is a conditional work action. Keep it out of the normal
-		// workspace until the current queue proves that relevant work exists.
-		importedQuestionsModeButton.setVisible(false);
-		importedQuestionsModeButton.setManaged(false);
-		newQuestionsModeButton.setTooltip(new Tooltip("Start capture of a new Question from the active Exam PDF."));
-		importedQuestionsModeButton.setTooltip(
-				new Tooltip("Complete source-region capture for a Question imported from a legacy workbook."));
-
-		// Capture-mode actions must keep their complete labels at supported pane
-		// widths.
-		newQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
-		importedQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
-		newQuestionsModeButton.setToggleGroup(captureModeGroup);
-		importedQuestionsModeButton.setToggleGroup(captureModeGroup);
-
-		// Opening the application does not implicitly begin Question capture.
-		captureModeGroup.selectToggle(null);
-		legacyCaptureBox.setId("legacy-question-capture");
+		// The same compact control is reused for multipart Written Response and MCQ
+		// continuation semantics; runtime methods replace its text as required.
 		firstRegionSharedContextCheckBox.setId("first-region-shared-context");
 		firstRegionSharedContextCheckBox.setTooltip(
 				new Tooltip("Store the first captured region as shared context for all parts of this question."));
@@ -1373,6 +1467,16 @@ public final class QuestionCapturePane extends VBox {
 		sharedContextStatusLabel.setVisible(false);
 		sharedContextStatusLabel.setManaged(false);
 		sharedContextStatusLabel.setWrapText(true);
+	}
+
+	private void configureStatusAndEditControls() {
+
+		// Capture, edit and context status messages may exceed the narrow workspace
+		// width, so preserve the complete message through wrapping.
+		saveStatusLabel.setId("question-save-status");
+		saveStatusLabel.setWrapText(true);
+		saveStatusLabel.setMaxWidth(Double.MAX_VALUE);
+		saveStatusLabel.setStyle(SUCCESS_STATUS_STYLE);
 		captureHintLabel.setId("question-capture-hint");
 		captureHintLabel.setWrapText(true);
 		captureHintLabel.setVisible(false);
@@ -1380,12 +1484,6 @@ public final class QuestionCapturePane extends VBox {
 		cancelQuestionEditButton.setId("cancel-question-edit");
 		cancelQuestionEditButton.setVisible(false);
 		cancelQuestionEditButton.setManaged(false);
-	}
-
-	private void configurePane() {
-		setSpacing(COMPACT_SPACING);
-		setPadding(PANEL_PADDING);
-		setStyle(BORDER_STYLE);
 	}
 
 	private boolean continueSharedContextToNextMcq() {
@@ -1422,12 +1520,6 @@ public final class QuestionCapturePane extends VBox {
 		return controls;
 	}
 
-	private StringConverter<Question> createImportedQuestionConverter() {
-
-		// Convert imported Questions to the descriptive labels shown in the ComboBox.
-		return createStringConverterList();
-	}
-
 	private SplitRequest createLegacySplitRequest(LegacySplitCaptureState state, List<SplitPart> completeParts) {
 		NewSharedContext newSharedContext = null;
 		SharedQuestionContext existingSharedContext = null;
@@ -1445,6 +1537,13 @@ public final class QuestionCapturePane extends VBox {
 		}
 		return new SplitRequest(state.originalQuestion, state.definition.sourceQuestionCode(), completeParts,
 				state.definition.retainedPartIndex(), newSharedContext, existingSharedContext);
+	}
+
+	private Task<LegacySplitSaveResult> createLegacySplitSaveTask(SplitRequest request) {
+
+		// Legacy split persistence uses the same reusable Task wrapper as ordinary
+		// Question saves.
+		return new CaptureBackgroundTask<>(() -> persistLegacyQuestionSplitTransaction(request));
 	}
 
 	private VBox createQuestionControls() {
@@ -1476,6 +1575,13 @@ public final class QuestionCapturePane extends VBox {
 		return controls;
 	}
 
+	private Task<QuestionSaveResult> createQuestionSaveTask(SqliteQuestionCaptureService.Request request) {
+
+		// Keep Task mechanics outside QuestionCapturePane; this method only binds the
+		// Question-specific persistence operation.
+		return new CaptureBackgroundTask<>(() -> persistQuestionCapture(request));
+	}
+
 	private ScrollPane createRegionsScrollPane() {
 		regionsScrollPane.setFitToWidth(true);
 		regionsScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
@@ -1496,39 +1602,6 @@ public final class QuestionCapturePane extends VBox {
 		Label label = new Label(text);
 		label.setStyle(SECTION_HEADING_STYLE);
 		return label;
-	}
-
-	private StringConverter<Question> createStringConverterList() {
-		return new StringConverter<Question>() {
-
-			@Override
-			public Question fromString(String text) {
-
-				// The ComboBox is selection-only, so displayed text is never parsed.
-				return null;
-			}
-
-			@Override
-			public String toString(Question question) {
-				if (question == null) {
-					return "";
-				}
-				ExamBooklet booklet = question.getBooklet();
-				Exam exam = booklet.getExam();
-				return String.format("%s %d — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
-						booklet.getName(), question.getQuestionCode(), question.getMarks());
-			}
-		};
-	}
-
-	private Task<QuestionSaveResult> createTaskList(SqliteQuestionCaptureService.Request request) {
-		return new Task<>() {
-
-			@Override
-			protected QuestionSaveResult call() {
-				return persistQuestionCapture(request);
-			}
-		};
 	}
 
 	private List<Question> currentQuestions() {
@@ -1714,6 +1787,85 @@ public final class QuestionCapturePane extends VBox {
 		completedHandler.run();
 	}
 
+	private void handleIndependentMcqSharedContextOptionChanged(boolean selected) {
+		mcqContinuationSelected = selected;
+		if (!selected) {
+
+			// Unticking before Save abandons a newly staged MCQ context.
+			if (mcqSharedContextCaptureActive) {
+				sharedContextCapturePane.cancelAutomaticContext();
+				mcqSharedContextCaptureActive = false;
+				inheritedMcqSharedContext = null;
+			}
+			if (inheritedMcqSharedContext != null) {
+				showSharedContextStatus("Using shared context from the previous question.");
+			} else {
+				hideSharedContextStatus();
+			}
+			updateQuestionCodeLock();
+			return;
+		}
+		if (inheritedMcqSharedContext != null) {
+
+			// This Question already inherits context. Selection therefore means only
+			// that the same context should continue to the following MCQ.
+			showSharedContextStatus("Using shared context from the previous question — "
+					+ "it will also continue to the following question.");
+			updateQuestionCodeLock();
+			return;
+		}
+		if (!beginAutomaticSharedContextCapture(newMcqSharedContextLabel())) {
+			mcqContinuationSelected = false;
+			setSharedContextCheckBoxSelected(false);
+			return;
+		}
+		mcqSharedContextCaptureActive = true;
+		showSharedContextStatus("Capture the shared context before capturing the question region.");
+		updateQuestionCodeLock();
+	}
+
+	private void handleManualResponseTypeSelection() {
+
+		// Manual response-type choice takes precedence over later conservative
+		// inference for Mixed or unresolved booklet formats.
+		responseTypeManuallySelected = true;
+	}
+
+	private void handleMarksChanged() {
+
+		// Mixed-book inference may become decisive when marks change, but marks
+		// changes caused by selecting MCQ must not recursively change the selection.
+		if (!updatingResponseTypeSelection) {
+			applyAutomaticResponseType();
+		}
+		refreshSaveButtonState();
+	}
+
+	private void handleMultipartSharedContextOptionChanged(boolean selected) {
+
+		// Multipart Written Response uses SourceQuestion semantics and must not retain
+		// transient independent-MCQ continuation state.
+		mcqContinuationSelected = false;
+		inheritedMcqSharedContext = null;
+		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
+		if (!selected) {
+			sharedContextCapturePane.cancelAutomaticContext();
+			hideSharedContextStatus();
+			updateQuestionCodeLock();
+			return;
+		}
+		if (sourceCode == null) {
+			setSharedContextCheckBoxSelected(false);
+			return;
+		}
+		String label = "Question " + sourceCode + " context";
+		if (!beginAutomaticSharedContextCapture(label)) {
+			setSharedContextCheckBoxSelected(false);
+			return;
+		}
+		updateQuestionCodeLock();
+	}
+
 	private void handleQuestionCodeChanged(String newCode) {
 		if (legacySplitCaptureState != null) {
 
@@ -1760,66 +1912,10 @@ public final class QuestionCapturePane extends VBox {
 		}
 		try {
 			if (isNewIndependentMcqCapture()) {
-				mcqContinuationSelected = selected;
-				if (!selected) {
-					if (mcqSharedContextCaptureActive) {
-
-						// Unticking before Save abandons a newly staged MCQ context.
-						sharedContextCapturePane.cancelAutomaticContext();
-						mcqSharedContextCaptureActive = false;
-						inheritedMcqSharedContext = null;
-					}
-					if (inheritedMcqSharedContext != null) {
-						showSharedContextStatus("Using shared context from the previous question.");
-					} else {
-						hideSharedContextStatus();
-					}
-					updateQuestionCodeLock();
-					return;
-				}
-				if (inheritedMcqSharedContext != null) {
-
-					// This MCQ already inherits the context. Selecting the checkbox means
-					// only that the same context should continue to one more MCQ.
-					showSharedContextStatus(
-							"Using shared context from the previous question — it will also continue to the following question.");
-					updateQuestionCodeLock();
-					return;
-				}
-				if (!beginAutomaticSharedContextCapture(newMcqSharedContextLabel())) {
-					mcqContinuationSelected = false;
-					setSharedContextCheckBoxSelected(false);
-					return;
-				}
-				mcqSharedContextCaptureActive = true;
-				showSharedContextStatus("Capture the shared context before capturing the question region.");
-				updateQuestionCodeLock();
+				handleIndependentMcqSharedContextOptionChanged(selected);
 				return;
 			}
-
-			// Multipart Written Response continues to use the existing SourceQuestion
-			// semantics. MCQ continuation state must never leak into that workflow.
-			mcqContinuationSelected = false;
-			inheritedMcqSharedContext = null;
-			String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
-			if (!selected) {
-				sharedContextCapturePane.cancelAutomaticContext();
-				hideSharedContextStatus();
-				updateQuestionCodeLock();
-				return;
-			}
-			if (sourceCode == null) {
-				setSharedContextCheckBoxSelected(false);
-				return;
-			}
-
-			// Retain the existing persisted-label convention for multipart Questions.
-			String label = "Question " + sourceCode + " context";
-			if (!beginAutomaticSharedContextCapture(label)) {
-				setSharedContextCheckBoxSelected(false);
-				return;
-			}
-			updateQuestionCodeLock();
+			handleMultipartSharedContextOptionChanged(selected);
 		} finally {
 			refreshSaveButtonState();
 		}
@@ -2061,15 +2157,12 @@ public final class QuestionCapturePane extends VBox {
 		questionSaveInProgress = true;
 		setDisable(true);
 		saveStatusLabel.setText("Saving split Question " + request.sourceQuestionCode() + "...");
-		Task<LegacySplitSaveResult> saveTask = new Task<>() {
-
-			@Override
-			protected LegacySplitSaveResult call() {
-				return persistLegacyQuestionSplitTransaction(request);
-			}
-		};
+		Task<LegacySplitSaveResult> saveTask = createLegacySplitSaveTask(request);
 		saveTask.setOnSucceeded(_ -> completeLegacyQuestionSplit(saveTask.getValue()));
 		saveTask.setOnFailed(_ -> {
+
+			// A failed background split leaves the staged capture available so the
+			// teacher can retry without rebuilding it.
 			questionSaveInProgress = false;
 			setDisable(false);
 			saveStatusLabel.setText("Split save failed — staged parts retained");
@@ -2118,6 +2211,16 @@ public final class QuestionCapturePane extends VBox {
 			fallback.removeIf(question -> question.getId() == saved.getId());
 			fallback.add(saved);
 			return new QuestionSaveResult(saved, List.copyOf(fallback), null, refreshFailure);
+		}
+	}
+
+	private boolean questionReadyToSave() {
+		try {
+			return findValidationError() == null;
+		} catch (IllegalStateException exception) {
+
+			// Inconsistent persisted relationships must never make Save available.
+			return false;
 		}
 	}
 
@@ -2186,99 +2289,20 @@ public final class QuestionCapturePane extends VBox {
 		updateImportedCaptureAvailability(!awaitingCapture.isEmpty());
 	}
 
-	private void refreshQuestionCodeStatus(String questionCode) {
-		Question duplicate = findDuplicateQuestion(questionCode);
-		if (duplicate == null) {
-			questionCodeStatusLabel.setText("");
-			questionCodeStatusLabel.setVisible(false);
-			questionCodeStatusLabel.setManaged(false);
-			return;
-		}
-		questionCodeStatusLabel
-				.setText("Question " + duplicate.getQuestionCode() + " has already been captured in this booklet.");
-		questionCodeStatusLabel.setVisible(true);
-		questionCodeStatusLabel.setManaged(true);
-	}
+	private void refreshIndependentMcqSharedContextControls() {
 
-	private void refreshRegionPreviews() {
-		regionPreviewBox.getChildren().clear();
-		for (int index = 0; index < pendingContentParts.size(); index++) {
-			addContentPreview(pendingContentParts.get(index), index);
-		}
-		updateRegionsScrollPane();
-	}
-
-	private void refreshSaveButtonState() {
-
-		// A selection is compatible with Add Region only when it belongs to the
-		// currently active Question or automatic Shared Context capture workflow.
-		boolean compatibleSelectionPending = sharedContextCapturePane.isCaptureMode()
-				? sharedContextCapturePane.hasCurrentSelection()
-				: currentSelection != null;
-		boolean addRegionEnabled = !questionSaveInProgress && compatibleSelectionPending;
-		addRegionButton.setDisable(!addRegionEnabled);
-		boolean importedContentAlreadyStored = importedQuestion != null && !importedQuestion.getContentParts().isEmpty()
-				&& !importedQuestion.isSourceCaptureRequired();
-
-		// Clipboard content is ordinary Question-body capture. Do not permit it while
-		// a PDF rectangle is unresolved, during Shared Context capture, or during the
-		// still-PDF-only legacy split workflow.
-		boolean pasteAllowed = !questionSaveInProgress && currentSelection == null
-				&& !sharedContextCapturePane.isCaptureMode() && legacySplitCaptureState == null
-				&& !importedContentAlreadyStored;
-		pasteImageButton.setDisable(!pasteAllowed);
-		if (questionSaveInProgress) {
-			saveQuestionButton.setDisable(true);
-			return;
-		}
-
-		// The shared action accepts either ordinary Question content or the current
-		// automatic Shared Context rectangle.
-		addRegionButton.setText(sharedContextCapturePane.isCaptureMode() ? "Add Context" : "Add Region");
-		boolean ready;
-		try {
-			ready = findValidationError() == null;
-		} catch (IllegalStateException exception) {
-
-			// Inconsistent persisted relationships must never make Save available.
-			ready = false;
-		}
-		saveQuestionButton.setDisable(!ready);
-	}
-
-	private void refreshSharedContextControls() {
-		if (isNewIndependentMcqCapture()) {
-
-			// Preserve a context currently being captured for this MCQ. Any older
-			// automatic multipart capture is no longer compatible with MCQ mode.
-			if (!mcqSharedContextCaptureActive && sharedContextCapturePane.hasUnsavedContextCapture()) {
-				sharedContextCapturePane.cancelAutomaticContext();
-			}
-			showMcqSharedContextOption();
-			return;
-		}
-		if (mcqSharedContextCaptureActive) {
+		// A stale automatic multipart capture cannot survive a transition to
+		// independent MCQ semantics.
+		if (!mcqSharedContextCaptureActive && sharedContextCapturePane.hasUnsavedContextCapture()) {
 			sharedContextCapturePane.cancelAutomaticContext();
 		}
-		mcqSharedContextCaptureActive = false;
-		mcqContinuationSelected = false;
-		inheritedMcqSharedContext = null;
+		showMcqSharedContextOption();
+	}
 
-		// Existing multipart and imported workflows retain their SourceQuestion-based
-		// context rules.
-		sharedContextCapturePane.cancelAutomaticContext();
+	private void refreshMultipartSharedContextControls() {
 		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 		if (sourceCode == null) {
-			if (importedQuestion != null && importedQuestion.isSharedContextUnresolved()) {
-				hideSharedContextControls();
-				boolean started = sharedContextCapturePane
-						.beginAutomaticContext("Question " + importedQuestion.getQuestionCode() + " context");
-				if (started) {
-					showSharedContextRequiredStatus("Shared context required — capture it as the first region.");
-				}
-				return;
-			}
-			hideSharedContextControls();
+			refreshUnresolvedImportedSharedContext();
 			return;
 		}
 		ExamBooklet booklet = bookletSupplier.get();
@@ -2295,6 +2319,87 @@ public final class QuestionCapturePane extends VBox {
 		}
 		boolean required = importedQuestion != null && importedQuestion.isSharedContextUnresolved();
 		showSharedContextOption(sourceCode, required);
+	}
+
+	private void refreshQuestionCodeStatus(String questionCode) {
+		Question duplicate = findDuplicateQuestion(questionCode);
+		if (duplicate == null) {
+			questionCodeStatusLabel.setText("");
+			questionCodeStatusLabel.setVisible(false);
+			questionCodeStatusLabel.setManaged(false);
+			return;
+		}
+		questionCodeStatusLabel
+				.setText("Question " + duplicate.getQuestionCode() + " has already been captured in this booklet.");
+		questionCodeStatusLabel.setVisible(true);
+		questionCodeStatusLabel.setManaged(true);
+	}
+
+	private void refreshQuestionContentActionState() {
+
+		// Add Region is available only when the workflow currently owns a compatible
+		// unaccepted PDF rectangle.
+		boolean compatibleSelectionPending = sharedContextCapturePane.isCaptureMode()
+				? sharedContextCapturePane.hasCurrentSelection()
+				: currentSelection != null;
+		addRegionButton.setDisable(questionSaveInProgress || !compatibleSelectionPending);
+		boolean importedContentAlreadyStored = importedQuestion != null && !importedQuestion.getContentParts().isEmpty()
+				&& !importedQuestion.isSourceCaptureRequired();
+
+		// Clipboard content is ordinary Question-body content. It cannot be added
+		// while another PDF selection, Shared Context capture or PDF-only split is
+		// unresolved.
+		boolean pasteAllowed = !questionSaveInProgress && currentSelection == null
+				&& !sharedContextCapturePane.isCaptureMode() && legacySplitCaptureState == null
+				&& !importedContentAlreadyStored;
+		pasteImageButton.setDisable(!pasteAllowed);
+	}
+
+	private void refreshQuestionSaveActionState() {
+		if (questionSaveInProgress) {
+			saveQuestionButton.setDisable(true);
+			return;
+		}
+
+		// The shared content action changes meaning while the current PDF selection is
+		// owned by automatic Shared Context capture.
+		addRegionButton.setText(sharedContextCapturePane.isCaptureMode() ? "Add Context" : "Add Region");
+		saveQuestionButton.setDisable(!questionReadyToSave());
+	}
+
+	private void refreshRegionPreviews() {
+		regionPreviewBox.getChildren().clear();
+		for (int index = 0; index < pendingContentParts.size(); index++) {
+			addContentPreview(pendingContentParts.get(index), index);
+		}
+		updateRegionsScrollPane();
+	}
+
+	private void refreshSaveButtonState() {
+		refreshQuestionContentActionState();
+		refreshQuestionSaveActionState();
+	}
+
+	private void refreshSharedContextControls() {
+		if (isNewIndependentMcqCapture()) {
+			refreshIndependentMcqSharedContextControls();
+			return;
+		}
+		clearIndependentMcqSharedContextState();
+		refreshMultipartSharedContextControls();
+	}
+
+	private void refreshUnresolvedImportedSharedContext() {
+		if (importedQuestion == null || !importedQuestion.isSharedContextUnresolved()) {
+			hideSharedContextControls();
+			return;
+		}
+		hideSharedContextControls();
+		boolean started = sharedContextCapturePane
+				.beginAutomaticContext("Question " + importedQuestion.getQuestionCode() + " context");
+		if (started) {
+			showSharedContextRequiredStatus("Shared context required — capture it as the first region.");
+		}
 	}
 
 	private void removeContentPart(int contentIndex) {
@@ -2341,26 +2446,36 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void resetQuestionEntry() {
-		mcqSharedContextCaptureActive = false;
-		mcqContinuationSelected = false;
-		inheritedMcqSharedContext = null;
-		sharedContextCapturePane.clearForQuestion();
-		hideSharedContextControls();
+		resetQuestionSharedContextState();
+		resetQuestionMetadataState();
+		clearRegions();
+		curriculumSelectorPane.clearClassificationBelowSubject();
+		refreshSaveButtonState();
+	}
+
+	private void resetQuestionMetadataState() {
 		questionCodeField.clear();
 		questionCodeField.setDisable(false);
 		marksField.clear();
 
-		// Every new Question starts with fresh automatic/default state rather than
-		// inheriting a manual response-type or checkbox choice from the preceding
-		// Question. Persisted MCQ continuation is reloaded separately below.
+		// Every new Question begins without a retained manual response-type choice.
+		// Booklet policy may immediately restore the appropriate automatic state.
 		responseTypeManuallySelected = false;
 		selectResponseType(null);
 		setResponseTypeDisabled(false);
 		applyAutomaticResponseType();
 		refreshSharedContextControls();
-		clearRegions();
-		curriculumSelectorPane.clearClassificationBelowSubject();
-		refreshSaveButtonState();
+	}
+
+	private void resetQuestionSharedContextState() {
+
+		// No transient Shared Context or MCQ-continuation choice carries into the next
+		// Question.
+		mcqSharedContextCaptureActive = false;
+		mcqContinuationSelected = false;
+		inheritedMcqSharedContext = null;
+		sharedContextCapturePane.clearForQuestion();
+		hideSharedContextControls();
 	}
 
 	private void restoreCaptureModeToggle() {
@@ -2414,7 +2529,7 @@ public final class QuestionCapturePane extends VBox {
 		questionSaveInProgress = true;
 		setDisable(true);
 		saveStatusLabel.setText("Saving " + request.questionCode() + "...");
-		Task<QuestionSaveResult> saveTask = createTaskList(request);
+		Task<QuestionSaveResult> saveTask = createQuestionSaveTask(request);
 		saveTask.setOnSucceeded(_ -> {
 			QuestionSaveResult result = saveTask.getValue();
 			completeQuestionSave(result, editing, imported, savedPreviousImportedIndex, savedHadStoredContent);
@@ -2610,44 +2725,8 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void showImportedQuestionMode(Question question) {
-
-		// Selecting an imported Question explicitly activates Question-side work.
-		newQuestionCaptureActive = false;
-		questionWorkBox.setDisable(false);
-		questionCodeField.setText(question.getQuestionCode());
-		marksField.setText(Integer.toString(question.getMarks()));
-		if (question.hasSharedContext()) {
-			sharedContextCapturePane.selectContext(question.getSharedContext());
-		}
-		curriculumSelectorPane.selectClassificationPath(question.getClassification());
-		curriculumSelectorPane.setClassificationControlsDisabled(false);
-		curriculumSelectorPane.setSyllabusContextLocked(true);
-		cancelQuestionEditButton.setVisible(false);
-		cancelQuestionEditButton.setManaged(false);
-		showImportedClassification(question);
-		questionCodeField.setDisable(true);
-		marksField.setDisable(true);
-		loadResponseType(question);
-		setResponseTypeDisabled(false);
-		refreshSharedContextControls();
-		if (question.isSourceCaptureRequired()) {
-			saveQuestionButton.setText("Save Recapture");
-
-			// Independent image content has already been loaded into the transient
-			// assembly. The teacher now supplies only replacement PDF-backed content.
-			showCaptureHint("The Question PDF was replaced. Preserved image content is shown below; "
-					+ "capture at least one replacement PDF region.");
-		} else if (question.getContentParts().isEmpty()) {
-			saveQuestionButton.setText("Save Question");
-			if (question.isSharedContextUnresolved()) {
-				hideCaptureHint();
-			} else {
-				showCaptureHint("Capture or paste the question content.");
-			}
-		} else {
-			saveQuestionButton.setText("Save Resolution");
-			hideCaptureHint();
-		}
+		activateImportedQuestionControls(question);
+		configureImportedQuestionSavePresentation(question);
 		showQuestionPendingStatus();
 		refreshSaveButtonState();
 	}
@@ -2736,6 +2815,11 @@ public final class QuestionCapturePane extends VBox {
 		// Question capture becomes active. Single-format booklets remain locked;
 		// Mixed booklets retain editable response-type controls.
 		applyAutomaticResponseType();
+
+		// The response type may already have been selected while the workspace was
+		// idle. In that case no ToggleGroup change event fires here, so explicitly
+		// rebuild Shared Context controls for the now-active capture workflow.
+		refreshSharedContextControls();
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		cancelQuestionEditButton.setVisible(false);
 		cancelQuestionEditButton.setManaged(false);

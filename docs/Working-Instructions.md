@@ -83,6 +83,8 @@ When a code increment completes work associated with one or more issues, identif
 
 At suitable checkpoints, especially before a pull request, compare
 
+when the issue implementation, targeted regressions and required documentation/Javadoc are green, I will tell you to add the completion comment and move the issue to Ready for PR. The issue stays open. After the Sprint PR is green and merged to main, the issues covered by it can be closed. If the PR uses Closes #..., GitHub can close them automatically on merge.
+
 ### Implementation workflow
 
 Work in testable slices.  Multiple changes can be propsed.  Make sure they are numbered. 

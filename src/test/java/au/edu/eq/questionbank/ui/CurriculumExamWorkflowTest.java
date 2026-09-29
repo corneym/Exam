@@ -175,6 +175,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void clearingSyllabusThenSubjectClearsDependentControls(FxRobot robot) throws Exception {
 		selectSubject(robot, "Chemistry");
+
+		// Classification controls are deliberately inactive while Question capture is
+		// idle. Enter the production new-Question workflow before testing the
+		// selector's
+		// own syllabus/hierarchy enablement rules.
+		fireControl(robot, "#capture-mode-new");
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
@@ -806,6 +812,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void resettingClassificationWithoutSyllabusKeepsUnitsDisabled(FxRobot robot) throws Exception {
 		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
+
+		// This test exercises CurriculumSelectorPane dependency state rather than the
+		// application's idle-capture state, so activate Classification first.
+		fireControl(robot, "#capture-mode-new");
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
 		robot.interact(pane::clearClassificationBelowSubject);
