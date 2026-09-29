@@ -19,7 +19,6 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
-import javafx.scene.control.Separator;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -162,14 +161,10 @@ public final class ExamAssetsPane extends VBox {
 		VBox examDetails = createExamDetailsSection();
 		VBox questionBooklets = createSection("QUESTION BOOKLETS", questionBookletsBox);
 		VBox answerBooklets = createSection("ANSWER BOOKLETS", answerBookletsBox);
-		Region actionSpacer = new Region();
-		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 
-		// Save now commits the active Exam Details edit. Later Slice 1 increments can
-		// extend the same workspace action row to other staged asset changes.
-		HBox actionRow = new HBox(SPACING, actionSpacer, cancelButton, saveButton);
-		getChildren().addAll(examHeading, examSelectorGrid, examDetails, questionBooklets, answerBooklets,
-				new Separator(), actionRow);
+		// Workspace-level controls will be added separately. Metadata editing actions
+		// belong wholly to the Exam Details section.
+		getChildren().addAll(examHeading, examSelectorGrid, examDetails, questionBooklets, answerBooklets);
 	}
 
 	private void cancelExamDetailsEdit() {
@@ -185,14 +180,11 @@ public final class ExamAssetsPane extends VBox {
 
 	private void clearSelectedExam() {
 		stateLabel.setText("State: —");
-
 		providerField.getSelectionModel().clearSelection();
 		providerField.setValue(null);
 		providerField.getEditor().clear();
-
 		yearField.getSelectionModel().clearSelection();
 		yearField.setValue(null);
-
 		assessmentField.getSelectionModel().clearSelection();
 		assessmentField.setValue(null);
 		assessmentField.getEditor().clear();
@@ -200,7 +192,6 @@ public final class ExamAssetsPane extends VBox {
 		// Never retain asset rows belonging to a previously selected Exam.
 		questionBookletsBox.getChildren().setAll(new Label("No Question booklets recorded."));
 		answerBookletsBox.getChildren().setAll(new Label("No Answer booklets recorded."));
-
 		setExamDetailsEditing(false);
 	}
 
@@ -238,6 +229,12 @@ public final class ExamAssetsPane extends VBox {
 		for (int year = currentYear; year >= currentYear - YEAR_LOOKBACK_YEARS; year--) {
 			yearField.getItems().add(year);
 		}
+
+		// Save availability follows semantic metadata changes rather than merely the
+		// fact that Edit mode is active.
+		providerField.getEditor().textProperty().addListener((_, _, _) -> updateExamDetailsSaveState());
+		yearField.valueProperty().addListener((_, _, _) -> updateExamDetailsSaveState());
+		assessmentField.getEditor().textProperty().addListener((_, _, _) -> updateExamDetailsSaveState());
 		questionBookletsBox.setId("exam-assets-question-booklets");
 		answerBookletsBox.setId("exam-assets-answer-booklets");
 		editExamButton.setId("exam-assets-edit");
@@ -277,13 +274,16 @@ public final class ExamAssetsPane extends VBox {
 		GridPane.setHgrow(providerField, Priority.ALWAYS);
 		GridPane.setHgrow(yearField, Priority.ALWAYS);
 		GridPane.setHgrow(assessmentField, Priority.ALWAYS);
-		Region editSpacer = new Region();
-		HBox.setHgrow(editSpacer, Priority.ALWAYS);
+		Region actionSpacer = new Region();
+		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 
-		// Edit remains an explicit Exam Details action as specified by the workspace
-		// design rather than making every field permanently editable.
-		HBox editRow = new HBox(SPACING, editSpacer, editExamButton);
-		return createSection("Exam Details", new VBox(ROW_SPACING, details, editRow));
+		// Edit, Cancel and Save form one Exam Details editing transaction. Keep them
+		// together here rather than presenting Cancel and Save as workspace actions.
+		HBox actionRow = new HBox(SPACING, actionSpacer, editExamButton, cancelButton, saveButton);
+		actionRow.setId("exam-assets-details-actions");
+		VBox section = createSection("Exam Details", new VBox(ROW_SPACING, details, actionRow));
+		section.setId("exam-assets-details-section");
+		return section;
 	}
 
 	private VBox createQuestionBookletRow(ExamBooklet booklet) {
@@ -334,12 +334,26 @@ public final class ExamAssetsPane extends VBox {
 		};
 	}
 
+	private boolean isExamDetailsDirty() {
+		Exam persistedExam = examBox.getValue();
+		if (!editingExamDetails || persistedExam == null) {
+			return false;
+		}
+
+		// Compare the proposed editor values with the persisted Exam that was selected
+		// when editing began. Outer whitespace is not a meaningful metadata change.
+		String providerName = editedText(providerField);
+		Integer year = yearField.getValue();
+		String assessmentName = editedText(assessmentField);
+		return !providerName.equals(persistedExam.getProvider().getName()) || year == null
+				|| year.intValue() != persistedExam.getYear() || !assessmentName.equals(persistedExam.getName());
+	}
+
 	private void loadSelectedExam(Exam exam) throws SQLException {
 		clearSelectedExam();
 		if (exam == null) {
 			return;
 		}
-
 		stateLabel.setText("State: " + exam.getCaptureState());
 
 		// Editable ComboBoxes maintain both a selected value and editor text. Set both
@@ -348,7 +362,6 @@ public final class ExamAssetsPane extends VBox {
 		String providerName = exam.getProvider().getName();
 		providerField.setValue(providerName);
 		providerField.getEditor().setText(providerName);
-
 		if (!yearField.getItems().contains(exam.getYear())) {
 
 			// Historical Exams outside the normal suggestion window must still display
@@ -356,11 +369,9 @@ public final class ExamAssetsPane extends VBox {
 			yearField.getItems().add(exam.getYear());
 		}
 		yearField.setValue(exam.getYear());
-
 		String assessmentName = exam.getName();
 		assessmentField.setValue(assessmentName);
 		assessmentField.getEditor().setText(assessmentName);
-
 		List<ExamBooklet> booklets = examWriter.findExamBooklets(exam);
 		if (booklets.isEmpty()) {
 			questionBookletsBox.getChildren().setAll(new Label("No Question booklets recorded."));
@@ -369,14 +380,12 @@ public final class ExamAssetsPane extends VBox {
 			// Asset rows always come from authoritative persistence for the selected Exam.
 			questionBookletsBox.getChildren().setAll(booklets.stream().map(this::createQuestionBookletRow).toList());
 		}
-
 		List<AnswerFile> answerFiles = answerWriter.findAnswerFiles(exam);
 		if (answerFiles.isEmpty()) {
 			answerBookletsBox.getChildren().setAll(new Label("No Answer booklets recorded."));
 		} else {
 			answerBookletsBox.getChildren().setAll(answerFiles.stream().map(this::createAnswerFileRow).toList());
 		}
-
 		setExamDetailsEditing(false);
 	}
 
@@ -435,19 +444,19 @@ public final class ExamAssetsPane extends VBox {
 	private void setExamDetailsEditing(boolean editing) {
 		editingExamDetails = editing;
 
-		// Metadata remains visible at all times. These controls become mutable only
-		// after the user explicitly chooses Edit.
+		// Metadata remains visible at all times and becomes mutable only after the
+		// explicit Edit action.
 		providerField.setDisable(!editing);
 		yearField.setDisable(!editing);
 		assessmentField.setDisable(!editing);
-
 		editExamButton.setDisable(editing || examBox.getValue() == null);
 
-		// Cancel and Save apply only to a staged Exam Details edit.
+		// Cancel is available for the complete lifetime of an edit transaction. Save,
+		// however, requires an actual metadata change.
 		cancelButton.setDisable(!editing);
-		saveButton.setDisable(!editing);
+		updateExamDetailsSaveState();
 
-		// Do not allow selection of another Exam while unsaved edits are present.
+		// Do not allow another Exam to be selected while an edit transaction is active.
 		examBox.setDisable(editing);
 	}
 
@@ -469,6 +478,13 @@ public final class ExamAssetsPane extends VBox {
 		// Defensive fallback keeps a malformed-but-readable path visible rather than
 		// presenting an empty source label.
 		return fileName == null ? relativePath : fileName.toString();
+	}
+
+	private void updateExamDetailsSaveState() {
+
+		// Save represents a real persistence operation, so it remains unavailable
+		// until the staged Exam Details differ from authoritative persistence.
+		saveButton.setDisable(!isExamDetailsDirty());
 	}
 
 	/**

@@ -149,7 +149,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(year.isDisabled());
 		assertTrue(assessment.isDisabled());
 		assertEquals(1, questionBooklets.getChildren().size());
-
 		assertEquals("QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]", activeExam.getText());
 	}
 
@@ -277,16 +276,12 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
-
 		@SuppressWarnings("unchecked")
 		ComboBox<String> provider = lookup(robot, "#exam-assets-provider", ComboBox.class);
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Integer> year = lookup(robot, "#exam-assets-year", ComboBox.class);
-
 		@SuppressWarnings("unchecked")
 		ComboBox<String> assessment = lookup(robot, "#exam-assets-assessment", ComboBox.class);
-
 		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
 		Button cancel = lookup(robot, "#exam-assets-cancel", Button.class);
 
@@ -296,26 +291,22 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(Integer.valueOf(2024), year.getValue());
 		assertEquals("External Assessment", assessment.getValue());
 		assertEquals("External Assessment", assessment.getEditor().getText());
-
 		fireControl(robot, edit);
 
 		// Entering Edit must preserve rather than clear the existing Exam metadata.
 		assertEquals("QCAA", provider.getEditor().getText());
 		assertEquals(Integer.valueOf(2024), year.getValue());
 		assertEquals("External Assessment", assessment.getEditor().getText());
-
 		robot.interact(() -> {
 			provider.getEditor().setText("Temporary Provider");
 			assessment.getEditor().setText("Temporary Assessment");
 		});
-
 		fireControl(robot, cancel);
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Cancel discards staged changes but remains in the Exam/Assets workspace.
 		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isEmpty());
-
 		assertEquals("QCAA", provider.getValue());
 		assertEquals("QCAA", provider.getEditor().getText());
 		assertEquals(Integer.valueOf(2024), year.getValue());
@@ -324,7 +315,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 		// Re-entering Edit must still begin from the persisted values.
 		fireControl(robot, edit);
-
 		assertEquals("QCAA", provider.getEditor().getText());
 		assertEquals(Integer.valueOf(2024), year.getValue());
 		assertEquals("External Assessment", assessment.getEditor().getText());
@@ -392,16 +382,24 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
 		Button save = lookup(robot, "#exam-assets-save", Button.class);
 
-		// Existing Exam metadata is protected until the explicit Edit action is chosen.
+		// Existing metadata is protected and there is initially nothing to save.
 		assertTrue(assessment.isDisabled());
 		assertTrue(save.isDisabled());
 		fireControl(robot, edit);
-		assertFalse(assessment.isDisabled());
-		assertFalse(save.isDisabled());
 
-		// Exercise the editable ComboBox editor because Assessment suggestions must not
-		// restrict the user to previously stored labels.
+		// Entering Edit alone is not a data change.
+		assertFalse(assessment.isDisabled());
+		assertTrue(save.isDisabled());
 		robot.interact(() -> assessment.getEditor().setText("Topic Test 1"));
+
+		// Save becomes available only after the staged value differs from persistence.
+		assertFalse(save.isDisabled());
+		robot.interact(() -> assessment.getEditor().setText("External Assessment"));
+
+		// Reverting the edit to the persisted value removes the dirty state.
+		assertTrue(save.isDisabled());
+		robot.interact(() -> assessment.getEditor().setText("Topic Test 1"));
+		assertFalse(save.isDisabled());
 		fireControl(robot, save);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals("Topic Test 1", assessment.getValue());
@@ -412,10 +410,49 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
 		Exam reloaded = writer.findExamByProviderAndYear(workingSubject, "QCAA", 2024);
 
-		// A fresh repository read proves Save corrected the persisted Exam rather than
-		// merely changing the visible field.
+		// A fresh repository read proves Save corrected persistence rather than merely
+		// changing the visible editor.
 		assertNotNull(reloaded);
 		assertEquals("Topic Test 1", reloaded.getName());
+	}
+
+	@Test
+	void examDetailsOwnEditCancelAndSaveActions(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		Node detailsSection = lookup(robot, "#exam-assets-details-section", Node.class);
+		Node actionRow = lookup(robot, "#exam-assets-details-actions", Node.class);
+		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
+		Button cancel = lookup(robot, "#exam-assets-cancel", Button.class);
+		Button save = lookup(robot, "#exam-assets-save", Button.class);
+
+		// All three controls operate on the same Exam Details edit transaction and
+		// therefore belong to the same action row inside that section.
+		assertEquals(actionRow, edit.getParent());
+		assertEquals(actionRow, cancel.getParent());
+		assertEquals(actionRow, save.getParent());
+		assertTrue(isDescendantOf(actionRow, detailsSection));
+
+		// The persisted Exam starts in view mode: Edit begins a transaction while
+		// Cancel and Save have nothing to act on yet.
+		assertFalse(edit.isDisabled());
+		assertTrue(cancel.isDisabled());
+		assertTrue(save.isDisabled());
+		fireControl(robot, edit);
+
+		// During editing, the transaction can either be discarded or committed.
+		assertTrue(edit.isDisabled());
+		assertFalse(cancel.isDisabled());
+		assertFalse(save.isDisabled());
+		fireControl(robot, cancel);
+
+		// Cancelling restores the normal Exam Details state without leaving the
+		// Exam/Assets workspace.
+		assertFalse(edit.isDisabled());
+		assertTrue(cancel.isDisabled());
+		assertTrue(save.isDisabled());
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 	}
 
 	@Test
