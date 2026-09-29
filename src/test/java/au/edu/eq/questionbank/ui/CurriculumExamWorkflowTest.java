@@ -34,6 +34,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
@@ -55,6 +56,48 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	@Test
+	void addSubjectCreatesAndActivatesStandaloneWorkingSubject(FxRobot robot) throws Exception {
+		Button addSubject = lookup(robot, "#add-subject", Button.class);
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+
+		// Open the real application Subject-creation action. The dialog is modal, so
+		// schedule the control while leaving the test thread available to complete it.
+		Platform.runLater(addSubject::fire);
+		waitForDialogShowing(robot, "Add Subject");
+
+		DialogPane dialog = showingDialogPane(robot, "Add Subject");
+		Node editorNode = dialog.lookup("#new-subject-name");
+		assertTrue(editorNode instanceof TextField);
+		TextField subjectName = (TextField) editorNode;
+		robot.interact(() -> subjectName.setText("Geography"));
+
+		Node okNode = dialog.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		Subject geography = subjects.getItems().stream().filter(subject -> "Geography".equals(subject.getName()))
+				.findFirst().orElseThrow(() -> new AssertionError("New Subject was not loaded into the selector"));
+
+		// Creation must immediately establish the new Subject as authoritative
+		// application context.
+		assertEquals(geography, subjects.getValue());
+		assertEquals(geography, field(application, "workingSubject", Subject.class));
+
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(
+				new SqliteDatabase(databasePath));
+
+		// The Subject itself must be persisted independently of curriculum creation.
+		assertTrue(curriculumRepository.findAllSubjects().stream()
+				.anyMatch(subject -> subject.getId() == geography.getId() && "Geography".equals(subject.getName())));
+		assertTrue(curriculumRepository.findVersionsForSubject(geography).isEmpty());
+
+		// Subject creation must likewise create no implicit Exam structure.
+		SqliteExamWriter storedExamWriter = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		assertTrue(storedExamWriter.findExamsForSubject(geography).isEmpty());
+	}
 
 	@Test
 	void canSelectAndPersistHistoricalSyllabusClassification(FxRobot robot) throws Exception {

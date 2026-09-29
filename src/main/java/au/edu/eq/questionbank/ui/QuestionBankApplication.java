@@ -164,9 +164,11 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
@@ -220,6 +222,9 @@ public class QuestionBankApplication extends Application {
 	private ExamBooklet inspectedBooklet;
 	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
 	private final Button changeExamAssetsButton = new Button("Change Exam");
+	// The application-level Subject remains outside this host so the left workspace
+	// can switch between Capture and Exam/Assets without replacing Working Subject.
+	private StackPane workspaceModeHost;
 
 	// Track the accepted workspace Subject separately so a rejected ComboBox change
 	// can restore the previous value without changing either capture queue.
@@ -350,6 +355,56 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Question Capture", "The stored exam PDF could not be opened.",
 					e.getMessage());
 			return false;
+		}
+	}
+
+	private void addSubject(Stage primaryStage, SqliteDatabase database, CurriculumSelectorPane selectorPane) {
+
+		// Creating and immediately activating a Subject is a Working Subject change.
+		// Preserve the existing safeguard against abandoning unsaved capture work.
+		if (!allowWorkingSubjectChange()) {
+			return;
+		}
+
+		TextInputDialog dialog = new TextInputDialog();
+		dialog.initOwner(primaryStage);
+		dialog.setTitle("Add Subject");
+		dialog.setHeaderText("Create a new Subject");
+		dialog.setContentText("Subject name:");
+		dialog.getEditor().setId("new-subject-name");
+
+		Optional<String> result = dialog.showAndWait();
+		if (result.isEmpty()) {
+			return;
+		}
+
+		String subjectName = result.get().strip();
+		if (subjectName.isBlank()) {
+			showAlert(Alert.AlertType.WARNING, "Add Subject", "Subject name is required.",
+					"Enter a name for the new Subject.");
+			return;
+		}
+
+		// Treat names case-insensitively at the UI boundary so entries such as
+		// Chemistry and chemistry cannot become separate application Subjects.
+		boolean subjectAlreadyExists = curriculumSelectionModel.getSubjects().stream()
+				.anyMatch(subject -> subject.getName().equalsIgnoreCase(subjectName));
+		if (subjectAlreadyExists) {
+			showAlert(Alert.AlertType.WARNING, "Add Subject", "That Subject already exists.",
+					"Choose the existing Subject from the Subject list.");
+			return;
+		}
+
+		try {
+			Subject createdSubject = new SqliteCurriculumWriter(database).insertSubject(subjectName);
+
+			// Reload from the authoritative repository before selecting the newly
+			// persisted Subject so the ComboBox contains its real persistent identity.
+			selectorPane.refreshSubjects();
+			selectorPane.selectSubject(createdSubject);
+		} catch (SQLException exception) {
+			showAlert(Alert.AlertType.ERROR, "Add Subject", "The Subject could not be created.",
+					exception.getMessage());
 		}
 	}
 
@@ -871,6 +926,17 @@ public class QuestionBankApplication extends Application {
 		return context;
 	}
 
+	private VBox createCaptureWorkspaceModePane() {
+
+		// Capture mode owns both the active Exam/booklet context and the existing
+		// Classification/Question/Answer workspace. A later Exam/Assets mode can
+		// replace this whole unit without disturbing the application Working Subject.
+		VBox captureModePane = new VBox(SECTION_SPACING, createActiveExamContextPane(), createCaptureWorkspacePane());
+		captureModePane.setId("capture-workspace-mode");
+
+		return captureModePane;
+	}
+
 	private VBox createCaptureWorkspacePane() {
 		VBox classificationContext = curriculumSelectorPane.detachClassificationContext();
 		VBox captureWorkspace = new VBox(SECTION_SPACING, classificationContext, questionCapturePane,
@@ -897,9 +963,15 @@ public class QuestionBankApplication extends Application {
 		return curriculumMenu;
 	}
 
-	private CurriculumSelectorPane createCurriculumSelectorPane() {
+	private CurriculumSelectorPane createCurriculumSelectorPane(Stage primaryStage, SqliteDatabase database) {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
 		selectorPane.selectedSubjectProperty().addListener((_, _, newSubject) -> handleSubjectChanged(newSubject));
+
+		// Subject creation belongs to application context because it persists directly
+		// to the question-bank database and then changes the authoritative Working
+		// Subject.
+		selectorPane.setAddSubjectAction(() -> addSubject(primaryStage, database, selectorPane));
+
 		return selectorPane;
 	}
 
@@ -1061,8 +1133,14 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private VBox createPreviewPane() {
-		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, createActiveExamContextPane(),
-				createCaptureWorkspacePane());
+
+		// Working Subject is permanent application context. Everything beneath it is
+		// hosted separately so Capture and Exam/Assets can later occupy the same
+		// left-hand workspace without rebuilding or duplicating Subject selection.
+		workspaceModeHost = new StackPane(createCaptureWorkspaceModePane());
+		workspaceModeHost.setId("workspace-mode-host");
+
+		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, workspaceModeHost);
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
 		previewPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
 		previewPane.setPrefWidth(PREVIEW_PANE_INITIAL_WIDTH);
@@ -1608,7 +1686,9 @@ public class QuestionBankApplication extends Application {
 		examSetupPane = new ExamSetupPane(examWriter, answerWriter,
 				booklet -> inspectBookletFromExamSetup(booklet, config),
 				booklet -> openBookletFromExamSetup(booklet, config));
-		curriculumSelectorPane = createCurriculumSelectorPane();
+		// The selector receives application-level Subject creation through the same
+		// database used by the rest of the capture workflow.
+		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
 				this::allowAnswerCaptureTransition, () -> clearCaptureSelection(CaptureSelectionOwner.ANSWER),

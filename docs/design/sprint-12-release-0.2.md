@@ -207,9 +207,12 @@ By Sprint 12 closeout the selected Subject is application-level context for:
 The application should present the selected Subject independently from Question
 classification.
 
-A first-class `Add Subject...` workflow must allow a new Subject to be created
-without requiring an Exam or curriculum to be created at the same time.
+A first-class Subject-creation workflow is available from the application-level
+Subject row through a compact `+` action beside the Subject selector.
 
+Creating a Subject persists the Subject independently, refreshes the authoritative
+Subject selector and immediately activates the new Subject as the Working Subject.
+It does not require an Exam or curriculum to be created at the same time.
 Changing Subject changes the corpus and work being displayed. Existing
 safeguards that prevent Subject changes while unsaved capture work is pending
 must remain.
@@ -1149,8 +1152,8 @@ No Exams have been added.
 No curriculum has been added.
     [Add Curriculum]
 
-Application-level Subject context must also provide:
-[Add Subject...]
+Application-level Subject context provides:
+Subject [ Chemistry ▼ ] [+]
 ```
 
 Creating a Subject does not require immediate creation of either an Exam or a

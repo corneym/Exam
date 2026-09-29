@@ -12,6 +12,8 @@ import javafx.beans.property.ReadOnlyBooleanWrapper;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
@@ -19,7 +21,9 @@ import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 /**
@@ -55,6 +59,9 @@ public class CurriculumSelectorPane extends VBox {
 	private boolean refreshingSubjects;
 	private boolean refreshingCode;
 	private VBox classificationContext;
+	// Subject creation is an application-level action. The pane owns only its
+	// compact presentation; persistence is supplied by the containing application.
+	private final Button addSubjectButton = new Button("+");
 
 	/**
 	 * Creates a selector bound to the supplied selection model.
@@ -216,6 +223,23 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
+	 * Supplies the application-level action used to create a Subject.
+	 *
+	 * @param action Subject-creation action owned by the containing application
+	 * @throws NullPointerException if {@code action} is {@code null}
+	 */
+	public void setAddSubjectAction(Runnable action) {
+		if (action == null) {
+			throw new NullPointerException("action");
+		}
+
+		// The selector does not know how Subjects are persisted. It merely exposes the
+		// compact action once the application supplies the authoritative workflow.
+		addSubjectButton.setOnAction(_ -> action.run());
+		addSubjectButton.setDisable(false);
+	}
+
+	/**
 	 * Enables or disables only the Question-classification section. Working Subject
 	 * remains application-level context and is not affected.
 	 *
@@ -286,15 +310,20 @@ public class CurriculumSelectorPane extends VBox {
 
 	private void buildContent() {
 
-		// Working Subject is a single compact row. The bold Subject label identifies
-		// the authoritative application-level selector without adding a heading row.
+		// Working Subject remains exactly one compact row. The bold Subject label,
+		// selector and small creation action all share that row.
 		Label subjectLabel = new Label("Subject");
 		subjectLabel.setId("working-subject-label");
 		subjectLabel.setStyle(HEADING_STYLE);
 
+		HBox subjectControls = new HBox(ROW_GAP, subjectBox, addSubjectButton);
+		subjectControls.setAlignment(Pos.CENTER_LEFT);
+		subjectControls.setMaxWidth(Double.MAX_VALUE);
+		HBox.setHgrow(subjectBox, Priority.ALWAYS);
+
 		GridPane subjectRow = createTwoColumnGrid();
-		subjectRow.addRow(0, subjectLabel, subjectBox);
-		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
+		subjectRow.addRow(0, subjectLabel, subjectControls);
+		GridPane.setHgrow(subjectControls, Priority.ALWAYS);
 
 		VBox subjectContext = new VBox(subjectRow);
 		subjectContext.setId("working-subject-context");
@@ -409,12 +438,27 @@ public class CurriculumSelectorPane extends VBox {
 				"Enter a complete curriculum code to select its Unit, Topic, Subtopic and Descriptor path."));
 		codeField.setMaxWidth(Double.MAX_VALUE);
 		codeField.setMinWidth(0);
+
 		configureHierarchyBox(subjectBox, "curriculum-subject", "Select subject");
 		configureHierarchyBox(syllabusBox, "curriculum-syllabus", "Select syllabus");
 		configureHierarchyBox(unitBox, "curriculum-unit", "Select unit");
 		configureHierarchyBox(topicBox, "curriculum-topic", "Select topic");
 		configureHierarchyBox(subtopicBox, "curriculum-subtopic", "Select subtopic");
 		configureHierarchyBox(descriptorBox, "curriculum-descriptor", "Select descriptor");
+
+		// Keep Subject creation as a compact one-character action on the existing
+		// Working Subject row rather than adding another row or long text button.
+		addSubjectButton.setId("add-subject");
+		addSubjectButton.setTooltip(new Tooltip("Add Subject"));
+		addSubjectButton.setAccessibleText("Add Subject");
+		addSubjectButton.setPadding(new Insets(2, 7, 2, 7));
+		addSubjectButton.setMinWidth(Region.USE_PREF_SIZE);
+		addSubjectButton.setMaxWidth(Region.USE_PREF_SIZE);
+
+		// Standalone selector instances do not own Subject persistence. The containing
+		// application enables this action when it supplies the persistence callback.
+		addSubjectButton.setDisable(true);
+
 		syllabusBox.setDisable(true);
 		unitBox.setDisable(true);
 		topicBox.setDisable(true);

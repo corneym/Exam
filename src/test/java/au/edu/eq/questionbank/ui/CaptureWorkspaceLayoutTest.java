@@ -261,6 +261,31 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void captureModeIsHostedBelowApplicationSubject(FxRobot robot) {
+		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
+		Node modeHost = lookup(robot, "#workspace-mode-host", Node.class);
+		Node captureMode = lookup(robot, "#capture-workspace-mode", Node.class);
+		Node activeExam = lookup(robot, "#active-exam-context", Node.class);
+		Node captureWorkspace = lookup(robot, "#capture-workspace", Node.class);
+
+		// Working Subject is application context and must survive future workspace-mode
+		// changes rather than becoming part of either Capture or Exam/Assets mode.
+		assertFalse(isDescendantOf(workingSubject, modeHost));
+
+		// The host owns one complete mode. Capture mode therefore carries both the
+		// active Exam/booklet context and the existing capture workspace together.
+		assertEquals(modeHost, captureMode.getParent());
+		assertEquals(captureMode, activeExam.getParent());
+		assertEquals(captureMode, captureWorkspace.getParent());
+
+		// Capture mode must remain beneath the persistent Subject context rather than
+		// accidentally re-parenting Subject into the swappable workspace.
+		assertTrue(isDescendantOf(activeExam, modeHost));
+		assertTrue(isDescendantOf(captureWorkspace, modeHost));
+		assertFalse(isDescendantOf(workingSubject, captureMode));
+	}
+
+	@Test
 	void captureWorkspaceContainsSeparateClassificationQuestionAndAnswerSections(FxRobot robot) {
 		Node captureWorkspace = lookup(robot, "#capture-workspace", Node.class);
 		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
@@ -457,21 +482,26 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	void workingSubjectContextUsesSingleSubjectRow(FxRobot robot) {
 		ComboBox<?> subject = lookup(robot, "#curriculum-subject", ComboBox.class);
 		Label subjectLabel = lookup(robot, "#working-subject-label", Label.class);
+		Button addSubject = lookup(robot, "#add-subject", Button.class);
 		Parent workingSubjectContext = lookup(robot, "#working-subject-context", Parent.class);
 
-		// Working Subject consists of exactly one layout row rather than a separate
-		// heading followed by a second Subject row.
+		// Working Subject still consists of exactly one layout row after adding the
+		// compact Subject-creation action.
 		assertEquals(1, workingSubjectContext.getChildrenUnmodifiable().size());
 
 		Node subjectRow = workingSubjectContext.getChildrenUnmodifiable().getFirst();
-
 		assertTrue(subjectRow instanceof javafx.scene.layout.GridPane);
-		assertEquals(subjectRow, subject.getParent());
 		assertEquals(subjectRow, subjectLabel.getParent());
 		assertEquals("Subject", subjectLabel.getText());
 
-		// Subject is the visual heading for this compact application-level context,
-		// so it must use the same bold treatment as other section headings.
+		// Subject selection and its compact + action share the control side of that
+		// same GridPane row rather than introducing a second row.
+		assertEquals(subject.getParent(), addSubject.getParent());
+		assertEquals(subjectRow, subject.getParent().getParent());
+		assertEquals("+", addSubject.getText());
+		assertEquals("Add Subject", addSubject.getTooltip().getText());
+
+		// Subject remains the visual heading for the application-level context.
 		primaryStage.getScene().getRoot().applyCss();
 		assertTrue(subjectLabel.getFont().getStyle().contains("Bold"));
 	}
