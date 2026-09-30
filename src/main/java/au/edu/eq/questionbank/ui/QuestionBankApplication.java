@@ -711,6 +711,13 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void closePendingQuestionBookletSourceFromExamAssets() {
+
+		// Closing VIEWER restores the Exam or Answer document that was displayed before
+		// the temporary new-booklet inspection began.
+		pdfWorkspace.closeViewerPdf();
+	}
+
 	private void closeRestorePreparation(Stage primaryStage, RestorePreparation preparation) {
 		try {
 			preparation.close();
@@ -1909,7 +1916,18 @@ public class QuestionBankApplication extends Application {
 				// it and persists the AnswerFile plus its explanation metadata.
 				(exam, sourcePath, name, containsAnswerExplanations) -> importAnswerBookletFromExamAssets(exam,
 						sourcePath, name, containsAnswerExplanations, config),
+
+				// Native Question-PDF selection remains application-owned.
 				() -> chooseQuestionBookletSource(primaryStage, config),
+
+				// The selected pre-persistence source opens immediately in read-only VIEWER
+				// mode.
+				this::viewPendingQuestionBookletSourceFromExamAssets,
+
+				// Cancelling or completing the pending transaction restores the prior PDF view.
+				this::closePendingQuestionBookletSourceFromExamAssets,
+
+				// Save imports, hashes and persists the managed Question booklet.
 				(exam, sourcePath, name, questionFormat, expectedQuestionCount) -> importQuestionBookletFromExamAssets(
 						exam, sourcePath, name, questionFormat, expectedQuestionCount, config));
 
@@ -3354,6 +3372,30 @@ public class QuestionBankApplication extends Application {
 		} catch (RuntimeException exception) {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The " + assetDescription + " could not be opened.",
 					failureMessage(exception));
+		}
+	}
+
+	private boolean viewPendingQuestionBookletSourceFromExamAssets(Path sourcePath) {
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		Path normalizedSource = sourcePath.toAbsolutePath().normalize();
+		if (!Files.isRegularFile(normalizedSource)) {
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The selected Question booklet PDF is unavailable.",
+					normalizedSource.toString());
+			return false;
+		}
+		try {
+
+			// A pending source is deliberately allowed to be outside managed storage:
+			// the user has just selected it and it has not yet been imported. VIEWER mode
+			// keeps inspection read-only and does not alter the capture booklet.
+			pdfWorkspace.openViewerPdf(normalizedSource);
+			return true;
+		} catch (RuntimeException exception) {
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The selected Question booklet could not be opened.",
+					failureMessage(exception));
+			return false;
 		}
 	}
 

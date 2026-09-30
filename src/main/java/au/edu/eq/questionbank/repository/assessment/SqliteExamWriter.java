@@ -161,6 +161,76 @@ public final class SqliteExamWriter {
 	}
 
 	/**
+	 * Creates a new Exam for an existing Subject, reusing an existing examination
+	 * Provider with the same name or creating that Provider as part of the same
+	 * transaction.
+	 *
+	 * <p>
+	 * Creating the Exam does not manufacture Question booklets, Answer files or
+	 * source documents. Those assets are added independently through Exam/Assets.
+	 * </p>
+	 *
+	 * @param subject      authoritative Subject owning the Exam
+	 * @param providerName non-blank examination Provider name
+	 * @param year         positive Exam year
+	 * @param name         non-blank assessment name
+	 * @return newly persisted ACTIVE Exam
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if {@code subject} is {@code null}
+	 * @throws IllegalArgumentException if supplied metadata is invalid or the Exam
+	 *                                  already exists
+	 */
+	public Exam createExam(Subject subject, String providerName, int year, String name) throws SQLException {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (providerName == null || providerName.isBlank()) {
+			throw new IllegalArgumentException("providerName must not be blank");
+		}
+		if (year < 1) {
+			throw new IllegalArgumentException("year must be positive");
+		}
+		if (name == null || name.isBlank()) {
+			throw new IllegalArgumentException("name must not be blank");
+		}
+		String normalizedProviderName = providerName.strip();
+		String normalizedName = name.strip();
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				ExamProvider provider = findExamProviderByName(connection, normalizedProviderName);
+				if (provider == null) {
+
+					// Provider creation is part of the same transaction as Exam creation so
+					// a failed Exam insert cannot leave a partial New Exam workflow behind.
+					provider = insertExamProvider(connection, normalizedProviderName);
+				}
+				Exam existing = findExam(connection, subject, provider, year, normalizedName);
+				if (existing != null) {
+
+					// New Exam mode creates a distinct Exam and must not silently reopen an
+					// existing natural-key match.
+					throw new IllegalArgumentException(
+							"Exam already exists for " + normalizedProviderName + " " + year + " " + normalizedName);
+				}
+				Exam created = insertExam(connection, subject, provider, year, normalizedName);
+				connection.commit();
+
+				// Schema defaults make a newly created Exam ACTIVE and therefore ready for
+				// subsequent Question and Answer asset configuration.
+				return created;
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
+			}
+		}
+	}
+
+	/**
 	 * Returns whether an examination provider with the supplied name still exists.
 	 *
 	 * @param providerName non-blank provider name

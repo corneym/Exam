@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.AnswerFile;
@@ -56,6 +57,8 @@ public final class ExamAssetsPane extends VBox {
 	private static final List<String> DEFAULT_BOOKLET_NAME_SUGGESTIONS = List.of("MCQ", "Paper 1", "Paper 2",
 			"Topic Test");
 	private static final String NO_ANSWER_BOOKLET = "No Answer Booklet";
+	private static final String WORKSPACE_SECTION_STYLE = "-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;"
+			+ "-fx-border-radius: 3;";
 	private final SqliteExamWriter examWriter;
 	private final SqliteAnswerWriter answerWriter;
 	private final ExamMetadataOptionsRepository optionsRepository;
@@ -93,36 +96,66 @@ public final class ExamAssetsPane extends VBox {
 	private final QuestionBookletCreationHandler questionBookletCreationHandler;
 	private final Button addQuestionBookletButton = new Button("Add Question Booklet");
 	private PendingQuestionBookletEditor pendingQuestionBookletEditor;
+	private final Predicate<Path> questionBookletSourcePreviewHandler;
+	private final Runnable questionBookletSourcePreviewCloseHandler;
+	private boolean pendingQuestionBookletPreviewOpen;
 
 	// TODO
 	// The EXAM label and its components should be surrounded with a border. The
 	// QUESTION BOOKLETS label and its components should be surrounded with a
 	// border. The ANSWER BOOKLETS and its components should be surrounded with a
 	// border. Low priority but a must for this sprint and slice.
+	// New Exam is a workspace-level structural transaction. It reuses the existing
+	// Exam Details controls but does not create another Subject selector.
+	private final Button addNewExamButton = new Button("Add New Exam");
+	private final Button clearNewExamButton = new Button("Clear");
+	private final Button cancelNewExamButton = new Button("Cancel");
+	private final Button saveNewExamButton = new Button("Save Exam");
+	private HBox examDetailsActionRow;
+	private HBox newExamActionRow;
+	private Subject workingSubject;
+	private boolean creatingNewExam;
+	private Long newExamReturnExamId;
 
 	/**
 	 * Creates the Exam/Assets workspace.
 	 *
-	 * @param examWriter                     authoritative Exam/booklet persistence
-	 * @param answerWriter                   authoritative AnswerFile persistence
-	 * @param optionsRepository              reusable Exam metadata labels
-	 * @param correctionHandler              authoritative Exam metadata correction
-	 * @param questionBookletViewHandler     opens a Question booklet read-only
-	 * @param answerFileViewHandler          opens an Answer booklet read-only
-	 * @param activeBookletSupplier          current authoritative capture booklet
-	 * @param captureBookletHandler          activates a selected booklet for
-	 *                                       capture
-	 * @param bookletMetadataUpdatedHandler  refreshes active capture state after a
-	 *                                       booklet metadata correction
-	 * @param answerBookletSourceChooser     chooses a source PDF for a new Answer
-	 *                                       booklet
-	 * @param answerBookletCreationHandler   imports and persists the new Answer
-	 *                                       asset * @throws NullPointerException if
-	 *                                       any argument is {@code null}
-	 * @param questionBookletSourceChooser   chooses a source PDF for a new Question
-	 *                                       booklet
-	 * @param questionBookletCreationHandler imports and persists a new Question
-	 *                                       booklet
+	 * @param examWriter                               authoritative Exam/booklet
+	 *                                                 persistence
+	 * @param answerWriter                             authoritative AnswerFile
+	 *                                                 persistence
+	 * @param optionsRepository                        reusable Exam metadata labels
+	 * @param correctionHandler                        authoritative Exam metadata
+	 *                                                 correction
+	 * @param questionBookletViewHandler               opens a Question booklet
+	 *                                                 read-only
+	 * @param answerFileViewHandler                    opens an Answer booklet
+	 *                                                 read-only
+	 * @param activeBookletSupplier                    current authoritative capture
+	 *                                                 booklet
+	 * @param captureBookletHandler                    activates a selected booklet
+	 *                                                 for capture
+	 * @param bookletMetadataUpdatedHandler            refreshes active capture
+	 *                                                 state after a booklet
+	 *                                                 metadata correction
+	 * @param answerBookletSourceChooser               chooses a source PDF for a
+	 *                                                 new Answer booklet
+	 * @param answerBookletCreationHandler             imports and persists the new
+	 *                                                 Answer asset * @throws
+	 *                                                 NullPointerException if any
+	 *                                                 argument is {@code null}
+	 * @param questionBookletSourceChooser             chooses a source PDF for a
+	 *                                                 new Question booklet
+	 * @param questionBookletCreationHandler           imports and persists a new
+	 *                                                 Question booklet * @param
+	 *                                                 questionBookletSourcePreviewHandler
+	 *                                                 opens a selected,
+	 *                                                 not-yet-persisted Question
+	 *                                                 PDF for read-only inspection
+	 * @param questionBookletSourcePreviewCloseHandler closes the temporary source
+	 *                                                 preview and restores the
+	 *                                                 previous PDF workspace
+	 *                                                 document
 	 */
 	public ExamAssetsPane(SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter,
 			ExamMetadataOptionsRepository optionsRepository, ExamCorrectionHandler correctionHandler,
@@ -130,6 +163,7 @@ public final class ExamAssetsPane extends VBox {
 			Supplier<ExamBooklet> activeBookletSupplier, Consumer<ExamBooklet> captureBookletHandler,
 			Consumer<ExamBooklet> bookletMetadataUpdatedHandler, Supplier<Path> answerBookletSourceChooser,
 			AnswerBookletCreationHandler answerBookletCreationHandler, Supplier<Path> questionBookletSourceChooser,
+			Predicate<Path> questionBookletSourcePreviewHandler, Runnable questionBookletSourcePreviewCloseHandler,
 			QuestionBookletCreationHandler questionBookletCreationHandler) {
 		if (examWriter == null) {
 			throw new NullPointerException("examWriter");
@@ -170,6 +204,12 @@ public final class ExamAssetsPane extends VBox {
 		if (questionBookletCreationHandler == null) {
 			throw new NullPointerException("questionBookletCreationHandler");
 		}
+		if (questionBookletSourcePreviewHandler == null) {
+			throw new NullPointerException("questionBookletSourcePreviewHandler");
+		}
+		if (questionBookletSourcePreviewCloseHandler == null) {
+			throw new NullPointerException("questionBookletSourcePreviewCloseHandler");
+		}
 		this.examWriter = examWriter;
 		this.answerWriter = answerWriter;
 		this.optionsRepository = optionsRepository;
@@ -191,6 +231,11 @@ public final class ExamAssetsPane extends VBox {
 		this.answerBookletSourceChooser = answerBookletSourceChooser;
 		this.answerBookletCreationHandler = answerBookletCreationHandler;
 
+		// Previewing the selected pre-persistence PDF still belongs to the application
+		// because the shared PdfWorkspacePane is application-owned.
+		this.questionBookletSourcePreviewHandler = questionBookletSourcePreviewHandler;
+		this.questionBookletSourcePreviewCloseHandler = questionBookletSourcePreviewCloseHandler;
+
 		// Exam/Assets owns structural asset editing while application-level callbacks
 		// keep an already-active Capture booklet synchronised after persistence
 		// changes.
@@ -207,36 +252,16 @@ public final class ExamAssetsPane extends VBox {
 	 * @throws SQLException if Exam persistence cannot be read
 	 */
 	public void refresh(Subject subject) throws SQLException {
-		Long previousExamId = examBox.getValue() == null ? null : Long.valueOf(examBox.getValue().getId());
-		examBox.getSelectionModel().clearSelection();
-		examBox.getItems().clear();
-		clearSelectedExam();
+		Long previousExamId = creatingNewExam || examBox.getValue() == null ? null
+				: Long.valueOf(examBox.getValue().getId());
 
-		// Suggestions may have changed elsewhere, but reload them while no Exam value
-		// is staged so they cannot erase persisted Provider or Assessment values.
-		refreshMetadataOptions();
-		if (subject == null) {
-			return;
-		}
-		List<Exam> exams = examWriter.findExamsForSubject(subject);
-		examBox.getItems().setAll(exams);
-		if (exams.isEmpty()) {
-			return;
-		}
-		Exam selectedExam = null;
-		if (previousExamId != null) {
-
-			// Preserve the selected persisted Exam whenever it still belongs to the
-			// authoritative Working Subject.
-			selectedExam = exams.stream().filter(exam -> exam.getId() == previousExamId.longValue()).findFirst()
-					.orElse(null);
-		}
-		if (selectedExam == null) {
-
-			// Repository ordering already presents the newest Exam first.
-			selectedExam = exams.getFirst();
-		}
-		examBox.getSelectionModel().select(selectedExam);
+		// A Working Subject refresh terminates any unsaved New Exam transaction because
+		// a New Exam must always inherit the current authoritative Subject.
+		creatingNewExam = false;
+		newExamReturnExamId = null;
+		workingSubject = subject;
+		restoreNormalExamPresentation();
+		reloadSubjectExams(subject, previousExamId);
 	}
 
 	private void beginAnswerBookletAdd() {
@@ -299,6 +324,22 @@ public final class ExamAssetsPane extends VBox {
 		setExamDetailsEditing(true);
 	}
 
+	private void beginNewExam() {
+		if (!canBeginNewExam()) {
+			return;
+		}
+		Exam selectedExam = examBox.getValue();
+		newExamReturnExamId = selectedExam == null ? null : Long.valueOf(selectedExam.getId());
+		creatingNewExam = true;
+
+		// Remove the persisted Exam selection before exposing blank metadata fields.
+		// The existing Exam catalogue remains loaded so Cancel can restore the prior
+		// row.
+		examBox.getSelectionModel().clearSelection();
+		clearSelectedExam();
+		showNewExamPresentation();
+	}
+
 	private void beginQuestionBookletAdd() {
 		Exam exam = examBox.getValue();
 		if (!canBeginQuestionBookletAdd(exam)) {
@@ -336,25 +377,35 @@ public final class ExamAssetsPane extends VBox {
 		updateUseSelectedBookletState();
 		editExamButton.setDisable(true);
 		examBox.setDisable(true);
+
+		// Open the selected source immediately so the user can inspect the booklet and
+		// enter the total Expected Questions while looking at the actual PDF. This is
+		// preview-only; the source does not become a persisted Exam asset until Save.
+		pendingQuestionBookletPreviewOpen = questionBookletSourcePreviewHandler.test(sourcePath);
 	}
 
 	private void buildContent() {
-		Label examHeading = new Label("EXAM");
-		examHeading.setStyle(HEADING_STYLE);
 		GridPane examSelectorGrid = new GridPane();
 		examSelectorGrid.setHgap(SPACING);
 		examSelectorGrid.add(examBox, 0, 0);
 		examSelectorGrid.add(stateLabel, 1, 0);
+		examSelectorGrid.add(addNewExamButton, 2, 0);
 		GridPane.setHgrow(examBox, Priority.ALWAYS);
 		VBox examDetails = createExamDetailsSection();
+
+		// Exam selection, lifecycle state, Add New Exam and Exam Details remain one
+		// bordered logical workspace area.
+		VBox examContent = new VBox(ROW_SPACING, examSelectorGrid, examDetails);
+		VBox examSection = createWorkspaceSection("exam-assets-exam-section", "EXAM", examContent);
 		VBox questionBooklets = createQuestionBookletsSection();
 		VBox answerBooklets = createAnswerBookletsSection();
+		newExamActionRow = createNewExamActionRow();
 
-		// Both asset sections now own their creation actions; capture activation
-		// remains
-		// a separate workspace-level transition.
-		getChildren().addAll(examHeading, examSelectorGrid, examDetails, questionBooklets, answerBooklets,
-				new Separator(), useSelectedBookletButton);
+		// New Exam transaction controls sit below all three setup sections, matching
+		// the
+		// workflow-wide nature of Clear / Cancel / Save Exam.
+		getChildren().addAll(examSection, questionBooklets, answerBooklets, newExamActionRow, new Separator(),
+				useSelectedBookletButton);
 	}
 
 	private boolean canBeginAnswerBookletAdd(Exam exam) {
@@ -363,6 +414,14 @@ public final class ExamAssetsPane extends VBox {
 		// neither may begin while the other is pending.
 		return exam != null && !exam.isComplete() && !editingExamDetails && editingBookletEditor == null
 				&& pendingAnswerBookletEditor == null && pendingQuestionBookletEditor == null;
+	}
+
+	private boolean canBeginNewExam() {
+
+		// New Exam owns the complete Exam/Assets structural workspace and therefore
+		// cannot overlap another metadata or asset transaction.
+		return workingSubject != null && !creatingNewExam && !editingExamDetails && editingBookletEditor == null
+				&& pendingQuestionBookletEditor == null && pendingAnswerBookletEditor == null;
 	}
 
 	private boolean canBeginQuestionBookletAdd(Exam exam) {
@@ -384,14 +443,66 @@ public final class ExamAssetsPane extends VBox {
 		loadSelectedExamSafely(selectedExam);
 	}
 
+	private void cancelNewExam() {
+		if (!creatingNewExam) {
+			return;
+		}
+		Long returnExamId = newExamReturnExamId;
+		creatingNewExam = false;
+		newExamReturnExamId = null;
+		restoreNormalExamPresentation();
+		if (returnExamId != null) {
+			Exam returnExam = examBox.getItems().stream().filter(exam -> exam.getId() == returnExamId.longValue())
+					.findFirst().orElse(null);
+			if (returnExam != null) {
+
+				// Re-selecting through the normal ComboBox listener reconstructs all Exam
+				// details and asset rows from authoritative persistence.
+				examBox.getSelectionModel().select(returnExam);
+				return;
+			}
+		}
+
+		// No previous Exam existed, or it disappeared while the transaction was open.
+		clearSelectedExam();
+		updateAddNewExamState();
+	}
+
+	private void clearNewExamFields() {
+		if (!creatingNewExam) {
+			return;
+		}
+		providerField.getSelectionModel().clearSelection();
+		providerField.setValue(null);
+		providerField.getEditor().clear();
+		yearField.getSelectionModel().clearSelection();
+		yearField.setValue(null);
+		assessmentField.getSelectionModel().clearSelection();
+		assessmentField.setValue(null);
+		assessmentField.getEditor().clear();
+
+		// Clearing returns the transaction to its incomplete state without leaving New
+		// Exam mode.
+		updateNewExamSaveState();
+	}
+
 	private void clearSelectedExam() {
 
 		// A pending Answer-booklet draft belongs only to the Exam from which it was
 		// started and cannot survive an Exam/Subject refresh.
+		boolean closePendingQuestionPreview = pendingQuestionBookletPreviewOpen;
+
 		// Pending structural drafts belong only to the Exam from which they were
 		// started and never survive an authoritative workspace reload.
 		pendingQuestionBookletEditor = null;
 		pendingAnswerBookletEditor = null;
+		pendingQuestionBookletPreviewOpen = false;
+		if (closePendingQuestionPreview) {
+
+			// PdfWorkspacePane retains the document displayed before VIEWER mode, so
+			// cancelling or completing the pending add can restore that context cleanly.
+			questionBookletSourcePreviewCloseHandler.run();
+		}
 		stateLabel.setText("State: —");
 		providerField.getSelectionModel().clearSelection();
 		providerField.setValue(null);
@@ -421,6 +532,9 @@ public final class ExamAssetsPane extends VBox {
 		updateAnswerBookletAddState();
 		setExamDetailsEditing(false);
 		updateUseSelectedBookletState();
+
+		// New Exam availability follows the same cleared transaction state.
+		updateAddNewExamState();
 	}
 
 	private void configureControls() {
@@ -460,9 +574,9 @@ public final class ExamAssetsPane extends VBox {
 
 		// Save availability follows semantic metadata changes rather than merely the
 		// fact that Edit mode is active.
-		providerField.getEditor().textProperty().addListener((_, _, _) -> updateExamDetailsSaveState());
-		yearField.valueProperty().addListener((_, _, _) -> updateExamDetailsSaveState());
-		assessmentField.getEditor().textProperty().addListener((_, _, _) -> updateExamDetailsSaveState());
+		providerField.getEditor().textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
+		yearField.valueProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
+		assessmentField.getEditor().textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
 		questionBookletsBox.setId("exam-assets-question-booklets");
 		answerBookletsBox.setId("exam-assets-answer-booklets");
 		editExamButton.setId("exam-assets-edit");
@@ -496,6 +610,20 @@ public final class ExamAssetsPane extends VBox {
 		// Source selection begins the temporary Answer-booklet editing transaction.
 		addAnswerBookletButton.setOnAction(_ -> beginAnswerBookletAdd());
 		updateAnswerBookletAddState();
+		addNewExamButton.setId("exam-assets-add-new-exam");
+		addNewExamButton.setMinWidth(Region.USE_PREF_SIZE);
+		addNewExamButton.setOnAction(_ -> beginNewExam());
+		clearNewExamButton.setId("exam-assets-new-exam-clear");
+		clearNewExamButton.setOnAction(_ -> clearNewExamFields());
+		cancelNewExamButton.setId("exam-assets-new-exam-cancel");
+		cancelNewExamButton.setOnAction(_ -> cancelNewExam());
+		saveNewExamButton.setId("exam-assets-new-exam-save");
+		saveNewExamButton.setOnAction(_ -> saveNewExam());
+
+		// New Exam cannot begin until Exam/Assets has been refreshed with an
+		// authoritative Working Subject.
+		updateAddNewExamState();
+		updateNewExamSaveState();
 		refreshMetadataOptions();
 		clearSelectedExam();
 	}
@@ -505,10 +633,10 @@ public final class ExamAssetsPane extends VBox {
 		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 		HBox actionRow = new HBox(SPACING, actionSpacer, addAnswerBookletButton);
 
-		// Persisted Answer rows and the structural Add action remain visually grouped
-		// inside one Answer Booklets section.
+		// Persisted rows, any pending row and the Add action all belong inside the
+		// Answer Booklets visual boundary.
 		VBox content = new VBox(ROW_SPACING, answerBookletsBox, actionRow);
-		return createSection("ANSWER BOOKLETS", content);
+		return createWorkspaceSection("exam-assets-answer-section", "ANSWER BOOKLETS", content);
 	}
 
 	private VBox createAnswerFileRow(AnswerFile answerFile) {
@@ -555,13 +683,28 @@ public final class ExamAssetsPane extends VBox {
 		Region actionSpacer = new Region();
 		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 
-		// Edit, Cancel and Save form one Exam Details editing transaction. Keep them
-		// together here rather than presenting Cancel and Save as workspace actions.
-		HBox actionRow = new HBox(SPACING, actionSpacer, editExamButton, cancelButton, saveButton);
-		actionRow.setId("exam-assets-details-actions");
-		VBox section = createSection("Exam Details", new VBox(ROW_SPACING, details, actionRow));
+		// Persisted Exam correction retains its existing Edit / Cancel / Save
+		// transaction. New Exam mode temporarily hides this complete action row.
+		examDetailsActionRow = new HBox(SPACING, actionSpacer, editExamButton, cancelButton, saveButton);
+		examDetailsActionRow.setId("exam-assets-details-actions");
+		VBox section = createSection("Exam Details", new VBox(ROW_SPACING, details, examDetailsActionRow));
 		section.setId("exam-assets-details-section");
 		return section;
+	}
+
+	private HBox createNewExamActionRow() {
+		Region actionSpacer = new Region();
+		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
+
+		// Clear remains separate on the left while Cancel and Save Exam form the
+		// transaction-completion controls on the right.
+		HBox actionRow = new HBox(SPACING, clearNewExamButton, actionSpacer, cancelNewExamButton, saveNewExamButton);
+		actionRow.setId("exam-assets-new-exam-actions");
+
+		// Normal Exam browsing is the initial workspace state.
+		actionRow.setVisible(false);
+		actionRow.setManaged(false);
+		return actionRow;
 	}
 
 	private VBox createQuestionBookletRow(ExamBooklet booklet, AnswerFile assignedAnswerFile) {
@@ -578,15 +721,39 @@ public final class ExamAssetsPane extends VBox {
 		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 		HBox actionRow = new HBox(SPACING, actionSpacer, addQuestionBookletButton);
 
-		// Persisted rows and creation belong to the same structural section.
+		// Persisted rows, any pending row and the Add action all belong inside the
+		// Question Booklets visual boundary.
 		VBox content = new VBox(ROW_SPACING, questionBookletsBox, actionRow);
-		return createSection("QUESTION BOOKLETS", content);
+		return createWorkspaceSection("exam-assets-question-section", "QUESTION BOOKLETS", content);
 	}
 
 	private VBox createSection(String headingText, javafx.scene.Node content) {
 		Label heading = new Label(headingText);
 		heading.setStyle(HEADING_STYLE);
 		VBox section = new VBox(ROW_SPACING, heading, content);
+		return section;
+	}
+
+	private VBox createWorkspaceSection(String id, String headingText, Node content) {
+		if (id == null) {
+			throw new NullPointerException("id");
+		}
+		if (headingText == null) {
+			throw new NullPointerException("headingText");
+		}
+		if (content == null) {
+			throw new NullPointerException("content");
+		}
+		Label heading = new Label(headingText);
+		heading.setId(id + "-heading");
+		heading.setStyle(HEADING_STYLE);
+
+		// Major Exam/Assets areas need an explicit visual boundary around both their
+		// heading and all controls owned by that area.
+		VBox section = new VBox(ROW_SPACING, heading, content);
+		section.setId(id);
+		section.setPadding(SECTION_PADDING);
+		section.setStyle(WORKSPACE_SECTION_STYLE);
 		return section;
 	}
 
@@ -663,6 +830,14 @@ public final class ExamAssetsPane extends VBox {
 		String assessmentName = editedText(assessmentField);
 		return !providerName.equals(persistedExam.getProvider().getName()) || year == null
 				|| year.intValue() != persistedExam.getYear() || !assessmentName.equals(persistedExam.getName());
+	}
+
+	private boolean isNewExamDetailsComplete() {
+
+		// No persisted Exam can be created without its inherited Subject and complete
+		// Provider / Year / Assessment identity.
+		return workingSubject != null && !editedText(providerField).isBlank() && yearField.getValue() != null
+				&& !editedText(assessmentField).isBlank();
 	}
 
 	private void loadSelectedExam(Exam exam) throws SQLException {
@@ -753,6 +928,61 @@ public final class ExamAssetsPane extends VBox {
 		for (QuestionBookletEditor editor : questionBookletEditors) {
 			editor.updateActionState();
 		}
+
+		// New Exam is another structural workspace operation and follows the same
+		// transaction exclusion rules.
+		updateAddNewExamState();
+	}
+
+	private void reloadSubjectExams(Subject subject, Long preferredExamId) throws SQLException {
+		examBox.getSelectionModel().clearSelection();
+		examBox.getItems().clear();
+		clearSelectedExam();
+
+		// Suggestions are user preferences rather than Exam identity and may have
+		// changed
+		// after creating or correcting another Exam.
+		refreshMetadataOptions();
+		if (subject == null) {
+			updateAddNewExamState();
+			return;
+		}
+		List<Exam> exams = examWriter.findExamsForSubject(subject);
+		examBox.getItems().setAll(exams);
+		if (exams.isEmpty()) {
+			updateAddNewExamState();
+			return;
+		}
+		Exam selectedExam = null;
+		if (preferredExamId != null) {
+
+			// A newly created or previously selected Exam wins over repository ordering.
+			selectedExam = exams.stream().filter(exam -> exam.getId() == preferredExamId.longValue()).findFirst()
+					.orElse(null);
+		}
+		if (selectedExam == null) {
+
+			// Repository ordering already presents the newest available Exam first.
+			selectedExam = exams.getFirst();
+		}
+		examBox.getSelectionModel().select(selectedExam);
+		updateAddNewExamState();
+	}
+
+	private void restoreNormalExamPresentation() {
+
+		// The normal persisted-Exam editing controls replace the New Exam transaction
+		// controls whenever creation ends or the Working Subject changes.
+		if (examDetailsActionRow != null) {
+			examDetailsActionRow.setVisible(true);
+			examDetailsActionRow.setManaged(true);
+		}
+		if (newExamActionRow != null) {
+			newExamActionRow.setVisible(false);
+			newExamActionRow.setManaged(false);
+		}
+		examBox.setDisable(false);
+		updateAddNewExamState();
 	}
 
 	private void saveExamDetails() {
@@ -780,6 +1010,36 @@ public final class ExamAssetsPane extends VBox {
 			setExamDetailsEditing(false);
 		} catch (SQLException | IOException | IllegalArgumentException | IllegalStateException exception) {
 			showCorrectionError(exception.getMessage());
+		}
+	}
+
+	private void saveNewExam() {
+		if (!creatingNewExam || !isNewExamDetailsComplete()) {
+			return;
+		}
+		String providerName = editedText(providerField);
+		Integer year = yearField.getValue();
+		String assessmentName = editedText(assessmentField);
+		try {
+			Exam created = examWriter.createExam(workingSubject, providerName, year.intValue(), assessmentName);
+
+			// Successful manual entry also enriches the reusable suggestions presented by
+			// subsequent Exam creation and correction workflows.
+			optionsRepository.addProvider(created.getProvider().getName());
+			optionsRepository.addAssessment(created.getName());
+			long createdExamId = created.getId();
+			creatingNewExam = false;
+			newExamReturnExamId = null;
+			restoreNormalExamPresentation();
+
+			// Reload from SQLite rather than treating the returned object as sufficient
+			// proof of authoritative workspace state.
+			reloadSubjectExams(workingSubject, Long.valueOf(createdExamId));
+		} catch (SQLException | IllegalArgumentException exception) {
+
+			// Failed creation leaves all entered values staged so the user can correct the
+			// metadata rather than re-entering the transaction.
+			showNewExamError(exception.getMessage());
 		}
 	}
 
@@ -860,6 +1120,44 @@ public final class ExamAssetsPane extends VBox {
 		alert.showAndWait();
 	}
 
+	private void showNewExamError(String message) {
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.setTitle("Exam / Assets");
+		alert.setHeaderText("The new Exam could not be saved.");
+		alert.setContentText(message == null || message.isBlank() ? "Exam creation failed." : message);
+
+		// A failed Save keeps the New Exam transaction active so entered metadata can
+		// be
+		// corrected without starting again.
+		alert.showAndWait();
+	}
+
+	private void showNewExamPresentation() {
+		stateLabel.setText("NEW EXAM");
+		clearNewExamFields();
+
+		// Provider, Year and Assessment are the only Exam identity values entered here.
+		// Subject remains inherited from the permanent Working Subject control.
+		providerField.setDisable(false);
+		yearField.setDisable(false);
+		assessmentField.setDisable(false);
+		examBox.setDisable(true);
+		addNewExamButton.setDisable(true);
+		examDetailsActionRow.setVisible(false);
+		examDetailsActionRow.setManaged(false);
+		newExamActionRow.setVisible(true);
+		newExamActionRow.setManaged(true);
+		questionBookletsBox.getChildren().setAll(new Label("Save the Exam before adding Question booklets."));
+		answerBookletsBox.getChildren().setAll(new Label("Save the Exam before adding Answer booklets."));
+
+		// Assets require a persisted Exam identity, so neither creation action can run
+		// during the unsaved New Exam transaction.
+		addQuestionBookletButton.setDisable(true);
+		addAnswerBookletButton.setDisable(true);
+		useSelectedBookletButton.setDisable(true);
+		updateNewExamSaveState();
+	}
+
 	private String sourceFileName(String relativePath) {
 		Path path = Path.of(relativePath);
 		Path fileName = path.getFileName();
@@ -867,6 +1165,13 @@ public final class ExamAssetsPane extends VBox {
 		// Defensive fallback keeps a malformed-but-readable path visible rather than
 		// presenting an empty source label.
 		return fileName == null ? relativePath : fileName.toString();
+	}
+
+	private void updateAddNewExamState() {
+
+		// The action remains visible but unavailable whenever another structural
+		// transaction currently owns the Exam/Assets workspace.
+		addNewExamButton.setDisable(!canBeginNewExam());
 	}
 
 	private void updateAnswerBookletAddState() {
@@ -904,6 +1209,21 @@ public final class ExamAssetsPane extends VBox {
 		saveButton.setDisable(!isExamDetailsDirty());
 	}
 
+	private void updateExamMetadataActionStates() {
+
+		// The same metadata fields serve existing-Exam correction and New Exam
+		// creation, but each transaction has independent Save rules.
+		updateExamDetailsSaveState();
+		updateNewExamSaveState();
+	}
+
+	private void updateNewExamSaveState() {
+
+		// Save Exam becomes available only while the New Exam transaction is active and
+		// every required identity field is complete.
+		saveNewExamButton.setDisable(!creatingNewExam || !isNewExamDetailsComplete());
+	}
+
 	private void updateQuestionBookletAddState() {
 
 		// Button availability is derived from the complete current transaction state.
@@ -912,8 +1232,9 @@ public final class ExamAssetsPane extends VBox {
 
 	private void updateUseSelectedBookletState() {
 
-		// Capture activation must never abandon any staged structural transaction.
-		useSelectedBookletButton.setDisable(editingExamDetails || editingBookletEditor != null
+		// Capture activation must never abandon staged Exam, Question-booklet or
+		// Answer-booklet structural work.
+		useSelectedBookletButton.setDisable(creatingNewExam || editingExamDetails || editingBookletEditor != null
 				|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null
 				|| questionBookletSelectionGroup.getSelectedToggle() == null);
 	}

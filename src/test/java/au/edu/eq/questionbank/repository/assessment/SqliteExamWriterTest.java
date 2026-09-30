@@ -155,6 +155,35 @@ class SqliteExamWriterTest {
 	}
 
 	@Test
+	void createsStandaloneExamAndReusesExistingProvider() throws Exception {
+		Path databasePath = tempDirectory.resolve("new-exam-creation.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Exam externalAssessment = writer.createExam(chemistry, "QCAA", 2025, "External Assessment");
+
+		// New Exam creation establishes metadata only. Its structural source assets are
+		// supplied later through the ordinary Exam/Assets workflows.
+		assertEquals(ExamCaptureState.ACTIVE, externalAssessment.getCaptureState());
+		assertTrue(writer.findExamBooklets(externalAssessment).isEmpty());
+		assertTrue(new SqliteAnswerWriter(database, writer).findAnswerFiles(externalAssessment).isEmpty());
+		Exam mockExam = writer.createExam(chemistry, "QCAA", 2024, "Mock Exam");
+
+		// Provider identity is shared rather than creating another QCAA row for every
+		// Exam entered through New Exam mode.
+		assertEquals(externalAssessment.getProvider().getId(), mockExam.getProvider().getId());
+		assertEquals(2, writer.findExamsForSubject(chemistry).size());
+
+		// Save Exam must not silently treat an existing Exam as a successful new one.
+		assertThrows(IllegalArgumentException.class,
+				() -> writer.createExam(chemistry, "QCAA", 2025, "External Assessment"));
+
+		// The rejected duplicate must leave the authoritative Exam catalogue unchanged.
+		assertEquals(2, writer.findExamsForSubject(chemistry).size());
+	}
+
+	@Test
 	void findsAllExamBookletsWithSourceRelationships() throws Exception {
 		Path databasePath = tempDirectory.resolve("all-exam-booklets.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
