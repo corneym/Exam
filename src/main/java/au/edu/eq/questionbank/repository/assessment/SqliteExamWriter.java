@@ -866,6 +866,32 @@ public final class SqliteExamWriter {
 	}
 
 	/**
+	 * Updates the editable structural metadata of one persisted Question booklet.
+	 *
+	 * @param booklet               persisted booklet to update
+	 * @param name                  non-blank booklet label
+	 * @param questionFormat        Question format recorded for the booklet
+	 * @param expectedQuestionCount positive expected top-level Question count, or
+	 *                              {@code null} when not recorded
+	 * @return updated booklet with the same persistent identity and source document
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if {@code booklet} or {@code questionFormat}
+	 *                                  is {@code null}
+	 * @throws IllegalArgumentException if the name is blank, the expected count is
+	 *                                  invalid, or the booklet does not exist
+	 * @throws IllegalStateException    if the owning Exam is complete
+	 */
+	public ExamBooklet updateExamBookletMetadata(ExamBooklet booklet, String name,
+			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount) throws SQLException {
+		try (Connection connection = database.openConnection()) {
+
+			// The connection-aware implementation is also reused when booklet metadata and
+			// Answer assignment must be committed as one transaction.
+			return updateExamBookletMetadata(connection, booklet, name, questionFormat, expectedQuestionCount);
+		}
+	}
+
+	/**
 	 * Updates structural capture-planning metadata for an existing Exam booklet.
 	 *
 	 * @param booklet               persisted booklet
@@ -881,40 +907,10 @@ public final class SqliteExamWriter {
 	 */
 	public ExamBooklet updateExamBookletPlanning(ExamBooklet booklet, ExamBookletQuestionFormat questionFormat,
 			Integer expectedQuestionCount) throws SQLException {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (questionFormat == null) {
-			throw new NullPointerException("questionFormat");
-		}
-		if (expectedQuestionCount != null && expectedQuestionCount < 1) {
-			throw new IllegalArgumentException("expectedQuestionCount must be positive when supplied");
-		}
-		try (Connection connection = database.openConnection()) {
 
-			// Format and expected count define Exam structure and therefore require an
-			// active Exam.
-			requireExamActive(connection, booklet.getExam().getId());
-			try (PreparedStatement statement = connection.prepareStatement("""
-					UPDATE exam_booklets
-					SET question_format = ?,
-					    expected_question_count = ?
-					WHERE id = ?
-					  AND exam_id = ?
-					""")) {
-				statement.setString(1, questionFormat.name());
-				statement.setObject(2, expectedQuestionCount);
-				statement.setLong(3, booklet.getId());
-				statement.setLong(4, booklet.getExam().getId());
-
-				// A planning update must not silently target a stale booklet identity.
-				if (statement.executeUpdate() != 1) {
-					throw new IllegalArgumentException("Exam booklet does not exist for its stored Exam");
-				}
-			}
-		}
-		return new ExamBooklet(booklet.getId(), booklet.getExam(), booklet.getName(), booklet.getSourceDocument(),
-				questionFormat, expectedQuestionCount);
+		// Planning is a subset of the authoritative booklet-metadata correction path.
+		// Preserve the current booklet label while updating format and expected count.
+		return updateExamBookletMetadata(booklet, booklet.getName(), questionFormat, expectedQuestionCount);
 	}
 
 	Exam findExam(Connection connection, Subject subject, ExamProvider provider, int year, String name)
@@ -1290,6 +1286,52 @@ public final class SqliteExamWriter {
 				}
 			}
 		}
+	}
+
+	ExamBooklet updateExamBookletMetadata(Connection connection, ExamBooklet booklet, String name,
+			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount) throws SQLException {
+		if (connection == null) {
+			throw new NullPointerException("connection");
+		}
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (name == null || name.isBlank()) {
+			throw new IllegalArgumentException("name must not be blank");
+		}
+		if (questionFormat == null) {
+			throw new NullPointerException("questionFormat");
+		}
+		if (expectedQuestionCount != null && expectedQuestionCount < 1) {
+			throw new IllegalArgumentException("expectedQuestionCount must be positive when supplied");
+		}
+		String normalizedName = name.strip();
+
+		// Name, format and expected count all describe Exam structure, so a completed
+		// Exam must be reactivated before any of them can change.
+		requireExamActive(connection, booklet.getExam().getId());
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE exam_booklets
+				SET booklet_name = ?,
+				    question_format = ?,
+				    expected_question_count = ?
+				WHERE id = ?
+				  AND exam_id = ?
+				""")) {
+			statement.setString(1, normalizedName);
+			statement.setString(2, questionFormat.name());
+			statement.setObject(3, expectedQuestionCount);
+			statement.setLong(4, booklet.getId());
+			statement.setLong(5, booklet.getExam().getId());
+
+			// Match both persistent identities so a stale booklet object cannot update a
+			// row belonging to another Exam.
+			if (statement.executeUpdate() != 1) {
+				throw new IllegalArgumentException("Exam booklet does not exist for its stored Exam");
+			}
+		}
+		return new ExamBooklet(booklet.getId(), booklet.getExam(), normalizedName, booklet.getSourceDocument(),
+				questionFormat, expectedQuestionCount);
 	}
 
 	private Exam correctExamMetadata(Connection connection, Exam exam, String providerName, int year, String name)

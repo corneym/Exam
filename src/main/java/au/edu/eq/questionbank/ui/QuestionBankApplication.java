@@ -21,6 +21,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
+import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -307,6 +308,59 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private boolean activateBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		if (!allowExamImportConfirmation()) {
+			return false;
+		}
+
+		// A read-only Exam/Assets View may currently own the PDF pane. Close that
+		// temporary viewer session before making a Question booklet authoritative.
+		if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
+			pdfWorkspace.closeViewerPdf();
+		}
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		Path storedPath;
+		try {
+
+			// Capture always opens the authoritative managed Question source rather than
+			// an external file chosen independently of persistence.
+			storedPath = pdfStore.resolve(booklet.getSourceDocument().getRelativePath());
+		} catch (IllegalArgumentException exception) {
+			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture", "The stored Question PDF path is invalid.",
+					exception.getMessage());
+			return false;
+		}
+		if (!Files.isRegularFile(storedPath)) {
+			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture", "The stored Question PDF is unavailable.",
+					storedPath.toString());
+			return false;
+		}
+		try {
+			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, config.pdfDataRoot());
+
+			// Reuse the established activation sequence so PDF state and Question entry
+			// state are reset exactly as they are for the existing workflow.
+			openExamPdf(selectedPdf);
+			examMetadataPane.activateExistingBooklet(booklet, storedPath);
+
+			// Rebuild both persisted capture queues after changing structural source
+			// context so Capture immediately reflects the newly active booklet.
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			return true;
+		} catch (RuntimeException exception) {
+			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture",
+					"The selected Question booklet could not be opened.", failureMessage(exception));
+			return false;
+		}
+	}
+
 	private void activateExamBookletSubject(Subject subject) {
 
 		// Activate the booklet's Subject before deriving any Question-capture
@@ -582,6 +636,14 @@ public class QuestionBankApplication extends Application {
 		showAlert(Alert.AlertType.WARNING, "Save in progress", "Save in progress",
 				"Wait for the current Question or Answer save to finish before " + actionDescription + ".");
 		return true;
+	}
+
+	private Path chooseAnswerBookletSource(Stage primaryStage, ApplicationConfig config) {
+		PdfFilePicker picker = new PdfFilePicker(config.pdfDataRoot());
+
+		// Source selection is application-owned because it interacts with the native
+		// filesystem rather than Exam/Assets presentation state.
+		return picker.chooseAnyPdf(primaryStage, "Choose Answer booklet PDF");
 	}
 
 	private CurriculumAuthoringSession chooseExistingCurriculum(Stage primaryStage, List<SyllabusVersion> versions,
@@ -1449,6 +1511,26 @@ public class QuestionBankApplication extends Application {
 		requestApplicationExit(primaryStage);
 	}
 
+	private void handleExamAssetsBookletMetadataUpdated(ExamBooklet updatedBooklet) {
+		if (updatedBooklet == null) {
+			throw new NullPointerException("updatedBooklet");
+		}
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet == null || activeBooklet.getId() != updatedBooklet.getId()) {
+
+			// Editing another booklet must not disturb the current Capture target.
+			return;
+		}
+
+		// Replace the active immutable booklet snapshot so Name, Type and Expected
+		// Questions agree immediately with persistence.
+		examMetadataPane.refreshActiveBookletPlanning(updatedBooklet);
+
+		// A Type change affects defaults for future Question capture from this booklet.
+		questionCapturePane.refreshForActiveBooklet();
+		refreshActiveExamContext();
+	}
+
 	private void handlePdfSelectionInvalidated() {
 		CaptureSelectionOwner owner = captureSelectionState.getOwner();
 		if (owner == null) {
@@ -1552,6 +1634,42 @@ public class QuestionBankApplication extends Application {
 						exception.getMessage());
 			}
 		}
+	}
+
+	private AnswerFile importAnswerBookletFromExamAssets(Exam exam, Path sourcePath, String name,
+			boolean containsAnswerExplanations, ApplicationConfig config) throws IOException, SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		if (name == null || name.isBlank()) {
+			throw new IllegalArgumentException("Answer booklet name must not be blank");
+		}
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+
+		// Answer assets use the same managed Subject/Provider/Year directory as the
+		// other source documents belonging to this Exam.
+		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
+				exam.getYear());
+		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
+		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
+		SourceDocumentHashService hashService = new SourceDocumentHashService();
+
+		// Every newly managed Answer asset receives byte identity immediately.
+		String contentSha256 = hashService.sha256(storedPath);
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
+
+		// Creation and explicit explanation metadata are persisted by one repository
+		// transaction after the managed source has been established.
+		return answerWriter.findOrCreateAnswerFile(exam, name.strip(), relativePath, contentSha256,
+				containsAnswerExplanations);
 	}
 
 	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
@@ -1727,8 +1845,23 @@ public class QuestionBankApplication extends Application {
 		// refresh.
 		// Returning to Capture is no longer coupled to Cancel. The later explicit
 		// Use Selected Booklet for Capture action will own that transition.
+		// ExamAssetsPane owns presentation while the application owns managed-path
+		// resolution and the shared PDF workspace.
 		examAssetsPane = new ExamAssetsPane(examWriter, answerWriter, examMetadataOptionsRepository,
-				this::correctExamMetadataAndReloadCapture);
+				this::correctExamMetadataAndReloadCapture,
+				booklet -> viewQuestionBookletFromExamAssets(booklet, config),
+				answerFile -> viewAnswerFileFromExamAssets(answerFile, config), examMetadataPane::getBooklet,
+				booklet -> useExamAssetsBookletForCapture(booklet, config),
+				this::handleExamAssetsBookletMetadataUpdated,
+
+				// Native file selection remains application-owned rather than being
+				// embedded in the Exam/Assets presentation component.
+				() -> chooseAnswerBookletSource(primaryStage, config),
+
+				// The application imports the chosen PDF into managed storage, hashes
+				// it and persists the AnswerFile plus its explanation metadata.
+				(exam, sourcePath, name, containsAnswerExplanations) -> importAnswerBookletFromExamAssets(exam,
+						sourcePath, name, containsAnswerExplanations, config));
 
 		// The selector receives application-level Subject creation through the same
 		// database used by the rest of the capture workflow.
@@ -1921,46 +2054,16 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void openBookletFromExamSetup(ExamBooklet booklet, ApplicationConfig config) {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (config == null) {
-			throw new NullPointerException("config");
-		}
-		if (!allowExamImportConfirmation()) {
+
+		// The transitional modal setup and the new Exam/Assets workspace deliberately
+		// share one authoritative capture-activation implementation.
+		if (!activateBookletForCapture(booklet, config)) {
 			return;
 		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-		Path storedPath;
-		try {
 
-			// Exam Setup activates only the authoritative managed PDF identified by the
-			// selected persisted ExamBooklet.
-			storedPath = pdfStore.resolve(booklet.getSourceDocument().getRelativePath());
-		} catch (IllegalArgumentException exception) {
-			showAlert(Alert.AlertType.ERROR, "Exam Setup", "The stored Question PDF path is invalid.",
-					exception.getMessage());
-			return;
-		}
-		if (!Files.isRegularFile(storedPath)) {
-			showAlert(Alert.AlertType.ERROR, "Exam Setup", "The stored Question PDF is unavailable.",
-					storedPath.toString());
-			return;
-		}
-		try {
-			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, config.pdfDataRoot());
-
-			// Reuse the normal capture activation path so PDF state and transient
-			// Question-entry state are reset exactly as they are for ordinary intake.
-			openExamPdf(selectedPdf);
-			examMetadataPane.activateExistingBooklet(booklet, storedPath);
-
-			// A successful selection has completed the setup-to-capture transition.
-			examSetupDialog.close();
-		} catch (RuntimeException exception) {
-			showAlert(Alert.AlertType.ERROR, "Exam Setup", "The selected Question booklet could not be opened.",
-					failureMessage(exception));
-		}
+		// Successful modal selection returns control to the underlying Capture
+		// workspace.
+		examSetupDialog.close();
 	}
 
 	private void openCurriculumAuthoringWindow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
@@ -3144,6 +3247,74 @@ public class QuestionBankApplication extends Application {
 		}
 		captureSelectionState.claim(CaptureSelectionOwner.SHARED_CONTEXT);
 		return true;
+	}
+
+	private void useExamAssetsBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
+
+		// Do not leave Exam/Assets unless the selected booklet has been successfully
+		// opened and activated as the authoritative capture source.
+		if (!activateBookletForCapture(booklet, config)) {
+			return;
+		}
+		showCaptureWorkspaceMode();
+	}
+
+	private void viewAnswerFileFromExamAssets(AnswerFile answerFile, ApplicationConfig config) {
+		if (answerFile == null) {
+			throw new NullPointerException("answerFile");
+		}
+
+		// Answer-booklet View is also inspection only. It must not enter Answer capture
+		// or replace the persisted Answer assignment.
+		viewExamAssetPdf(answerFile.getSourceDocument().getRelativePath(), "Answer booklet", config);
+	}
+
+	private void viewExamAssetPdf(String relativePath, String assetDescription, ApplicationConfig config) {
+		if (relativePath == null) {
+			throw new NullPointerException("relativePath");
+		}
+		if (assetDescription == null) {
+			throw new NullPointerException("assetDescription");
+		}
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		Path storedPath;
+		try {
+
+			// Resolve only through the managed PDF root so Exam/Assets never opens an
+			// arbitrary external path recorded outside application storage.
+			storedPath = pdfStore.resolve(relativePath);
+		} catch (IllegalArgumentException exception) {
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets",
+					"The stored " + assetDescription + " PDF path is invalid.", exception.getMessage());
+			return;
+		}
+		if (!Files.isRegularFile(storedPath)) {
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The stored " + assetDescription + " PDF is unavailable.",
+					storedPath.toString());
+			return;
+		}
+		try {
+
+			// VIEWER mode disables region capture but, unlike the old modal inspection
+			// workflow, the Exam/Assets pane remains visible beside the shared PDF pane.
+			pdfWorkspace.openViewerPdf(storedPath);
+		} catch (RuntimeException exception) {
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The " + assetDescription + " could not be opened.",
+					failureMessage(exception));
+		}
+	}
+
+	private void viewQuestionBookletFromExamAssets(ExamBooklet booklet, ApplicationConfig config) {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+
+		// Question-booklet View is inspection only. It must not activate this booklet
+		// for capture or change ExamMetadataPane capture state.
+		viewExamAssetPdf(booklet.getSourceDocument().getRelativePath(), "Question booklet", config);
 	}
 
 	private enum BackupFailureDecision {

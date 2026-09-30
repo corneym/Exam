@@ -3,7 +3,12 @@ package au.edu.eq.questionbank.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -11,19 +16,27 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
@@ -195,6 +208,43 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(status.getParent() == addRegion.getParent(),
 				"Answer status must not share the selection-action row");
 		assertFalse(status.getParent() == saveAnswer.getParent(), "Answer status must not share the save-action row");
+	}
+
+	@Test
+	void answerExplanationMetadataCanBeChangedAndReloaded(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet, "Marking guide",
+				"Chemistry/2024/marking-guide.pdf");
+
+		// Enter the real Exam/Assets workspace after the AnswerFile has been persisted.
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		CheckBox explanations = lookup(robot, "#exam-assets-answer-explanations-" + answerFile.getId(), CheckBox.class);
+
+		// Newly created AnswerFiles default to no recorded explanations.
+		assertFalse(explanations.isSelected());
+
+		// Use semantic activation because this test concerns metadata behaviour rather
+		// than pointer hit-testing.
+		fireControl(robot, explanations);
+		WaitForAsyncUtils.waitForFxEvents();
+		AnswerFile persisted = answerWriter.findAnswerFiles(booklet.getExam()).stream()
+				.filter(candidate -> candidate.getId() == answerFile.getId()).findFirst().orElseThrow();
+		assertTrue(persisted.hasAnswerExplanations());
+
+		// Return to Capture through the production transition, then reopen Exam/Assets
+		// so the checkbox must be reconstructed from persistence rather than retained
+		// local control state.
+		fireControl(robot, "#exam-assets-use-selected-booklet");
+		WaitForAsyncUtils.waitForFxEvents();
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		CheckBox reloaded = lookup(robot, "#exam-assets-answer-explanations-" + answerFile.getId(), CheckBox.class);
+		assertTrue(reloaded.isSelected());
 	}
 
 	@Test
@@ -373,6 +423,55 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void examAssetsCanAddAnswerBookletWithExplanationMetadata(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		Path answerSource = pdfDataRoot.resolve("marking-guide.pdf");
+		Files.copy(examPdf, answerSource);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
+
+		// Bypass only the native chooser. The rest of the real Exam/Assets editing
+		// and application persistence workflow remains under test.
+		robot.interact(() -> {
+			try {
+				invoke(examAssetsPane, "beginAnswerBookletAdd", new Class<?>[] { Path.class }, answerSource);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		TextField name = lookup(robot, "#exam-assets-new-answer-name", TextField.class);
+		CheckBox explanations = lookup(robot, "#exam-assets-new-answer-explanations", CheckBox.class);
+		Button save = lookup(robot, "#exam-assets-new-answer-save", Button.class);
+		robot.interact(() -> name.setText("Marking Guide"));
+		fireControl(robot, explanations);
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitForFxEvents();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		List<AnswerFile> answerFiles = answerWriter.findAnswerFiles(booklet.getExam());
+		assertEquals(1, answerFiles.size());
+		AnswerFile stored = answerFiles.getFirst();
+		assertEquals("Marking Guide", stored.getName());
+		assertTrue(stored.hasAnswerExplanations());
+
+		// The normal persisted Answer row replaces the temporary editor after Save.
+		CheckBox persistedExplanations = lookup(robot, "#exam-assets-answer-explanations-" + stored.getId(),
+				CheckBox.class);
+		assertTrue(persistedExplanations.isSelected());
+		@SuppressWarnings("unchecked")
+		ComboBox<Object> answerChoice = lookup(robot, "#exam-assets-question-answer-" + booklet.getId(),
+				ComboBox.class);
+
+		// Reloading the Exam after creation must also publish the new asset immediately
+		// to Question-booklet assignment choices.
+		assertTrue(answerChoice.getItems().stream().anyMatch(item -> "Marking Guide".equals(item.toString())));
+	}
+
+	@Test
 	void examAssetsCanCorrectAndReloadAssessment(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		fireControl(robot, "#change-exam-assets");
@@ -417,6 +516,127 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void examAssetsCanEditQuestionBookletMetadata(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet original = examMetadataPane().getBooklet();
+		assertNotNull(original);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		@SuppressWarnings("unchecked")
+		ComboBox<String> name = lookup(robot, "#exam-assets-question-name-" + original.getId(), ComboBox.class);
+		RadioButton written = lookup(robot, "#exam-assets-question-format-written-" + original.getId(),
+				RadioButton.class);
+		RadioButton mcq = lookup(robot, "#exam-assets-question-format-mcq-" + original.getId(), RadioButton.class);
+		RadioButton both = lookup(robot, "#exam-assets-question-format-both-" + original.getId(), RadioButton.class);
+		HBox formatRow = lookup(robot, "#exam-assets-question-format-row-" + original.getId(), HBox.class);
+
+		// MCQ, Written Response and Both are alternative values for one field and must
+		// therefore occupy one compact horizontal row rather than three vertical rows.
+		assertEquals(formatRow, mcq.getParent());
+		assertEquals(formatRow, written.getParent());
+		assertEquals(formatRow, both.getParent());
+		assertEquals(3, formatRow.getChildren().size());
+		TextField expected = lookup(robot, "#exam-assets-question-expected-" + original.getId(), TextField.class);
+		Button edit = lookup(robot, "#exam-assets-question-edit-" + original.getId(), Button.class);
+		Button save = lookup(robot, "#exam-assets-question-save-" + original.getId(), Button.class);
+
+		// Persisted structural metadata starts protected and Save has no work to do.
+		assertTrue(name.isDisabled());
+		assertTrue(written.isDisabled());
+		assertTrue(expected.isDisabled());
+		assertTrue(save.isDisabled());
+		fireControl(robot, edit);
+
+		// Entering Edit alone must not create a dirty row.
+		assertFalse(name.isDisabled());
+		assertFalse(written.isDisabled());
+		assertFalse(expected.isDisabled());
+		assertTrue(save.isDisabled());
+		robot.interact(() -> name.getEditor().setText("Paper 1"));
+		fireControl(robot, written);
+		robot.interact(() -> expected.setText("10"));
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitForFxEvents();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamBooklet reloaded = writer.findExamBooklets(original.getExam()).stream()
+				.filter(booklet -> booklet.getId() == original.getId()).findFirst().orElseThrow();
+
+		// A fresh persistence read proves that all three editable structural values
+		// were committed under the original booklet identity and source document.
+		assertEquals("Paper 1", reloaded.getName());
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, reloaded.getQuestionFormat());
+		assertEquals(Integer.valueOf(10), reloaded.getExpectedQuestionCount());
+		assertEquals(original.getSourceDocument().getId(), reloaded.getSourceDocument().getId());
+
+		// Because this was the active booklet, Capture context must also hold the
+		// authoritative replacement object rather than its stale pre-edit snapshot.
+		assertEquals("Paper 1", examMetadataPane().getBooklet().getName());
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, examMetadataPane().getBooklet().getQuestionFormat());
+
+		// Saving booklet metadata deliberately leaves the user in Exam/Assets. Verify
+		// the rebuilt row shows the authoritative persisted values rather than looking
+		// for Capture-only controls that are not currently in the scene graph.
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+		@SuppressWarnings("unchecked")
+		ComboBox<String> reloadedName = lookup(robot, "#exam-assets-question-name-" + original.getId(), ComboBox.class);
+		RadioButton reloadedWritten = lookup(robot, "#exam-assets-question-format-written-" + original.getId(),
+				RadioButton.class);
+		TextField reloadedExpected = lookup(robot, "#exam-assets-question-expected-" + original.getId(),
+				TextField.class);
+		assertEquals("Paper 1", reloadedName.getValue());
+		assertTrue(reloadedWritten.isSelected());
+		assertEquals("10", reloadedExpected.getText());
+
+		// The rebuilt row returns to protected view mode after its successful save.
+		assertTrue(reloadedName.isDisabled());
+		assertTrue(reloadedWritten.isDisabled());
+		assertTrue(reloadedExpected.isDisabled());
+	}
+
+	@Test
+	void examAssetsCanViewQuestionAndAnswerBookletsWithoutChangingCaptureBooklet(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
+		assertNotNull(activeBooklet);
+
+		// Create one persisted AnswerFile so this test exercises both asset types in
+		// the real Exam/Assets hierarchy.
+		Question question = captureQuestion(robot, "Q1");
+		openAnswerPdfForTest(question);
+
+		// Answer persistence shares the same Exam writer because both operate on the
+		// authoritative Exam/source-document hierarchy.
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile answerFile = answerWriter.findAnswerFiles(activeBooklet.getExam()).getFirst();
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		Node examAssets = lookup(robot, "#exam-assets-workspace", Node.class);
+		Button questionView = lookup(robot, "#exam-assets-question-view-" + activeBooklet.getId(), Button.class);
+		fireControl(robot, questionView);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// View uses the shared read-only PDF mode while leaving Exam/Assets visible.
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
+		assertTrue(examAssets.getScene() != null);
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+
+		// Inspection must not silently replace the active capture booklet.
+		assertEquals(activeBooklet.getId(), examMetadataPane().getBooklet().getId());
+		Button answerView = lookup(robot, "#exam-assets-answer-view-" + answerFile.getId(), Button.class);
+		fireControl(robot, answerView);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Answer assets use the same VIEWER mode rather than entering Answer capture.
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+		assertEquals(activeBooklet.getId(), examMetadataPane().getBooklet().getId());
+	}
+
+	@Test
 	void examDetailsOwnEditCancelAndSaveActions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		fireControl(robot, "#change-exam-assets");
@@ -441,10 +661,11 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(save.isDisabled());
 		fireControl(robot, edit);
 
-		// During editing, the transaction can either be discarded or committed.
+		// Entering Edit makes cancellation available, but Save remains unavailable
+		// until one of the persisted metadata values actually changes.
 		assertTrue(edit.isDisabled());
 		assertFalse(cancel.isDisabled());
-		assertFalse(save.isDisabled());
+		assertTrue(save.isDisabled());
 		fireControl(robot, cancel);
 
 		// Cancelling restores the normal Exam Details state without leaving the
@@ -509,6 +730,88 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// the useful regression check that the row is not being compressed.
 		assertTrue(clearChoice.getWidth() + 0.5 >= clearChoice.minWidth(clearChoice.getHeight()),
 				"Clear choice must remain fully readable at minimum workspace width");
+	}
+
+	@Test
+	void oneAnswerBookletCanBeAssignedToSeveralQuestionBooklets(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet firstBooklet = examMetadataPane().getBooklet();
+		assertNotNull(firstBooklet);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		// Create another managed Question PDF for a second booklet belonging to the
+		// same Exam.
+		Path firstQuestionPdf = pdfDataRoot.resolve(firstBooklet.getSourceDocument().getRelativePath());
+		Path secondQuestionPdf = firstQuestionPdf.resolveSibling("paper-2-answer-assignment-test.pdf");
+		Files.copy(firstQuestionPdf, secondQuestionPdf);
+		ExamBooklet secondBooklet = examImporter.importExam(firstBooklet.getExam().getSubject(),
+				firstBooklet.getExam().getProvider().getName(), firstBooklet.getExam().getYear(),
+				firstBooklet.getExam().getName(), "Paper 2", pdfDataRoot.relativize(secondQuestionPdf).toString(),
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+
+		// Register one independent Answer asset without assigning it to either
+		// Question booklet.
+		Path answerPdf = firstQuestionPdf.resolveSibling("marking-guide-assignment-test.pdf");
+		Files.copy(firstQuestionPdf, answerPdf);
+		AnswerFile markingGuide = answerWriter.findOrCreateAnswerFile(firstBooklet.getExam(), "Marking Guide",
+				pdfDataRoot.relativize(answerPdf).toString());
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		@SuppressWarnings("unchecked")
+		ComboBox<Object> firstAnswer = lookup(robot, "#exam-assets-question-answer-" + firstBooklet.getId(),
+				ComboBox.class);
+		Button firstEdit = lookup(robot, "#exam-assets-question-edit-" + firstBooklet.getId(), Button.class);
+		Button firstSave = lookup(robot, "#exam-assets-question-save-" + firstBooklet.getId(), Button.class);
+
+		// No Answer Booklet must be the first deliberate choice.
+		assertEquals("No Answer Booklet", firstAnswer.getItems().getFirst().toString());
+		fireControl(robot, firstEdit);
+
+		// The only registered Answer asset follows No Answer Booklet.
+		robot.interact(() -> firstAnswer.getSelectionModel().select(1));
+		assertEquals("Marking Guide", firstAnswer.getValue().toString());
+		assertFalse(firstSave.isDisabled());
+		fireControl(robot, firstSave);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(markingGuide.getId(), answerWriter.findAnswerFile(firstBooklet).getId());
+
+		// Saving the first row rebuilds the workspace, so look up the second row from
+		// the new scene graph before assigning the same AnswerFile.
+		@SuppressWarnings("unchecked")
+		ComboBox<Object> secondAnswer = lookup(robot, "#exam-assets-question-answer-" + secondBooklet.getId(),
+				ComboBox.class);
+		Button secondEdit = lookup(robot, "#exam-assets-question-edit-" + secondBooklet.getId(), Button.class);
+		Button secondSave = lookup(robot, "#exam-assets-question-save-" + secondBooklet.getId(), Button.class);
+		fireControl(robot, secondEdit);
+		robot.interact(() -> secondAnswer.getSelectionModel().select(1));
+		fireControl(robot, secondSave);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The relationship is many-booklets-to-one-AnswerFile rather than exclusive
+		// ownership by one Question booklet.
+		assertEquals(markingGuide.getId(), answerWriter.findAnswerFile(firstBooklet).getId());
+		assertEquals(markingGuide.getId(), answerWriter.findAnswerFile(secondBooklet).getId());
+
+		// The assignment can also be removed explicitly while no persisted Answer
+		// regions depend on it.
+		@SuppressWarnings("unchecked")
+		ComboBox<Object> reloadedFirstAnswer = lookup(robot, "#exam-assets-question-answer-" + firstBooklet.getId(),
+				ComboBox.class);
+		Button reloadedFirstEdit = lookup(robot, "#exam-assets-question-edit-" + firstBooklet.getId(), Button.class);
+		Button reloadedFirstSave = lookup(robot, "#exam-assets-question-save-" + firstBooklet.getId(), Button.class);
+		fireControl(robot, reloadedFirstEdit);
+		robot.interact(() -> reloadedFirstAnswer.getSelectionModel().select(0));
+		assertEquals("No Answer Booklet", reloadedFirstAnswer.getValue().toString());
+		fireControl(robot, reloadedFirstSave);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertNull(answerWriter.findAnswerFile(firstBooklet));
+
+		// Removing it from one booklet must not disturb another booklet that shares
+		// the same AnswerFile.
+		assertEquals(markingGuide.getId(), answerWriter.findAnswerFile(secondBooklet).getId());
 	}
 
 	@Test
@@ -613,6 +916,55 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// narrow workspace wider.
 		assertTrue(status.getWidth() <= questionCapturePane().getWidth() + 0.5,
 				"Question status must remain within the Question pane width");
+	}
+
+	@Test
+	void selectedExamAssetsBookletCanBecomeActiveCaptureBooklet(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+
+		// Add a second persisted booklet to the same Exam so the test proves that row
+		// selection, rather than the previously active booklet, drives the transition.
+		Path firstStoredPdf = pdfDataRoot.resolve(originalBooklet.getSourceDocument().getRelativePath());
+		Path secondStoredPdf = firstStoredPdf.resolveSibling("paper-2-test.pdf");
+		Files.copy(firstStoredPdf, secondStoredPdf);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet secondBooklet = examImporter.importExam(originalBooklet.getExam().getSubject(),
+				originalBooklet.getExam().getProvider().getName(), originalBooklet.getExam().getYear(),
+				originalBooklet.getExam().getName(), "Paper 2", pdfDataRoot.relativize(secondStoredPdf).toString(),
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		RadioButton secondSelection = lookup(robot, "#exam-assets-question-select-" + secondBooklet.getId(),
+				RadioButton.class);
+		Button useSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+
+		// The existing active booklet is preselected, but the user can explicitly
+		// choose
+		// another persisted Question booklet.
+		assertFalse(useSelected.isDisabled());
+		fireControl(robot, secondSelection);
+		assertTrue(secondSelection.isSelected());
+
+		// Inspecting the selected booklet must remain separate from activating it.
+		fireControl(robot, "#exam-assets-question-view-" + secondBooklet.getId());
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
+		assertEquals(originalBooklet.getId(), examMetadataPane().getBooklet().getId());
+		fireControl(robot, useSelected);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Successful activation closes VIEWER mode, opens the selected Question source
+		// for capture and returns the existing live Capture workspace to the mode host.
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
+		assertEquals(secondBooklet.getId(), examMetadataPane().getBooklet().getId());
+		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isEmpty());
+		Label activeExam = lookup(robot, "#active-exam-booklet", Label.class);
+		assertEquals("QCAA 2024 External Assessment — Paper 2 [ACTIVE]", activeExam.getText());
 	}
 
 	@Override

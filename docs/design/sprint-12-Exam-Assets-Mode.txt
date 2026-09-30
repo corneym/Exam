@@ -21,10 +21,8 @@ MAIN WINDOW — EXAM / ASSETS MODE
 │ │ Paper 1                              │ │                                           │
 │ │ [paper1.pdf]                [ View ] │ │                                           │
 │ │                                      │ │                                           │
-│ │ Name       [ Paper 1              ▼] │ │                                           │
-│ │ Type       (●) MCQ                   │ │                                           │
-│ │            ( ) Written Response      │ │               PDF PANE                    │
-│ │            ( ) Both                  │ │                                           │
+│ │ Name       [ Paper 1              ▼] │ │                PDF PANE                   │
+│ │ Type (●) MCQ  ( ) Written () Both    │ │                                           │
 │ │                                      │ │    Shows whichever Question or            │
 │ │ Expected Questions [ 20 ]            │ │    Answer booklet is selected by View.    │
 │ │                                      │ │                                           │
@@ -34,9 +32,7 @@ MAIN WINDOW — EXAM / ASSETS MODE
 │ │ [paper2.pdf]                [ View ] │ │                                           │
 │ │                                      │ │                                           │
 │ │ Name       [ Paper 2             ▼]  │ │                                           │
-│ │ Type       ( ) MCQ                   │ │                                           │
-│ │            (●) Written Response      │ │                                           │
-│ │            ( ) Both                  │ │                                           │
+│ │ Type (●) MCQ  ( ) Written () Both    │ │                                           │
 │ │                                      │ │                                           │
 │ │ Expected Questions [ 10 ]            │ │                                           │
 │ │                                      │ │                                           │

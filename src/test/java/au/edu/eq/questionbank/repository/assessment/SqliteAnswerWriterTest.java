@@ -37,6 +37,37 @@ class SqliteAnswerWriterTest {
 	Path tempDirectory;
 
 	@Test
+	void answerFileCanRecordExplanationMetadataDuringRegistration() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("answer-registration-explanations.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/QCAA/2025/paper1.pdf");
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		String answerPath = "Chemistry/QCAA/2025/marking-guide.pdf";
+		String hash = "0123456789abcdef".repeat(4);
+
+		// The new creation workflow records the reviewed flag in the same transaction
+		// that creates the AnswerFile.
+		AnswerFile created = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide", answerPath, hash,
+				true);
+		assertTrue(created.hasAnswerExplanations());
+		AnswerFile reloaded = answerWriter.findAnswerFiles(booklet.getExam()).getFirst();
+		assertEquals(created.getId(), reloaded.getId());
+		assertTrue(reloaded.hasAnswerExplanations());
+		Exam completedExam = examWriter.setExamCaptureState(booklet.getExam(), ExamCaptureState.COMPLETE);
+
+		// Explanation metadata remains descriptive: reusing the existing Answer asset
+		// may correct the flag without reactivating the completed Exam.
+		AnswerFile corrected = answerWriter.findOrCreateAnswerFile(completedExam, "Marking guide", answerPath, hash,
+				false);
+		assertEquals(created.getId(), corrected.getId());
+		assertFalse(corrected.hasAnswerExplanations());
+		assertFalse(answerWriter.findAnswerFiles(completedExam).getFirst().hasAnswerExplanations());
+	}
+
+	@Test
 	void assignsSharedAndSeparateAnswerFilesToBooklets() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("booklet-answer-files.db"));
 		database.initialiseSchema();
