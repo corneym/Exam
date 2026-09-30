@@ -262,20 +262,54 @@ class CurriculumAuthoringApplicationRegressionTest {
 
 	@Test
 	void savedAuthoringChangesRefreshExistingClassificationChoices(FxRobot robot) throws Exception {
-		robot.interact(() -> {
-			for (String id : List.of("#curriculum-subject", "#curriculum-syllabus", "#curriculum-unit",
-					"#curriculum-topic", "#curriculum-descriptor")) {
-				robot.lookup(id).queryAs(ComboBox.class).getSelectionModel().selectFirst();
-			}
+		ComboBox<?> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		ComboBox<?> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+		ComboBox<?> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		ComboBox<?> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		ComboBox<?> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+
+		robot.interact(() -> subjects.getSelectionModel().selectFirst());
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean loaded = new AtomicBoolean();
+			robot.interact(() ->
+
+			// The Working Subject transition is asynchronous. Do not attempt hierarchy
+			// selection until its current syllabus and root Unit have been published.
+			loaded.set(syllabuses.getValue() != null && !units.getItems().isEmpty()));
+			return loaded.get();
 		});
+
+		robot.interact(() -> {
+			// Once the Subject snapshot has arrived, ordinary hierarchy navigation is
+			// synchronous and can establish the classification this regression preserves.
+			units.getSelectionModel().selectFirst();
+			topics.getSelectionModel().selectFirst();
+			descriptors.getSelectionModel().selectFirst();
+		});
+		assertTrue(descriptors.getValue() instanceof CurriculumNode,
+				"Test precondition requires an existing classification selection");
+
 		openExisting(robot);
 		editExistingDescriptor(robot, true);
 		robot.interact(() -> robot.lookup("#save-curriculum").queryAs(Button.class).fire());
+
 		Stage authoring = authoringStage(robot);
 		robot.interact(() -> Event.fireEvent(authoring, new WindowEvent(authoring, WindowEvent.WINDOW_CLOSE_REQUEST)));
-		ComboBox<?> choices = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean refreshed = new AtomicBoolean();
+			robot.interact(() ->
+
+			// Closing a saved authoring session must rebuild the existing classification
+			// path from authoritative persistence rather than retain stale wording.
+			refreshed.set(descriptors.getItems().stream().filter(CurriculumNode.class::isInstance)
+					.map(CurriculumNode.class::cast).anyMatch(node -> node.getName().equals("Edited descriptor"))));
+			return refreshed.get();
+		});
+
 		assertTrue(
-				choices.getItems().stream().filter(CurriculumNode.class::isInstance).map(CurriculumNode.class::cast)
+				descriptors.getItems().stream().filter(CurriculumNode.class::isInstance).map(CurriculumNode.class::cast)
 						.anyMatch(node -> node.getName().equals("Edited descriptor")),
 				"Classification choices must reflect persisted authoring changes");
 	}
