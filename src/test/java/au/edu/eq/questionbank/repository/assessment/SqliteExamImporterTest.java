@@ -52,6 +52,51 @@ class SqliteExamImporterTest {
 	}
 
 	@Test
+	void freshQuestionBookletImportPersistsPlanningMetadata() throws Exception {
+		Path databasePath = tempDirectory.resolve("planned-question-booklet.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		String hash = "0123456789abcdef".repeat(4);
+
+		// Fresh Exam/Assets intake supplies the known structural planning metadata
+		// together with the managed source identity.
+		ExamBooklet imported = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
+				"Chemistry/QCAA/2025/paper2.pdf", ExamBookletQuestionFormat.WRITTEN_RESPONSE, Integer.valueOf(12),
+				hash);
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, imported.getQuestionFormat());
+		assertEquals(Integer.valueOf(12), imported.getExpectedQuestionCount());
+		assertEquals(hash, imported.getSourceDocument().getContentSha256());
+		ExamBooklet reloaded = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper2.pdf");
+
+		// Independent reconstruction proves the values were committed to SQLite rather
+		// than existing only on the object returned by the importer.
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, reloaded.getQuestionFormat());
+		assertEquals(Integer.valueOf(12), reloaded.getExpectedQuestionCount());
+		assertEquals(hash, reloaded.getSourceDocument().getContentSha256());
+	}
+
+	@Test
+	void freshQuestionBookletImportRejectsThreeDigitExpectedCount() throws Exception {
+		Path databasePath = tempDirectory.resolve("invalid-planned-question-booklet.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		// Expected Question counts are deliberately constrained to the agreed
+		// one- or two-digit range before any persistence transaction begins.
+		assertThrows(IllegalArgumentException.class,
+				() -> importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
+						"Chemistry/QCAA/2025/paper2.pdf", ExamBookletQuestionFormat.WRITTEN_RESPONSE,
+						Integer.valueOf(100), null));
+		assertEquals(0, writer.findAllExamBooklets().size());
+	}
+
+	@Test
 	void importsAndReusesExplicitBookletQuestionFormat() throws Exception {
 		Path databasePath = tempDirectory.resolve("booklet-format.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -160,6 +205,32 @@ class SqliteExamImporterTest {
 		ExamBooklet reloaded = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
 
 		// A fresh reconstruction from SQLite proves the hash was actually persisted.
+		assertEquals(hash, reloaded.getSourceDocument().getContentSha256());
+	}
+
+	@Test
+	void persistsPlanningMetadataDuringFreshBookletImport() throws Exception {
+		Path databasePath = tempDirectory.resolve("planned-booklet-import.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		String hash = "0123456789abcdef".repeat(4);
+
+		// Fresh Exam/Assets intake must persist all known booklet planning metadata in
+		// the same import operation.
+		ExamBooklet imported = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
+				"Chemistry/QCAA/2025/paper2.pdf", ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12, hash);
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, imported.getQuestionFormat());
+		assertEquals(Integer.valueOf(12), imported.getExpectedQuestionCount());
+		assertEquals(hash, imported.getSourceDocument().getContentSha256());
+		ExamBooklet reloaded = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper2.pdf");
+
+		// A fresh reconstruction proves the planning values were persisted rather than
+		// existing only on the returned domain object.
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, reloaded.getQuestionFormat());
+		assertEquals(Integer.valueOf(12), reloaded.getExpectedQuestionCount());
 		assertEquals(hash, reloaded.getSourceDocument().getContentSha256());
 	}
 

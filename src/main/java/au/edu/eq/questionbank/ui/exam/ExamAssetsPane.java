@@ -89,32 +89,48 @@ public final class ExamAssetsPane extends VBox {
 	private final AnswerBookletCreationHandler answerBookletCreationHandler;
 	private final Button addAnswerBookletButton = new Button("Add Answer Booklet");
 	private PendingAnswerBookletEditor pendingAnswerBookletEditor;
+	private final Supplier<Path> questionBookletSourceChooser;
+	private final QuestionBookletCreationHandler questionBookletCreationHandler;
+	private final Button addQuestionBookletButton = new Button("Add Question Booklet");
+	private PendingQuestionBookletEditor pendingQuestionBookletEditor;
+
+	// TODO
+	// The EXAM label and its components should be surrounded with a border. The
+	// QUESTION BOOKLETS label and its components should be surrounded with a
+	// border. The ANSWER BOOKLETS and its components should be surrounded with a
+	// border. Low priority but a must for this sprint and slice.
 
 	/**
 	 * Creates the Exam/Assets workspace.
 	 *
-	 * @param examWriter                    authoritative Exam/booklet persistence
-	 * @param answerWriter                  authoritative AnswerFile persistence
-	 * @param optionsRepository             reusable Exam metadata labels
-	 * @param correctionHandler             authoritative Exam metadata correction
-	 * @param questionBookletViewHandler    opens a Question booklet read-only
-	 * @param answerFileViewHandler         opens an Answer booklet read-only
-	 * @param activeBookletSupplier         current authoritative capture booklet
-	 * @param captureBookletHandler         activates a selected booklet for capture
-	 * @param bookletMetadataUpdatedHandler refreshes active capture state after a
-	 *                                      booklet metadata correction
-	 * @param answerBookletSourceChooser    chooses a source PDF for a new Answer
-	 *                                      booklet
-	 * @param answerBookletCreationHandler  imports and persists the new Answer
-	 *                                      asset * @throws NullPointerException if
-	 *                                      any argument is {@code null}
+	 * @param examWriter                     authoritative Exam/booklet persistence
+	 * @param answerWriter                   authoritative AnswerFile persistence
+	 * @param optionsRepository              reusable Exam metadata labels
+	 * @param correctionHandler              authoritative Exam metadata correction
+	 * @param questionBookletViewHandler     opens a Question booklet read-only
+	 * @param answerFileViewHandler          opens an Answer booklet read-only
+	 * @param activeBookletSupplier          current authoritative capture booklet
+	 * @param captureBookletHandler          activates a selected booklet for
+	 *                                       capture
+	 * @param bookletMetadataUpdatedHandler  refreshes active capture state after a
+	 *                                       booklet metadata correction
+	 * @param answerBookletSourceChooser     chooses a source PDF for a new Answer
+	 *                                       booklet
+	 * @param answerBookletCreationHandler   imports and persists the new Answer
+	 *                                       asset * @throws NullPointerException if
+	 *                                       any argument is {@code null}
+	 * @param questionBookletSourceChooser   chooses a source PDF for a new Question
+	 *                                       booklet
+	 * @param questionBookletCreationHandler imports and persists a new Question
+	 *                                       booklet
 	 */
 	public ExamAssetsPane(SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter,
 			ExamMetadataOptionsRepository optionsRepository, ExamCorrectionHandler correctionHandler,
 			Consumer<ExamBooklet> questionBookletViewHandler, Consumer<AnswerFile> answerFileViewHandler,
 			Supplier<ExamBooklet> activeBookletSupplier, Consumer<ExamBooklet> captureBookletHandler,
 			Consumer<ExamBooklet> bookletMetadataUpdatedHandler, Supplier<Path> answerBookletSourceChooser,
-			AnswerBookletCreationHandler answerBookletCreationHandler) {
+			AnswerBookletCreationHandler answerBookletCreationHandler, Supplier<Path> questionBookletSourceChooser,
+			QuestionBookletCreationHandler questionBookletCreationHandler) {
 		if (examWriter == null) {
 			throw new NullPointerException("examWriter");
 		}
@@ -148,6 +164,12 @@ public final class ExamAssetsPane extends VBox {
 		if (answerBookletCreationHandler == null) {
 			throw new NullPointerException("answerBookletCreationHandler");
 		}
+		if (questionBookletSourceChooser == null) {
+			throw new NullPointerException("questionBookletSourceChooser");
+		}
+		if (questionBookletCreationHandler == null) {
+			throw new NullPointerException("questionBookletCreationHandler");
+		}
 		this.examWriter = examWriter;
 		this.answerWriter = answerWriter;
 		this.optionsRepository = optionsRepository;
@@ -157,6 +179,11 @@ public final class ExamAssetsPane extends VBox {
 		this.activeBookletSupplier = activeBookletSupplier;
 		this.captureBookletHandler = captureBookletHandler;
 		this.bookletMetadataUpdatedHandler = bookletMetadataUpdatedHandler;
+
+		// Source selection and managed PDF import are application responsibilities;
+		// this pane coordinates only the editing transaction.
+		this.questionBookletSourceChooser = questionBookletSourceChooser;
+		this.questionBookletCreationHandler = questionBookletCreationHandler;
 
 		// Native source selection and managed-file persistence remain
 		// application-owned;
@@ -246,6 +273,9 @@ public final class ExamAssetsPane extends VBox {
 		// A pending structural asset transaction owns the selected Exam until it is
 		// either saved or cancelled.
 		updateAnswerBookletAddState();
+
+		// Starting an Answer asset also disables the competing Question-asset action.
+		updateQuestionBookletAddState();
 		refreshQuestionBookletActionStates();
 		updateUseSelectedBookletState();
 		editExamButton.setDisable(true);
@@ -269,6 +299,45 @@ public final class ExamAssetsPane extends VBox {
 		setExamDetailsEditing(true);
 	}
 
+	private void beginQuestionBookletAdd() {
+		Exam exam = examBox.getValue();
+		if (!canBeginQuestionBookletAdd(exam)) {
+			return;
+		}
+		Path sourcePath = questionBookletSourceChooser.get();
+		if (sourcePath == null) {
+
+			// Cancelling native source selection leaves persistence and UI unchanged.
+			return;
+		}
+		beginQuestionBookletAdd(sourcePath);
+	}
+
+	private void beginQuestionBookletAdd(Path sourcePath) {
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		Exam exam = examBox.getValue();
+		if (!canBeginQuestionBookletAdd(exam)) {
+			return;
+		}
+		pendingQuestionBookletEditor = new PendingQuestionBookletEditor(exam, sourcePath);
+		if (questionBookletEditors.isEmpty()) {
+
+			// Remove the empty-state message before presenting a genuine pending asset.
+			questionBookletsBox.getChildren().clear();
+		}
+		questionBookletsBox.getChildren().add(pendingQuestionBookletEditor.createRow());
+
+		// Only one structural transaction may own the Exam at a time.
+		updateQuestionBookletAddState();
+		updateAnswerBookletAddState();
+		refreshQuestionBookletActionStates();
+		updateUseSelectedBookletState();
+		editExamButton.setDisable(true);
+		examBox.setDisable(true);
+	}
+
 	private void buildContent() {
 		Label examHeading = new Label("EXAM");
 		examHeading.setStyle(HEADING_STYLE);
@@ -278,20 +347,30 @@ public final class ExamAssetsPane extends VBox {
 		examSelectorGrid.add(stateLabel, 1, 0);
 		GridPane.setHgrow(examBox, Priority.ALWAYS);
 		VBox examDetails = createExamDetailsSection();
-		VBox questionBooklets = createSection("QUESTION BOOKLETS", questionBookletsBox);
+		VBox questionBooklets = createQuestionBookletsSection();
 		VBox answerBooklets = createAnswerBookletsSection();
 
-		// Capture activation remains independent of asset inspection and editing.
+		// Both asset sections now own their creation actions; capture activation
+		// remains
+		// a separate workspace-level transition.
 		getChildren().addAll(examHeading, examSelectorGrid, examDetails, questionBooklets, answerBooklets,
 				new Separator(), useSelectedBookletButton);
 	}
 
 	private boolean canBeginAnswerBookletAdd(Exam exam) {
 
-		// Adding another asset changes Exam structure and therefore requires an active
-		// Exam with no other structural edit transaction in progress.
+		// Question and Answer asset creation are both structural Exam transactions, so
+		// neither may begin while the other is pending.
 		return exam != null && !exam.isComplete() && !editingExamDetails && editingBookletEditor == null
-				&& pendingAnswerBookletEditor == null;
+				&& pendingAnswerBookletEditor == null && pendingQuestionBookletEditor == null;
+	}
+
+	private boolean canBeginQuestionBookletAdd(Exam exam) {
+
+		// Adding a source booklet changes Exam structure and therefore requires an
+		// ACTIVE Exam with no competing structural edit.
+		return exam != null && !exam.isComplete() && !editingExamDetails && editingBookletEditor == null
+				&& pendingQuestionBookletEditor == null && pendingAnswerBookletEditor == null;
 	}
 
 	private void cancelExamDetailsEdit() {
@@ -309,6 +388,9 @@ public final class ExamAssetsPane extends VBox {
 
 		// A pending Answer-booklet draft belongs only to the Exam from which it was
 		// started and cannot survive an Exam/Subject refresh.
+		// Pending structural drafts belong only to the Exam from which they were
+		// started and never survive an authoritative workspace reload.
+		pendingQuestionBookletEditor = null;
 		pendingAnswerBookletEditor = null;
 		stateLabel.setText("State: —");
 		providerField.getSelectionModel().clearSelection();
@@ -333,6 +415,9 @@ public final class ExamAssetsPane extends VBox {
 		questionBookletSelectionGroup.getToggles().clear();
 		questionBookletsBox.getChildren().setAll(new Label("No Question booklets recorded."));
 		answerBookletsBox.getChildren().setAll(new Label("No Answer booklets recorded."));
+
+		// Recalculate structural actions after clearing all Exam-owned transient state.
+		updateQuestionBookletAddState();
 		updateAnswerBookletAddState();
 		setExamDetailsEditing(false);
 		updateUseSelectedBookletState();
@@ -400,6 +485,13 @@ public final class ExamAssetsPane extends VBox {
 		});
 		addAnswerBookletButton.setId("exam-assets-add-answer-booklet");
 		addAnswerBookletButton.setMinWidth(Region.USE_PREF_SIZE);
+		addQuestionBookletButton.setId("exam-assets-add-question-booklet");
+		addQuestionBookletButton.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Source selection starts one temporary structural Question-booklet
+		// transaction.
+		addQuestionBookletButton.setOnAction(_ -> beginQuestionBookletAdd());
+		updateQuestionBookletAddState();
 
 		// Source selection begins the temporary Answer-booklet editing transaction.
 		addAnswerBookletButton.setOnAction(_ -> beginAnswerBookletAdd());
@@ -481,6 +573,16 @@ public final class ExamAssetsPane extends VBox {
 		return editor.createRow();
 	}
 
+	private VBox createQuestionBookletsSection() {
+		Region actionSpacer = new Region();
+		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
+		HBox actionRow = new HBox(SPACING, actionSpacer, addQuestionBookletButton);
+
+		// Persisted rows and creation belong to the same structural section.
+		VBox content = new VBox(ROW_SPACING, questionBookletsBox, actionRow);
+		return createSection("QUESTION BOOKLETS", content);
+	}
+
 	private VBox createSection(String headingText, javafx.scene.Node content) {
 		Label heading = new Label(headingText);
 		heading.setStyle(HEADING_STYLE);
@@ -504,6 +606,24 @@ public final class ExamAssetsPane extends VBox {
 
 		// Strip only the final extension; retain any earlier periods as part of the
 		// original asset name.
+		return filename.substring(0, extensionSeparator);
+	}
+
+	private String defaultQuestionBookletName(Path sourcePath) {
+		Path filenamePath = sourcePath.getFileName();
+		if (filenamePath == null) {
+			return "";
+		}
+		String filename = filenamePath.toString();
+		int extensionSeparator = filename.lastIndexOf('.');
+		if (extensionSeparator <= 0) {
+
+			// A filename without an extension is already the best available initial name.
+			return filename;
+		}
+
+		// Strip only the final extension so meaningful periods inside the filename are
+		// retained.
 		return filename.substring(0, extensionSeparator);
 	}
 
@@ -663,6 +783,20 @@ public final class ExamAssetsPane extends VBox {
 		}
 	}
 
+	private void selectQuestionBooklet(long bookletId) {
+		for (Toggle toggle : questionBookletSelectionGroup.getToggles()) {
+			Object userData = toggle.getUserData();
+			if (userData instanceof ExamBooklet booklet && booklet.getId() == bookletId) {
+
+				// Selection identifies the newly added row for the later explicit capture
+				// transition; it does not itself activate the booklet.
+				questionBookletSelectionGroup.selectToggle(toggle);
+				updateUseSelectedBookletState();
+				return;
+			}
+		}
+	}
+
 	private void setExamDetailsEditing(boolean editing) {
 		editingExamDetails = editing;
 
@@ -687,7 +821,9 @@ public final class ExamAssetsPane extends VBox {
 		// Capture transition must not silently discard a staged Exam Details edit.
 		updateUseSelectedBookletState();
 
-		// Exam Details and asset creation are mutually exclusive editing transactions.
+		// Exam Details, Question-booklet creation and Answer-booklet creation are
+		// mutually exclusive transactions.
+		updateQuestionBookletAddState();
 		updateAnswerBookletAddState();
 	}
 
@@ -768,12 +904,18 @@ public final class ExamAssetsPane extends VBox {
 		saveButton.setDisable(!isExamDetailsDirty());
 	}
 
+	private void updateQuestionBookletAddState() {
+
+		// Button availability is derived from the complete current transaction state.
+		addQuestionBookletButton.setDisable(!canBeginQuestionBookletAdd(examBox.getValue()));
+	}
+
 	private void updateUseSelectedBookletState() {
 
-		// Capture activation must never discard an Exam, Question-booklet or pending
-		// Answer-booklet edit transaction.
+		// Capture activation must never abandon any staged structural transaction.
 		useSelectedBookletButton.setDisable(editingExamDetails || editingBookletEditor != null
-				|| pendingAnswerBookletEditor != null || questionBookletSelectionGroup.getSelectedToggle() == null);
+				|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null
+				|| questionBookletSelectionGroup.getSelectedToggle() == null);
 	}
 
 	private void useSelectedQuestionBookletForCapture() {
@@ -830,6 +972,299 @@ public final class ExamAssetsPane extends VBox {
 		 * @throws IOException  if managed PDF relocation fails
 		 */
 		Exam correct(Exam exam, String providerName, int year, String assessmentName) throws SQLException, IOException;
+	}
+
+	/**
+	 * Imports and persists one new Question booklet selected through Exam/Assets.
+	 */
+	@FunctionalInterface
+	public interface QuestionBookletCreationHandler {
+
+		/**
+		 * Creates one Question booklet for an existing Exam.
+		 *
+		 * @param exam                  owning Exam
+		 * @param sourcePath            user-selected source PDF
+		 * @param name                  booklet name
+		 * @param questionFormat        explicit Question format
+		 * @param expectedQuestionCount expected top-level Question count, or
+		 *                              {@code null} until reviewed
+		 * @return persisted Question booklet
+		 * @throws IOException  if the source cannot be imported or hashed
+		 * @throws SQLException if persistence fails
+		 */
+		ExamBooklet create(Exam exam, Path sourcePath, String name, ExamBookletQuestionFormat questionFormat,
+				Integer expectedQuestionCount) throws IOException, SQLException;
+	}
+
+	private final class PendingQuestionBookletEditor {
+
+		private final Exam exam;
+		private final Path sourcePath;
+		private final ComboBox<String> nameField = new ComboBox<>();
+		private final ToggleGroup formatGroup = new ToggleGroup();
+		private final RadioButton mcqButton = new RadioButton("MCQ");
+		private final RadioButton writtenButton = new RadioButton("Written Response");
+		private final RadioButton bothButton = new RadioButton("Both");
+		private final TextField expectedField = new TextField();
+		private final Button cancelButton = new Button("Cancel");
+		private final Button saveButton = new Button("Save");
+
+		private PendingQuestionBookletEditor(Exam exam, Path sourcePath) {
+			this.exam = exam;
+			this.sourcePath = sourcePath;
+			configureControls();
+		}
+
+		private void cancel() {
+
+			// Nothing has been persisted yet; restore the selected Exam directly from
+			// authoritative storage.
+			pendingQuestionBookletEditor = null;
+			loadSelectedExamSafely(exam);
+		}
+
+		private void configureControls() {
+			nameField.setId("exam-assets-new-question-name");
+			nameField.setEditable(true);
+			nameField.setMaxWidth(Double.MAX_VALUE);
+			nameField.getItems().setAll(bookletNameSuggestions);
+			String defaultName = defaultQuestionBookletName(sourcePath);
+			nameField.setValue(defaultName);
+			nameField.getEditor().setText(defaultName);
+			mcqButton.setId("exam-assets-new-question-format-mcq");
+			writtenButton.setId("exam-assets-new-question-format-written");
+			bothButton.setId("exam-assets-new-question-format-both");
+			mcqButton.setToggleGroup(formatGroup);
+			writtenButton.setToggleGroup(formatGroup);
+			bothButton.setToggleGroup(formatGroup);
+
+			// Toggle user data is the exact enum persisted by the importer.
+			mcqButton.setUserData(ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+			writtenButton.setUserData(ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+			bothButton.setUserData(ExamBookletQuestionFormat.MIXED);
+			expectedField.setId("exam-assets-new-question-expected");
+			expectedField.setPrefColumnCount(2);
+			expectedField.setMaxWidth(Region.USE_PREF_SIZE);
+			cancelButton.setId("exam-assets-new-question-cancel");
+			saveButton.setId("exam-assets-new-question-save");
+			cancelButton.setOnAction(_ -> cancel());
+			saveButton.setOnAction(_ -> save());
+
+			// Any staged metadata change can affect whether the new booklet is valid for
+			// persistence.
+			nameField.getEditor().textProperty().addListener((_, _, _) -> updateSaveState());
+			formatGroup.selectedToggleProperty().addListener((_, _, _) -> updateSaveState());
+			expectedField.textProperty().addListener((_, _, _) -> updateSaveState());
+			updateSaveState();
+		}
+
+		private VBox createRow() {
+			Label heading = new Label("New Question Booklet");
+			heading.setStyle(HEADING_STYLE);
+			Label sourceLabel = new Label(sourceFileName(sourcePath.toString()));
+			sourceLabel.setId("exam-assets-new-question-source");
+			HBox formatControls = new HBox(SPACING, mcqButton, writtenButton, bothButton);
+			formatControls.setId("exam-assets-new-question-format-row");
+			GridPane metadata = new GridPane();
+			metadata.setHgap(SPACING);
+			metadata.setVgap(ROW_SPACING);
+			metadata.addRow(0, new Label("Name"), nameField);
+			metadata.addRow(1, new Label("Type"), formatControls);
+			metadata.addRow(2, new Label("Expected Questions"), expectedField);
+			GridPane.setHgrow(nameField, Priority.ALWAYS);
+			Region actionSpacer = new Region();
+			HBox.setHgrow(actionSpacer, Priority.ALWAYS);
+			HBox actions = new HBox(SPACING, actionSpacer, cancelButton, saveButton);
+
+			// Expected count may remain blank until inspection establishes the
+			// authoritative top-level Question count.
+			VBox row = new VBox(ROW_SPACING, heading, sourceLabel, metadata, actions);
+			row.setId("exam-assets-new-question-booklet");
+			row.setPadding(SECTION_PADDING);
+			row.setStyle(BORDER_STYLE);
+			return row;
+		}
+
+		private Integer expectedQuestionCount() {
+			String text = expectedField.getText().strip();
+			if (text.isBlank()) {
+
+				// Blank deliberately means the booklet still requires source review.
+				return null;
+			}
+			try {
+				int count = Integer.parseInt(text);
+				if (count < 1 || count > 99) {
+					throw new IllegalArgumentException("Expected Questions must be between 1 and 99 when supplied.");
+				}
+				return count;
+			} catch (NumberFormatException exception) {
+				throw new IllegalArgumentException("Expected Questions must be a positive whole number.");
+			}
+		}
+
+		private boolean hasValidValues() {
+			if (nameField.getEditor().getText().strip().isBlank() || selectedFormat() == null) {
+				return false;
+			}
+			try {
+				expectedQuestionCount();
+				return true;
+			} catch (IllegalArgumentException exception) {
+
+				// Invalid staged numeric input remains visible but cannot be saved.
+				return false;
+			}
+		}
+
+		private void save() {
+			if (saveButton.isDisabled()) {
+				return;
+			}
+			try {
+				ExamBooklet created = questionBookletCreationHandler.create(exam, sourcePath,
+						nameField.getEditor().getText().strip(), selectedFormat(), expectedQuestionCount());
+				pendingQuestionBookletEditor = null;
+
+				// Reload first so the workspace row and all Answer-assignment choices come
+				// from persistence rather than from the returned object alone.
+				loadSelectedExamSafely(exam);
+				selectQuestionBooklet(created.getId());
+
+				// A newly persisted booklet immediately enters read-only inspection of the
+				// authoritative managed PDF. This is not capture activation.
+				questionBookletViewHandler.accept(created);
+			} catch (IOException | SQLException | IllegalArgumentException | IllegalStateException exception) {
+				String message = exception.getMessage();
+				if (message == null || message.isBlank()) {
+					message = exception.getClass().getSimpleName();
+				}
+
+				// Leave the staged editor intact so the user can correct metadata or cancel.
+				showBookletError(message);
+			}
+		}
+
+		private ExamBookletQuestionFormat selectedFormat() {
+			Toggle selected = formatGroup.getSelectedToggle();
+			if (selected == null) {
+				return null;
+			}
+
+			// Every Type toggle carries the exact persisted enum value.
+			return (ExamBookletQuestionFormat) selected.getUserData();
+		}
+
+		private void updateSaveState() {
+
+			// Source selection is already complete; Save depends only on valid structural
+			// metadata.
+			saveButton.setDisable(!hasValidValues());
+		}
+	}
+
+	// Keep a real object for the No Answer Booklet choice so selection is distinct
+	// from an uninitialised ComboBox value.
+	private record AnswerAssignmentChoice(AnswerFile answerFile, String label) {
+
+		@Override
+		public String toString() {
+			return label;
+		}
+	}
+
+	private final class PendingAnswerBookletEditor {
+
+		private final Exam exam;
+		private final Path sourcePath;
+		private final TextField nameField = new TextField();
+		private final CheckBox explanationsField = new CheckBox("Contains answer explanations");
+		private final Button cancelButton = new Button("Cancel");
+		private final Button saveButton = new Button("Save");
+
+		private PendingAnswerBookletEditor(Exam exam, Path sourcePath) {
+			this.exam = exam;
+			this.sourcePath = sourcePath;
+			configureControls();
+		}
+
+		private void cancel() {
+
+			// Nothing has been persisted yet. Re-read the Exam to restore exactly its
+			// authoritative Answer rows and Question-booklet Answer choices.
+			pendingAnswerBookletEditor = null;
+			loadSelectedExamSafely(exam);
+		}
+
+		private void configureControls() {
+			nameField.setId("exam-assets-new-answer-name");
+			nameField.setText(defaultAnswerBookletName(sourcePath));
+			nameField.setMaxWidth(Double.MAX_VALUE);
+			explanationsField.setId("exam-assets-new-answer-explanations");
+			cancelButton.setId("exam-assets-new-answer-cancel");
+			saveButton.setId("exam-assets-new-answer-save");
+			cancelButton.setOnAction(_ -> cancel());
+			saveButton.setOnAction(_ -> save());
+
+			// A blank descriptive name cannot become a persisted AnswerFile.
+			nameField.textProperty().addListener((_, _, _) -> updateSaveState());
+			updateSaveState();
+		}
+
+		private VBox createRow() {
+			Label heading = new Label("New Answer Booklet");
+			heading.setStyle(HEADING_STYLE);
+			Label sourceLabel = new Label(sourceFileName(sourcePath.toString()));
+			sourceLabel.setId("exam-assets-new-answer-source");
+			GridPane metadata = new GridPane();
+			metadata.setHgap(SPACING);
+			metadata.setVgap(ROW_SPACING);
+			metadata.addRow(0, new Label("Name"), nameField);
+			GridPane.setHgrow(nameField, Priority.ALWAYS);
+			Region actionSpacer = new Region();
+			HBox.setHgrow(actionSpacer, Priority.ALWAYS);
+			HBox actions = new HBox(SPACING, actionSpacer, cancelButton, saveButton);
+
+			// The selected source remains visible while the user supplies only the
+			// metadata that is not derivable from the PDF itself.
+			VBox row = new VBox(ROW_SPACING, heading, sourceLabel, metadata, explanationsField, actions);
+			row.setId("exam-assets-new-answer-booklet");
+			row.setPadding(SECTION_PADDING);
+			row.setStyle(BORDER_STYLE);
+			return row;
+		}
+
+		private void save() {
+			String name = nameField.getText().strip();
+			if (name.isBlank()) {
+				return;
+			}
+			try {
+				answerBookletCreationHandler.create(exam, sourcePath, name, explanationsField.isSelected());
+				pendingAnswerBookletEditor = null;
+
+				// Rebuild both sections so the new Answer asset is immediately available
+				// in every Question booklet's Answer dropdown.
+				loadSelectedExamSafely(exam);
+			} catch (IOException | SQLException | IllegalArgumentException | IllegalStateException exception) {
+				String message = exception.getMessage();
+				if (message == null || message.isBlank()) {
+					message = exception.getClass().getSimpleName();
+				}
+
+				// Leave the pending editor intact so metadata can be corrected or the
+				// operation cancelled after a failed persistence attempt.
+				showAnswerFileError("Answer booklet could not be added.", message);
+			}
+		}
+
+		private void updateSaveState() {
+
+			// The source has already been selected; only a meaningful Answer asset name
+			// is required before persistence can proceed.
+			saveButton.setDisable(nameField.getText().isBlank());
+		}
 	}
 
 	private final class QuestionBookletEditor {
@@ -901,33 +1336,36 @@ public final class ExamAssetsPane extends VBox {
 		}
 
 		private void beginEdit() {
-			if (editingBookletEditor != null || editingExamDetails || booklet.getExam().isComplete()) {
+			if (editingBookletEditor != null || editingExamDetails || pendingQuestionBookletEditor != null
+					|| pendingAnswerBookletEditor != null || booklet.getExam().isComplete()) {
 				return;
 			}
 
-			// Only one structural row edit may be staged at once so changing workspace
-			// context cannot abandon an unrelated booklet transaction.
+			// Only one structural row edit may be staged at once.
 			editingBookletEditor = this;
 			setEditing(true);
 			editExamButton.setDisable(true);
 			refreshQuestionBookletActionStates();
 			updateUseSelectedBookletState();
-
-			// Asset-add availability follows the same single structural-transaction rule.
+			updateQuestionBookletAddState();
 			updateAnswerBookletAddState();
+
+			// Configuring a booklet deliberately opens its authoritative managed PDF in
+			// read-only VIEWER mode so expected Question count can be checked against the
+			// actual source without activating this booklet for capture.
+			questionBookletViewHandler.accept(booklet);
 		}
 
 		private void cancelEdit() {
 
-			// Cancel restores the last persisted snapshot without writing anything.
+			// Cancel restores the last authoritative persisted values without writing.
 			applyPersistedValues();
 			editingBookletEditor = null;
 			setEditing(false);
 			setExamDetailsEditing(false);
 			refreshQuestionBookletActionStates();
 			updateUseSelectedBookletState();
-
-			// Asset-add availability follows the same single structural-transaction rule.
+			updateQuestionBookletAddState();
 			updateAnswerBookletAddState();
 		}
 
@@ -1040,12 +1478,17 @@ public final class ExamAssetsPane extends VBox {
 		private Integer editedExpectedQuestionCount() {
 			String text = expectedField.getText().strip();
 			if (text.isBlank()) {
+
+				// Null remains meaningful for a booklet that has not yet been reviewed.
 				return null;
 			}
 			try {
 				int count = Integer.parseInt(text);
-				if (count < 1) {
-					throw new IllegalArgumentException("Expected Questions must be positive when supplied.");
+				if (count < 1 || count > 99) {
+
+					// Expected top-level Question counts are deliberately constrained to the
+					// agreed two-digit range.
+					throw new IllegalArgumentException("Expected Questions must be between 1 and 99 when supplied.");
 				}
 				return count;
 			} catch (NumberFormatException exception) {
@@ -1150,119 +1593,15 @@ public final class ExamAssetsPane extends VBox {
 
 		private void updateActionState() {
 
-			// Completed Exams remain inspectable but their structural metadata cannot be
-			// edited until reactivated. A pending Answer asset is another structural
-			// transaction and therefore excludes booklet editing as well.
+			// All Question-booklet structural operations share one transaction slot at the
+			// workspace level.
 			editButton.setDisable(editing || editingExamDetails || booklet.getExam().isComplete()
-					|| pendingAnswerBookletEditor != null
+					|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null
 					|| (editingBookletEditor != null && editingBookletEditor != this));
 			cancelButton.setDisable(!editing);
 
-			// Save requires both a real difference and a complete valid row.
+			// Save requires a real difference and a completely valid staged row.
 			saveButton.setDisable(!editing || !hasValidEditedValues() || !isDirty());
-		}
-	}
-
-	// Keep a real object for the No Answer Booklet choice so selection is distinct
-	// from an uninitialised ComboBox value.
-	private record AnswerAssignmentChoice(AnswerFile answerFile, String label) {
-
-		@Override
-		public String toString() {
-			return label;
-		}
-	}
-
-	private final class PendingAnswerBookletEditor {
-
-		private final Exam exam;
-		private final Path sourcePath;
-		private final TextField nameField = new TextField();
-		private final CheckBox explanationsField = new CheckBox("Contains answer explanations");
-		private final Button cancelButton = new Button("Cancel");
-		private final Button saveButton = new Button("Save");
-
-		private PendingAnswerBookletEditor(Exam exam, Path sourcePath) {
-			this.exam = exam;
-			this.sourcePath = sourcePath;
-			configureControls();
-		}
-
-		private void cancel() {
-
-			// Nothing has been persisted yet. Re-read the Exam to restore exactly its
-			// authoritative Answer rows and Question-booklet Answer choices.
-			pendingAnswerBookletEditor = null;
-			loadSelectedExamSafely(exam);
-		}
-
-		private void configureControls() {
-			nameField.setId("exam-assets-new-answer-name");
-			nameField.setText(defaultAnswerBookletName(sourcePath));
-			nameField.setMaxWidth(Double.MAX_VALUE);
-			explanationsField.setId("exam-assets-new-answer-explanations");
-			cancelButton.setId("exam-assets-new-answer-cancel");
-			saveButton.setId("exam-assets-new-answer-save");
-			cancelButton.setOnAction(_ -> cancel());
-			saveButton.setOnAction(_ -> save());
-
-			// A blank descriptive name cannot become a persisted AnswerFile.
-			nameField.textProperty().addListener((_, _, _) -> updateSaveState());
-			updateSaveState();
-		}
-
-		private VBox createRow() {
-			Label heading = new Label("New Answer Booklet");
-			heading.setStyle(HEADING_STYLE);
-			Label sourceLabel = new Label(sourceFileName(sourcePath.toString()));
-			sourceLabel.setId("exam-assets-new-answer-source");
-			GridPane metadata = new GridPane();
-			metadata.setHgap(SPACING);
-			metadata.setVgap(ROW_SPACING);
-			metadata.addRow(0, new Label("Name"), nameField);
-			GridPane.setHgrow(nameField, Priority.ALWAYS);
-			Region actionSpacer = new Region();
-			HBox.setHgrow(actionSpacer, Priority.ALWAYS);
-			HBox actions = new HBox(SPACING, actionSpacer, cancelButton, saveButton);
-
-			// The selected source remains visible while the user supplies only the
-			// metadata that is not derivable from the PDF itself.
-			VBox row = new VBox(ROW_SPACING, heading, sourceLabel, metadata, explanationsField, actions);
-			row.setId("exam-assets-new-answer-booklet");
-			row.setPadding(SECTION_PADDING);
-			row.setStyle(BORDER_STYLE);
-			return row;
-		}
-
-		private void save() {
-			String name = nameField.getText().strip();
-			if (name.isBlank()) {
-				return;
-			}
-			try {
-				answerBookletCreationHandler.create(exam, sourcePath, name, explanationsField.isSelected());
-				pendingAnswerBookletEditor = null;
-
-				// Rebuild both sections so the new Answer asset is immediately available
-				// in every Question booklet's Answer dropdown.
-				loadSelectedExamSafely(exam);
-			} catch (IOException | SQLException | IllegalArgumentException | IllegalStateException exception) {
-				String message = exception.getMessage();
-				if (message == null || message.isBlank()) {
-					message = exception.getClass().getSimpleName();
-				}
-
-				// Leave the pending editor intact so metadata can be corrected or the
-				// operation cancelled after a failed persistence attempt.
-				showAnswerFileError("Answer booklet could not be added.", message);
-			}
-		}
-
-		private void updateSaveState() {
-
-			// The source has already been selected; only a meaningful Answer asset name
-			// is required before persistence can proceed.
-			saveButton.setDisable(nameField.getText().isBlank());
 		}
 	}
 }

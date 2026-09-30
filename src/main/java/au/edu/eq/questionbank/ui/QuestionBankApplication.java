@@ -25,6 +25,7 @@ import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SharedContextStatus;
@@ -667,6 +668,14 @@ public class QuestionBankApplication extends Application {
 					e.getMessage());
 			return null;
 		}
+	}
+
+	private Path chooseQuestionBookletSource(Stage primaryStage, ApplicationConfig config) {
+		PdfFilePicker picker = new PdfFilePicker(config.pdfDataRoot());
+
+		// Native filesystem interaction remains outside ExamAssetsPane so the pane can
+		// be workflow-tested without automating a platform FileChooser.
+		return picker.chooseAnyPdf(primaryStage, "Choose Question booklet PDF");
 	}
 
 	/**
@@ -1802,6 +1811,44 @@ public class QuestionBankApplication extends Application {
 		return Optional.of(Integer.valueOf(requests.size()));
 	}
 
+	private ExamBooklet importQuestionBookletFromExamAssets(Exam exam, Path sourcePath, String name,
+			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount, ApplicationConfig config)
+			throws IOException, SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		if (questionFormat == null) {
+			throw new NullPointerException("questionFormat");
+		}
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		if (name == null || name.isBlank()) {
+			throw new IllegalArgumentException("Question booklet name must not be blank");
+		}
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+
+		// Question and Answer assets share the authoritative managed
+		// Subject/Provider/Year directory hierarchy.
+		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
+				exam.getYear());
+		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
+		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
+		SourceDocumentHashService hashService = new SourceDocumentHashService();
+
+		// New Question booklets acquire byte identity before persistence publishes
+		// their SourceDocument.
+		String contentSha256 = hashService.sha256(storedPath);
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		return importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(), exam.getName(),
+				name.strip(), relativePath, questionFormat, expectedQuestionCount, contentSha256);
+	}
+
 	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
 			PdfFilePicker answerPdfPicker) {
 		questionRepository = new SqliteQuestionRepository(database);
@@ -1861,7 +1908,10 @@ public class QuestionBankApplication extends Application {
 				// The application imports the chosen PDF into managed storage, hashes
 				// it and persists the AnswerFile plus its explanation metadata.
 				(exam, sourcePath, name, containsAnswerExplanations) -> importAnswerBookletFromExamAssets(exam,
-						sourcePath, name, containsAnswerExplanations, config));
+						sourcePath, name, containsAnswerExplanations, config),
+				() -> chooseQuestionBookletSource(primaryStage, config),
+				(exam, sourcePath, name, questionFormat, expectedQuestionCount) -> importQuestionBookletFromExamAssets(
+						exam, sourcePath, name, questionFormat, expectedQuestionCount, config));
 
 		// The selector receives application-level Subject creation through the same
 		// database used by the rest of the capture workflow.

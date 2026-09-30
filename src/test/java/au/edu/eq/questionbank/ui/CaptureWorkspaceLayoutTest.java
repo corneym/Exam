@@ -423,6 +423,23 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void editingQuestionBookletUsesInspectionWithoutChangingCaptureBooklet(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		fireControl(robot, "#exam-assets-question-edit-" + activeBooklet.getId());
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Structural configuration opens the authoritative booklet for read-only
+		// inspection but must not change capture identity.
+		assertEquals(activeBooklet.getId(), examMetadataPane().getBooklet().getId());
+		PdfWorkspacePane.DocumentMode displayedDocument = field(pdfWorkspace(), "displayedDocument",
+				PdfWorkspacePane.DocumentMode.class);
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, displayedDocument);
+	}
+
+	@Test
 	void examAssetsCanAddAnswerBookletWithExplanationMetadata(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -469,6 +486,62 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Reloading the Exam after creation must also publish the new asset immediately
 		// to Question-booklet assignment choices.
 		assertTrue(answerChoice.getItems().stream().anyMatch(item -> "Marking Guide".equals(item.toString())));
+	}
+
+	@Test
+	void examAssetsCanAddQuestionBookletAndEnterInspection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
+		Path questionSource = pdfDataRoot.resolve("paper2.pdf");
+		Files.copy(examPdf, questionSource);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
+
+		// Bypass only the native FileChooser. The real pending-editor, persistence,
+		// reload and inspection workflow remains under test.
+		robot.interact(() -> {
+			try {
+				invoke(examAssetsPane, "beginQuestionBookletAdd", new Class<?>[] { Path.class }, questionSource);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		@SuppressWarnings("unchecked")
+		ComboBox<String> name = lookup(robot, "#exam-assets-new-question-name", ComboBox.class);
+		RadioButton written = lookup(robot, "#exam-assets-new-question-format-written", RadioButton.class);
+		TextField expected = lookup(robot, "#exam-assets-new-question-expected", TextField.class);
+		Button save = lookup(robot, "#exam-assets-new-question-save", Button.class);
+		robot.interact(() -> {
+			name.getEditor().setText("Paper 2");
+
+			// Three-digit values are outside the agreed expected-count range.
+			expected.setText("100");
+		});
+		fireControl(robot, written);
+		assertTrue(save.isDisabled());
+		robot.interact(() -> expected.setText("12"));
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitForFxEvents();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		List<ExamBooklet> booklets = examWriter.findExamBooklets(activeBooklet.getExam());
+		ExamBooklet created = booklets.stream().filter(booklet -> "Paper 2".equals(booklet.getName())).findFirst()
+				.orElseThrow();
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, created.getQuestionFormat());
+		assertEquals(Integer.valueOf(12), created.getExpectedQuestionCount());
+		assertNotNull(created.getSourceDocument().getContentSha256());
+		RadioButton selected = lookup(robot, "#exam-assets-question-select-" + created.getId(), RadioButton.class);
+		assertTrue(selected.isSelected());
+
+		// Inspection must not silently replace the authoritative capture booklet.
+		assertEquals(activeBooklet.getId(), examMetadataPane().getBooklet().getId());
+		PdfWorkspacePane.DocumentMode displayedDocument = field(pdfWorkspace(), "displayedDocument",
+				PdfWorkspacePane.DocumentMode.class);
+
+		// Newly persisted Question booklets enter read-only inspection immediately.
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, displayedDocument);
 	}
 
 	@Test
