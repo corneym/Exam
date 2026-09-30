@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -245,6 +246,10 @@ public class QuestionBankApplication extends Application {
 	// existing pane rather than reconstructing capture controls and their state.
 	private VBox captureWorkspaceModePane;
 	private ExamAssetsPane examAssetsPane;
+
+	// Exam/Assets persistence participates in the same application-level Subject
+	// generation as the shared Question snapshot.
+	private Function<Subject, ExamAssetsPane.SubjectSnapshot> workingSubjectExamAssetsSnapshotLoader;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -1617,26 +1622,18 @@ public class QuestionBankApplication extends Application {
 
 		// Working Subject becomes authoritative synchronously. Only persistence-heavy
 		// rebuilding of Subject-dependent data is deferred.
+		// Once accepted, one application Subject owns every Subject-dependent view.
 		workingSubject = newSubject;
-		startWorkingSubjectQuestionRefresh(newSubject);
+
+		// Question/Answer and visible Exam/Assets now share one asynchronous refresh
+		// generation so stale work from any part cannot overwrite a later selection.
+		startWorkingSubjectRefresh(newSubject);
 		examMetadataPane.invalidateForSubjectChange(newSubject);
 
-		// Active structural context is lightweight presentation state and must stop
-		// referring to an Exam belonging to the previous Subject immediately.
+		// Moving application Subject may invalidate an active Exam from the old
+		// Subject,
+		// so this lightweight visible context changes immediately.
 		refreshActiveExamContext();
-
-		// Exam/Assets still uses its existing synchronous refresh in this first #75
-		// slice. Moving that persistence work to the same asynchronous coordinator is
-		// the next independent batch.
-		if (examAssetsPane != null && workspaceModeHost != null
-				&& workspaceModeHost.getChildren().contains(examAssetsPane)) {
-			try {
-				examAssetsPane.refresh(newSubject);
-			} catch (SQLException exception) {
-				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be refreshed.",
-						exception.getMessage());
-			}
-		}
 	}
 
 	private AnswerFile importAnswerBookletFromExamAssets(Exam exam, Path sourcePath, String name,
@@ -1922,6 +1919,19 @@ public class QuestionBankApplication extends Application {
 				// Save imports, hashes and persists the managed Question booklet.
 				(exam, sourcePath, name, questionFormat, expectedQuestionCount) -> importQuestionBookletFromExamAssets(
 						exam, sourcePath, name, questionFormat, expectedQuestionCount, config));
+		workingSubjectExamAssetsSnapshotLoader = subject -> {
+			try {
+
+				// This function is invoked only by the application-owned worker task;
+				// the pane method itself performs persistence reads but no JavaFX work.
+				return examAssetsPane.loadSubjectSnapshot(subject);
+			} catch (SQLException exception) {
+
+				// Function cannot declare SQLException. Preserve it as the cause so the
+				// FX-thread failure handler can present the underlying persistence error.
+				throw new IllegalStateException("Exam assets could not be loaded.", exception);
+			}
+		};
 
 		// The selector receives application-level Subject creation through the same
 		// database used by the rest of the capture workflow.
@@ -3152,12 +3162,64 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
-	private void startWorkingSubjectQuestionRefresh(Subject subject) {
-		long generation = ++workingSubjectRefreshGeneration;
+	private void startWorkingSubjectExamAssetsRefresh(Subject subject, long generation) {
+		if (examAssetsPane == null || workspaceModeHost == null
+				|| !workspaceModeHost.getChildren().contains(examAssetsPane)) {
 
-		// Remove data belonging to the previous Subject immediately. This is
-		// lightweight
-		// UI work and prevents stale queues remaining visible while persistence loads.
+			// Hidden Exam/Assets needs no immediate Subject snapshot. Its ordinary entry
+			// path will load the then-current authoritative Subject.
+			return;
+		}
+
+		// Remove the previous Subject's Exams immediately on the FX thread before the
+		// replacement hierarchy begins loading.
+		examAssetsPane.beginSubjectRefresh(subject);
+		if (subject == null) {
+
+			// Clearing Subject is complete once stale presentation has been removed.
+			return;
+		}
+		Task<ExamAssetsPane.SubjectSnapshot> task = new Task<>() {
+
+			@Override
+			protected ExamAssetsPane.SubjectSnapshot call() {
+
+				// All Exam, booklet, AnswerFile and assignment reads occur away from
+				// the JavaFX application thread.
+				return workingSubjectExamAssetsSnapshotLoader.apply(subject);
+			}
+		};
+		task.setOnSucceeded(_ -> {
+			if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+				// A later Subject selection owns the workspace now.
+				return;
+			}
+			examAssetsPane.applySubjectSnapshot(task.getValue());
+		});
+		task.setOnFailed(_ -> {
+			if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+				// Failure from stale work must not disturb the current Subject.
+				return;
+			}
+			Throwable failure = task.getException();
+			if (failure instanceof IllegalStateException && failure.getCause() != null) {
+
+				// Surface the underlying SQLite failure rather than the Function wrapper.
+				failure = failure.getCause();
+			}
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be refreshed.",
+					failureMessage(failure));
+		});
+		Thread thread = new Thread(task, "working-subject-exam-assets-refresh-" + generation);
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	private void startWorkingSubjectQuestionRefresh(Subject subject, long generation) {
+
+		// Clear previous Subject queues immediately; persistence remains on the worker.
 		if (questionCapturePane != null) {
 			questionCapturePane.setWorkingSubject(subject, List.of());
 		}
@@ -3165,9 +3227,6 @@ public class QuestionBankApplication extends Application {
 			answerCapturePane.setWorkingSubject(subject, List.of());
 		}
 		if (questionCapturePane == null && answerCapturePane == null) {
-
-			// Application construction can establish Subject state before capture panes
-			// exist. There is nothing to publish yet in that case.
 			return;
 		}
 		Task<List<Question>> task = new Task<>() {
@@ -3175,18 +3234,25 @@ public class QuestionBankApplication extends Application {
 			@Override
 			protected List<Question> call() {
 
-				// Repository I/O runs exclusively on this worker thread. Copy the
-				// result so later UI publication observes one stable shared snapshot.
+				// One corpus read supplies both capture panes for this Subject
+				// transition.
 				return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
 			}
 		};
 		task.setOnSucceeded(_ -> completeWorkingSubjectQuestionRefresh(subject, generation, task.getValue()));
 		task.setOnFailed(_ -> failWorkingSubjectQuestionRefresh(subject, generation, task.getException()));
 		Thread thread = new Thread(task, "working-subject-question-refresh-" + generation);
-
-		// Subject refresh must never prevent normal application shutdown.
 		thread.setDaemon(true);
 		thread.start();
+	}
+
+	private void startWorkingSubjectRefresh(Subject subject) {
+		long generation = ++workingSubjectRefreshGeneration;
+
+		// All Subject-dependent background work belongs to this single accepted
+		// application transition and therefore shares one stale-result generation.
+		startWorkingSubjectQuestionRefresh(subject, generation);
+		startWorkingSubjectExamAssetsRefresh(subject, generation);
 	}
 
 	private boolean transferQuestionSelectionToSharedContext() {

@@ -9,7 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -33,6 +38,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
+import javafx.application.Platform;
 import javafx.event.EventHandler;
 import javafx.scene.Node;
 import javafx.scene.Parent;
@@ -1367,6 +1373,96 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// narrow workspace wider.
 		assertTrue(status.getWidth() <= questionCapturePane().getWidth() + 0.5,
 				"Question status must remain within the Question pane width");
+	}
+
+	@Test
+	void rapidWorkingSubjectChangesDiscardStaleExamAssetsSnapshot(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject physics = subjects.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Subject biology = subjects.getItems().stream().filter(subject -> "Biology".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		Exam physicsExam = writer.createExam(physics, "NEAP", 2024, "Physics Trial");
+		Exam biologyExam = writer.createExam(biology, "School", 2024, "Biology Trial");
+		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Exam> examSelector = lookup(robot, "#exam-assets-exam", ComboBox.class);
+		CountDownLatch physicsStarted = new CountDownLatch(1);
+		CountDownLatch releasePhysics = new CountDownLatch(1);
+		CountDownLatch physicsFinished = new CountDownLatch(1);
+		CountDownLatch biologyFinished = new CountDownLatch(1);
+		AtomicBoolean persistenceRanOnFxThread = new AtomicBoolean(false);
+		Function<Subject, ExamAssetsPane.SubjectSnapshot> loader = subject -> {
+			if (Platform.isFxApplicationThread()) {
+
+				// Any true result proves persistence escaped back onto JavaFX.
+				persistenceRanOnFxThread.set(true);
+			}
+			if (physics.equals(subject)) {
+				physicsStarted.countDown();
+				try {
+
+					// Hold the first Subject load so the second selection can complete
+					// first and exercise stale-result suppression deterministically.
+					if (!releasePhysics.await(5, TimeUnit.SECONDS)) {
+						throw new AssertionError("Timed out waiting to release Physics Exam/Assets load");
+					}
+				} catch (InterruptedException exception) {
+					Thread.currentThread().interrupt();
+					throw new RuntimeException(exception);
+				}
+			}
+			try {
+				ExamAssetsPane.SubjectSnapshot snapshot = examAssetsPane.loadSubjectSnapshot(subject);
+				if (physics.equals(subject)) {
+					physicsFinished.countDown();
+				} else if (biology.equals(subject)) {
+					biologyFinished.countDown();
+				}
+				return snapshot;
+			} catch (SQLException exception) {
+				throw new RuntimeException(exception);
+			}
+		};
+		setField(application, "workingSubjectExamAssetsSnapshotLoader", loader);
+		robot.interact(() ->
+
+		// Direct ComboBox selection is deterministic because pointer behaviour is not
+		// under test.
+		subjects.getSelectionModel().select(physics));
+		assertTrue(physicsStarted.await(5, TimeUnit.SECONDS));
+		assertFalse(persistenceRanOnFxThread.get());
+		AtomicBoolean previousExamCleared = new AtomicBoolean();
+		robot.interact(() ->
+
+		// While Physics persistence is blocked, Chemistry Exam data must already have
+		// disappeared from the visible workspace.
+		previousExamCleared.set(examSelector.getItems().isEmpty()));
+		assertTrue(previousExamCleared.get());
+		robot.interact(() ->
+
+		// A later accepted Subject selection must be able to proceed while the first
+		// persistence task is still blocked.
+		subjects.getSelectionModel().select(biology));
+		assertTrue(biologyFinished.await(5, TimeUnit.SECONDS));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(biologyExam.getId(), examSelector.getValue().getId());
+		assertEquals("Biology", examSelector.getValue().getSubject().getName());
+
+		// Let the older Physics task finish after Biology is already authoritative.
+		releasePhysics.countDown();
+		assertTrue(physicsFinished.await(5, TimeUnit.SECONDS));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(persistenceRanOnFxThread.get());
+
+		// Completion of the stale first task must not restore Physics Exam data.
+		assertEquals(biologyExam.getId(), examSelector.getValue().getId());
+		assertNotEquals(physicsExam.getId(), examSelector.getValue().getId());
+		assertEquals("Biology", examSelector.getValue().getSubject().getName());
 	}
 
 	@Test

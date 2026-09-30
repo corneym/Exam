@@ -7,6 +7,7 @@ import java.time.Year;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -120,6 +121,11 @@ public final class ExamAssetsPane extends VBox {
 	private Subject workingSubject;
 	private boolean creatingNewExam;
 	private Long newExamReturnExamId;
+
+	// Selecting an Exam while applying a preloaded Subject snapshot must not
+	// trigger
+	// another synchronous SQLite read through the ordinary ComboBox listener.
+	private boolean applyingSubjectSnapshot;
 
 	/**
 	 * Creates the Exam/Assets workspace.
@@ -250,6 +256,81 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
+	 * Publishes a previously loaded Subject snapshot to Exam/Assets.
+	 *
+	 * @param snapshot immutable persistence snapshot
+	 */
+	public void applySubjectSnapshot(SubjectSnapshot snapshot) {
+		if (snapshot == null) {
+			throw new NullPointerException("snapshot");
+		}
+		if (!Objects.equals(workingSubject, snapshot.subject())) {
+
+			// The application-level generation guard normally rejects stale work first.
+			// Retain this pane-level check so stale data is also harmless if called
+			// directly.
+			return;
+		}
+		applyingSubjectSnapshot = true;
+		try {
+			examBox.getSelectionModel().clearSelection();
+			examBox.getItems().clear();
+			clearSelectedExam();
+			refreshMetadataOptions();
+			examBox.getItems().setAll(snapshot.exams());
+			ExamSnapshot selectedExam = snapshot.selectedExam();
+			if (selectedExam != null) {
+
+				// Selecting the preloaded Exam must not invoke the ordinary persistence
+				// listener while this snapshot is being published.
+				examBox.getSelectionModel().select(selectedExam.exam());
+				applyExamSnapshot(selectedExam);
+			}
+			updateAddNewExamState();
+		} finally {
+			applyingSubjectSnapshot = false;
+		}
+	}
+
+	/**
+	 * Immediately removes presentation belonging to the previous Working Subject
+	 * while its replacement persistence snapshot is loading.
+	 *
+	 * @param subject newly accepted Working Subject, or {@code null}
+	 */
+	public void beginSubjectRefresh(Subject subject) {
+		creatingNewExam = false;
+		newExamReturnExamId = null;
+		workingSubject = subject;
+		restoreNormalExamPresentation();
+		applyingSubjectSnapshot = true;
+		try {
+
+			// Old Subject data must disappear immediately rather than remain visible while
+			// the replacement snapshot is being loaded.
+			examBox.getSelectionModel().clearSelection();
+			examBox.getItems().clear();
+			clearSelectedExam();
+			refreshMetadataOptions();
+			updateAddNewExamState();
+		} finally {
+			applyingSubjectSnapshot = false;
+		}
+	}
+
+	/**
+	 * Loads all persistence data needed for the initial Exam/Assets presentation of
+	 * one Subject without touching JavaFX controls.
+	 *
+	 * @param subject Working Subject, or {@code null}
+	 * @return immutable persistence snapshot
+	 * @throws SQLException if the Exam hierarchy cannot be read
+	 */
+	public SubjectSnapshot loadSubjectSnapshot(Subject subject) throws SQLException {
+		return loadSubjectSnapshot(subject, null);
+	}
+
+	/**
 	 * Reloads the persisted Exams belonging to the current Working Subject.
 	 *
 	 * @param subject authoritative application Subject, or {@code null}
@@ -258,14 +339,60 @@ public final class ExamAssetsPane extends VBox {
 	public void refresh(Subject subject) throws SQLException {
 		Long previousExamId = creatingNewExam || examBox.getValue() == null ? null
 				: Long.valueOf(examBox.getValue().getId());
-
-		// A Working Subject refresh terminates any unsaved New Exam transaction because
-		// a New Exam must always inherit the current authoritative Subject.
 		creatingNewExam = false;
 		newExamReturnExamId = null;
 		workingSubject = subject;
 		restoreNormalExamPresentation();
-		reloadSubjectExams(subject, previousExamId);
+
+		// Direct workspace entry remains a synchronous caller for now, but uses the
+		// same
+		// snapshot contract as asynchronous Working Subject publication.
+		applySubjectSnapshot(loadSubjectSnapshot(subject, previousExamId));
+	}
+
+	private void applyExamSnapshot(ExamSnapshot snapshot) {
+		Exam exam = snapshot.exam();
+
+		// Authoritative Exam metadata also repairs the local suggestion cache
+		// introduced
+		// by the completed #74 behaviour.
+		rememberPersistedExamMetadata(exam);
+		stateLabel.setText("State: " + exam.getCaptureState());
+		String providerName = exam.getProvider().getName();
+		providerField.setValue(providerName);
+		providerField.getEditor().setText(providerName);
+		if (!yearField.getItems().contains(exam.getYear())) {
+
+			// Historical years remain valid even when outside the standard suggestion
+			// window.
+			yearField.getItems().add(exam.getYear());
+		}
+		yearField.setValue(exam.getYear());
+		String assessmentName = exam.getName();
+		assessmentField.setValue(assessmentName);
+		assessmentField.getEditor().setText(assessmentName);
+		List<ExamBooklet> booklets = snapshot.booklets().stream().map(BookletSnapshot::booklet).toList();
+		refreshBookletNameSuggestions(booklets);
+		availableAnswerFiles = snapshot.answerFiles();
+		if (snapshot.booklets().isEmpty()) {
+			questionBookletsBox.getChildren().setAll(new Label("No Question booklets recorded."));
+		} else {
+			List<Node> rows = new ArrayList<>();
+			for (BookletSnapshot bookletSnapshot : snapshot.booklets()) {
+
+				// All persistence was completed before publication; row construction is
+				// now JavaFX-only.
+				rows.add(createQuestionBookletRow(bookletSnapshot.booklet(), bookletSnapshot.assignedAnswerFile()));
+			}
+			questionBookletsBox.getChildren().setAll(rows);
+		}
+		if (availableAnswerFiles.isEmpty()) {
+			answerBookletsBox.getChildren().setAll(new Label("No Answer booklets recorded."));
+		} else {
+			answerBookletsBox.getChildren()
+					.setAll(availableAnswerFiles.stream().map(this::createAnswerFileRow).toList());
+		}
+		setExamDetailsEditing(false);
 	}
 
 	private void beginAnswerBookletAdd() {
@@ -556,7 +683,14 @@ public final class ExamAssetsPane extends VBox {
 				return exam == null ? "" : formatExam(exam);
 			}
 		});
-		examBox.valueProperty().addListener((_, _, exam) -> loadSelectedExamSafely(exam));
+		examBox.valueProperty().addListener((_, _, exam) -> {
+
+			// Ordinary user selection still loads synchronously. Snapshot publication
+			// already contains the selected Exam hierarchy and must not read it twice.
+			if (!applyingSubjectSnapshot) {
+				loadSelectedExamSafely(exam);
+			}
+		});
 		stateLabel.setId("exam-assets-state");
 
 		// Provider and Assessment use reusable suggestions but their persisted Exam
@@ -902,54 +1036,28 @@ public final class ExamAssetsPane extends VBox {
 				&& !editedText(assessmentField).isBlank();
 	}
 
+	private ExamSnapshot loadExamSnapshot(Exam exam) throws SQLException {
+		List<ExamBooklet> booklets = List.copyOf(examWriter.findExamBooklets(exam));
+		List<AnswerFile> answerFiles = List.copyOf(answerWriter.findAnswerFiles(exam));
+		List<BookletSnapshot> bookletSnapshots = new ArrayList<>();
+		for (ExamBooklet booklet : booklets) {
+
+			// Resolve every assignment on the worker thread so JavaFX publication becomes
+			// presentation-only.
+			bookletSnapshots.add(new BookletSnapshot(booklet, answerWriter.findAnswerFile(booklet)));
+		}
+		return new ExamSnapshot(exam, bookletSnapshots, answerFiles);
+	}
+
 	private void loadSelectedExam(Exam exam) throws SQLException {
 		clearSelectedExam();
 		if (exam == null) {
 			return;
 		}
 
-		// Persisted Exam metadata is authoritative. If this installation has never seen
-		// one of its values, restore that value to the local reusable suggestion cache.
-		rememberPersistedExamMetadata(exam);
-		stateLabel.setText("State: " + exam.getCaptureState());
-
-		// Editable ComboBoxes maintain both selected value and editor text. Set both
-		// explicitly so persisted metadata survives disabled and Edit states.
-		String providerName = exam.getProvider().getName();
-		providerField.setValue(providerName);
-		providerField.getEditor().setText(providerName);
-		if (!yearField.getItems().contains(exam.getYear())) {
-
-			// Historical years must remain visible even when outside the suggestion range.
-			yearField.getItems().add(exam.getYear());
-		}
-		yearField.setValue(exam.getYear());
-		String assessmentName = exam.getName();
-		assessmentField.setValue(assessmentName);
-		assessmentField.getEditor().setText(assessmentName);
-		List<ExamBooklet> booklets = examWriter.findExamBooklets(exam);
-		refreshBookletNameSuggestions(booklets);
-
-		// Answer choices must exist before Question rows are constructed because every
-		// row presents its currently assigned AnswerFile.
-		availableAnswerFiles = answerWriter.findAnswerFiles(exam);
-		if (booklets.isEmpty()) {
-			questionBookletsBox.getChildren().setAll(new Label("No Question booklets recorded."));
-		} else {
-			List<Node> rows = new ArrayList<>();
-			for (ExamBooklet booklet : booklets) {
-				AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(booklet);
-				rows.add(createQuestionBookletRow(booklet, assignedAnswerFile));
-			}
-			questionBookletsBox.getChildren().setAll(rows);
-		}
-		if (availableAnswerFiles.isEmpty()) {
-			answerBookletsBox.getChildren().setAll(new Label("No Answer booklets recorded."));
-		} else {
-			answerBookletsBox.getChildren()
-					.setAll(availableAnswerFiles.stream().map(this::createAnswerFileRow).toList());
-		}
-		setExamDetailsEditing(false);
+		// Ordinary user selection retains its existing synchronous persistence path.
+		// Subject transitions instead preload this same immutable structure off-thread.
+		applyExamSnapshot(loadExamSnapshot(exam));
 	}
 
 	private void loadSelectedExamSafely(Exam exam) {
@@ -966,6 +1074,31 @@ public final class ExamAssetsPane extends VBox {
 			alert.setContentText(exception.getMessage());
 			alert.showAndWait();
 		}
+	}
+
+	private SubjectSnapshot loadSubjectSnapshot(Subject subject, Long preferredExamId) throws SQLException {
+		if (subject == null) {
+
+			// Clearing Working Subject requires no persistence lookup.
+			return new SubjectSnapshot(null, List.of(), null);
+		}
+		List<Exam> exams = List.copyOf(examWriter.findExamsForSubject(subject));
+		if (exams.isEmpty()) {
+			return new SubjectSnapshot(subject, exams, null);
+		}
+		Exam selectedExam = null;
+		if (preferredExamId != null) {
+
+			// Preserve an existing selection when refreshing the same Subject.
+			selectedExam = exams.stream().filter(exam -> exam.getId() == preferredExamId.longValue()).findFirst()
+					.orElse(null);
+		}
+		if (selectedExam == null) {
+
+			// Repository ordering already identifies the preferred initial Exam.
+			selectedExam = exams.getFirst();
+		}
+		return new SubjectSnapshot(subject, exams, loadExamSnapshot(selectedExam));
 	}
 
 	private void refreshBookletNameSuggestions(List<ExamBooklet> booklets) {
@@ -1383,6 +1516,25 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
+	 * Persistence snapshot for one Question booklet and its current AnswerFile
+	 * assignment.
+	 *
+	 * @param booklet            persisted Question booklet
+	 * @param assignedAnswerFile currently assigned AnswerFile, or {@code null}
+	 */
+	public record BookletSnapshot(ExamBooklet booklet, AnswerFile assignedAnswerFile) {
+
+		/**
+		 * Validates the immutable booklet snapshot.
+		 */
+		public BookletSnapshot {
+			if (booklet == null) {
+				throw new NullPointerException("booklet");
+			}
+		}
+	}
+
+	/**
 	 * Performs one authoritative Exam metadata correction.
 	 */
 	@FunctionalInterface
@@ -1400,6 +1552,36 @@ public final class ExamAssetsPane extends VBox {
 		 * @throws IOException  if managed PDF relocation fails
 		 */
 		Exam correct(Exam exam, String providerName, int year, String assessmentName) throws SQLException, IOException;
+	}
+
+	/**
+	 * Persistence snapshot for the Exam currently selected in Exam/Assets.
+	 *
+	 * @param exam        persisted Exam
+	 * @param booklets    Question booklets and their AnswerFile assignments
+	 * @param answerFiles AnswerFiles owned by the Exam
+	 */
+	public record ExamSnapshot(Exam exam, List<BookletSnapshot> booklets, List<AnswerFile> answerFiles) {
+
+		/**
+		 * Validates and freezes the selected Exam snapshot.
+		 */
+		public ExamSnapshot {
+			if (exam == null) {
+				throw new NullPointerException("exam");
+			}
+			if (booklets == null) {
+				throw new NullPointerException("booklets");
+			}
+			if (answerFiles == null) {
+				throw new NullPointerException("answerFiles");
+			}
+
+			// Worker-thread persistence results must become stable immutable input before
+			// they are published back to JavaFX.
+			booklets = List.copyOf(booklets);
+			answerFiles = List.copyOf(answerFiles);
+		}
 	}
 
 	/**
@@ -1423,6 +1605,30 @@ public final class ExamAssetsPane extends VBox {
 		 */
 		ExamBooklet create(Exam exam, Path sourcePath, String name, ExamBookletQuestionFormat questionFormat,
 				Integer expectedQuestionCount) throws IOException, SQLException;
+	}
+
+	/**
+	 * Persistence snapshot required to present Exam/Assets for one Working Subject.
+	 *
+	 * @param subject      authoritative Working Subject, or {@code null} when
+	 *                     cleared
+	 * @param exams        Exams belonging to that Subject
+	 * @param selectedExam complete snapshot for the Exam to display, or
+	 *                     {@code null}
+	 */
+	public record SubjectSnapshot(Subject subject, List<Exam> exams, ExamSnapshot selectedExam) {
+
+		/**
+		 * Validates and freezes the Subject snapshot.
+		 */
+		public SubjectSnapshot {
+			if (exams == null) {
+				throw new NullPointerException("exams");
+			}
+
+			// Do not expose a mutable repository result across the worker/FX boundary.
+			exams = List.copyOf(exams);
+		}
 	}
 
 	private final class PendingQuestionBookletEditor {
