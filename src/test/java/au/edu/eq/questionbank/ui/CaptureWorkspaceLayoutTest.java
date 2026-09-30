@@ -14,7 +14,9 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -24,12 +26,15 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
+import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfStore;
@@ -37,6 +42,7 @@ import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -54,6 +60,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -961,6 +968,42 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void examAssetsLegacyImportUsesWorkingSubjectWithoutDuplicateSelector(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject workingSubject = subjects.getValue();
+		assertNotNull(workingSubject);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		Button legacyImport = lookup(robot, "#exam-assets-import-legacy-questions", Button.class);
+		assertFalse(legacyImport.isDisabled());
+
+		// The action opens a modal dialog, so schedule the semantic Button action and
+		// leave the test thread free to inspect and close that dialog.
+		fireControlLater(legacyImport);
+		waitForDialogShowing(robot, "Import Legacy Question Metadata");
+		DialogPane dialog = showingDialogPane(robot, "Import Legacy Question Metadata");
+		assertNotNull(dialog);
+		robot.interact(() -> {
+			Label inheritedSubject = (Label) dialog.lookup("#legacy-question-import-subject");
+			ComboBox<?> syllabuses = (ComboBox<?>) dialog.lookup("#legacy-question-import-syllabus");
+
+			// The application Working Subject is visible as immutable context. The only
+			// ComboBox in the dialog is the historical syllabus selector.
+			assertEquals(workingSubject.getName(), inheritedSubject.getText());
+			assertEquals(1L, dialog.lookupAll(".combo-box").stream().filter(ComboBox.class::isInstance).count());
+			assertFalse(syllabuses.getItems().isEmpty());
+			assertTrue(syllabuses.getItems().stream().allMatch(
+					item -> item instanceof SyllabusVersion version && workingSubject.equals(version.getSubject())));
+		});
+
+		// Cancel through the DialogPane-owned control; pointer hit-testing is not part
+		// of this regression.
+		fireDialogButton(robot, "Cancel");
+		waitForDialogHidden(robot, "Import Legacy Question Metadata");
+	}
+
+	@Test
 	void examAssetsPrimarySectionsOwnTheirHeadingsAndControls(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		fireControl(robot, "#change-exam-assets");
@@ -1134,6 +1177,72 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(cancel.isDisabled());
 		assertTrue(save.isDisabled());
 		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+	}
+
+	@Test
+	void legacyImportRefreshPublishesOneOffFxQuestionSnapshotToBothCapturePanes(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject subject = subjects.getValue();
+		assertNotNull(subject);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Represent newly imported metadata: the Question has no source content or
+		// Answer yet, so it belongs simultaneously to Question and Answer work queues.
+		Question imported = repository.save(booklet, "91", "", 2, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		AtomicInteger reads = new AtomicInteger();
+		AtomicBoolean persistenceRanOnFxThread = new AtomicBoolean(false);
+		Supplier<List<Question>> loader = () -> {
+			reads.incrementAndGet();
+			if (Platform.isFxApplicationThread()) {
+
+				// Post-import corpus loading must retain the #75 off-FX persistence rule.
+				persistenceRanOnFxThread.set(true);
+			}
+			return repository.findAll();
+		};
+		setField(application, "workingSubjectQuestionSnapshotLoader", loader);
+		robot.interact(() -> {
+			try {
+
+				// Exercise the exact application boundary used after successful atomic
+				// legacy metadata import.
+				invoke(application, "startLegacyQuestionCaptureRefresh",
+						new Class<?>[] { Subject.class, LegacyQuestionImportResult.class }, subject,
+						new LegacyQuestionImportResult(1, 0, 0));
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
+		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean applied = new AtomicBoolean();
+			robot.interact(() ->
+
+			// Both visible queues must contain the Question produced by the same one-read
+			// corpus publication before the success dialog is dismissed.
+			applied.set(importedAction.isVisible()
+					&& importedQuestions.getItems().stream().anyMatch(question -> question.getId() == imported.getId())
+					&& unansweredQuestions.getItems().stream()
+							.anyMatch(question -> question.getId() == imported.getId())));
+			return applied.get();
+		});
+		assertEquals(1, reads.get());
+		assertFalse(persistenceRanOnFxThread.get());
+		waitForDialogShowing(robot, "Legacy Question Import");
+		DialogPane resultDialog = showingDialogPane(robot, "Legacy Question Import");
+		assertEquals("Legacy Question metadata imported.", resultDialog.getHeaderText());
+
+		// Close the real DialogPane-owned action; pointer behaviour is irrelevant.
+		fireDialogButton(robot, "OK");
+		waitForDialogHidden(robot, "Legacy Question Import");
 	}
 
 	@Test
@@ -1521,6 +1630,83 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	@Test
+	void unresolvedLegacyImportRemainsInExamAssetsUntilRecheckedOrCancelled(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		AtomicBoolean rechecked = new AtomicBoolean(false);
+		AtomicBoolean cancelled = new AtomicBoolean(false);
+		List<LegacyBookletRequirement> requirements = List.of(new LegacyBookletRequirement("QCAA", 2020, "Paper 1"),
+				new LegacyBookletRequirement("QCAA", 2020, "Paper 2"));
+		robot.interact(() -> pane.showLegacyImportRequirements("2019", Path.of("legacy-questions.xlsx"), requirements,
+				() -> rechecked.set(true), () -> {
+					cancelled.set(true);
+
+					// Production cancellation clears the application-owned pending import
+					// and its Exam/Assets presentation together.
+					pane.clearLegacyImportRequirements();
+				}));
+		VBox status = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
+		Button startImport = lookup(robot, "#exam-assets-import-legacy-questions", Button.class);
+		Button recheck = lookup(robot, "#exam-assets-legacy-import-recheck", Button.class);
+		Button cancel = lookup(robot, "#exam-assets-legacy-import-cancel", Button.class);
+		Label firstRequirement = lookup(robot, "#exam-assets-legacy-import-requirement-0", Label.class);
+		Label secondRequirement = lookup(robot, "#exam-assets-legacy-import-requirement-1", Label.class);
+
+		// Unresolved workbook identities remain visible beside the ordinary structural
+		// controls rather than opening the former parallel booklet-creation dialog.
+		assertTrue(status.isVisible());
+		assertTrue(status.isManaged());
+		assertEquals("QCAA 2020 — Paper 1", firstRequirement.getText());
+		assertEquals("QCAA 2020 — Paper 2", secondRequirement.getText());
+
+		// A second import cannot replace this pending transaction, but settled
+		// persistence can be checked explicitly.
+		assertTrue(startImport.isDisabled());
+		assertFalse(recheck.isDisabled());
+		fireControl(robot, recheck);
+		assertTrue(rechecked.get());
+
+		// Cancelling removes only the legacy intake state; Exam/Assets itself remains
+		// active and available for normal management.
+		fireControl(robot, cancel);
+		assertTrue(cancelled.get());
+		assertFalse(status.isVisible());
+		assertFalse(status.isManaged());
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+		assertFalse(startImport.isDisabled());
+	}
+
+	@Test
+	void workingSubjectChangeClearsPendingLegacyImportRequirements(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		robot.interact(() -> pane.showLegacyImportRequirements("2019", Path.of("legacy-questions.xlsx"),
+				List.of(new LegacyBookletRequirement("QCAA", 2020, "Paper 1")), () -> {
+				}, () -> {
+				}));
+		VBox status = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
+		assertTrue(status.isManaged());
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject physics = subjects.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() ->
+
+		// Direct selection exercises Working Subject semantics rather than ComboBox
+		// pointer behaviour.
+		subjects.getSelectionModel().select(physics));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !status.isManaged());
+
+		// Requirements derived from Chemistry must not survive after Physics becomes
+		// the authoritative application Subject.
+		assertFalse(status.isVisible());
+		assertFalse(status.isManaged());
 	}
 
 	@Test

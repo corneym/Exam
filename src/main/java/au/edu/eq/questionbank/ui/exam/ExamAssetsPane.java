@@ -12,6 +12,7 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
+import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -86,6 +87,11 @@ public final class ExamAssetsPane extends VBox {
 	private final ToggleGroup questionBookletSelectionGroup = new ToggleGroup();
 	private final Button useSelectedBookletButton = new Button("Use Selected Booklet for Capture");
 
+	// Legacy Question intake is a workspace-level operation because the Working
+	// Subject and authoritative Exam hierarchy already belong to Exam/Assets.
+	private final Runnable legacyQuestionImportHandler;
+	private final Button importLegacyQuestionsButton = new Button("Import Legacy Questions...");
+
 	// Booklet labels from the selected Exam extend the standard reusable
 	// suggestions.
 	private List<String> bookletNameSuggestions = DEFAULT_BOOKLET_NAME_SUGGESTIONS;
@@ -104,6 +110,13 @@ public final class ExamAssetsPane extends VBox {
 	private final Predicate<Path> questionBookletSourcePreviewHandler;
 	private final Runnable questionBookletSourcePreviewCloseHandler;
 	private boolean pendingQuestionBookletPreviewOpen;
+
+	// A pending legacy preflight remains visible while the user creates the missing
+	// authoritative Exam/booklet structure through the ordinary workspace controls.
+	private final VBox legacyImportRequirementsBox = new VBox(ROW_SPACING);
+	private final Button legacyImportRecheckButton = new Button("Recheck and Import");
+	private final Button legacyImportCancelButton = new Button("Cancel Import");
+	private boolean legacyImportPending;
 
 	// TODO
 	// The EXAM label and its components should be surrounded with a border. The
@@ -146,8 +159,8 @@ public final class ExamAssetsPane extends VBox {
 	 * @param captureBookletHandler                    activates a selected booklet
 	 *                                                 for capture
 	 * @param bookletMetadataUpdatedHandler            refreshes active capture
-	 *                                                 state after a booklet
-	 *                                                 metadata correction
+	 *                                                 state after booklet metadata
+	 *                                                 correction
 	 * @param answerBookletSourceChooser               chooses a source PDF for a
 	 *                                                 new Answer booklet
 	 * @param answerBookletCreationHandler             imports and persists the new
@@ -163,6 +176,9 @@ public final class ExamAssetsPane extends VBox {
 	 *                                                 document
 	 * @param questionBookletCreationHandler           imports and persists a new
 	 *                                                 Question booklet
+	 * @param legacyQuestionImportHandler              opens legacy Question intake
+	 *                                                 for the current Working
+	 *                                                 Subject
 	 * @throws NullPointerException if any argument is {@code null}
 	 */
 	public ExamAssetsPane(SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter,
@@ -172,7 +188,7 @@ public final class ExamAssetsPane extends VBox {
 			Consumer<ExamBooklet> bookletMetadataUpdatedHandler, Supplier<Path> answerBookletSourceChooser,
 			AnswerBookletCreationHandler answerBookletCreationHandler, Supplier<Path> questionBookletSourceChooser,
 			Predicate<Path> questionBookletSourcePreviewHandler, Runnable questionBookletSourcePreviewCloseHandler,
-			QuestionBookletCreationHandler questionBookletCreationHandler) {
+			QuestionBookletCreationHandler questionBookletCreationHandler, Runnable legacyQuestionImportHandler) {
 		if (examWriter == null) {
 			throw new NullPointerException("examWriter");
 		}
@@ -218,6 +234,9 @@ public final class ExamAssetsPane extends VBox {
 		if (questionBookletSourcePreviewCloseHandler == null) {
 			throw new NullPointerException("questionBookletSourcePreviewCloseHandler");
 		}
+		if (legacyQuestionImportHandler == null) {
+			throw new NullPointerException("legacyQuestionImportHandler");
+		}
 		this.examWriter = examWriter;
 		this.answerWriter = answerWriter;
 		this.optionsRepository = optionsRepository;
@@ -234,8 +253,7 @@ public final class ExamAssetsPane extends VBox {
 		this.questionBookletCreationHandler = questionBookletCreationHandler;
 
 		// Native source selection and managed-file persistence remain
-		// application-owned;
-		// this pane owns only the Exam/Assets editing workflow.
+		// application-owned; this pane owns only the Exam/Assets editing workflow.
 		this.answerBookletSourceChooser = answerBookletSourceChooser;
 		this.answerBookletCreationHandler = answerBookletCreationHandler;
 
@@ -243,6 +261,10 @@ public final class ExamAssetsPane extends VBox {
 		// because the shared PdfWorkspacePane is application-owned.
 		this.questionBookletSourcePreviewHandler = questionBookletSourcePreviewHandler;
 		this.questionBookletSourcePreviewCloseHandler = questionBookletSourcePreviewCloseHandler;
+
+		// Legacy intake is initiated here, but dialog construction and import
+		// coordination remain application-level responsibilities.
+		this.legacyQuestionImportHandler = legacyQuestionImportHandler;
 
 		// Exam/Assets owns structural asset editing while application-level callbacks
 		// keep an already-active Capture booklet synchronised after persistence
@@ -300,6 +322,10 @@ public final class ExamAssetsPane extends VBox {
 		creatingNewExam = false;
 		newExamReturnExamId = null;
 		workingSubject = subject;
+
+		// A legacy workbook preflight belongs to exactly one Working Subject. Never
+		// carry its unresolved Exam identities into another Subject.
+		clearLegacyImportRequirements();
 		restoreNormalExamPresentation();
 		applyingSubjectSnapshot = true;
 		try {
@@ -314,6 +340,22 @@ public final class ExamAssetsPane extends VBox {
 		} finally {
 			applyingSubjectSnapshot = false;
 		}
+	}
+
+	/**
+	 * Clears any unresolved legacy-import preflight from the workspace.
+	 */
+	public void clearLegacyImportRequirements() {
+		legacyImportPending = false;
+		legacyImportRequirementsBox.getChildren().clear();
+		legacyImportRequirementsBox.setVisible(false);
+		legacyImportRequirementsBox.setManaged(false);
+
+		// Remove callbacks belonging to the completed or abandoned intake so stale
+		// actions cannot retain application workflow state.
+		legacyImportRecheckButton.setOnAction(null);
+		legacyImportCancelButton.setOnAction(null);
+		updateUseSelectedBookletState();
 	}
 
 	/**
@@ -346,6 +388,79 @@ public final class ExamAssetsPane extends VBox {
 		// same
 		// snapshot contract as asynchronous Working Subject publication.
 		applySubjectSnapshot(loadSubjectSnapshot(subject, previousExamId));
+	}
+
+	/**
+	 * Presents unresolved Question-booklet identities reported by legacy workbook
+	 * preflight.
+	 *
+	 * @param syllabusName  historical syllabus used by the workbook
+	 * @param workbookPath  selected legacy workbook
+	 * @param requirements  unresolved authoritative booklet identities
+	 * @param recheckAction reruns preflight and imports when everything resolves
+	 * @param cancelAction  abandons the pending legacy import
+	 * @throws NullPointerException     if any argument is {@code null}
+	 * @throws IllegalArgumentException if {@code syllabusName} is blank or
+	 *                                  {@code requirements} is empty
+	 */
+	public void showLegacyImportRequirements(String syllabusName, Path workbookPath,
+			List<LegacyBookletRequirement> requirements, Runnable recheckAction, Runnable cancelAction) {
+		if (syllabusName == null) {
+			throw new NullPointerException("syllabusName");
+		}
+		if (workbookPath == null) {
+			throw new NullPointerException("workbookPath");
+		}
+		if (requirements == null) {
+			throw new NullPointerException("requirements");
+		}
+		if (recheckAction == null) {
+			throw new NullPointerException("recheckAction");
+		}
+		if (cancelAction == null) {
+			throw new NullPointerException("cancelAction");
+		}
+		if (syllabusName.isBlank()) {
+			throw new IllegalArgumentException("syllabusName must not be blank");
+		}
+		if (requirements.isEmpty()) {
+			throw new IllegalArgumentException("requirements must not be empty");
+		}
+		legacyImportPending = true;
+		Label heading = new Label("LEGACY IMPORT");
+		heading.setStyle(HEADING_STYLE);
+		Path filename = workbookPath.getFileName();
+		Label context = new Label("Syllabus: " + syllabusName + "\nWorkbook: "
+				+ (filename == null ? workbookPath.toString() : filename.toString()));
+		context.setWrapText(true);
+		Label instruction = new Label(
+				"Create or add the following Question booklets through Exam/Assets, then choose Recheck and Import.");
+		instruction.setWrapText(true);
+		VBox requirementRows = new VBox(ROW_SPACING);
+		for (int index = 0; index < requirements.size(); index++) {
+			LegacyBookletRequirement requirement = requirements.get(index);
+			Label row = new Label(
+					requirement.providerName() + " " + requirement.year() + " — " + requirement.bookletName());
+			row.setId("exam-assets-legacy-import-requirement-" + index);
+			row.setWrapText(true);
+			requirementRows.getChildren().add(row);
+		}
+		Region actionSpacer = new Region();
+		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
+		HBox actions = new HBox(SPACING, legacyImportCancelButton, actionSpacer, legacyImportRecheckButton);
+
+		// Recheck deliberately performs no implicit structure creation. It asks the
+		// application to inspect the authoritative persistence again.
+		legacyImportRecheckButton.setOnAction(_ -> {
+			if (canRecheckLegacyQuestionImport()) {
+				recheckAction.run();
+			}
+		});
+		legacyImportCancelButton.setOnAction(_ -> cancelAction.run());
+		legacyImportRequirementsBox.getChildren().setAll(heading, context, instruction, requirementRows, actions);
+		legacyImportRequirementsBox.setVisible(true);
+		legacyImportRequirementsBox.setManaged(true);
+		updateUseSelectedBookletState();
 	}
 
 	private void applyExamSnapshot(ExamSnapshot snapshot) {
@@ -529,10 +644,20 @@ public final class ExamAssetsPane extends VBox {
 		VBox examSection = createWorkspaceSection("exam-assets-exam-section", "EXAM", null, examContent);
 		VBox questionBooklets = createQuestionBookletsSection();
 		VBox answerBooklets = createAnswerBookletsSection();
+		Region workspaceActionSpacer = new Region();
+		HBox.setHgrow(workspaceActionSpacer, Priority.ALWAYS);
 
-		// Capture activation remains outside the asset-management sections because it
-		// changes the active capture context rather than editing Exam structure.
-		getChildren().addAll(examSection, questionBooklets, answerBooklets, new Separator(), useSelectedBookletButton);
+		// Legacy intake starts independently of the currently selected Exam. Capture
+		// activation remains the explicit structural transition back to Capture.
+		HBox workspaceActions = new HBox(SPACING, importLegacyQuestionsButton, workspaceActionSpacer,
+				useSelectedBookletButton);
+		workspaceActions.setId("exam-assets-workspace-actions");
+
+		// The legacy requirements panel is part of Exam/Assets because unresolved
+		// provider/year/booklet identities must be corrected with these normal
+		// controls.
+		getChildren().addAll(examSection, questionBooklets, answerBooklets, legacyImportRequirementsBox,
+				new Separator(), workspaceActions);
 	}
 
 	private boolean canBeginAnswerBookletAdd(Exam exam) {
@@ -541,6 +666,15 @@ public final class ExamAssetsPane extends VBox {
 		// neither may begin while the other is pending.
 		return exam != null && !exam.isComplete() && !editingExamDetails && editingBookletEditor == null
 				&& pendingAnswerBookletEditor == null && pendingQuestionBookletEditor == null;
+	}
+
+	private boolean canBeginLegacyQuestionImport() {
+
+		// A new intake cannot replace an unresolved preflight or overlap an unsaved
+		// Exam/asset structural transaction.
+		return workingSubject != null && !legacyImportPending && !creatingNewExam && !editingExamDetails
+				&& editingBookletEditor == null && pendingQuestionBookletEditor == null
+				&& pendingAnswerBookletEditor == null;
 	}
 
 	private boolean canBeginNewExam() {
@@ -593,6 +727,14 @@ public final class ExamAssetsPane extends VBox {
 		// No previous Exam existed, or it disappeared while the transaction was open.
 		clearSelectedExam();
 		updateAddNewExamState();
+	}
+
+	private boolean canRecheckLegacyQuestionImport() {
+
+		// Recheck reads only authoritative persistence, so every staged structural
+		// transaction must first have been saved or cancelled.
+		return legacyImportPending && !creatingNewExam && !editingExamDetails && editingBookletEditor == null
+				&& pendingQuestionBookletEditor == null && pendingAnswerBookletEditor == null;
 	}
 
 	private void clearNewExamFields() {
@@ -758,6 +900,30 @@ public final class ExamAssetsPane extends VBox {
 		cancelNewExamButton.setOnAction(_ -> cancelNewExam());
 		saveNewExamButton.setId("exam-assets-new-exam-save");
 		saveNewExamButton.setOnAction(_ -> saveNewExam());
+
+		// Legacy intake belongs to the whole Working Subject rather than whichever
+		// persisted Exam happens to be selected.
+		importLegacyQuestionsButton.setId("exam-assets-import-legacy-questions");
+		importLegacyQuestionsButton.setMinWidth(Region.USE_PREF_SIZE);
+		importLegacyQuestionsButton.setOnAction(_ -> {
+			if (canBeginLegacyQuestionImport()) {
+
+				// Application code owns the modal import workflow and its persistence.
+				legacyQuestionImportHandler.run();
+			}
+		});
+		legacyImportRecheckButton.setId("exam-assets-legacy-import-recheck");
+		legacyImportRecheckButton.setMinWidth(Region.USE_PREF_SIZE);
+		legacyImportCancelButton.setId("exam-assets-legacy-import-cancel");
+		legacyImportCancelButton.setMinWidth(Region.USE_PREF_SIZE);
+
+		// The requirements section is dormant until workbook preflight reports
+		// authoritative Exam/booklet structure that does not yet exist.
+		legacyImportRequirementsBox.setId("exam-assets-legacy-import-requirements");
+		legacyImportRequirementsBox.setPadding(SECTION_PADDING);
+		legacyImportRequirementsBox.setStyle(WORKSPACE_SECTION_STYLE);
+		legacyImportRequirementsBox.setVisible(false);
+		legacyImportRequirementsBox.setManaged(false);
 
 		// New Exam cannot begin until Exam/Assets has been refreshed with an
 		// authoritative Working Subject.
@@ -1469,12 +1635,21 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private void updateUseSelectedBookletState() {
+		boolean structuralTransactionActive = creatingNewExam || editingExamDetails || editingBookletEditor != null
+				|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null;
 
 		// Capture activation must never abandon staged Exam, Question-booklet or
 		// Answer-booklet structural work.
-		useSelectedBookletButton.setDisable(creatingNewExam || editingExamDetails || editingBookletEditor != null
-				|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null
-				|| questionBookletSelectionGroup.getSelectedToggle() == null);
+		useSelectedBookletButton
+				.setDisable(structuralTransactionActive || questionBookletSelectionGroup.getSelectedToggle() == null);
+
+		// Only one legacy intake may be pending for the authoritative Working Subject.
+		importLegacyQuestionsButton.setDisable(!canBeginLegacyQuestionImport());
+
+		// Recheck reads authoritative persistence and therefore becomes available only
+		// after the user has saved or cancelled the structure they were editing.
+		legacyImportRecheckButton.setDisable(!canRecheckLegacyQuestionImport());
+		legacyImportCancelButton.setDisable(!legacyImportPending);
 	}
 
 	private void useSelectedQuestionBookletForCapture() {

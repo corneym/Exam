@@ -246,49 +246,82 @@ each available version. Switching between current and historical syllabus
 versions after the Subject snapshot has loaded therefore does not return to
 SQLite for root-Unit lookup on the JavaFX thread.
 
-### 3.8 Legacy import and Exam/Assets share one authoritative Exam model
+### 3.8 Legacy Question metadata intake uses Exam/Assets
 
-Legacy import is an intake source, not a separate long-term Exam-management
-model.
+Legacy Question import is an intake source, not a second Exam-management model.
 
-Legacy-imported Exams and booklets feed the same persisted Exam, Question
-booklet and Answer-file model used by the main-window Exam/Assets workspace.
+The implemented Sprint 12 workflow begins from the main-window Exam/Assets
+workspace. It inherits the authoritative Working Subject and does not present
+another Subject selector.
 
-Reliable legacy metadata may pre-populate known Exam structure, including:
+The intake dialog asks only for:
 
-- provider;
-- year;
-- booklet identity;
-- Question codes;
-- marks;
-- classifications;
+- the historical syllabus version represented by the workbook;
+- the legacy Excel workbook.
+
+Workbook preflight validates classification data and determines every required
+provider/year/Question-booklet identity before Question metadata is imported.
+
+Existing uniquely matching Exams and Question booklets are reused. The workbook
+does not recreate them and does not overwrite authoritative Exam/Assets planning
+metadata.
+
+If required structure is missing, Exam/Assets displays the unresolved
+provider/year/booklet requirements. The user then creates or corrects the
+necessary Exam and Question-booklet structure through the ordinary Exam/Assets
+controls.
+
+The workbook does not invent:
+
+- Assessment name;
+- Question booklet PDF;
+- Answer/marking PDF;
+- booklet format;
+- Expected Questions;
+- AnswerFile assignment;
+- Exam completion state.
+
+`Recheck and Import` reruns authoritative preflight after the user has completed
+the required Exam/Assets work. Question metadata is imported only when every
+required booklet resolves uniquely. Ambiguous matches are rejected rather than
+guessed.
+
+The existing atomic `LegacyQuestionMetadataImporter` remains responsible for
+Question metadata semantics, including:
+
+- Question codes and marks;
+- historical classification;
 - response-type evidence;
-- multipart/source-Question relationships;
-- existing MCQ Answer letters where supplied.
+- multipart `SourceQuestion` identity;
+- legacy Shared Context/preamble evidence;
+- supplied MCQ Answer letters;
+- conflict detection and idempotent re-import.
 
-Legacy Question records provide evidence about Questions already encountered.
-They do not establish the authoritative expected top-level Question count.
+Question and Answer source assets are managed only through Exam/Assets. The
+former legacy booklet-import and Answer-PDF dialogs are retired.
 
-For example, finding 19 distinct top-level Questions in a legacy workbook does
-not prove that the original booklet contained only 19 Questions. Expected
-Questions is reviewed separately against the source Question booklet through
-Exam/Assets.
+After a successful atomic metadata import, one Question corpus snapshot is
+loaded off the JavaFX application thread and published to both Question and
+Answer capture. Imported/incomplete work therefore becomes available without
+performing duplicate corpus reads or changing the Working Subject.
 
-Legacy-imported Exams remain `ACTIVE` until the user deliberately reviews and
-declares their structure complete.
+A pending legacy preflight belongs to exactly one Working Subject. An accepted
+Working Subject change cancels that pending intake so stale requirements cannot
+survive into another Subject.
 
-Question PDFs, Answer/marking assets, booklet assignments, Expected Questions,
-booklet format and AnswerFile capability metadata are reviewed through the
-ordinary Exam/Assets workspace.
+The former standalone Exam-menu legacy-import action is removed. Exam/Assets is
+the single application entry point for legacy Question metadata intake.
 
-Legacy import and interactive Exam/Assets creation therefore converge on the
-same authoritative SQLite hierarchy rather than maintaining parallel Exam
-models.
+Regression coverage verifies:
 
-A legacy workbook identifies a Question booklet using the metadata available in
-that historical format. Where that information is insufficient to distinguish
-multiple persisted Exams, import must reject the ambiguous match rather than
-guess which Exam was intended.
+- Exam/Assets-created assets are reused without changing Expected Questions,
+  booklet format or ACTIVE Exam state;
+- missing requirements remain visible in Exam/Assets until resolved, rechecked
+  or cancelled;
+- Working Subject changes clear pending requirements;
+- the import dialog has no duplicate Subject selector;
+- the post-import Question corpus is loaded once off JavaFX and shared by
+  Question and Answer capture.
 
 ## 4. Slice 1 --- Exam setup, assets, hashes and safe correction
 
@@ -320,6 +353,9 @@ The workspace supports:
 - assigning zero or one AnswerFile to each Question booklet;
 - allowing one AnswerFile to serve several Question booklets;
 - selecting a Question booklet independently of the current capture booklet;
+- preflighting and importing legacy Question metadata for the Working Subject,
+  with unresolved Exam/booklet requirements completed through the ordinary
+  Exam/Assets controls;
 - explicitly activating the selected booklet through `Use Selected Booklet for Capture`.
 
 New Exam creation persists Provider, Year and Assessment first. Question and

@@ -32,26 +32,40 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	private static final int FILE_FIELD_WIDTH = 300;
 	private static final int FILE_CONTROL_SPACING = 6;
 	private static final int SELECTOR_WIDTH = 220;
+
+	// Subject identity comes from the application Working Subject. This dialog may
+	// choose only the historical syllabus used by the workbook.
+	private final Subject subject;
 	private final CurriculumRepository curriculumRepository;
-	private final ComboBox<Subject> subjectBox = new ComboBox<>();
+	private final Label subjectLabel = new Label();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
 	private final TextField fileField = new TextField();
 	private Path selectedFile;
 
 	/**
-	 * Creates a legacy import dialog backed by the available persisted curriculum.
+	 * Creates legacy Question-metadata intake for one authoritative Working
+	 * Subject.
 	 *
-	 * @param owner                the owning window
-	 * @param curriculumRepository source of subjects and syllabus versions
-	 * @throws NullPointerException if {@code curriculumRepository} is {@code null}
+	 * @param owner                owning window
+	 * @param subject              authoritative application Working Subject
+	 * @param curriculumRepository source of syllabus versions for that Subject
+	 * @throws NullPointerException if {@code subject} or
+	 *                              {@code curriculumRepository} is {@code null}
 	 */
-	public LegacyQuestionImportDialog(Window owner, CurriculumRepository curriculumRepository) {
+	public LegacyQuestionImportDialog(Window owner, Subject subject, CurriculumRepository curriculumRepository) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
 		if (curriculumRepository == null) {
 			throw new NullPointerException("curriculumRepository");
 		}
+		this.subject = subject;
 		this.curriculumRepository = curriculumRepository;
+
+		// Configure the immutable Working Subject context before offering historical
+		// syllabus and workbook choices.
 		ButtonType importButtonType = configureDialog(owner);
-		configureSelectors();
+		configureSyllabusSelector();
 		HBox fileBox = configureFileControls(owner);
 		buildContent(fileBox);
 		wireValidation(importButtonType);
@@ -60,25 +74,16 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	/**
 	 * Returns the selected workbook, or {@code null} before a valid selection.
 	 *
-	 * @return the selected workbook path, or {@code null}
+	 * @return selected workbook path, or {@code null}
 	 */
 	public Path getSelectedFile() {
 		return selectedFile;
 	}
 
 	/**
-	 * Returns the selected subject, or {@code null} before selection.
-	 *
-	 * @return the selected subject, or {@code null}
-	 */
-	public Subject getSelectedSubject() {
-		return subjectBox.getValue();
-	}
-
-	/**
 	 * Returns the explicitly selected source syllabus version.
 	 *
-	 * @return the selected syllabus version, or {@code null} before selection
+	 * @return selected syllabus version, or {@code null} before selection
 	 */
 	public SyllabusVersion getSelectedSyllabusVersion() {
 		return syllabusBox.getValue();
@@ -89,8 +94,10 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		grid.setHgap(FORM_COLUMN_GAP);
 		grid.setVgap(FORM_ROW_GAP);
 		grid.setPadding(new Insets(FORM_PADDING));
-		grid.add(new Label("Subject:"), 0, 0);
-		grid.add(subjectBox, 1, 0);
+
+		// Subject is displayed as inherited context rather than as a second selector.
+		grid.add(new Label("Working Subject:"), 0, 0);
+		grid.add(subjectLabel, 1, 0);
 		grid.add(new Label("Syllabus version:"), 0, 1);
 		grid.add(syllabusBox, 1, 1);
 		grid.add(new Label("Excel file:"), 0, 2);
@@ -104,6 +111,8 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel workbooks", "*.xlsx"));
 		File file = chooser.showOpenDialog(owner);
 		if (file == null) {
+
+			// Cancelling the native chooser leaves the current dialog selections intact.
 			return;
 		}
 		selectedFile = file.toPath();
@@ -112,7 +121,7 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 
 	private ButtonType configureDialog(Window owner) {
 		setTitle("Import Legacy Question Metadata");
-		setHeaderText("Import legacy question metadata from Excel");
+		setHeaderText("Import legacy Question metadata for " + subject.getName());
 		initOwner(owner);
 		ButtonType importButtonType = new ButtonType("Import", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(importButtonType, ButtonType.CANCEL);
@@ -120,60 +129,45 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	}
 
 	private HBox configureFileControls(Window owner) {
+		fileField.setId("legacy-question-import-workbook");
 		fileField.setEditable(false);
 		fileField.setPrefWidth(FILE_FIELD_WIDTH);
 		Button browseButton = new Button("Browse...");
+		browseButton.setId("legacy-question-import-browse");
 		browseButton.setOnAction(_ -> chooseFile(owner));
 		return new HBox(FILE_CONTROL_SPACING, fileField, browseButton);
 	}
 
-	private void configureSelectors() {
-		subjectBox.getItems().setAll(curriculumRepository.findAllSubjects());
-		subjectBox.setPrefWidth(SELECTOR_WIDTH);
-		subjectBox.valueProperty().addListener((_, _, newSubject) -> loadSyllabusVersions(newSubject));
+	private void configureSyllabusSelector() {
+		subjectLabel.setId("legacy-question-import-subject");
+		subjectLabel.setText(subject.getName());
+		syllabusBox.setId("legacy-question-import-syllabus");
 		syllabusBox.setPrefWidth(SELECTOR_WIDTH);
-		syllabusBox.setDisable(true);
+
+		// Historical and current versions remain valid choices, but every choice is
+		// constrained to the already authoritative Working Subject.
+		syllabusBox.getItems().setAll(curriculumRepository.findVersionsForSubject(subject));
+		syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
 	}
 
 	private boolean isValid() {
-		if (subjectBox.getItems().isEmpty()) {
-			showValidationError("No subjects are available.",
-					"Import a curriculum before importing legacy question metadata.");
-			return false;
-		}
-		if (subjectBox.getValue() == null) {
-			showValidationError("No subject selected.", "Select the subject for the legacy question metadata.");
-			subjectBox.requestFocus();
-			return false;
-		}
 		if (syllabusBox.getItems().isEmpty()) {
 			showValidationError("No syllabus versions are available.", "Import the required curriculum for "
-					+ subjectBox.getValue().getName() + " before importing legacy question metadata.");
+					+ subject.getName() + " before importing legacy Question metadata.");
 			return false;
 		}
 		if (syllabusBox.getValue() == null) {
 			showValidationError("No syllabus version selected.",
-					"Select the syllabus version used by the legacy question metadata.");
+					"Select the syllabus version used by the legacy Question metadata.");
 			syllabusBox.requestFocus();
 			return false;
 		}
 		if (selectedFile == null) {
 			showValidationError("No Excel workbook selected.",
-					"Choose the legacy question metadata workbook to import.");
+					"Choose the legacy Question metadata workbook to import.");
 			return false;
 		}
 		return true;
-	}
-
-	private void loadSyllabusVersions(Subject subject) {
-		syllabusBox.getItems().clear();
-		syllabusBox.setValue(null);
-		if (subject == null) {
-			syllabusBox.setDisable(true);
-			return;
-		}
-		syllabusBox.getItems().setAll(curriculumRepository.findVersionsForSubject(subject));
-		syllabusBox.setDisable(false);
 	}
 
 	private void showValidationError(String header, String message) {
@@ -187,12 +181,18 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 
 	private void validateImportAction(javafx.event.ActionEvent event) {
 		if (!isValid()) {
+
+			// Invalid intake remains open so the missing syllabus or workbook can be
+			// supplied without restarting the workflow.
 			event.consume();
 		}
 	}
 
 	private void wireValidation(ButtonType importButtonType) {
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
+
+		// Dialog validation runs before JavaFX is allowed to complete the Import
+		// action.
 		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, this::validateImportAction);
 	}
 }

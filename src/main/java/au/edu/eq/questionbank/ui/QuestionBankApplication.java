@@ -6,7 +6,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Clock;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -21,7 +20,6 @@ import au.edu.eq.questionbank.ApplicationPaths;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
-import au.edu.eq.questionbank.importer.legacy.LegacyBookletImportRequest;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
@@ -134,8 +132,6 @@ import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.curriculum.NewCurriculumDialog;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
-import au.edu.eq.questionbank.ui.exam.LegacyAnswerPdfImportDialog;
-import au.edu.eq.questionbank.ui.exam.LegacyBookletImportDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyQuestionImportDialog;
 import au.edu.eq.questionbank.ui.export.RevisionExportDialog;
 import au.edu.eq.questionbank.ui.export.RevisionExportTask;
@@ -253,6 +249,10 @@ public class QuestionBankApplication extends Application {
 	// Exam/Assets persistence participates in the same application-level Subject
 	// generation as the shared Question snapshot.
 	private Function<Subject, ExamAssetsPane.SubjectSnapshot> workingSubjectExamAssetsSnapshotLoader;
+
+	// Legacy workbook intake may pause while the user creates missing authoritative
+	// Exam/booklet structure in Exam/Assets.
+	private PendingLegacyQuestionImport pendingLegacyQuestionImport;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -653,6 +653,16 @@ public class QuestionBankApplication extends Application {
 		return true;
 	}
 
+	private void cancelPendingLegacyQuestionImport() {
+		pendingLegacyQuestionImport = null;
+
+		// Presentation follows the application-owned pending state rather than
+		// retaining an independently meaningful legacy transaction.
+		if (examAssetsPane != null) {
+			examAssetsPane.clearLegacyImportRequirements();
+		}
+	}
+
 	private Path chooseAnswerBookletSource(Stage primaryStage, ApplicationConfig config) {
 		PdfFilePicker picker = new PdfFilePicker(config.pdfDataRoot());
 
@@ -1009,6 +1019,55 @@ public class QuestionBankApplication extends Application {
 		return result.isPresent() && result.get() == restoreButton;
 	}
 
+	private void continueLegacyQuestionImport(Stage primaryStage, ApplicationConfig config,
+			PendingLegacyQuestionImport pending) {
+		if (!Objects.equals(workingSubject, pending.subject())) {
+
+			// A later Working Subject has become authoritative. Silently abandon the
+			// obsolete callback rather than importing into stale application context.
+			cancelPendingLegacyQuestionImport();
+			return;
+		}
+		try {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
+			List<LegacyBookletRequirement> missing = importer.findMissingBooklets(pending.workbookPath(),
+					pending.subject().getName(), pending.syllabusVersion().getName());
+			if (!missing.isEmpty()) {
+				pendingLegacyQuestionImport = pending;
+
+				// Historical workbook evidence may identify provider/year/booklet but
+				// cannot manufacture authoritative Exam planning or source assets.
+				examAssetsPane.showLegacyImportRequirements(pending.syllabusVersion().getName(), pending.workbookPath(),
+						missing, () -> recheckPendingLegacyQuestionImport(primaryStage, config),
+						this::cancelPendingLegacyQuestionImport);
+				return;
+			}
+
+			// Only a completely resolved and unambiguous authoritative booklet hierarchy
+			// may receive the legacy Question rows.
+			LegacyQuestionImportResult importResult = importer.importWorkbook(pending.workbookPath(),
+					pending.subject().getName(), pending.syllabusVersion().getName());
+
+			// The structural preflight is now complete. Remove its workspace state before
+			// refreshing the capture queues from the committed corpus.
+			cancelPendingLegacyQuestionImport();
+
+			// Corpus loading is deliberately separated from the atomic import so the
+			// potentially large post-import repository read cannot block JavaFX.
+			startLegacyQuestionCaptureRefresh(pending.subject(), importResult);
+		} catch (IOException exception) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
+					exception.getMessage());
+		} catch (SQLException exception) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not save the Question metadata.",
+					exception.getMessage());
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import failed.",
+					exception.getMessage());
+		}
+	}
+
 	private Exam correctExamMetadataAndReloadCapture(Exam exam, String providerName, int year, String assessmentName)
 			throws SQLException, IOException {
 		PdfWorkspacePane.DocumentMode displayedBeforeCorrection = pdfWorkspace.getDisplayedDocument();
@@ -1131,9 +1190,9 @@ public class QuestionBankApplication extends Application {
 		Menu examMenu = createMenu("_Exam");
 		MenuItem examAssetsItem = createMenuItem("_Exam / Assets...", this::showExamAssetsMode);
 
-		// Retain the established id so existing automation can follow the same logical
-		// Exam-management entry point while the presentation moves from modal setup to
-		// the main-window workspace.
+		// Exam/Assets is the single Exam-management entry point. Legacy Question
+		// intake now begins inside that workspace rather than from a parallel menu
+		// item.
 		examAssetsItem.setId("open-exam-for-capture");
 		MenuItem markCompleteItem = createMenuItem("_Mark Active Exam Complete...",
 				() -> markActiveExamComplete(primaryStage));
@@ -1149,11 +1208,8 @@ public class QuestionBankApplication extends Application {
 		MenuItem replaceAnswerPdfItem = createMenuItem("Replace Active _Answer PDF...",
 				() -> replaceActiveAnswerPdf(primaryStage, config));
 		replaceAnswerPdfItem.setId("replace-active-answer-pdf");
-		MenuItem legacyImportItem = createMenuItem("Import _Legacy Question Metadata...",
-				() -> importLegacyQuestionMetadata(primaryStage, config));
 		examMenu.getItems().addAll(examAssetsItem, new SeparatorMenuItem(), markCompleteItem, reactivateItem,
-				new SeparatorMenuItem(), replaceQuestionPdfItem, replaceAnswerPdfItem, new SeparatorMenuItem(),
-				legacyImportItem);
+				new SeparatorMenuItem(), replaceQuestionPdfItem, replaceAnswerPdfItem);
 		return examMenu;
 	}
 
@@ -1227,43 +1283,6 @@ public class QuestionBankApplication extends Application {
 		item.setOnAction(_ -> action.run());
 		item.setMnemonicParsing(true);
 		return item;
-	}
-
-	private void createMissingLegacyBooklets(ApplicationConfig config, Subject subject,
-			List<LegacyBookletImportRequest> requests) throws IOException, SQLException {
-		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-		SourceDocumentHashService hashService = new SourceDocumentHashService();
-		Set<Long> importedAnswerFileExamIds = new HashSet<>();
-		for (LegacyBookletImportRequest request : requests) {
-			LegacyBookletRequirement requirement = request.requirement();
-			Path storedPath = pdfStore.importExamPdf(request.pdfPath(), subject.getName(), requirement.providerName(),
-					requirement.year());
-			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
-			String questionHash = hashService.sha256(storedPath);
-
-			// Legacy structure still enters the same authoritative model, while its
-			// managed PDF now receives the same content identity as fresh imports.
-			ExamBooklet booklet = examImporter.importExam(subject, requirement.providerName(), requirement.year(),
-					request.assessmentName(), requirement.bookletName(), relativePath, questionHash);
-			if (request.answerPdfPath() == null) {
-				continue;
-			}
-			if (!importedAnswerFileExamIds.add(booklet.getExam().getId())) {
-				continue;
-			}
-			Path storedAnswerPath = pdfStore.importExamPdf(request.answerPdfPath(), subject.getName(),
-					requirement.providerName(), requirement.year());
-			String answerRelativePath = config.pdfDataRoot().relativize(storedAnswerPath).toString();
-			String answerHash = hashService.sha256(storedAnswerPath);
-
-			// The legacy marking guide is managed by the same hashed SourceDocument
-			// persistence used by normal Answer capture.
-			answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide", answerRelativePath, answerHash);
-		}
 	}
 
 	private CurriculumAuthoringSession createNewCurriculum(Stage primaryStage,
@@ -1662,6 +1681,10 @@ public class QuestionBankApplication extends Application {
 		workingSubject = newSubject;
 		if (subjectValueChanged) {
 
+			// Pending legacy preflight belongs to the previous authoritative Subject
+			// and cannot survive an accepted application-level Subject transition.
+			cancelPendingLegacyQuestionImport();
+
 			// The PDF workspace is Subject-dependent application context. Remove any
 			// document that still belongs to the previous Subject before replacement
 			// state begins loading.
@@ -1756,96 +1779,34 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void importLegacyAnswerPdfs(ApplicationConfig config, Subject subject,
-			List<LegacyAnswerPdfImportDialog.AnswerPdfSelection> selections) throws IOException, SQLException {
-		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-		SourceDocumentHashService hashService = new SourceDocumentHashService();
-		for (LegacyAnswerPdfImportDialog.AnswerPdfSelection selection : selections) {
-			Exam exam = examWriter.findExamByProviderAndYear(subject, selection.providerName(), selection.year());
-			if (exam == null) {
-				throw new IllegalStateException("No existing exam matches " + selection.providerName() + " "
-						+ selection.year() + " for " + subject.getName());
-			}
-			Path storedPath = pdfStore.importExamPdf(selection.pdfPath(), subject.getName(), selection.providerName(),
-					selection.year());
-			String relativePath = config.pdfDataRoot().relativize(storedPath).toString();
-			String contentSha256 = hashService.sha256(storedPath);
-
-			// Imported legacy Answer PDFs receive byte identity immediately rather than
-			// remaining indistinguishable from pre-v16 migrated documents.
-			answerWriter.findOrCreateAnswerFile(exam, "Marking guide", relativePath, contentSha256);
-		}
-	}
-
 	private void importLegacyQuestionMetadata(Stage primaryStage, ApplicationConfig config) {
+		if (workingSubject == null) {
+
+			// Legacy intake cannot establish its own Subject.
+			showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "No Working Subject is selected.",
+					"Select a Working Subject before importing legacy Question metadata.");
+			return;
+		}
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
-			LegacyQuestionImportDialog dialog = new LegacyQuestionImportDialog(primaryStage, curriculumRepository);
+			Subject subject = workingSubject;
+			LegacyQuestionImportDialog dialog = new LegacyQuestionImportDialog(primaryStage, subject,
+					curriculumRepository);
 			Optional<ButtonType> result = dialog.showAndWait();
-			if (result.isEmpty() || result.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+			if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 				return;
 			}
-			Subject subject = dialog.getSelectedSubject();
-			SyllabusVersion syllabusVersion = dialog.getSelectedSyllabusVersion();
-			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
-			Optional<Integer> importedBooklets = importMissingLegacyBooklets(primaryStage, config, dialog, subject,
-					syllabusVersion, importer);
-			if (importedBooklets.isEmpty()) {
-				return;
-			}
-			LegacyQuestionImportResult importResult = importer.importWorkbook(dialog.getSelectedFile(),
-					subject.getName(), syllabusVersion.getName());
-			answerCapturePane.refreshQuestions();
-			questionCapturePane.showLegacyCaptureControls();
-			showLegacyQuestionImportResult(importedBooklets.get().intValue(), importResult);
-		} catch (IOException e) {
-			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
-					e.getMessage());
-		} catch (SQLException e) {
-			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not save the question metadata.",
-					e.getMessage());
-		} catch (IllegalArgumentException | IllegalStateException e) {
-			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy question import failed.",
-					e.getMessage());
-		}
-	}
 
-	private Optional<Integer> importMissingLegacyBooklets(Stage primaryStage, ApplicationConfig config,
-			LegacyQuestionImportDialog dialog, Subject subject, SyllabusVersion syllabusVersion,
-			LegacyQuestionMetadataImporter importer) throws IOException, SQLException {
-		List<LegacyBookletRequirement> missingBooklets = importer.findMissingBooklets(dialog.getSelectedFile(),
-				subject.getName(), syllabusVersion.getName());
-		if (missingBooklets.isEmpty()) {
-			List<LegacyBookletRequirement> requiredBooklets = importer.findRequiredBooklets(dialog.getSelectedFile(),
-					subject.getName(), syllabusVersion.getName());
-			if (!requiredBooklets.isEmpty()) {
-				LegacyAnswerPdfImportDialog answerDialog = new LegacyAnswerPdfImportDialog(primaryStage,
-						requiredBooklets);
-				Optional<ButtonType> answerResult = answerDialog.showAndWait();
-				if (answerResult.isEmpty() || answerResult.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
-					return Optional.empty();
-				}
-				importLegacyAnswerPdfs(config, subject, answerDialog.getSelections());
-			}
-			return Optional.of(Integer.valueOf(0));
+			// Freeze the complete intake context before preflight. Subsequent Exam/Assets
+			// editing must not alter which Subject, syllabus or workbook is being imported.
+			PendingLegacyQuestionImport pending = new PendingLegacyQuestionImport(subject,
+					dialog.getSelectedSyllabusVersion(), dialog.getSelectedFile());
+			continueLegacyQuestionImport(primaryStage, config, pending);
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import could not start.",
+					exception.getMessage());
 		}
-		LegacyBookletImportDialog bookletDialog = new LegacyBookletImportDialog(primaryStage, missingBooklets);
-		Optional<ButtonType> bookletResult = bookletDialog.showAndWait();
-		if (bookletResult.isEmpty() || bookletResult.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
-			return Optional.empty();
-		}
-		List<LegacyBookletImportRequest> requests = bookletDialog.getRequests();
-		createMissingLegacyBooklets(config, subject, requests);
-		List<LegacyBookletRequirement> stillMissing = importer.findMissingBooklets(dialog.getSelectedFile(),
-				subject.getName(), syllabusVersion.getName());
-		if (!stillMissing.isEmpty()) {
-			throw new IllegalStateException("Required exam booklets are still missing " + "after booklet import.");
-		}
-		return Optional.of(Integer.valueOf(requests.size()));
 	}
 
 	private ExamBooklet importQuestionBookletFromExamAssets(Exam exam, Path sourcePath, String name,
@@ -1963,7 +1924,11 @@ public class QuestionBankApplication extends Application {
 
 				// Save imports, hashes and persists the managed Question booklet.
 				(exam, sourcePath, name, questionFormat, expectedQuestionCount) -> importQuestionBookletFromExamAssets(
-						exam, sourcePath, name, questionFormat, expectedQuestionCount, config));
+						exam, sourcePath, name, questionFormat, expectedQuestionCount, config),
+
+				// Legacy intake is launched from Exam/Assets but remains coordinated by
+				// the application because it spans dialogs, persistence and capture state.
+				() -> importLegacyQuestionMetadata(primaryStage, config));
 		workingSubjectExamAssetsSnapshotLoader = subject -> {
 			try {
 
@@ -2227,6 +2192,19 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Exam State", "The Exam state could not be changed.",
 					failureMessage(exception));
 		}
+	}
+
+	private void recheckPendingLegacyQuestionImport(Stage primaryStage, ApplicationConfig config) {
+		PendingLegacyQuestionImport pending = pendingLegacyQuestionImport;
+		if (pending == null) {
+
+			// A stale UI event has nothing left to resume.
+			return;
+		}
+
+		// Recheck executes the same authoritative preflight as the initial intake.
+		// Saving an Exam or booklet never bypasses validation.
+		continueLegacyQuestionImport(primaryStage, config, pending);
 	}
 
 	private void refreshActiveExamContext() {
@@ -2802,15 +2780,17 @@ public class QuestionBankApplication extends Application {
 		dialog.showAndWait();
 	}
 
-	private void showLegacyQuestionImportResult(int importedBooklets, LegacyQuestionImportResult importResult) {
+	private void showLegacyQuestionImportResult(LegacyQuestionImportResult importResult) {
 		String message = """
-				Exam booklets imported: %d
 				Questions imported: %d
 				Questions already present: %d
 				Answers imported: %d
-				""".formatted(importedBooklets, importResult.insertedQuestions(), importResult.existingQuestions(),
+				""".formatted(importResult.insertedQuestions(), importResult.existingQuestions(),
 				importResult.insertedAnswers());
-		showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy question metadata imported.", message);
+
+		// Exam and booklet structure is now managed exclusively by Exam/Assets and is
+		// therefore deliberately absent from the legacy-import result count.
+		showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy Question metadata imported.", message);
 	}
 
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
@@ -3129,6 +3109,57 @@ public class QuestionBankApplication extends Application {
 		configurePrimaryStage(primaryStage, config);
 	}
 
+	private void startLegacyQuestionCaptureRefresh(Subject subject, LegacyQuestionImportResult importResult) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (importResult == null) {
+			throw new NullPointerException("importResult");
+		}
+		Task<List<Question>> task = new Task<>() {
+
+			@Override
+			protected List<Question> call() {
+
+				// Legacy import has already committed. Load one immutable corpus snapshot
+				// away from JavaFX and publish that same snapshot to both capture panes.
+				return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+			}
+		};
+		task.setOnSucceeded(_ -> {
+			if (!Objects.equals(workingSubject, subject)) {
+
+				// A later Working Subject owns the application now. Imported persistence
+				// remains valid, but its old Subject must not overwrite current UI state.
+				return;
+			}
+			List<Question> questions = task.getValue();
+
+			// Both capture panes consume exactly the same post-import corpus read.
+			questionCapturePane.setWorkingSubject(subject, questions);
+			answerCapturePane.setWorkingSubject(subject, questions);
+
+			// setWorkingSubject(...) already recalculates imported/incomplete Question
+			// availability, so do not call showLegacyCaptureControls(), which would
+			// perform another repository-backed refresh.
+			showLegacyQuestionImportResult(importResult);
+		});
+		task.setOnFailed(_ -> {
+			if (!Objects.equals(workingSubject, subject)) {
+
+				// A refresh failure for application context the user has already left is
+				// stale and must not interrupt the current workflow.
+				return;
+			}
+			showAlert(Alert.AlertType.WARNING, "Legacy Question Import",
+					"Question metadata was imported, but capture state could not be refreshed.",
+					"The imported metadata is stored safely. " + failureMessage(task.getException()));
+		});
+		Thread thread = new Thread(task, "legacy-question-capture-refresh");
+		thread.setDaemon(true);
+		thread.start();
+	}
+
 	private void startQuestionSplitFromSearch(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		SharedQuestionContext existingSharedContext;
@@ -3411,6 +3442,27 @@ public class QuestionBankApplication extends Application {
 		// Question-booklet View is inspection only. It must not activate this booklet
 		// for capture or change ExamMetadataPane capture state.
 		viewExamAssetPdf(booklet.getSourceDocument().getRelativePath(), "Question booklet", config);
+	}
+
+	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion, Path workbookPath) {
+
+		private PendingLegacyQuestionImport {
+			if (subject == null) {
+				throw new NullPointerException("subject");
+			}
+			if (syllabusVersion == null) {
+				throw new NullPointerException("syllabusVersion");
+			}
+			if (workbookPath == null) {
+				throw new NullPointerException("workbookPath");
+			}
+
+			// The historical syllabus must belong to the same authoritative Subject as
+			// the pending workbook import.
+			if (!subject.equals(syllabusVersion.getSubject())) {
+				throw new IllegalArgumentException("Legacy import syllabus does not belong to Working Subject");
+			}
+		}
 	}
 
 	private enum BackupFailureDecision {

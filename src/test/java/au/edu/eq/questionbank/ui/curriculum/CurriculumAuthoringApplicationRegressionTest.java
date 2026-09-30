@@ -267,9 +267,7 @@ class CurriculumAuthoringApplicationRegressionTest {
 		ComboBox<?> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
 		ComboBox<?> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
 		ComboBox<?> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
-
 		robot.interact(() -> subjects.getSelectionModel().selectFirst());
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			AtomicBoolean loaded = new AtomicBoolean();
 			robot.interact(() ->
@@ -279,8 +277,8 @@ class CurriculumAuthoringApplicationRegressionTest {
 			loaded.set(syllabuses.getValue() != null && !units.getItems().isEmpty()));
 			return loaded.get();
 		});
-
 		robot.interact(() -> {
+
 			// Once the Subject snapshot has arrived, ordinary hierarchy navigation is
 			// synchronous and can establish the classification this regression preserves.
 			units.getSelectionModel().selectFirst();
@@ -289,14 +287,11 @@ class CurriculumAuthoringApplicationRegressionTest {
 		});
 		assertTrue(descriptors.getValue() instanceof CurriculumNode,
 				"Test precondition requires an existing classification selection");
-
 		openExisting(robot);
 		editExistingDescriptor(robot, true);
 		robot.interact(() -> robot.lookup("#save-curriculum").queryAs(Button.class).fire());
-
 		Stage authoring = authoringStage(robot);
 		robot.interact(() -> Event.fireEvent(authoring, new WindowEvent(authoring, WindowEvent.WINDOW_CLOSE_REQUEST)));
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			AtomicBoolean refreshed = new AtomicBoolean();
 			robot.interact(() ->
@@ -307,7 +302,6 @@ class CurriculumAuthoringApplicationRegressionTest {
 					.map(CurriculumNode.class::cast).anyMatch(node -> node.getName().equals("Edited descriptor"))));
 			return refreshed.get();
 		});
-
 		assertTrue(
 				descriptors.getItems().stream().filter(CurriculumNode.class::isInstance).map(CurriculumNode.class::cast)
 						.anyMatch(node -> node.getName().equals("Edited descriptor")),

@@ -37,6 +37,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
+import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
@@ -406,16 +407,27 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void examMenuRoutesDirectlyToExamAssetsWorkspace(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		MenuBar menuBar = lookup(robot, ".menu-bar", MenuBar.class);
-		MenuItem examAssetsItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+		Menu examMenu = menuBar.getMenus().stream().filter(menu -> "_Exam".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		MenuItem examAssetsItem = examMenu.getItems().stream()
 				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
 		assertEquals("_Exam / Assets...", examAssetsItem.getText());
 
-		// Menu activation must switch the existing main-window host rather than opening
-		// the superseded modal Exam Setup workflow.
+		// Legacy Question intake is now owned by Exam/Assets and must not remain as a
+		// second standalone Exam-menu workflow.
+		assertFalse(examMenu.getItems().stream().filter(item -> item.getText() != null)
+				.anyMatch(item -> item.getText().contains("Legacy Question Metadata")));
+
+		// Menu activation switches the existing main-window host rather than opening
+		// any superseded modal Exam-management workflow.
 		robot.interact(examAssetsItem::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 		assertTrue(robot.lookup("#workspace-mode-host").tryQuery().isPresent());
+
+		// Legacy metadata intake is now visible only as an Exam/Assets workspace
+		// operation.
+		assertTrue(robot.lookup("#exam-assets-import-legacy-questions").tryQuery().isPresent());
 	}
 
 	@Test
