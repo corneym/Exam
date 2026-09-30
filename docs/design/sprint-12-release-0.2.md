@@ -217,6 +217,29 @@ Changing Subject changes the corpus and work being displayed. Existing
 safeguards that prevent Subject changes while unsaved capture work is pending
 must remain.
 
+Working Subject transitions are application-coordinated and asynchronous. Once
+the existing capture-state guard accepts a Subject change, the new Subject
+becomes authoritative immediately and stale Subject-dependent presentation is
+cleared before replacement persistence data is loaded.
+
+One application-level refresh generation coordinates the transition. Curriculum
+syllabus/root-Unit data is loaded away from the JavaFX application thread, and
+one immutable Question-corpus snapshot is shared by Question Capture and Answer
+Capture. When Exam/Assets is visible, its persisted Exam/asset snapshot is loaded
+in parallel under the same refresh generation.
+
+All resulting JavaFX control updates are published on the JavaFX application
+thread. Results belonging to an older Subject generation are discarded, so a
+slower earlier refresh cannot overwrite a later Subject selection. Clearing
+Working Subject requires no replacement persistence load. A current-generation
+persistence failure leaves the accepted Subject authoritative while dependent
+state remains cleared and the failure is surfaced to the user.
+
+Curriculum Subject snapshots include syllabus versions and the root Units for
+each available version. Switching between current and historical syllabus
+versions after the Subject snapshot has loaded therefore does not return to
+SQLite for root-Unit lookup on the JavaFX thread.
+
 ### 3.8 Legacy import and Exam/Assets share one authoritative Exam model
 
 Legacy import is an intake source, not a separate long-term Exam-management

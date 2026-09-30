@@ -26,6 +26,8 @@ Never give me code based solely on the conversation summary when the repository 
 
 Follow the code-change format in docs/Working-Instructions.md exactly.
 
+When giving Markdown text to copy make sure it is delimited with 4 backticks so it is directly copyable as MD.
+
 ### Source of truth
 
 The GitHub repository is:
@@ -63,6 +65,8 @@ For every Java code-change instruction, always give:
 - exact copy/paste-ready code.
 - there is no need to give the filename when it can be inferred from the class name.
 
+If EDIT is the instruction, give the starting instruction and the final instruction as bounds on the EDIT.
+
 There is no need to give placement.  No need to give import instructions.  Eclipse sorts methods and adds imports.
 
 Do not use vague instructions such as "put this near..." or "add this somewhere
@@ -93,7 +97,7 @@ A TestFX test that passes on a local desktop is not considered deterministic mer
 
 ### GitHub issue and project tracking during implementation
 
-GitHub Issues and the GitHub Project are part of the normal development workflow.
+GitHub Issues and the GitHub Project are part of the normal development workflow.  Each batch of code changes must have a title - Batch nn: description.
 
 As implementation progresses, ChatGPT must explicitly tell the user when the current work changes the appropriate GitHub tracking state.
 

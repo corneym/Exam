@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Tag;
@@ -63,6 +64,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				CurriculumSelectionModel.class).getClassification();
 		TextField curriculumCode = lookup(robot, "#curriculum-code", TextField.class);
 		String originalCode = curriculumCode.getText();
+		long refreshGenerationBefore = field(application, "workingSubjectRefreshGeneration", Long.class).longValue();
 
 		// Accept a Question region. The PDF rectangle is no longer pending, but the
 		// accepted region is still unsaved Question-capture work.
@@ -90,6 +92,11 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(originalClassification,
 				field(application, "curriculumSelectionModel", CurriculumSelectionModel.class).getClassification());
 		assertClassificationControlShows(robot, originalClassification);
+
+		// A rejected transition must stop before the application creates a new
+		// asynchronous Subject generation.
+		assertEquals(refreshGenerationBefore,
+				field(application, "workingSubjectRefreshGeneration", Long.class).longValue());
 	}
 
 	@Test
@@ -575,8 +582,9 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void mouseSelectingImportedQuestionMayActivateSubjectWithoutRebuildingOpenPopup(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
-		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
-				.getClassification();
+		CurriculumSelectionModel curriculumModel = field(application, "curriculumSelectionModel",
+				CurriculumSelectionModel.class);
+		CurriculumNode classification = curriculumModel.getClassification();
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		Question importedQuestion = stored.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
@@ -605,13 +613,33 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return item instanceof Question question && question.getId() == importedQuestion.getId();
 		}).query();
 		robot.clickOn(importedCell);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean restored = new AtomicBoolean();
+			robot.interact(() ->
 
-		// Processing all queued FX work also surfaces any exception raised by the
-		// ComboBox/ListView selection transition.
+			// Imported-question activation is complete only when the asynchronously
+			// activated Subject has also restored the Question's persisted
+			// classification.
+			restored.set(imported.getValue() != null && imported.getValue().getId() == importedQuestion.getId()
+					&& booklet.getExam().getSubject().equals(workingSubject.getValue())
+					&& examMetadataPane().getBooklet() != null
+					&& examMetadataPane().getBooklet().getId() == booklet.getId()
+					&& classification.equals(curriculumModel.getClassification())));
+			return restored.get();
+		});
+
+		// Processing all queued FX work must not reveal a delayed ComboBox/ListView
+		// exception after the popup selection has completed.
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(importedQuestion.getId(), imported.getValue().getId());
 		assertEquals(booklet.getExam().getSubject(), workingSubject.getValue());
 		assertEquals(booklet.getId(), examMetadataPane().getBooklet().getId());
+		assertEquals(classification, curriculumModel.getClassification());
+
+		// Activating a real booklet for the new Subject opens its replacement Exam PDF.
+		// The Subject-change clear must not erase that newly established document.
+		assertTrue(pdfWorkspace().hasExamPdf());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
 	}
 
 	@Test

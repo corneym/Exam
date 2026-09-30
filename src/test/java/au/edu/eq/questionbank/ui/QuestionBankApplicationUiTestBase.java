@@ -433,6 +433,17 @@ abstract class QuestionBankApplicationUiTestBase {
 		}).get();
 		assertEquals(Boolean.TRUE, activated);
 		WaitForAsyncUtils.waitForFxEvents();
+		@SuppressWarnings("unchecked")
+		ComboBox<SyllabusVersion> syllabusBox = lookup(robot, "#curriculum-syllabus", ComboBox.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicReference<Boolean> curriculumLoaded = new AtomicReference<>(Boolean.FALSE);
+			robot.interact(() ->
+
+			// The production Subject transition is now asynchronous. Wait for its
+			// observable syllabus publication rather than racing the worker thread.
+			curriculumLoaded.set(Boolean.valueOf(!syllabusBox.getItems().isEmpty())));
+			return curriculumLoaded.get().booleanValue();
+		});
 
 		// Workflow fixtures deliberately enter new-Question capture.
 		fireControl(robot, "#capture-mode-new");

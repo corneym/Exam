@@ -1,6 +1,8 @@
 package au.edu.eq.questionbank.ui.model;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -25,6 +27,14 @@ public class CurriculumSelectionModel {
 	private CurriculumNode subtopic;
 	private CurriculumNode classification;
 
+	// A successfully loaded Subject snapshot supplies the Subject-transition
+	// choices without repeating their persistence reads on the JavaFX thread.
+	private SubjectSnapshot subjectSnapshot;
+
+	// The desktop application owns asynchronous Working Subject transitions. A
+	// standalone selector keeps its existing synchronous Subject behaviour.
+	private boolean subjectRefreshManagedExternally;
+
 	/**
 	 * Creates a selection model backed by curriculum lookups from a repository.
 	 *
@@ -36,6 +46,54 @@ public class CurriculumSelectionModel {
 			throw new NullPointerException("repository");
 		}
 		this.repository = repository;
+	}
+
+	private static boolean isDescriptor(CurriculumNode node) {
+		return node.getLevel() == CurriculumLevel.DESCRIPTOR;
+	}
+
+	private static boolean isSubtopic(CurriculumNode node) {
+		return node.getLevel() == CurriculumLevel.SUBTOPIC;
+	}
+
+	/**
+	 * Publishes a previously loaded Subject snapshot into this selection model.
+	 *
+	 * @param snapshot snapshot for the already accepted Subject
+	 * @throws NullPointerException  if {@code snapshot} is {@code null}
+	 * @throws IllegalStateException if the model has since moved to another Subject
+	 */
+	public void applySubjectSnapshot(SubjectSnapshot snapshot) {
+		if (snapshot == null) {
+			throw new NullPointerException("snapshot");
+		}
+		if (!snapshot.subject().equals(subject)) {
+
+			// Application generation checking should normally discard stale work before
+			// this boundary, but the model also protects itself from cross-Subject data.
+			throw new IllegalStateException("Curriculum snapshot does not match the selected Subject");
+		}
+		subjectSnapshot = snapshot;
+		syllabusVersion = snapshot.currentSyllabusVersion();
+
+		// A newly published Subject snapshot starts with no Question classification.
+		clearCurriculumNodeSelections();
+	}
+
+	/**
+	 * Establishes the new Subject immediately while clearing curriculum state that
+	 * belonged to the previous Subject.
+	 *
+	 * @param subject newly accepted Subject, or {@code null} to clear it
+	 */
+	public void beginSubjectRefresh(Subject subject) {
+		this.subject = subject;
+		subjectSnapshot = null;
+		syllabusVersion = null;
+
+		// Nothing beneath Subject may survive while replacement persistence data is
+		// loading.
+		clearCurriculumNodeSelections();
 	}
 
 	/**
@@ -165,6 +223,11 @@ public class CurriculumSelectionModel {
 		if (subject == null) {
 			return List.of();
 		}
+		if (subjectSnapshot != null && subjectSnapshot.subject().equals(subject)) {
+
+			// The accepted Working Subject already supplied these values off-thread.
+			return subjectSnapshot.syllabusVersions();
+		}
 		return repository.findVersionsForSubject(subject);
 	}
 
@@ -209,7 +272,49 @@ public class CurriculumSelectionModel {
 		if (syllabusVersion == null) {
 			return List.of();
 		}
+		if (subjectSnapshot != null && subjectSnapshot.subject().equals(subject)
+				&& subjectSnapshot.syllabusVersions().contains(syllabusVersion)) {
+
+			// All root Units for this Working Subject were loaded before snapshot
+			// publication, including roots belonging to historical syllabuses.
+			return subjectSnapshot.unitsFor(syllabusVersion);
+		}
+
+		// Standalone model use without an applied Subject snapshot retains the existing
+		// repository-backed behaviour.
 		return repository.findRootNodes(syllabusVersion);
+	}
+
+	/**
+	 * Loads the persistence-backed curriculum state needed when a Subject becomes
+	 * the Working Subject. This method changes no selection state and may therefore
+	 * be called by an application-owned background task.
+	 *
+	 * @param subject Subject whose initial curriculum state is required
+	 * @return immutable Subject snapshot
+	 * @throws NullPointerException if {@code subject} is {@code null}
+	 */
+	public SubjectSnapshot loadSubjectSnapshot(Subject subject) {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		List<SyllabusVersion> versions = List.copyOf(repository.findVersionsForSubject(subject));
+		SyllabusVersion currentVersion = null;
+		Map<Long, List<CurriculumNode>> unitsByVersionId = new HashMap<>();
+		for (SyllabusVersion version : versions) {
+			if (currentVersion == null && version.isCurrent()) {
+
+				// Preserve the established rule that the first current version becomes
+				// the default selection.
+				currentVersion = version;
+			}
+
+			// Root Units for every available version are loaded while this method is
+			// running on the application worker. Later syllabus switching therefore
+			// requires no SQLite root-node lookup on the JavaFX thread.
+			unitsByVersionId.put(version.getId(), List.copyOf(repository.findRootNodes(version)));
+		}
+		return new SubjectSnapshot(subject, versions, currentVersion, unitsByVersionId);
 	}
 
 	/**
@@ -265,21 +370,14 @@ public class CurriculumSelectionModel {
 	 * @param subject the subject to select, or {@code null} to clear it
 	 */
 	public void selectSubject(Subject subject) {
-		this.subject = subject;
-		syllabusVersion = null;
-
-		// Clear the previous path before lookup so it cannot remain attached to the new
-		// subject.
-		clearCurriculumNodeSelections();
+		beginSubjectRefresh(subject);
 		if (subject == null) {
 			return;
 		}
-		for (SyllabusVersion version : repository.findVersionsForSubject(subject)) {
-			if (version.isCurrent()) {
-				syllabusVersion = version;
-				return;
-			}
-		}
+
+		// Standalone selector users retain synchronous behaviour, but now use exactly
+		// the same immutable snapshot contract as the application-level async path.
+		applySubjectSnapshot(loadSubjectSnapshot(subject));
 	}
 
 	/**
@@ -315,8 +413,7 @@ public class CurriculumSelectionModel {
 			if (subject == null) {
 				throw new IllegalStateException("Select a subject before selecting a syllabus version");
 			}
-			if (!syllabusVersion.getSubject().equals(subject)
-					|| !repository.findVersionsForSubject(subject).contains(syllabusVersion)) {
+			if (!syllabusVersion.getSubject().equals(subject) || !getSyllabusVersions().contains(syllabusVersion)) {
 				throw new IllegalArgumentException("Syllabus version is not available for the selected subject");
 			}
 		}
@@ -347,6 +444,19 @@ public class CurriculumSelectionModel {
 		classification = null;
 	}
 
+	/**
+	 * Chooses whether Subject-dependent persistence refresh is coordinated by the
+	 * containing application rather than by this pane's synchronous action handler.
+	 *
+	 * @param managedExternally whether the application owns Subject refresh
+	 */
+	public void setSubjectRefreshManagedExternally(boolean managedExternally) {
+
+		// Only Subject transition ownership changes; ordinary classification controls
+		// continue to be handled by this pane.
+		subjectRefreshManagedExternally = managedExternally;
+	}
+
 	private void clearCurriculumNodeSelections() {
 		unit = null;
 		topic = null;
@@ -354,11 +464,98 @@ public class CurriculumSelectionModel {
 		classification = null;
 	}
 
-	private static boolean isDescriptor(CurriculumNode node) {
-		return node.getLevel() == CurriculumLevel.DESCRIPTOR;
-	}
+	/**
+	 * Immutable persistence snapshot needed to establish a Subject's initial
+	 * curriculum-selection state.
+	 *
+	 * @param subject                  Subject represented by the snapshot
+	 * @param syllabusVersions         available syllabus versions for that Subject
+	 * @param currentSyllabusVersion   current version, or {@code null} when none is
+	 *                                 marked current
+	 * @param unitsBySyllabusVersionId root Units for every available syllabus
+	 *                                 version, keyed by persistent syllabus-version
+	 *                                 identifier
+	 */
+	public record SubjectSnapshot(Subject subject, List<SyllabusVersion> syllabusVersions,
+			SyllabusVersion currentSyllabusVersion, Map<Long, List<CurriculumNode>> unitsBySyllabusVersionId) {
 
-	private static boolean isSubtopic(CurriculumNode node) {
-		return node.getLevel() == CurriculumLevel.SUBTOPIC;
+		public SubjectSnapshot {
+			if (subject == null) {
+				throw new NullPointerException("subject");
+			}
+			if (syllabusVersions == null) {
+				throw new NullPointerException("syllabusVersions");
+			}
+			if (unitsBySyllabusVersionId == null) {
+				throw new NullPointerException("unitsBySyllabusVersionId");
+			}
+
+			// Freeze the version list before the snapshot crosses the worker-to-JavaFX
+			// boundary.
+			syllabusVersions = List.copyOf(syllabusVersions);
+			Map<Long, List<CurriculumNode>> copiedUnitsByVersionId = new HashMap<>();
+			for (SyllabusVersion version : syllabusVersions) {
+				if (!version.getSubject().equals(subject)) {
+					throw new IllegalArgumentException("Syllabus version does not belong to the snapshot Subject");
+				}
+				List<CurriculumNode> roots = unitsBySyllabusVersionId.get(version.getId());
+				if (roots == null) {
+					throw new IllegalArgumentException(
+							"Snapshot is missing root Units for syllabus version " + version.getId());
+				}
+
+				// Root data is validated once before it is reused on the JavaFX thread.
+				for (CurriculumNode root : roots) {
+					if (!root.getSyllabusVersion().equals(version) || root.getLevel() != CurriculumLevel.UNIT
+							|| root.getParent() != null) {
+						throw new IllegalArgumentException(
+								"Snapshot contains an invalid root Unit for syllabus version " + version.getId());
+					}
+				}
+				copiedUnitsByVersionId.put(version.getId(), List.copyOf(roots));
+			}
+			if (copiedUnitsByVersionId.size() != unitsBySyllabusVersionId.size()) {
+
+				// A snapshot may contain roots only for versions that belong to this
+				// Subject.
+				throw new IllegalArgumentException("Snapshot contains Units for an unavailable syllabus version");
+			}
+			unitsBySyllabusVersionId = Map.copyOf(copiedUnitsByVersionId);
+			if (currentSyllabusVersion != null && (!currentSyllabusVersion.getSubject().equals(subject)
+					|| !syllabusVersions.contains(currentSyllabusVersion))) {
+				throw new IllegalArgumentException("Current syllabus does not belong to the snapshot Subject");
+			}
+		}
+
+		/**
+		 * Returns root Units belonging to the snapshot's current syllabus.
+		 *
+		 * @return current-syllabus root Units, or an empty list when there is no
+		 *         current syllabus
+		 */
+		public List<CurriculumNode> currentUnits() {
+
+			// Keep current-version access explicit because the initial pane publication
+			// uses this value directly.
+			return unitsFor(currentSyllabusVersion);
+		}
+
+		/**
+		 * Returns the already-loaded root Units for one available syllabus version.
+		 *
+		 * @param syllabusVersion syllabus whose root Units are required
+		 * @return immutable root-Unit list, or an empty list when the supplied version
+		 *         is null or unavailable in this snapshot
+		 */
+		public List<CurriculumNode> unitsFor(SyllabusVersion syllabusVersion) {
+			if (syllabusVersion == null || !syllabusVersion.getSubject().equals(subject)
+					|| !syllabusVersions.contains(syllabusVersion)) {
+				return List.of();
+			}
+
+			// Every available version was loaded when this snapshot was built, so this
+			// is an in-memory lookup only.
+			return unitsBySyllabusVersionId.getOrDefault(syllabusVersion.getId(), List.of());
+		}
 	}
 }

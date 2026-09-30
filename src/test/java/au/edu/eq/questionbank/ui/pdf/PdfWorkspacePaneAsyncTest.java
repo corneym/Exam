@@ -50,6 +50,37 @@ class PdfWorkspacePaneAsyncTest {
 	Path tempDir;
 	private PdfWorkspacePane pane;
 
+	@Test
+	void clearDocumentsRemovesEveryDocumentAndReturnsToEmptyWorkspace(FxRobot robot) throws Exception {
+		Path examPath = createPdf("clear-exam.pdf");
+		Path answerPath = createPdf("clear-answer.pdf");
+		Path viewerPath = createPdf("clear-viewer.pdf");
+		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.openAnswerPdf(answerPath);
+			pane.openViewerPdf(viewerPath);
+
+			// Include viewer-specific state so clearing proves that no document workflow
+			// leaks into the next application context.
+			pane.showViewerCompletionAction("Finish Inspection", () -> {
+			});
+		});
+		assertNotNull(pane.getExamPdfSession());
+		assertNotNull(pane.getAnswerPdfSession());
+		assertNotNull(pageView.getImage());
+		robot.interact(pane::clearDocuments);
+
+		// The workspace remains reusable, but every document owned by the previous
+		// application context has gone.
+		assertNull(pane.getExamPdfSession());
+		assertNull(pane.getAnswerPdfSession());
+		assertNull(pageView.getImage());
+		assertEquals("No PDF selected", ((javafx.scene.control.Label) pane.lookup("#pdf-page-label")).getText());
+		assertTrue(pane.lookup("#finish-pdf-inspection").isVisible() == false);
+		assertThrows(IllegalStateException.class, () -> pane.extractDisplayedPageText());
+	}
+
 	@AfterEach
 	void close() throws Exception {
 		pane.close();

@@ -127,6 +127,59 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Clears all Exam, Answer and standalone viewer documents while leaving this
+	 * workspace available for later reuse.
+	 * <p>
+	 * Any outstanding asynchronous document load is invalidated before the existing
+	 * sessions are closed.
+	 */
+	public void clearDocuments() {
+		documentRequest++;
+		Exception failure = null;
+		try {
+			failure = closeSession(examPdfSession, failure);
+		} finally {
+			examPdfSession = null;
+		}
+		try {
+			failure = closeSession(answerPdfSession, failure);
+		} finally {
+			answerPdfSession = null;
+			answerPdfPath = null;
+		}
+		try {
+			failure = closeSession(viewerPdfSession, failure);
+		} finally {
+			viewerPdfSession = null;
+		}
+
+		// No persisted or live rectangle may survive after its source document has
+		// ceased to belong to the current application context.
+		clearStoredRegionHighlights();
+		clearSelection();
+
+		// Viewer-only actions and return state also belong to the document being
+		// discarded rather than to the reusable workspace.
+		hideViewerCompletionAction();
+		displayedDocument = DocumentMode.EXAM;
+		viewerReturnDocument = DocumentMode.EXAM;
+		currentPageNumber = 1;
+		viewerReturnPageNumber = 1;
+		examPageNumber = 1;
+		answerPageNumber = 1;
+
+		// Restore the ordinary empty-workspace presentation ready for a later Exam or
+		// Answer document.
+		pagePane.setCursor(Cursor.DEFAULT);
+		fullWidthSelectionCheckBox.setVisible(true);
+		fullWidthSelectionCheckBox.setManaged(true);
+		clearDisplayedPage();
+		if (failure != null) {
+			throw new IllegalStateException("Unable to clear the PDF workspace", failure);
+		}
+	}
+
+	/**
 	 * Removes the visible pending selection rectangle.
 	 */
 	public void clearSelection() {
@@ -989,10 +1042,14 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	private HBox createPageControls() {
+
+		// Stable ids let workflow tests verify the empty PDF presentation without
+		// depending on visible-text lookup or scene-graph ordering.
+		pageLabel.setId("pdf-page-label");
+		pageNumberField.setId("pdf-page-number");
 		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, new Label("Go to:"),
 				pageNumberField, nextButton, fullWidthSelectionCheckBox, viewerCompletionButton);
 		pageControls.setAlignment(Pos.CENTER);
-		pageControls.setPadding(PAGE_CONTROLS_PADDING);
 		return pageControls;
 	}
 

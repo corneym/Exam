@@ -25,11 +25,13 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
@@ -37,6 +39,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
+import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
 import javafx.event.EventHandler;
@@ -1545,6 +1548,101 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Subject remains the visual heading for the application-level context.
 		primaryStage.getScene().getRoot().applyCss();
 		assertTrue(subjectLabel.getFont().getStyle().contains("Bold"));
+	}
+
+	@Test
+	void workingSubjectCurriculumRefreshRunsOffFxThreadAndDiscardsStaleSnapshot(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject physics = subjects.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		Subject biology = subjects.getItems().stream().filter(subject -> "Biology".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		CountDownLatch physicsStarted = new CountDownLatch(1);
+		CountDownLatch releasePhysics = new CountDownLatch(1);
+		CountDownLatch physicsFinished = new CountDownLatch(1);
+		CountDownLatch biologyFinished = new CountDownLatch(1);
+		AtomicBoolean persistenceRanOnFxThread = new AtomicBoolean(false);
+		Function<Subject, CurriculumSelectionModel.SubjectSnapshot> loader = subject -> {
+			if (Platform.isFxApplicationThread()) {
+
+				// Curriculum persistence must never move back onto the JavaFX thread.
+				persistenceRanOnFxThread.set(true);
+			}
+			if (physics.equals(subject)) {
+				physicsStarted.countDown();
+				try {
+
+					// Hold the older Subject so Biology can become authoritative first.
+					if (!releasePhysics.await(5, TimeUnit.SECONDS)) {
+						throw new AssertionError("Timed out waiting to release Physics curriculum load");
+					}
+				} catch (InterruptedException exception) {
+					Thread.currentThread().interrupt();
+					throw new RuntimeException(exception);
+				}
+			}
+			CurriculumSelectionModel.SubjectSnapshot snapshot = model.loadSubjectSnapshot(subject);
+			if (physics.equals(subject)) {
+				physicsFinished.countDown();
+			} else if (biology.equals(subject)) {
+				biologyFinished.countDown();
+			}
+			return snapshot;
+		};
+		setField(application, "workingSubjectCurriculumSnapshotLoader", loader);
+		try {
+			robot.interact(() ->
+
+			// Direct selection tests application state rather than mouse hit-testing.
+			subjects.getSelectionModel().select(physics));
+			assertTrue(physicsStarted.await(5, TimeUnit.SECONDS));
+			assertFalse(persistenceRanOnFxThread.get());
+			AtomicBoolean previousCurriculumCleared = new AtomicBoolean();
+			robot.interact(() ->
+
+			// Chemistry choices must disappear before the blocked Physics persistence
+			// operation completes.
+			previousCurriculumCleared.set(
+					syllabuses.getItems().isEmpty() && syllabuses.getValue() == null && units.getItems().isEmpty()));
+			assertTrue(previousCurriculumCleared.get());
+			robot.interact(() ->
+
+			// The later Biology selection must proceed while Physics is still blocked.
+			subjects.getSelectionModel().select(biology));
+			assertTrue(biologyFinished.await(5, TimeUnit.SECONDS));
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+				AtomicBoolean biologyApplied = new AtomicBoolean();
+				robot.interact(() ->
+
+				// Biology has one historical syllabus and deliberately no current
+				// syllabus in the shared workflow fixture.
+				biologyApplied.set(biology.equals(subjects.getValue()) && biology.equals(model.getSubject())
+						&& syllabuses.getItems().size() == 1
+						&& biology.equals(syllabuses.getItems().getFirst().getSubject())
+						&& syllabuses.getValue() == null && units.getItems().isEmpty()));
+				return biologyApplied.get();
+			});
+
+			// Now let the obsolete Physics worker complete.
+			releasePhysics.countDown();
+			assertTrue(physicsFinished.await(5, TimeUnit.SECONDS));
+			WaitForAsyncUtils.waitForFxEvents();
+			assertFalse(persistenceRanOnFxThread.get());
+
+			// Completion of the stale worker must not restore Physics curriculum data.
+			assertEquals(biology, subjects.getValue());
+			assertEquals(biology, model.getSubject());
+			assertEquals(1, syllabuses.getItems().size());
+			assertEquals(biology, syllabuses.getItems().getFirst().getSubject());
+			assertNull(syllabuses.getValue());
+			assertTrue(units.getItems().isEmpty());
+		} finally {
+			releasePhysics.countDown();
+		}
 	}
 
 	@Test

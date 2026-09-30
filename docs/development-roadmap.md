@@ -233,6 +233,15 @@ TestFX semantic interactions use real JavaFX control actions rather than pointer
 hit-testing unless pointer behaviour itself is under test. Modal-dialog tests use
 actual showing windows/DialogPanes to avoid scene-graph races.
 
+Sprint 12 applied this rule to application-level Working Subject changes.
+Accepted Subject transitions now use an application-owned asynchronous refresh
+generation covering curriculum, Question/Answer capture and visible Exam/Assets
+state. Question and Answer capture share one loaded Question snapshot, curriculum
+Subject data is preloaded before JavaFX publication, and stale results from an
+older Subject generation are discarded. Subject-change safety guards remain
+synchronous so unfinished capture work cannot be invalidated by a background
+transition.
+
 ### 3.15 Version and release identity
 
 Maven `project.version` is the authoritative application/release version.

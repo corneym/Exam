@@ -12,6 +12,9 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -165,7 +168,18 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
 		selectSubject(robot, "Biology");
-		WaitForAsyncUtils.waitForFxEvents();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean loaded = new AtomicBoolean();
+			robot.interact(() ->
+
+			// Biology deliberately has one historical syllabus and no current version.
+			// Wait for that observable snapshot rather than assuming one FX pulse is
+			// sufficient for the background persistence work.
+			loaded.set(subjects.getValue() != null && "Biology".equals(subjects.getValue().getName())
+					&& syllabuses.getItems().size() == 1 && "2019".equals(syllabuses.getItems().getFirst().getName())
+					&& syllabuses.getValue() == null));
+			return loaded.get();
+		});
 		assertEquals("Biology", subjects.getValue().getName());
 		assertNull(examMetadataPane().getBooklet());
 		assertEquals(1, syllabuses.getItems().size());
@@ -177,6 +191,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SyllabusVersion historical = syllabuses.getItems().getFirst();
 		robot.interact(() -> syllabuses.setValue(historical));
 		WaitForAsyncUtils.waitForFxEvents();
+
+		// Explicit historical-syllabus selection remains an ordinary curriculum
+		// navigation operation after the Working Subject snapshot has completed.
 		assertEquals(historical, syllabuses.getValue());
 		assertEquals(1, units.getItems().size());
 		assertEquals("2", units.getItems().getFirst().getCode());
@@ -211,23 +228,55 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void clearingSyllabusThenSubjectClearsDependentControls(FxRobot robot) throws Exception {
-		selectSubject(robot, "Chemistry");
+	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		assertNotNull(examMetadataPane().getBooklet());
+		PdfWorkspacePane workspace = pdfWorkspace();
+		ImageView pageView = lookup(robot, "#pdf-page-view", ImageView.class);
+		Label pageLabel = lookup(robot, "#pdf-page-label", Label.class);
+		assertTrue(workspace.hasExamPdf());
+		assertNotNull(pageView.getImage());
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		selectSubject(robot, "Physics");
 
-		// Classification controls are deliberately inactive while Question capture is
-		// idle. Enter the production new-Question workflow before testing the
-		// selector's
-		// own syllabus/hierarchy enablement rules.
-		fireControl(robot, "#capture-mode-new");
-		selectFirst(robot, "#curriculum-unit");
-		selectFirst(robot, "#curriculum-topic");
-		selectFirstFinalClassification(robot);
+		// Accepted Subject change invalidates its previous Exam and PDF immediately;
+		// it does not wait for the asynchronous Subject snapshot to finish loading.
+		assertNull(examMetadataPane().getBooklet());
+		assertEquals("Physics", subjects.getValue().getName());
+		assertFalse(workspace.hasExamPdf());
+		assertNull(workspace.getAnswerPdfSession());
+		assertNull(pageView.getImage());
+		assertEquals("No PDF selected", pageLabel.getText());
+	}
+
+	@Test
+	void clearingSyllabusThenSubjectClearsDependentControls(FxRobot robot) throws Exception {
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
 		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
 		ComboBox<CurriculumNode> subtopics = comboBox(robot, "#curriculum-subtopic");
 		ComboBox<CurriculumNode> descriptors = comboBox(robot, "#curriculum-descriptor");
+		selectSubject(robot, "Chemistry");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean loaded = new AtomicBoolean();
+			robot.interact(() ->
+
+			// Chemistry's current syllabus and root Unit prove that asynchronous
+			// curriculum publication has completed.
+			loaded.set(subjects.getValue() != null && "Chemistry".equals(subjects.getValue().getName())
+					&& syllabuses.getItems().size() == 2 && syllabuses.getValue() != null
+					&& "2025".equals(syllabuses.getValue().getName()) && !units.getItems().isEmpty()));
+			return loaded.get();
+		});
+
+		// Classification controls are deliberately inactive while Question capture is
+		// idle. Enter the production new-Question workflow before testing hierarchy
+		// enablement rules.
+		fireControl(robot, "#capture-mode-new");
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		robot.interact(() -> syllabuses.getSelectionModel().clearSelection());
 		assertEquals("Chemistry", subjects.getValue().getName());
@@ -250,7 +299,11 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
-		robot.interact(() -> subjects.getSelectionModel().clearSelection());
+		robot.interact(() ->
+
+		// Clearing Working Subject is itself an accepted Subject transition, but it
+		// requires no replacement persistence snapshot.
+		subjects.getSelectionModel().clearSelection());
 		assertNull(model.getSubject());
 		assertNull(model.getSyllabusVersion());
 		assertNull(model.getUnit());
@@ -266,6 +319,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			assertTrue(box.getItems().isEmpty());
 			assertTrue(box.isDisabled());
 		}
+
+		// Clearing the authoritative application Subject must also clear the Subject
+		// used to filter both capture queues.
+		assertNull(field(application, "workingSubject", Subject.class));
+		assertNull(field(questionCapturePane(), "workingSubject", Subject.class));
+		assertNull(field(answerCapturePane(), "workingSubject", Subject.class));
 	}
 
 	@Test
@@ -650,6 +709,56 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	@Test
+	void workingSubjectLoadFailureLeavesNewSubjectVisibleButDependentStateEmpty(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		Subject physics = subjects.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		setField(application, "workingSubjectCurriculumSnapshotLoader",
+				(Function<Subject, CurriculumSelectionModel.SubjectSnapshot>) subject -> {
+
+					// Simulate a persistence failure before any new Subject-dependent
+					// curriculum or Question data can be published.
+					throw new IllegalStateException("Synthetic curriculum load failure");
+				});
+		robot.interact(() ->
+
+		// Direct selection is deterministic because pointer behaviour is not under
+		// test.
+		subjects.getSelectionModel().select(physics));
+		waitForDialogShowing(robot, "Working Subject");
+		DialogPane errorDialog = showingDialogPane(robot, "Working Subject");
+		assertNotNull(errorDialog);
+		assertEquals("Data for the Working Subject could not be loaded.", errorDialog.getHeaderText());
+
+		// The accepted Subject itself remains authoritative even though its dependent
+		// persistence snapshot failed.
+		assertEquals(physics, subjects.getValue());
+		assertEquals(physics, field(application, "workingSubject", Subject.class));
+		assertEquals(physics, model.getSubject());
+		assertEquals(physics, field(questionCapturePane(), "workingSubject", Subject.class));
+		assertEquals(physics, field(answerCapturePane(), "workingSubject", Subject.class));
+
+		// Previous Chemistry state was cleared synchronously before the worker ran, so
+		// failure cannot leave it presented as if it belonged to Physics.
+		assertNull(model.getSyllabusVersion());
+		assertNull(model.getClassification());
+		assertTrue(syllabuses.getItems().isEmpty());
+		assertNull(syllabuses.getValue());
+		assertTrue(units.getItems().isEmpty());
+		assertNull(examMetadataPane().getBooklet());
+		Node okNode = errorDialog.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+
+		// Close the actual DialogPane-owned control without pointer hit-testing.
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Working Subject");
 	}
 
 	private Path createReplacementQuestionPdf(Path path) throws Exception {

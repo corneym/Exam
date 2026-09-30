@@ -26,7 +26,6 @@ import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionMetadataImporter;
 import au.edu.eq.questionbank.model.AnswerFile;
-import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
@@ -221,6 +220,10 @@ public class QuestionBankApplication extends Application {
 	private SqliteExamWriter examWriter;
 	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
 	private final Button changeExamAssetsButton = new Button("Change Exam");
+
+	// Curriculum persistence joins the application-owned Working Subject refresh
+	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
+	private Function<Subject, CurriculumSelectionModel.SubjectSnapshot> workingSubjectCurriculumSnapshotLoader;
 
 	// One loader supplies the complete Question snapshot used by both capture
 	// panes.
@@ -722,6 +725,32 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void clearPdfWorkspaceForSubjectChange(Subject newSubject) {
+		ExamBooklet activeBooklet = examMetadataPane == null ? null : examMetadataPane.getBooklet();
+		boolean newSubjectExamAlreadyDisplayed = newSubject != null && activeBooklet != null
+				&& activeBooklet.getExam().getSubject().equals(newSubject) && pdfWorkspace.hasExamPdf()
+				&& pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.EXAM;
+		if (newSubjectExamAlreadyDisplayed) {
+
+			// Booklet activation opens the new Subject's Exam PDF before its Subject
+			// callback runs. Do not erase that newly established context.
+			return;
+		}
+		try {
+
+			// A normal Working Subject change invalidates Exam, Answer and viewer
+			// documents belonging to the previous application context immediately.
+			pdfWorkspace.clearDocuments();
+		} catch (RuntimeException exception) {
+
+			// clearDocuments removes visible stale state even when resource closing
+			// reports a failure. Surface the resource problem without undoing the
+			// already accepted Subject transition.
+			showAlert(Alert.AlertType.ERROR, "Working Subject",
+					"The previous PDF workspace could not be closed cleanly.", failureMessage(exception));
+		}
+	}
+
 	private void closePendingQuestionBookletSourceFromExamAssets() {
 
 		// Closing VIEWER restores the Exam or Answer document that was displayed before
@@ -768,18 +797,25 @@ public class QuestionBankApplication extends Application {
 		showScormExportSuccess(task.getValue());
 	}
 
-	private void completeWorkingSubjectQuestionRefresh(Subject subject, long generation, List<Question> questions) {
+	private void completeWorkingSubjectCaptureRefresh(Subject subject, long generation,
+			WorkingSubjectCaptureSnapshot snapshot) {
 		if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
 
-			// A later Subject selection is already authoritative. Discard this completed
-			// snapshot rather than allowing an older task to restore stale queue data.
+			// A later Subject selection is already authoritative. Neither curriculum nor
+			// queue data from this completed worker may be published.
 			return;
 		}
+		if (curriculumSelectorPane != null) {
+
+			// Curriculum is published first so any Question subsequently exposed by the
+			// queues can immediately restore its classification path.
+			curriculumSelectorPane.applySubjectSnapshot(snapshot.curriculumSnapshot());
+		}
 		if (questionCapturePane != null) {
-			questionCapturePane.setWorkingSubject(subject, questions);
+			questionCapturePane.setWorkingSubject(subject, snapshot.questions());
 		}
 		if (answerCapturePane != null) {
-			answerCapturePane.setWorkingSubject(subject, questions);
+			answerCapturePane.setWorkingSubject(subject, snapshot.questions());
 		}
 	}
 
@@ -1078,6 +1114,10 @@ public class QuestionBankApplication extends Application {
 
 	private CurriculumSelectorPane createCurriculumSelectorPane(Stage primaryStage, SqliteDatabase database) {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
+
+		// Working Subject changes are coordinated centrally so the pane never performs
+		// its Subject-dependent persistence reads on the JavaFX thread.
+		selectorPane.setSubjectRefreshManagedExternally(true);
 		selectorPane.selectedSubjectProperty().addListener((_, _, newSubject) -> handleSubjectChanged(newSubject));
 
 		// Subject creation belongs to application context because it persists directly
@@ -1425,19 +1465,19 @@ public class QuestionBankApplication extends Application {
 		return message.toString();
 	}
 
-	private void failWorkingSubjectQuestionRefresh(Subject subject, long generation, Throwable failure) {
+	private void failWorkingSubjectCaptureRefresh(Subject subject, long generation, Throwable failure) {
 		if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
 
 			// Failure from obsolete work is irrelevant to the current Subject and must not
 			// interrupt the teacher with a stale error.
 			return;
 		}
-		String message = failure == null ? "Question data could not be loaded." : failureMessage(failure);
+		String message = failure == null ? "Subject-dependent data could not be loaded." : failureMessage(failure);
 
-		// The queues were cleared before loading began, so failure cannot leave corpus
-		// data from the previous Subject presented as current.
-		showAlert(Alert.AlertType.ERROR, "Working Subject",
-				"Question data for the Working Subject could not be loaded.", message);
+		// Curriculum choices and both queues were cleared before loading began, so a
+		// failure cannot leave data from the previous Subject presented as current.
+		showAlert(Alert.AlertType.ERROR, "Working Subject", "Data for the Working Subject could not be loaded.",
+				message);
 	}
 
 	private SharedQuestionContext findExistingSplitSharedContext(Question originalQuestion) {
@@ -1596,23 +1636,20 @@ public class QuestionBankApplication extends Application {
 		if (restoringWorkingSubject) {
 			return;
 		}
-		boolean subjectActuallyChanged = workingSubject != null && !workingSubject.equals(newSubject);
-		if (subjectActuallyChanged && !allowWorkingSubjectChange()) {
+		boolean subjectValueChanged = !Objects.equals(workingSubject, newSubject);
+		boolean guardedSubjectChange = workingSubject != null && subjectValueChanged;
+		if (guardedSubjectChange && !allowWorkingSubjectChange()) {
 
-			// The value-property listener runs before the ComboBox's own action handler.
-			// Preserve the accepted classification now, but restore it only after the
-			// rejected Subject change has finished clearing dependent controls.
-			CurriculumNode previousClassification = curriculumSelectionModel.getClassification();
+			// The application-managed Subject handler has not cleared curriculum,
+			// Question, Answer or PDF state because the transition was rejected before
+			// the asynchronous refresh began.
 			Platform.runLater(() -> {
 				restoringWorkingSubject = true;
 				try {
 
-					// Re-establish the accepted Working Subject first, then reconstruct
-					// the complete classification path that existed before rejection.
+					// Restore only the accepted Subject value. Existing classification
+					// and PDF state were deliberately preserved by the rejected change.
 					curriculumSelectorPane.selectSubject(workingSubject);
-					if (previousClassification != null) {
-						curriculumSelectorPane.selectClassificationPath(previousClassification);
-					}
 				} finally {
 					restoringWorkingSubject = false;
 				}
@@ -1620,19 +1657,24 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Working Subject becomes authoritative synchronously. Only persistence-heavy
-		// rebuilding of Subject-dependent data is deferred.
-		// Once accepted, one application Subject owns every Subject-dependent view.
+		// Working Subject becomes authoritative synchronously. Persistence-heavy
+		// rebuilding of Subject-dependent data is deferred to the application worker.
 		workingSubject = newSubject;
+		if (subjectValueChanged) {
 
-		// Question/Answer and visible Exam/Assets now share one asynchronous refresh
-		// generation so stale work from any part cannot overwrite a later selection.
+			// The PDF workspace is Subject-dependent application context. Remove any
+			// document that still belongs to the previous Subject before replacement
+			// state begins loading.
+			clearPdfWorkspaceForSubjectChange(newSubject);
+		}
+
+		// Curriculum, Question/Answer and visible Exam/Assets share one asynchronous
+		// generation so stale work cannot overwrite a later Subject selection.
 		startWorkingSubjectRefresh(newSubject);
 		examMetadataPane.invalidateForSubjectChange(newSubject);
 
 		// Moving application Subject may invalidate an active Exam from the old
-		// Subject,
-		// so this lightweight visible context changes immediately.
+		// Subject, so this lightweight visible context changes immediately.
 		refreshActiveExamContext();
 	}
 
@@ -1854,9 +1896,12 @@ public class QuestionBankApplication extends Application {
 			PdfFilePicker answerPdfPicker) {
 		questionRepository = new SqliteQuestionRepository(database);
 
+		// Curriculum Subject state is persistence-only at this boundary and can be
+		// safely loaded by the application worker before JavaFX publication.
+		workingSubjectCurriculumSnapshotLoader = curriculumSelectionModel::loadSubjectSnapshot;
+
 		// Working Subject transitions load the corpus once at application level and
-		// then
-		// publish that same immutable snapshot to Question and Answer capture.
+		// then publish that same immutable snapshot to Question and Answer capture.
 		workingSubjectQuestionSnapshotLoader = questionRepository::findAll;
 		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
 		SqliteQuestionCaptureService questionCaptureService = new SqliteQuestionCaptureService(database);
@@ -3162,6 +3207,48 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
+	private void startWorkingSubjectCaptureRefresh(Subject subject, long generation) {
+
+		// Remove curriculum state belonging to the previous Subject immediately while
+		// keeping all persistence reads off the JavaFX thread.
+		if (curriculumSelectorPane != null) {
+			curriculumSelectorPane.beginSubjectRefresh(subject);
+		}
+
+		// Clear previous Subject queues immediately; persistence remains on the worker.
+		if (questionCapturePane != null) {
+			questionCapturePane.setWorkingSubject(subject, List.of());
+		}
+		if (answerCapturePane != null) {
+			answerCapturePane.setWorkingSubject(subject, List.of());
+		}
+		if (subject == null) {
+
+			// Clearing Working Subject requires no replacement persistence snapshot.
+			return;
+		}
+		Task<WorkingSubjectCaptureSnapshot> task = new Task<>() {
+
+			@Override
+			protected WorkingSubjectCaptureSnapshot call() {
+
+				// Load curriculum first so successful publication can establish
+				// classification choices before either capture pane exposes Questions.
+				CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot = workingSubjectCurriculumSnapshotLoader
+						.apply(subject);
+
+				// One corpus read supplies both capture panes for this Subject transition.
+				List<Question> questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+				return new WorkingSubjectCaptureSnapshot(curriculumSnapshot, questions);
+			}
+		};
+		task.setOnSucceeded(_ -> completeWorkingSubjectCaptureRefresh(subject, generation, task.getValue()));
+		task.setOnFailed(_ -> failWorkingSubjectCaptureRefresh(subject, generation, task.getException()));
+		Thread thread = new Thread(task, "working-subject-capture-refresh-" + generation);
+		thread.setDaemon(true);
+		thread.start();
+	}
+
 	private void startWorkingSubjectExamAssetsRefresh(Subject subject, long generation) {
 		if (examAssetsPane == null || workspaceModeHost == null
 				|| !workspaceModeHost.getChildren().contains(examAssetsPane)) {
@@ -3217,41 +3304,12 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
-	private void startWorkingSubjectQuestionRefresh(Subject subject, long generation) {
-
-		// Clear previous Subject queues immediately; persistence remains on the worker.
-		if (questionCapturePane != null) {
-			questionCapturePane.setWorkingSubject(subject, List.of());
-		}
-		if (answerCapturePane != null) {
-			answerCapturePane.setWorkingSubject(subject, List.of());
-		}
-		if (questionCapturePane == null && answerCapturePane == null) {
-			return;
-		}
-		Task<List<Question>> task = new Task<>() {
-
-			@Override
-			protected List<Question> call() {
-
-				// One corpus read supplies both capture panes for this Subject
-				// transition.
-				return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
-			}
-		};
-		task.setOnSucceeded(_ -> completeWorkingSubjectQuestionRefresh(subject, generation, task.getValue()));
-		task.setOnFailed(_ -> failWorkingSubjectQuestionRefresh(subject, generation, task.getException()));
-		Thread thread = new Thread(task, "working-subject-question-refresh-" + generation);
-		thread.setDaemon(true);
-		thread.start();
-	}
-
 	private void startWorkingSubjectRefresh(Subject subject) {
 		long generation = ++workingSubjectRefreshGeneration;
 
-		// All Subject-dependent background work belongs to this single accepted
-		// application transition and therefore shares one stale-result generation.
-		startWorkingSubjectQuestionRefresh(subject, generation);
+		// Curriculum, Question/Answer capture and visible Exam/Assets all belong to
+		// this accepted application transition and share one stale-result generation.
+		startWorkingSubjectCaptureRefresh(subject, generation);
 		startWorkingSubjectExamAssetsRefresh(subject, generation);
 	}
 
@@ -3357,5 +3415,22 @@ public class QuestionBankApplication extends Application {
 
 	private enum BackupFailureDecision {
 		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
+	}
+
+	private record WorkingSubjectCaptureSnapshot(CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot,
+			List<Question> questions) {
+
+		private WorkingSubjectCaptureSnapshot {
+			if (curriculumSnapshot == null) {
+				throw new NullPointerException("curriculumSnapshot");
+			}
+			if (questions == null) {
+				throw new NullPointerException("questions");
+			}
+
+			// Freeze the shared corpus before the worker publishes it to both capture
+			// panes.
+			questions = List.copyOf(questions);
+		}
 	}
 }
