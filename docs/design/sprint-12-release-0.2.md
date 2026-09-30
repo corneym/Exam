@@ -1053,6 +1053,66 @@ missing explanations as ordinary Question incompleteness.
 
 A later audit view may report captured explanation coverage separately.
 
+### 6.7 Implementation status
+
+Slice 3 is implemented.
+
+The existing `Answer` representation is reused rather than introducing a
+separate explanation entity. An MCQ Answer may contain:
+
+```text
+answerText = A/B/C/D
+regions    = zero or more optional explanation regions
+```
+
+`AnswerFile.contains_answer_explanations` is persisted asset metadata and is
+editable through Exam/Assets. Changing that descriptive flag remains permitted
+for a COMPLETE Exam because it does not alter Exam structure.
+
+During ordinary MCQ Answer capture, explanation-region controls are available
+only when the Question booklet's assigned `AnswerFile` is marked as containing
+explanations. The A-D choice remains sufficient to save a complete MCQ Answer;
+explanation regions remain optional.
+
+The explicit `Capture MCQ Explanations` workflow provides retrofit capture for
+already-answered MCQs. The user first activates a Question booklet through
+Exam/Assets with `Use Selected Booklet for Capture`. Retrofit candidate discovery
+is then restricted to answered MCQs belonging to that active booklet whose
+assigned `AnswerFile` is marked as containing explanations.
+
+Candidate discovery and AnswerFile lookup run away from the JavaFX application
+thread. Subject and active-booklet context are checked again before asynchronous
+results are published so stale work cannot enter a later capture context.
+
+Retrofit capture reuses the ordinary persisted Answer-edit path. Saving
+explanation regions preserves both the existing A-D choice and persisted Answer
+identity.
+
+Within one retrofit session, a successfully updated MCQ is removed from the
+candidate list and the next remaining candidate is opened automatically.
+Cancelling an edit does not remove its candidate. This queue behaviour is
+session workflow state only; it does not create persisted per-MCQ explanation
+completeness.
+
+Existing explanation regions do not otherwise imply that a Question is complete
+or incomplete for explanation purposes. The AnswerFile flag describes
+source-document capability and does not prove that every MCQ has an explanation.
+
+Ordinary corpus completeness remains unchanged:
+
+```text
+valid A/B/C/D
+    -> MCQ Answer complete
+
+valid A/B/C/D + no explanation regions
+    -> MCQ Answer complete
+
+explanation regions + no valid A/B/C/D
+    -> MCQ Answer incomplete
+```
+
+No new missing-explanation audit problem is introduced.
+
 ## 7. Slice 4 --- Corpus Dashboard / Audit refinement
 
 ### 7.1 Purpose

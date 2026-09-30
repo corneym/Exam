@@ -472,16 +472,26 @@ Planned behaviour includes:
 
 ### Slice 3 --- MCQ explanation regions
 
-Optional marking-PDF explanation material may be attached to MCQ Answers.
+Slice 3 is implemented.
 
-The A/B/C/D choice remains authoritative and sufficient for MCQ Answer
-completeness. Explanation regions are supplementary.
+Optional marking-PDF explanation material can be attached to MCQ Answers while
+the stored A/B/C/D choice remains authoritative and sufficient for Answer
+completeness.
 
-AnswerFiles may record that they contain MCQ explanation material. New Answer
-capture and a retrofit workflow may then attach explanation regions to existing
-MCQ Answers without changing the stored answer letter.
+AnswerFiles persist whether they contain MCQ explanation material. Ordinary MCQ
+Answer capture exposes optional region capture only for a flagged AnswerFile.
 
-Explanation coverage remains separate from ordinary Answer completeness.
+An explicit `Capture MCQ Explanations` workflow permits already-answered MCQs to
+be enriched later. The workflow is scoped to the active Question booklet
+selected through Exam/Assets, reuses the existing Answer-edit persistence path,
+and preserves the stored A-D choice and Answer identity.
+
+After a successful retrofit update the completed candidate is removed from the
+current session and the next candidate opens automatically. Cancelling leaves
+the candidate available.
+
+Explanation coverage remains separate from ordinary Answer completeness. The
+AnswerFile capability flag does not imply that every MCQ requires an explanation.
 
 ### Slice 4 --- Corpus Dashboard / Audit refinement
 

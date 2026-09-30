@@ -16,7 +16,7 @@ Before writing code, check that the proposed change satisfies every relevant acc
 
 Tests must verify the acceptance criteria, not merely verify the implementation you happened to choose.
 
-When I report that tests are green, do not automatically declare the slice complete. Compare the implemented behaviour against the original acceptance criteria first.
+When I report that tests are green, do not automatically declare the slice complete. Compare the implemented behaviour against the original acceptance criteria first.  If I need to inspect the application visually, YOU MUST LET ME KNOW.
 
 If an earlier instruction from you was wrong or incomplete, explicitly correct it rather than building later work on top of it.
 

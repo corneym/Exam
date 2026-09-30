@@ -144,15 +144,51 @@
 		<section>
 			<h2>Capture an Answer</h2>
 			<p>
-				The Answer pane operates on a selected Question.
+				The Answer pane operates on Questions from the active Question booklet.
+				The Answer or marking PDF assigned to that booklet is the authoritative
+				Answer source.
 			</p>
+			<p>
+				For a written-response Question, capture one or more regions from the
+				assigned Answer or marking PDF and then choose
+				<strong>Save Answer</strong>.
+			</p>
+			<p>
+				For a multiple-choice Question, the stored A, B, C or D choice remains
+				the authoritative Answer.
+			</p>
+			<p>
+				If the assigned Answer booklet has been marked
+				<strong>Contains answer explanations</strong> in Exam / Assets, optional
+				explanation regions may also be captured from that marking PDF. These
+				regions supplement the stored A-D choice; they are not required for the
+				MCQ to have a complete Answer.
+			</p>
+
+			<h3>Retrofit MCQ explanations</h3>
 			<ol>
-				<li>Select the Question whose Answer is being captured.</li>
-				<li>If the Answer is sourced from a PDF, choose the required Answer PDF.</li>
-				<li>Select and accept the required Answer region or regions.</li>
-				<li>For response types that use a stored choice rather than an image region, select the required choice.</li>
-				<li>Choose <strong>Save Answer</strong>.</li>
+				<li>Open <strong>Exam / Assets</strong> and select the required Exam.</li>
+				<li>Confirm that the Answer booklet is marked
+					<strong>Contains answer explanations</strong>.</li>
+				<li>Select the Question booklet whose MCQs are being processed.</li>
+				<li>Choose <strong>Use Selected Booklet for Capture</strong>.</li>
+				<li>In the Answer pane, choose <strong>Capture MCQ Explanations</strong>.</li>
+				<li>Select an answered MCQ from the active booklet.</li>
+				<li>Select the required explanation area in the marking PDF and choose
+					<strong>Add Region</strong>.</li>
+				<li>Choose <strong>Update Answer</strong>.</li>
 			</ol>
+			<p>
+				After a successful update, that MCQ is removed from the current retrofit
+				list and the next candidate is opened automatically. Cancelling an edit
+				leaves that MCQ in the list.
+			</p>
+			<p class="note">
+				MCQ explanation retrofit is restricted to the active Question booklet.
+				The Answer-booklet flag means that the source document contains
+				explanation material; it does not mean that every MCQ must have an
+				explanation region.
+			</p>
 		</section>
 
 		<p><a href="index.html">Back to Help contents</a></p>

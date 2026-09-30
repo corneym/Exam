@@ -1182,7 +1182,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void legacyImportRefreshPublishesOneOffFxQuestionSnapshotToBothCapturePanes(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-		@SuppressWarnings("unchecked")
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		Subject subject = subjects.getValue();
 		assertNotNull(subject);

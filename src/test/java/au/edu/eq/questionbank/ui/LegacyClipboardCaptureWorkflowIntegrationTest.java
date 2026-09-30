@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
@@ -39,6 +40,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.render.QuestionContentRenderer;
 import javafx.scene.Node;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -121,8 +123,15 @@ class LegacyClipboardCaptureWorkflowIntegrationTest extends QuestionBankApplicat
 			ClipboardContent clipboardContent = new ClipboardContent();
 			clipboardContent.putImage(image);
 			Clipboard.getSystemClipboard().setContent(clipboardContent);
+
+			// This integration test changes the clipboard without leaving the
+			// application window, so explicitly perform the same availability refresh
+			// that occurs when focus returns from an external Snipping Tool capture.
+			questionCapturePane().refreshClipboardImageAvailability();
 		});
-		fireControl(robot, "#paste-question-image");
+		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
+		assertFalse(addFromClipboard.isDisabled());
+		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 
 		// Navigate away from the initially displayed PDF page before taking the

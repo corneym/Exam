@@ -134,8 +134,8 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(pdfControls.isManaged());
 		assertFalse(choosePdf.isDisabled());
 
-		// MCQs never capture rectangular Answer regions even though they can display
-		// and register an Answer PDF.
+		// The default AnswerFile has not been marked as containing explanations, so
+		// this MCQ remains a simple A-D Answer workflow with no region controls.
 		assertFalse(addRegion.isVisible());
 		assertFalse(addRegion.isManaged());
 		assertTrue(save.isDisabled());

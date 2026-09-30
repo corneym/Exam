@@ -31,6 +31,7 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
@@ -306,6 +307,103 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void existingMcqAnswerCanReceiveExplanationRegionWithoutChangingStoredChoice(FxRobot robot) throws Exception {
+		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+
+		// Retrofit eligibility comes from persisted AnswerFile metadata and existing
+		// authoritative A-D Answers.
+		AnswerFile explanationFile = answerWriter.setContainsAnswerExplanations(fixture.answersA(), true);
+		long originalAnswerId = answerWriter.insertAnswer(fixture.mcqQuestion(), "B", List.of()).getId();
+		Question secondMcq = repository.save(fixture.mcqQuestion().getBooklet(), "2", "", 1,
+				List.of(new QuestionRegion(fixture.mcqQuestion().getBooklet(), 1, 0.10, 0.35, 0.50, 0.20)),
+				fixture.mcqQuestion().getClassification(), false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		answerWriter.insertAnswer(secondMcq, "C", List.of());
+
+		// Create another eligible MCQ in the same Subject and Exam but a different
+		// booklet. It proves that retrofit is scoped to the active Question booklet,
+		// not merely to Working Subject or Exam.
+		Exam exam = fixture.mcqQuestion().getExam();
+		ExamBooklet otherMcqBooklet = new SqliteExamImporter(database, examWriter).importExam(exam.getSubject(),
+				exam.getProvider().getName(), exam.getYear(), exam.getName(), "Other MCQ booklet",
+				"Chemistry/2024/other-mcq.pdf", ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		Question otherBookletMcq = repository.save(otherMcqBooklet, "99", "", 1,
+				List.of(new QuestionRegion(otherMcqBooklet, 1, 0.10, 0.10, 0.50, 0.20)),
+				fixture.mcqQuestion().getClassification(), false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		answerWriter.assignAnswerFile(otherMcqBooklet, explanationFile);
+		answerWriter.insertAnswer(otherBookletMcq, "D", List.of());
+
+		// Make the MCQ booklet authoritative exactly as the Exam/Assets transition
+		// does before entering Capture.
+		robot.interact(() -> examMetadataPane().activateExistingBooklet(fixture.mcqQuestion().getBooklet(), examPdf));
+		robot.interact(() -> refreshAnswerQuestionsForTest(repository.findAll()));
+		WaitForAsyncUtils.waitForFxEvents();
+		Button beginRetrofit = lookup(robot, "#capture-mcq-explanations", Button.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !beginRetrofit.isDisabled());
+		robot.interact(beginRetrofit::fire);
+		@SuppressWarnings("unchecked")
+		ComboBox<Question> retrofitQuestions = lookup(robot, "#mcq-explanation-question", ComboBox.class);
+		Node retrofitControls = retrofitQuestions.getParent();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> retrofitControls.isVisible() && retrofitQuestions.getItems().size() == 2);
+
+		// Only answered MCQs from the active MCQ booklet are candidates.
+		assertTrue(retrofitQuestions.getItems().stream()
+				.anyMatch(question -> question.getId() == fixture.mcqQuestion().getId()));
+		assertTrue(retrofitQuestions.getItems().stream().anyMatch(question -> question.getId() == secondMcq.getId()));
+		assertTrue(retrofitQuestions.getItems().stream()
+				.noneMatch(question -> question.getId() == otherBookletMcq.getId()));
+		Question firstCandidate = retrofitQuestions.getItems().stream()
+				.filter(question -> question.getId() == fixture.mcqQuestion().getId()).findFirst().orElseThrow();
+		robot.interact(() -> retrofitQuestions.getSelectionModel().select(firstCandidate));
+		WaitForAsyncUtils.waitForFxEvents();
+		RadioButton answerB = lookup(robot, "#answer-choice-b", RadioButton.class);
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		assertTrue(answerB.isSelected());
+		assertTrue(addRegion.isVisible());
+		assertTrue(answerCapturePane().isEditingAnswer());
+
+		// PDF dragging remains intentional because region geometry is the behaviour
+		// under test.
+		dragRegionOnDisplayedPage(robot);
+		robot.interact(addRegion::fire);
+		robot.interact(() -> lookup(robot, "#save-answer", Button.class).fire());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findById(firstCandidate.getId()).filter(Question::hasAnswer)
+						.map(question -> "B".equals(question.getAnswer().getAnswerText())
+								&& question.getAnswer().getId() == originalAnswerId
+								&& question.getAnswer().getRegions().size() == 1)
+						.orElse(false));
+
+		// A successful save consumes the first session candidate and immediately opens
+		// the next one.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> retrofitQuestions.getItems().size() == 1 && retrofitQuestions.getValue() != null
+						&& retrofitQuestions.getValue().getId() == secondMcq.getId()
+						&& answerCapturePane().isEditingAnswer());
+		assertTrue(retrofitQuestions.getItems().stream()
+				.noneMatch(question -> question.getId() == firstCandidate.getId()));
+		assertEquals(secondMcq.getId(), retrofitQuestions.getValue().getId());
+		RadioButton answerC = lookup(robot, "#answer-choice-c", RadioButton.class);
+		assertTrue(answerC.isSelected(), "Automatic advancement must restore the next candidate's stored letter");
+
+		// Cancelling does not consume the candidate because no successful update was
+		// persisted for it.
+		Button cancel = lookup(robot, "#cancel-answer-edit", Button.class);
+		robot.interact(cancel::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(retrofitQuestions.getItems().stream().anyMatch(question -> question.getId() == secondMcq.getId()));
+		Button done = lookup(robot, "#finish-mcq-explanations", Button.class);
+		robot.interact(done::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(retrofitControls.isVisible());
+		assertTrue(beginRetrofit.isVisible());
+	}
+
+	@Test
 	void failedAnswerWriteRetainsTheQuestionAndAcceptedRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "53");
@@ -359,6 +457,55 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(expectedHash, assignedAnswerFile.getSourceDocument().getContentSha256());
 		assertFalse(pdfControls.isVisible());
 		assertFalse(pdfControls.isManaged());
+	}
+
+	@Test
+	void multipleChoiceCanSaveChoiceWithOptionalExplanationRegion(FxRobot robot) throws Exception {
+		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		// Explanation capture is enabled by authoritative AnswerFile metadata rather
+		// than by the Question, filename or temporary UI state.
+		AnswerFile explanationFile = answerWriter.setContainsAnswerExplanations(fixture.answersA(), true);
+		assertTrue(explanationFile.hasAnswerExplanations());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		List<Question> refreshedQuestions = repository.findAll();
+		robot.interact(() -> refreshAnswerQuestionsForTest(refreshedQuestions));
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		Question mcq = questions.getItems().stream()
+				.filter(candidate -> candidate.getId() == fixture.mcqQuestion().getId()).findFirst().orElseThrow();
+		robot.interact(() -> questions.getSelectionModel().select(mcq));
+		WaitForAsyncUtils.waitForFxEvents();
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		RadioButton answerB = lookup(robot, "#answer-choice-b", RadioButton.class);
+		Button save = lookup(robot, "#save-answer", Button.class);
+
+		// A flagged MCQ keeps the normal A-D controls while also exposing optional
+		// marking-PDF region capture.
+		assertTrue(addRegion.isVisible());
+		assertTrue(addRegion.isManaged());
+		robot.interact(answerB::fire);
+		assertTrue(answerB.isSelected());
+
+		// PDF dragging is intentionally pointer-driven because region geometry itself
+		// is the behaviour under test.
+		dragRegionOnDisplayedPage(robot);
+		robot.interact(addRegion::fire);
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		robot.interact(save::fire);
+
+		// Persistence of both the A-D choice and region is the completion condition.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findById(mcq.getId()).filter(Question::hasAnswer)
+						.map(candidate -> "B".equals(candidate.getAnswer().getAnswerText())
+								&& candidate.getAnswer().getRegions().size() == 1)
+						.orElse(false));
+		Question stored = repository.findById(mcq.getId()).orElseThrow();
+		assertEquals("B", stored.getAnswer().getAnswerText());
+		assertEquals(1, stored.getAnswer().getRegions().size());
+		assertEquals(explanationFile.getId(), stored.getAnswer().getRegions().getFirst().answerFile().getId());
 	}
 
 	@Test

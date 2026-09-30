@@ -605,14 +605,14 @@ public class QuestionBankApplication extends Application {
 		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
 				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
 				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
-				|| answerCapturePane.isSaveInProgress();
+				|| answerCapturePane.isSaveInProgress() || answerCapturePane.isEditingAnswer();
 		if (!captureWorkInProgress) {
 			return true;
 		}
 
 		// Subject changes rebuild capture queues and can invalidate the active Exam.
-		// Never permit that transition while unsaved capture state still depends on
-		// the current Subject or PDF.
+		// Never permit that transition while unsaved capture or Answer-edit state still
+		// depends on the current Subject or PDF.
 		showAlert(Alert.AlertType.WARNING, "Working Subject", "Capture work is in progress",
 				"Add, clear, save or cancel the current Question, shared-context or Answer capture before changing Working Subject.");
 		return false;
@@ -1948,8 +1948,9 @@ public class QuestionBankApplication extends Application {
 		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
 		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
-				this::allowAnswerCaptureTransition, () -> clearCaptureSelection(CaptureSelectionOwner.ANSWER),
-				questionExtractor, pdfWorkspace::getAnswerPdfSession,
+				this::allowAnswerCaptureTransition, examMetadataPane::getBooklet,
+				() -> clearCaptureSelection(CaptureSelectionOwner.ANSWER), questionExtractor,
+				pdfWorkspace::getAnswerPdfSession,
 				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.ANSWER, pageNumber),
 				(selected, completed) -> pdfWorkspace.openAnswerPdfAsync(selected.path(), completed));
 		answerCapturePane.refreshQuestions();

@@ -23,7 +23,6 @@ public final class QuestionCorpusAudit {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
-
 		EnumSet<QuestionCorpusProblem> problems = EnumSet.noneOf(QuestionCorpusProblem.class);
 
 		// contentParts is the authoritative Question body. PDF regions are only a
@@ -36,15 +35,12 @@ public final class QuestionCorpusAudit {
 		if (!questionContentCaptured) {
 			problems.add(QuestionCorpusProblem.MISSING_QUESTION_CONTENT);
 		}
-
 		boolean sharedContextResolved = !question.isSharedContextUnresolved();
 		if (!sharedContextResolved) {
 			problems.add(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT);
 		}
-
 		boolean responseTypeResolved = question.getResponseType() != QuestionResponseType.UNKNOWN;
 		boolean answerComplete = false;
-
 		if (!responseTypeResolved) {
 			problems.add(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE);
 
@@ -56,12 +52,10 @@ public final class QuestionCorpusAudit {
 			case WRITTEN_RESPONSE -> hasCompleteWrittenAnswer(question);
 			case UNKNOWN -> false;
 			};
-
 			if (!answerComplete) {
 				problems.add(QuestionCorpusProblem.MISSING_ANSWER);
 			}
 		}
-
 		return new QuestionCorpusStatus(questionContentCaptured, responseTypeResolved, answerComplete,
 				sharedContextResolved, problems);
 	}

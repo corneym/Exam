@@ -710,7 +710,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findFirst().orElseThrow();
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		setField(application, "workingSubjectCurriculumSnapshotLoader",
-				(Function<Subject, CurriculumSelectionModel.SubjectSnapshot>) subject -> {
+				(Function<Subject, CurriculumSelectionModel.SubjectSnapshot>) _ -> {
 
 					// Simulate a persistence failure before any new Subject-dependent
 					// curriculum or Question data can be published.

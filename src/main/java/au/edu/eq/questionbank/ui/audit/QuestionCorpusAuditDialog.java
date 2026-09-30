@@ -89,11 +89,9 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 				|| item.status().hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT)) {
 			return ResolutionTarget.QUESTION;
 		}
-
 		if (item.status().hasProblem(QuestionCorpusProblem.MISSING_ANSWER)) {
 			return ResolutionTarget.ANSWER;
 		}
-
 		return null;
 	}
 

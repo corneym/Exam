@@ -60,19 +60,16 @@ public final class QuestionCorpusQueue {
 		if (questions == null) {
 			throw new NullPointerException("questions");
 		}
-
 		int complete = 0;
 		int incomplete = 0;
 		int missingQuestionContent = 0;
 		int missingAnswer = 0;
 		int unresolvedSharedContext = 0;
 		int unknownResponseType = 0;
-
 		for (Question question : questions) {
 			if (question == null) {
 				throw new NullPointerException("questions contains null");
 			}
-
 			QuestionCorpusStatus status = QuestionCorpusAudit.assess(question);
 			if (status.isComplete()) {
 				complete++;
@@ -95,7 +92,6 @@ public final class QuestionCorpusQueue {
 				unknownResponseType++;
 			}
 		}
-
 		return new QuestionCorpusSummary(questions.size(), complete, incomplete, missingQuestionContent, missingAnswer,
 				unresolvedSharedContext, unknownResponseType);
 	}

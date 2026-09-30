@@ -96,6 +96,7 @@ class ExamMetadataCorrectionServiceTest {
 		Path correctedAnswerPdf = correctedDirectory.resolve("answers.pdf");
 		assertFalse(Files.exists(examPdf));
 		assertFalse(Files.exists(answerPdf));
+
 		// Relocation leaves no obsolete provider/year directory tree behind. Pruning
 		// stops at Chemistry because the corrected QCAA hierarchy now lives there.
 		assertFalse(Files.exists(oldDirectory));
@@ -120,24 +121,18 @@ class ExamMetadataCorrectionServiceTest {
 	@Test
 	void relocationPruningStopsAtFirstNonEmptyDirectory() throws Exception {
 		Fixture fixture = createFixture("non-empty-source-directory.db");
-
 		Path oldDirectory = fixture.pdfRoot().resolve("Chemistry").resolve("2022 QCAA").resolve("2022");
 		Path oldPdf = oldDirectory.resolve("paper1.pdf");
 		Path retainedFile = oldDirectory.resolve("retain.txt");
-
 		Files.createDirectories(oldDirectory);
 		Files.writeString(oldPdf, "exam bytes");
 		Files.writeString(retainedFile, "unrelated managed-directory content");
-
 		SourceDocument sourceDocument = fixture.examWriter()
 				.insertSourceDocument(fixture.pdfRoot().relativize(oldPdf).toString());
 		fixture.examWriter().insertExamBooklet(fixture.exam(), sourceDocument, "Paper 1");
-
 		fixture.service().correct(fixture.exam(), "QCAA", 2022, "External Assessment");
-
 		Path correctedPdf = fixture.pdfRoot().resolve("Chemistry").resolve("QCAA").resolve("2022")
 				.resolve("paper1.pdf");
-
 		assertTrue(Files.exists(correctedPdf));
 		assertFalse(Files.exists(oldPdf));
 

@@ -67,13 +67,10 @@ class QuestionCorpusAuditTest {
 	@Test
 	void imageOnlyQuestionCountsAsCapturedQuestionContent() {
 		Question base = fixture.question(QuestionResponseType.MULTIPLE_CHOICE, false, false);
-
 		Question imageOnly = new Question(base.getId(), base.getBooklet(), base.getQuestionCode(),
 				base.getQuestionText(), base.getMarks(), List.of(), base.getClassification(), false, null, null,
 				QuestionResponseType.MULTIPLE_CHOICE, List.of(new ImageQuestionContentPart(new byte[] { 1 })));
-
 		imageOnly.setAnswer(new Answer(106, "A", List.of()));
-
 		QuestionCorpusStatus status = QuestionCorpusAudit.assess(imageOnly);
 
 		// Clipboard/image content is authoritative Question content even though the
@@ -88,9 +85,7 @@ class QuestionCorpusAuditTest {
 	void missingQuestionContentIsReportedIndependently() {
 		Question question = fixture.question(QuestionResponseType.MULTIPLE_CHOICE, false, false);
 		question.setAnswer(new Answer(102, "A", List.of()));
-
 		QuestionCorpusStatus status = QuestionCorpusAudit.assess(question);
-
 		assertFalse(status.questionContentCaptured());
 		assertTrue(status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
 		assertFalse(status.hasProblem(QuestionCorpusProblem.MISSING_ANSWER));
@@ -157,13 +152,10 @@ class QuestionCorpusAuditTest {
 	@Test
 	void retainedImageDoesNotHideRequiredPdfSourceRecapture() {
 		Question base = fixture.question(QuestionResponseType.MULTIPLE_CHOICE, false, false);
-
 		Question recaptureRequired = new Question(base.getId(), base.getBooklet(), base.getQuestionCode(),
 				base.getQuestionText(), base.getMarks(), List.of(), base.getClassification(), false, null, null,
 				QuestionResponseType.MULTIPLE_CHOICE, List.of(new ImageQuestionContentPart(new byte[] { 1 })), true);
-
 		recaptureRequired.setAnswer(new Answer(107, "A", List.of()));
-
 		QuestionCorpusStatus status = QuestionCorpusAudit.assess(recaptureRequired);
 
 		// PDF replacement explicitly requires new source capture. Retained clipboard

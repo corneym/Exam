@@ -95,7 +95,6 @@ public final class ExamMetadataCorrectionService {
 			// Exam metadata and SourceDocument paths. Old empty directories can now be
 			// removed without interfering with rollback of an unsuccessful correction.
 			pruneEmptySourceDirectories(completedMoves);
-
 			return new Result(corrected, replacementPaths);
 		} catch (SQLException | IOException | RuntimeException failure) {
 
@@ -123,7 +122,6 @@ public final class ExamMetadataCorrectionService {
 	private boolean containsManagedPathSymbolicLink(Path directory) {
 		Path relativeDirectory = pdfDataRoot.relativize(directory);
 		Path current = pdfDataRoot;
-
 		for (Path segment : relativeDirectory) {
 			current = current.resolve(segment);
 			if (Files.isSymbolicLink(current)) {
@@ -133,7 +131,6 @@ public final class ExamMetadataCorrectionService {
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -167,7 +164,6 @@ public final class ExamMetadataCorrectionService {
 
 	private void pruneEmptyManagedDirectoryTree(Path startDirectory) {
 		Path current = startDirectory.toAbsolutePath().normalize();
-
 		while (current != null && current.startsWith(pdfDataRoot) && !current.equals(pdfDataRoot)) {
 
 			// Never traverse a symbolic-link component inside the configured managed
@@ -176,7 +172,6 @@ public final class ExamMetadataCorrectionService {
 			if (containsManagedPathSymbolicLink(current)) {
 				return;
 			}
-
 			if (!Files.exists(current)) {
 
 				// Another relocation may already have removed the same empty directory.
@@ -184,11 +179,9 @@ public final class ExamMetadataCorrectionService {
 				current = current.getParent();
 				continue;
 			}
-
 			if (!Files.isDirectory(current)) {
 				return;
 			}
-
 			try (var entries = Files.list(current)) {
 				if (entries.findAny().isPresent()) {
 
@@ -203,7 +196,6 @@ public final class ExamMetadataCorrectionService {
 				// to inspect an old directory must not report the correction as failed.
 				return;
 			}
-
 			try {
 				Files.delete(current);
 			} catch (IOException cleanupFailure) {
@@ -212,7 +204,6 @@ public final class ExamMetadataCorrectionService {
 				// leaves only an obsolete directory. Preserve the successful correction.
 				return;
 			}
-
 			current = current.getParent();
 		}
 	}
