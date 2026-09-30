@@ -23,6 +23,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
@@ -34,6 +35,7 @@ import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
@@ -880,6 +882,141 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(examSection.getStyle().contains("-fx-border-width: 1"));
 		assertTrue(questionSection.getStyle().contains("-fx-border-width: 1"));
 		assertTrue(answerSection.getStyle().contains("-fx-border-width: 1"));
+	}
+
+	@Test
+	void examAssetsRejectsAnswerContentAlreadyManagedAsQuestionPdf(FxRobot robot) throws Exception {
+
+		prepareExamAndClassification(robot);
+
+		ExamBooklet existing = examMetadataPane().getBooklet();
+
+		Path managedQuestionPdf = new PdfStore(pdfDataRoot).resolve(existing.getSourceDocument().getRelativePath());
+
+		Path externalCopy = databasePath.getParent().resolve("different-answer-filename.pdf");
+
+		Files.copy(managedQuestionPdf, externalCopy);
+
+		fireControl(robot, "#change-exam-assets");
+
+		WaitForAsyncUtils.waitForFxEvents();
+
+		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
+
+		robot.interact(() -> {
+			try {
+				invoke(examAssetsPane, "beginAnswerBookletAdd", new Class<?>[] { Path.class }, externalCopy);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+
+		TextField name = lookup(robot, "#exam-assets-new-answer-name", TextField.class);
+
+		Button save = lookup(robot, "#exam-assets-new-answer-save", Button.class);
+
+		robot.interact(() -> name.setText("Duplicate Answers"));
+
+		assertFalse(save.isDisabled());
+
+		// The content hash is already owned by the Question source. Add Answer must
+		// surface that conflict rather than create another managed source.
+		fireControlLater(save);
+
+		waitForDialogShowing(robot, "Exam / Assets");
+
+		DialogPane dialog = showingDialogPane(robot, "Exam / Assets");
+
+		assertEquals("Answer booklet could not be added.", dialog.getHeaderText());
+
+		assertTrue(dialog.getContentText().contains("already managed"));
+
+		fireDialogButton(robot, "OK");
+
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
+
+		// A Question PDF cannot silently become a new AnswerFile merely because the
+		// selected external filename is different.
+		assertTrue(answerWriter.findAnswerFiles(existing.getExam()).isEmpty());
+
+		fireControl(robot, "#exam-assets-new-answer-cancel");
+	}
+
+	@Test
+	void examAssetsRejectsDuplicateQuestionBookletContent(FxRobot robot) throws Exception {
+
+		prepareExamAndClassification(robot);
+
+		ExamBooklet existing = examMetadataPane().getBooklet();
+
+		assertNotNull(existing);
+
+		Path managedPdf = new PdfStore(pdfDataRoot).resolve(existing.getSourceDocument().getRelativePath());
+
+		Path externalCopy = databasePath.getParent().resolve("different-question-filename.pdf");
+
+		Files.copy(managedPdf, externalCopy);
+
+		fireControl(robot, "#change-exam-assets");
+
+		WaitForAsyncUtils.waitForFxEvents();
+
+		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
+
+		// Bypass only the native FileChooser. The pending editor and real production
+		// persistence callback remain under test.
+		robot.interact(() -> {
+			try {
+				invoke(examAssetsPane, "beginQuestionBookletAdd", new Class<?>[] { Path.class }, externalCopy);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+
+		@SuppressWarnings("unchecked")
+		ComboBox<String> name = lookup(robot, "#exam-assets-new-question-name", ComboBox.class);
+
+		RadioButton written = lookup(robot, "#exam-assets-new-question-format-written", RadioButton.class);
+
+		TextField expected = lookup(robot, "#exam-assets-new-question-expected", TextField.class);
+
+		Button save = lookup(robot, "#exam-assets-new-question-save", Button.class);
+
+		robot.interact(() -> {
+			name.getEditor().setText("Duplicate Paper");
+
+			expected.setText("12");
+		});
+
+		fireControl(robot, written);
+
+		assertFalse(save.isDisabled());
+
+		// Save opens a modal error because the selected bytes already belong to the
+		// persisted managed booklet.
+		fireControlLater(save);
+
+		waitForDialogShowing(robot, "Exam / Assets");
+
+		DialogPane dialog = showingDialogPane(robot, "Exam / Assets");
+
+		assertEquals("Question booklet metadata could not be saved.", dialog.getHeaderText());
+
+		assertTrue(dialog.getContentText().contains("already managed"));
+
+		fireDialogButton(robot, "OK");
+
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+
+		// Rejection must not create another SourceDocument/Booklet relationship.
+		assertEquals(1, writer.findExamBooklets(existing.getExam()).size());
+
+		// A failed Add remains staged so the user can choose another source or cancel.
+		assertTrue(robot.lookup("#exam-assets-new-question-booklet").tryQuery().isPresent());
+
+		fireControl(robot, "#exam-assets-new-question-cancel");
 	}
 
 	@Test

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationPaths;
@@ -30,6 +31,7 @@ import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -1602,6 +1604,7 @@ public class QuestionBankApplication extends Application {
 
 	private AnswerFile importAnswerBookletFromExamAssets(Exam exam, Path sourcePath, String name,
 			boolean containsAnswerExplanations, ApplicationConfig config) throws IOException, SQLException {
+
 		if (exam == null) {
 			throw new NullPointerException("exam");
 		}
@@ -1614,25 +1617,38 @@ public class QuestionBankApplication extends Application {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("Answer booklet name must not be blank");
 		}
+
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+
+		// Cross-type duplication is also unsafe: an Answer add must not silently reuse
+		// bytes already managed as a Question booklet or another Answer asset.
+		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Answer booklet");
+
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 
-		// Answer assets use the same managed Subject/Provider/Year directory as the
-		// other source documents belonging to this Exam.
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
 				exam.getYear());
-		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
-		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
-		SourceDocumentHashService hashService = new SourceDocumentHashService();
 
-		// Every newly managed Answer asset receives byte identity immediately.
-		String contentSha256 = hashService.sha256(storedPath);
-		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		SqliteExamWriter writer = new SqliteExamWriter(database);
+		String storedHash = new SourceDocumentHashService().sha256(storedPath);
+
+		if (!sourceHash.equals(storedHash)) {
+
+			// Do not register an AnswerFile if the managed bytes no longer match the
+			// source that passed duplicate detection.
+			throw new IOException("Answer booklet PDF changed while it was being copied");
+		}
+
+		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
+
+		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
+
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
 
-		// Creation and explicit explanation metadata are persisted by one repository
-		// transaction after the managed source has been established.
-		return answerWriter.findOrCreateAnswerFile(exam, name.strip(), relativePath, contentSha256,
+		// Creation and explanation metadata are persisted only after duplicate and byte
+		// integrity checks have succeeded.
+		return answerWriter.findOrCreateAnswerFile(exam, name.strip(), relativePath, storedHash,
 				containsAnswerExplanations);
 	}
 
@@ -1769,6 +1785,7 @@ public class QuestionBankApplication extends Application {
 	private ExamBooklet importQuestionBookletFromExamAssets(Exam exam, Path sourcePath, String name,
 			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount, ApplicationConfig config)
 			throws IOException, SQLException {
+
 		if (exam == null) {
 			throw new NullPointerException("exam");
 		}
@@ -1784,24 +1801,39 @@ public class QuestionBankApplication extends Application {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("Question booklet name must not be blank");
 		}
+
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+
+		// Detect byte-identical managed material before PdfStore creates another
+		// managed
+		// file with a different filename.
+		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Question booklet");
+
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
 
-		// Question and Answer assets share the authoritative managed
-		// Subject/Provider/Year directory hierarchy.
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
 				exam.getYear());
-		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
-		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
-		SourceDocumentHashService hashService = new SourceDocumentHashService();
 
-		// New Question booklets acquire byte identity before persistence publishes
-		// their SourceDocument.
-		String contentSha256 = hashService.sha256(storedPath);
-		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		SqliteExamWriter writer = new SqliteExamWriter(database);
+		String storedHash = new SourceDocumentHashService().sha256(storedPath);
+
+		if (!sourceHash.equals(storedHash)) {
+
+			// The selected bytes changed between duplicate detection and managed copying.
+			// Do not publish a SourceDocument identity based on inconsistent evidence.
+			throw new IOException("Question booklet PDF changed while it was being copied");
+		}
+
+		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
+
+		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
+
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		// Persistence receives the verified final managed-byte identity.
 		return importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(), exam.getName(),
-				name.strip(), relativePath, questionFormat, expectedQuestionCount, contentSha256);
+				name.strip(), relativePath, questionFormat, expectedQuestionCount, storedHash);
 	}
 
 	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
@@ -2358,6 +2390,47 @@ public class QuestionBankApplication extends Application {
 
 			// RETRY deliberately loops through prepareForExit().
 		}
+	}
+
+	private String requireNewManagedPdfContent(Path sourcePath, SqliteExamWriter writer, String assetDescription)
+			throws IOException, SQLException {
+
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		if (writer == null) {
+			throw new NullPointerException("writer");
+		}
+		if (assetDescription == null || assetDescription.isBlank()) {
+			throw new IllegalArgumentException("assetDescription must not be blank");
+		}
+
+		String contentSha256 = new SourceDocumentHashService().sha256(sourcePath);
+
+		List<SourceDocument> matches = writer.findSourceDocumentsByHash(contentSha256);
+
+		if (matches.isEmpty()) {
+
+			// No persisted managed source currently owns these bytes, so normal intake may
+			// proceed.
+			return contentSha256;
+		}
+
+		String knownPaths = matches.stream().map(SourceDocument::getRelativePath).collect(Collectors.joining(", "));
+
+		if (matches.size() == 1) {
+
+			// Add means creation of another structural asset. Byte-identical managed
+			// content must be surfaced rather than silently duplicated or reinterpreted.
+			throw new IllegalArgumentException("Selected " + assetDescription + " PDF is already managed as "
+					+ knownPaths + ". Use the existing asset instead.");
+		}
+
+		// More than one existing source with the same bytes is inherently ambiguous.
+		// The application must never choose one by filename, row order or Exam.
+		throw new IllegalArgumentException(
+				"Selected " + assetDescription + " PDF matches more than one managed document: " + knownPaths
+						+ ". Resolve the duplicate managed documents before adding another asset.");
 	}
 
 	private void restoreBackup(Stage primaryStage, ApplicationConfig config) {

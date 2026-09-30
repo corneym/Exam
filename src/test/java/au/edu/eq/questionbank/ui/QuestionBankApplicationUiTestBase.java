@@ -31,10 +31,12 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
@@ -398,42 +400,59 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
 			String assessmentName, String bookletName, ExamBookletQuestionFormat questionFormat) throws Exception {
+
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+
 		Subject selectedSubject = workingSubjectBox.getItems().stream()
 				.filter(subject -> subjectName.equals(subject.getName())).findFirst().orElseThrow();
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-		String relativePath = pdfDataRoot.relativize(examPdf).toString();
 
-		// Test fixtures now create the same authoritative persisted hierarchy used by
-		// Exam/Assets rather than driving the retired modal ExamImportDialog.
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+
+		PdfStore pdfStore = new PdfStore(pdfDataRoot);
+
+		// Test setup must use the same managed Subject / Provider / Year hierarchy as
+		// normal Exam/Assets intake rather than persisting the fixture's temporary
+		// path.
+		Path storedPdf = pdfStore.importExamPdf(examPdf, selectedSubject.getName(), providerName, yearValue);
+
+		String relativePath = pdfDataRoot.relativize(storedPdf).toString();
+
+		String contentSha256 = new SourceDocumentHashService().sha256(storedPdf);
+
+		// Fixtures now have the same persisted byte identity as newly added production
+		// assets, so hash-based duplicate behaviour is genuinely under test.
 		ExamBooklet booklet = examImporter.importExam(selectedSubject, providerName, yearValue, assessmentName,
-				bookletName, relativePath, questionFormat);
+				bookletName, relativePath, questionFormat, contentSha256);
+
 		Boolean activated = (Boolean) WaitForAsyncUtils.asyncFx(() -> {
 			try {
 
-				// Exercise the real application activation boundary so PDF state,
-				// Working Subject, active Exam metadata and capture queues are rebuilt
-				// exactly as they are after Use Selected Booklet for Capture.
+				// Exercise the real capture-activation boundary rather than the
+				// retired modal Exam-import workflow.
 				return invoke(application, "activateBookletForCapture",
 						new Class<?>[] { ExamBooklet.class, ApplicationConfig.class }, booklet, applicationConfig);
 			} catch (Exception exception) {
 				throw new RuntimeException(exception);
 			}
 		}).get();
+
 		assertEquals(Boolean.TRUE, activated);
+
 		WaitForAsyncUtils.waitForFxEvents();
 
-		// Workflow fixtures deliberately enter new-Question capture. Production
-		// requires
-		// the same explicit transition before Classification becomes editable.
+		// Workflow fixtures deliberately enter new-Question capture.
 		fireControl(robot, "#capture-mode-new");
 
 		// Classification remains independent of booklet Question format.
 		selectFirst(robot, "#curriculum-unit");
+
 		selectFirst(robot, "#curriculum-topic");
+
 		selectFirstFinalClassification(robot);
 	}
 
