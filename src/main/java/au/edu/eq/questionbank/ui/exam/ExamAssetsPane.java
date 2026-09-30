@@ -19,18 +19,22 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Toggle;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -563,6 +567,11 @@ public final class ExamAssetsPane extends VBox {
 		assessmentField.setId("exam-assets-assessment");
 		assessmentField.setEditable(true);
 		assessmentField.setMaxWidth(Double.MAX_VALUE);
+
+		// Provider and Assessment suggestions are reusable preferences rather than Exam
+		// identity. Their popup rows therefore expose a non-destructive removal action.
+		configureSuggestionRemoval(providerField, optionsRepository::removeProvider);
+		configureSuggestionRemoval(assessmentField, optionsRepository::removeAssessment);
 		yearField.setId("exam-assets-year");
 		yearField.setMaxWidth(Double.MAX_VALUE);
 		int currentYear = Year.now().getValue();
@@ -624,6 +633,57 @@ public final class ExamAssetsPane extends VBox {
 		updateNewExamSaveState();
 		refreshMetadataOptions();
 		clearSelectedExam();
+	}
+
+	private void configureSuggestionRemoval(ComboBox<String> field, Consumer<String> removalAction) {
+		if (field == null) {
+			throw new NullPointerException("field");
+		}
+		if (removalAction == null) {
+			throw new NullPointerException("removalAction");
+		}
+		MenuItem removeItem = new MenuItem("Remove from suggestions");
+		ContextMenu contextMenu = new ContextMenu(removeItem);
+		contextMenu.setOnShowing(_ -> {
+			String value = field.getEditor().getText().strip();
+
+			// Only an actual persisted suggestion may be removed. Free text entered by
+			// the user must never acquire suggestion-removal semantics accidentally.
+			boolean storedSuggestion = field.getItems().stream().anyMatch(existing -> existing.equalsIgnoreCase(value));
+			removeItem.setDisable(!storedSuggestion);
+		});
+		removeItem.setOnAction(_ -> {
+			String value = field.getEditor().getText().strip();
+			boolean storedSuggestion = field.getItems().stream().anyMatch(existing -> existing.equalsIgnoreCase(value));
+			if (!storedSuggestion) {
+				return;
+			}
+
+			// This action modifies only the reusable suggestion preference. Persisted Exam
+			// metadata remains authoritative and unchanged.
+			removalAction.accept(value);
+			refreshMetadataOptions();
+		});
+		EventHandler<ContextMenuEvent> showRemovalMenu = event -> {
+
+			// Editable ComboBoxes may route a secondary click either to the
+			// ComboBox itself or to its TextField editor. Handle both explicitly.
+			if (contextMenu.isShowing()) {
+				contextMenu.hide();
+			}
+			Node anchor = event.getSource() instanceof Node node ? node : field;
+			contextMenu.show(anchor, event.getScreenX(), event.getScreenY());
+			event.consume();
+		};
+
+		// Expose the same semantic action through both parts of the editable control.
+		field.setContextMenu(contextMenu);
+		field.getEditor().setContextMenu(contextMenu);
+
+		// Explicit handling avoids depending on JavaFX skin-specific context-menu
+		// dispatch, which differs between desktop and Xvfb.
+		field.setOnContextMenuRequested(showRemovalMenu);
+		field.getEditor().setOnContextMenuRequested(showRemovalMenu);
 	}
 
 	private VBox createAnswerBookletsSection() {
@@ -847,6 +907,10 @@ public final class ExamAssetsPane extends VBox {
 		if (exam == null) {
 			return;
 		}
+
+		// Persisted Exam metadata is authoritative. If this installation has never seen
+		// one of its values, restore that value to the local reusable suggestion cache.
+		rememberPersistedExamMetadata(exam);
 		stateLabel.setText("State: " + exam.getCaptureState());
 
 		// Editable ComboBoxes maintain both selected value and editor text. Set both
@@ -916,11 +980,23 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private void refreshMetadataOptions() {
+		String providerValue = providerField.getValue();
+		String providerText = providerField.getEditor().getText();
+		String assessmentValue = assessmentField.getValue();
+		String assessmentText = assessmentField.getEditor().getText();
 
-		// Preferences supply suggestions only. Persisted Exam values remain
-		// authoritative even when they are not already present in these lists.
+		// Preferences supply suggestions only. Replacing their item lists must not
+		// replace persisted Exam metadata or staged editor text.
 		providerField.getItems().setAll(optionsRepository.getProviders());
 		assessmentField.getItems().setAll(optionsRepository.getAssessments());
+		if (providerValue != null) {
+			providerField.setValue(providerValue);
+		}
+		providerField.getEditor().setText(providerText);
+		if (assessmentValue != null) {
+			assessmentField.setValue(assessmentValue);
+		}
+		assessmentField.getEditor().setText(assessmentText);
 	}
 
 	private void refreshQuestionBookletActionStates() {
@@ -969,6 +1045,35 @@ public final class ExamAssetsPane extends VBox {
 		}
 		examBox.getSelectionModel().select(selectedExam);
 		updateAddNewExamState();
+	}
+
+	private void rememberPersistedExamMetadata(Exam exam) {
+		String providerName = exam.getProvider().getName();
+		String assessmentName = exam.getName();
+		boolean providerMissing = optionsRepository.getProviders().stream()
+				.noneMatch(existing -> existing.equalsIgnoreCase(providerName));
+		boolean assessmentMissing = optionsRepository.getAssessments().stream()
+				.noneMatch(existing -> existing.equalsIgnoreCase(assessmentName));
+		if (!providerMissing && !assessmentMissing) {
+
+			// Avoid rebuilding the ComboBox item lists when the local cache already
+			// contains both authoritative values.
+			return;
+		}
+		if (providerMissing) {
+
+			// Encountering authoritative persisted metadata makes it reusable locally.
+			optionsRepository.addProvider(providerName);
+		}
+		if (assessmentMissing) {
+
+			// Assessment values follow the same local-cache rule as Provider values.
+			optionsRepository.addAssessment(assessmentName);
+		}
+
+		// Make newly discovered authoritative values available to the ComboBoxes during
+		// this same Exam load rather than waiting for another workspace refresh.
+		refreshMetadataOptions();
 	}
 
 	private void restoreNormalExamPresentation() {

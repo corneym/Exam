@@ -400,35 +400,26 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
 			String assessmentName, String bookletName, ExamBookletQuestionFormat questionFormat) throws Exception {
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
-
 		Subject selectedSubject = workingSubjectBox.getItems().stream()
 				.filter(subject -> subjectName.equals(subject.getName())).findFirst().orElseThrow();
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
-
 		PdfStore pdfStore = new PdfStore(pdfDataRoot);
 
 		// Test setup must use the same managed Subject / Provider / Year hierarchy as
 		// normal Exam/Assets intake rather than persisting the fixture's temporary
 		// path.
 		Path storedPdf = pdfStore.importExamPdf(examPdf, selectedSubject.getName(), providerName, yearValue);
-
 		String relativePath = pdfDataRoot.relativize(storedPdf).toString();
-
 		String contentSha256 = new SourceDocumentHashService().sha256(storedPdf);
 
 		// Fixtures now have the same persisted byte identity as newly added production
 		// assets, so hash-based duplicate behaviour is genuinely under test.
 		ExamBooklet booklet = examImporter.importExam(selectedSubject, providerName, yearValue, assessmentName,
 				bookletName, relativePath, questionFormat, contentSha256);
-
 		Boolean activated = (Boolean) WaitForAsyncUtils.asyncFx(() -> {
 			try {
 
@@ -440,9 +431,7 @@ abstract class QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		}).get();
-
 		assertEquals(Boolean.TRUE, activated);
-
 		WaitForAsyncUtils.waitForFxEvents();
 
 		// Workflow fixtures deliberately enter new-Question capture.
@@ -450,9 +439,7 @@ abstract class QuestionBankApplicationUiTestBase {
 
 		// Classification remains independent of booklet Question format.
 		selectFirst(robot, "#curriculum-unit");
-
 		selectFirst(robot, "#curriculum-topic");
-
 		selectFirstFinalClassification(robot);
 	}
 

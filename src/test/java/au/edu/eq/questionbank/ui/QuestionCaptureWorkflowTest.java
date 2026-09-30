@@ -541,29 +541,26 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.getClassification();
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 
-		// Create outstanding work only for Chemistry. The imported-work action must
-		// therefore follow Working Subject rather than remaining globally visible.
+		// Create outstanding work only for Chemistry. Subject transitions must filter
+		// this persisted Question from the one shared application snapshot.
 		repository.save(chemistryBooklet, "43", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
 		QuestionCapturePane pane = questionCapturePane();
 		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
 		robot.interact(pane::refreshImportedQuestions);
 		assertTrue(importedAction.isVisible());
-
-		// Changing to a Subject with no outstanding imported/incomplete work removes
-		// the operational entry point immediately.
 		robot.interact(() -> workingSubjectBox.setValue(physics));
-		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals(physics, workingSubjectBox.getValue());
-		assertFalse(importedAction.isVisible());
-		assertFalse(importedAction.isManaged());
 
-		// Returning to Chemistry restores the action because the persisted incomplete
-		// Question was filtered out, not deleted or otherwise modified.
+		// The previous Subject's queue is cleared synchronously before the background
+		// snapshot is loaded.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !importedAction.isVisible());
+		assertEquals(physics, workingSubjectBox.getValue());
 		robot.interact(() -> workingSubjectBox.setValue(chemistry));
-		WaitForAsyncUtils.waitForFxEvents();
+
+		// Returning to Chemistry now depends on asynchronous snapshot publication, so
+		// wait for the observable queue result rather than merely draining FX events.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, importedAction::isVisible);
 		assertEquals(chemistry, workingSubjectBox.getValue());
-		assertTrue(importedAction.isVisible());
 		assertTrue(importedAction.isManaged());
 	}
 
@@ -816,6 +813,94 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			for (CountDownLatch gate : release) {
 				gate.countDown();
 			}
+		}
+	}
+
+	@Test
+	void rapidWorkingSubjectChangesDiscardStaleQuestionSnapshot(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject chemistry = workingSubjectBox.getValue();
+		Subject physics = workingSubjectBox.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		ExamBooklet chemistryBooklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question staleChemistryQuestion = repository.save(chemistryBooklet, "ASYNC1", "", 1, List.of(), classification,
+				false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+		CountDownLatch firstLoadEntered = new CountDownLatch(1);
+		CountDownLatch releaseFirstLoad = new CountDownLatch(1);
+		CountDownLatch firstLoadReturned = new CountDownLatch(1);
+		CountDownLatch secondLoadReturned = new CountDownLatch(1);
+		AtomicInteger reads = new AtomicInteger();
+		setField(application, "workingSubjectQuestionSnapshotLoader",
+				(java.util.function.Supplier<List<Question>>) () -> {
+
+					// Every Subject transition must perform exactly one application-level
+					// corpus read and it must never run on the JavaFX thread.
+					assertFalse(Platform.isFxApplicationThread());
+					int read = reads.getAndIncrement();
+					if (read == 0) {
+						firstLoadEntered.countDown();
+						try {
+							assertTrue(releaseFirstLoad.await(10, TimeUnit.SECONDS));
+						} catch (InterruptedException exception) {
+							Thread.currentThread().interrupt();
+							throw new IllegalStateException(exception);
+						}
+						firstLoadReturned.countDown();
+
+						// This deliberately stale Chemistry snapshot must be discarded after
+						// the later Subject transition has completed.
+						return List.of(staleChemistryQuestion);
+					}
+					if (read == 1) {
+						secondLoadReturned.countDown();
+
+						// The later Chemistry transition deliberately publishes an empty
+						// snapshot so a subsequent stale overwrite is easy to detect.
+						return List.of();
+					}
+					throw new AssertionError("Expected one corpus read per accepted Subject transition");
+				});
+		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		ComboBox<Question> unanswered = unansweredQuestions(robot);
+		try {
+
+			// Begin a slow Physics refresh.
+			robot.interact(() -> workingSubjectBox.setValue(physics));
+			assertTrue(firstLoadEntered.await(5, TimeUnit.SECONDS));
+
+			// Before Physics finishes, make Chemistry authoritative again. Its later
+			// generation is allowed to complete first.
+			robot.interact(() -> workingSubjectBox.setValue(chemistry));
+			assertTrue(secondLoadReturned.await(5, TimeUnit.SECONDS));
+			WaitForAsyncUtils.waitForFxEvents();
+			assertEquals(chemistry, workingSubjectBox.getValue());
+			assertEquals(chemistry, field(questionCapturePane(), "workingSubject", Subject.class));
+			assertEquals(chemistry, field(answerCapturePane(), "workingSubject", Subject.class));
+			assertFalse(importedAction.isVisible());
+			assertTrue(unanswered.getItems().isEmpty());
+
+			// Now allow the older Physics load to complete after Chemistry is already
+			// current.
+			releaseFirstLoad.countDown();
+			assertTrue(firstLoadReturned.await(5, TimeUnit.SECONDS));
+			WaitForAsyncUtils.waitForFxEvents();
+
+			// The stale first generation must not repopulate either pane.
+			assertEquals(chemistry, field(questionCapturePane(), "workingSubject", Subject.class));
+			assertEquals(chemistry, field(answerCapturePane(), "workingSubject", Subject.class));
+			assertFalse(importedAction.isVisible());
+			assertTrue(unanswered.getItems().isEmpty());
+
+			// Two accepted Subject transitions cause two repository snapshots, not two
+			// independent reads by each capture pane.
+			assertEquals(2, reads.get());
+		} finally {
+			releaseFirstLoad.countDown();
 		}
 	}
 

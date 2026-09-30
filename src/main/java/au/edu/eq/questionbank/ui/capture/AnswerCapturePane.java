@@ -540,17 +540,35 @@ public final class AnswerCapturePane extends VBox {
 	 *                       Subjects
 	 */
 	public void setWorkingSubject(Subject workingSubject) {
+
+		// Preserve the existing standalone API while allowing the application-level
+		// Subject coordinator to bypass this repository read.
+		setWorkingSubject(workingSubject, questionRepository.findAll());
+	}
+
+	/**
+	 * Changes the transient Working Subject and rebuilds the Answer work queue from
+	 * an already-loaded Question snapshot.
+	 *
+	 * @param workingSubject Subject to display, or {@code null} to display all
+	 *                       Subjects
+	 * @param questions      complete Question snapshot to filter
+	 * @throws NullPointerException if {@code questions} is {@code null}
+	 */
+	public void setWorkingSubject(Subject workingSubject, List<Question> questions) {
+		if (questions == null) {
+			throw new NullPointerException("questions");
+		}
 		Question previouslySelected = unansweredQuestionField.getValue();
 		this.workingSubject = workingSubject;
 
-		// Rebuild the queue from persistence so changing workspace focus cannot alter
-		// Question or Answer data.
-		refreshQuestions();
+		// Reuse the application-owned corpus snapshot instead of independently reading
+		// the complete Question repository.
+		refreshQuestions(questions);
 		if (previouslySelected != null && unansweredQuestionField.getValue() == null) {
 
-			// The previous target is no longer part of the active Subject queue. Reset
-			// its presentation state as well as the ComboBox so the pane cannot continue
-			// to look as though that Question is active.
+			// The old target no longer belongs to the accepted Working Subject. Clear its
+			// presentation as well as removing it from the queue.
 			applyUnansweredQuestionChange(null, false);
 		}
 	}

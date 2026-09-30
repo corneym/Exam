@@ -770,11 +770,30 @@ public final class QuestionCapturePane extends VBox {
 	 *                       Subjects
 	 */
 	public void setWorkingSubject(Subject workingSubject) {
-		this.workingSubject = workingSubject;
 
-		// Re-read the current corpus so a Working Subject change immediately updates
-		// the imported Question queue without modifying persisted Questions.
-		refreshImportedQuestions();
+		// Preserve the existing standalone behaviour for callers that do not already
+		// own a Question snapshot.
+		setWorkingSubject(workingSubject, currentQuestions());
+	}
+
+	/**
+	 * Changes the transient Working Subject and rebuilds the imported-Question
+	 * queue from an already-loaded Question snapshot.
+	 *
+	 * @param workingSubject Subject to display, or {@code null} to display all
+	 *                       Subjects
+	 * @param questions      complete Question snapshot to filter
+	 * @throws NullPointerException if {@code questions} is {@code null}
+	 */
+	public void setWorkingSubject(Subject workingSubject, List<Question> questions) {
+		if (questions == null) {
+			throw new NullPointerException("questions");
+		}
+
+		// The application can now publish one shared corpus snapshot to both capture
+		// panes without causing this pane to perform another repository read.
+		this.workingSubject = workingSubject;
+		refreshImportedQuestions(questions);
 	}
 
 	/**

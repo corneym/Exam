@@ -9,8 +9,10 @@ import java.time.Clock;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import au.edu.eq.questionbank.ApplicationConfig;
@@ -218,6 +220,17 @@ public class QuestionBankApplication extends Application {
 	private SqliteExamWriter examWriter;
 	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
 	private final Button changeExamAssetsButton = new Button("Change Exam");
+
+	// One loader supplies the complete Question snapshot used by both capture
+	// panes.
+	// Keeping it application-owned prevents duplicate repository reads per Subject
+	// transition and provides a deterministic dependency for workflow tests.
+	private Supplier<List<Question>> workingSubjectQuestionSnapshotLoader = List::of;
+
+	// Every accepted Working Subject change advances this generation. Background
+	// work from an earlier generation may finish, but it may never update current
+	// UI.
+	private long workingSubjectRefreshGeneration;
 
 	// The application-level Subject remains outside this host so the left workspace
 	// can switch between Capture and Exam/Assets without replacing Working Subject.
@@ -748,6 +761,21 @@ public class QuestionBankApplication extends Application {
 		finishScormExport();
 		progressAlert.close();
 		showScormExportSuccess(task.getValue());
+	}
+
+	private void completeWorkingSubjectQuestionRefresh(Subject subject, long generation, List<Question> questions) {
+		if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+			// A later Subject selection is already authoritative. Discard this completed
+			// snapshot rather than allowing an older task to restore stale queue data.
+			return;
+		}
+		if (questionCapturePane != null) {
+			questionCapturePane.setWorkingSubject(subject, questions);
+		}
+		if (answerCapturePane != null) {
+			answerCapturePane.setWorkingSubject(subject, questions);
+		}
 	}
 
 	private void configurePdfWorkspace() {
@@ -1392,6 +1420,21 @@ public class QuestionBankApplication extends Application {
 		return message.toString();
 	}
 
+	private void failWorkingSubjectQuestionRefresh(Subject subject, long generation, Throwable failure) {
+		if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+			// Failure from obsolete work is irrelevant to the current Subject and must not
+			// interrupt the teacher with a stale error.
+			return;
+		}
+		String message = failure == null ? "Question data could not be loaded." : failureMessage(failure);
+
+		// The queues were cleared before loading began, so failure cannot leave corpus
+		// data from the previous Subject presented as current.
+		showAlert(Alert.AlertType.ERROR, "Working Subject",
+				"Question data for the Working Subject could not be loaded.", message);
+	}
+
 	private SharedQuestionContext findExistingSplitSharedContext(Question originalQuestion) {
 		SourceQuestion matchingSource = null;
 		SharedQuestionContext matchingContext = null;
@@ -1553,15 +1596,14 @@ public class QuestionBankApplication extends Application {
 
 			// The value-property listener runs before the ComboBox's own action handler.
 			// Preserve the accepted classification now, but restore it only after the
-			// rejected Subject change has finished clearing its dependent controls.
+			// rejected Subject change has finished clearing dependent controls.
 			CurriculumNode previousClassification = curriculumSelectionModel.getClassification();
 			Platform.runLater(() -> {
 				restoringWorkingSubject = true;
 				try {
 
 					// Re-establish the accepted Working Subject first, then reconstruct
-					// the complete classification path that existed before the rejected
-					// transition.
+					// the complete classification path that existed before rejection.
 					curriculumSelectorPane.selectSubject(workingSubject);
 					if (previousClassification != null) {
 						curriculumSelectorPane.selectClassificationPath(previousClassification);
@@ -1573,24 +1615,19 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Once accepted, one workspace Subject drives classification plus both
-		// Question and Answer work queues.
+		// Working Subject becomes authoritative synchronously. Only persistence-heavy
+		// rebuilding of Subject-dependent data is deferred.
 		workingSubject = newSubject;
-		if (questionCapturePane != null) {
-			questionCapturePane.setWorkingSubject(newSubject);
-		}
-		if (answerCapturePane != null) {
-			answerCapturePane.setWorkingSubject(newSubject);
-		}
+		startWorkingSubjectQuestionRefresh(newSubject);
 		examMetadataPane.invalidateForSubjectChange(newSubject);
 
-		// Moving application Subject may invalidate an active Exam from the old
-		// Subject, so refresh the persistent workspace context immediately.
+		// Active structural context is lightweight presentation state and must stop
+		// referring to an Exam belonging to the previous Subject immediately.
 		refreshActiveExamContext();
 
-		// Subject remains authoritative while Exam/Assets mode is open. Refresh that
-		// workspace immediately rather than leaving Exams from the previous Subject
-		// visible.
+		// Exam/Assets still uses its existing synchronous refresh in this first #75
+		// slice. Moving that persistence work to the same asynchronous coordinator is
+		// the next independent batch.
 		if (examAssetsPane != null && workspaceModeHost != null
 				&& workspaceModeHost.getChildren().contains(examAssetsPane)) {
 			try {
@@ -1604,7 +1641,6 @@ public class QuestionBankApplication extends Application {
 
 	private AnswerFile importAnswerBookletFromExamAssets(Exam exam, Path sourcePath, String name,
 			boolean containsAnswerExplanations, ApplicationConfig config) throws IOException, SQLException {
-
 		if (exam == null) {
 			throw new NullPointerException("exam");
 		}
@@ -1617,33 +1653,24 @@ public class QuestionBankApplication extends Application {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("Answer booklet name must not be blank");
 		}
-
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 
 		// Cross-type duplication is also unsafe: an Answer add must not silently reuse
 		// bytes already managed as a Question booklet or another Answer asset.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Answer booklet");
-
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
 				exam.getYear());
-
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
-
 		if (!sourceHash.equals(storedHash)) {
 
 			// Do not register an AnswerFile if the managed bytes no longer match the
 			// source that passed duplicate detection.
 			throw new IOException("Answer booklet PDF changed while it was being copied");
 		}
-
 		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
-
 		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
-
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
 
 		// Creation and explanation metadata are persisted only after duplicate and byte
@@ -1785,7 +1812,6 @@ public class QuestionBankApplication extends Application {
 	private ExamBooklet importQuestionBookletFromExamAssets(Exam exam, Path sourcePath, String name,
 			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount, ApplicationConfig config)
 			throws IOException, SQLException {
-
 		if (exam == null) {
 			throw new NullPointerException("exam");
 		}
@@ -1801,34 +1827,25 @@ public class QuestionBankApplication extends Application {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("Question booklet name must not be blank");
 		}
-
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 
 		// Detect byte-identical managed material before PdfStore creates another
 		// managed
 		// file with a different filename.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Question booklet");
-
 		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
 				exam.getYear());
-
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
-
 		if (!sourceHash.equals(storedHash)) {
 
 			// The selected bytes changed between duplicate detection and managed copying.
 			// Do not publish a SourceDocument identity based on inconsistent evidence.
 			throw new IOException("Question booklet PDF changed while it was being copied");
 		}
-
 		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
-
 		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
-
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
 
 		// Persistence receives the verified final managed-byte identity.
@@ -1839,6 +1856,11 @@ public class QuestionBankApplication extends Application {
 	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
 			PdfFilePicker answerPdfPicker) {
 		questionRepository = new SqliteQuestionRepository(database);
+
+		// Working Subject transitions load the corpus once at application level and
+		// then
+		// publish that same immutable snapshot to Question and Answer capture.
+		workingSubjectQuestionSnapshotLoader = questionRepository::findAll;
 		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
 		SqliteQuestionCaptureService questionCaptureService = new SqliteQuestionCaptureService(database);
 		LegacyQuestionSplitService legacyQuestionSplitService = new LegacyQuestionSplitService(database);
@@ -1923,6 +1945,13 @@ public class QuestionBankApplication extends Application {
 				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
 		questionCapturePane.refreshImportedQuestions();
+	}
+
+	private boolean isCurrentWorkingSubjectRefresh(Subject subject, long generation) {
+
+		// Both generation and Subject identity must still describe the currently
+		// accepted application context.
+		return generation == workingSubjectRefreshGeneration && Objects.equals(workingSubject, subject);
 	}
 
 	private boolean isRegionSelectionAvailable(PdfWorkspacePane.DocumentMode documentMode) {
@@ -2394,7 +2423,6 @@ public class QuestionBankApplication extends Application {
 
 	private String requireNewManagedPdfContent(Path sourcePath, SqliteExamWriter writer, String assetDescription)
 			throws IOException, SQLException {
-
 		if (sourcePath == null) {
 			throw new NullPointerException("sourcePath");
 		}
@@ -2404,20 +2432,15 @@ public class QuestionBankApplication extends Application {
 		if (assetDescription == null || assetDescription.isBlank()) {
 			throw new IllegalArgumentException("assetDescription must not be blank");
 		}
-
 		String contentSha256 = new SourceDocumentHashService().sha256(sourcePath);
-
 		List<SourceDocument> matches = writer.findSourceDocumentsByHash(contentSha256);
-
 		if (matches.isEmpty()) {
 
 			// No persisted managed source currently owns these bytes, so normal intake may
 			// proceed.
 			return contentSha256;
 		}
-
 		String knownPaths = matches.stream().map(SourceDocument::getRelativePath).collect(Collectors.joining(", "));
-
 		if (matches.size() == 1) {
 
 			// Add means creation of another structural asset. Byte-identical managed
@@ -3125,6 +3148,43 @@ public class QuestionBankApplication extends Application {
 		task.setOnFailed(_ -> failScormExport(task, progressAlert));
 		progressAlert.show();
 		Thread thread = new Thread(task, "revision-scorm-export");
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	private void startWorkingSubjectQuestionRefresh(Subject subject) {
+		long generation = ++workingSubjectRefreshGeneration;
+
+		// Remove data belonging to the previous Subject immediately. This is
+		// lightweight
+		// UI work and prevents stale queues remaining visible while persistence loads.
+		if (questionCapturePane != null) {
+			questionCapturePane.setWorkingSubject(subject, List.of());
+		}
+		if (answerCapturePane != null) {
+			answerCapturePane.setWorkingSubject(subject, List.of());
+		}
+		if (questionCapturePane == null && answerCapturePane == null) {
+
+			// Application construction can establish Subject state before capture panes
+			// exist. There is nothing to publish yet in that case.
+			return;
+		}
+		Task<List<Question>> task = new Task<>() {
+
+			@Override
+			protected List<Question> call() {
+
+				// Repository I/O runs exclusively on this worker thread. Copy the
+				// result so later UI publication observes one stable shared snapshot.
+				return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+			}
+		};
+		task.setOnSucceeded(_ -> completeWorkingSubjectQuestionRefresh(subject, generation, task.getValue()));
+		task.setOnFailed(_ -> failWorkingSubjectQuestionRefresh(subject, generation, task.getException()));
+		Thread thread = new Thread(task, "working-subject-question-refresh-" + generation);
+
+		// Subject refresh must never prevent normal application shutdown.
 		thread.setDaemon(true);
 		thread.start();
 	}

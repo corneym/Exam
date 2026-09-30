@@ -11,6 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
@@ -24,21 +26,26 @@ import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
+import javafx.event.EventHandler;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
+import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
@@ -472,8 +479,10 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	void examAssetsCanAddAnswerBookletWithExplanationMetadata(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
-		Path answerSource = pdfDataRoot.resolve("marking-guide.pdf");
-		Files.copy(examPdf, answerSource);
+
+		// The successful Add path needs genuinely new content. Copying examPdf would
+		// correctly trigger #46 duplicate-content rejection instead.
+		Path answerSource = createPdf(pdfDataRoot.resolve("marking-guide.pdf"), 3);
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
 		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
@@ -521,8 +530,10 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	void examAssetsCanAddQuestionBookletAndEnterInspection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
-		Path questionSource = pdfDataRoot.resolve("paper2.pdf");
-		Files.copy(examPdf, questionSource);
+
+		// Paper 2 must represent genuinely new source content. A byte-for-byte copy of
+		// the active booklet is now deliberately rejected by #46.
+		Path questionSource = createPdf(pdfDataRoot.resolve("paper2.pdf"), 4);
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
 		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
@@ -798,6 +809,108 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void examAssetsCanRemoveMetadataSuggestionsWithoutChangingExam(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
+		Exam originalExam = activeBooklet.getExam();
+		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		ExamMetadataOptionsRepository optionsRepository = field(examAssetsPane, "optionsRepository",
+				ExamMetadataOptionsRepository.class);
+		String persistedProvider = originalExam.getProvider().getName();
+		String persistedAssessment = originalExam.getName();
+
+		// Start with both local suggestions removed. Opening the authoritative Exam
+		// must
+		// repopulate them even though no new Exam metadata is being saved.
+		optionsRepository.removeProvider(persistedProvider);
+		optionsRepository.removeAssessment(persistedAssessment);
+		assertFalse(optionsRepository.getProviders().stream().anyMatch(persistedProvider::equalsIgnoreCase));
+		assertFalse(optionsRepository.getAssessments().stream().anyMatch(persistedAssessment::equalsIgnoreCase));
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		@SuppressWarnings("unchecked")
+		ComboBox<String> provider = lookup(robot, "#exam-assets-provider", ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<String> assessment = lookup(robot, "#exam-assets-assessment", ComboBox.class);
+		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
+		Button cancel = lookup(robot, "#exam-assets-cancel", Button.class);
+
+		// Loading persisted metadata must backfill missing local suggestions.
+		assertTrue(optionsRepository.getProviders().stream().anyMatch(persistedProvider::equalsIgnoreCase));
+		assertTrue(optionsRepository.getAssessments().stream().anyMatch(persistedAssessment::equalsIgnoreCase));
+		assertTrue(provider.getItems().stream().anyMatch(persistedProvider::equalsIgnoreCase));
+		assertTrue(assessment.getItems().stream().anyMatch(persistedAssessment::equalsIgnoreCase));
+		assertEquals(persistedProvider, provider.getEditor().getText());
+		assertEquals(persistedAssessment, assessment.getEditor().getText());
+		fireControl(robot, edit);
+		ContextMenu providerMenu = provider.getEditor().getContextMenu();
+		assertNotNull(providerMenu);
+		ContextMenuEvent providerRequest = new ContextMenuEvent(ContextMenuEvent.CONTEXT_MENU_REQUESTED, 0.0, 0.0, 0.0,
+				0.0, false, null);
+		EventHandler<? super ContextMenuEvent> providerContextHandler = provider.getEditor()
+				.getOnContextMenuRequested();
+		assertNotNull(providerContextHandler);
+		robot.interact(() -> {
+
+			// Invoke the production context-menu handler directly so the regression covers
+			// the right-click action without depending on native popup timing under Xvfb.
+			providerContextHandler.handle(providerRequest);
+		});
+		assertTrue(providerRequest.isConsumed());
+		MenuItem removeProvider = providerMenu.getItems().getFirst();
+		assertEquals("Remove from suggestions", removeProvider.getText());
+		assertFalse(removeProvider.isDisable());
+		robot.interact(removeProvider::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(optionsRepository.getProviders().stream().anyMatch(persistedProvider::equalsIgnoreCase));
+		assertFalse(provider.getItems().stream().anyMatch(persistedProvider::equalsIgnoreCase));
+
+		// Removing the reusable suggestion must not alter the authoritative value shown
+		// for the currently loaded Exam.
+		assertEquals(persistedProvider, provider.getEditor().getText());
+		ContextMenu assessmentMenu = assessment.getEditor().getContextMenu();
+		assertNotNull(assessmentMenu);
+		ContextMenuEvent assessmentRequest = new ContextMenuEvent(ContextMenuEvent.CONTEXT_MENU_REQUESTED, 0.0, 0.0,
+				0.0, 0.0, false, null);
+		EventHandler<? super ContextMenuEvent> assessmentContextHandler = assessment.getEditor()
+				.getOnContextMenuRequested();
+		assertNotNull(assessmentContextHandler);
+		robot.interact(() -> {
+
+			// Assessment must expose the same explicit context-menu removal path.
+			assessmentContextHandler.handle(assessmentRequest);
+		});
+		assertTrue(assessmentRequest.isConsumed());
+		MenuItem removeAssessment = assessmentMenu.getItems().getFirst();
+		assertEquals("Remove from suggestions", removeAssessment.getText());
+		assertFalse(removeAssessment.isDisable());
+		robot.interact(removeAssessment::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(optionsRepository.getAssessments().stream().anyMatch(persistedAssessment::equalsIgnoreCase));
+		assertFalse(assessment.getItems().stream().anyMatch(persistedAssessment::equalsIgnoreCase));
+		assertEquals(persistedAssessment, assessment.getEditor().getText());
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		Exam persisted = writer.findExamByProviderAndYear(originalExam.getSubject(), persistedProvider,
+				originalExam.getYear());
+		assertNotNull(persisted);
+
+		// Suggestion removal is local preference maintenance only. SQLite Exam metadata
+		// must remain unchanged throughout the operation.
+		assertEquals(persistedAssessment, persisted.getName());
+		fireControl(robot, cancel);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Cancel reloads the authoritative persisted Exam. Because both values are now
+		// absent locally, that reload must restore them to the suggestion cache.
+		assertTrue(optionsRepository.getProviders().stream().anyMatch(persistedProvider::equalsIgnoreCase));
+		assertTrue(optionsRepository.getAssessments().stream().anyMatch(persistedAssessment::equalsIgnoreCase));
+		assertTrue(provider.getItems().stream().anyMatch(persistedProvider::equalsIgnoreCase));
+		assertTrue(assessment.getItems().stream().anyMatch(persistedAssessment::equalsIgnoreCase));
+		assertEquals(persistedProvider, provider.getEditor().getText());
+		assertEquals(persistedAssessment, assessment.getEditor().getText());
+	}
+
+	@Test
 	void examAssetsCanViewQuestionAndAnswerBookletsWithoutChangingCaptureBooklet(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
@@ -886,23 +999,14 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void examAssetsRejectsAnswerContentAlreadyManagedAsQuestionPdf(FxRobot robot) throws Exception {
-
 		prepareExamAndClassification(robot);
-
 		ExamBooklet existing = examMetadataPane().getBooklet();
-
 		Path managedQuestionPdf = new PdfStore(pdfDataRoot).resolve(existing.getSourceDocument().getRelativePath());
-
 		Path externalCopy = databasePath.getParent().resolve("different-answer-filename.pdf");
-
 		Files.copy(managedQuestionPdf, externalCopy);
-
 		fireControl(robot, "#change-exam-assets");
-
 		WaitForAsyncUtils.waitForFxEvents();
-
 		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
-
 		robot.interact(() -> {
 			try {
 				invoke(examAssetsPane, "beginAnswerBookletAdd", new Class<?>[] { Path.class }, externalCopy);
@@ -910,59 +1014,38 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-
 		TextField name = lookup(robot, "#exam-assets-new-answer-name", TextField.class);
-
 		Button save = lookup(robot, "#exam-assets-new-answer-save", Button.class);
-
 		robot.interact(() -> name.setText("Duplicate Answers"));
-
 		assertFalse(save.isDisabled());
 
 		// The content hash is already owned by the Question source. Add Answer must
 		// surface that conflict rather than create another managed source.
 		fireControlLater(save);
-
 		waitForDialogShowing(robot, "Exam / Assets");
-
 		DialogPane dialog = showingDialogPane(robot, "Exam / Assets");
-
 		assertEquals("Answer booklet could not be added.", dialog.getHeaderText());
-
 		assertTrue(dialog.getContentText().contains("already managed"));
-
 		fireDialogButton(robot, "OK");
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
 
 		// A Question PDF cannot silently become a new AnswerFile merely because the
 		// selected external filename is different.
 		assertTrue(answerWriter.findAnswerFiles(existing.getExam()).isEmpty());
-
 		fireControl(robot, "#exam-assets-new-answer-cancel");
 	}
 
 	@Test
 	void examAssetsRejectsDuplicateQuestionBookletContent(FxRobot robot) throws Exception {
-
 		prepareExamAndClassification(robot);
-
 		ExamBooklet existing = examMetadataPane().getBooklet();
-
 		assertNotNull(existing);
-
 		Path managedPdf = new PdfStore(pdfDataRoot).resolve(existing.getSourceDocument().getRelativePath());
-
 		Path externalCopy = databasePath.getParent().resolve("different-question-filename.pdf");
-
 		Files.copy(managedPdf, externalCopy);
-
 		fireControl(robot, "#change-exam-assets");
-
 		WaitForAsyncUtils.waitForFxEvents();
-
 		ExamAssetsPane examAssetsPane = field(application, "examAssetsPane", ExamAssetsPane.class);
 
 		// Bypass only the native FileChooser. The pending editor and real production
@@ -974,40 +1057,26 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-
 		@SuppressWarnings("unchecked")
 		ComboBox<String> name = lookup(robot, "#exam-assets-new-question-name", ComboBox.class);
-
 		RadioButton written = lookup(robot, "#exam-assets-new-question-format-written", RadioButton.class);
-
 		TextField expected = lookup(robot, "#exam-assets-new-question-expected", TextField.class);
-
 		Button save = lookup(robot, "#exam-assets-new-question-save", Button.class);
-
 		robot.interact(() -> {
 			name.getEditor().setText("Duplicate Paper");
-
 			expected.setText("12");
 		});
-
 		fireControl(robot, written);
-
 		assertFalse(save.isDisabled());
 
 		// Save opens a modal error because the selected bytes already belong to the
 		// persisted managed booklet.
 		fireControlLater(save);
-
 		waitForDialogShowing(robot, "Exam / Assets");
-
 		DialogPane dialog = showingDialogPane(robot, "Exam / Assets");
-
 		assertEquals("Question booklet metadata could not be saved.", dialog.getHeaderText());
-
 		assertTrue(dialog.getContentText().contains("already managed"));
-
 		fireDialogButton(robot, "OK");
-
 		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
 
 		// Rejection must not create another SourceDocument/Booklet relationship.
@@ -1015,7 +1084,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 		// A failed Add remains staged so the user can choose another source or cancel.
 		assertTrue(robot.lookup("#exam-assets-new-question-booklet").tryQuery().isPresent());
-
 		fireControl(robot, "#exam-assets-new-question-cancel");
 	}
 
@@ -1398,6 +1466,22 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Syllabus selection still belongs to classification within the already
 		// selected Subject.
 		assertTrue(isDescendantOf(syllabus, classificationContext));
+	}
+
+	private Path createPdf(Path path, int pageCount) throws Exception {
+		if (pageCount < 1) {
+			throw new IllegalArgumentException("pageCount must be positive");
+		}
+		try (PDDocument document = new PDDocument()) {
+
+			// Different page counts guarantee different PDF content hashes rather than
+			// relying on filenames to make otherwise identical test documents distinct.
+			for (int page = 0; page < pageCount; page++) {
+				document.addPage(new PDPage());
+			}
+			document.save(path.toFile());
+		}
+		return path;
 	}
 
 	private boolean isDescendantOf(Node node, Node ancestor) {
