@@ -24,17 +24,19 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
-import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
@@ -342,14 +344,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 	}
 
-	ExamImportDialog examImportDialog() {
-		try {
-			return field(application, "examImportDialog", ExamImportDialog.class);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
 	ExamMetadataPane examMetadataPane() {
 		try {
 			return field(application, "examMetadataPane", ExamMetadataPane.class);
@@ -404,34 +398,37 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
 			String assessmentName, String bookletName, ExamBookletQuestionFormat questionFormat) throws Exception {
-		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
-		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(examPdf)).get();
-		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
-		Subject selectedSubject = examSubject.getItems().stream()
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject selectedSubject = workingSubjectBox.getItems().stream()
 				.filter(subject -> subjectName.equals(subject.getName())).findFirst().orElseThrow();
-		ComboBox<String> provider = comboBox(robot, "#exam-provider");
-		ComboBox<Integer> year = comboBox(robot, "#exam-year");
-		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
-		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
-		ComboBox<ExamBookletQuestionFormat> format = comboBox(robot, "#exam-question-format");
-		robot.interact(() -> {
-			examSubject.setValue(selectedSubject);
-			provider.getEditor().setText(providerName);
-			year.getSelectionModel().select(Integer.valueOf(yearValue));
-			assessment.getEditor().setText(assessmentName);
-			booklet.getEditor().setText(bookletName);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		String relativePath = pdfDataRoot.relativize(examPdf).toString();
 
-			// Exercise the same explicit booklet-format selection required from the user.
-			format.setValue(questionFormat);
-		});
+		// Test fixtures now create the same authoritative persisted hierarchy used by
+		// Exam/Assets rather than driving the retired modal ExamImportDialog.
+		ExamBooklet booklet = examImporter.importExam(selectedSubject, providerName, yearValue, assessmentName,
+				bookletName, relativePath, questionFormat);
+		Boolean activated = (Boolean) WaitForAsyncUtils.asyncFx(() -> {
+			try {
 
-		// Confirm through the real JavaFX action without depending on pointer
-		// hit-testing.
-		fireControl(robot, "#confirm-exam-details");
+				// Exercise the real application activation boundary so PDF state,
+				// Working Subject, active Exam metadata and capture queues are rebuilt
+				// exactly as they are after Use Selected Booklet for Capture.
+				return invoke(application, "activateBookletForCapture",
+						new Class<?>[] { ExamBooklet.class, ApplicationConfig.class }, booklet, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		}).get();
+		assertEquals(Boolean.TRUE, activated);
 		WaitForAsyncUtils.waitForFxEvents();
 
-		// Workflow fixtures deliberately enter new-Question capture. Production now
-		// requires the same explicit transition before Classification becomes editable.
+		// Workflow fixtures deliberately enter new-Question capture. Production
+		// requires
+		// the same explicit transition before Classification becomes editable.
 		fireControl(robot, "#capture-mode-new");
 
 		// Classification remains independent of booklet Question format.
@@ -477,14 +474,6 @@ abstract class QuestionBankApplicationUiTestBase {
 	void showImportedQuestionCaptureForTest(QuestionCapturePane pane) {
 		try {
 			invoke(pane, "showImportedQuestionCapture", new Class<?>[0]);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	void stageExamPdfForTest(Path sourcePath) {
-		try {
-			invoke(examMetadataPane(), "stageExamPdf", new Class<?>[] { Path.class }, sourcePath);
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}

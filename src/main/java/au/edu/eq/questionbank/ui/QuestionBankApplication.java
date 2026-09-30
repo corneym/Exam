@@ -121,7 +121,6 @@ import au.edu.eq.questionbank.ui.audit.QuestionCorpusAuditDialog;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.capture.SharedContextCapturePane;
-import au.edu.eq.questionbank.ui.correction.ExamMetadataCorrectionDialog;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionMetadataDialog;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumAuthoringPane;
@@ -130,11 +129,7 @@ import au.edu.eq.questionbank.ui.curriculum.CurriculumMappingReviewDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.curriculum.NewCurriculumDialog;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
-import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
-import au.edu.eq.questionbank.ui.exam.ExamSetupDialog;
-import au.edu.eq.questionbank.ui.exam.ExamSetupPane;
-import au.edu.eq.questionbank.ui.exam.ExpectedQuestionCountDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyAnswerPdfImportDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyBookletImportDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyQuestionImportDialog;
@@ -210,7 +205,6 @@ public class QuestionBankApplication extends Application {
 	private QuestionCapturePane questionCapturePane;
 	private AnswerCapturePane answerCapturePane;
 	private ScrollPane previewScrollPane;
-	private ExamImportDialog examImportDialog;
 	private Runnable applicationExitAction = Platform::exit;
 	private ShutdownCoordinator shutdownCoordinator;
 	private boolean resourcesClosedForRestore;
@@ -219,10 +213,7 @@ public class QuestionBankApplication extends Application {
 	private MenuItem scormExportMenuItem;
 	private boolean scormExportRunning;
 	private SplitPane workspaceSplitPane;
-	private ExamSetupPane examSetupPane;
-	private ExamSetupDialog examSetupDialog;
 	private SqliteExamWriter examWriter;
-	private ExamBooklet inspectedBooklet;
 	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
 	private final Button changeExamAssetsButton = new Button("Change Exam");
 
@@ -728,21 +719,12 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void closeViewerPdf() {
-		ExamBooklet completedInspection = inspectedBooklet;
 
-		// Clear the marker before any modal follow-up so cancellation or exceptions
-		// cannot make a later unrelated viewer close look like the same inspection.
-		inspectedBooklet = null;
+		// Viewer closing is now a generic PDF operation. Exam-booklet planning is owned
+		// directly by Exam/Assets rather than being triggered indirectly when an old
+		// modal inspection session closes.
 		pdfWorkspace.closeViewerPdf();
 		setViewerMode(false);
-		if (completedInspection == null) {
-			return;
-		}
-		recordExpectedQuestionCount(completedInspection);
-
-		// Inspection originated from Exam Setup, so return there after either saving
-		// or cancelling the count step.
-		Platform.runLater(this::showExamSetup);
 	}
 
 	private void completeExitWithoutBackup(Stage primaryStage) {
@@ -788,9 +770,10 @@ public class QuestionBankApplication extends Application {
 				questionCapturePane.refreshClipboardImageAvailability();
 			}
 		});
+
+		// Exam creation and asset management now live entirely in the main-window
+		// Exam/Assets workspace. No modal Exam Setup or Add Exam dialog is constructed.
 		showStage(primaryStage, createRootLayout(primaryStage, config));
-		examImportDialog = new ExamImportDialog(primaryStage, examMetadataPane);
-		examSetupDialog = new ExamSetupDialog(primaryStage, examSetupPane, () -> showExamImportFromSetup(config));
 	}
 
 	private void configureShutdown(ApplicationConfig config) {
@@ -1071,11 +1054,12 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createExamMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu examMenu = createMenu("_Exam");
+		MenuItem examAssetsItem = createMenuItem("_Exam / Assets...", this::showExamAssetsMode);
 
-		// Retain the existing control id for UI-test compatibility while changing the
-		// user-facing workflow from direct PDF import to Exam-level setup.
-		MenuItem openForCaptureItem = createMenuItem("_Exam Setup / Assets...", this::showExamSetup);
-		openForCaptureItem.setId("open-exam-for-capture");
+		// Retain the established id so existing automation can follow the same logical
+		// Exam-management entry point while the presentation moves from modal setup to
+		// the main-window workspace.
+		examAssetsItem.setId("open-exam-for-capture");
 		MenuItem markCompleteItem = createMenuItem("_Mark Active Exam Complete...",
 				() -> markActiveExamComplete(primaryStage));
 		markCompleteItem.setId("mark-active-exam-complete");
@@ -1085,15 +1069,14 @@ public class QuestionBankApplication extends Application {
 				() -> replaceActiveQuestionPdf(primaryStage, config));
 		replaceQuestionPdfItem.setId("replace-active-question-pdf");
 
-		// Answer correction is booklet-scoped. A genuinely shared old AnswerFile
-		// remains managed, while an orphaned replaced asset is retired by the
-		// correction service.
+		// Answer correction remains booklet-scoped. A genuinely shared AnswerFile is
+		// preserved while only the active booklet assignment is corrected.
 		MenuItem replaceAnswerPdfItem = createMenuItem("Replace Active _Answer PDF...",
 				() -> replaceActiveAnswerPdf(primaryStage, config));
 		replaceAnswerPdfItem.setId("replace-active-answer-pdf");
 		MenuItem legacyImportItem = createMenuItem("Import _Legacy Question Metadata...",
 				() -> importLegacyQuestionMetadata(primaryStage, config));
-		examMenu.getItems().addAll(openForCaptureItem, new SeparatorMenuItem(), markCompleteItem, reactivateItem,
+		examMenu.getItems().addAll(examAssetsItem, new SeparatorMenuItem(), markCompleteItem, reactivateItem,
 				new SeparatorMenuItem(), replaceQuestionPdfItem, replaceAnswerPdfItem, new SeparatorMenuItem(),
 				legacyImportItem);
 		return examMenu;
@@ -1846,16 +1829,6 @@ public class QuestionBankApplication extends Application {
 				this::allowExamImportConfirmation, this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled,
 				this::activateExamBookletSubject);
 
-		// Exam Setup reads the same persisted Exam, booklet and AnswerFile hierarchy
-		// used by capture and legacy import. Selecting a booklet activates that real
-		// asset.
-		// Exam Setup reads the same persisted Exam, booklet and AnswerFile hierarchy
-		// used
-		// by capture and legacy import. Inspection and capture remain distinct actions.
-		examSetupPane = new ExamSetupPane(examWriter, answerWriter,
-				booklet -> inspectBookletFromExamSetup(booklet, config),
-				booklet -> openBookletFromExamSetup(booklet, config));
-
 		// The new main-window Exam/Assets workspace reads the same authoritative
 		// repositories as the transitional modal Exam Setup workflow.
 		// The new workspace owns Exam editing presentation while the application
@@ -1918,58 +1891,6 @@ public class QuestionBankApplication extends Application {
 				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
 		questionCapturePane.refreshImportedQuestions();
-	}
-
-	private void inspectBookletFromExamSetup(ExamBooklet booklet, ApplicationConfig config) {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (config == null) {
-			throw new NullPointerException("config");
-		}
-		if (!allowBookletInspection()) {
-			return;
-		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-		Path storedPath;
-		try {
-
-			// Inspection always uses the authoritative managed Question-booklet source,
-			// never an external copy selected independently of persistence.
-			storedPath = pdfStore.resolve(booklet.getSourceDocument().getRelativePath());
-		} catch (IllegalArgumentException exception) {
-			showAlert(Alert.AlertType.ERROR, "Inspect Question Booklet", "The stored Question PDF path is invalid.",
-					exception.getMessage());
-			return;
-		}
-		if (!Files.isRegularFile(storedPath)) {
-			showAlert(Alert.AlertType.ERROR, "Inspect Question Booklet", "The stored Question PDF is unavailable.",
-					storedPath.toString());
-			return;
-		}
-		try {
-
-			// Exam Setup is modal. Close it before showing the document so normal PDF
-			// page navigation remains available during inspection.
-			examSetupDialog.close();
-
-			// VIEWER is deliberately read-only: the PDF workspace hides capture controls
-			// and isRegionSelectionAvailable() rejects region capture for this mode.
-			pdfWorkspace.openViewerPdf(storedPath);
-			setViewerMode(true);
-
-			// Remember why VIEWER mode was opened. Ordinary File > Open PDF viewing must
-			// never trigger Exam-planning prompts when it is closed.
-			inspectedBooklet = booklet;
-
-			// Inspection has an explicit completion action beside the PDF navigation
-			// controls. Finishing inspection closes VIEWER mode, records the expected
-			// top-level Question count and returns to Exam Setup.
-			pdfWorkspace.showViewerCompletionAction("Finish Inspection", this::closeViewerPdf);
-		} catch (RuntimeException exception) {
-			showAlert(Alert.AlertType.ERROR, "Inspect Question Booklet",
-					"The Question booklet could not be opened for inspection.", failureMessage(exception));
-		}
 	}
 
 	private boolean isRegionSelectionAvailable(PdfWorkspacePane.DocumentMode documentMode) {
@@ -2086,19 +2007,6 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.openAnswerPdf(selectedPdf.path());
 	}
 
-	private void openBookletFromExamSetup(ExamBooklet booklet, ApplicationConfig config) {
-
-		// The transitional modal setup and the new Exam/Assets workspace deliberately
-		// share one authoritative capture-activation implementation.
-		if (!activateBookletForCapture(booklet, config)) {
-			return;
-		}
-
-		// Successful modal selection returns control to the underlying Capture
-		// workspace.
-		examSetupDialog.close();
-	}
-
 	private void openCurriculumAuthoringWindow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
 			CurriculumAuthoringSession session) {
 
@@ -2202,33 +2110,6 @@ public class QuestionBankApplication extends Application {
 		} catch (SQLException | RuntimeException exception) {
 			showAlert(Alert.AlertType.ERROR, "Exam State", "The Exam state could not be changed.",
 					failureMessage(exception));
-		}
-	}
-
-	private void recordExpectedQuestionCount(ExamBooklet booklet) {
-		if (booklet.getExam().isComplete()) {
-
-			// Expected Question count is structural Exam planning and therefore follows
-			// the same ACTIVE/COMPLETE lock as other booklet structure.
-			showAlert(Alert.AlertType.WARNING, "Expected Question Count", "The Exam is complete.",
-					"Reactivate the Exam before changing its expected Question count.");
-			return;
-		}
-		ExpectedQuestionCountDialog dialog = new ExpectedQuestionCountDialog(primaryWindow(), booklet);
-		Optional<Integer> result = dialog.showAndWait();
-		if (result.isEmpty()) {
-			return;
-		}
-		try {
-			ExamBooklet updatedBooklet = examWriter.updateExamBookletPlanning(booklet, booklet.getQuestionFormat(),
-					result.get());
-
-			// If this booklet was already active for Question capture, refresh the
-			// in-memory object so capture state agrees immediately with persistence.
-			examMetadataPane.refreshActiveBookletPlanning(updatedBooklet);
-		} catch (SQLException | RuntimeException exception) {
-			showAlert(Alert.AlertType.ERROR, "Expected Question Count",
-					"The expected Question count could not be saved.", failureMessage(exception));
 		}
 	}
 
@@ -2758,101 +2639,6 @@ public class QuestionBankApplication extends Application {
 		} catch (SQLException exception) {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
 					exception.getMessage());
-		}
-	}
-
-	private void showExamImport() {
-		if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
-			showAlert(Alert.AlertType.WARNING, "Import Exam", "Close the viewer PDF first.",
-					"An exam cannot be imported while an unrelated PDF is open in viewer mode.");
-			return;
-		}
-		examMetadataPane.refreshSubjects();
-		examMetadataPane.beginImport();
-		examImportDialog.showAndWait();
-	}
-
-	private void showExamImportFromSetup() {
-		ExamBooklet previousBooklet = examMetadataPane.getBooklet();
-		long previousBookletId = previousBooklet == null ? -1L : previousBooklet.getId();
-
-		// Reuse the existing authoritative Exam/booklet intake workflow rather than
-		// duplicating creation logic inside Exam Setup.
-		showExamImport();
-		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
-		if (activeBooklet != null && activeBooklet.getId() != previousBookletId) {
-
-			// Successful intake has already activated the new booklet for capture.
-			// Remove the underlying setup dialog so the capture workspace is immediately
-			// available rather than remaining obscured by the modal Exam Setup surface.
-			examSetupDialog.close();
-			return;
-		}
-		if (workingSubject == null) {
-			return;
-		}
-		try {
-
-			// Cancellation or a non-activating return may still follow persistence changes
-			// made elsewhere, so rebuild the visible Exam/asset snapshot before continuing.
-			examSetupPane.refresh(workingSubject);
-		} catch (SQLException exception) {
-			showAlert(Alert.AlertType.ERROR, "Exam Setup", "Exam assets could not be refreshed.",
-					exception.getMessage());
-		}
-	}
-
-	private void showExamImportFromSetup(ApplicationConfig config) {
-		if (config == null) {
-			throw new NullPointerException("config");
-		}
-		ExamBooklet previousBooklet = examMetadataPane.getBooklet();
-		long previousBookletId = previousBooklet == null ? -1L : previousBooklet.getId();
-
-		// Reuse the authoritative intake workflow. Successful confirmation creates or
-		// recognises the persisted booklet before inspection begins.
-		showExamImport();
-		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
-		if (activeBooklet != null && activeBooklet.getId() != previousBookletId) {
-
-			// A newly added booklet must be reviewed before its expected top-level
-			// Question count is recorded. Do not expose Question capture first.
-			inspectBookletFromExamSetup(activeBooklet, config);
-			return;
-		}
-		if (workingSubject == null) {
-			return;
-		}
-		try {
-
-			// Cancellation or recognition of an already-active booklet leaves the user
-			// inside Exam Setup with a fresh persistence snapshot.
-			examSetupPane.refresh(workingSubject);
-		} catch (SQLException exception) {
-			showAlert(Alert.AlertType.ERROR, "Exam Setup", "Exam assets could not be refreshed.",
-					exception.getMessage());
-		}
-	}
-
-	private void showExamSetup() {
-		if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
-			showAlert(Alert.AlertType.WARNING, "Exam Setup", "Close the viewer PDF first.",
-					"Exam Setup cannot change the active Exam while an unrelated PDF is open in viewer mode.");
-			return;
-		}
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Exam Setup", "No Working Subject is selected.",
-					"Select a Working Subject before opening Exam Setup.");
-			return;
-		}
-		try {
-
-			// Re-read the authoritative Exam hierarchy whenever setup opens because
-			// legacy import, correction or another setup action may have changed it.
-			examSetupPane.refresh(workingSubject);
-			examSetupDialog.showAndWait();
-		} catch (SQLException exception) {
-			showAlert(Alert.AlertType.ERROR, "Exam Setup", "Exam assets could not be loaded.", exception.getMessage());
 		}
 	}
 

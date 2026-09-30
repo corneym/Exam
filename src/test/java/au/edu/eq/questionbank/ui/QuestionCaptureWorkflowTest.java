@@ -2,7 +2,6 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -18,31 +17,25 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionRepository;
-import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
-import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
-import au.edu.eq.questionbank.ui.exam.ExamSetupDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
-import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
-import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
@@ -200,176 +193,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void addingBookletFromExamSetupImmediatelyStartsInspectionBeforePlanning(FxRobot robot) throws Exception {
-		@SuppressWarnings("unchecked")
-		ComboBox<Subject> workingSubjectBox = (ComboBox<Subject>) robot.lookup("#curriculum-subject").query();
-		Subject chemistry = workingSubjectBox.getItems().stream()
-				.filter(subject -> "Chemistry".equals(subject.getName())).findFirst().orElseThrow();
-		robot.interact(() -> workingSubjectBox.setValue(chemistry));
-		WaitForAsyncUtils.waitForFxEvents();
-		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
-		MenuItem setupItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
-		Platform.runLater(setupItem::fire);
-		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, setupDialog::isShowing);
-		Button addButton = (Button) setupDialog.getDialogPane()
-				.lookupButton(setupDialog.getDialogPane().getButtonTypes().getFirst());
-		Platform.runLater(addButton::fire);
-		ExamImportDialog importDialog = field(application, "examImportDialog", ExamImportDialog.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, importDialog::isShowing);
-		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(examPdf)).get();
-		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
-		ComboBox<String> provider = comboBox(robot, "#exam-provider");
-		ComboBox<Integer> year = comboBox(robot, "#exam-year");
-		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
-		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
-		ComboBox<ExamBookletQuestionFormat> format = comboBox(robot, "#exam-question-format");
-		robot.interact(() -> {
-			examSubject.setValue(chemistry);
-			provider.getEditor().setText("QCAA");
-			year.getSelectionModel().select(Integer.valueOf(2025));
-			assessment.getEditor().setText("External Assessment");
-			booklet.getEditor().setText("Paper 1");
-			format.setValue(ExamBookletQuestionFormat.WRITTEN_RESPONSE);
-		});
-		fireControl(robot, "#confirm-exam-details");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !importDialog.isShowing());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER);
-		assertFalse(setupDialog.isShowing());
-		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
-		assertNotNull(activeBooklet);
-		assertEquals("Paper 1", activeBooklet.getName());
-
-		// Intake has persisted the booklet, but VIEWER mode prevents Question-region
-		// capture until structural inspection has been completed.
-		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
-		dragRegionOnDisplayedPage(robot);
-		assertFalse(selectionState.hasPendingSelection());
-		MenuItem closePdfItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.filter(item -> "_Close PDF".equals(item.getText())).findFirst().orElseThrow();
-		Platform.runLater(closePdfItem::fire);
-		waitForDialogShowing(robot, "Expected Question Count");
-		DialogPane countDialog = showingDialogPane(robot, "Expected Question Count");
-		TextField countField = (TextField) countDialog.lookup("#expected-question-count");
-		robot.interact(() -> countField.setText("10"));
-		fireDialogButton(robot, "Save Count");
-		waitForDialogHidden(robot, "Expected Question Count");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> Integer.valueOf(10).equals(examMetadataPane().getBooklet().getExpectedQuestionCount()));
-		assertEquals(Integer.valueOf(10), examMetadataPane().getBooklet().getExpectedQuestionCount());
-
-		// Completion of the inspection/planning step returns to Exam Setup rather
-		// than silently starting Question capture.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, setupDialog::isShowing);
-		fireDialogButton(robot, "Close");
-	}
-
-	@Test
-	void bookletInspectionRecordsExpectedTopLevelQuestionCount(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
-		assertEquals(null, activeBooklet.getExpectedQuestionCount());
-		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
-		MenuItem setupItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
-		Platform.runLater(setupItem::fire);
-		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, setupDialog::isShowing);
-		@SuppressWarnings("unchecked")
-		ListView<ExamBooklet> booklets = (ListView<ExamBooklet>) setupDialog.getDialogPane()
-				.lookup("#exam-setup-booklets");
-
-		// The Exam Setup controls belong to the modal dialog window, not necessarily
-		// the TestFX root currently associated with the main application scene.
-		robot.interact(() -> booklets.getSelectionModel().selectFirst());
-		Button inspectBooklet = (Button) setupDialog.getDialogPane().lookup("#exam-setup-inspect-booklet");
-		fireControl(robot, inspectBooklet);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER);
-
-		// Closing an inspection is what advances the workflow to structural planning.
-		Button finishInspection = lookup(robot, "#finish-pdf-inspection", Button.class);
-		assertTrue(finishInspection.isVisible());
-		assertTrue(finishInspection.isManaged());
-
-		// Inspection must provide an obvious workflow action rather than requiring the
-		// user to discover the generic File > Close PDF command.
-		fireControl(robot, finishInspection);
-		waitForDialogShowing(robot, "Expected Question Count");
-		DialogPane countDialog = showingDialogPane(robot, "Expected Question Count");
-		TextField countField = (TextField) countDialog.lookup("#expected-question-count");
-		assertNotNull(countField);
-		robot.interact(() -> countField.setText("12"));
-		fireDialogButton(robot, "Save Count");
-		waitForDialogHidden(robot, "Expected Question Count");
-
-		// The active capture object is refreshed immediately rather than retaining the
-		// old null planning value until another Exam open.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> Integer.valueOf(12).equals(examMetadataPane().getBooklet().getExpectedQuestionCount()));
-		assertEquals(Integer.valueOf(12), examMetadataPane().getBooklet().getExpectedQuestionCount());
-		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
-		ExamBooklet persistedBooklet = writer.findExamBooklets(activeBooklet.getExam()).stream()
-				.filter(booklet -> booklet.getId() == activeBooklet.getId()).findFirst().orElseThrow();
-
-		// Persistence, not the UI object, is authoritative for later completeness
-		// auditing and capture planning.
-		assertEquals(Integer.valueOf(12), persistedBooklet.getExpectedQuestionCount());
-
-		// Completing inspection returns to Exam Setup with the refreshed count visible.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, setupDialog::isShowing);
-		@SuppressWarnings("unchecked")
-		ListView<ExamBooklet> refreshedBooklets = (ListView<ExamBooklet>) setupDialog.getDialogPane()
-				.lookup("#exam-setup-booklets");
-		assertTrue(refreshedBooklets.getItems().stream().anyMatch(booklet -> booklet.getId() == activeBooklet.getId()
-				&& Integer.valueOf(12).equals(booklet.getExpectedQuestionCount())));
-		fireDialogButton(robot, "Close");
-	}
-
-	@Test
-	void bookletInspectionUsesViewerModeWithoutActivatingRegionCapture(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		ExamBooklet activeBeforeInspection = examMetadataPane().getBooklet();
-		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
-		MenuItem setupItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
-
-		// Exam Setup is modal, so schedule the action and leave the test thread free
-		// to operate the resulting controls.
-		Platform.runLater(setupItem::fire);
-		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, setupDialog::isShowing);
-		@SuppressWarnings("unchecked")
-		ListView<ExamBooklet> booklets = (ListView<ExamBooklet>) setupDialog.getDialogPane()
-				.lookup("#exam-setup-booklets");
-		assertFalse(booklets.getItems().isEmpty());
-
-		// Query the modal dialog directly so this workflow is independent of whichever
-		// JavaFX window TestFX currently treats as its lookup root.
-		robot.interact(() -> booklets.getSelectionModel().selectFirst());
-		Button inspectBooklet = (Button) setupDialog.getDialogPane().lookup("#exam-setup-inspect-booklet");
-		fireControl(robot, inspectBooklet);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !setupDialog.isShowing());
-		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
-
-		// Inspection must not silently replace the application's active capture
-		// booklet. It is review of persisted structure only.
-		assertEquals(activeBeforeInspection.getId(), examMetadataPane().getBooklet().getId());
-		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
-		assertFalse(selectionState.hasPendingSelection());
-
-		// Exercise a normal drag gesture against the inspected PDF. VIEWER mode must
-		// ignore it rather than publishing a Question-region selection.
-		dragRegionOnDisplayedPage(robot);
-		assertFalse(selectionState.hasPendingSelection());
-
-		// Restore the previous capture document for subsequent application cleanup.
-		robot.interact(pdfWorkspace()::closeViewerPdf);
-	}
-
-	@Test
 	void captureEntryPointsUseTaskBasedLabels(FxRobot robot) throws Exception {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 
@@ -398,25 +221,12 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, newMode);
 		assertTrue(newMode.isSelected());
 		assertFalse(importedMode.isSelected());
-		MenuItem examSetupItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+		MenuItem examAssetsItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
 				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
 
-		// Exam structure and source assets are reviewed before selecting a particular
-		// Question booklet for capture.
-		assertEquals("_Exam Setup / Assets...", examSetupItem.getText());
-		ExamSetupDialog setupDialog = field(application, "examSetupDialog", ExamSetupDialog.class);
-		assertEquals("Exam Setup / Asset Management", setupDialog.getTitle());
-		Button addExamButton = (Button) setupDialog.getDialogPane()
-				.lookupButton(setupDialog.getDialogPane().getButtonTypes().getFirst());
-		assertEquals("Add Exam / Booklet...", addExamButton.getText());
-		ExamImportDialog importDialog = field(application, "examImportDialog", ExamImportDialog.class);
-
-		// New Exam/booklet intake remains the authoritative import path but is a
-		// subordinate action of Exam Setup.
-		assertEquals("Add Exam / Booklet", importDialog.getTitle());
-		Button confirmButton = (Button) importDialog.getDialogPane()
-				.lookupButton(importDialog.getDialogPane().getButtonTypes().getFirst());
-		assertEquals("Add and Inspect", confirmButton.getText());
+		// Exam management now enters the main-window workspace directly. The former
+		// modal Exam Setup / Add Exam wording is no longer part of the normal workflow.
+		assertEquals("_Exam / Assets...", examAssetsItem.getText());
 	}
 
 	@Test
@@ -583,6 +393,22 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(duplicateStatus.isVisible());
 		assertFalse(duplicateStatus.isManaged());
+	}
+
+	@Test
+	void examMenuRoutesDirectlyToExamAssetsWorkspace(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		MenuBar menuBar = lookup(robot, ".menu-bar", MenuBar.class);
+		MenuItem examAssetsItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
+		assertEquals("_Exam / Assets...", examAssetsItem.getText());
+
+		// Menu activation must switch the existing main-window host rather than opening
+		// the superseded modal Exam Setup workflow.
+		robot.interact(examAssetsItem::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+		assertTrue(robot.lookup("#workspace-mode-host").tryQuery().isPresent());
 	}
 
 	@Test

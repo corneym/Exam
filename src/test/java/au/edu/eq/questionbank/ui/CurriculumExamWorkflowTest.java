@@ -50,6 +50,7 @@ import javafx.scene.control.DialogPane;
 import javafx.scene.control.ListView;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
 import javafx.stage.Stage;
 
@@ -390,124 +391,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void externalIdenticalExamPdfIsRejectedWhenPersistedMatchIsAmbiguous(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		ExamBooklet original = examMetadataPane().getBooklet();
-		assertNotNull(original);
-		PdfStore pdfStore = new PdfStore(pdfDataRoot);
-		Path firstStoredPdf = pdfStore.resolve(original.getSourceDocument().getRelativePath());
-		assertTrue(Files.isRegularFile(firstStoredPdf));
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		SqliteExamWriter writer = new SqliteExamWriter(database);
-
-		// Persist a second booklet backed by a different managed source file whose
-		// bytes are deliberately identical to the first booklet's PDF.
-		Path secondStoredPdf = firstStoredPdf.getParent().resolve("byte-identical-second.pdf");
-		Files.copy(firstStoredPdf, secondStoredPdf);
-		String secondRelativePath = pdfDataRoot.relativize(secondStoredPdf).toString();
-		var secondSource = writer.insertSourceDocument(secondRelativePath);
-		var secondBooklet = writer.insertExamBooklet(original.getExam(), secondSource, "Paper 2");
-		assertTrue(secondBooklet.getId() != original.getId());
-		assertEquals(2, writer.findAllExamBooklets().size());
-
-		// This third file is outside the managed store and has a completely
-		// unrelated filename. It is byte-identical to both persisted sources.
-		Path externalCopy = databasePath.getParent().resolve("ambiguous-external-copy.pdf");
-		Files.copy(firstStoredPdf, externalCopy);
-		assertFalse(externalCopy.startsWith(pdfDataRoot));
-		WaitForAsyncUtils.asyncFx(() -> {
-			examMetadataPane().beginImport();
-			examImportDialog().show();
-		}).get();
-
-		// stageExamPdf shows a modal error for ambiguity, so start it asynchronously
-		// rather than waiting for the call itself to return.
-		Platform.runLater(() -> stageExamPdfForTest(externalCopy));
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> robot
-				.lookup("Selected PDF matches more than one persisted exam booklet.").tryQuery().isPresent());
-
-		// Ambiguity must be reported rather than resolved by filename, insertion
-		// order or any other arbitrary choice.
-		assertTrue(robot.lookup("Exam details could not be saved.").tryQuery().isPresent());
-		fireDialogButton(robot, "OK");
-
-		// Rejection must not create another ExamBooklet or alter either existing
-		// persisted relationship.
-		List<ExamBooklet> persisted = writer.findAllExamBooklets();
-		assertEquals(2, persisted.size());
-		assertTrue(persisted.stream().anyMatch(booklet -> booklet.getId() == original.getId()));
-		assertTrue(persisted.stream().anyMatch(booklet -> booklet.getId() == secondBooklet.getId()));
-
-		// The failed selection must not remain staged for confirmation.
-		Path pendingPdfPath = field(examMetadataPane(), "pendingPdfPath", Path.class);
-		ExamBooklet pendingKnownBooklet = field(examMetadataPane(), "pendingKnownBooklet", ExamBooklet.class);
-		assertNull(pendingPdfPath);
-		assertNull(pendingKnownBooklet);
-		fireControl(robot, "#cancel-exam-import");
-		WaitForAsyncUtils.waitForFxEvents();
-	}
-
-	@Test
-	void externalIdenticalExamPdfReusesPersistedBooklet(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		ExamBooklet original = examMetadataPane().getBooklet();
-		assertNotNull(original);
-
-		// This fixture was imported through the normal v16 workflow, so external-copy
-		// recognition should exercise persisted hash identity rather than the legacy
-		// byte-comparison fallback.
-		assertNotNull(original.getSourceDocument().getContentSha256());
-		Path storedPdf = new PdfStore(pdfDataRoot).resolve(original.getSourceDocument().getRelativePath());
-		assertTrue(Files.isRegularFile(storedPdf));
-
-		// Use a different filename outside the managed PDF root. Recognition must
-		// therefore come from byte identity rather than filename or directory names.
-		Path externalCopy = databasePath.getParent().resolve("completely-different-name.pdf");
-		Files.copy(storedPdf, externalCopy);
-		assertFalse(externalCopy.startsWith(pdfDataRoot));
-		WaitForAsyncUtils.asyncFx(() -> {
-			examMetadataPane().beginImport();
-			examImportDialog().show();
-		}).get();
-		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(externalCopy)).get();
-		ComboBox<Subject> subject = comboBox(robot, "#exam-subject");
-		ComboBox<String> provider = comboBox(robot, "#exam-provider");
-		ComboBox<Integer> year = comboBox(robot, "#exam-year");
-		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
-		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
-
-		// The differently named external copy must resolve to the metadata already
-		// owned by the byte-identical persisted source document.
-		assertEquals(original.getExam().getSubject().getId(), subject.getValue().getId());
-		assertEquals(original.getExam().getProvider().getName(), provider.getValue());
-		assertEquals(original.getExam().getYear(), year.getValue());
-		assertEquals(original.getExam().getName(), assessment.getValue());
-		assertEquals(original.getName(), booklet.getValue());
-		assertTrue(subject.isDisabled());
-		assertTrue(provider.isDisabled());
-		assertTrue(year.isDisabled());
-		assertTrue(assessment.isDisabled());
-		assertTrue(booklet.isDisabled());
-		fireControl(robot, "#confirm-exam-details");
-		WaitForAsyncUtils.waitForFxEvents();
-		ExamBooklet reopened = examMetadataPane().getBooklet();
-		assertNotNull(reopened);
-
-		// Reopening an external identical copy must activate the original persisted
-		// booklet rather than create a duplicate Exam, SourceDocument or Booklet.
-		assertEquals(original.getExam().getId(), reopened.getExam().getId());
-		assertEquals(original.getId(), reopened.getId());
-		assertEquals(original.getSourceDocument().getId(), reopened.getSourceDocument().getId());
-		assertEquals(original.getSourceDocument().getRelativePath(), reopened.getSourceDocument().getRelativePath());
-		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
-		assertEquals(1, writer.findAllExamBooklets().size());
-
-		// Confirmation opens the authoritative managed source rather than changing
-		// persistence to point at the external copy.
-		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
-	}
-
-	@Test
 	void importedExamPdfUsesSubjectProviderYearHierarchy(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Path expectedPath = pdfDataRoot.resolve("Chemistry").resolve("QCAA").resolve("2024")
@@ -530,43 +413,25 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		long originalExamId = original.getExam().getId();
 		long originalBookletId = original.getId();
 		long originalSourceDocumentId = original.getSourceDocument().getId();
-		Path storedPdf = new PdfStore(pdfDataRoot).resolve(original.getSourceDocument().getRelativePath());
-		assertTrue(Files.isRegularFile(storedPdf));
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		assertEquals(1, writer.findAllExamBooklets().size());
 
-		// Start another Open Exam workflow and select the PDF that persistence
-		// already identifies as this booklet.
-		WaitForAsyncUtils.asyncFx(() -> {
-			examMetadataPane().beginImport();
-			examImportDialog().show();
-		}).get();
-		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
-		ComboBox<Subject> subject = comboBox(robot, "#exam-subject");
-		ComboBox<String> provider = comboBox(robot, "#exam-provider");
-		ComboBox<Integer> year = comboBox(robot, "#exam-year");
-		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
-		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
-
-		// Recognition must populate the persisted metadata without requiring the
-		// user to re-enter or infer anything from the filename.
-		assertEquals(original.getExam().getSubject().getId(), subject.getValue().getId());
-		assertEquals(original.getExam().getProvider().getName(), provider.getValue());
-		assertEquals(original.getExam().getYear(), year.getValue());
-		assertEquals(original.getExam().getName(), assessment.getValue());
-		assertEquals(original.getName(), booklet.getValue());
-
-		// Existing metadata is authoritative in this workflow. Corrections belong
-		// to Edit Exam rather than creating a second hierarchy for the same source.
-		assertTrue(subject.isDisabled());
-		assertTrue(provider.isDisabled());
-		assertTrue(year.isDisabled());
-		assertTrue(assessment.isDisabled());
-		assertTrue(booklet.isDisabled());
-		fireControl(robot, "#confirm-exam-details");
+		// The current normal workflow reopens a persisted booklet through Exam/Assets
+		// rather than by selecting its managed PDF through the retired import dialog.
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		RadioButton selectedBooklet = lookup(robot, "#exam-assets-question-select-" + originalBookletId,
+				RadioButton.class);
+		assertTrue(selectedBooklet.isSelected());
+		Button useSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+		assertFalse(useSelected.isDisabled());
+		fireControl(robot, useSelected);
 		WaitForAsyncUtils.waitForFxEvents();
 		ExamBooklet reopened = examMetadataPane().getBooklet();
 		assertNotNull(reopened);
 
-		// Opening the known PDF must retain every persistent identity.
+		// Activating an existing Exam/Assets row must retain every authoritative
+		// persistent identity rather than importing another Exam, booklet or source.
 		assertEquals(originalExamId, reopened.getExam().getId());
 		assertEquals(originalBookletId, reopened.getId());
 		assertEquals(originalSourceDocumentId, reopened.getSourceDocument().getId());
@@ -574,6 +439,11 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(original.getExam().getYear(), reopened.getExam().getYear());
 		assertEquals(original.getExam().getName(), reopened.getExam().getName());
 		assertEquals(original.getName(), reopened.getName());
+
+		// A fresh repository read proves capture activation did not manufacture a
+		// duplicate persisted hierarchy.
+		assertEquals(1, writer.findAllExamBooklets().size());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
 	}
 
 	@Test
@@ -583,12 +453,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertNotNull(originalBooklet);
 
 		// Existing Questions must retain their own persisted response type when the
-		// booklet itself later acquires format metadata.
+		// migrated booklet later acquires explicit format metadata.
 		Question existingQuestion = captureQuestion(robot, "OLD1");
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, existingQuestion.getResponseType());
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 
-		// Simulate a booklet migrated from a schema that had no question-format field.
+		// Simulate a booklet migrated from a schema that had no Question-format field.
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						UPDATE exam_booklets
@@ -603,50 +473,48 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
 		assertNotNull(legacyBooklet);
 		assertEquals(ExamBookletQuestionFormat.UNSPECIFIED, legacyBooklet.getQuestionFormat());
-		Path storedPdf = new PdfStore(pdfDataRoot).resolve(legacyBooklet.getSourceDocument().getRelativePath());
-		WaitForAsyncUtils.asyncFx(() -> {
-			examMetadataPane().beginImport();
-			examImportDialog().show();
-		}).get();
-		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
-		ComboBox<ExamBookletQuestionFormat> format = comboBox(robot, "#exam-question-format");
 
-		// Migration-only UNSPECIFIED state is visible only as missing metadata, never
-		// as
-		// a normal user-selectable format.
-		assertFalse(format.getItems().contains(ExamBookletQuestionFormat.UNSPECIFIED));
-		assertNull(format.getValue());
-		assertTrue(format.isDisabled());
-		Button confirm = lookup(robot, "#confirm-exam-details", Button.class);
+		// Exam/Assets is now the authoritative place for resolving migrated structural
+		// metadata such as an unspecified Question-booklet format.
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		long bookletId = originalBooklet.getId();
+		RadioButton multipleChoice = lookup(robot, "#exam-assets-question-format-mcq-" + bookletId, RadioButton.class);
+		RadioButton writtenResponse = lookup(robot, "#exam-assets-question-format-written-" + bookletId,
+				RadioButton.class);
+		RadioButton both = lookup(robot, "#exam-assets-question-format-both-" + bookletId, RadioButton.class);
+		Button edit = lookup(robot, "#exam-assets-question-edit-" + bookletId, Button.class);
+		Button save = lookup(robot, "#exam-assets-question-save-" + bookletId, Button.class);
 
-		// Confirmation opens the modal format decision before the booklet becomes
-		// active.
-		Platform.runLater(confirm::fire);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("Question format has not been recorded for this booklet.").tryQuery().isPresent());
+		// UNSPECIFIED is migration-only state. Exam/Assets represents it as no selected
+		// normal format rather than exposing UNSPECIFIED as a user choice.
+		assertFalse(multipleChoice.isSelected());
+		assertFalse(writtenResponse.isSelected());
+		assertFalse(both.isSelected());
+		assertTrue(multipleChoice.isDisabled());
+		assertTrue(writtenResponse.isDisabled());
+		assertTrue(both.isDisabled());
+		fireControl(robot, edit);
+		assertFalse(both.isDisabled());
 
-		// The current dialog defaults to Both/Mixed; accepting it is sufficient to
-		// prove
-		// the decision is persisted during opening rather than during Question save.
-		fireDialogButton(robot, "OK");
-		ExamBooklet reopened = examMetadataPane().getBooklet();
-		assertNotNull(reopened);
-		assertEquals(originalBooklet.getId(), reopened.getId());
-		assertEquals(ExamBookletQuestionFormat.MIXED, reopened.getQuestionFormat());
-
-		// The resolved booklet format is shown as authoritative metadata after opening.
-		assertEquals(ExamBookletQuestionFormat.MIXED, format.getValue());
-		assertTrue(format.isDisabled());
+		// A migrated booklet cannot be saved from Edit mode until a real supported
+		// Question format has been deliberately selected.
+		assertTrue(save.isDisabled());
+		fireControl(robot, both);
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitForFxEvents();
 		ExamBooklet persisted = writer
 				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
-
-		// Re-reading SQLite proves the format was persisted during Open Exam.
 		assertNotNull(persisted);
+
+		// Both in the UI maps to MIXED in authoritative persistence.
 		assertEquals(ExamBookletQuestionFormat.MIXED, persisted.getQuestionFormat());
 		Question reloadedExisting = new SqliteQuestionRepository(database).findById(existingQuestion.getId())
 				.orElseThrow();
 
-		// Booklet classification must never rewrite existing Question response types.
+		// Correcting booklet structure must never rewrite an existing Question's
+		// independently persisted response type.
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedExisting.getResponseType());
 	}
 

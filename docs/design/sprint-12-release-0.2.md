@@ -217,13 +217,13 @@ Changing Subject changes the corpus and work being displayed. Existing
 safeguards that prevent Subject changes while unsaved capture work is pending
 must remain.
 
-### 3.8 Legacy import and Exam Setup share one authoritative Exam model
+### 3.8 Legacy import and Exam/Assets share one authoritative Exam model
 
 Legacy import is an intake source, not a separate long-term Exam-management
 model.
 
-Legacy-imported Exams and booklets must feed the same Exam Setup / Asset
-Management workflow used for newly entered Exams.
+Legacy-imported Exams and booklets feed the same persisted Exam, Question
+booklet and Answer-file model used by the main-window Exam/Assets workspace.
 
 Reliable legacy metadata may pre-populate known Exam structure, including:
 
@@ -238,18 +238,28 @@ Reliable legacy metadata may pre-populate known Exam structure, including:
 - existing MCQ Answer letters where supplied.
 
 Legacy Question records provide evidence about Questions already encountered.
-They must not establish the authoritative expected top-level Question count.
+They do not establish the authoritative expected top-level Question count.
 
 For example, finding 19 distinct top-level Questions in a legacy workbook does
-not prove that the original booklet contained only 19 Questions. The expected
-count is confirmed separately against the source Question booklet.
+not prove that the original booklet contained only 19 Questions. Expected
+Questions is reviewed separately against the source Question booklet through
+Exam/Assets.
 
 Legacy-imported Exams remain `ACTIVE` until the user deliberately reviews and
 declares their structure complete.
 
-Question PDFs, Answer/marking assets, booklet assignments, expected Question
-counts, booklet format and AnswerFile capability metadata are reviewed through
-the ordinary Exam Setup workflow.
+Question PDFs, Answer/marking assets, booklet assignments, Expected Questions,
+booklet format and AnswerFile capability metadata are reviewed through the
+ordinary Exam/Assets workspace.
+
+Legacy import and interactive Exam/Assets creation therefore converge on the
+same authoritative SQLite hierarchy rather than maintaining parallel Exam
+models.
+
+A legacy workbook identifies a Question booklet using the metadata available in
+that historical format. Where that information is insufficient to distinguish
+multiple persisted Exams, import must reject the ambiguous match rather than
+guess which Exam was intended.
 
 ## 4. Slice 1 --- Exam setup, assets, hashes and safe correction
 
@@ -259,63 +269,49 @@ Establish the complete Exam-level source context required before Question
 capture, including expected Question structure, managed source assets and safe
 correction of incorrectly selected assets.
 
-### 4.2 Exam setup / asset-management dialog
+### 4.2 Main-window Exam/Assets workspace
 
-Starting new Question capture from a blank state opens an Exam setup /
-asset-management workflow.
+Exam management is performed in the main application window rather than through
+the former modal Exam Setup / Add Exam workflow.
 
-The workflow supports:
+`Change Exam` in Capture mode and `Exam -> Exam / Assets...` both switch the
+left-hand workspace to Exam/Assets while retaining the authoritative Working
+Subject above it and reusing the existing PDF workspace on the right.
 
-- selecting an existing Exam;
-- creating a new Exam or Question booklet;
-- reviewing all Question booklets for that Exam;
-- reviewing all Answer/marking PDFs for that Exam;
-- inspecting an existing Question booklet;
-- selecting the Question booklet to use for capture;
-- returning later to correct or extend an active Exam.
+The workspace supports:
 
-The dialog is an Exam-level management surface rather than a one-PDF import
-form.
+- selecting an existing Exam for the Working Subject;
+- creating a new Exam without another Subject selector;
+- correcting Provider, Year and Assessment;
+- reviewing Question booklets;
+- reviewing Answer/marking PDFs;
+- adding Question and Answer assets;
+- inspecting Question and Answer PDFs in the shared read-only viewer;
+- recording Question-booklet format and Expected Questions;
+- assigning zero or one AnswerFile to each Question booklet;
+- allowing one AnswerFile to serve several Question booklets;
+- selecting a Question booklet independently of the current capture booklet;
+- explicitly activating the selected booklet through `Use Selected Booklet for Capture`.
 
-Implementation status as at 29 September 2026:
+New Exam creation persists Provider, Year and Assessment first. Question and
+Answer assets are then added to that authoritative persisted Exam.
 
-`Exam Setup / Assets...` is the application-level entry point for Exam
-management.
+A new Question booklet imports its source PDF into managed storage, records the
+managed source-document hash, and opens the selected source immediately in
+read-only viewer mode. This allows Expected Questions to be entered while the
+booklet is being inspected.
 
-The setup surface is scoped to the current Working Subject and lists every
-persisted Exam for that Subject, including Exams that do not yet have source
-assets.
+Saving the booklet replaces the temporary source preview with inspection of the
+authoritative managed PDF. Inspection itself does not change the active capture
+booklet.
 
-For the selected Exam it shows:
+`Use Selected Booklet for Capture` is the explicit transition from Exam
+management to Question Capture. It activates the persisted booklet, opens its
+managed Question PDF, refreshes capture state and restores the Question Capture
+workspace.
 
-- Exam lifecycle state;
-- expected versus available Question-booklet counts;
-- expected versus available Answer-file counts;
-- persisted Question booklets;
-- booklet Question format;
-- booklet expected top-level Question count when known;
-- persisted Answer/marking assets;
-- booklet assignments for each AnswerFile.
-
-A shared AnswerFile is shown once while identifying each booklet that currently
-uses it.
-
-The user may either:
-
-```
-Inspect / Set Expected Questions...
-Open Selected Booklet for Capture
-Add Exam / Booklet...
-```
-
-Selecting a persisted booklet for capture resolves its authoritative managed
-Question PDF and activates the existing ExamBooklet. No duplicate Exam,
-booklet or SourceDocument record is created.
-New Exam/booklet intake continues to use the existing authoritative import
-workflow, but it is now subordinate to Exam Setup rather than being the main
-Exam-management surface.
-After a newly added booklet is persisted it enters booklet inspection before
-Question capture begins.
+The former modal `ExamSetupDialog` / `ExamImportDialog` path is no longer part
+of normal application workflow.
 
 ### 4.3 Question booklet setup
 For each Question booklet the application records:
@@ -345,43 +341,38 @@ Exam must be reactivated before that value can be changed.
 
 ### 4.4 Preview-only booklet inspection
 
-Question-booklet inspection uses the existing shared PDF workspace in `VIEWER` mode.
+Question-booklet inspection uses the existing shared PDF workspace in `VIEWER`
+mode.
 
 Inspection provides:
 
 - normal page navigation;
-- review of the complete managed Question booklet;
+- review of the complete Question booklet;
 - no Question-region selection;
 - no Question-content creation;
-- no change to the active capture booklet merely because another booklet is being inspected.
+- no change to the active capture booklet merely because another booklet is
+  being inspected.
 
-Exam Setup opens the authoritative managed PDF belonging to the selected `ExamBooklet`; an arbitrary external copy is not used for inspection.
+For an existing persisted booklet, Exam/Assets opens the authoritative managed
+PDF belonging to that `ExamBooklet`.
 
-Unsaved Question, Shared Context or Answer capture work blocks entry into inspection because changing the displayed PDF would otherwise invalidate transient capture state.
+When adding a new Question booklet, the user-selected source PDF is previewed
+immediately before persistence so the booklet can be visually reviewed while
+Question format and Expected Questions are entered.
 
-Booklet inspection provides an explicit `Finish Inspection` action beside the PDF navigation controls. The user does not need to discover the generic `File -> Close PDF` command to complete the workflow.
+After Save, the managed persisted copy becomes authoritative and remains
+available for inspection through the same shared viewer.
 
-`Finish Inspection` is available only for the Exam-booklet inspection workflow. Ordinary PDFs opened in read-only viewer mode do not display this action.
+Expected Questions is maintained directly as Question-booklet metadata in
+Exam/Assets. It records the number of numbered top-level Questions, so multipart
+parts such as `21a`, `21b` and `21c` represent one top-level Question.
 
-Completing inspection closes the read-only booklet view and opens an `Expected Question Count` step. The user is explicitly reminded that multipart parts such as `21a`, `21b` and `21c` count as one top-level Question.
+Expected Questions may remain unknown until the source booklet has been
+reviewed. Legacy Question rows must not be used to infer that authoritative
+count.
 
-The count must be a positive whole number. Saving it uses the existing `SqliteExamWriter.updateExamBookletPlanning(...)` structural-planning boundary.
-
-If the inspected booklet is also the active capture booklet, its in-memory planning metadata is refreshed immediately after persistence.
-
-After the count step is completed or cancelled, the application returns to Exam Setup with the refreshed booklet information visible.
-
-A previously recorded expected count is pre-populated during later inspection, allowing the value to be reviewed or corrected.
-
-TestFX regressions verify that:
-
-- inspection uses read-only `VIEWER` mode;
-- PDF dragging during inspection does not create a pending capture selection;
-- existing booklets can have expected counts recorded retrospectively;
-- saved counts are persisted and reflected in the active booklet;
-- newly added booklets enter inspection before capture;
-- `Finish Inspection` is available during booklet inspection;
-- ordinary read-only PDF viewing does not expose the inspection-only completion action.
+Inspection remains separate from capture activation. Only `Use Selected Booklet
+for Capture` changes the application's active capture booklet.
 
 ### 4.5 Expected-but-not-yet-available assets
 
@@ -418,7 +409,7 @@ sufficiently to establish them. When supplied:
 Available asset counts are derived independently from actual persisted
 `ExamBooklet` and `AnswerFile` rows.
 
-This allows later Exam Setup and Corpus Dashboard workflows to distinguish, for
+This allows later Exam/Assets and Corpus Dashboard workflows to distinguish, for
 example:
 
 ```text
@@ -468,7 +459,7 @@ work.
 
 ### 4.7 Answer/marking assets
 
-The Exam setup workflow must show the Exam's Answer/marking PDFs and their
+The Exam/Assets workflow must show the Exam's Answer/marking PDFs and their
 booklet assignments.
 
 One `AnswerFile` may continue to serve multiple Question booklets where that is
@@ -563,7 +554,7 @@ older missing source-document hash without invalidating existing capture.
 
 The current user-facing action is `Replace Active Question PDF...` on the Exam
 menu. The replacement service is UI-independent so the same operation can be
-moved into the planned Exam Setup / Asset Management surface without changing
+moved into the Exam/Assets workspace without changing
 its persistence semantics.
 
 ### 4.9 Safe replacement of a wrong Answer/marking PDF
@@ -729,7 +720,7 @@ WORKING SUBJECT
 
 ACTIVE EXAM / BOOKLET
     QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]
-    [Change Exam / Assets...]
+    [Change Exam]
 
     +--------------------------------------+
     | Classification                       |
@@ -750,8 +741,8 @@ Question classification.
 shows the currently active persisted Exam and booklet, including the Exam
 lifecycle state.
 
-`Change Exam / Assets...` returns directly to the ordinary Exam Setup /
-asset-management workflow.
+`Change Exam` switches the left side of the main window directly to the
+Exam/Assets workspace. It does not open the retired modal Exam Setup workflow.
 
 `Classification`, `Question` and `Answer` remain separate bordered panes. They
 are visually grouped inside a larger, unobtrusive bordered container without
@@ -1093,7 +1084,7 @@ Examples:
 
 ``` text
 Missing/wrong Exam asset
-    -> Exam Setup / Asset Management
+    -> Exam/Assets
 
 Missing Question content
     -> Question Capture
