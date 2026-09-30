@@ -479,6 +479,10 @@ public class CurriculumSelectionModel {
 	public record SubjectSnapshot(Subject subject, List<SyllabusVersion> syllabusVersions,
 			SyllabusVersion currentSyllabusVersion, Map<Long, List<CurriculumNode>> unitsBySyllabusVersionId) {
 
+		/**
+		 * Validates and freezes the persistence data carried across the
+		 * worker-to-JavaFX boundary.
+		 */
 		public SubjectSnapshot {
 			if (subject == null) {
 				throw new NullPointerException("subject");

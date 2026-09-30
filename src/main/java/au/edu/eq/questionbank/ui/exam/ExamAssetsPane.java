@@ -151,21 +151,19 @@ public final class ExamAssetsPane extends VBox {
 	 * @param answerBookletSourceChooser               chooses a source PDF for a
 	 *                                                 new Answer booklet
 	 * @param answerBookletCreationHandler             imports and persists the new
-	 *                                                 Answer asset * @throws
-	 *                                                 NullPointerException if any
-	 *                                                 argument is {@code null}
+	 *                                                 Answer asset
 	 * @param questionBookletSourceChooser             chooses a source PDF for a
 	 *                                                 new Question booklet
-	 * @param questionBookletCreationHandler           imports and persists a new
-	 *                                                 Question booklet * @param
-	 *                                                 questionBookletSourcePreviewHandler
-	 *                                                 opens a selected,
+	 * @param questionBookletSourcePreviewHandler      opens a selected,
 	 *                                                 not-yet-persisted Question
 	 *                                                 PDF for read-only inspection
 	 * @param questionBookletSourcePreviewCloseHandler closes the temporary source
 	 *                                                 preview and restores the
 	 *                                                 previous PDF workspace
 	 *                                                 document
+	 * @param questionBookletCreationHandler           imports and persists a new
+	 *                                                 Question booklet
+	 * @throws NullPointerException if any argument is {@code null}
 	 */
 	public ExamAssetsPane(SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter,
 			ExamMetadataOptionsRepository optionsRepository, ExamCorrectionHandler correctionHandler,

@@ -235,6 +235,12 @@ Working Subject requires no replacement persistence load. A current-generation
 persistence failure leaves the accepted Subject authoritative while dependent
 state remains cleared and the failure is surfaced to the user.
 
+An accepted Working Subject change also clears the PDF workspace immediately so
+an Exam, Answer or standalone viewer document from the previous Subject cannot
+remain visible as current context. If a booklet-activation workflow has already
+opened the replacement Exam PDF for the newly accepted Subject, that new
+document is retained rather than cleared.
+
 Curriculum Subject snapshots include syllabus versions and the root Units for
 each available version. Switching between current and historical syllabus
 versions after the Subject snapshot has loaded therefore does not return to

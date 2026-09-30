@@ -220,20 +220,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		assertNotNull(examMetadataPane().getBooklet());
-		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-		selectSubject(robot, "Physics");
-		WaitForAsyncUtils.waitForFxEvents();
-		assertNull(examMetadataPane().getBooklet());
-		assertEquals("Physics", subjects.getValue().getName());
-	}
-
-	@Test
-	void changingSubjectInvalidatesPreviouslySetExamMetadata(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		assertNotNull(examMetadataPane().getBooklet());
 		PdfWorkspacePane workspace = pdfWorkspace();
-		ImageView pageView = lookup(robot, "#pdf-page-view", ImageView.class);
-		Label pageLabel = lookup(robot, "#pdf-page-label", Label.class);
+		var pageView = lookup(robot, "#pdf-page-view", javafx.scene.image.ImageView.class);
+		var pageLabel = lookup(robot, "#pdf-page-label", javafx.scene.control.Label.class);
 		assertTrue(workspace.hasExamPdf());
 		assertNotNull(pageView.getImage());
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
