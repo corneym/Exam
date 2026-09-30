@@ -336,6 +336,18 @@ correction of incorrectly selected assets.
 Exam management is performed in the main application window rather than through
 the former modal Exam Setup / Add Exam workflow.
 
+Exam identity correction may relocate managed Question and Answer PDFs when
+Provider or Year changes the authoritative storage path.
+
+After a successful relocation and persistence commit, obsolete empty source
+directories are pruned upwards within the configured managed PDF root. Pruning
+stops at the first non-empty directory and never removes the managed root.
+Symbolic-link components are not traversed during cleanup.
+
+Directory pruning is filesystem housekeeping rather than authoritative Exam
+state. Failure to remove an obsolete empty directory therefore does not convert
+an otherwise successfully committed Exam correction into a failed correction.
+
 `Change Exam` in Capture mode and `Exam -> Exam / Assets...` both switch the
 left-hand workspace to Exam/Assets while retaining the authoritative Working
 Subject above it and reusing the existing PDF workspace on the right.
@@ -1123,6 +1135,13 @@ Question content.
 
 The problem terminology should therefore move from "missing Question source
 region" toward "missing Question content" where appropriate.
+
+Implementation now treats the authoritative ordered Question content-parts list
+as the body-content test rather than using the legacy PDF-region projection.
+An image-only Question therefore counts as having Question content. A Question
+whose PDF source was explicitly invalidated still reports missing Question
+content until the required source recapture is completed, even when independent
+clipboard-image content remains.
 
 ### 7.6 Operational UI
 

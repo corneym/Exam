@@ -5,9 +5,10 @@ package au.edu.eq.questionbank.service.audit;
  */
 public enum QuestionCorpusProblem {
 	/**
-	 * The Question has no captured source region.
+	 * The Question has no authoritative content, or required PDF source recapture
+	 * remains outstanding.
 	 */
-	MISSING_QUESTION_SOURCE,
+	MISSING_QUESTION_CONTENT,
 	/**
 	 * The Question's required Answer representation is incomplete.
 	 */

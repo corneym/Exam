@@ -329,7 +329,7 @@ final class QuestionCorpusAuditPane extends VBox {
 
 	private String problemLabel(QuestionCorpusProblem problem) {
 		return switch (problem) {
-		case MISSING_QUESTION_SOURCE -> "Missing question source";
+		case MISSING_QUESTION_CONTENT -> "Missing question content";
 		case MISSING_ANSWER -> "Missing answer";
 		case UNRESOLVED_SHARED_CONTEXT -> "Unresolved shared context";
 		case UNKNOWN_RESPONSE_TYPE -> "Unknown response type";
@@ -397,10 +397,10 @@ final class QuestionCorpusAuditPane extends VBox {
 	private String summaryText(QuestionCorpusSummary summary) {
 		return String.format(
 				"Total: %d    Complete: %d    Incomplete: %d    "
-						+ "Missing question source: %d    Missing answer: %d    "
+						+ "Missing question content: %d    Missing answer: %d    "
 						+ "Unresolved shared context: %d    Unknown response type: %d",
 				summary.totalQuestions(), summary.completeQuestions(), summary.incompleteQuestions(),
-				summary.missingQuestionSource(), summary.missingAnswer(), summary.unresolvedSharedContext(),
+				summary.missingQuestionContent(), summary.missingAnswer(), summary.unresolvedSharedContext(),
 				summary.unknownResponseType());
 	}
 

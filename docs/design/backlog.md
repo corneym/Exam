@@ -49,14 +49,6 @@ a genuine retrieval need.
 The Sprint 11 two-column Search layout is already complete. This backlog item is
 about retrieval semantics, not another layout redesign.
 
-### Remove empty managed directories after Exam relocation
-
-When Exam/provider/year correction moves managed source files, prune empty
-managed directories left behind.
-
-Work upwards only within the configured managed PDF root and stop at the first
-non-empty or protected directory. Never delete outside the managed root.
-
 ## Planned future capability
 
 These items are more concrete than "some day/maybe", but are not active Sprint

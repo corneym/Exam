@@ -5,34 +5,38 @@ import java.util.Set;
 /**
  * Completeness state for one Question in the corpus.
  *
- * @param questionSourceCaptured whether at least one Question source region
- *                               exists
- * @param responseTypeResolved   whether the response type is authoritative
- * @param answerComplete         whether the required Answer representation
- *                               exists
- * @param sharedContextResolved  whether any required shared context has been
- *                               resolved
- * @param problems               current corpus problems
+ * @param questionContentCaptured whether authoritative Question content is
+ *                                available and no required source recapture
+ *                                remains
+ * @param responseTypeResolved    whether the response type is authoritative
+ * @param answerComplete          whether the required Answer representation
+ *                                exists
+ * @param sharedContextResolved   whether any required shared context has been
+ *                                resolved
+ * @param problems                current corpus problems
  */
-public record QuestionCorpusStatus(boolean questionSourceCaptured, boolean responseTypeResolved, boolean answerComplete,
-		boolean sharedContextResolved, Set<QuestionCorpusProblem> problems) {
+public record QuestionCorpusStatus(boolean questionContentCaptured, boolean responseTypeResolved,
+		boolean answerComplete, boolean sharedContextResolved, Set<QuestionCorpusProblem> problems) {
 
 	/**
 	 * Creates a completeness snapshot with an immutable set of reported problems.
 	 *
-	 * @param questionSourceCaptured whether at least one Question source region
-	 *                               exists
-	 * @param responseTypeResolved   whether the response type is authoritative
-	 * @param answerComplete         whether the required Answer representation
-	 *                               exists
-	 * @param sharedContextResolved  whether any required shared context has been
-	 *                               resolved
-	 * @param problems               current corpus problems
+	 * @param questionContentCaptured whether authoritative Question content is
+	 *                                available and no required source recapture
+	 *                                remains
+	 * @param responseTypeResolved    whether the response type is authoritative
+	 * @param answerComplete          whether the required Answer representation
+	 *                                exists
+	 * @param sharedContextResolved   whether any required shared context has been
+	 *                                resolved
+	 * @param problems                current corpus problems
 	 */
 	public QuestionCorpusStatus {
 		if (problems == null) {
 			throw new NullPointerException("problems");
 		}
+
+		// Status snapshots must not expose mutable caller-owned problem sets.
 		problems = Set.copyOf(problems);
 	}
 

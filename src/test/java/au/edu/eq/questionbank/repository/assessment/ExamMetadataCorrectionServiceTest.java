@@ -78,6 +78,7 @@ class ExamMetadataCorrectionServiceTest {
 	void relocatesBookletAndAnswerFilesAndUpdatesPersistedPaths() throws Exception {
 		Fixture fixture = createFixture("relocate.db");
 		Path oldDirectory = fixture.pdfRoot().resolve("Chemistry").resolve("2022 QCAA").resolve("2022");
+		Path oldProviderDirectory = oldDirectory.getParent();
 		Path examPdf = oldDirectory.resolve("paper1.pdf");
 		Path answerPdf = oldDirectory.resolve("answers.pdf");
 		Files.createDirectories(oldDirectory);
@@ -95,6 +96,11 @@ class ExamMetadataCorrectionServiceTest {
 		Path correctedAnswerPdf = correctedDirectory.resolve("answers.pdf");
 		assertFalse(Files.exists(examPdf));
 		assertFalse(Files.exists(answerPdf));
+		// Relocation leaves no obsolete provider/year directory tree behind. Pruning
+		// stops at Chemistry because the corrected QCAA hierarchy now lives there.
+		assertFalse(Files.exists(oldDirectory));
+		assertFalse(Files.exists(oldProviderDirectory));
+		assertTrue(Files.isDirectory(fixture.pdfRoot().resolve("Chemistry")));
 		assertEquals("exam bytes", Files.readString(correctedExamPdf));
 		assertEquals("answer bytes", Files.readString(correctedAnswerPdf));
 		assertEquals(fixture.exam().getId(), result.exam().getId());
@@ -109,6 +115,38 @@ class ExamMetadataCorrectionServiceTest {
 		assertEquals(answerFile.getSourceDocument().getId(), correctedAnswerFile.getSourceDocument().getId());
 		assertEquals(fixture.pdfRoot().relativize(correctedAnswerPdf).toString(),
 				correctedAnswerFile.getSourceDocument().getRelativePath());
+	}
+
+	@Test
+	void relocationPruningStopsAtFirstNonEmptyDirectory() throws Exception {
+		Fixture fixture = createFixture("non-empty-source-directory.db");
+
+		Path oldDirectory = fixture.pdfRoot().resolve("Chemistry").resolve("2022 QCAA").resolve("2022");
+		Path oldPdf = oldDirectory.resolve("paper1.pdf");
+		Path retainedFile = oldDirectory.resolve("retain.txt");
+
+		Files.createDirectories(oldDirectory);
+		Files.writeString(oldPdf, "exam bytes");
+		Files.writeString(retainedFile, "unrelated managed-directory content");
+
+		SourceDocument sourceDocument = fixture.examWriter()
+				.insertSourceDocument(fixture.pdfRoot().relativize(oldPdf).toString());
+		fixture.examWriter().insertExamBooklet(fixture.exam(), sourceDocument, "Paper 1");
+
+		fixture.service().correct(fixture.exam(), "QCAA", 2022, "External Assessment");
+
+		Path correctedPdf = fixture.pdfRoot().resolve("Chemistry").resolve("QCAA").resolve("2022")
+				.resolve("paper1.pdf");
+
+		assertTrue(Files.exists(correctedPdf));
+		assertFalse(Files.exists(oldPdf));
+
+		// An unrelated entry makes the old year directory the pruning boundary.
+		// Neither that directory nor its ancestors may be removed.
+		assertTrue(Files.exists(retainedFile));
+		assertTrue(Files.isDirectory(oldDirectory));
+		assertTrue(Files.isDirectory(oldDirectory.getParent()));
+		assertTrue(Files.isDirectory(fixture.pdfRoot()));
 	}
 
 	private Fixture createFixture(String databaseName) throws Exception {

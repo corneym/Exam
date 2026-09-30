@@ -56,8 +56,8 @@ class QuestionCorpusAuditDialogTest {
 	}
 
 	@Test
-	void missingQuestionSourceRoutesToQuestionCaptureBeforeAnswer() {
-		QuestionCorpusWorkItem item = item(QuestionCorpusProblem.MISSING_QUESTION_SOURCE,
+	void missingQuestionContentRoutesToQuestionCaptureBeforeAnswer() {
+		QuestionCorpusWorkItem item = item(QuestionCorpusProblem.MISSING_QUESTION_CONTENT,
 				QuestionCorpusProblem.MISSING_ANSWER);
 		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.QUESTION,
 				QuestionCorpusAuditDialog.resolutionTarget(item));
@@ -66,7 +66,7 @@ class QuestionCorpusAuditDialogTest {
 	@Test
 	void unknownResponseTypeRoutesToMetadataFirst() {
 		QuestionCorpusWorkItem item = item(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE,
-				QuestionCorpusProblem.MISSING_QUESTION_SOURCE, QuestionCorpusProblem.MISSING_ANSWER);
+				QuestionCorpusProblem.MISSING_QUESTION_CONTENT, QuestionCorpusProblem.MISSING_ANSWER);
 		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.METADATA,
 				QuestionCorpusAuditDialog.resolutionTarget(item));
 	}
@@ -82,7 +82,7 @@ class QuestionCorpusAuditDialogTest {
 		EnumSet<QuestionCorpusProblem> set = EnumSet.noneOf(QuestionCorpusProblem.class);
 		set.addAll(List.of(problems));
 		QuestionCorpusStatus status = new QuestionCorpusStatus(
-				!set.contains(QuestionCorpusProblem.MISSING_QUESTION_SOURCE),
+				!set.contains(QuestionCorpusProblem.MISSING_QUESTION_CONTENT),
 				!set.contains(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE),
 				!set.contains(QuestionCorpusProblem.MISSING_ANSWER)
 						&& !set.contains(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE),

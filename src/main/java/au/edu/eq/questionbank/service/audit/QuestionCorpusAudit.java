@@ -23,20 +23,28 @@ public final class QuestionCorpusAudit {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
+
 		EnumSet<QuestionCorpusProblem> problems = EnumSet.noneOf(QuestionCorpusProblem.class);
 
-		// Assess stored capture evidence here; this does not open or validate the
-		// source PDF.
-		boolean questionSourceCaptured = !question.getRegions().isEmpty();
-		if (!questionSourceCaptured) {
-			problems.add(QuestionCorpusProblem.MISSING_QUESTION_SOURCE);
+		// contentParts is the authoritative Question body. PDF regions are only a
+		// compatibility projection and may legitimately be empty for image-only
+		// Questions.
+		//
+		// Explicit sourceCaptureRequired remains authoritative after PDF replacement:
+		// retained clipboard images do not satisfy a required replacement PDF capture.
+		boolean questionContentCaptured = !question.getContentParts().isEmpty() && !question.isSourceCaptureRequired();
+		if (!questionContentCaptured) {
+			problems.add(QuestionCorpusProblem.MISSING_QUESTION_CONTENT);
 		}
+
 		boolean sharedContextResolved = !question.isSharedContextUnresolved();
 		if (!sharedContextResolved) {
 			problems.add(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT);
 		}
+
 		boolean responseTypeResolved = question.getResponseType() != QuestionResponseType.UNKNOWN;
 		boolean answerComplete = false;
+
 		if (!responseTypeResolved) {
 			problems.add(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE);
 
@@ -48,11 +56,13 @@ public final class QuestionCorpusAudit {
 			case WRITTEN_RESPONSE -> hasCompleteWrittenAnswer(question);
 			case UNKNOWN -> false;
 			};
+
 			if (!answerComplete) {
 				problems.add(QuestionCorpusProblem.MISSING_ANSWER);
 			}
 		}
-		return new QuestionCorpusStatus(questionSourceCaptured, responseTypeResolved, answerComplete,
+
+		return new QuestionCorpusStatus(questionContentCaptured, responseTypeResolved, answerComplete,
 				sharedContextResolved, problems);
 	}
 

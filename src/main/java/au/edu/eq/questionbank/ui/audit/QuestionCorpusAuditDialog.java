@@ -77,16 +77,23 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		if (item == null || item.status().isComplete()) {
 			return null;
 		}
+
+		// Response metadata must be resolved first because it determines which Answer
+		// representation is required.
 		if (item.status().hasProblem(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE)) {
 			return ResolutionTarget.METADATA;
 		}
-		if (item.status().hasProblem(QuestionCorpusProblem.MISSING_QUESTION_SOURCE)
+
+		// Missing Question body or Shared Context belongs to Question capture.
+		if (item.status().hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT)
 				|| item.status().hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT)) {
 			return ResolutionTarget.QUESTION;
 		}
+
 		if (item.status().hasProblem(QuestionCorpusProblem.MISSING_ANSWER)) {
 			return ResolutionTarget.ANSWER;
 		}
+
 		return null;
 	}
 
