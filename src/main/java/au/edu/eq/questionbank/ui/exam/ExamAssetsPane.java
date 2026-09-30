@@ -392,20 +392,18 @@ public final class ExamAssetsPane extends VBox {
 		examSelectorGrid.add(addNewExamButton, 2, 0);
 		GridPane.setHgrow(examBox, Priority.ALWAYS);
 		VBox examDetails = createExamDetailsSection();
-
-		// Exam selection, lifecycle state, Add New Exam and Exam Details remain one
-		// bordered logical workspace area.
-		VBox examContent = new VBox(ROW_SPACING, examSelectorGrid, examDetails);
-		VBox examSection = createWorkspaceSection("exam-assets-exam-section", "EXAM", examContent);
-		VBox questionBooklets = createQuestionBookletsSection();
-		VBox answerBooklets = createAnswerBookletsSection();
 		newExamActionRow = createNewExamActionRow();
 
-		// New Exam transaction controls sit below all three setup sections, matching
-		// the
-		// workflow-wide nature of Clear / Cancel / Save Exam.
-		getChildren().addAll(examSection, questionBooklets, answerBooklets, newExamActionRow, new Separator(),
-				useSelectedBookletButton);
+		// New Exam transaction controls belong to the Exam they are creating, so keep
+		// them inside the same bordered EXAM area as selector and Exam Details.
+		VBox examContent = new VBox(ROW_SPACING, examSelectorGrid, examDetails, newExamActionRow);
+		VBox examSection = createWorkspaceSection("exam-assets-exam-section", "EXAM", null, examContent);
+		VBox questionBooklets = createQuestionBookletsSection();
+		VBox answerBooklets = createAnswerBookletsSection();
+
+		// Capture activation remains outside the asset-management sections because it
+		// changes the active capture context rather than editing Exam structure.
+		getChildren().addAll(examSection, questionBooklets, answerBooklets, new Separator(), useSelectedBookletButton);
 	}
 
 	private boolean canBeginAnswerBookletAdd(Exam exam) {
@@ -629,14 +627,11 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private VBox createAnswerBookletsSection() {
-		Region actionSpacer = new Region();
-		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
-		HBox actionRow = new HBox(SPACING, actionSpacer, addAnswerBookletButton);
 
-		// Persisted rows, any pending row and the Add action all belong inside the
-		// Answer Booklets visual boundary.
-		VBox content = new VBox(ROW_SPACING, answerBookletsBox, actionRow);
-		return createWorkspaceSection("exam-assets-answer-section", "ANSWER BOOKLETS", content);
+		// The Add action creates an asset owned by this section, so present it directly
+		// beside the ANSWER BOOKLETS heading instead of consuming another row.
+		return createWorkspaceSection("exam-assets-answer-section", "ANSWER BOOKLETS", addAnswerBookletButton,
+				answerBookletsBox);
 	}
 
 	private VBox createAnswerFileRow(AnswerFile answerFile) {
@@ -717,14 +712,11 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private VBox createQuestionBookletsSection() {
-		Region actionSpacer = new Region();
-		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
-		HBox actionRow = new HBox(SPACING, actionSpacer, addQuestionBookletButton);
 
-		// Persisted rows, any pending row and the Add action all belong inside the
-		// Question Booklets visual boundary.
-		VBox content = new VBox(ROW_SPACING, questionBookletsBox, actionRow);
-		return createWorkspaceSection("exam-assets-question-section", "QUESTION BOOKLETS", content);
+		// The Add action creates an asset owned by this section, so present it directly
+		// beside the QUESTION BOOKLETS heading instead of consuming another row.
+		return createWorkspaceSection("exam-assets-question-section", "QUESTION BOOKLETS", addQuestionBookletButton,
+				questionBookletsBox);
 	}
 
 	private VBox createSection(String headingText, javafx.scene.Node content) {
@@ -734,7 +726,7 @@ public final class ExamAssetsPane extends VBox {
 		return section;
 	}
 
-	private VBox createWorkspaceSection(String id, String headingText, Node content) {
+	private VBox createWorkspaceSection(String id, String headingText, Node headingAction, Node content) {
 		if (id == null) {
 			throw new NullPointerException("id");
 		}
@@ -747,10 +739,20 @@ public final class ExamAssetsPane extends VBox {
 		Label heading = new Label(headingText);
 		heading.setId(id + "-heading");
 		heading.setStyle(HEADING_STYLE);
+		Region headingSpacer = new Region();
+		HBox.setHgrow(headingSpacer, Priority.ALWAYS);
+		HBox headingRow = new HBox(SPACING, heading, headingSpacer);
+		headingRow.setId(id + "-heading-row");
 
-		// Major Exam/Assets areas need an explicit visual boundary around both their
-		// heading and all controls owned by that area.
-		VBox section = new VBox(ROW_SPACING, heading, content);
+		// Section-level actions sit on the same visual row as their section heading
+		// rather than consuming a separate row beneath the section contents.
+		if (headingAction != null) {
+			headingRow.getChildren().add(headingAction);
+		}
+
+		// Major Exam/Assets areas need one explicit visual boundary around their
+		// heading, section action and all controls owned by that area.
+		VBox section = new VBox(ROW_SPACING, headingRow, content);
 		section.setId(id);
 		section.setPadding(SECTION_PADDING);
 		section.setStyle(WORKSPACE_SECTION_STYLE);

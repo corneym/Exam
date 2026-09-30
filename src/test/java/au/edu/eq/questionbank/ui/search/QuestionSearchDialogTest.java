@@ -49,6 +49,29 @@ class QuestionSearchDialogTest {
 	}
 
 	@Test
+	void examEditingIsNotOfferedFromQuestionSearch(FxRobot robot) {
+		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(retrievalRepository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(tempDirectory),
+				new QuestionExtractor());
+		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
+		robot.interact(() -> extracted(curriculumRepository, retrievalService, previewService, dialogHolder));
+		QuestionSearchDialog dialog = dialogHolder[0];
+		robot.interact(dialog::show);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Exam identity correction has moved to Exam/Assets and must no longer appear
+		// as
+		// an alternative Question Search action.
+		assertTrue(robot.lookup("#question-search-edit-exam").tryQuery().isEmpty());
+		assertTrue(dialog.getDialogPane().getButtonTypes().stream()
+				.noneMatch(buttonType -> "Edit Exam".equals(buttonType.getText())));
+		robot.interact(dialog::close);
+	}
+
+	@Test
 	void fullHeightPositionSurvivesHideAndReshow(FxRobot robot) {
 		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of();

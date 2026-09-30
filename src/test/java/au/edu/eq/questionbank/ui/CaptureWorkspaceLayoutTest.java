@@ -644,6 +644,9 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		ComboBox<String> assessment = lookup(robot, "#exam-assets-assessment", ComboBox.class);
 		Button clear = lookup(robot, "#exam-assets-new-exam-clear", Button.class);
 		Button save = lookup(robot, "#exam-assets-new-exam-save", Button.class);
+		Button cancel = lookup(robot, "#exam-assets-new-exam-cancel", Button.class);
+		HBox newExamActions = lookup(robot, "#exam-assets-new-exam-actions", HBox.class);
+		VBox examSection = lookup(robot, "#exam-assets-exam-section", VBox.class);
 		Button addQuestion = lookup(robot, "#exam-assets-add-question-booklet", Button.class);
 		Button addAnswer = lookup(robot, "#exam-assets-add-answer-booklet", Button.class);
 
@@ -661,6 +664,13 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(save.isDisabled());
 		Label state = lookup(robot, "#exam-assets-state", Label.class);
 		assertEquals("NEW EXAM", state.getText());
+
+		// Clear, Cancel and Save Exam operate on the EXAM transaction and therefore
+		// belong inside the bordered EXAM section rather than below all asset sections.
+		assertTrue(isDescendantOf(newExamActions, examSection));
+		assertEquals(newExamActions, clear.getParent());
+		assertEquals(newExamActions, cancel.getParent());
+		assertEquals(newExamActions, save.getParent());
 		robot.interact(() -> {
 			provider.getEditor().setText("QCAA");
 			year.getSelectionModel().select(Integer.valueOf(2023));
@@ -837,6 +847,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Node examHeading = lookup(robot, "#exam-assets-exam-section-heading", Node.class);
 		Node questionHeading = lookup(robot, "#exam-assets-question-section-heading", Node.class);
 		Node answerHeading = lookup(robot, "#exam-assets-answer-section-heading", Node.class);
+		HBox questionHeadingRow = lookup(robot, "#exam-assets-question-section-heading-row", HBox.class);
+		HBox answerHeadingRow = lookup(robot, "#exam-assets-answer-section-heading-row", HBox.class);
 		Node examSelector = lookup(robot, "#exam-assets-exam", Node.class);
 		Node examDetails = lookup(robot, "#exam-assets-details-section", Node.class);
 		Node questionBooklets = lookup(robot, "#exam-assets-question-booklets", Node.class);
@@ -844,8 +856,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Node answerBooklets = lookup(robot, "#exam-assets-answer-booklets", Node.class);
 		Button addAnswerBooklet = lookup(robot, "#exam-assets-add-answer-booklet", Button.class);
 
-		// Each heading and all controls owned by that logical area must reside inside
-		// the same outer section rather than appearing as disconnected workspace rows.
+		// Each logical area owns its heading, contents and section-specific actions
+		// inside the same bordered container.
 		assertTrue(isDescendantOf(examHeading, examSection));
 		assertTrue(isDescendantOf(examSelector, examSection));
 		assertTrue(isDescendantOf(examDetails, examSection));
@@ -856,8 +868,15 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(isDescendantOf(answerBooklets, answerSection));
 		assertTrue(isDescendantOf(addAnswerBooklet, answerSection));
 
+		// Section creation actions share the heading row rather than using a separate
+		// action row below the persisted asset rows.
+		assertEquals(questionHeadingRow, questionHeading.getParent());
+		assertEquals(questionHeadingRow, addQuestionBooklet.getParent());
+		assertEquals(answerHeadingRow, answerHeading.getParent());
+		assertEquals(answerHeadingRow, addAnswerBooklet.getParent());
+
 		// The primary section itself owns the visible border; individual persisted
-		// booklet rows may retain their own more local borders independently.
+		// asset rows may retain their own more local borders.
 		assertTrue(examSection.getStyle().contains("-fx-border-width: 1"));
 		assertTrue(questionSection.getStyle().contains("-fx-border-width: 1"));
 		assertTrue(answerSection.getStyle().contains("-fx-border-width: 1"));

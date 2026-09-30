@@ -45,7 +45,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private final ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
 	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
 	private final ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
-	private final ButtonType editExamButtonType = new ButtonType("Edit Exam", ButtonBar.ButtonData.OTHER);
 	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Recapture Shared Context",
 			ButtonBar.ButtonData.OTHER);
 	private final ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
@@ -116,8 +115,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void configureActionButtonBindings(Button editQuestionButton, Button splitQuestionButton,
-			Button editMetadataButton, Button editExamButton, Button recaptureSharedContextButton,
-			Button editAnswerButton) {
+			Button editMetadataButton, Button recaptureSharedContextButton, Button editAnswerButton) {
 		editQuestionButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
 		splitQuestionButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
@@ -125,8 +123,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 					|| selected.hasSharedContext();
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty()));
 		editMetadataButton.disableProperty().bind(
-				Bindings.or(searchPane.selectedResultProperty().isNull(), searchPane.classificationDirtyProperty()));
-		editExamButton.disableProperty().bind(
 				Bindings.or(searchPane.selectedResultProperty().isNull(), searchPane.classificationDirtyProperty()));
 		recaptureSharedContextButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
@@ -139,15 +135,13 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void configureActionButtonIds(Button editQuestionButton, Button splitQuestionButton,
-			Button editMetadataButton, Button editExamButton, Button recaptureSharedContextButton,
-			Button editAnswerButton) {
+			Button editMetadataButton, Button recaptureSharedContextButton, Button editAnswerButton) {
 
-		// Stable IDs support TestFX without exposing implementation-specific button
-		// ordering to UI tests.
+		// Stable IDs support deterministic TestFX lookup without depending on Dialog
+		// button ordering.
 		editQuestionButton.setId("question-search-edit-question");
 		splitQuestionButton.setId("question-search-split-question");
 		editMetadataButton.setId("question-search-edit-metadata");
-		editExamButton.setId("question-search-edit-exam");
 		recaptureSharedContextButton.setId("question-search-recapture-shared-context");
 		editAnswerButton.setId("question-search-edit-answer");
 		editQuestionButton.setTooltip(
@@ -156,8 +150,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 				new Tooltip("Convert one legacy Question into multipart Questions after capturing every part."));
 		editMetadataButton.setTooltip(
 				new Tooltip("Correct this Question's code, marks, response type and Shared Context requirement."));
-		editExamButton.setTooltip(
-				new Tooltip("Correct the owning Exam's identity and relocate its managed source PDFs if required."));
 		recaptureSharedContextButton
 				.setTooltip(new Tooltip("Replace the reusable Shared Context linked to this Question."));
 		editAnswerButton.setTooltip(new Tooltip("Replace this Question's stored Answer content."));
@@ -165,17 +157,19 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 	private void configureActionButtons() {
 		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
-				editExamButtonType, recaptureSharedContextButtonType, editAnswerButtonType, ButtonType.CLOSE);
+				recaptureSharedContextButtonType, editAnswerButtonType, ButtonType.CLOSE);
 		Button editQuestionButton = buttonFor(editQuestionButtonType);
 		Button splitQuestionButton = buttonFor(splitQuestionButtonType);
 		Button editMetadataButton = buttonFor(editMetadataButtonType);
-		Button editExamButton = buttonFor(editExamButtonType);
 		Button recaptureSharedContextButton = buttonFor(recaptureSharedContextButtonType);
 		Button editAnswerButton = buttonFor(editAnswerButtonType);
 		Button closeButton = buttonFor(ButtonType.CLOSE);
-		configureActionButtonIds(editQuestionButton, splitQuestionButton, editMetadataButton, editExamButton,
+
+		// Exam identity correction no longer belongs to Question Search. Exam/Assets is
+		// now the authoritative workspace for Provider, Year and Assessment editing.
+		configureActionButtonIds(editQuestionButton, splitQuestionButton, editMetadataButton,
 				recaptureSharedContextButton, editAnswerButton);
-		configureActionButtonBindings(editQuestionButton, splitQuestionButton, editMetadataButton, editExamButton,
+		configureActionButtonBindings(editQuestionButton, splitQuestionButton, editMetadataButton,
 				recaptureSharedContextButton, editAnswerButton);
 		configureDirtyActionHandling(editQuestionButton, closeButton);
 	}
@@ -272,15 +266,14 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			if (buttonType == editMetadataButtonType) {
 				return new EditRequest(selected, EditTarget.METADATA);
 			}
-			if (buttonType == editExamButtonType) {
-				return new EditRequest(selected, EditTarget.EXAM);
-			}
 			if (buttonType == recaptureSharedContextButtonType) {
 				return new EditRequest(selected, EditTarget.SHARED_CONTEXT);
 			}
 			if (buttonType == editAnswerButtonType) {
 				return new EditRequest(selected, EditTarget.ANSWER);
 			}
+
+			// Close and non-edit actions do not publish an edit request.
 			return null;
 		});
 	}
@@ -513,8 +506,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		SPLIT,
 		/** Correct Question metadata. */
 		METADATA,
-		/** Correct owning Exam metadata. */
-		EXAM,
 		/** Recapture the reusable shared context. */
 		SHARED_CONTEXT,
 		/** Edit or recapture the Answer. */

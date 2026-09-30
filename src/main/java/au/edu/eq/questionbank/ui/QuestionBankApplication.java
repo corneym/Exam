@@ -1341,41 +1341,6 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void editExamMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
-			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
-		if (blockWhileCaptureSaveInProgress(primaryStage, "editing Exam metadata")) {
-			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
-			return;
-		}
-		if (captureSelectionState.hasPendingSelection() || questionCapturePane.hasAcceptedRegions()
-				|| answerCapturePane.hasAcceptedRegions() || questionCapturePane.isCapturingSharedContext()) {
-
-			// Relocation closes managed PDF sessions. Never do that while transient capture
-			// state still depends on the currently open document.
-			showAlert(Alert.AlertType.WARNING, "Edit Exam Metadata", "Capture work is in progress",
-					"Save or cancel the current Question, shared-context or Answer capture before editing Exam metadata.");
-			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
-			return;
-		}
-		ExamMetadataCorrectionDialog correctionDialog = new ExamMetadataCorrectionDialog(primaryStage,
-				question.getExam());
-		Optional<ExamMetadataCorrectionDialog.Result> result = correctionDialog.showAndWait();
-		if (result.isEmpty()) {
-			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
-			return;
-		}
-		ExamMetadataCorrectionDialog.Result replacement = result.get();
-		try {
-			correctExamMetadataAndReloadCapture(question.getExam(), replacement.providerName(), replacement.year(),
-					replacement.assessmentName());
-			resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository, metadataService);
-		} catch (SQLException | IOException | IllegalArgumentException | IllegalStateException exception) {
-			showAlert(Alert.AlertType.ERROR, "Edit Exam Metadata",
-					"The Exam metadata correction could not be completed.", failureMessage(exception));
-			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
-		}
-	}
-
 	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question);
@@ -3025,10 +2990,6 @@ public class QuestionBankApplication extends Application {
 		}
 		QuestionSearchDialog.EditRequest request = result.get();
 		Question question = request.question();
-		if (request.target() == QuestionSearchDialog.EditTarget.EXAM) {
-			editExamMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
-			return;
-		}
 		if (request.target() == QuestionSearchDialog.EditTarget.METADATA) {
 			editQuestionMetadata(primaryStage, dialog, question, curriculumRepository, metadataService);
 			return;
