@@ -6,6 +6,7 @@ import java.util.function.BiConsumer;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import javafx.beans.binding.Bindings;
@@ -18,65 +19,77 @@ import javafx.scene.control.Tooltip;
 import javafx.stage.Window;
 
 /**
- * Dialog containing the question-corpus completeness work queue.
+ * Dialog containing the operational Corpus Dashboard.
  */
 public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.ResolutionRequest> {
 
-	private static final int DIALOG_WIDTH = 1100;
-	private static final int DIALOG_HEIGHT = 700;
-	private final QuestionCorpusAuditPane auditPane;
+	private static final int DIALOG_WIDTH = 1200;
+	private static final int DIALOG_HEIGHT = 850;
+
+	private final CorpusDashboardPane dashboardPane;
 
 	/**
-	 * Creates an audit dialog scoped to the application's Working Subject.
+	 * Creates the Corpus Dashboard scoped to the application's Working Subject.
 	 *
 	 * @param owner          owner window
 	 * @param workingSubject authoritative Working Subject
+	 * @param examStatuses   calculated Exam and booklet audit snapshots
 	 * @param questions      current Question snapshot
 	 */
-	public QuestionCorpusAuditDialog(Window owner, Subject workingSubject, List<Question> questions) {
+	public QuestionCorpusAuditDialog(Window owner, Subject workingSubject, List<ExamCorpusStatus> examStatuses,
+			List<Question> questions) {
 		if (owner == null) {
 			throw new NullPointerException("owner");
 		}
 		if (workingSubject == null) {
 			throw new NullPointerException("workingSubject");
 		}
+		if (examStatuses == null) {
+			throw new NullPointerException("examStatuses");
+		}
 		if (questions == null) {
 			throw new NullPointerException("questions");
 		}
 
-		// The dialog receives Subject scope from the application rather than
-		// establishing a competing local Subject selection.
+		// The Dashboard inherits authoritative Subject scope and calculated corpus
+		// state from the application composition root.
 		initOwner(owner);
-		setTitle("Question Corpus Audit");
-		setHeaderText("Review and complete question-bank data");
+		setTitle("Corpus Dashboard");
 		setResizable(true);
-		auditPane = new QuestionCorpusAuditPane(workingSubject, questions);
+
+		dashboardPane = new CorpusDashboardPane(workingSubject, examStatuses, questions);
+
 		ButtonType resolveButtonType = new ButtonType("Resolve Selected", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(resolveButtonType, ButtonType.CLOSE);
-		getDialogPane().setContent(auditPane);
+		getDialogPane().setContent(dashboardPane);
+
 		Button resolveButton = (Button) getDialogPane().lookupButton(resolveButtonType);
 		resolveButton.setId("corpus-resolve-selected");
 		resolveButton.setTooltip(
 				new Tooltip("Open the correction workflow for the selected Question's next unresolved problem."));
+
 		resolveButton.disableProperty()
 				.bind(Bindings.createBooleanBinding(
-						() -> auditPane.selectedWorkItems().size() != 1
-								|| resolutionTarget(auditPane.getSelectedWorkItem()) == null,
-						auditPane.selectedWorkItems()));
+						() -> dashboardPane.selectedWorkItems().size() != 1
+								|| resolutionTarget(dashboardPane.getSelectedWorkItem()) == null,
+						dashboardPane.selectedWorkItems()));
+
 		setResultConverter(buttonType -> {
-			if (buttonType != resolveButtonType) {
+			if (buttonType != resolveButtonType || dashboardPane.selectedWorkItems().size() != 1) {
 				return null;
 			}
-			if (auditPane.selectedWorkItems().size() != 1) {
-				return null;
-			}
-			QuestionCorpusWorkItem item = auditPane.getSelectedWorkItem();
+
+			QuestionCorpusWorkItem item = dashboardPane.getSelectedWorkItem();
 			ResolutionTarget target = resolutionTarget(item);
 			if (item == null || target == null) {
 				return null;
 			}
+
+			// Preserve the existing correction-routing contract until #61 replaces it
+			// with direct Dashboard actions.
 			return new ResolutionRequest(item.question(), target);
 		});
+
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
 	}
@@ -104,13 +117,18 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 	}
 
 	/**
-	 * Replaces the audited Questions and attempts to restore one selection.
+	 * Replaces the complete Dashboard persistence snapshot.
 	 *
-	 * @param questions           refreshed Question snapshot
-	 * @param preferredQuestionId Question identifier to reselect when present
+	 * @param examStatuses        refreshed Exam/booklet audit state
+	 * @param questions           refreshed Questions
+	 * @param preferredQuestionId Question to reselect when it remains visible, or a
+	 *                            non-positive value for no preferred selection
 	 */
-	public void refreshQuestions(List<Question> questions, long preferredQuestionId) {
-		auditPane.refreshQuestions(questions, preferredQuestionId);
+	public void refreshData(List<ExamCorpusStatus> examStatuses, List<Question> questions, long preferredQuestionId) {
+
+		// Exam/booklet and Question snapshots are replaced together so the live
+		// Dashboard never mixes different persistence generations.
+		dashboardPane.replaceData(examStatuses, questions, preferredQuestionId);
 	}
 
 	/**
@@ -122,12 +140,14 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
-		auditPane.setBulkResponseTypeHandler((questions, responseType) -> {
+
+		dashboardPane.setBulkResponseTypeHandler((questions, responseType) -> {
 			String responseTypeLabel = switch (responseType) {
 			case MULTIPLE_CHOICE -> "Multiple choice";
 			case WRITTEN_RESPONSE -> "Written response";
 			case UNKNOWN -> throw new IllegalArgumentException("UNKNOWN cannot be applied as a bulk resolution");
 			};
+
 			ButtonType applyButton = new ButtonType("Apply", ButtonBar.ButtonData.OK_DONE);
 			Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
 			confirmation.initOwner(getOwner());
@@ -136,12 +156,28 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 					.setHeaderText("Set " + questions.size() + " selected question(s) to " + responseTypeLabel + "?");
 			confirmation.setContentText("Only the response type will be changed.");
 			confirmation.getButtonTypes().setAll(applyButton, ButtonType.CANCEL);
+
 			ButtonType decision = confirmation.showAndWait().orElse(ButtonType.CANCEL);
 			if (decision != applyButton) {
 				return;
 			}
+
 			handler.accept(questions, responseType);
 		});
+	}
+
+	/**
+	 * Installs the explicit Dashboard persistence reload operation.
+	 *
+	 * @param handler refresh operation
+	 */
+	public void setRefreshHandler(Runnable handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// The pane owns presentation while the application owns repository access.
+		dashboardPane.setRefreshHandler(handler);
 	}
 
 	/** Resolution workflow to launch for an incomplete Question. */
@@ -155,7 +191,7 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 	}
 
 	/**
-	 * Requested Question and correction workflow selected by the audit dialog.
+	 * Requested Question and correction workflow selected by the Dashboard dialog.
 	 *
 	 * @param question Question to correct
 	 * @param target   correction workflow to launch

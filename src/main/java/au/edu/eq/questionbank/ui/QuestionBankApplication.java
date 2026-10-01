@@ -86,6 +86,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumSourcePdfRep
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.backup.AutomaticBackupRetention;
 import au.edu.eq.questionbank.service.backup.BackupException;
 import au.edu.eq.questionbank.service.backup.BackupKind;
@@ -2212,6 +2213,22 @@ public class QuestionBankApplication extends Application {
 				exam.getName(), booklet.getName(), lifecycle));
 	}
 
+	private boolean refreshCorpusDashboard(QuestionCorpusAuditDialog dialog, ExamCorpusAuditService auditService,
+			Subject dashboardSubject, long preferredQuestionId) {
+		try {
+
+			// Always rebuild Exam/booklet calculations from persistence before replacing
+			// the Question work snapshot.
+			dialog.refreshData(auditService.assessSubject(dashboardSubject), questionRepository.findAll(),
+					preferredQuestionId);
+			return true;
+		} catch (SQLException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
+					exception.getMessage());
+			return false;
+		}
+	}
+
 	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {
 		if (!allowAnswerPdfReplacement()) {
 			return;
@@ -2808,47 +2825,79 @@ public class QuestionBankApplication extends Application {
 		}
 		if (workingSubject == null) {
 
-			// Corpus Audit uses the same authoritative application Subject boundary as
-			// capture and Search Questions.
-			showAlert(Alert.AlertType.WARNING, "Corpus Audit", "No Working Subject is selected.",
-					"Select a Working Subject before opening Corpus Audit.");
+			// Corpus Dashboard uses the same authoritative application Subject boundary
+			// as capture and Search Questions.
+			showAlert(Alert.AlertType.WARNING, "Corpus Dashboard", "No Working Subject is selected.",
+					"Select a Working Subject before opening the Corpus Dashboard.");
 			return;
 		}
-		QuestionCorpusAuditDialog dialog = new QuestionCorpusAuditDialog(primaryStage, workingSubject,
-				questionRepository.findAll());
-		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(
-				new SqliteDatabase(config.databasePath()));
+
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		ExamCorpusAuditService auditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
+				new PdfStore(config.pdfDataRoot()));
+
+		QuestionCorpusAuditDialog dialog;
+		try {
+
+			// Structural audit snapshots and Question work come from one initial
+			// persistence generation before the modal Dashboard is displayed.
+			dialog = new QuestionCorpusAuditDialog(primaryStage, workingSubject,
+					auditService.assessSubject(workingSubject), questionRepository.findAll());
+		} catch (SQLException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be loaded.",
+					exception.getMessage());
+			return;
+		}
+
+		Subject dashboardSubject = workingSubject;
+		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
+
+		dialog.setRefreshHandler(() -> refreshCorpusDashboard(dialog, auditService, dashboardSubject, -1L));
+
 		dialog.setBulkResponseTypeHandler((questions, responseType) -> {
 			try {
 				metadataService.resolveUnknownResponseTypes(questions, responseType);
 				questionCapturePane.refreshImportedQuestions();
 				answerCapturePane.refreshQuestions();
 
-				// The dialog retains its original Working Subject and re-scopes every
-				// refreshed repository snapshot internally.
-				dialog.refreshQuestions(questionRepository.findAll(), -1L);
+				// A successful bulk correction reloads both structural and Question
+				// Dashboard state together.
+				refreshCorpusDashboard(dialog, auditService, dashboardSubject, -1L);
 			} catch (IllegalArgumentException | IllegalStateException exception) {
 				showAlert(Alert.AlertType.ERROR, "Resolve Response Types",
 						"The selected response types could not be saved.", exception.getMessage());
-				dialog.refreshQuestions(questionRepository.findAll(), questions.getFirst().getId());
+
+				// Re-read authoritative persistence after failure while attempting to
+				// preserve the first affected Question selection.
+				refreshCorpusDashboard(dialog, auditService, dashboardSubject, questions.getFirst().getId());
 			}
 		});
-		showQuestionCorpusAuditDialog(primaryStage, config, dialog);
+
+		showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService, dashboardSubject);
 	}
 
 	private void showQuestionCorpusAuditDialog(Stage primaryStage, ApplicationConfig config,
-			QuestionCorpusAuditDialog dialog) {
+			QuestionCorpusAuditDialog dialog, ExamCorpusAuditService auditService, Subject dashboardSubject) {
 		Optional<QuestionCorpusAuditDialog.ResolutionRequest> result = dialog.showAndWait();
 		if (result.isEmpty()) {
 			return;
 		}
+
 		QuestionCorpusAuditDialog.ResolutionRequest request = result.get();
 		Question question = request.question();
+
 		switch (request.target()) {
 		case METADATA -> {
 			Runnable resumeAudit = () -> {
-				dialog.refreshQuestions(questionRepository.findAll(), question.getId());
-				Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog));
+
+				// Metadata correction may alter Question completeness, so reconstruct both
+				// Dashboard representations before reopening the modal surface.
+				if (refreshCorpusDashboard(dialog, auditService, dashboardSubject, question.getId())) {
+					Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService,
+							dashboardSubject));
+				}
 			};
 			editCorpusQuestionMetadata(primaryStage, config, question, resumeAudit);
 		}

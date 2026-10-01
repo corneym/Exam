@@ -1,6 +1,8 @@
 ## Working instructions for this chat
 
 This chat is the working chat for the next sprint of the Exam Question Bank project.
+THESE INSTRUCTIONS ARE IMPERATIVES.  DO NOT DEVIATE.
+RE-READ THESE INSTRUCTIONS before every code change.  Follow the instructions explcitly.
 
 ### Repository Working Rule
 
