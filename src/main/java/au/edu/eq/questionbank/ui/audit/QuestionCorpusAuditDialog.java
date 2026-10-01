@@ -5,6 +5,7 @@ import java.util.function.BiConsumer;
 
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import javafx.beans.binding.Bindings;
@@ -26,23 +27,30 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 	private final QuestionCorpusAuditPane auditPane;
 
 	/**
-	 * Creates an audit dialog for the supplied Question snapshot.
+	 * Creates an audit dialog scoped to the application's Working Subject.
 	 *
-	 * @param owner     owner window
-	 * @param questions Questions to audit
+	 * @param owner          owner window
+	 * @param workingSubject authoritative Working Subject
+	 * @param questions      current Question snapshot
 	 */
-	public QuestionCorpusAuditDialog(Window owner, List<Question> questions) {
+	public QuestionCorpusAuditDialog(Window owner, Subject workingSubject, List<Question> questions) {
 		if (owner == null) {
 			throw new NullPointerException("owner");
+		}
+		if (workingSubject == null) {
+			throw new NullPointerException("workingSubject");
 		}
 		if (questions == null) {
 			throw new NullPointerException("questions");
 		}
+
+		// The dialog receives Subject scope from the application rather than
+		// establishing a competing local Subject selection.
 		initOwner(owner);
 		setTitle("Question Corpus Audit");
 		setHeaderText("Review and complete question-bank data");
 		setResizable(true);
-		auditPane = new QuestionCorpusAuditPane(questions);
+		auditPane = new QuestionCorpusAuditPane(workingSubject, questions);
 		ButtonType resolveButtonType = new ButtonType("Resolve Selected", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(resolveButtonType, ButtonType.CLOSE);
 		getDialogPane().setContent(auditPane);

@@ -47,13 +47,18 @@ class QuestionCorpusAuditPaneTest {
 	@Test
 	@SuppressWarnings("unchecked")
 	void displaysSummaryAndFiltersWorkQueue(FxRobot robot) {
+		Label workingSubject = robot.lookup("#corpus-working-subject").queryAs(Label.class);
 		Label summary = robot.lookup("#corpus-summary").queryAs(Label.class);
 		Label resultCount = robot.lookup("#corpus-result-count").queryAs(Label.class);
 		ListView<QuestionCorpusWorkItem> workItems = robot.lookup("#corpus-work-items").queryAs(ListView.class);
 		ComboBox<QuestionCorpusProblem> problem = robot.lookup("#corpus-filter-problem").queryAs(ComboBox.class);
-		ComboBox<Subject> subject = robot.lookup("#corpus-filter-subject").queryAs(ComboBox.class);
 		ComboBox<QuestionCorpusCompletionFilter> completion = robot.lookup("#corpus-filter-completion")
 				.queryAs(ComboBox.class);
+
+		// Working Subject is read-only context. No independent audit Subject selector
+		// may exist.
+		assertEquals("Chemistry", workingSubject.getText());
+		assertTrue(robot.lookup("#corpus-filter-subject").queryAll().isEmpty());
 		assertTrue(summary.getText().contains("Total: 3"));
 		assertTrue(summary.getText().contains("Complete: 1"));
 		assertTrue(summary.getText().contains("Incomplete: 2"));
@@ -61,16 +66,32 @@ class QuestionCorpusAuditPaneTest {
 		assertTrue(summary.getText().contains("Unknown response type: 1"));
 		assertEquals("Showing 3 question(s)", resultCount.getText());
 		assertEquals(3, workItems.getItems().size());
+
+		// Every visible Question must belong to the authoritative Working Subject.
+		assertTrue(workItems.getItems().stream()
+				.allMatch(item -> item.question().getExam().getSubject().getId() == chemistry.getId()));
 		robot.interact(() -> problem.setValue(QuestionCorpusProblem.MISSING_ANSWER));
 		assertEquals(1, workItems.getItems().size());
 		assertEquals("Q2", workItems.getItems().getFirst().question().getQuestionCode());
-		robot.clickOn("#corpus-clear-filters");
-		robot.interact(() -> subject.setValue(chemistry));
-		assertEquals(2, workItems.getItems().size());
-		assertTrue(summary.getText().contains("Total: 2"));
+		Button clearFilters = robot.lookup("#corpus-clear-filters").queryButton();
+		robot.interact(clearFilters::fire);
+		assertEquals(3, workItems.getItems().size());
 		robot.interact(() -> completion.setValue(QuestionCorpusCompletionFilter.COMPLETE));
 		assertEquals(1, workItems.getItems().size());
 		assertEquals("Q1", workItems.getItems().getFirst().question().getQuestionCode());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void filterOptionsAreRestrictedToWorkingSubject(FxRobot robot) {
+		ComboBox<Integer> year = robot.lookup("#corpus-filter-year").queryAs(ComboBox.class);
+		ComboBox<ExamBooklet> booklet = robot.lookup("#corpus-filter-booklet").queryAs(ComboBox.class);
+
+		// The source snapshot also contains Physics 2025 data. Neither its year nor
+		// booklet may leak into Chemistry's local Dashboard filters.
+		assertEquals(List.of(2024), List.copyOf(year.getItems()));
+		assertEquals(1, booklet.getItems().size());
+		assertEquals(chemistry.getId(), booklet.getItems().getFirst().getExam().getSubject().getId());
 	}
 
 	@Test
@@ -81,12 +102,17 @@ class QuestionCorpusAuditPaneTest {
 			selectedQuestions.set(List.copyOf(questions));
 			selectedResponseType.set(responseType);
 		}));
-		robot.clickOn("#corpus-select-all-unknown");
+		Button selectUnknown = robot.lookup("#corpus-select-all-unknown").queryButton();
+		robot.interact(selectUnknown::fire);
 		Button writtenResponseButton = robot.lookup("#corpus-set-written-response").queryButton();
 		assertFalse(writtenResponseButton.isDisable());
-		robot.clickOn(writtenResponseButton);
+		robot.interact(writtenResponseButton::fire);
+
+		// The Physics UNKNOWN Question is outside Working Subject scope and therefore
+		// cannot enter the bulk correction request.
 		assertEquals(1, selectedQuestions.get().size());
 		assertEquals("Q3", selectedQuestions.get().getFirst().getQuestionCode());
+		assertEquals(chemistry.getId(), selectedQuestions.get().getFirst().getExam().getSubject().getId());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, selectedResponseType.get());
 	}
 
@@ -94,19 +120,12 @@ class QuestionCorpusAuditPaneTest {
 	void start(Stage stage) {
 		Fixture fixture = new Fixture();
 		chemistry = fixture.chemistry;
-		pane = new QuestionCorpusAuditPane(fixture.questions());
+
+		// Corpus Audit receives its Subject from the application rather than exposing
+		// another Subject selector.
+		pane = new QuestionCorpusAuditPane(chemistry, fixture.questions());
 		stage.setScene(new Scene(pane, 1100, 600));
 		stage.show();
-	}
-
-	@Test
-	@SuppressWarnings("unchecked")
-	void yearFilterIsChronologicalRegardlessOfQuestionInputOrder(FxRobot robot) {
-		ComboBox<Integer> year = robot.lookup("#corpus-filter-year").queryAs(ComboBox.class);
-
-		// The fixture supplies 2025 before 2024, so this proves filter ordering is
-		// independent of repository/input order.
-		assertEquals(List.of(2024, 2025), List.copyOf(year.getItems()));
 	}
 
 	private static final class Fixture {
@@ -143,11 +162,14 @@ class QuestionCorpusAuditPaneTest {
 			complete.setAnswer(new Answer(60, "A", List.of()));
 			Question missingAnswer = question(51, chemistryBooklet, chemistryClassification, "Q2",
 					QuestionResponseType.WRITTEN_RESPONSE);
-			Question unknown = question(52, physicsBooklet, physicsClassification, "Q3", QuestionResponseType.UNKNOWN);
+			Question chemistryUnknown = question(52, chemistryBooklet, chemistryClassification, "Q3",
+					QuestionResponseType.UNKNOWN);
+			Question physicsUnknown = question(53, physicsBooklet, physicsClassification, "Q99",
+					QuestionResponseType.UNKNOWN);
 
-			// Deliberately return the later year first. Corpus Audit must not inherit
-			// repository/input order when presenting the Year filter.
-			return List.of(unknown, complete, missingAnswer);
+			// Deliberately place out-of-scope Physics first so the test proves audit
+			// scoping rather than accidentally relying on input order.
+			return List.of(physicsUnknown, chemistryUnknown, complete, missingAnswer);
 		}
 	}
 }

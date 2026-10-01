@@ -2822,7 +2822,16 @@ public class QuestionBankApplication extends Application {
 		if (blockWhileCaptureSaveInProgress(primaryStage, "opening the corpus audit")) {
 			return;
 		}
-		QuestionCorpusAuditDialog dialog = new QuestionCorpusAuditDialog(primaryStage, questionRepository.findAll());
+		if (workingSubject == null) {
+
+			// Corpus Audit uses the same authoritative application Subject boundary as
+			// capture and Search Questions.
+			showAlert(Alert.AlertType.WARNING, "Corpus Audit", "No Working Subject is selected.",
+					"Select a Working Subject before opening Corpus Audit.");
+			return;
+		}
+		QuestionCorpusAuditDialog dialog = new QuestionCorpusAuditDialog(primaryStage, workingSubject,
+				questionRepository.findAll());
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(
 				new SqliteDatabase(config.databasePath()));
 		dialog.setBulkResponseTypeHandler((questions, responseType) -> {
@@ -2830,6 +2839,9 @@ public class QuestionBankApplication extends Application {
 				metadataService.resolveUnknownResponseTypes(questions, responseType);
 				questionCapturePane.refreshImportedQuestions();
 				answerCapturePane.refreshQuestions();
+
+				// The dialog retains its original Working Subject and re-scopes every
+				// refreshed repository snapshot internally.
 				dialog.refreshQuestions(questionRepository.findAll(), -1L);
 			} catch (IllegalArgumentException | IllegalStateException exception) {
 				showAlert(Alert.AlertType.ERROR, "Resolve Response Types",

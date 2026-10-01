@@ -24,14 +24,12 @@ import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
-import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import javafx.util.StringConverter;
 
 /**
  * Displays corpus-completeness totals and a filterable Question work queue.
@@ -40,8 +38,9 @@ final class QuestionCorpusAuditPane extends VBox {
 
 	private static final double SPACING = 8.0;
 	private static final Insets PADDING = new Insets(10);
+	private final Subject workingSubject;
+	private final Label workingSubjectLabel = new Label();
 	private List<Question> questions;
-	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<ExamProvider> providerBox = new ComboBox<>();
 	private final ComboBox<Integer> yearBox = new ComboBox<>();
 	private final ComboBox<ExamBooklet> bookletBox = new ComboBox<>();
@@ -57,8 +56,15 @@ final class QuestionCorpusAuditPane extends VBox {
 	private BiConsumer<List<Question>, QuestionResponseType> bulkResponseTypeHandler = (_, _) -> {
 	};
 
-	QuestionCorpusAuditPane(List<Question> questions) {
-		this.questions = copyQuestions(questions);
+	QuestionCorpusAuditPane(Subject workingSubject, List<Question> questions) {
+		if (workingSubject == null) {
+			throw new NullPointerException("workingSubject");
+		}
+
+		// Working Subject is authoritative application state. The audit receives it as
+		// immutable scope rather than allowing a second Subject selection.
+		this.workingSubject = workingSubject;
+		this.questions = questionsForWorkingSubject(questions, workingSubject);
 		configureControls();
 		populateFilterOptions();
 		configureActions();
@@ -66,16 +72,23 @@ final class QuestionCorpusAuditPane extends VBox {
 		refresh();
 	}
 
-	private static List<Question> copyQuestions(List<Question> questions) {
+	private static List<Question> questionsForWorkingSubject(List<Question> questions, Subject workingSubject) {
 		if (questions == null) {
 			throw new NullPointerException("questions");
+		}
+		if (workingSubject == null) {
+			throw new NullPointerException("workingSubject");
 		}
 		for (Question question : questions) {
 			if (question == null) {
 				throw new NullPointerException("questions contains null");
 			}
 		}
-		return List.copyOf(questions);
+
+		// Persistent Subject identity defines the audit boundary even when repository
+		// reads reconstructed separate Subject objects.
+		return questions.stream().filter(question -> question.getExam().getSubject().getId() == workingSubject.getId())
+				.toList();
 	}
 
 	QuestionCorpusWorkItem getSelectedWorkItem() {
@@ -83,17 +96,16 @@ final class QuestionCorpusAuditPane extends VBox {
 	}
 
 	void refreshQuestions(List<Question> updatedQuestions, long preferredQuestionId) {
-		Long subjectId = subjectBox.getValue() == null ? null : subjectBox.getValue().getId();
 		Long providerId = providerBox.getValue() == null ? null : providerBox.getValue().getId();
 		Integer year = yearBox.getValue();
 		Long bookletId = bookletBox.getValue() == null ? null : bookletBox.getValue().getId();
 		QuestionCorpusCompletionFilter completion = completionBox.getValue();
 		QuestionCorpusProblem problem = problemBox.getValue();
-		questions = copyQuestions(updatedQuestions);
+
+		// Every replacement snapshot is re-scoped to the immutable Working Subject
+		// before any local Dashboard filters are restored.
+		questions = questionsForWorkingSubject(updatedQuestions, workingSubject);
 		populateFilterOptions();
-		subjectBox.setValue(subjectId == null ? null
-				: subjectBox.getItems().stream().filter(subject -> subject.getId() == subjectId.longValue()).findFirst()
-						.orElse(null));
 		providerBox.setValue(providerId == null ? null
 				: providerBox.getItems().stream().filter(provider -> provider.getId() == providerId.longValue())
 						.findFirst().orElse(null));
@@ -140,11 +152,22 @@ final class QuestionCorpusAuditPane extends VBox {
 		bulkResponseTypeHandler.accept(selected, responseType);
 	}
 
+	private String bookletLabel(ExamBooklet booklet) {
+
+		// Provider and year disambiguate otherwise identical booklet names within the
+		// Working Subject.
+		return String.format("%s %d — %s", booklet.getExam().getProvider().getName(), booklet.getExam().getYear(),
+				booklet.getName());
+	}
+
 	private void buildContent() {
 		Label heading = new Label("Question-bank completeness");
 		heading.setStyle("-fx-font-weight: bold;");
-		HBox firstFilterRow = new HBox(SPACING, new Label("Subject"), subjectBox, new Label("Provider"), providerBox,
-				new Label("Year"), yearBox, new Label("Booklet"), bookletBox);
+
+		// Working Subject is displayed as application context, not as a Dashboard
+		// filter that can conflict with the main window.
+		HBox firstFilterRow = new HBox(SPACING, new Label("Working Subject"), workingSubjectLabel,
+				new Label("Provider"), providerBox, new Label("Year"), yearBox, new Label("Booklet"), bookletBox);
 		firstFilterRow.setAlignment(Pos.CENTER_LEFT);
 		HBox secondFilterRow = new HBox(SPACING, new Label("Completion"), completionBox, new Label("Problem"),
 				problemBox, clearFiltersButton);
@@ -161,7 +184,9 @@ final class QuestionCorpusAuditPane extends VBox {
 	}
 
 	private void clearFilters() {
-		subjectBox.setValue(null);
+
+		// Clear only Dashboard-local restrictions. Working Subject belongs to the
+		// application and remains authoritative.
 		providerBox.setValue(null);
 		yearBox.setValue(null);
 		bookletBox.setValue(null);
@@ -170,8 +195,20 @@ final class QuestionCorpusAuditPane extends VBox {
 		refresh();
 	}
 
+	private String completionLabel(QuestionCorpusCompletionFilter completion) {
+
+		// Present domain enum values using concise user-facing audit terminology.
+		return switch (completion) {
+		case ALL -> "All";
+		case COMPLETE -> "Complete";
+		case INCOMPLETE -> "Incomplete";
+		};
+	}
+
 	private void configureActions() {
-		subjectBox.valueProperty().addListener((_, _, _) -> refresh());
+
+		// Only Dashboard-local filters are mutable here. Working Subject changes are
+		// owned by the main application.
 		providerBox.valueProperty().addListener((_, _, _) -> refresh());
 		yearBox.valueProperty().addListener((_, _, _) -> refresh());
 		bookletBox.valueProperty().addListener((_, _, _) -> refresh());
@@ -185,144 +222,122 @@ final class QuestionCorpusAuditPane extends VBox {
 				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> updateBulkActionState());
 	}
 
-	private void configureControls() {
-		subjectBox.setId("corpus-filter-subject");
-		providerBox.setId("corpus-filter-provider");
-		yearBox.setId("corpus-filter-year");
-		bookletBox.setId("corpus-filter-booklet");
+	private void configureAuditFilterControls() {
 		completionBox.setId("corpus-filter-completion");
 		problemBox.setId("corpus-filter-problem");
 		clearFiltersButton.setId("corpus-clear-filters");
-		summaryLabel.setId("corpus-summary");
-		resultCountLabel.setId("corpus-result-count");
-		workItems.setId("corpus-work-items");
-		subjectBox.setPromptText("All subjects");
-		providerBox.setPromptText("All providers");
-		yearBox.setPromptText("All years");
-		bookletBox.setPromptText("All booklets");
+
 		problemBox.setPromptText("All problems");
+
+		// Completion always has an explicit value while a null problem represents all
+		// audit problems.
 		completionBox.getItems().setAll(QuestionCorpusCompletionFilter.values());
 		completionBox.setValue(QuestionCorpusCompletionFilter.ALL);
 		problemBox.getItems().setAll(QuestionCorpusProblem.values());
-		providerBox.setConverter(new StringConverter<ExamProvider>() {
 
-			@Override
-			public ExamProvider fromString(String text) {
-				return null;
-			}
+		completionBox.setConverter(new QuestionCorpusAuditFilterConverter<>(this::completionLabel));
+		problemBox.setConverter(new QuestionCorpusAuditFilterConverter<>(this::problemLabel));
+	}
 
-			@Override
-			public String toString(ExamProvider provider) {
-				return provider == null ? "" : provider.getName();
-			}
-		});
-		bookletBox.setConverter(new StringConverter<ExamBooklet>() {
-
-			@Override
-			public ExamBooklet fromString(String text) {
-				return null;
-			}
-
-			@Override
-			public String toString(ExamBooklet booklet) {
-				if (booklet == null) {
-					return "";
-				}
-				return String.format("%s %d — %s", booklet.getExam().getProvider().getName(),
-						booklet.getExam().getYear(), booklet.getName());
-			}
-		});
-		completionBox.setConverter(new StringConverter<QuestionCorpusCompletionFilter>() {
-
-			@Override
-			public QuestionCorpusCompletionFilter fromString(String text) {
-				return null;
-			}
-
-			@Override
-			public String toString(QuestionCorpusCompletionFilter value) {
-				if (value == null) {
-					return "";
-				}
-				return switch (value) {
-				case ALL -> "All";
-				case COMPLETE -> "Complete";
-				case INCOMPLETE -> "Incomplete";
-				};
-			}
-		});
-		problemBox.setConverter(new StringConverter<QuestionCorpusProblem>() {
-
-			@Override
-			public QuestionCorpusProblem fromString(String text) {
-				return null;
-			}
-
-			@Override
-			public String toString(QuestionCorpusProblem problem) {
-				return problem == null ? "" : problemLabel(problem);
-			}
-		});
-		workItems.setCellFactory(_ -> new ListCell<>() {
-
-			@Override
-			protected void updateItem(QuestionCorpusWorkItem item, boolean empty) {
-				super.updateItem(item, empty);
-				if (empty || item == null) {
-					setText(null);
-					return;
-				}
-				setText(workItemLabel(item));
-			}
-		});
+	private void configureBulkResponseTypeControls() {
 		selectAllUnknownButton.setId("corpus-select-all-unknown");
 		setSelectedMultipleChoiceButton.setId("corpus-set-multiple-choice");
 		setSelectedWrittenResponseButton.setId("corpus-set-written-response");
+
 		selectAllUnknownButton
 				.setTooltip(new Tooltip("Select every currently shown Question whose response type is Unknown."));
 		setSelectedMultipleChoiceButton.setTooltip(new Tooltip(
 				"Persist Multiple choice for the selected Questions without changing their other metadata."));
 		setSelectedWrittenResponseButton.setTooltip(new Tooltip(
 				"Persist Written response for the selected Questions without changing their other metadata."));
-		workItems.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+
+		// Bulk correction begins disabled until the visible queue supplies a valid
+		// selection of unresolved response types.
 		setSelectedMultipleChoiceButton.setDisable(true);
 		setSelectedWrittenResponseButton.setDisable(true);
 	}
 
+	private void configureControls() {
+
+		// Keep control setup grouped by UI responsibility so Dashboard growth does not
+		// rebuild another monolithic configuration method.
+		configureWorkingSubjectControl();
+		configureScopeFilterControls();
+		configureAuditFilterControls();
+		configureSummaryControls();
+		configureWorkQueueControls();
+		configureBulkResponseTypeControls();
+	}
+
+	private void configureScopeFilterControls() {
+		providerBox.setId("corpus-filter-provider");
+		yearBox.setId("corpus-filter-year");
+		bookletBox.setId("corpus-filter-booklet");
+
+		providerBox.setPromptText("All providers");
+		yearBox.setPromptText("All years");
+		bookletBox.setPromptText("All booklets");
+
+		// These ComboBoxes are selection-only, so named converters own their display
+		// formatting without adding conversion implementation detail to this pane.
+		providerBox.setConverter(new QuestionCorpusAuditFilterConverter<>(ExamProvider::getName));
+		bookletBox.setConverter(new QuestionCorpusAuditFilterConverter<>(this::bookletLabel));
+	}
+
+	private void configureSummaryControls() {
+
+		// Summary and result-count controls have stable IDs because they are both
+		// operational Dashboard output and TestFX observation points.
+		summaryLabel.setId("corpus-summary");
+		resultCountLabel.setId("corpus-result-count");
+	}
+
+	private void configureWorkingSubjectControl() {
+
+		// Working Subject is authoritative application context rather than an
+		// independently editable audit filter.
+		workingSubjectLabel.setId("corpus-working-subject");
+		workingSubjectLabel.setText(workingSubject.getName());
+	}
+
+	private void configureWorkQueueControls() {
+		workItems.setId("corpus-work-items");
+
+		// Work-item presentation belongs to a named cell implementation rather than
+		// an anonymous class embedded in pane configuration.
+		workItems.setCellFactory(_ -> new QuestionCorpusAuditWorkItemCell(this::workItemLabel));
+		workItems.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+	}
+
 	private QuestionCorpusFilter createFilter(QuestionCorpusCompletionFilter completion,
 			QuestionCorpusProblem problem) {
-		Subject subject = subjectBox.getValue();
 		ExamProvider provider = providerBox.getValue();
 		ExamBooklet booklet = bookletBox.getValue();
-		return new QuestionCorpusFilter(subject == null ? null : subject.getId(),
-				provider == null ? null : provider.getId(), yearBox.getValue(),
-				booklet == null ? null : booklet.getId(), completion, problem);
+
+		// Subject scope remains explicit in the domain filter even though the source
+		// snapshot has already been restricted to the Working Subject.
+		return new QuestionCorpusFilter(workingSubject.getId(), provider == null ? null : provider.getId(),
+				yearBox.getValue(), booklet == null ? null : booklet.getId(), completion, problem);
 	}
 
 	private void populateFilterOptions() {
-		Map<Long, Subject> subjects = new LinkedHashMap<>();
 		Map<Long, ExamProvider> providers = new LinkedHashMap<>();
 		Map<Integer, Integer> years = new LinkedHashMap<>();
 		Map<Long, ExamBooklet> booklets = new LinkedHashMap<>();
 		for (Question question : questions) {
-			Subject subject = question.getExam().getSubject();
 			ExamProvider provider = question.getExam().getProvider();
 			int year = question.getExam().getYear();
 			ExamBooklet booklet = question.getBooklet();
 
-			// Preserve one entry for each persisted filter identity while scanning the
-			// current corpus snapshot.
-			subjects.putIfAbsent(subject.getId(), subject);
+			// The Question snapshot is already Working-Subject scoped, so every local
+			// filter option necessarily belongs to that Subject.
 			providers.putIfAbsent(provider.getId(), provider);
 			years.putIfAbsent(year, year);
 			booklets.putIfAbsent(booklet.getId(), booklet);
 		}
-		subjectBox.getItems().setAll(subjects.values());
 		providerBox.getItems().setAll(providers.values());
 
-		// Years are a numeric domain value rather than a persistence/insertion order.
-		// Sort them explicitly so the "All years" filter always presents a predictable
-		// chronological sequence regardless of repository or corpus iteration order.
+		// Years are numeric domain values rather than repository insertion order.
 		yearBox.getItems().setAll(years.values().stream().sorted().toList());
 		bookletBox.getItems().setAll(booklets.values());
 	}

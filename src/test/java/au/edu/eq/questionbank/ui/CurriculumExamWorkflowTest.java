@@ -49,6 +49,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
+import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
@@ -314,6 +315,71 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertNull(field(application, "workingSubject", Subject.class));
 		assertNull(field(questionCapturePane(), "workingSubject", Subject.class));
 		assertNull(field(answerCapturePane(), "workingSubject", Subject.class));
+	}
+
+	@Test
+	void corpusAuditInheritsWorkingSubject(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject workingSubject = subjects.getValue();
+		assertNotNull(workingSubject);
+
+		// Exercise the real Questions menu action so this regression verifies the
+		// application passes its authoritative Working Subject into Corpus Audit.
+		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
+		MenuItem auditItem = questionMenu.getItems().stream().filter(item -> "_Corpus Audit...".equals(item.getText()))
+				.findFirst().orElseThrow(() -> new AssertionError("Questions -> Corpus Audit menu item not found"));
+
+		// Corpus Audit enters a modal showAndWait() loop, so schedule the action and
+		// leave the test thread available to inspect and close the dialog.
+		Platform.runLater(auditItem::fire);
+		waitForDialogShowing(robot, "Question Corpus Audit");
+		DialogPane audit = showingDialogPane(robot, "Question Corpus Audit");
+
+		Node workingSubjectNode = audit.lookup("#corpus-working-subject");
+		assertTrue(workingSubjectNode instanceof Label);
+		assertEquals(workingSubject.getName(), ((Label) workingSubjectNode).getText());
+
+		// Corpus Audit must not expose a second Subject selector that can conflict
+		// with the application-level Working Subject.
+		assertNull(audit.lookup("#corpus-filter-subject"));
+
+		Node closeNode = audit.lookupButton(ButtonType.CLOSE);
+		assertTrue(closeNode instanceof Button);
+		robot.interact(((Button) closeNode)::fire);
+		waitForDialogHidden(robot, "Question Corpus Audit");
+	}
+
+	@Test
+	void corpusAuditRequiresWorkingSubject(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+
+		// Remove the authoritative application Subject before entering Corpus Audit.
+		robot.interact(() -> subjects.getSelectionModel().clearSelection());
+		WaitForAsyncUtils.waitForFxEvents();
+		assertNull(field(application, "workingSubject", Subject.class));
+
+		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
+		MenuItem auditItem = questionMenu.getItems().stream().filter(item -> "_Corpus Audit...".equals(item.getText()))
+				.findFirst().orElseThrow(() -> new AssertionError("Questions -> Corpus Audit menu item not found"));
+
+		// The prerequisite warning is modal, so schedule the real menu action rather
+		// than blocking the test thread inside the action itself.
+		Platform.runLater(auditItem::fire);
+		waitForDialogShowing(robot, "Corpus Audit");
+		DialogPane warning = showingDialogPane(robot, "Corpus Audit");
+		assertEquals("No Working Subject is selected.", warning.getHeaderText());
+
+		Node okNode = warning.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Corpus Audit");
+
+		// Failure at the application boundary must occur before the actual audit
+		// surface is constructed.
+		assertTrue(robot.lookup("#corpus-working-subject").tryQuery().isEmpty());
 	}
 
 	@Test
