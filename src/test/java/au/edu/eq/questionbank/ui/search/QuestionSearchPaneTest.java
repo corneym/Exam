@@ -1385,12 +1385,6 @@ public class QuestionSearchPaneTest {
 			delayedParent = parent;
 		}
 
-		private void delaySubjects() {
-			delaySubjectLoading = true;
-			subjectDelayStarted = new CountDownLatch(1);
-			subjectDelayRelease = new CountDownLatch(1);
-		}
-
 		private void failChildrenFor(CurriculumNode parent) {
 			failingParent = parent;
 		}
@@ -1403,21 +1397,9 @@ public class QuestionSearchPaneTest {
 			return delayStarted.getCount() == 0;
 		}
 
-		private boolean hasSubjectDelayStarted() {
-			return subjectDelayStarted.getCount() == 0;
-		}
-
 		private void releaseDelayedChildren() {
 			delayedParent = null;
 			delayRelease.countDown();
-		}
-
-		private void releaseDelayedSubjects() {
-
-			// Future Subject loads should complete normally; only the already-running load
-			// remains blocked on this latch.
-			delaySubjectLoading = false;
-			subjectDelayRelease.countDown();
 		}
 	}
 

@@ -639,16 +639,6 @@ public class CurriculumSelectorPane extends VBox {
 		return heading;
 	}
 
-	private GridPane createSubjectGrid() {
-		GridPane grid = createTwoColumnGrid();
-
-		// One compact row identifies the authoritative application-level Subject
-		// without a second WORKING SUBJECT heading above it.
-		grid.addRow(0, new Label("Subject"), subjectBox);
-		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
-		return grid;
-	}
-
 	private GridPane createTwoColumnGrid() {
 		GridPane grid = new GridPane();
 		grid.setHgap(COLUMN_GAP);

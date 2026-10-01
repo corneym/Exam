@@ -31,10 +31,6 @@ public class CurriculumSelectionModel {
 	// choices without repeating their persistence reads on the JavaFX thread.
 	private SubjectSnapshot subjectSnapshot;
 
-	// The desktop application owns asynchronous Working Subject transitions. A
-	// standalone selector keeps its existing synchronous Subject behaviour.
-	private boolean subjectRefreshManagedExternally;
-
 	/**
 	 * Creates a selection model backed by curriculum lookups from a repository.
 	 *
@@ -442,19 +438,6 @@ public class CurriculumSelectionModel {
 		topic = null;
 		subtopic = null;
 		classification = null;
-	}
-
-	/**
-	 * Chooses whether Subject-dependent persistence refresh is coordinated by the
-	 * containing application rather than by this pane's synchronous action handler.
-	 *
-	 * @param managedExternally whether the application owns Subject refresh
-	 */
-	public void setSubjectRefreshManagedExternally(boolean managedExternally) {
-
-		// Only Subject transition ownership changes; ordinary classification controls
-		// continue to be handled by this pane.
-		subjectRefreshManagedExternally = managedExternally;
 	}
 
 	private void clearCurriculumNodeSelections() {

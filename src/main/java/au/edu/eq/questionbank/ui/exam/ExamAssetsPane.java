@@ -1168,15 +1168,6 @@ public final class ExamAssetsPane extends VBox {
 		return "%d %s %s".formatted(exam.getYear(), exam.getProvider().getName(), exam.getName());
 	}
 
-	private String formatQuestionFormat(ExamBookletQuestionFormat format) {
-		return switch (format) {
-		case MULTIPLE_CHOICE -> "MCQ";
-		case WRITTEN_RESPONSE -> "Written Response";
-		case MIXED -> "Both";
-		case UNSPECIFIED -> "Not recorded";
-		};
-	}
-
 	private boolean isExamDetailsDirty() {
 		Exam persistedExam = examBox.getValue();
 		if (!editingExamDetails || persistedExam == null) {

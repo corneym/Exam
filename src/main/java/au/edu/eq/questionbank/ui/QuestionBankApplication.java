@@ -517,22 +517,6 @@ public class QuestionBankApplication extends Application {
 		return false;
 	}
 
-	private boolean allowBookletInspection() {
-		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
-				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
-				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
-				|| answerCapturePane.isSaveInProgress() || answerCapturePane.isEditingAnswer();
-		if (!captureWorkInProgress) {
-			return true;
-		}
-
-		// Opening VIEWER mode clears the visible PDF selection. Do not do that while
-		// unsaved capture state still depends on the currently displayed source.
-		showAlert(Alert.AlertType.WARNING, "Inspect Question Booklet", "Capture work is in progress",
-				"Save, add, clear or cancel the current Question, Shared Context or Answer work before inspecting another booklet.");
-		return false;
-	}
-
 	private boolean allowExamAssetsTransition() {
 		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
 				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()

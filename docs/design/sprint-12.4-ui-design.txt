@@ -1,0 +1,45 @@
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ CORPUS DASHBOARD                                                                             │
+│ Working Subject: Chemistry                                             [ Refresh ]           │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Provider [ All providers ▼ ]     Year [ All years ▼ ]     Exam state [ All ▼ ]  [ Clear ]    │
+│                                                                                              │
+│ [ 486 Questions ] [ 38 Need attention ] [ 5 Missing content ] [ 18 Missing answers ]         │
+│ [ 7 Unknown type ] [ 8 Shared Context ] [ MCQ explanations 62 / 79 ]                         │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ EXAMS                                                                                        │
+│                                                                                              │
+│ Year   Provider   Assessment              State      Q assets   Answer assets   Work         │
+│ ──────────────────────────────────────────────────────────────────────────────────────────── │
+│ 2025   QCAA       External Assessment     COMPLETE   2 / 2      1 / 1           3            │
+│ 2024   QCAA       External Assessment     COMPLETE   2 / 2      1 / 1           —            │
+│ 2023   QCAA       External Assessment     ACTIVE     1 / 2      0 / 1           12           │
+│ 2022   NEAP       Trial Examination       COMPLETE   2 / 2      1 / 1           2            │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ SELECTED EXAM                                                                                │
+│ QCAA 2025 — External Assessment                                     Declared state: COMPLETE │
+│ Question booklets: 2 / 2     Answer booklets: 1 / 1     Questions: 50       Need work: 3     │
+│                                                                                              │
+│ BOOKLETS                                                                                     │
+│                                                                                              │
+│ Booklet   Format       Q PDF       Answer file      Expected   Found   Parts   Problems      │
+│ ──────────────────────────────────────────────────────────────────────────────────────────── │
+│ Paper 1   MCQ          Available   Marking guide       20       20      20      —            │
+│ Paper 2   Written      MISSING     Marking guide       30       29      34      3            │
+│                                                                                              │
+│ Selected booklet: Paper 2                                                                    │
+│ ⚠ Expected 30 top-level Questions; encountered 29. Investigation required.                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ QUESTION WORK                                                                                │
+│ Show [ Needs attention ▼ ]                                        Showing 3 Questions        │
+│                                                                                              │
+│ ✓   Question   Type       Content     Answer      Shared Context       Problem               │
+│ ──────────────────────────────────────────────────────────────────────────────────────────── │
+│     Q7         Written    MISSING     Missing     Resolved             Missing content       │
+│     Q12        Written    OK          Missing     Resolved             Missing answer        │
+│     Q18a       UNKNOWN    OK          —           UNRESOLVED           Unknown type, Context │
+│                                                                                              │
+│ [ Select all unknown shown ]   [ Set selected: Multiple choice ]   [ Set selected: Written ] │
+│                                                                                              │
+│ MCQ explanation coverage for selected booklet: 18 / 20 eligible Questions                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘

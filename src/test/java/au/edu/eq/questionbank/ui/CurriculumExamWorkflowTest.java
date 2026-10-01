@@ -839,17 +839,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.orElseThrow(() -> new AssertionError("Exam menu item not found: " + itemId));
 	}
 
-	private Question searchResultQuestion(Object result) {
-		try {
-
-			// Whole-application workflow tests do not depend on the package-private
-			// ui.search result wrapper. Read only its wrapped persisted Question.
-			return (Question) invoke(result, "question", new Class<?>[0]);
-		} catch (Exception exception) {
-			throw new RuntimeException(exception);
-		}
-	}
-
 	private void selectSubject(FxRobot robot, String subjectName) {
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		Subject selectedSubject = null;

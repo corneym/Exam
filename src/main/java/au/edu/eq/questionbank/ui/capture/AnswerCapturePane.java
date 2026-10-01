@@ -24,7 +24,6 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
-
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.model.Subject;
@@ -1208,10 +1207,6 @@ public final class AnswerCapturePane extends VBox {
 		QuestionResponseType responseType = question == null ? null : question.getResponseType();
 		return AnswerCaptureValidator.findError(new AnswerCaptureValidator.State(question != null, responseType,
 				currentAnswerSelection != null, answerText, pendingAnswerRegions.size()));
-	}
-
-	private void finishAnswerEdit() {
-		finishAnswerEdit(true);
 	}
 
 	private void finishAnswerEdit(boolean reloadQuestions) {

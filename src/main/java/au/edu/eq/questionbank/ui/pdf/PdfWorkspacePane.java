@@ -15,7 +15,6 @@ import au.edu.eq.questionbank.pdf.PdfSession;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.control.Button;
@@ -52,7 +51,6 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private static final float DISPLAY_DPI = 120;
 	private static final double MIN_SELECTION_SIZE = 5.0;
 	private static final double PAGE_CONTROL_SPACING = 10.0;
-	private static final Insets PAGE_CONTROLS_PADDING = new Insets(6, 6, 16, 6);
 	private static final double ANCHOR_MARKER_RADIUS = 5.0;
 	private static final Color STORED_REGION_FILL = Color.rgb(160, 160, 160, 0.18);
 	private static final Color STORED_REGION_STROKE = Color.rgb(110, 110, 110, 0.75);
