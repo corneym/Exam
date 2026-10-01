@@ -141,6 +141,11 @@ exercise.
 When fixing a reported defect, prefer a regression test that reproduces the real
 production failure mode.
 
+When the work is associated with a GitHub Issue, keep the Issue lifecycle in
+view. After a meaningful slice is completed and verified, record the result in
+the Issue when it is useful, and tell me any manual Project-field change that is
+now appropriate before continuing.
+
 ### TestFX and CI determinism
 
 Workflow and behaviour tests must be written so the same logical test is reliable
@@ -202,16 +207,20 @@ whenever you give Markdown that itself contains fenced code blocks using three b
 
 ### Git
 
-Do not tell me to commit, push, merge, rebase, delete branches, or otherwise
-change Git history unless:
+Tell me when to commit, push, merge, rebase.  
 
-- I explicitly ask for Git instructions; or
-- we have reached an agreed sprint closeout/merge step.
+Do not give instructions on add, commit, push unless I explicitly ask for Git instructions
 
 When I do ask for Git instructions, give the exact commands in the order I
 should run them.
 
-Do not perform GitHub writes or commits on my behalf unless I explicitly ask.
+Do not perform Git commits, pushes, merges, branch changes, pull-request
+creation, Issue creation, Issue closure, or other repository-changing actions on
+my behalf unless I explicitly ask.
+
+Exception: when a GitHub Issue has explicitly been designated as the current
+work item, ChatGPT may add concise progress/design/test comments to that Issue as
+described under Issue tracking.
 
 ### Codex/reviews
 
@@ -231,16 +240,72 @@ and verify the current branch state before drawing conclusions.
 
 ### Issue tracking
 
-Short-lived working issues are recorded as Eclipse task markers.
+GitHub Issues are the durable record for substantial development work.
+
+Short-lived implementation notes and very small local reminders may still use
+Eclipse task markers.
 
 Do not create or reintroduce `docs/issues.txt`.
 
-When a defect is being handled as part of the current sprint/work item, resolve
-it through the normal implementation and regression-test workflow rather than
-adding it to the project backlog merely for tracking.
+When I identify a GitHub Issue as the current work item, treat that Issue as the
+authoritative record for the scope of that work unless I explicitly change it.
 
-Only deliberately deferred or unresolved work that must survive the current
-development session belongs in `docs/design/backlog.md`.
+At the start of work on an Issue:
+
+- inspect the current Issue before proposing implementation;
+- inspect the relevant current repository code before giving exact changes;
+- use the Issue title/body/comments to understand the agreed scope;
+- do not silently broaden the Issue.
+
+ChatGPT may add comments to the current GitHub Issue without asking for separate
+confirmation each time when the comment records work we have just agreed,
+implemented, tested, or deliberately deferred.
+
+Useful Issue comments include:
+
+- an agreed design decision;
+- the implementation slice just completed;
+- tests run and their result;
+- a defect discovered while implementing the Issue;
+- a deliberate decision to defer part of the work;
+- a concise summary when the Issue is ready for pull request;
+- a final implementation/verification summary after merge.
+
+Do not add routine conversational chatter to an Issue. Comments should preserve
+information that will still be useful after the chat is gone.
+
+ChatGPT may create a new GitHub Issue only when I explicitly ask for one or when
+I explicitly approve a proposed Issue.
+
+GitHub Project fields such as Status, Sprint, Priority and Slice are managed
+manually by me.
+
+When a Project-field change is appropriate, tell me explicitly and concisely,
+for example:
+
+- `Move Issue #74 to In Progress.`
+- `Set Issue #74 Sprint to Sprint 12.`
+- `Set Issue #74 Slice to 3.`
+- `Move Issue #74 to Ready for PR.`
+- `Move Issue #74 to Done.`
+- `Clear Slice on Issue #74.`
+- `Create a new Issue for this deferred item.`
+
+Do not assume that I have made a Project-field change merely because development
+has progressed. Wait for me to confirm it if the distinction matters to the next
+step.
+
+When a defect is being handled as part of the current Issue, resolve it through
+the normal implementation and regression-test workflow rather than creating a
+separate Issue merely for tracking.
+
+Create or propose a separate Issue when work is genuinely independent,
+deliberately deferred, or large enough that it should have its own lifecycle.
+
+Only deliberately deferred or unresolved architectural work that must survive
+outside the normal Issue workflow belongs in `docs/design/backlog.md`. Avoid
+duplicating the same actionable work in both the backlog document and a GitHub
+Issue unless the documentation is intentionally acting as a higher-level roadmap.
 
 ### Documentation
 

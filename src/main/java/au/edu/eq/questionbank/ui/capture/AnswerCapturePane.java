@@ -39,7 +39,6 @@ import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
-import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -57,7 +56,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
-import javafx.util.StringConverter;
 
 /**
  * Owns unanswered-question selection, answer source and region state, textual
@@ -74,24 +72,7 @@ public final class AnswerCapturePane extends VBox {
 	private static final Insets PANEL_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
-	private static final StringConverter<Question> QUESTION_CODE_CONVERTER = new StringConverter<>() {
-
-		@Override
-		public Question fromString(String string) {
-			return null;
-		}
-
-		@Override
-		public String toString(Question question) {
-			if (question == null) {
-				return "";
-			}
-			String answerState = question.hasAnswer() ? " — answered" : "";
-			return String.format("%s %d — %s — %s — %s%s", question.getExam().getProvider().getName(),
-					question.getExam().getYear(), question.getBooklet().getName(), question.getQuestionCode(),
-					marksLabel(question.getMarks()), answerState);
-		}
-	};
+	private static final AnswerQuestionConverter QUESTION_CODE_CONVERTER = new AnswerQuestionConverter();
 	private final SourceDocumentHashService sourceDocumentHashService = new SourceDocumentHashService();
 
 	// Workflow dependencies and application callbacks.
@@ -344,17 +325,14 @@ public final class AnswerCapturePane extends VBox {
 			return false;
 		}
 		refreshQuestions();
-		Question matching = unansweredQuestionField.getItems().stream()
-				.filter(candidate -> candidate.getId() == question.getId()).findFirst().orElse(null);
+		Question matching = findQuestionById(unansweredQuestionField.getItems(), question);
 		if (matching == null) {
 			return false;
 		}
-		restoringUnansweredQuestionSelection = true;
-		try {
-			unansweredQuestionField.setValue(matching);
-		} finally {
-			restoringUnansweredQuestionSelection = false;
-		}
+
+		// Programmatic capture owns the target transition and therefore suppresses the
+		// ordinary ComboBox listener.
+		setUnansweredQuestionSilently(matching);
 		applyUnansweredQuestionChange(matching);
 		return true;
 	}
@@ -410,24 +388,19 @@ public final class AnswerCapturePane extends VBox {
 		if (!answerTransitionAllowed.getAsBoolean()) {
 			return false;
 		}
+
+		// Existing-Answer editing owns the selector until Save or Cancel.
 		clearPendingAnswerRegions();
 		editingAnswerQuestion = question;
 		answerEditCompletedHandler = editCompletedHandler;
 		unansweredQuestionField.setDisable(true);
-		restoringUnansweredQuestionSelection = true;
-		try {
-			unansweredQuestionField.setValue(question);
-		} finally {
-			restoringUnansweredQuestionSelection = false;
-		}
+		setUnansweredQuestionSilently(question);
 		applyUnansweredQuestionChange(question);
 
-		// applyUnansweredQuestionChange restores the registered Answer PDF. Once that
-		// document is available, position it at the first persisted Answer region.
+		// Persisted Answer regions determine the initial marking-PDF page.
 		showFirstStoredAnswerRegionPage(question);
 		saveAnswerButton.setText("Update Answer");
-		cancelAnswerEditButton.setVisible(true);
-		cancelAnswerEditButton.setManaged(true);
+		setVisibleAndManaged(cancelAnswerEditButton, true);
 		return true;
 	}
 
@@ -501,37 +474,15 @@ public final class AnswerCapturePane extends VBox {
 		Question editTarget = editingAnswerQuestion;
 		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;
 
-		// Build the Answer work queue independently of repository insertion order so
-		// that sustained Answer capture follows the examination's natural source order.
-		// Apply the transient Working Subject while constructing the visible Answer
-		// queue. No persisted Question or Answer data is changed by this filter.
+		// Build the Answer queue independently of repository insertion order and apply
+		// only the transient Working Subject filter.
 		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds,
 				workingSubject);
-		Question matching = editTarget;
-		if (matching == null && selected != null) {
-			for (Question question : unansweredQuestions) {
+		Question matching = editTarget == null ? findQuestionById(unansweredQuestions, selected) : editTarget;
+		replaceUnansweredQuestionsSilently(unansweredQuestions, matching);
 
-				// Preserve the currently selected Question across queue refreshes by persistent
-				// identity rather than object instance.
-				if (question.getId() == selected.getId()) {
-					matching = question;
-					break;
-				}
-			}
-		}
-
-		// Suppress the normal selection listener while replacing the queue and
-		// restoring the previous selection.
-		restoringUnansweredQuestionSelection = true;
-		try {
-			unansweredQuestionField.getItems().setAll(unansweredQuestions);
-			unansweredQuestionField.setValue(matching);
-		} finally {
-			restoringUnansweredQuestionSelection = false;
-		}
-
-		// Activation of another Exam booklet rebuilds this queue, so use the same
-		// publication point to recalculate retrofit availability.
+		// Active-booklet changes affect availability of the retrofit workflow as well
+		// as the ordinary unanswered queue.
 		refreshMcqExplanationActionState();
 	}
 
@@ -625,27 +576,18 @@ public final class AnswerCapturePane extends VBox {
 		if (selectedPdf == null) {
 			throw new NullPointerException("selectedPdf");
 		}
-		try {
+		AnswerFile registeredAnswerFile = registerSelectedAnswerFile(question, selectedPdf);
+		activateSelectedAnswerFile(question, selectedPdf, registeredAnswerFile);
+	}
 
-			// Hash the managed Answer PDF before publishing its SourceDocument so the
-			// persisted identity always describes the authoritative stored bytes.
-			String contentSha256 = sourceDocumentHashService.sha256(selectedPdf.path());
+	private void activateSelectedAnswerFile(Question question, SelectedPdf selectedPdf,
+			AnswerFile registeredAnswerFile) {
 
-			// Register or reuse the AnswerFile and persist its relationship to this
-			// specific ExamBooklet.
-			answerFile = answerWriter.findOrCreateAnswerFile(question.getBooklet(), selectedPdf.file().getName(),
-					selectedPdf.relativePath(), contentSha256);
-		} catch (IOException | SQLException exception) {
-			throw new IllegalStateException("Unable to save answer PDF", exception);
-		}
-
-		// Persistence succeeds before the document becomes active in the workspace.
+		// Persistence succeeds before this source becomes active in the shared PDF
+		// workspace.
+		answerFile = registeredAnswerFile;
 		answerPdfHandler.accept(selectedPdf);
 		selectedAnswerPdfLabel.setText(answerFile.getName());
-
-		// Selecting or reusing an AnswerFile can change whether an MCQ is permitted to
-		// capture optional explanation regions. Recompute both PDF and region controls
-		// from the authoritative persisted AnswerFile immediately.
 		updateAnswerPdfControlsVisibility(question);
 		updateAnswerRegionControlsVisibility(question);
 		refreshAnswerRegionList();
@@ -694,12 +636,10 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void applyRestoredQuestionSelection(Question previousQuestion) {
-		restoringUnansweredQuestionSelection = true;
-		try {
-			unansweredQuestionField.setValue(previousQuestion);
-		} finally {
-			restoringUnansweredQuestionSelection = false;
-		}
+
+		// Restoration is already the resolution of a rejected transition and must not
+		// invoke that transition guard again.
+		setUnansweredQuestionSilently(previousQuestion);
 	}
 
 	private void applyUnansweredQuestionChange(Question question) {
@@ -710,77 +650,43 @@ public final class AnswerCapturePane extends VBox {
 		clearPendingAnswerRegions();
 		clearMultipleChoiceAnswer();
 		if (question == null) {
-
-			// No active Question means no booklet-specific AnswerFile can remain current.
-			answerFile = null;
-			selectedAnswerPdfLabel.setText("No PDF selected");
-			selectedAnswerQuestionLabel.setText("No question selected");
-			updateMultipleChoiceAnswerVisibility(null);
-			updateAnswerRegionControlsVisibility(null);
-			saveAnswerButton.setDisable(true);
-			chooseAnswerPdfButton.setDisable(true);
-			saveAnswerButton.setText("Save Answer");
-			answerRegionCountLabel.setText("Regions: 0");
-			answerRegionStatusLabel.setText("");
-			updateAnswerPdfControlsVisibility(null);
+			showNoAnswerQuestion();
 			return;
 		}
 		boolean usesAnswerDocument = usesAnswerDocument(question);
-
-		// UNKNOWN Questions cannot own an AnswerFile until their response type has been
-		// resolved.
-		if (!usesAnswerDocument) {
-			answerFile = null;
-			selectedAnswerPdfLabel.setText("No PDF selected");
-		}
-		if (question.hasAnswer()) {
-			Answer answer = question.getAnswer();
-			selectMultipleChoiceAnswer(answer.getAnswerText());
-
-			// Persisted Answer regions remain authoritative Answer content. The booklet
-			// mapping determines which document is displayed for those regions.
-			pendingAnswerRegions.addAll(answer.getRegions());
-			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — answer stored");
-			saveAnswerButton.setText("Update Answer");
-		} else {
-			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
-			saveAnswerButton.setText("Save Answer");
-			answerRegionCountLabel.setText("Regions: 0");
-			answerRegionStatusLabel.setText("");
-		}
+		prepareAnswerFileForQuestion(usesAnswerDocument);
+		restoreAnswerState(question);
 		if (loadDocument && usesAnswerDocument) {
 
-			// Resolve the active Answer PDF from the Question's booklet, never merely
-			// from another Question belonging to the same Exam.
+			// Resolve the source from the Question's own booklet rather than carrying
+			// another booklet's AnswerFile into this target.
 			loadAssignedAnswerFile(question);
 		}
-		refreshAnswerRegionList();
-		if (question.hasAnswer()) {
-			showAcceptedRegionStatus();
-		}
-		updateMultipleChoiceAnswerVisibility(question);
-		updateAnswerRegionControlsVisibility(question);
+		refreshAnswerPresentation(question, usesAnswerDocument);
+	}
 
-		// MCQ and written-response Questions may both have an assigned answer document.
-		chooseAnswerPdfButton.setDisable(!usesAnswerDocument);
-		updateAnswerPdfControlsVisibility(question);
-		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
-			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — response type unresolved; "
-					+ "use Edit Metadata before capturing an answer.");
-		}
-		refreshSaveButtonState();
+	private void beginAnswerSave() {
+
+		// Freeze the complete Answer pane while one persistence transaction owns its
+		// transient state.
+		answerSaveInProgress = true;
+		setDisable(true);
+	}
+
+	private void beginMcqExplanationCandidateLoad() {
+
+		// Publish loading state before background persistence work begins.
+		mcqExplanationLoadInProgress = true;
+		captureMcqExplanationsButton.setDisable(true);
+		captureMcqExplanationsButton.setText("Loading...");
 	}
 
 	private void beginMcqExplanationCapture() {
-		if (mcqExplanationMode || mcqExplanationLoadInProgress || workingSubject == null || answerSaveInProgress
-				|| editingAnswerQuestion != null) {
+		if (mcqExplanationCaptureUnavailable()) {
 			return;
 		}
 		ExamBooklet requestedBooklet = activeBookletSupplier.get();
 		if (requestedBooklet == null) {
-
-			// The workflow is booklet-scoped. It cannot infer a target merely from the
-			// Working Subject or an Exam selected elsewhere.
 			return;
 		}
 		if (hasUnsavedOrdinaryAnswerDraft()) {
@@ -792,49 +698,14 @@ public final class AnswerCapturePane extends VBox {
 			return;
 		}
 		Subject requestedSubject = workingSubject;
-		mcqExplanationLoadInProgress = true;
-		captureMcqExplanationsButton.setDisable(true);
-		captureMcqExplanationsButton.setText("Loading...");
-		Task<List<Question>> task = new Task<>() {
-
-			@Override
-			protected List<Question> call() throws Exception {
-
-				// Candidate discovery and AnswerFile lookup are persistence work and stay
-				// off the JavaFX application thread.
-				return loadMcqExplanationCandidates(questionRepository.findAll(), requestedSubject, requestedBooklet);
-			}
-		};
-		task.setOnSucceeded(_ -> {
-			finishMcqExplanationCandidateLoad();
-			if (!Objects.equals(workingSubject, requestedSubject)
-					|| !sameBooklet(requestedBooklet, activeBookletSupplier.get())) {
-
-				// Subject or active-booklet context changed while the worker was running.
-				// Its result is stale and must never enter the current workspace.
-				return;
-			}
-			List<Question> candidates = task.getValue();
-			if (candidates.isEmpty()) {
-				selectedAnswerQuestionLabel
-						.setText("No answered MCQs in the active booklet are available for explanation capture.");
-				return;
-			}
-			enterMcqExplanationCapture(candidates);
-		});
-		task.setOnFailed(_ -> {
-			finishMcqExplanationCandidateLoad();
-			if (!Objects.equals(workingSubject, requestedSubject)
-					|| !sameBooklet(requestedBooklet, activeBookletSupplier.get())) {
-				return;
-			}
-			Throwable failure = task.getException();
-			String message = failure == null || failure.getMessage() == null
-					? "The eligible Questions could not be loaded."
-					: failure.getMessage();
-			showAnswerFileError("MCQ explanation Questions could not be loaded.", message);
-		});
-		Thread.ofVirtual().name("mcq-explanation-candidates").start(task);
+		beginMcqExplanationCandidateLoad();
+		CaptureBackgroundTask<List<Question>> task = new CaptureBackgroundTask<>(
+				() -> loadMcqExplanationCandidates(questionRepository.findAll(), requestedSubject, requestedBooklet));
+		task.setOnSucceeded(
+				_ -> handleMcqExplanationCandidateLoadSuccess(requestedSubject, requestedBooklet, task.getValue()));
+		task.setOnFailed(
+				_ -> handleMcqExplanationCandidateLoadFailure(requestedSubject, requestedBooklet, task.getException()));
+		startVirtualTask("mcq-explanation-candidates", task);
 	}
 
 	private void cancelAnswerEdit() {
@@ -856,29 +727,26 @@ public final class AnswerCapturePane extends VBox {
 		}
 		if (!usesAnswerDocument(question)) {
 
-			// UNKNOWN response types must be resolved before an answer source is attached.
+			// UNKNOWN response types must be resolved before an Answer source is
+			// attached.
 			return;
 		}
 		Path sourcePath = pdfFilePicker.chooseAnyPdf(stage, "Choose answer PDF");
-		if (sourcePath == null) {
-			return;
-		}
-		if (!answerTransitionAllowed.getAsBoolean()) {
+		if (sourcePath == null || !answerTransitionAllowed.getAsBoolean()) {
 			return;
 		}
 		if (hasAcceptedRegions()) {
 			clearPendingAnswerRegions();
 		}
-		Exam exam = question.getExam();
-		PdfStore pdfStore = new PdfStore(pdfFilePicker.dataRoot());
-		try {
-			Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(),
-					exam.getProvider().getName(), exam.getYear());
-			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfFilePicker.dataRoot());
-			selectAnswerPdf(question, selectedPdf);
-		} catch (IOException e) {
-			showAnswerPdfError(e.getMessage());
-		}
+		importSelectedAnswerPdf(question, sourcePath);
+	}
+
+	private void clearAnswerFile(String label) {
+
+		// AnswerFile identity and its visible filename are one presentation state and
+		// must never be cleared independently.
+		answerFile = null;
+		selectedAnswerPdfLabel.setText(label);
 	}
 
 	private void clearCurrentAnswerSelection() {
@@ -926,27 +794,31 @@ public final class AnswerCapturePane extends VBox {
 		question.setAnswer(answer);
 		locallyAnsweredQuestionIds.add(question.getId());
 		if (editing) {
-			if (mcqExplanationMode && sameQuestion(question, mcqExplanationEditingQuestion)) {
-
-				// Only a successfully persisted retrofit edit consumes its current
-				// candidate. Cancel and failed saves must leave it available.
-				mcqExplanationEditSaved = true;
-			}
-			Runnable completedHandler = null;
-			try {
-				completedHandler = finishAnswerEditState(false);
-			} finally {
-				finishAnswerSaveTransition(null);
-			}
-			if (completedHandler != null) {
-				completedHandler.run();
-			}
+			completeEditedAnswerSave(question);
 			return;
 		}
-		clearPendingAnswerRegions();
-		clearMultipleChoiceAnswer();
-		Question next = removeSavedQuestionAndSelectNext(question, previousIndex);
-		loadNextAnswerDocument(next);
+		completeNewAnswerSave(question, previousIndex);
+	}
+
+	private void completeEditedAnswerSave(Question question) {
+		if (mcqExplanationMode && sameQuestion(question, mcqExplanationEditingQuestion)) {
+
+			// Only a successfully persisted retrofit edit consumes its session
+			// candidate.
+			mcqExplanationEditSaved = true;
+		}
+		Runnable completedHandler = null;
+		try {
+			completedHandler = finishAnswerEditState(false);
+		} finally {
+
+			// Edit completion must always release save state even if presentation
+			// cleanup itself fails.
+			finishAnswerSaveTransition(null);
+		}
+		if (completedHandler != null) {
+			completedHandler.run();
+		}
 	}
 
 	private void completeMcqExplanationEdit() {
@@ -955,47 +827,27 @@ public final class AnswerCapturePane extends VBox {
 		}
 		Question completedQuestion = mcqExplanationEditingQuestion;
 		boolean saved = mcqExplanationEditSaved;
-		mcqExplanationEditingQuestion = null;
-		mcqExplanationEditSaved = false;
-		unansweredQuestionField.setDisable(true);
-		mcqExplanationQuestionField.setDisable(false);
-		finishMcqExplanationCaptureButton.setDisable(false);
+		finishMcqExplanationEditState();
 		if (!saved || completedQuestion == null) {
-
-			// Cancel returns to the selector but deliberately retains the candidate.
-			clearMcqExplanationSelection();
-			selectedAnswerQuestionLabel.setText("Select an answered MCQ to capture explanation regions.");
+			restoreMcqExplanationCandidateAfterCancel();
 			return;
 		}
-		int completedIndex = -1;
-		for (int index = 0; index < mcqExplanationQuestionField.getItems().size(); index++) {
-			if (mcqExplanationQuestionField.getItems().get(index).getId() == completedQuestion.getId()) {
-				completedIndex = index;
-				break;
-			}
-		}
-		restoringMcqExplanationSelection = true;
-		try {
-
-			// Remove only from this workflow session. No persisted per-MCQ explanation
-			// completeness state is inferred or stored.
-			if (completedIndex >= 0) {
-				mcqExplanationQuestionField.getItems().remove(completedIndex);
-			}
-			mcqExplanationQuestionField.setValue(null);
-		} finally {
-			restoringMcqExplanationSelection = false;
-		}
+		int completedIndex = removeMcqExplanationCandidate(completedQuestion);
 		if (mcqExplanationQuestionField.getItems().isEmpty()) {
 			selectedAnswerQuestionLabel.setText("No remaining MCQ explanation candidates in this booklet.");
 			return;
 		}
-		int nextIndex = completedIndex < 0 ? 0
-				: Math.min(completedIndex, mcqExplanationQuestionField.getItems().size() - 1);
+		selectNextMcqExplanationCandidate(completedIndex);
+	}
 
-		// Ordinary ComboBox selection is intentional here. Its listener enters the
-		// existing Answer editor for the next candidate immediately.
-		mcqExplanationQuestionField.getSelectionModel().select(nextIndex);
+	private void completeNewAnswerSave(Question question, int previousIndex) {
+
+		// Ordinary sequential capture removes the persisted Question from the queue and
+		// advances to its next source-order neighbour.
+		clearPendingAnswerRegions();
+		clearMultipleChoiceAnswer();
+		Question nextQuestion = removeSavedQuestionAndSelectNext(question, previousIndex);
+		loadNextAnswerDocument(nextQuestion);
 	}
 
 	private void configureActions(Stage stage) {
@@ -1016,66 +868,34 @@ public final class AnswerCapturePane extends VBox {
 		});
 	}
 
-	private void configureControls() {
-		unansweredQuestionField.setId("unanswered-question");
-		unansweredQuestionField.setPromptText("Select unanswered question");
-		unansweredQuestionField
-				.setTooltip(new Tooltip("Lists Questions without an Answer in source order for the current booklet."));
-		unansweredQuestionField.setMaxWidth(Double.MAX_VALUE);
-		unansweredQuestionField.setConverter(QUESTION_CODE_CONVERTER);
-		unansweredQuestionField.setOnShowing(_ -> showSelectedAnswerDocument());
-		unansweredQuestionField.valueProperty().addListener(
-				(_, oldQuestion, newQuestion) -> handleUnansweredQuestionChanged(oldQuestion, newQuestion));
-		answerAButton.setId("answer-choice-a");
-		answerBButton.setId("answer-choice-b");
-		answerCButton.setId("answer-choice-c");
-		answerDButton.setId("answer-choice-d");
+	private void configureAnswerPdfControls() {
 		answerPdfControls.setId("answer-pdf-controls");
-
-		// The PDF action retains its full label, while the selected filename may wrap
-		// across the available pane width instead of competing horizontally with it.
+		chooseAnswerPdfButton.setId("choose-answer-pdf");
+		chooseAnswerPdfButton.setDisable(true);
 		chooseAnswerPdfButton.setMinWidth(Region.USE_PREF_SIZE);
+		chooseAnswerPdfButton.setTooltip(new Tooltip(
+				"Choose the Answer PDF assigned to this booklet before capturing written-response regions."));
+
+		// The filename receives its own wrapping row so it cannot force the PDF action
+		// below its readable preferred width.
 		selectedAnswerPdfLabel.setId("selected-answer-pdf");
 		selectedAnswerPdfLabel.setWrapText(true);
 		selectedAnswerPdfLabel.setMaxWidth(Double.MAX_VALUE);
-		multipleChoiceAnswerControls.setId("multiple-choice-answer-controls");
-		answerAButton.setToggleGroup(multipleChoiceAnswerGroup);
-		answerBButton.setToggleGroup(multipleChoiceAnswerGroup);
-		answerCButton.setToggleGroup(multipleChoiceAnswerGroup);
-		answerDButton.setToggleGroup(multipleChoiceAnswerGroup);
-		answerAButton.setUserData("A");
-		answerBButton.setUserData("B");
-		answerCButton.setUserData("C");
-		answerDButton.setUserData("D");
-		String choiceTooltip = "Store the selected A-D choice as this multiple-choice Question's Answer.";
-		answerAButton.setTooltip(new Tooltip(choiceTooltip));
-		answerBButton.setTooltip(new Tooltip(choiceTooltip));
-		answerCButton.setTooltip(new Tooltip(choiceTooltip));
-		answerDButton.setTooltip(new Tooltip(choiceTooltip));
-		clearMultipleChoiceAnswerButton.setId("clear-answer-choice");
-		multipleChoiceAnswerGroup.selectedToggleProperty().addListener((_, _, newToggle) -> {
-			if (newToggle != null) {
-				preservedAnswerText = null;
-			}
-			refreshSaveButtonState();
-		});
-		setMultipleChoiceAnswerEnabled(false);
+	}
+
+	private void configureAnswerPersistenceControls() {
 		saveAnswerButton.setId("save-answer");
 		saveAnswerButton.setDisable(true);
 		saveAnswerButton.setText("Save Answer");
 		saveAnswerButton.setTooltip(new Tooltip(
 				"Persist the selected choice and any optional explanation regions, or the required written-response regions."));
-		chooseAnswerPdfButton.setDisable(true);
-		chooseAnswerPdfButton.setId("choose-answer-pdf");
-		chooseAnswerPdfButton
-				.setTooltip(new Tooltip("Open the Answer or marking PDF assigned to this Question booklet."));
-		addAnswerRegionButton.setId("add-answer-region");
-		addAnswerRegionButton.setTooltip(new Tooltip(
-				"Accept the current marking-PDF selection as Answer content or optional MCQ explanation material."));
-		chooseAnswerPdfButton.setDisable(true);
-		chooseAnswerPdfButton.setId("choose-answer-pdf");
-		chooseAnswerPdfButton.setTooltip(new Tooltip(
-				"Choose the Answer PDF assigned to this booklet before capturing written-response regions."));
+		saveAnswerButton.setMinWidth(Region.USE_PREF_SIZE);
+		cancelAnswerEditButton.setId("cancel-answer-edit");
+		cancelAnswerEditButton.setMinWidth(Region.USE_PREF_SIZE);
+		setVisibleAndManaged(cancelAnswerEditButton, false);
+	}
+
+	private void configureAnswerRegionControls() {
 		addAnswerRegionButton.setId("add-answer-region");
 		addAnswerRegionButton
 				.setTooltip(new Tooltip("Accept the current Answer PDF selection as part of this Question's Answer."));
@@ -1084,27 +904,17 @@ public final class AnswerCapturePane extends VBox {
 		answerRegionStatusLabel.setId("answer-region-status");
 		answerRegionStatusLabel.setText("");
 
-		// Preserve the full visible text of Answer-capture actions when the capture
-		// workspace is at its supported minimum width.
+		// Preserve complete action labels at the minimum supported capture-workspace
+		// width.
 		addAnswerRegionButton.setMinWidth(Region.USE_PREF_SIZE);
 		clearAnswerSelectionButton.setMinWidth(Region.USE_PREF_SIZE);
 		answerRegionCountLabel.setMinWidth(Region.USE_PREF_SIZE);
-		saveAnswerButton.setMinWidth(Region.USE_PREF_SIZE);
-		cancelAnswerEditButton.setMinWidth(Region.USE_PREF_SIZE);
-
-		// Status messages vary in length, so they wrap instead of competing with action
-		// buttons for horizontal space.
 		answerRegionStatusLabel.setWrapText(true);
 		answerRegionStatusLabel.setMaxWidth(Double.MAX_VALUE);
-		selectedAnswerQuestionLabel.setId("selected-answer-question");
+		setSelectionActionsEnabled(false);
+	}
 
-		// Answer status can include marks, stored-answer state, and workflow warnings.
-		// Allow it to use multiple lines instead of truncating at narrow widths.
-		selectedAnswerQuestionLabel.setWrapText(true);
-		selectedAnswerQuestionLabel.setMaxWidth(Double.MAX_VALUE);
-		cancelAnswerEditButton.setId("cancel-answer-edit");
-		cancelAnswerEditButton.setVisible(false);
-		cancelAnswerEditButton.setManaged(false);
+	private void configureAnswerRegionPreview() {
 		answerRegionsScrollPane.setFitToWidth(true);
 		answerRegionsScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 		answerRegionsScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -1113,24 +923,34 @@ public final class AnswerCapturePane extends VBox {
 		answerRegionsScrollPane.setMinHeight(0);
 		answerRegionsScrollPane.setMaxHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
 
-		// Size the accepted-region area to its actual content instead of immediately
-		// claiming the full 300 px viewport height when the first region is added.
-		answerRegionsScrollPane.prefHeightProperty()
-				.bind(Bindings.createDoubleBinding(this::answerRegionsPreferredHeight,
-
-						// Adding or removing a preview changes the preferred content height.
-						answerRegionListBox.getChildren(),
-
-						// Resizing the Answer pane changes the preview width and therefore
-						// the height required to preserve the image aspect ratio.
-						widthProperty()));
+		// Size the accepted-region area from its actual preview content rather than
+		// immediately claiming the complete maximum viewport height.
+		answerRegionsScrollPane.prefHeightProperty().bind(Bindings.createDoubleBinding(
+				this::answerRegionsPreferredHeight, answerRegionListBox.getChildren(), widthProperty()));
 		answerRegionsScrollPane.setMaxWidth(Double.MAX_VALUE);
-		answerRegionsScrollPane.setVisible(false);
-		answerRegionsScrollPane.setManaged(false);
-		setSelectionActionsEnabled(false);
+		setVisibleAndManaged(answerRegionsScrollPane, false);
+	}
 
-		// MCQ explanation retrofit is explicitly entered and remains unavailable until
-		// the application supplies an authoritative Working Subject.
+	private void configureAnswerStatusControls() {
+		selectedAnswerQuestionLabel.setId("selected-answer-question");
+
+		// Answer status may include marks, stored state and workflow guidance, so allow
+		// it to wrap rather than competing with action controls.
+		selectedAnswerQuestionLabel.setWrapText(true);
+		selectedAnswerQuestionLabel.setMaxWidth(Double.MAX_VALUE);
+	}
+
+	private void configureControls() {
+
+		// Keep control construction grouped by presentation concern so later Answer
+		// workflow changes do not accumulate in one monolithic configuration method.
+		configureQuestionSelector();
+		configureMultipleChoiceControls();
+		configureAnswerPdfControls();
+		configureAnswerRegionControls();
+		configureAnswerPersistenceControls();
+		configureAnswerStatusControls();
+		configureAnswerRegionPreview();
 		configureMcqExplanationControls();
 	}
 
@@ -1147,14 +967,60 @@ public final class AnswerCapturePane extends VBox {
 		finishMcqExplanationCaptureButton.setId("finish-mcq-explanations");
 		finishMcqExplanationCaptureButton.setMinWidth(Region.USE_PREF_SIZE);
 
-		// The answered-MCQ selector replaces the entry action only while the explicit
-		// retrofit workflow is active.
+		// The retrofit selector replaces the normal entry action only while the
+		// explicit MCQ-explanation workflow is active.
 		HBox.setHgrow(mcqExplanationQuestionField, Priority.ALWAYS);
 		mcqExplanationSelectionControls.getChildren().setAll(mcqExplanationQuestionField,
 				finishMcqExplanationCaptureButton);
 		mcqExplanationSelectionControls.setAlignment(Pos.CENTER_LEFT);
-		mcqExplanationSelectionControls.setVisible(false);
-		mcqExplanationSelectionControls.setManaged(false);
+		setVisibleAndManaged(mcqExplanationSelectionControls, false);
+	}
+
+	private void configureMultipleChoiceControls() {
+		answerAButton.setId("answer-choice-a");
+		answerBButton.setId("answer-choice-b");
+		answerCButton.setId("answer-choice-c");
+		answerDButton.setId("answer-choice-d");
+		multipleChoiceAnswerControls.setId("multiple-choice-answer-controls");
+		answerAButton.setToggleGroup(multipleChoiceAnswerGroup);
+		answerBButton.setToggleGroup(multipleChoiceAnswerGroup);
+		answerCButton.setToggleGroup(multipleChoiceAnswerGroup);
+		answerDButton.setToggleGroup(multipleChoiceAnswerGroup);
+		answerAButton.setUserData("A");
+		answerBButton.setUserData("B");
+		answerCButton.setUserData("C");
+		answerDButton.setUserData("D");
+		String choiceTooltip = "Store the selected A-D choice as this multiple-choice Question's Answer.";
+		answerAButton.setTooltip(new Tooltip(choiceTooltip));
+		answerBButton.setTooltip(new Tooltip(choiceTooltip));
+		answerCButton.setTooltip(new Tooltip(choiceTooltip));
+		answerDButton.setTooltip(new Tooltip(choiceTooltip));
+		clearMultipleChoiceAnswerButton.setId("clear-answer-choice");
+
+		// Selecting a current A-D choice supersedes any older arbitrary textual Answer
+		// retained only for backwards compatibility.
+		multipleChoiceAnswerGroup.selectedToggleProperty().addListener((_, _, newToggle) -> {
+			if (newToggle != null) {
+				preservedAnswerText = null;
+			}
+			refreshSaveButtonState();
+		});
+		setMultipleChoiceAnswerEnabled(false);
+	}
+
+	private void configureQuestionSelector() {
+		unansweredQuestionField.setId("unanswered-question");
+		unansweredQuestionField.setPromptText("Select unanswered question");
+		unansweredQuestionField
+				.setTooltip(new Tooltip("Lists Questions without an Answer in source order for the current booklet."));
+		unansweredQuestionField.setMaxWidth(Double.MAX_VALUE);
+		unansweredQuestionField.setConverter(QUESTION_CODE_CONVERTER);
+		unansweredQuestionField.setOnShowing(_ -> showSelectedAnswerDocument());
+
+		// Selection changes remain guarded by the Answer-transition workflow rather
+		// than performing persistence or document work directly in this listener.
+		unansweredQuestionField.valueProperty().addListener(
+				(_, oldQuestion, newQuestion) -> handleUnansweredQuestionChanged(oldQuestion, newQuestion));
 	}
 
 	private ImageView createAcceptedAnswerPreview(AnswerRegion region) {
@@ -1206,6 +1072,26 @@ public final class AnswerCapturePane extends VBox {
 		VBox controls = new VBox(COMPACT_SPACING, selectionControls, answerRegionStatusLabel, saveControls);
 		controls.setFillWidth(true);
 		return controls;
+	}
+
+	private VBox createAnswerRegionRow(AnswerRegion region, int regionIndex) {
+		Button removeButton = new Button("Remove");
+
+		// Removing a region changes only transient Answer-edit state until Save.
+		removeButton.setOnAction(_ -> removeAnswerRegion(regionIndex));
+		HBox controls = new HBox(removeButton);
+		controls.setAlignment(Pos.CENTER_LEFT);
+		VBox row = new VBox(COMPACT_SPACING);
+		if (answerFile != null && region.answerFile().getId() == answerFile.getId()) {
+
+			// Only the currently displayed AnswerFile can supply an immediate preview.
+			row.getChildren().addAll(createAcceptedAnswerPreview(region), controls);
+		} else {
+			Label unavailable = new Label("Preview unavailable for page " + region.pageNumber());
+			row.getChildren().addAll(unavailable, controls);
+		}
+		row.setFillWidth(true);
+		return row;
 	}
 
 	private VBox createMcqExplanationWorkflowControls() {
@@ -1260,13 +1146,9 @@ public final class AnswerCapturePane extends VBox {
 
 		// Ordinary unanswered capture and retrofit selection are separate explicit
 		// modes. Hide the ordinary selector rather than presenting two active targets.
-		unansweredQuestionField.setVisible(false);
-		unansweredQuestionField.setManaged(false);
-		unansweredQuestionField.setDisable(true);
-		captureMcqExplanationsButton.setVisible(false);
-		captureMcqExplanationsButton.setManaged(false);
-		mcqExplanationSelectionControls.setVisible(true);
-		mcqExplanationSelectionControls.setManaged(true);
+		setVisibleAndManaged(unansweredQuestionField, false);
+		setVisibleAndManaged(captureMcqExplanationsButton, false);
+		setVisibleAndManaged(mcqExplanationSelectionControls, true);
 		restoringMcqExplanationSelection = true;
 		try {
 			mcqExplanationQuestionField.getItems().setAll(candidates);
@@ -1279,6 +1161,47 @@ public final class AnswerCapturePane extends VBox {
 		// when retrofit mode ends.
 		applyUnansweredQuestionChange(null, false);
 		selectedAnswerQuestionLabel.setText("Select an answered MCQ to capture explanation regions.");
+	}
+
+	private void failAnswerSave(Throwable failure) {
+		answerSaveInProgress = false;
+		setDisable(false);
+		refreshSaveButtonState();
+
+		// Persistence failure leaves transient Answer content available for correction
+		// and retry.
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.setHeaderText("Answer could not be saved.");
+		alert.setContentText(
+				failure == null || failure.getMessage() == null ? "The answer was not saved." : failure.getMessage());
+		alert.showAndWait();
+	}
+
+	private AnswerFile findAssignedAnswerFileForDisplay(Question question) {
+		try {
+			AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
+			if (assignedAnswerFile == null) {
+
+				// An unresolved booklet must never inherit another booklet's Answer
+				// source merely because both belong to the same Exam.
+				showAnswerFileRequired(question);
+			}
+			return assignedAnswerFile;
+		} catch (SQLException exception) {
+			showAnswerFileRequired(question);
+			showAnswerFileError("Could not read the answer PDF assigned to this booklet.", exception.getMessage());
+			return null;
+		}
+	}
+
+	private Question findQuestionById(List<Question> questions, Question target) {
+		if (target == null) {
+			return null;
+		}
+
+		// Question objects may have been reconstructed by another repository read, so
+		// persistent identity rather than Java object identity restores selection.
+		return questions.stream().filter(question -> question.getId() == target.getId()).findFirst().orElse(null);
 	}
 
 	private String findValidationError(Question question, String answerText) {
@@ -1366,6 +1289,52 @@ public final class AnswerCapturePane extends VBox {
 		applyUnansweredQuestionChange(matchingReturnQuestion);
 	}
 
+	private void finishMcqExplanationEditState() {
+
+		// Release edit ownership before deciding whether the candidate remains in this
+		// retrofit session.
+		mcqExplanationEditingQuestion = null;
+		mcqExplanationEditSaved = false;
+		unansweredQuestionField.setDisable(true);
+		mcqExplanationQuestionField.setDisable(false);
+		finishMcqExplanationCaptureButton.setDisable(false);
+	}
+
+	private void finishNextAnswerDocumentLoad(AnswerFile file, Throwable failure) {
+		if (failure == null) {
+			answerFile = file;
+			selectedAnswerPdfLabel.setText(file.getName());
+		} else {
+			clearAnswerFile("Choose an answer PDF");
+		}
+		finishAnswerSaveTransition(failure);
+	}
+
+	private void handleMcqExplanationCandidateLoadFailure(Subject requestedSubject, ExamBooklet requestedBooklet,
+			Throwable failure) {
+		finishMcqExplanationCandidateLoad();
+		if (!mcqExplanationRequestIsCurrent(requestedSubject, requestedBooklet)) {
+			return;
+		}
+		String message = failure == null || failure.getMessage() == null ? "The eligible Questions could not be loaded."
+				: failure.getMessage();
+		showAnswerFileError("MCQ explanation Questions could not be loaded.", message);
+	}
+
+	private void handleMcqExplanationCandidateLoadSuccess(Subject requestedSubject, ExamBooklet requestedBooklet,
+			List<Question> candidates) {
+		finishMcqExplanationCandidateLoad();
+		if (!mcqExplanationRequestIsCurrent(requestedSubject, requestedBooklet)) {
+			return;
+		}
+		if (candidates.isEmpty()) {
+			selectedAnswerQuestionLabel
+					.setText("No answered MCQs in the active booklet are available for explanation capture.");
+			return;
+		}
+		enterMcqExplanationCapture(candidates);
+	}
+
 	private void handleMcqExplanationQuestionChanged(Question question) {
 		if (restoringMcqExplanationSelection || !mcqExplanationMode || question == null
 				|| editingAnswerQuestion != null) {
@@ -1387,6 +1356,29 @@ public final class AnswerCapturePane extends VBox {
 		// editAnswer now owns the selected Question until Save or Cancel completes.
 		mcqExplanationQuestionField.setDisable(true);
 		finishMcqExplanationCaptureButton.setDisable(true);
+	}
+
+	private void handleNextAnswerFileLoaded(Question question, AnswerFile file) {
+		if (!sameQuestion(question, unansweredQuestionField.getValue())) {
+			finishAnswerSaveTransition(new CancellationException("Answer selection changed"));
+			return;
+		}
+		if (file == null) {
+
+			// Never carry the preceding booklet's PDF into an unresolved booklet.
+			clearAnswerFile("Choose an answer PDF");
+			finishAnswerSaveTransition(null);
+			return;
+		}
+		openNextAnswerDocument(file);
+	}
+
+	private void handleNextAnswerFileLoadFailure(Throwable failure) {
+
+		// A failed lookup must not leave the preceding booklet's AnswerFile appearing
+		// to belong to the new Question.
+		clearAnswerFile("Choose an answer PDF");
+		finishAnswerSaveTransition(failure);
 	}
 
 	private void handleUnansweredQuestionChanged(Question previousQuestion, Question question) {
@@ -1417,6 +1409,21 @@ public final class AnswerCapturePane extends VBox {
 		return !currentAnswerText().isBlank();
 	}
 
+	private void importSelectedAnswerPdf(Question question, Path sourcePath) {
+		Exam exam = question.getExam();
+		PdfStore pdfStore = new PdfStore(pdfFilePicker.dataRoot());
+		try {
+
+			// Import into managed Exam storage before registering the booklet mapping.
+			Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(),
+					exam.getProvider().getName(), exam.getYear());
+			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfFilePicker.dataRoot());
+			selectAnswerPdf(question, selectedPdf);
+		} catch (IOException exception) {
+			showAnswerPdfError(exception.getMessage());
+		}
+	}
+
 	private boolean isMultipleChoiceQuestion(Question question) {
 		return question != null && question.getResponseType() == QuestionResponseType.MULTIPLE_CHOICE;
 	}
@@ -1426,59 +1433,14 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private boolean loadAssignedAnswerFile(Question question) {
-		AnswerFile assignedAnswerFile;
-		try {
-
-			// The ExamBooklet mapping is authoritative. Do not infer the file from the
-			// number of AnswerFiles registered for the surrounding Exam.
-			assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
-		} catch (SQLException e) {
-			answerFile = null;
-			selectedAnswerPdfLabel.setText("Choose an answer PDF");
-			showAnswerFileError("Could not read the answer PDF assigned to this booklet.", e.getMessage());
-			updateAnswerPdfControlsVisibility(question);
-			return false;
-		}
+		AnswerFile assignedAnswerFile = findAssignedAnswerFileForDisplay(question);
 		if (assignedAnswerFile == null) {
-
-			// An unresolved booklet must never inherit the previously displayed file merely
-			// because that file belongs to the same Exam.
-			answerFile = null;
-			selectedAnswerPdfLabel.setText("Choose an answer PDF");
-			updateAnswerPdfControlsVisibility(question);
 			return false;
 		}
 		if (answerFile != null && answerFile.getId() == assignedAnswerFile.getId()) {
-
-			// MCQ and Paper 1 may deliberately share one AnswerFile. Reuse the already
-			// loaded document rather than reopening the same PDF on every manual selection.
-			answerFile = assignedAnswerFile;
-			selectedAnswerPdfLabel.setText(assignedAnswerFile.getName());
-			try {
-				answerDocumentHandler.run();
-			} catch (RuntimeException e) {
-				answerFile = null;
-				selectedAnswerPdfLabel.setText("Choose an answer PDF");
-				showAnswerFileError("The assigned answer PDF could not be displayed.", e.getMessage());
-				updateAnswerPdfControlsVisibility(question);
-				return false;
-			}
-			updateAnswerPdfControlsVisibility(question);
-			return true;
+			return redisplayAssignedAnswerFile(question, assignedAnswerFile);
 		}
-
-		// A different booklet may point at a different AnswerFile. Clear the old file
-		// before attempting to open the newly assigned document.
-		answerFile = null;
-		Path pdfPath = resolveRegisteredAnswerFile(assignedAnswerFile);
-		if (pdfPath == null) {
-			selectedAnswerPdfLabel.setText("Choose an answer PDF");
-			updateAnswerPdfControlsVisibility(question);
-			return false;
-		}
-		boolean opened = openRegisteredAnswerFile(assignedAnswerFile, pdfPath);
-		updateAnswerPdfControlsVisibility(question);
-		return opened;
+		return openDifferentAssignedAnswerFile(question, assignedAnswerFile);
 	}
 
 	private List<Question> loadMcqExplanationCandidates(List<Question> questions, Subject subject,
@@ -1509,53 +1471,60 @@ public final class AnswerCapturePane extends VBox {
 	private void loadNextAnswerDocument(Question question) {
 		if (question == null || !usesAnswerDocument(question)) {
 
-			// Nothing remains that can legitimately retain the previous booklet's Answer
-			// source.
-			answerFile = null;
-			selectedAnswerPdfLabel.setText("No PDF selected");
+			// Nothing remains that may legitimately retain the previous booklet's
+			// Answer source.
+			clearAnswerFile("No PDF selected");
 			finishAnswerSaveTransition(null);
 			return;
 		}
 		answerRegionStatusLabel.setText("Answer saved — loading next question...");
-		Task<AnswerFile> task = new Task<>() {
+		CaptureBackgroundTask<AnswerFile> task = new CaptureBackgroundTask<>(
+				() -> answerWriter.findAnswerFile(question.getBooklet()));
+		task.setOnSucceeded(_ -> handleNextAnswerFileLoaded(question, task.getValue()));
+		task.setOnFailed(_ -> handleNextAnswerFileLoadFailure(task.getException()));
+		startVirtualTask("next-answer-file", task);
+	}
 
-			@Override
-			protected AnswerFile call() throws SQLException {
+	private boolean mcqExplanationCaptureUnavailable() {
 
-				// The next Question may belong to another booklet in the same Exam, so its
-				// own persisted mapping must be resolved before choosing a document.
-				return answerWriter.findAnswerFile(question.getBooklet());
-			}
+		// Entry is blocked while another Answer lifecycle owns the workspace.
+		return mcqExplanationMode || mcqExplanationLoadInProgress || workingSubject == null || answerSaveInProgress
+				|| editingAnswerQuestion != null;
+	}
+
+	private boolean mcqExplanationRequestIsCurrent(Subject requestedSubject, ExamBooklet requestedBooklet) {
+
+		// Both transient Subject and booklet identity must still match before a
+		// background result can modify the current workspace.
+		return Objects.equals(workingSubject, requestedSubject)
+				&& sameBooklet(requestedBooklet, activeBookletSupplier.get());
+	}
+
+	private RadioButton multipleChoiceButtonFor(String answerText) {
+
+		// A-D matching remains case-insensitive for older persisted Answer text.
+		return switch (answerText) {
+		case "A", "a" -> answerAButton;
+		case "B", "b" -> answerBButton;
+		case "C", "c" -> answerCButton;
+		case "D", "d" -> answerDButton;
+		default -> null;
 		};
-		task.setOnSucceeded(_ -> {
-			if (!sameQuestion(question, unansweredQuestionField.getValue())) {
-				finishAnswerSaveTransition(new CancellationException("Answer selection changed"));
-				return;
-			}
-			AnswerFile file = task.getValue();
-			if (file == null) {
+	}
 
-				// Never carry the preceding booklet's PDF into an unresolved booklet.
-				answerFile = null;
-				selectedAnswerPdfLabel.setText("Choose an answer PDF");
-				finishAnswerSaveTransition(null);
-				return;
-			}
+	private boolean openDifferentAssignedAnswerFile(Question question, AnswerFile assignedAnswerFile) {
 
-			// Keep the existing asynchronous PDF-loading path even when the next booklet
-			// shares the same AnswerFile. Existing save-transition and failure handling
-			// relies on this callback completing before capture is re-enabled.
-			openNextAnswerDocument(file);
-		});
-		task.setOnFailed(_ -> {
-
-			// A failed lookup must not leave the preceding booklet's AnswerFile appearing
-			// to belong to the new Question.
-			answerFile = null;
-			selectedAnswerPdfLabel.setText("Choose an answer PDF");
-			finishAnswerSaveTransition(task.getException());
-		});
-		Thread.ofVirtual().name("next-answer-file").start(task);
+		// Clear only identity before resolution. The existing label is retained until
+		// either the new document opens or the failure state is known.
+		answerFile = null;
+		Path pdfPath = resolveRegisteredAnswerFile(assignedAnswerFile);
+		if (pdfPath == null) {
+			showAnswerFileRequired(question);
+			return false;
+		}
+		boolean opened = openRegisteredAnswerFile(assignedAnswerFile, pdfPath);
+		updateAnswerPdfControlsVisibility(question);
+		return opened;
 	}
 
 	private void openNextAnswerDocument(AnswerFile file) {
@@ -1563,24 +1532,14 @@ public final class AnswerCapturePane extends VBox {
 			Path path = new PdfStore(pdfFilePicker.dataRoot()).resolve(file.getSourceDocument().getRelativePath());
 			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfFilePicker.dataRoot());
 
-			// Load asynchronously because this path is used immediately after an Answer
-			// save. The save transition remains active until PDF loading completes.
-			answerPdfLoader.accept(selected, failure -> {
-				if (failure == null) {
-					answerFile = file;
-					selectedAnswerPdfLabel.setText(file.getName());
-				} else {
-					answerFile = null;
-					selectedAnswerPdfLabel.setText("Choose an answer PDF");
-				}
-				finishAnswerSaveTransition(failure);
-			});
-		} catch (RuntimeException e) {
+			// Save transition remains active until the asynchronous PDF loader reports
+			// completion.
+			answerPdfLoader.accept(selected, failure -> finishNextAnswerDocumentLoad(file, failure));
+		} catch (RuntimeException exception) {
 
-			// A bad persisted path must finish the save transition cleanly rather than
-			// leaving Answer capture permanently disabled.
+			// A bad persisted path must still release the save transition.
 			answerFile = null;
-			finishAnswerSaveTransition(e);
+			finishAnswerSaveTransition(exception);
 		}
 	}
 
@@ -1602,40 +1561,72 @@ public final class AnswerCapturePane extends VBox {
 		return true;
 	}
 
-	private void refreshAnswerRegionList() {
-		boolean hasRegions = !pendingAnswerRegions.isEmpty();
-		boolean showRegions = hasRegions && answerRegionControlsVisibleFor(unansweredQuestionField.getValue());
+	private Answer persistAnswer(Question question, long existingAnswerId, String storedText,
+			List<AnswerRegion> regions, boolean updating) throws SQLException {
 
-		// The AnswerFile flag controls whether MCQ regions are treated as explanation
-		// material. Written-response regions retain their existing behaviour.
-		answerRegionsScrollPane.setManaged(showRegions);
-		answerRegionsScrollPane.setVisible(showRegions);
+		// Existing Answers preserve identity; new Answers use the insert path.
+		if (updating) {
+			return answerWriter.updateAnswer(question, existingAnswerId, storedText, regions);
+		}
+		return answerWriter.insertAnswer(question, storedText, regions);
+	}
+
+	private void prepareAnswerFileForQuestion(boolean usesAnswerDocument) {
+		if (!usesAnswerDocument) {
+
+			// UNKNOWN response types cannot retain a booklet-specific Answer source.
+			clearAnswerFile("No PDF selected");
+		}
+	}
+
+	private boolean redisplayAssignedAnswerFile(Question question, AnswerFile assignedAnswerFile) {
+		answerFile = assignedAnswerFile;
+		selectedAnswerPdfLabel.setText(assignedAnswerFile.getName());
+		try {
+
+			// Reuse the already-open document when consecutive Questions deliberately
+			// share one persisted AnswerFile.
+			answerDocumentHandler.run();
+		} catch (RuntimeException exception) {
+			showAnswerFileRequired(question);
+			showAnswerFileError("The assigned answer PDF could not be displayed.", exception.getMessage());
+			return false;
+		}
+		updateAnswerPdfControlsVisibility(question);
+		return true;
+	}
+
+	private void refreshAnswerPresentation(Question question, boolean usesAnswerDocument) {
+		refreshAnswerRegionList();
+		if (question.hasAnswer()) {
+			showAcceptedRegionStatus();
+		}
+		updateMultipleChoiceAnswerVisibility(question);
+		updateAnswerRegionControlsVisibility(question);
+
+		// Both supported response types may own an Answer document.
+		chooseAnswerPdfButton.setDisable(!usesAnswerDocument);
+		updateAnswerPdfControlsVisibility(question);
+		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
+			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — response type unresolved; "
+					+ "use Edit Metadata before capturing an answer.");
+		}
+		refreshSaveButtonState();
+	}
+
+	private void refreshAnswerRegionList() {
+		boolean showRegions = !pendingAnswerRegions.isEmpty()
+				&& answerRegionControlsVisibleFor(unansweredQuestionField.getValue());
+
+		// The AnswerFile flag changes MCQ explanation presentation but written-response
+		// regions retain the same preview rules.
+		setVisibleAndManaged(answerRegionsScrollPane, showRegions);
 		answerRegionListBox.getChildren().clear();
 		if (!showRegions) {
 			return;
 		}
-		for (int i = 0; i < pendingAnswerRegions.size(); i++) {
-			AnswerRegion region = pendingAnswerRegions.get(i);
-			int regionIndex = i;
-			Button removeButton = new Button("Remove");
-
-			// Removing a region changes only transient Answer-edit state until Save.
-			removeButton.setOnAction(_ -> removeAnswerRegion(regionIndex));
-			HBox controls = new HBox(removeButton);
-			controls.setAlignment(Pos.CENTER_LEFT);
-			VBox row = new VBox(COMPACT_SPACING);
-			if (answerFile != null && region.answerFile().getId() == answerFile.getId()) {
-
-				// Preview only regions belonging to the AnswerFile currently displayed in
-				// the shared PDF workspace.
-				ImageView previewView = createAcceptedAnswerPreview(region);
-				row.getChildren().addAll(previewView, controls);
-			} else {
-				Label missingPreviewLabel = new Label("Preview unavailable for page " + region.pageNumber());
-				row.getChildren().addAll(missingPreviewLabel, controls);
-			}
-			row.setFillWidth(true);
-			answerRegionListBox.getChildren().add(row);
+		for (int index = 0; index < pendingAnswerRegions.size(); index++) {
+			answerRegionListBox.getChildren().add(createAnswerRegionRow(pendingAnswerRegions.get(index), index));
 		}
 		answerRegionListBox.requestLayout();
 		answerRegionsScrollPane.requestLayout();
@@ -1659,11 +1650,46 @@ public final class AnswerCapturePane extends VBox {
 		saveAnswerButton.setDisable(!ready);
 	}
 
+	private AnswerFile registerSelectedAnswerFile(Question question, SelectedPdf selectedPdf) {
+		try {
+
+			// Persist the managed-file hash before publishing the AnswerFile identity.
+			String contentSha256 = sourceDocumentHashService.sha256(selectedPdf.path());
+			return answerWriter.findOrCreateAnswerFile(question.getBooklet(), selectedPdf.file().getName(),
+					selectedPdf.relativePath(), contentSha256);
+		} catch (IOException | SQLException exception) {
+			throw new IllegalStateException("Unable to save answer PDF", exception);
+		}
+	}
+
 	private void removeAnswerRegion(int regionIndex) {
 		pendingAnswerRegions.remove(regionIndex);
 		refreshAnswerRegionList();
 		showAcceptedRegionStatus();
 		refreshSaveButtonState();
+	}
+
+	private int removeMcqExplanationCandidate(Question completedQuestion) {
+		int completedIndex = -1;
+		for (int index = 0; index < mcqExplanationQuestionField.getItems().size(); index++) {
+			if (mcqExplanationQuestionField.getItems().get(index).getId() == completedQuestion.getId()) {
+				completedIndex = index;
+				break;
+			}
+		}
+		restoringMcqExplanationSelection = true;
+		try {
+
+			// Removal is session workflow state only; it does not persist explanation
+			// completeness against the Question.
+			if (completedIndex >= 0) {
+				mcqExplanationQuestionField.getItems().remove(completedIndex);
+			}
+			mcqExplanationQuestionField.setValue(null);
+		} finally {
+			restoringMcqExplanationSelection = false;
+		}
+		return completedIndex;
 	}
 
 	private Question removeSavedQuestionAndSelectNext(Question savedQuestion, int previousIndex) {
@@ -1684,27 +1710,39 @@ public final class AnswerCapturePane extends VBox {
 		return nextQuestion;
 	}
 
+	private void replaceUnansweredQuestionsSilently(List<Question> questions, Question selected) {
+		restoringUnansweredQuestionSelection = true;
+		try {
+
+			// Replace queue contents and selection as one suppressed UI transaction.
+			unansweredQuestionField.getItems().setAll(questions);
+			unansweredQuestionField.setValue(selected);
+		} finally {
+			restoringUnansweredQuestionSelection = false;
+		}
+	}
+
 	private void resetMcqExplanationPresentation() {
 		mcqExplanationMode = false;
 		mcqExplanationReturnQuestion = null;
 		mcqExplanationEditingQuestion = null;
 		mcqExplanationEditSaved = false;
-		captureMcqExplanationsButton.setVisible(true);
-		captureMcqExplanationsButton.setManaged(true);
+		setVisibleAndManaged(captureMcqExplanationsButton, true);
 		refreshMcqExplanationActionState();
-		mcqExplanationSelectionControls.setVisible(false);
-		mcqExplanationSelectionControls.setManaged(false);
+		setVisibleAndManaged(mcqExplanationSelectionControls, false);
 		mcqExplanationQuestionField.setDisable(false);
 		finishMcqExplanationCaptureButton.setDisable(false);
 		restoringMcqExplanationSelection = true;
 		try {
+
+			// Retrofit candidates are session-local and cannot leak into the next
+			// invocation.
 			mcqExplanationQuestionField.getItems().clear();
 			mcqExplanationQuestionField.setValue(null);
 		} finally {
 			restoringMcqExplanationSelection = false;
 		}
-		unansweredQuestionField.setVisible(true);
-		unansweredQuestionField.setManaged(true);
+		setVisibleAndManaged(unansweredQuestionField, true);
 		unansweredQuestionField.setDisable(false);
 	}
 
@@ -1716,6 +1754,32 @@ public final class AnswerCapturePane extends VBox {
 			showAnswerFileError("The registered answer PDF path is invalid.", e.getMessage());
 			return null;
 		}
+	}
+
+	private void restoreAnswerState(Question question) {
+		if (!question.hasAnswer()) {
+			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question));
+			saveAnswerButton.setText("Save Answer");
+			answerRegionCountLabel.setText("Regions: 0");
+			answerRegionStatusLabel.setText("");
+			return;
+		}
+		Answer answer = question.getAnswer();
+		selectMultipleChoiceAnswer(answer.getAnswerText());
+
+		// Persisted regions remain authoritative transient edit state while their
+		// booklet mapping determines which document supplies their preview.
+		pendingAnswerRegions.addAll(answer.getRegions());
+		selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — answer stored");
+		saveAnswerButton.setText("Update Answer");
+	}
+
+	private void restoreMcqExplanationCandidateAfterCancel() {
+
+		// Cancel leaves the candidate in the current session and returns control to
+		// explicit selection.
+		clearMcqExplanationSelection();
+		selectedAnswerQuestionLabel.setText("Select an answered MCQ to capture explanation regions.");
 	}
 
 	private void restoreUnansweredQuestionSelection(Question previousQuestion) {
@@ -1752,42 +1816,18 @@ public final class AnswerCapturePane extends VBox {
 		int previousIndex = unansweredQuestionField.getSelectionModel().getSelectedIndex();
 		String storedText = answerText.isBlank() ? null : answerText;
 
-		// Snapshot accepted regions before the background task takes ownership of the
-		// save.
+		// Snapshot transient Answer content before background persistence takes
+		// ownership of the save.
 		List<AnswerRegion> regions = List.copyOf(pendingAnswerRegions);
 		boolean updating = question.hasAnswer();
 		long existingAnswerId = updating ? question.getAnswer().getId() : 0;
 		boolean editing = editingAnswerQuestion != null;
-		answerSaveInProgress = true;
-		setDisable(true);
-		Task<Answer> saveTask = new Task<>() {
-
-			@Override
-			protected Answer call() throws Exception {
-				if (updating) {
-					return answerWriter.updateAnswer(question, existingAnswerId, storedText, regions);
-				}
-				return answerWriter.insertAnswer(question, storedText, regions);
-			}
-		};
-		saveTask.setOnSucceeded(_ -> {
-			Answer answer = saveTask.getValue();
-			completeAnswerSave(question, answer, editing, previousIndex);
-		});
-		saveTask.setOnFailed(_ -> {
-			answerSaveInProgress = false;
-			setDisable(false);
-			refreshSaveButtonState();
-			Throwable failure = saveTask.getException();
-			Alert alert = new Alert(Alert.AlertType.ERROR);
-			alert.setHeaderText("Answer could not be saved.");
-			alert.setContentText(failure == null || failure.getMessage() == null ? "The answer was not saved."
-					: failure.getMessage());
-			alert.showAndWait();
-		});
-		Thread saveThread = new Thread(saveTask, "answer-save");
-		saveThread.setDaemon(true);
-		saveThread.start();
+		beginAnswerSave();
+		CaptureBackgroundTask<Answer> saveTask = new CaptureBackgroundTask<>(
+				() -> persistAnswer(question, existingAnswerId, storedText, regions, updating));
+		saveTask.setOnSucceeded(_ -> completeAnswerSave(question, saveTask.getValue(), editing, previousIndex));
+		saveTask.setOnFailed(_ -> failAnswerSave(saveTask.getException()));
+		startDaemonTask("answer-save", saveTask);
 	}
 
 	private void selectMultipleChoiceAnswer(String answerText) {
@@ -1796,27 +1836,24 @@ public final class AnswerCapturePane extends VBox {
 		if (answerText == null || answerText.isBlank()) {
 			return;
 		}
-		String value = answerText.trim();
-		if ("A".equalsIgnoreCase(value)) {
-			multipleChoiceAnswerGroup.selectToggle(answerAButton);
-			return;
-		}
-		if ("B".equalsIgnoreCase(value)) {
-			multipleChoiceAnswerGroup.selectToggle(answerBButton);
-			return;
-		}
-		if ("C".equalsIgnoreCase(value)) {
-			multipleChoiceAnswerGroup.selectToggle(answerCButton);
-			return;
-		}
-		if ("D".equalsIgnoreCase(value)) {
-			multipleChoiceAnswerGroup.selectToggle(answerDButton);
+		RadioButton answerButton = multipleChoiceButtonFor(answerText.trim());
+		if (answerButton != null) {
+			multipleChoiceAnswerGroup.selectToggle(answerButton);
 			return;
 		}
 
-		// Preserve older arbitrary textual answers even though the current capture UI
-		// only exposes A-D choices.
+		// Preserve older arbitrary textual answers even though current capture exposes
+		// only A-D choices.
 		preservedAnswerText = answerText;
+	}
+
+	private void selectNextMcqExplanationCandidate(int completedIndex) {
+		int nextIndex = completedIndex < 0 ? 0
+				: Math.min(completedIndex, mcqExplanationQuestionField.getItems().size() - 1);
+
+		// Normal ComboBox selection deliberately invokes the existing edit workflow
+		// for the next candidate.
+		mcqExplanationQuestionField.getSelectionModel().select(nextIndex);
 	}
 
 	private void setMultipleChoiceAnswerEnabled(boolean enabled) {
@@ -1831,6 +1868,26 @@ public final class AnswerCapturePane extends VBox {
 		boolean effective = enabled && answerRegionsAvailableFor(unansweredQuestionField.getValue());
 		addAnswerRegionButton.setDisable(!effective);
 		clearAnswerSelectionButton.setDisable(!effective);
+	}
+
+	private void setUnansweredQuestionSilently(Question question) {
+		restoringUnansweredQuestionSelection = true;
+		try {
+
+			// Programmatic queue maintenance must not enter the ordinary target-change
+			// listener and repeat transition guards.
+			unansweredQuestionField.setValue(question);
+		} finally {
+			restoringUnansweredQuestionSelection = false;
+		}
+	}
+
+	private void setVisibleAndManaged(javafx.scene.Node node, boolean visible) {
+
+		// JavaFX layout participation must always follow visual visibility for
+		// conditional Answer-capture controls.
+		node.setVisible(visible);
+		node.setManaged(visible);
 	}
 
 	private void showAcceptedRegionStatus() {
@@ -1851,6 +1908,11 @@ public final class AnswerCapturePane extends VBox {
 		alert.setHeaderText(header);
 		alert.setContentText(message);
 		alert.showAndWait();
+	}
+
+	private void showAnswerFileRequired(Question question) {
+		clearAnswerFile("Choose an answer PDF");
+		updateAnswerPdfControlsVisibility(question);
 	}
 
 	private void showAnswerPdfError(String message) {
@@ -1893,6 +1955,19 @@ public final class AnswerCapturePane extends VBox {
 		answerPageNavigationHandler.accept(firstRegion.pageNumber());
 	}
 
+	private void showNoAnswerQuestion() {
+		clearAnswerFile("No PDF selected");
+		selectedAnswerQuestionLabel.setText("No question selected");
+		updateMultipleChoiceAnswerVisibility(null);
+		updateAnswerRegionControlsVisibility(null);
+		saveAnswerButton.setDisable(true);
+		chooseAnswerPdfButton.setDisable(true);
+		saveAnswerButton.setText("Save Answer");
+		answerRegionCountLabel.setText("Regions: 0");
+		answerRegionStatusLabel.setText("");
+		updateAnswerPdfControlsVisibility(null);
+	}
+
 	private void showSelectedAnswerDocument() {
 		Question question = unansweredQuestionField.getValue();
 		if (question == null || answerSaveInProgress || !usesAnswerDocument(question)) {
@@ -1902,6 +1977,21 @@ public final class AnswerCapturePane extends VBox {
 		// Opening the Answer selector must resolve the current booklet's mapping rather
 		// than assuming the currently loaded same-Exam PDF is suitable.
 		loadAssignedAnswerFile(question);
+	}
+
+	private void startDaemonTask(String threadName, Runnable task) {
+
+		// Preserve the existing daemon-thread semantics used by Answer persistence.
+		Thread thread = new Thread(task, threadName);
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	private void startVirtualTask(String threadName, Runnable task) {
+
+		// Lookup-style background work uses lightweight virtual threads while JavaFX
+		// Task retains success/failure delivery on the application thread.
+		Thread.ofVirtual().name(threadName).start(task);
 	}
 
 	private void updateAnswerPdfControlsVisibility(Question question) {
