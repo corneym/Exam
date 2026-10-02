@@ -46,14 +46,12 @@ class QuestionCorpusAuditDialogDashboardTest {
 	@Test
 	void dialogUsesOperationalDashboardPane(FxRobot robot) {
 		assertInstanceOf(CorpusDashboardPane.class, dialog.getDialogPane().getContent());
-
 		var refresh = robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-refresh").queryButton();
 		assertTrue(refresh.isDisable());
-
 		robot.interact(() -> dialog.setRefreshHandler(() -> {
+
 			// Persistence reload is owned by the application in production.
 		}));
-
 		assertTrue(!refresh.isDisable());
 	}
 
@@ -63,20 +61,16 @@ class QuestionCorpusAuditDialogDashboardTest {
 		ExamProvider provider = new ExamProvider(2, "QCAA");
 		Exam exam = new Exam(3, chemistry, provider, 2025, "External Assessment", ExamCaptureState.COMPLETE);
 		ExamBooklet booklet = new ExamBooklet(4, exam, "Paper 1", new SourceDocument(5, "Chemistry/2025/paper1.pdf"));
-
 		SyllabusVersion syllabus = new SyllabusVersion(6, chemistry, "2025", true);
 		Unit unit = new Unit(7, syllabus, "1", "Unit 1", 1);
 		Topic topic = new Topic(8, syllabus, unit, "1.1", "Topic 1", 1);
 		Descriptor descriptor = new Descriptor(9, syllabus, topic, "1.1.1", "Descriptor", 1);
-
 		Question question = new Question(10, booklet, "Q1", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20)), descriptor, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-
 		BookletCorpusStatus bookletStatus = new BookletCorpusStatus(booklet, true, null, 1, 1,
 				new QuestionCorpusSummary(1, 0, 1, 0, 1, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.noneOf(BookletCorpusFinding.class));
-
 		ExamCorpusStatus examStatus = new ExamCorpusStatus(exam, new ExamAssetExpectations(1, 1, 0, 0),
 				List.of(bookletStatus), new QuestionCorpusSummary(1, 0, 1, 0, 1, 0, 0),
 				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
@@ -85,7 +79,6 @@ class QuestionCorpusAuditDialogDashboardTest {
 		// for its content hierarchy to be inspected.
 		stage.setScene(new Scene(new javafx.scene.layout.StackPane(), 200, 100));
 		stage.show();
-
 		dialog = new QuestionCorpusAuditDialog(stage, chemistry, List.of(examStatus), List.of(question));
 	}
 }

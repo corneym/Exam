@@ -34,14 +34,11 @@ class ExamCorpusAuditTest {
 	void aggregatesQuestionStatusAcrossBooklets() {
 		Question complete = fixture.multipleChoiceQuestion(100, fixture.paper1, "1");
 		complete.setAnswer(new Answer(200, "A", List.of()));
-
 		Question missingAnswer = fixture.writtenQuestion(101, fixture.paper2, "2");
-
 		BookletCorpusStatus paper1Status = BookletCorpusAudit.assess(fixture.paper1, List.of(complete),
 				fixture.answerFile, true);
 		BookletCorpusStatus paper2Status = BookletCorpusAudit.assess(fixture.paper2, List.of(missingAnswer),
 				fixture.answerFile, true);
-
 		ExamAssetExpectations expectations = new ExamAssetExpectations(2, 2, 1, 1);
 		ExamCorpusStatus status = ExamCorpusAudit.assess(fixture.exam, expectations,
 				List.of(paper1Status, paper2Status));
@@ -60,12 +57,10 @@ class ExamCorpusAuditTest {
 				new SourceDocument(51, "Chemistry/2025/solutions.pdf"), true);
 		Question question = fixture.multipleChoiceQuestion(120, fixture.paper1, "3");
 		question.setAnswer(new Answer(220, "B", List.of()));
-
 		BookletCorpusStatus paper1Status = BookletCorpusAudit.assess(fixture.paper1, List.of(question), explanations,
 				true);
 		BookletCorpusStatus paper2Status = BookletCorpusAudit.assess(fixture.paper2, List.of(), null, true);
 		ExamAssetExpectations expectations = new ExamAssetExpectations(2, 2, 1, 1);
-
 		ExamCorpusStatus status = ExamCorpusAudit.assess(fixture.exam, expectations,
 				List.of(paper1Status, paper2Status));
 
@@ -73,7 +68,6 @@ class ExamCorpusAuditTest {
 		// availability remains a separate reporting dimension.
 		assertEquals(1, status.questionSummary().completeQuestions());
 		assertEquals(0, status.questionSummary().missingAnswer());
-
 		McqExplanationSummary explanationSummary = status.mcqExplanationSummary();
 		assertEquals(1, explanationSummary.explanationCapableBookletCount());
 		assertEquals(1, explanationSummary.eligibleQuestionCount());
@@ -88,7 +82,6 @@ class ExamCorpusAuditTest {
 	void bookletFindingStillRequiresExamAttentionWithoutChangingExamState() {
 		BookletCorpusStatus missingPdf = BookletCorpusAudit.assess(fixture.paper1, List.of(), null, false);
 		BookletCorpusStatus paper2Status = BookletCorpusAudit.assess(fixture.paper2, List.of(), null, true);
-
 		ExamAssetExpectations expectations = new ExamAssetExpectations(2, 2, 1, 1);
 		ExamCorpusStatus status = ExamCorpusAudit.assess(fixture.exam, expectations, List.of(missingPdf, paper2Status));
 
@@ -103,7 +96,6 @@ class ExamCorpusAuditTest {
 	void expectedAssetCountMismatchIsAdvisoryForCompletedExam() {
 		BookletCorpusStatus paper1Status = BookletCorpusAudit.assess(fixture.paper1, List.of(), null, true);
 		BookletCorpusStatus paper2Status = BookletCorpusAudit.assess(fixture.paper2, List.of(), null, true);
-
 		ExamAssetExpectations expectations = new ExamAssetExpectations(3, 2, 2, 1);
 		ExamCorpusStatus status = ExamCorpusAudit.assess(fixture.exam, expectations,
 				List.of(paper1Status, paper2Status));
@@ -121,7 +113,6 @@ class ExamCorpusAuditTest {
 	void matchingAssetExpectationsProduceNoExamLevelFindings() {
 		BookletCorpusStatus paper1Status = BookletCorpusAudit.assess(fixture.paper1, List.of(), null, true);
 		BookletCorpusStatus paper2Status = BookletCorpusAudit.assess(fixture.paper2, List.of(), null, true);
-
 		ExamAssetExpectations expectations = new ExamAssetExpectations(2, 2, 1, 1);
 		ExamCorpusStatus status = ExamCorpusAudit.assess(fixture.exam, expectations,
 				List.of(paper1Status, paper2Status));

@@ -8,7 +8,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
@@ -50,19 +52,15 @@ final class CorpusDashboardPane extends VBox {
 	private static final double EXAM_TABLE_HEIGHT = 190.0;
 	private static final double BOOKLET_TABLE_HEIGHT = 190.0;
 	private static final double QUESTION_TABLE_HEIGHT = 260.0;
-
 	private final Subject workingSubject;
 	private List<ExamCorpusStatus> examStatuses;
 	private List<Question> questions;
-
 	private final Label workingSubjectLabel = new Label();
 	private final Button refreshButton = new Button("Refresh");
-
 	private final ComboBox<ExamProvider> providerBox = new ComboBox<>();
 	private final ComboBox<Integer> yearBox = new ComboBox<>();
 	private final ComboBox<ExamCaptureState> examStateBox = new ComboBox<>();
 	private final Button clearFiltersButton = new Button("Clear");
-
 	private final Button totalQuestionsButton = new Button();
 	private final Button needsAttentionButton = new Button();
 	private final Button missingContentButton = new Button();
@@ -70,16 +68,13 @@ final class CorpusDashboardPane extends VBox {
 	private final Button unknownTypeButton = new Button();
 	private final Button sharedContextButton = new Button();
 	private final Label mcqExplanationSummaryLabel = new Label();
-
 	private final TableView<ExamCorpusStatus> examTable = new TableView<>();
 	private final Label selectedExamLabel = new Label();
 	private final Label declaredExamStateLabel = new Label();
 	private final Label selectedExamCountsLabel = new Label();
-
 	private final TableView<BookletCorpusStatus> bookletTable = new TableView<>();
 	private final Label selectedBookletLabel = new Label();
 	private final Label bookletWarningLabel = new Label();
-
 	private final ComboBox<QuestionCorpusCompletionFilter> questionViewBox = new ComboBox<>();
 	private final Label questionResultCountLabel = new Label();
 	private final TableView<QuestionCorpusWorkItem> questionTable = new TableView<>();
@@ -87,13 +82,15 @@ final class CorpusDashboardPane extends VBox {
 	private final Button setSelectedMultipleChoiceButton = new Button("Set selected: Multiple choice");
 	private final Button setSelectedWrittenResponseButton = new Button("Set selected: Written");
 	private final Label mcqExplanationCoverageLabel = new Label();
-
 	private QuestionCorpusProblem selectedQuestionProblem;
 	private boolean changingScopeFilters;
 	private boolean changingQuestionFilter;
 	private Runnable refreshHandler = () -> {
 	};
 	private BiConsumer<List<Question>, QuestionResponseType> bulkResponseTypeHandler = (_, _) -> {
+	};
+	private final Button manageExamAssetsButton = new Button("Manage Exam / Assets");
+	private BiConsumer<Exam, ExamBooklet> examAssetsHandler = (_, _) -> {
 	};
 
 	CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions) {
@@ -106,7 +103,6 @@ final class CorpusDashboardPane extends VBox {
 		this.workingSubject = workingSubject;
 		this.examStatuses = statusesForWorkingSubject(examStatuses);
 		this.questions = questionsForWorkingSubject(questions);
-
 		configureControls();
 		configureActions();
 		buildContent();
@@ -139,7 +135,6 @@ final class CorpusDashboardPane extends VBox {
 		// summaries and Question work cannot drift across separate UI snapshots.
 		examStatuses = statusesForWorkingSubject(updatedStatuses);
 		questions = questionsForWorkingSubject(updatedQuestions);
-
 		changingScopeFilters = true;
 		try {
 			populateFilterOptions();
@@ -151,11 +146,9 @@ final class CorpusDashboardPane extends VBox {
 		} finally {
 			changingScopeFilters = false;
 		}
-
 		refreshSummaryControls();
 		refreshExamTable(selectedExamId, selectedBookletId);
 		refreshQuestionWork();
-
 		if (preferredQuestionId > 0) {
 
 			// Restore a corrected Question only when it remains visible under the
@@ -183,6 +176,15 @@ final class CorpusDashboardPane extends VBox {
 
 		// Bulk UNKNOWN resolution remains an existing operational Dashboard feature.
 		bulkResponseTypeHandler = handler;
+	}
+
+	void setExamAssetsHandler(BiConsumer<Exam, ExamBooklet> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Structural correction is owned by the existing Exam/Assets workspace.
+		examAssetsHandler = handler;
 	}
 
 	void setRefreshHandler(Runnable handler) {
@@ -254,11 +256,9 @@ final class CorpusDashboardPane extends VBox {
 
 	private String bookletWarningText(BookletCorpusStatus status) {
 		StringBuilder text = new StringBuilder();
-
 		if (status.hasFinding(BookletCorpusFinding.MISSING_QUESTION_PDF)) {
 			text.append("Question PDF is missing.");
 		}
-
 		if (status.hasFinding(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH)) {
 			if (!text.isEmpty()) {
 				text.append("  ");
@@ -269,69 +269,52 @@ final class CorpusDashboardPane extends VBox {
 					.append(" top-level Questions; encountered ").append(status.encounteredTopLevelQuestionCount())
 					.append(". Investigation required.");
 		}
-
 		return text.toString();
 	}
 
 	private void buildContent() {
 		Label heading = new Label("CORPUS DASHBOARD");
 		heading.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
-
 		HBox subjectRow = new HBox(SPACING, new Label("Working Subject:"), workingSubjectLabel);
 		subjectRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(subjectRow, Priority.ALWAYS);
-
 		HBox headingRow = new HBox(SPACING, heading, subjectRow, refreshButton);
 		headingRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(subjectRow, Priority.ALWAYS);
-
 		HBox filterRow = new HBox(SPACING, new Label("Provider"), providerBox, new Label("Year"), yearBox,
 				new Label("Exam state"), examStateBox, clearFiltersButton);
 		filterRow.setAlignment(Pos.CENTER_LEFT);
-
 		HBox summaryRowOne = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
 				missingAnswerButton);
 		summaryRowOne.setAlignment(Pos.CENTER_LEFT);
-
 		HBox summaryRowTwo = new HBox(SPACING, unknownTypeButton, sharedContextButton, mcqExplanationSummaryLabel);
 		summaryRowTwo.setAlignment(Pos.CENTER_LEFT);
-
 		Label examsHeading = new Label("EXAMS");
 		examsHeading.setStyle("-fx-font-weight: bold;");
-
 		Label selectedExamHeading = new Label("SELECTED EXAM");
 		selectedExamHeading.setStyle("-fx-font-weight: bold;");
-
-		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel);
+		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel,
+				manageExamAssetsButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
-
 		Label bookletsHeading = new Label("BOOKLETS");
 		bookletsHeading.setStyle("-fx-font-weight: bold;");
-
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
-
 		Label questionWorkHeading = new Label("QUESTION WORK");
 		questionWorkHeading.setStyle("-fx-font-weight: bold;");
-
 		HBox questionFilterRow = new HBox(SPACING, new Label("Show"), questionViewBox, questionResultCountLabel);
 		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
-
 		HBox bulkResponseTypeRow = new HBox(SPACING, selectAllUnknownButton, setSelectedMultipleChoiceButton,
 				setSelectedWrittenResponseButton);
 		bulkResponseTypeRow.setAlignment(Pos.CENTER_LEFT);
-
 		mcqExplanationCoverageLabel.setWrapText(true);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
-
 		VBox.setVgrow(questionTable, Priority.ALWAYS);
-
 		getChildren().addAll(headingRow, filterRow, summaryRowOne, summaryRowTwo, examsHeading, examTable,
 				selectedExamHeading, selectedExamTitleRow, selectedExamCountsLabel, bookletsHeading, bookletTable,
 				selectedBookletLabel, bookletWarningLabel, questionWorkHeading, questionFilterRow, questionTable,
 				bulkResponseTypeRow, mcqExplanationCoverageLabel);
-
 		setSpacing(SPACING);
 		setPadding(PADDING);
 	}
@@ -354,11 +337,13 @@ final class CorpusDashboardPane extends VBox {
 		selectedExamLabel.setText("No Exam selected");
 		declaredExamStateLabel.setText("");
 		selectedExamCountsLabel.setText("");
-
 		bookletTable.getItems().clear();
 		selectedBookletLabel.setText("Selected booklet: All booklets");
 		setVisibleAndManaged(bookletWarningLabel, false);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
+
+		// No selected Exam means there can be no structural correction target.
+		updateExamAssetsActionState();
 	}
 
 	private String completionLabel(QuestionCorpusCompletionFilter completion) {
@@ -372,7 +357,6 @@ final class CorpusDashboardPane extends VBox {
 	private void configureActions() {
 		refreshButton.setOnAction(_ -> refreshHandler.run());
 		clearFiltersButton.setOnAction(_ -> clearFilters());
-
 		providerBox.valueProperty().addListener((_, _, _) -> {
 			if (!changingScopeFilters) {
 				refreshDashboard();
@@ -388,7 +372,6 @@ final class CorpusDashboardPane extends VBox {
 				refreshDashboard();
 			}
 		});
-
 		totalQuestionsButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.ALL, null));
 		needsAttentionButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE, null));
 		missingContentButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
@@ -399,7 +382,6 @@ final class CorpusDashboardPane extends VBox {
 				QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
 		sharedContextButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
-
 		questionViewBox.valueProperty().addListener((_, _, _) -> {
 			if (changingQuestionFilter) {
 				return;
@@ -409,7 +391,6 @@ final class CorpusDashboardPane extends VBox {
 			selectedQuestionProblem = null;
 			refreshQuestionWork();
 		});
-
 		examTable.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
 			if (selected == null) {
 				clearSelectedExam();
@@ -421,12 +402,12 @@ final class CorpusDashboardPane extends VBox {
 			showSelectedExam(selected, null);
 			refreshQuestionWork();
 		});
-
 		bookletTable.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
 			if (selected == null) {
 				selectedBookletLabel.setText("Selected booklet: All booklets");
 				setVisibleAndManaged(bookletWarningLabel, false);
 				setVisibleAndManaged(mcqExplanationCoverageLabel, false);
+				updateExamAssetsActionState();
 				refreshQuestionWork();
 				return;
 			}
@@ -435,64 +416,55 @@ final class CorpusDashboardPane extends VBox {
 			showSelectedBooklet(selected);
 			refreshQuestionWork();
 		});
-
 		selectAllUnknownButton.setOnAction(_ -> selectAllUnknownShown());
 		setSelectedMultipleChoiceButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.MULTIPLE_CHOICE));
 		setSelectedWrittenResponseButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.WRITTEN_RESPONSE));
-
 		questionTable.getSelectionModel().getSelectedItems()
 				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> updateBulkActionState());
+		manageExamAssetsButton.setOnAction(_ -> manageSelectedExamAssets());
 	}
 
 	private void configureBookletTable() {
 		bookletTable.setId("corpus-dashboard-booklets");
 		bookletTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
 		bookletTable.setPrefHeight(BOOKLET_TABLE_HEIGHT);
-
 		TableColumn<BookletCorpusStatus, String> bookletColumn = new TableColumn<>("Booklet");
 		bookletColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().booklet().getName()));
-
 		TableColumn<BookletCorpusStatus, String> formatColumn = new TableColumn<>("Format");
 		formatColumn.setCellValueFactory(
 				data -> new ReadOnlyStringWrapper(data.getValue().booklet().getQuestionFormat().toString()));
-
-		TableColumn<BookletCorpusStatus, String> pdfColumn = new TableColumn<>("Q PDF");
+		TableColumn<BookletCorpusStatus, String> pdfColumn = new TableColumn<>("Question PDF");
 		pdfColumn.setCellValueFactory(
 				data -> new ReadOnlyStringWrapper(data.getValue().questionPdfAvailable() ? "Available" : "MISSING"));
-
 		TableColumn<BookletCorpusStatus, String> answerFileColumn = new TableColumn<>("Answer file");
 		answerFileColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(answerFileLabel(data.getValue())));
-
 		TableColumn<BookletCorpusStatus, String> expectedColumn = new TableColumn<>("Expected");
 		expectedColumn.setCellValueFactory(
 				data -> new ReadOnlyStringWrapper(nullableCount(data.getValue().expectedTopLevelQuestionCount())));
-
 		TableColumn<BookletCorpusStatus, Number> foundColumn = new TableColumn<>("Found");
 		foundColumn.setCellValueFactory(
 				data -> new ReadOnlyObjectWrapper<>(data.getValue().encounteredTopLevelQuestionCount()));
-
 		TableColumn<BookletCorpusStatus, Number> partsColumn = new TableColumn<>("Parts");
 		partsColumn.setCellValueFactory(data -> new ReadOnlyObjectWrapper<>(data.getValue().questionPartCount()));
-
 		TableColumn<BookletCorpusStatus, String> problemsColumn = new TableColumn<>("Problems");
 		problemsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(bookletProblemLabel(data.getValue())));
 
-		bookletTable.getColumns().setAll(bookletColumn, formatColumn, pdfColumn, answerFileColumn, expectedColumn,
-				foundColumn, partsColumn, problemsColumn);
+		// Use the collection overload so mixed TableColumn value types do not create
+		// a generic varargs array warning.
+		bookletTable.getColumns().setAll(List.<TableColumn<BookletCorpusStatus, ?>>of(bookletColumn, formatColumn,
+				pdfColumn, answerFileColumn, expectedColumn, foundColumn, partsColumn, problemsColumn));
 	}
 
 	private void configureBulkResponseTypeControls() {
 		selectAllUnknownButton.setId("corpus-dashboard-select-all-unknown");
 		setSelectedMultipleChoiceButton.setId("corpus-dashboard-set-multiple-choice");
 		setSelectedWrittenResponseButton.setId("corpus-dashboard-set-written-response");
-
 		selectAllUnknownButton
 				.setTooltip(new Tooltip("Select every currently shown Question whose response type is Unknown."));
 		setSelectedMultipleChoiceButton
 				.setTooltip(new Tooltip("Set the selected unresolved Questions to Multiple choice."));
 		setSelectedWrittenResponseButton
 				.setTooltip(new Tooltip("Set the selected unresolved Questions to Written response."));
-
 		setSelectedMultipleChoiceButton.setDisable(true);
 		setSelectedWrittenResponseButton.setDisable(true);
 	}
@@ -500,58 +472,54 @@ final class CorpusDashboardPane extends VBox {
 	private void configureControls() {
 		workingSubjectLabel.setId("corpus-dashboard-working-subject");
 		workingSubjectLabel.setText(workingSubject.getName());
-
 		refreshButton.setId("corpus-dashboard-refresh");
 
 		// Persistence reload is supplied later by the owning dialog/application.
 		refreshButton.setDisable(true);
-
 		configureFilterControls();
 		configureSummaryControls();
 		configureExamTable();
 		configureBookletTable();
 		configureQuestionWorkControls();
 		configureBulkResponseTypeControls();
-
 		selectedExamLabel.setId("corpus-dashboard-selected-exam");
 		declaredExamStateLabel.setId("corpus-dashboard-selected-exam-state");
 		selectedExamCountsLabel.setId("corpus-dashboard-selected-exam-counts");
 		selectedBookletLabel.setId("corpus-dashboard-selected-booklet");
 		bookletWarningLabel.setId("corpus-dashboard-booklet-warning");
 		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
+		manageExamAssetsButton.setId("corpus-dashboard-manage-exam-assets");
+		manageExamAssetsButton.setTooltip(
+				new Tooltip("Open the selected Exam or booklet in Exam / Assets to investigate structural findings."));
+		manageExamAssetsButton.setDisable(true);
 	}
 
 	private void configureExamTable() {
 		examTable.setId("corpus-dashboard-exams");
 		examTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
 		examTable.setPrefHeight(EXAM_TABLE_HEIGHT);
-
 		TableColumn<ExamCorpusStatus, Number> yearColumn = new TableColumn<>("Year");
 		yearColumn.setCellValueFactory(data -> new ReadOnlyObjectWrapper<>(data.getValue().exam().getYear()));
-
 		TableColumn<ExamCorpusStatus, String> providerColumn = new TableColumn<>("Provider");
 		providerColumn
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().exam().getProvider().getName()));
-
 		TableColumn<ExamCorpusStatus, String> assessmentColumn = new TableColumn<>("Assessment");
 		assessmentColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().exam().getName()));
-
 		TableColumn<ExamCorpusStatus, String> stateColumn = new TableColumn<>("State");
 		stateColumn
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().declaredCaptureState().name()));
-
-		TableColumn<ExamCorpusStatus, String> questionAssetsColumn = new TableColumn<>("Q assets");
-		questionAssetsColumn
+		TableColumn<ExamCorpusStatus, String> questionBookletsColumn = new TableColumn<>("Question Booklets");
+		questionBookletsColumn
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(questionAssetCount(data.getValue())));
-
-		TableColumn<ExamCorpusStatus, String> answerAssetsColumn = new TableColumn<>("Answer assets");
-		answerAssetsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(answerAssetCount(data.getValue())));
-
+		TableColumn<ExamCorpusStatus, String> answerBookletsColumn = new TableColumn<>("Answer Booklets");
+		answerBookletsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(answerAssetCount(data.getValue())));
 		TableColumn<ExamCorpusStatus, String> workColumn = new TableColumn<>("Work");
 		workColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(workLabel(data.getValue())));
 
-		examTable.getColumns().setAll(yearColumn, providerColumn, assessmentColumn, stateColumn, questionAssetsColumn,
-				answerAssetsColumn, workColumn);
+		// Use the collection overload so mixed TableColumn value types do not create
+		// a generic varargs array warning.
+		examTable.getColumns().setAll(List.<TableColumn<ExamCorpusStatus, ?>>of(yearColumn, providerColumn,
+				assessmentColumn, stateColumn, questionBookletsColumn, answerBookletsColumn, workColumn));
 	}
 
 	private void configureFilterControls() {
@@ -559,12 +527,10 @@ final class CorpusDashboardPane extends VBox {
 		yearBox.setId("corpus-dashboard-filter-year");
 		examStateBox.setId("corpus-dashboard-filter-exam-state");
 		clearFiltersButton.setId("corpus-dashboard-clear-filters");
-
 		providerBox.setPromptText("All providers");
 		yearBox.setPromptText("All years");
 		examStateBox.setPromptText("All");
 		examStateBox.getItems().setAll(ExamCaptureState.values());
-
 		providerBox.setConverter(new QuestionCorpusAuditFilterConverter<>(ExamProvider::getName));
 	}
 
@@ -572,39 +538,33 @@ final class CorpusDashboardPane extends VBox {
 		questionViewBox.setId("corpus-dashboard-question-view");
 		questionResultCountLabel.setId("corpus-dashboard-question-count");
 		questionTable.setId("corpus-dashboard-question-work");
-
 		questionViewBox.getItems().setAll(QuestionCorpusCompletionFilter.values());
 		questionViewBox.setValue(QuestionCorpusCompletionFilter.INCOMPLETE);
 		questionViewBox.setConverter(new QuestionCorpusAuditFilterConverter<>(this::completionLabel));
-
 		questionTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
 		questionTable.setPrefHeight(QUESTION_TABLE_HEIGHT);
 		questionTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-
 		TableColumn<QuestionCorpusWorkItem, String> questionColumn = new TableColumn<>("Question");
 		questionColumn
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().question().getQuestionCode()));
-
 		TableColumn<QuestionCorpusWorkItem, String> typeColumn = new TableColumn<>("Type");
 		typeColumn
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(responseTypeLabel(data.getValue().question())));
-
 		TableColumn<QuestionCorpusWorkItem, String> contentColumn = new TableColumn<>("Content");
 		contentColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(
 				data.getValue().status().questionContentCaptured() ? "OK" : "MISSING"));
-
 		TableColumn<QuestionCorpusWorkItem, String> answerColumn = new TableColumn<>("Answer");
 		answerColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(answerStatusLabel(data.getValue())));
-
 		TableColumn<QuestionCorpusWorkItem, String> sharedContextColumn = new TableColumn<>("Shared Context");
 		sharedContextColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(
 				data.getValue().status().sharedContextResolved() ? "Resolved" : "UNRESOLVED"));
-
 		TableColumn<QuestionCorpusWorkItem, String> problemColumn = new TableColumn<>("Problem");
 		problemColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(problemsLabel(data.getValue())));
 
-		questionTable.getColumns().setAll(questionColumn, typeColumn, contentColumn, answerColumn, sharedContextColumn,
-				problemColumn);
+		// Use the collection overload so mixed TableColumn value types do not create
+		// a generic varargs array warning.
+		questionTable.getColumns().setAll(List.<TableColumn<QuestionCorpusWorkItem, ?>>of(questionColumn, typeColumn,
+				contentColumn, answerColumn, sharedContextColumn, problemColumn));
 	}
 
 	private void configureSummaryControls() {
@@ -628,7 +588,6 @@ final class CorpusDashboardPane extends VBox {
 		ExamProvider provider = providerBox.getValue();
 		Integer year = yearBox.getValue();
 		ExamCaptureState state = examStateBox.getValue();
-
 		return examStatuses.stream()
 				.filter(status -> provider == null || status.exam().getProvider().getId() == provider.getId())
 				.filter(status -> year == null || status.exam().getYear() == year.intValue())
@@ -646,8 +605,30 @@ final class CorpusDashboardPane extends VBox {
 		return questions.stream().filter(question -> visibleExamIds.contains(question.getExam().getId())).toList();
 	}
 
+	private void manageSelectedExamAssets() {
+		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		if (selectedExam == null) {
+			return;
+		}
+		BookletCorpusStatus selectedBooklet = bookletTable.getSelectionModel().getSelectedItem();
+
+		// Preserve booklet scope only when the booklet itself has a structural finding.
+		// An Exam-wide count mismatch routes to the Exam rather than implying that the
+		// currently selected booklet is responsible.
+		ExamBooklet targetBooklet = selectedBooklet != null && !selectedBooklet.findings().isEmpty()
+				? selectedBooklet.booklet()
+				: null;
+		if (selectedExam.findings().isEmpty() && targetBooklet == null) {
+			return;
+		}
+		examAssetsHandler.accept(selectedExam.exam(), targetBooklet);
+	}
+
 	private String nullableCount(Integer count) {
-		return count == null ? "—" : count.toString();
+
+		// An absent planning count is different from zero. State that explicitly
+		// rather than displaying the same dash used elsewhere for "no problem".
+		return count == null ? "not recorded" : count.toString();
 	}
 
 	private void populateFilterOptions() {
@@ -656,10 +637,8 @@ final class CorpusDashboardPane extends VBox {
 			ExamProvider provider = status.exam().getProvider();
 			providers.putIfAbsent(provider.getId(), provider);
 		}
-
 		providerBox.getItems().setAll(providers.values().stream()
 				.sorted(Comparator.comparing(ExamProvider::getName).thenComparingLong(ExamProvider::getId)).toList());
-
 		yearBox.getItems().setAll(examStatuses.stream().map(status -> status.exam().getYear()).distinct()
 				.sorted(Comparator.reverseOrder()).toList());
 	}
@@ -681,7 +660,6 @@ final class CorpusDashboardPane extends VBox {
 		if (item.status().isComplete()) {
 			return "—";
 		}
-
 		StringBuilder text = new StringBuilder();
 		for (QuestionCorpusProblem problem : QuestionCorpusProblem.values()) {
 			if (!item.status().hasProblem(problem)) {
@@ -706,9 +684,7 @@ final class CorpusDashboardPane extends VBox {
 		if (selectedExam == null) {
 			return List.of();
 		}
-
 		BookletCorpusStatus selectedBooklet = bookletTable.getSelectionModel().getSelectedItem();
-
 		return questions.stream().filter(question -> question.getExam().getId() == selectedExam.exam().getId())
 				.filter(question -> selectedBooklet == null
 						|| question.getBooklet().getId() == selectedBooklet.booklet().getId())
@@ -742,30 +718,22 @@ final class CorpusDashboardPane extends VBox {
 	private void refreshDashboard() {
 		Long preferredExamId = selectedExamId();
 		Long preferredBookletId = selectedBookletId();
-
 		refreshSummaryControls();
 		refreshExamTable(preferredExamId, preferredBookletId);
 		refreshQuestionWork();
 	}
 
-	private void refreshExamTable() {
-		refreshExamTable(selectedExamId(), selectedBookletId());
-	}
-
 	private void refreshExamTable(Long preferredExamId, Long preferredBookletId) {
 		List<ExamCorpusStatus> filtered = filteredExamStatuses();
 		examTable.getItems().setAll(filtered);
-
 		ExamCorpusStatus preferred = preferredExamId == null ? null
 				: filtered.stream().filter(status -> status.exam().getId() == preferredExamId.longValue()).findFirst()
 						.orElse(null);
-
 		if (preferred != null) {
 			examTable.getSelectionModel().select(preferred);
 			showSelectedExam(preferred, preferredBookletId);
 			return;
 		}
-
 		if (!filtered.isEmpty()) {
 
 			// The first visible Exam is selected automatically. Booklet scope remains
@@ -773,7 +741,6 @@ final class CorpusDashboardPane extends VBox {
 			examTable.getSelectionModel().selectFirst();
 			return;
 		}
-
 		examTable.getSelectionModel().clearSelection();
 		clearSelectedExam();
 	}
@@ -781,7 +748,6 @@ final class CorpusDashboardPane extends VBox {
 	private void refreshQuestionWork() {
 		List<QuestionCorpusWorkItem> workItems = QuestionCorpusQueue.build(questionsForSelectedScope(),
 				questionWorkFilter());
-
 		questionTable.getItems().setAll(workItems);
 		questionResultCountLabel.setText(String.format("Showing %d Questions", workItems.size()));
 		updateBulkActionState();
@@ -789,14 +755,12 @@ final class CorpusDashboardPane extends VBox {
 
 	private void refreshSummaryControls() {
 		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(filteredSummaryQuestions());
-
 		totalQuestionsButton.setText(summary.totalQuestions() + " Questions");
 		needsAttentionButton.setText(summary.incompleteQuestions() + " Need attention");
 		missingContentButton.setText(summary.missingQuestionContent() + " Missing content");
 		missingAnswerButton.setText(summary.missingAnswer() + " Missing answers");
 		unknownTypeButton.setText(summary.unknownResponseType() + " Unknown type");
 		sharedContextButton.setText(summary.unresolvedSharedContext() + " Shared Context");
-
 		int eligibleExplanations = 0;
 		int capturedExplanations = 0;
 		for (ExamCorpusStatus status : filteredExamStatuses()) {
@@ -820,7 +784,6 @@ final class CorpusDashboardPane extends VBox {
 
 	private void selectAllUnknownShown() {
 		questionTable.getSelectionModel().clearSelection();
-
 		for (int index = 0; index < questionTable.getItems().size(); index++) {
 			QuestionCorpusWorkItem item = questionTable.getItems().get(index);
 			if (item.question().getResponseType() == QuestionResponseType.UNKNOWN) {
@@ -851,7 +814,6 @@ final class CorpusDashboardPane extends VBox {
 		if (selected.stream().anyMatch(item -> item.question().getResponseType() != QuestionResponseType.UNKNOWN)) {
 			return List.of();
 		}
-
 		return selected.stream().map(QuestionCorpusWorkItem::question).toList();
 	}
 
@@ -862,11 +824,9 @@ final class CorpusDashboardPane extends VBox {
 
 	private void showSelectedBooklet(BookletCorpusStatus status) {
 		selectedBookletLabel.setText("Selected booklet: " + status.booklet().getName());
-
 		String warning = bookletWarningText(status);
 		bookletWarningLabel.setText(warning);
 		setVisibleAndManaged(bookletWarningLabel, !warning.isBlank());
-
 		if (status.mcqExplanationCoverage().explanationCapable()) {
 			mcqExplanationCoverageLabel
 					.setText(String.format("MCQ explanation coverage for selected booklet: %d / %d eligible Questions",
@@ -876,13 +836,16 @@ final class CorpusDashboardPane extends VBox {
 			mcqExplanationCoverageLabel.setText("MCQ explanation coverage for selected booklet: not available");
 		}
 		setVisibleAndManaged(mcqExplanationCoverageLabel, true);
+
+		// A selected booklet may introduce a structural correction target even when its
+		// Exam has no Exam-wide finding.
+		updateExamAssetsActionState();
 	}
 
 	private void showSelectedExam(ExamCorpusStatus status, Long preferredBookletId) {
 		selectedExamLabel.setText(String.format("%s %d — %s", status.exam().getProvider().getName(),
 				status.exam().getYear(), status.exam().getName()));
 		declaredExamStateLabel.setText("Declared state: " + status.declaredCaptureState().name());
-
 		ExamAssetExpectations expectations = status.assetExpectations();
 		selectedExamCountsLabel.setText(String.format(
 				"Question booklets: %s     Answer booklets: %s     Questions: %d     Need work: %d",
@@ -890,21 +853,21 @@ final class CorpusDashboardPane extends VBox {
 						expectations.expectedQuestionBookletCount()),
 				presentExpected(expectations.availableAnswerFileCount(), expectations.expectedAnswerFileCount()),
 				status.questionSummary().totalQuestions(), examWorkCount(status)));
-
 		bookletTable.getItems().setAll(status.bookletStatuses());
 		bookletTable.getSelectionModel().clearSelection();
 		selectedBookletLabel.setText("Selected booklet: All booklets");
 		setVisibleAndManaged(bookletWarningLabel, false);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 
+		// Exam-wide structural findings are actionable even before one booklet is
+		// selected.
+		updateExamAssetsActionState();
 		if (preferredBookletId == null) {
 			return;
 		}
-
 		BookletCorpusStatus preferred = status.bookletStatuses().stream()
 				.filter(bookletStatus -> bookletStatus.booklet().getId() == preferredBookletId.longValue()).findFirst()
 				.orElse(null);
-
 		if (preferred != null) {
 			bookletTable.getSelectionModel().select(preferred);
 			showSelectedBooklet(preferred);
@@ -930,10 +893,20 @@ final class CorpusDashboardPane extends VBox {
 		boolean unknownVisible = questionTable.getItems().stream()
 				.anyMatch(item -> item.question().getResponseType() == QuestionResponseType.UNKNOWN);
 		selectAllUnknownButton.setDisable(!unknownVisible);
-
 		boolean validSelection = !selectedQuestionsForBulkUpdate().isEmpty();
 		setSelectedMultipleChoiceButton.setDisable(!validSelection);
 		setSelectedWrittenResponseButton.setDisable(!validSelection);
+	}
+
+	private void updateExamAssetsActionState() {
+		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		BookletCorpusStatus selectedBooklet = bookletTable.getSelectionModel().getSelectedItem();
+		boolean examFinding = selectedExam != null && !selectedExam.findings().isEmpty();
+		boolean bookletFinding = selectedBooklet != null && !selectedBooklet.findings().isEmpty();
+
+		// Question incompleteness alone belongs to Question/Answer correction and must
+		// not enable the structural Exam/Assets route.
+		manageExamAssetsButton.setDisable(!examFinding && !bookletFinding);
 	}
 
 	private String workLabel(ExamCorpusStatus status) {

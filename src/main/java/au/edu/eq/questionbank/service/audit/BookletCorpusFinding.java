@@ -7,12 +7,10 @@ package au.edu.eq.questionbank.service.audit;
  * state of the owning Exam.
  */
 public enum BookletCorpusFinding {
-
 	/**
 	 * The Question source PDF recorded for the booklet is not currently available.
 	 */
 	MISSING_QUESTION_PDF,
-
 	/**
 	 * The user-declared expected top-level Question count differs from the
 	 * encountered source/top-level Question count.

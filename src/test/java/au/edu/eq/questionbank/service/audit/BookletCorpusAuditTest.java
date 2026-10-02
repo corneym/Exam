@@ -39,7 +39,6 @@ class BookletCorpusAuditTest {
 		ExamBooklet oneQuestionBooklet = new ExamBooklet(30, fixture.exam, "Paper 2",
 				new SourceDocument(31, "Chemistry/2025/paper2.pdf"), ExamBookletQuestionFormat.MULTIPLE_CHOICE, 1);
 		Question question = fixture.question(120, oneQuestionBooklet, "1", null);
-
 		BookletCorpusStatus status = BookletCorpusAudit.assess(oneQuestionBooklet, List.of(question), null, true);
 
 		// AnswerFile assignment is descriptive booklet state. Its absence is not
@@ -52,7 +51,6 @@ class BookletCorpusAuditTest {
 	@Test
 	void assignedAnswerFileIsIncludedInStatus() {
 		Question question = fixture.question(130, fixture.booklet, "1", null);
-
 		BookletCorpusStatus status = BookletCorpusAudit.assess(fixture.booklet, List.of(question), fixture.answerFile,
 				true);
 
@@ -64,7 +62,6 @@ class BookletCorpusAuditTest {
 	@Test
 	void expectedCountMismatchIsAdvisoryAndDoesNotChangeExamState() {
 		Question question = fixture.question(110, fixture.booklet, "1", null);
-
 		BookletCorpusStatus status = BookletCorpusAudit.assess(fixture.booklet, List.of(question), null, true);
 
 		// The audit reports the discrepancy but never reverses a deliberate COMPLETE
@@ -78,16 +75,12 @@ class BookletCorpusAuditTest {
 	void missingMcqExplanationIsCoverageOnlyAndDoesNotMakeQuestionIncomplete() {
 		AnswerFile explanations = new AnswerFile(50, fixture.exam, "Solutions",
 				new SourceDocument(51, "Chemistry/2025/solutions.pdf"), true);
-
 		Question explained = fixture.multipleChoiceQuestion(150, fixture.booklet, "1");
 		explained.setAnswer(new Answer(160, "A", List.of(new AnswerRegion(explanations, 1, 0.10, 0.10, 0.70, 0.20))));
-
 		Question notExplained = fixture.multipleChoiceQuestion(151, fixture.booklet, "2");
 		notExplained.setAnswer(new Answer(161, "B", List.of()));
-
 		BookletCorpusStatus status = BookletCorpusAudit.assess(fixture.booklet, List.of(explained, notExplained),
 				explanations, true);
-
 		McqExplanationCoverage coverage = status.mcqExplanationCoverage();
 
 		// Both MCQs have authoritative ordinary A-D Answers. Only one has optional
@@ -96,7 +89,6 @@ class BookletCorpusAuditTest {
 		assertEquals(2, coverage.eligibleQuestionCount());
 		assertEquals(1, coverage.capturedExplanationCount());
 		assertEquals(1, coverage.missingExplanationCount());
-
 		assertEquals(2, status.questionSummary().completeQuestions());
 		assertEquals(0, status.questionSummary().missingAnswer());
 		assertTrue(status.findings().isEmpty());
@@ -126,10 +118,8 @@ class BookletCorpusAuditTest {
 		// Deliberately reuse the SourceQuestion numeric id as an ordinary Question id.
 		// The two persistence namespaces must still count as separate top-level items.
 		Question ordinary = fixture.question(100, fixture.booklet, "22", null);
-
 		BookletCorpusStatus status = BookletCorpusAudit.assess(fixture.booklet, List.of(partA, partB, ordinary),
 				fixture.answerFile, true);
-
 		assertEquals(3, status.questionPartCount());
 		assertEquals(2, status.encounteredTopLevelQuestionCount());
 		assertEquals(Integer.valueOf(2), status.expectedTopLevelQuestionCount());
@@ -142,7 +132,6 @@ class BookletCorpusAuditTest {
 				new SourceDocument(41, "Chemistry/2025/paper3.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE, 1);
 		Question included = fixture.question(140, fixture.booklet, "1", null);
 		Question excluded = fixture.question(141, otherBooklet, "2", null);
-
 		BookletCorpusStatus status = BookletCorpusAudit.assess(fixture.booklet, List.of(excluded, included), null,
 				true);
 

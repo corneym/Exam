@@ -35,7 +35,6 @@ public final class ExamCorpusAudit {
 		if (bookletStatuses == null) {
 			throw new NullPointerException("bookletStatuses");
 		}
-
 		for (BookletCorpusStatus bookletStatus : bookletStatuses) {
 			if (bookletStatus == null) {
 				throw new NullPointerException("bookletStatuses contains null");
@@ -44,11 +43,9 @@ public final class ExamCorpusAudit {
 				throw new IllegalArgumentException("Booklet audit status must belong to the audited Exam");
 			}
 		}
-
 		QuestionCorpusSummary questionSummary = aggregateQuestionSummary(bookletStatuses);
 		McqExplanationSummary explanationSummary = aggregateMcqExplanationSummary(bookletStatuses);
 		EnumSet<ExamCorpusFinding> findings = EnumSet.noneOf(ExamCorpusFinding.class);
-
 		Integer expectedQuestionBooklets = assetExpectations.expectedQuestionBookletCount();
 		if (expectedQuestionBooklets != null
 				&& expectedQuestionBooklets.intValue() != assetExpectations.availableQuestionBookletCount()) {
@@ -57,7 +54,6 @@ public final class ExamCorpusAudit {
 			// guess whether the planning value or persisted assets are wrong.
 			findings.add(ExamCorpusFinding.EXPECTED_QUESTION_BOOKLET_COUNT_MISMATCH);
 		}
-
 		Integer expectedAnswerFiles = assetExpectations.expectedAnswerFileCount();
 		if (expectedAnswerFiles != null
 				&& expectedAnswerFiles.intValue() != assetExpectations.availableAnswerFileCount()) {
@@ -66,7 +62,6 @@ public final class ExamCorpusAudit {
 			// Question Answer completeness.
 			findings.add(ExamCorpusFinding.EXPECTED_ANSWER_FILE_COUNT_MISMATCH);
 		}
-
 		return new ExamCorpusStatus(exam, assetExpectations, bookletStatuses, questionSummary, explanationSummary,
 				findings);
 	}
@@ -75,7 +70,6 @@ public final class ExamCorpusAudit {
 		int explanationCapableBooklets = 0;
 		int eligibleQuestions = 0;
 		int capturedExplanations = 0;
-
 		for (BookletCorpusStatus bookletStatus : bookletStatuses) {
 			McqExplanationCoverage coverage = bookletStatus.mcqExplanationCoverage();
 
@@ -87,7 +81,6 @@ public final class ExamCorpusAudit {
 			eligibleQuestions += coverage.eligibleQuestionCount();
 			capturedExplanations += coverage.capturedExplanationCount();
 		}
-
 		return new McqExplanationSummary(explanationCapableBooklets, eligibleQuestions, capturedExplanations);
 	}
 
@@ -99,7 +92,6 @@ public final class ExamCorpusAudit {
 		int missingAnswer = 0;
 		int unresolvedSharedContext = 0;
 		int unknownResponseType = 0;
-
 		for (BookletCorpusStatus bookletStatus : bookletStatuses) {
 			QuestionCorpusSummary summary = bookletStatus.questionSummary();
 
@@ -113,7 +105,6 @@ public final class ExamCorpusAudit {
 			unresolvedSharedContext += summary.unresolvedSharedContext();
 			unknownResponseType += summary.unknownResponseType();
 		}
-
 		return new QuestionCorpusSummary(totalQuestions, completeQuestions, incompleteQuestions, missingQuestionContent,
 				missingAnswer, unresolvedSharedContext, unknownResponseType);
 	}

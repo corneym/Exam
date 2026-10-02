@@ -139,6 +139,8 @@ public final class ExamAssetsPane extends VBox {
 	// trigger
 	// another synchronous SQLite read through the ordinary ComboBox listener.
 	private boolean applyingSubjectSnapshot;
+	private Runnable corpusDashboardReturnHandler;
+	private final Button returnToCorpusDashboardButton = new Button("Return to Corpus Dashboard");
 
 	/**
 	 * Creates the Exam/Assets workspace.
@@ -343,6 +345,17 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
+	 * Removes any Dashboard return operation from this Exam/Assets session.
+	 */
+	public void clearCorpusDashboardReturnHandler() {
+
+		// Ordinary Exam/Assets entry must never retain a callback belonging to an
+		// earlier Dashboard correction session.
+		corpusDashboardReturnHandler = null;
+		updateCorpusDashboardReturnState();
+	}
+
+	/**
 	 * Clears any unresolved legacy-import preflight from the workspace.
 	 */
 	public void clearLegacyImportRequirements() {
@@ -388,6 +401,63 @@ public final class ExamAssetsPane extends VBox {
 		// same
 		// snapshot contract as asynchronous Working Subject publication.
 		applySubjectSnapshot(loadSubjectSnapshot(subject, previousExamId));
+	}
+
+	/**
+	 * Makes an explicit return to the Corpus Dashboard available after structural
+	 * correction.
+	 *
+	 * @param handler operation that reloads and reopens the Dashboard
+	 */
+	public void setCorpusDashboardReturnHandler(Runnable handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Presence of this callback identifies Exam/Assets as a Dashboard-launched
+		// correction session rather than an ordinary workspace visit.
+		corpusDashboardReturnHandler = handler;
+		updateCorpusDashboardReturnState();
+	}
+
+	/**
+	 * Opens Exam/Assets on one persisted Exam and optionally selects one of its
+	 * Question booklets.
+	 *
+	 * @param subject   authoritative Working Subject
+	 * @param examId    persisted Exam identity
+	 * @param bookletId persisted Question-booklet identity, or {@code null} for
+	 *                  Exam-wide correction
+	 * @throws SQLException             if Exam persistence cannot be read
+	 * @throws NullPointerException     if Subject is null
+	 * @throws IllegalArgumentException if an identity is invalid or does not belong
+	 *                                  to the supplied Subject/Exam
+	 */
+	public void showForCorrection(Subject subject, long examId, Long bookletId) throws SQLException {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (examId <= 0) {
+			throw new IllegalArgumentException("examId must be positive");
+		}
+		if (bookletId != null && bookletId.longValue() <= 0) {
+			throw new IllegalArgumentException("bookletId must be positive when supplied");
+		}
+		creatingNewExam = false;
+		newExamReturnExamId = null;
+		workingSubject = subject;
+		restoreNormalExamPresentation();
+
+		// Reload from persistence using persistent identity rather than relying on the
+		// Dashboard's snapshot objects.
+		SubjectSnapshot snapshot = loadSubjectSnapshot(subject, Long.valueOf(examId));
+		if (snapshot.selectedExam() == null || snapshot.selectedExam().exam().getId() != examId) {
+			throw new IllegalArgumentException("Exam does not belong to the Working Subject");
+		}
+		applySubjectSnapshot(snapshot);
+		if (bookletId != null && !selectQuestionBooklet(bookletId.longValue())) {
+			throw new IllegalArgumentException("Question booklet does not belong to the selected Exam");
+		}
 	}
 
 	/**
@@ -650,7 +720,7 @@ public final class ExamAssetsPane extends VBox {
 		// Legacy intake starts independently of the currently selected Exam. Capture
 		// activation remains the explicit structural transition back to Capture.
 		HBox workspaceActions = new HBox(SPACING, importLegacyQuestionsButton, workspaceActionSpacer,
-				useSelectedBookletButton);
+				returnToCorpusDashboardButton, useSelectedBookletButton);
 		workspaceActions.setId("exam-assets-workspace-actions");
 
 		// The legacy requirements panel is part of Exam/Assets because unresolved
@@ -806,6 +876,7 @@ public final class ExamAssetsPane extends VBox {
 		updateAddNewExamState();
 	}
 
+	// TODO Refactor this method and maybe the class
 	private void configureControls() {
 		examBox.setId("exam-assets-exam");
 		examBox.setMaxWidth(Double.MAX_VALUE);
@@ -924,6 +995,12 @@ public final class ExamAssetsPane extends VBox {
 		legacyImportRequirementsBox.setStyle(WORKSPACE_SECTION_STYLE);
 		legacyImportRequirementsBox.setVisible(false);
 		legacyImportRequirementsBox.setManaged(false);
+		returnToCorpusDashboardButton.setId("exam-assets-return-dashboard");
+		returnToCorpusDashboardButton.setMinWidth(Region.USE_PREF_SIZE);
+		returnToCorpusDashboardButton.setVisible(false);
+		returnToCorpusDashboardButton.setManaged(false);
+		returnToCorpusDashboardButton.setDisable(true);
+		returnToCorpusDashboardButton.setOnAction(_ -> returnToCorpusDashboard());
 
 		// New Exam cannot begin until Exam/Assets has been refreshed with an
 		// authoritative Working Subject.
@@ -1380,6 +1457,22 @@ public final class ExamAssetsPane extends VBox {
 		updateAddNewExamState();
 	}
 
+	private void returnToCorpusDashboard() {
+		if (corpusDashboardReturnHandler == null || structuralTransactionActive()) {
+
+			// Never abandon unsaved Exam/booklet work merely because this workspace was
+			// originally opened from the Dashboard.
+			updateCorpusDashboardReturnState();
+			return;
+		}
+
+		// Consume the session callback before invoking it so later ordinary
+		// Exam/Assets use cannot reopen an obsolete Dashboard.
+		Runnable handler = corpusDashboardReturnHandler;
+		clearCorpusDashboardReturnHandler();
+		handler.run();
+	}
+
 	private void saveExamDetails() {
 		Exam selectedExam = examBox.getValue();
 		if (!editingExamDetails || selectedExam == null) {
@@ -1438,18 +1531,19 @@ public final class ExamAssetsPane extends VBox {
 		}
 	}
 
-	private void selectQuestionBooklet(long bookletId) {
+	private boolean selectQuestionBooklet(long bookletId) {
 		for (Toggle toggle : questionBookletSelectionGroup.getToggles()) {
 			Object userData = toggle.getUserData();
 			if (userData instanceof ExamBooklet booklet && booklet.getId() == bookletId) {
 
-				// Selection identifies the newly added row for the later explicit capture
-				// transition; it does not itself activate the booklet.
+				// Selection identifies the structural target without activating that
+				// booklet for Question capture.
 				questionBookletSelectionGroup.selectToggle(toggle);
 				updateUseSelectedBookletState();
-				return;
+				return true;
 			}
 		}
+		return false;
 	}
 
 	private void setExamDetailsEditing(boolean editing) {
@@ -1562,6 +1656,14 @@ public final class ExamAssetsPane extends VBox {
 		return fileName == null ? relativePath : fileName.toString();
 	}
 
+	private boolean structuralTransactionActive() {
+
+		// Every staged structural operation must be saved or cancelled before the
+		// workspace may return to a persistence-derived Dashboard.
+		return creatingNewExam || editingExamDetails || editingBookletEditor != null
+				|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null || legacyImportPending;
+	}
+
 	private void updateAddNewExamState() {
 
 		// The action remains visible but unavailable whenever another structural
@@ -1597,6 +1699,13 @@ public final class ExamAssetsPane extends VBox {
 		}
 	}
 
+	private void updateCorpusDashboardReturnState() {
+		boolean available = corpusDashboardReturnHandler != null;
+		returnToCorpusDashboardButton.setVisible(available);
+		returnToCorpusDashboardButton.setManaged(available);
+		returnToCorpusDashboardButton.setDisable(!available || structuralTransactionActive());
+	}
+
 	private void updateExamDetailsSaveState() {
 
 		// Save represents a real persistence operation, so it remains unavailable
@@ -1626,21 +1735,15 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private void updateUseSelectedBookletState() {
-		boolean structuralTransactionActive = creatingNewExam || editingExamDetails || editingBookletEditor != null
-				|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null;
+		boolean structuralTransactionActive = structuralTransactionActive();
 
-		// Capture activation must never abandon staged Exam, Question-booklet or
-		// Answer-booklet structural work.
+		// Capture activation must never abandon staged Exam, Question-booklet,
+		// Answer-booklet or legacy-import structural work.
 		useSelectedBookletButton
 				.setDisable(structuralTransactionActive || questionBookletSelectionGroup.getSelectedToggle() == null);
 
-		// Only one legacy intake may be pending for the authoritative Working Subject.
-		importLegacyQuestionsButton.setDisable(!canBeginLegacyQuestionImport());
-
-		// Recheck reads authoritative persistence and therefore becomes available only
-		// after the user has saved or cancelled the structure they were editing.
-		legacyImportRecheckButton.setDisable(!canRecheckLegacyQuestionImport());
-		legacyImportCancelButton.setDisable(!legacyImportPending);
+		// Dashboard return follows the same structural transaction boundary.
+		updateCorpusDashboardReturnState();
 	}
 
 	private void useSelectedQuestionBookletForCapture() {

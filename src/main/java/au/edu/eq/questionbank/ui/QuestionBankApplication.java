@@ -1324,7 +1324,10 @@ public class QuestionBankApplication extends Application {
 		// Capture modes are selected directly in the visible Question pane.
 		// Keep this menu for operations that open separate question workflows.
 		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
-		MenuItem corpusAuditItem = createMenuItem("_Corpus Audit...",
+
+		// The former Corpus Audit action now opens the operational Exam -> booklet ->
+		// Question Dashboard.
+		MenuItem corpusAuditItem = createMenuItem("_Corpus Dashboard...",
 				() -> showQuestionCorpusAudit(primaryStage, config));
 		corpusAuditItem.setId("question-corpus-audit");
 		questionMenu.getItems().addAll(searchItem, corpusAuditItem);
@@ -2229,6 +2232,21 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void reopenCorpusDashboardAfterCorrection(Stage primaryStage, ApplicationConfig config,
+			QuestionCorpusAuditDialog dialog, ExamCorpusAuditService auditService, Subject dashboardSubject,
+			long preferredQuestionId) {
+
+		// Reconstruct structural and Question state from persistence after correction.
+		if (!refreshCorpusDashboard(dialog, auditService, dashboardSubject, preferredQuestionId)) {
+			return;
+		}
+
+		// Completion callbacks run on the JavaFX thread. Queue the modal Dashboard so
+		// the capture workflow can finish its own event transaction first.
+		Platform.runLater(
+				() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService, dashboardSubject));
+	}
+
 	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {
 		if (!allowAnswerPdfReplacement()) {
 			return;
@@ -2763,12 +2781,56 @@ public class QuestionBankApplication extends Application {
 		}
 		try {
 
+			// Ordinary workspace entry must not inherit a Dashboard return callback from
+			// an earlier structural correction session.
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+
 			// Re-read the current Subject's Exam hierarchy every time this workspace is
 			// entered so the screen never relies on stale modal-setup state.
 			examAssetsPane.refresh(workingSubject);
 			workspaceModeHost.getChildren().setAll(examAssetsPane);
 		} catch (SQLException exception) {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
+					exception.getMessage());
+		}
+	}
+
+	private void showExamAssetsMode(Exam exam, ExamBooklet booklet) {
+
+		// Retain the existing direct structural-entry contract for callers and tests
+		// that do not require a Dashboard return lifecycle.
+		showExamAssetsMode(exam, booklet, null);
+	}
+
+	private void showExamAssetsMode(Exam exam, ExamBooklet booklet, Runnable returnHandler) {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		if (!allowExamAssetsTransition()) {
+			return;
+		}
+		if (workingSubject == null || exam.getSubject().getId() != workingSubject.getId()) {
+			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "The requested Exam is outside the Working Subject.",
+					"Return to the Dashboard for the current Working Subject and try again.");
+			return;
+		}
+		try {
+
+			// Clear any previous correction-session ownership before reconstructing the
+			// requested Exam from authoritative persistence.
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+			examAssetsPane.showForCorrection(workingSubject, exam.getId(),
+					booklet == null ? null : Long.valueOf(booklet.getId()));
+			if (returnHandler != null) {
+
+				// Only Dashboard-launched structural correction exposes an explicit route
+				// back to that Dashboard instance.
+				examAssetsPane.setCorpusDashboardReturnHandler(returnHandler);
+			}
+			workspaceModeHost.getChildren().setAll(examAssetsPane);
+		} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The requested Exam assets could not be opened.",
 					exception.getMessage());
 		}
 	}
@@ -2831,13 +2893,11 @@ public class QuestionBankApplication extends Application {
 					"Select a Working Subject before opening the Corpus Dashboard.");
 			return;
 		}
-
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		ExamCorpusAuditService auditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
 				new PdfStore(config.pdfDataRoot()));
-
 		QuestionCorpusAuditDialog dialog;
 		try {
 
@@ -2850,12 +2910,9 @@ public class QuestionBankApplication extends Application {
 					exception.getMessage());
 			return;
 		}
-
 		Subject dashboardSubject = workingSubject;
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
-
 		dialog.setRefreshHandler(() -> refreshCorpusDashboard(dialog, auditService, dashboardSubject, -1L));
-
 		dialog.setBulkResponseTypeHandler((questions, responseType) -> {
 			try {
 				metadataService.resolveUnknownResponseTypes(questions, responseType);
@@ -2874,7 +2931,6 @@ public class QuestionBankApplication extends Application {
 				refreshCorpusDashboard(dialog, auditService, dashboardSubject, questions.getFirst().getId());
 			}
 		});
-
 		showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService, dashboardSubject);
 	}
 
@@ -2884,34 +2940,51 @@ public class QuestionBankApplication extends Application {
 		if (result.isEmpty()) {
 			return;
 		}
-
 		QuestionCorpusAuditDialog.ResolutionRequest request = result.get();
 		Question question = request.question();
-
 		switch (request.target()) {
-		case METADATA -> {
-			Runnable resumeAudit = () -> {
-
-				// Metadata correction may alter Question completeness, so reconstruct both
-				// Dashboard representations before reopening the modal surface.
-				if (refreshCorpusDashboard(dialog, auditService, dashboardSubject, question.getId())) {
-					Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService,
-							dashboardSubject));
-				}
+		case METADATA -> editCorpusQuestionMetadata(primaryStage, config, question,
+				() -> reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog, auditService, dashboardSubject,
+						question.getId()));
+		case QUESTION -> {
+			Runnable completedHandler = () -> {
+				pdfWorkspace.closeExamPdf();
+				reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog, auditService, dashboardSubject,
+						question.getId());
 			};
-			editCorpusQuestionMetadata(primaryStage, config, question, resumeAudit);
-		}
-		case QUESTION -> questionCapturePane.captureImportedQuestion(question);
-		case ANSWER -> {
-			if (question.hasAnswer()) {
 
-				// An existing Answer edit temporarily opens its assigned Answer PDF.
-				// Save and Cancel must both release that document.
-				answerCapturePane.editAnswer(question, pdfWorkspace::closeAnswerPdf);
-			} else {
-				answerCapturePane.captureAnswer(question);
+			// Missing Question content and unresolved Shared Context use the existing
+			// imported/incomplete Question workflow because it already handles
+			// source-recapture semantics correctly.
+			if (!questionCapturePane.captureImportedQuestion(question, completedHandler)) {
+				Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService,
+						dashboardSubject));
 			}
 		}
+		case ANSWER -> {
+			Runnable completedHandler = () -> {
+				pdfWorkspace.closeAnswerPdf();
+				reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog, auditService, dashboardSubject,
+						question.getId());
+			};
+			boolean correctionStarted;
+			if (question.hasAnswer()) {
+
+				// Existing Answers retain the normal edit lifecycle.
+				correctionStarted = answerCapturePane.editAnswer(question, completedHandler);
+			} else {
+
+				// Missing Answers now have the same completion callback contract.
+				correctionStarted = answerCapturePane.captureAnswer(question, completedHandler);
+			}
+			if (!correctionStarted) {
+				Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService,
+						dashboardSubject));
+			}
+		}
+		case EXAM_ASSETS -> showExamAssetsMode(request.exam(), request.booklet(),
+				() -> reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog, auditService, dashboardSubject,
+						-1L));
 		}
 	}
 

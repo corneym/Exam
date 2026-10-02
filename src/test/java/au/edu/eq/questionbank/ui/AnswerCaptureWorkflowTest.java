@@ -279,6 +279,28 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void directAnswerCaptureCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "DASH-A");
+		AtomicBoolean callbackRan = new AtomicBoolean();
+		AtomicBoolean saveInProgressAtCompletion = new AtomicBoolean();
+		robot.interact(() -> assertTrue(answerCapturePane().captureAnswer(question, () -> {
+			saveInProgressAtCompletion.set(answerCapturePane().isSaveInProgress());
+			callbackRan.set(true);
+		})));
+		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
+				new Class<?>[] { Question.class, String.class }, question, "A")).get();
+
+		// Dashboard return must occur after the complete Answer save transition rather
+		// than merely after the SQLite write succeeds.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, callbackRan::get);
+		assertFalse(saveInProgressAtCompletion.get());
+		assertFalse(answerCapturePane().isSaveInProgress());
+		assertTrue(new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow().hasAnswer());
+	}
+
+	@Test
 	void editingAnswerCompletesWithoutReloadingTheQuestionBank(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "54");

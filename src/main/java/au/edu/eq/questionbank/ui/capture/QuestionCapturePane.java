@@ -188,6 +188,9 @@ public final class QuestionCapturePane extends VBox {
 	// Suppress inference while a response-type change itself updates the marks
 	// field.
 	private boolean updatingResponseTypeSelection;
+	private long importedCaptureCompletionQuestionId = -1L;
+	private Runnable importedCaptureCompletedHandler = () -> {
+	};
 
 	/**
 	 * Creates the question-capture workflow and its repository integration.
@@ -434,8 +437,26 @@ public final class QuestionCapturePane extends VBox {
 	 * @return whether the requested question became the active capture target
 	 */
 	public boolean captureImportedQuestion(Question question) {
+
+		// Ordinary callers do not require a completion notification.
+		return captureImportedQuestion(question, () -> {
+		});
+	}
+
+	/**
+	 * Opens imported-question capture for one incomplete Question and records an
+	 * operation to run after that Question is successfully persisted.
+	 *
+	 * @param question         persisted Question requiring source/context work
+	 * @param completedHandler operation to run after successful correction
+	 * @return whether the requested Question became the active capture target
+	 */
+	public boolean captureImportedQuestion(Question question, Runnable completedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
+		}
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
 		}
 		showImportedQuestionCapture();
 		if (!importedCaptureMode) {
@@ -453,7 +474,15 @@ public final class QuestionCapturePane extends VBox {
 			refreshingImportedQuestions = false;
 		}
 		loadImportedQuestion(matching);
-		return importedQuestion != null && importedQuestion.getId() == question.getId();
+		boolean activated = importedQuestion != null && importedQuestion.getId() == question.getId();
+		if (activated) {
+
+			// Dashboard correction owns this callback only for the explicitly requested
+			// persisted Question.
+			importedCaptureCompletionQuestionId = question.getId();
+			importedCaptureCompletedHandler = completedHandler;
+		}
+		return activated;
 	}
 
 	/**
@@ -478,6 +507,9 @@ public final class QuestionCapturePane extends VBox {
 		importedCaptureMode = false;
 		editingQuestion = null;
 		newQuestionCaptureActive = false;
+
+		// A changed Exam PDF invalidates any direct imported-correction return target.
+		clearImportedCaptureCompletion();
 		questionEditCompletedHandler = () -> {
 		};
 		captureModeGroup.selectToggle(null);
@@ -837,6 +869,11 @@ public final class QuestionCapturePane extends VBox {
 			return;
 		}
 		if (!importedCaptureMode || editingQuestion != null) {
+
+			// Entering the ordinary imported queue abandons any earlier direct
+			// Dashboard correction callback. captureImportedQuestion(...) installs its
+			// callback only after this transition succeeds.
+			clearImportedCaptureCompletion();
 			questionEditCompletedHandler = () -> {
 			};
 			editingQuestion = null;
@@ -878,6 +915,10 @@ public final class QuestionCapturePane extends VBox {
 			restoreCaptureModeToggle();
 			return;
 		}
+
+		// Explicitly leaving imported correction abandons any Dashboard return callback
+		// associated with that unfinished Question.
+		clearImportedCaptureCompletion();
 		questionEditCompletedHandler = () -> {
 		};
 		editingQuestion = null;
@@ -1212,6 +1253,12 @@ public final class QuestionCapturePane extends VBox {
 		});
 	}
 
+	private void clearImportedCaptureCompletion() {
+		importedCaptureCompletionQuestionId = -1L;
+		importedCaptureCompletedHandler = () -> {
+		};
+	}
+
 	private void clearImportedQuestionSelection() {
 		refreshingImportedQuestions = true;
 		try {
@@ -1276,7 +1323,7 @@ public final class QuestionCapturePane extends VBox {
 	private void completeQuestionSave(QuestionSaveResult result, boolean editing, boolean imported,
 			int previousImportedIndex, boolean hadStoredContent) {
 		completionQuestions = result.questions();
-		Runnable editCompletedHandler = null;
+		Runnable completedHandler = null;
 		try {
 			if (result.validationError() != null) {
 				saveStatusLabel.setText("Question not saved — check question details");
@@ -1286,8 +1333,14 @@ public final class QuestionCapturePane extends VBox {
 			Question question = result.question();
 			questionsChangedHandler.accept(result.questions());
 			if (editing) {
-				editCompletedHandler = finishQuestionEditState();
+				completedHandler = finishQuestionEditState();
 			} else {
+				if (imported) {
+
+					// A Dashboard-launched imported correction returns only after its
+					// requested Question has been durably saved.
+					completedHandler = takeImportedCaptureCompletion(question);
+				}
 				resetAfterQuestionSave(previousImportedIndex);
 			}
 			String action = "Saved";
@@ -1311,8 +1364,8 @@ public final class QuestionCapturePane extends VBox {
 				completionQuestions = null;
 			}
 		}
-		if (editCompletedHandler != null) {
-			editCompletedHandler.run();
+		if (completedHandler != null) {
+			completedHandler.run();
 		}
 	}
 
@@ -3063,6 +3116,18 @@ public final class QuestionCapturePane extends VBox {
 			return true;
 		}
 		return false;
+	}
+
+	private Runnable takeImportedCaptureCompletion(Question question) {
+		if (question == null || importedCaptureCompletionQuestionId != question.getId()) {
+			return null;
+		}
+
+		// Consume the callback before resetAfterQuestionSave advances the imported
+		// queue so it can run only once for the requested correction.
+		Runnable completedHandler = importedCaptureCompletedHandler;
+		clearImportedCaptureCompletion();
+		return completedHandler;
 	}
 
 	private void updateImportedCaptureAvailability(boolean available) {

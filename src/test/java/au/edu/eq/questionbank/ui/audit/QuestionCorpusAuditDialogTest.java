@@ -49,6 +49,20 @@ class QuestionCorpusAuditDialogTest {
 	}
 
 	@Test
+	void examAssetRequestCarriesExamAndOptionalBooklet() {
+		Exam exam = question.getExam();
+		ExamBooklet booklet = question.getBooklet();
+		QuestionCorpusAuditDialog.ResolutionRequest request = QuestionCorpusAuditDialog.ResolutionRequest
+				.forExamAssets(exam, booklet);
+
+		// Structural routing is intentionally separate from Question correction.
+		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.EXAM_ASSETS, request.target());
+		assertNull(request.question());
+		assertEquals(exam.getId(), request.exam().getId());
+		assertEquals(booklet.getId(), request.booklet().getId());
+	}
+
+	@Test
 	void missingAnswerRoutesToAnswerCapture() {
 		QuestionCorpusWorkItem item = item(QuestionCorpusProblem.MISSING_ANSWER);
 		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.ANSWER,

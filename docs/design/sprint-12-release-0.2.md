@@ -1220,6 +1220,27 @@ The Dashboard should support:
 
 The Dashboard is an operational work queue, not a graph-heavy analytics screen.
 
+Implementation status (Sprint 12.4):
+
+The former concatenated Corpus Audit ListView has been replaced by the
+operational Corpus Dashboard. The Dashboard is scoped to the authoritative
+Working Subject and presents:
+
+- Provider, year and declared Exam-state filters;
+- Subject-scope Question completeness summaries;
+- clickable Question-work summary filters;
+- an Exam table with declared state, booklet/file counts and Question work;
+- a selected-Exam summary;
+- booklet Question-PDF, Answer-file, expected/found and Question-work status;
+- advisory structural warnings without changing declared Exam state;
+- an Exam/booklet-scoped Question work table;
+- separate MCQ explanation coverage; and
+- retained bulk UNKNOWN response-type correction.
+
+The live Questions menu action now opens the Dashboard. Direct correction
+routing from Dashboard rows and structural findings remains the responsibility
+of the following correction-routing slice.
+
 ### 7.7 Correction routing
 
 Use existing or Sprint 12 workflows rather than creating parallel editors.
@@ -1242,6 +1263,25 @@ Unknown response type
 Unresolved Shared Context
     -> Question / Shared Context workflow
 ```
+
+Implementation status (Sprint 12.4):
+
+Dashboard correction routing now uses the existing authoritative workflows:
+
+- structural Exam and booklet findings route to the corresponding Exam/Assets
+  record;
+- missing Question content and unresolved Shared Context route to Question
+  capture;
+- missing Answers route to Answer capture;
+- unknown response types route to the existing metadata or bulk correction
+  workflow; and
+- completed corrective work reloads authoritative Dashboard state before the
+  Dashboard is shown again.
+
+When Exam/Assets is opened from a structural Dashboard finding, it provides an
+explicit Return to Corpus Dashboard action. That action is disabled while an
+Exam, Question-booklet, Answer-booklet or legacy-import structural transaction
+is staged, so returning cannot silently discard unsaved work.
 
 ### 7.8 Curriculum mapping reporting
 

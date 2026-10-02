@@ -121,6 +121,22 @@ At suitable checkpoints, especially before a pull request, compare
 
 when the issue implementation, targeted regressions and required documentation/Javadoc are green, I will tell you to add the completion comment and move the issue to Ready for PR. The issue stays open. After the Sprint PR is green and merged to main, the issues covered by it can be closed. If the PR uses Closes #..., GitHub can close them automatically on merge.
 
+### Java Code Changes
+PERMANENT working instruction
+When presenting Java code changes for manual application, group all changes by class so that each class is edited only once where practical.
+
+Within each class, present changes in this order:
+
+1. Fields, alphabetically by the main field identifier.
+2. Constructor changes.
+3. Public API methods, alphabetically by method name.
+4. Package-visible methods, alphabetically by method name.
+5. Private methods, alphabetically by method name.
+6. Nested records, enums, interfaces or helper types, unless their existing location makes another ordering materially easier to apply.
+
+Keep overloaded methods adjacent. If multiple changes affect the same method, present them together rather than requiring the user to revisit that method later.
+
+
 ### Implementation workflow
 
 Work in testable slices.  Multiple changes can be propsed.  Make sure they are numbered. 

@@ -46,13 +46,11 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 		if (findings == null) {
 			throw new NullPointerException("findings");
 		}
-
 		Set<Long> bookletIds = new HashSet<>();
 		int bookletQuestionCount = 0;
 		int explanationCapableBooklets = 0;
 		int eligibleExplanations = 0;
 		int capturedExplanations = 0;
-
 		for (BookletCorpusStatus bookletStatus : bookletStatuses) {
 			if (bookletStatus == null) {
 				throw new NullPointerException("bookletStatuses contains null");
@@ -67,7 +65,6 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 			// Every Question represented by the Exam summary must come from exactly one
 			// audited booklet.
 			bookletQuestionCount += bookletStatus.questionPartCount();
-
 			McqExplanationCoverage coverage = bookletStatus.mcqExplanationCoverage();
 			if (coverage.explanationCapable()) {
 				explanationCapableBooklets++;
@@ -75,7 +72,6 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 			eligibleExplanations += coverage.eligibleQuestionCount();
 			capturedExplanations += coverage.capturedExplanationCount();
 		}
-
 		if (assetExpectations.availableQuestionBookletCount() != bookletStatuses.size()) {
 			throw new IllegalArgumentException(
 					"Available Question-booklet count must equal supplied booklet audit statuses");

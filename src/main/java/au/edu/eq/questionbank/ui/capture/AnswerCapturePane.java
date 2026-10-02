@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.model.Subject;
@@ -148,6 +149,9 @@ public final class AnswerCapturePane extends VBox {
 	private final Supplier<ExamBooklet> activeBookletSupplier;
 	private Question mcqExplanationEditingQuestion;
 	private boolean mcqExplanationEditSaved;
+	private long answerCaptureCompletionQuestionId = -1L;
+	private Runnable answerCaptureCompletedHandler = () -> {
+	};
 
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
@@ -308,11 +312,30 @@ public final class AnswerCapturePane extends VBox {
 	 * @return {@code true} when the transition into capture was accepted
 	 */
 	public boolean captureAnswer(Question question) {
+
+		// Ordinary sequential Answer capture has no external completion owner.
+		return captureAnswer(question, () -> {
+		});
+	}
+
+	/**
+	 * Starts Answer capture for one unanswered Question and runs an operation after
+	 * the Answer has been successfully persisted and the save transition has
+	 * finished.
+	 *
+	 * @param question         Question to capture
+	 * @param completedHandler operation to run after successful capture
+	 * @return {@code true} when the transition into capture was accepted
+	 */
+	public boolean captureAnswer(Question question, Runnable completedHandler) {
 		if (answerSaveInProgress) {
 			return false;
 		}
 		if (question == null) {
 			throw new NullPointerException("question");
+		}
+		if (completedHandler == null) {
+			throw new NullPointerException("completedHandler");
 		}
 		if (question.hasAnswer()) {
 			throw new IllegalArgumentException("Question already has an answer");
@@ -333,6 +356,8 @@ public final class AnswerCapturePane extends VBox {
 		// ordinary ComboBox listener.
 		setUnansweredQuestionSilently(matching);
 		applyUnansweredQuestionChange(matching);
+		answerCaptureCompletionQuestionId = matching.getId();
+		answerCaptureCompletedHandler = completedHandler;
 		return true;
 	}
 
@@ -387,6 +412,10 @@ public final class AnswerCapturePane extends VBox {
 		if (!answerTransitionAllowed.getAsBoolean()) {
 			return false;
 		}
+
+		// Existing-Answer editing has its own completion lifecycle and therefore
+		// abandons any unfinished direct missing-Answer capture callback.
+		clearAnswerCaptureCompletion();
 
 		// Existing-Answer editing owns the selector until Save or Cancel.
 		clearPendingAnswerRegions();
@@ -738,6 +767,12 @@ public final class AnswerCapturePane extends VBox {
 			clearPendingAnswerRegions();
 		}
 		importSelectedAnswerPdf(question, sourcePath);
+	}
+
+	private void clearAnswerCaptureCompletion() {
+		answerCaptureCompletionQuestionId = -1L;
+		answerCaptureCompletedHandler = () -> {
+		};
 	}
 
 	private void clearAnswerFile(String label) {
@@ -1248,6 +1283,13 @@ public final class AnswerCapturePane extends VBox {
 			answerRegionStatusLabel.setText("Answer saved — next PDF could not be loaded");
 			showAnswerFileError("Answer saved, but the next question's PDF could not be loaded.",
 					"Your answer is stored. Choose an answer PDF to continue. " + failure.getMessage());
+		}
+
+		// Direct Dashboard correction returns only after the complete Answer save
+		// transition, including any asynchronous next-document handling, has finished.
+		Runnable completedHandler = takeAnswerCaptureCompletion();
+		if (completedHandler != null) {
+			completedHandler.run();
 		}
 	}
 
@@ -1808,6 +1850,12 @@ public final class AnswerCapturePane extends VBox {
 		if (answerSaveInProgress) {
 			return;
 		}
+		if (answerCaptureCompletionQuestionId > 0 && answerCaptureCompletionQuestionId != question.getId()) {
+
+			// Changing to and saving another Question means the original direct
+			// Dashboard correction was abandoned.
+			clearAnswerCaptureCompletion();
+		}
 		int previousIndex = unansweredQuestionField.getSelectionModel().getSelectedIndex();
 		String storedText = answerText.isBlank() ? null : answerText;
 
@@ -1987,6 +2035,17 @@ public final class AnswerCapturePane extends VBox {
 		// Lookup-style background work uses lightweight virtual threads while JavaFX
 		// Task retains success/failure delivery on the application thread.
 		Thread.ofVirtual().name(threadName).start(task);
+	}
+
+	private Runnable takeAnswerCaptureCompletion() {
+		if (answerCaptureCompletionQuestionId <= 0) {
+			return null;
+		}
+
+		// Successful direct Answer capture consumes its Dashboard return callback once.
+		Runnable completedHandler = answerCaptureCompletedHandler;
+		clearAnswerCaptureCompletion();
+		return completedHandler;
 	}
 
 	private void updateAnswerPdfControlsVisibility(Question question) {

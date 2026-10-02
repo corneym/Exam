@@ -41,10 +41,8 @@ class ExamCorpusAuditServiceTest {
 	void invalidStoredQuestionPdfPathBecomesFindingWithoutAbortingAudit() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("invalid-pdf-path.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		Exam exam = examWriter.createExam(chemistry, "QCAA", 2025, "External Assessment");
 
@@ -53,12 +51,10 @@ class ExamCorpusAuditServiceTest {
 		SourceDocument invalidDocument = examWriter.insertSourceDocument("../outside-managed-root.pdf");
 		ExamBooklet booklet = examWriter.insertExamBooklet(exam, invalidDocument, "Paper 1",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
-
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
 		ExamCorpusAuditService service = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
 				new PdfStore(tempDirectory.resolve("pdf-invalid-path")));
-
 		List<ExamCorpusStatus> statuses = service.assessSubject(chemistry);
 
 		// The invalid source path becomes a local booklet finding; it does not make the
@@ -66,7 +62,6 @@ class ExamCorpusAuditServiceTest {
 		assertEquals(1, statuses.size());
 		ExamCorpusStatus status = statuses.getFirst();
 		assertEquals(1, status.bookletStatuses().size());
-
 		BookletCorpusStatus bookletStatus = status.bookletStatuses().getFirst();
 		assertEquals(booklet.getId(), bookletStatus.booklet().getId());
 		assertFalse(bookletStatus.questionPdfAvailable());
@@ -84,24 +79,19 @@ class ExamCorpusAuditServiceTest {
 		Path databasePath = tempDirectory.resolve("corpus-audit.db");
 		Path pdfRoot = tempDirectory.resolve("pdf");
 		Files.createDirectories(pdfRoot);
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
 		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
 		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
 		Descriptor descriptor = curriculumWriter.insertDescriptor(topic, "1.1.1", "Descriptor", 1);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		Exam exam = examWriter.createExam(chemistry, "QCAA", 2025, "External Assessment");
-
 		SourceDocument paper1Document = examWriter.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
 		ExamBooklet paper1 = examWriter.insertExamBooklet(exam, paper1Document, "Paper 1",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 1);
-
 		SourceDocument paper2Document = examWriter.insertSourceDocument("Chemistry/QCAA/2025/paper2.pdf");
 		ExamBooklet paper2 = examWriter.insertExamBooklet(exam, paper2Document, "Paper 2",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 1);
@@ -109,12 +99,10 @@ class ExamCorpusAuditServiceTest {
 		// The persisted Exam planning metadata exactly matches the structural assets
 		// created for this fixture.
 		examWriter.updateExamAssetExpectations(exam, 2, 1);
-
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(exam, "Marking guide",
 				"Chemistry/QCAA/2025/answers.pdf");
 		answerWriter.assignAnswerFile(paper1, answerFile);
-
 		PdfStore pdfStore = new PdfStore(pdfRoot);
 		Path paper1Pdf = pdfStore.resolve(paper1Document.getRelativePath());
 		Files.createDirectories(paper1Pdf.getParent());
@@ -122,7 +110,6 @@ class ExamCorpusAuditServiceTest {
 
 		// Deliberately do not create Paper 2 on disk. Its persisted SourceDocument
 		// remains valid metadata while the audit must report the physical PDF missing.
-
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
 		questionRepository.save(paper1, "1", "", 2, List.of(new QuestionRegion(paper1, 1, 0.10, 0.10, 0.70, 0.20)),
 				descriptor, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
@@ -131,20 +118,16 @@ class ExamCorpusAuditServiceTest {
 		// persisted.
 		// The missing Answer and missing Paper 2 PDF must not reverse this declaration.
 		examWriter.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
-
 		Subject physics = curriculumWriter.insertSubject("Physics");
 
 		// A different Subject Exam proves the service honours the authoritative
 		// Subject boundary rather than returning every Exam in the database.
 		examWriter.createExam(physics, "QCAA", 2025, "External Assessment");
-
 		ExamCorpusAuditService service = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
 				pdfStore);
 		List<ExamCorpusStatus> statuses = service.assessSubject(chemistry);
-
 		assertEquals(1, statuses.size());
 		ExamCorpusStatus status = statuses.getFirst();
-
 		assertEquals(exam.getId(), status.exam().getId());
 		assertEquals(ExamCaptureState.COMPLETE, status.declaredCaptureState());
 
@@ -155,7 +138,6 @@ class ExamCorpusAuditServiceTest {
 		assertEquals(Integer.valueOf(1), status.assetExpectations().expectedAnswerFileCount());
 		assertEquals(1, status.assetExpectations().availableAnswerFileCount());
 		assertTrue(status.findings().isEmpty());
-
 		assertEquals(2, status.bookletStatuses().size());
 		BookletCorpusStatus paper1Status = status.bookletStatuses().stream()
 				.filter(bookletStatus -> bookletStatus.booklet().getId() == paper1.getId()).findFirst().orElseThrow();
@@ -194,24 +176,19 @@ class ExamCorpusAuditServiceTest {
 	void plannedExamWithoutBookletsRemainsVisibleAndReportsAssetMismatch() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("planned-exam.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		Exam exam = examWriter.createExam(chemistry, "QCAA", 2025, "External Assessment");
 
 		// Planning metadata may legitimately precede source-asset registration.
 		examWriter.updateExamAssetExpectations(exam, 1, 0);
 		Exam completed = examWriter.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
-
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
 		ExamCorpusAuditService service = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
 				new PdfStore(tempDirectory.resolve("pdf-planned-exam")));
-
 		List<ExamCorpusStatus> statuses = service.assessSubject(chemistry);
-
 		assertEquals(1, statuses.size());
 		ExamCorpusStatus status = statuses.getFirst();
 
@@ -223,7 +200,6 @@ class ExamCorpusAuditServiceTest {
 		assertEquals(0, status.assetExpectations().availableQuestionBookletCount());
 		assertEquals(Integer.valueOf(0), status.assetExpectations().expectedAnswerFileCount());
 		assertEquals(0, status.assetExpectations().availableAnswerFileCount());
-
 		assertTrue(status.hasFinding(ExamCorpusFinding.EXPECTED_QUESTION_BOOKLET_COUNT_MISMATCH));
 		assertFalse(status.hasFinding(ExamCorpusFinding.EXPECTED_ANSWER_FILE_COUNT_MISMATCH));
 		assertEquals(0, status.questionSummary().totalQuestions());
@@ -238,14 +214,11 @@ class ExamCorpusAuditServiceTest {
 	void subjectWithNoExamsReturnsEmptyAuditSnapshot() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("empty-subject.db"));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
-
 		ExamCorpusAuditService service = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
 				new PdfStore(tempDirectory.resolve("pdf-empty-subject")));
 

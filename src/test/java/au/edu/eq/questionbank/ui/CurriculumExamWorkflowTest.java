@@ -14,6 +14,7 @@ import java.sql.PreparedStatement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -27,6 +28,7 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
@@ -41,6 +43,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
+import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
@@ -54,6 +57,7 @@ import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleGroup;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -324,62 +328,122 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Subject workingSubject = subjects.getValue();
 		assertNotNull(workingSubject);
 
-		// Exercise the real Questions menu action so this regression verifies the
-		// application passes its authoritative Working Subject into Corpus Audit.
+		// Exercise the real Questions menu action through its stable control identity
+		// rather than coupling the workflow regression to visible menu wording.
 		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
-		MenuItem auditItem = questionMenu.getItems().stream().filter(item -> "_Corpus Audit...".equals(item.getText()))
-				.findFirst().orElseThrow(() -> new AssertionError("Questions -> Corpus Audit menu item not found"));
+		MenuItem dashboardItem = questionMenu.getItems().stream()
+				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
+				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
 
-		// Corpus Audit enters a modal showAndWait() loop, so schedule the action and
+		// The Dashboard enters a modal showAndWait() loop, so schedule the action and
 		// leave the test thread available to inspect and close the dialog.
-		Platform.runLater(auditItem::fire);
-		waitForDialogShowing(robot, "Question Corpus Audit");
-		DialogPane audit = showingDialogPane(robot, "Question Corpus Audit");
-
-		Node workingSubjectNode = audit.lookup("#corpus-working-subject");
+		Platform.runLater(dashboardItem::fire);
+		waitForDialogShowing(robot, "Corpus Dashboard");
+		DialogPane dashboard = showingDialogPane(robot, "Corpus Dashboard");
+		Node workingSubjectNode = dashboard.lookup("#corpus-dashboard-working-subject");
 		assertTrue(workingSubjectNode instanceof Label);
 		assertEquals(workingSubject.getName(), ((Label) workingSubjectNode).getText());
 
-		// Corpus Audit must not expose a second Subject selector that can conflict
-		// with the application-level Working Subject.
-		assertNull(audit.lookup("#corpus-filter-subject"));
-
-		Node closeNode = audit.lookupButton(ButtonType.CLOSE);
+		// The Dashboard inherits application-level Working Subject and must not expose
+		// an independent Subject filter.
+		assertNull(dashboard.lookup("#corpus-dashboard-filter-subject"));
+		Node closeNode = dashboard.lookupButton(ButtonType.CLOSE);
 		assertTrue(closeNode instanceof Button);
 		robot.interact(((Button) closeNode)::fire);
-		waitForDialogHidden(robot, "Question Corpus Audit");
+		waitForDialogHidden(robot, "Corpus Dashboard");
 	}
 
 	@Test
 	void corpusAuditRequiresWorkingSubject(FxRobot robot) throws Exception {
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 
-		// Remove the authoritative application Subject before entering Corpus Audit.
+		// Remove the authoritative application Subject before entering the Dashboard.
 		robot.interact(() -> subjects.getSelectionModel().clearSelection());
 		WaitForAsyncUtils.waitForFxEvents();
 		assertNull(field(application, "workingSubject", Subject.class));
-
 		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
-		MenuItem auditItem = questionMenu.getItems().stream().filter(item -> "_Corpus Audit...".equals(item.getText()))
-				.findFirst().orElseThrow(() -> new AssertionError("Questions -> Corpus Audit menu item not found"));
+		MenuItem dashboardItem = questionMenu.getItems().stream()
+				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
+				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
 
 		// The prerequisite warning is modal, so schedule the real menu action rather
 		// than blocking the test thread inside the action itself.
-		Platform.runLater(auditItem::fire);
-		waitForDialogShowing(robot, "Corpus Audit");
-		DialogPane warning = showingDialogPane(robot, "Corpus Audit");
+		Platform.runLater(dashboardItem::fire);
+		waitForDialogShowing(robot, "Corpus Dashboard");
+		DialogPane warning = showingDialogPane(robot, "Corpus Dashboard");
 		assertEquals("No Working Subject is selected.", warning.getHeaderText());
-
 		Node okNode = warning.lookupButton(ButtonType.OK);
 		assertTrue(okNode instanceof Button);
 		robot.interact(((Button) okNode)::fire);
-		waitForDialogHidden(robot, "Corpus Audit");
+		waitForDialogHidden(robot, "Corpus Dashboard");
 
-		// Failure at the application boundary must occur before the actual audit
+		// Failure at the application boundary must occur before the actual Dashboard
 		// surface is constructed.
-		assertTrue(robot.lookup("#corpus-working-subject").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#corpus-dashboard-working-subject").tryQuery().isEmpty());
+	}
+
+	@Test
+	void dashboardExamAssetsReturnWaitsForStructuralWorkToFinish(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		AtomicInteger returned = new AtomicInteger();
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showExamAssetsMode", new Class<?>[] { Exam.class, ExamBooklet.class, Runnable.class },
+					booklet.getExam(), booklet, (Runnable) returned::incrementAndGet);
+			return null;
+		}).get();
+		Button returnToDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
+		assertTrue(returnToDashboard.isVisible());
+		assertTrue(returnToDashboard.isManaged());
+		assertFalse(returnToDashboard.isDisable());
+		Button editExam = lookup(robot, "#exam-assets-edit", Button.class);
+
+		// A staged structural edit must disable Dashboard return rather than silently
+		// discarding the user's work.
+		robot.interact(editExam::fire);
+		assertTrue(returnToDashboard.isDisable());
+		Button cancelEdit = lookup(robot, "#exam-assets-cancel", Button.class);
+		robot.interact(cancelEdit::fire);
+		assertFalse(returnToDashboard.isDisable());
+
+		// Once the structural workspace is settled, the configured return operation
+		// runs exactly once and removes itself from Exam/Assets.
+		robot.interact(returnToDashboard::fire);
+		assertEquals(1, returned.get());
+		assertFalse(returnToDashboard.isVisible());
+		assertFalse(returnToDashboard.isManaged());
+	}
+
+	@Test
+	void dashboardStructuralRouteOpensRequestedExamAndBooklet(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
+
+		// Exercise the application-level structural route rather than manipulating the
+		// Exam/Assets controls directly.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showExamAssetsMode", new Class<?>[] { Exam.class, ExamBooklet.class },
+					booklet.getExam(), booklet);
+			return null;
+		}).get();
+		@SuppressWarnings("unchecked")
+		ComboBox<Exam> exams = field(assets, "examBox", ComboBox.class);
+		ToggleGroup bookletSelection = field(assets, "questionBookletSelectionGroup", ToggleGroup.class);
+		assertNotNull(exams.getValue());
+		assertEquals(booklet.getExam().getId(), exams.getValue().getId());
+		assertNotNull(bookletSelection.getSelectedToggle());
+		assertTrue(bookletSelection.getSelectedToggle().getUserData() instanceof ExamBooklet);
+		ExamBooklet selectedBooklet = (ExamBooklet) bookletSelection.getSelectedToggle().getUserData();
+		assertEquals(booklet.getId(), selectedBooklet.getId());
+
+		// Structural routing selects the booklet for management but must not itself
+		// change authoritative capture activation.
+		assertEquals(booklet.getId(), examMetadataPane().getBooklet().getId());
 	}
 
 	@Test

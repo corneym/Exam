@@ -325,6 +325,34 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void directImportedCorrectionCompletesAfterSuccessfulSave(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question incomplete = repository.save(booklet, "DASH-Q", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(pane::refreshImportedQuestions);
+		AtomicInteger completed = new AtomicInteger();
+
+		// Dashboard routing selects exactly one persisted incomplete Question and owns
+		// the completion callback for that correction.
+		robot.interact(() -> assertTrue(pane.captureImportedQuestion(incomplete, completed::incrementAndGet)));
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+
+		// Completion is the durable workflow result; do not wait merely for a transient
+		// save flag to become false.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> completed.get() == 1);
+		Question stored = repository.findById(incomplete.getId()).orElseThrow();
+		assertFalse(stored.getContentParts().isEmpty());
+		assertEquals(1, completed.get());
+	}
+
+	@Test
 	void duplicateQuestionCodeIsRejectedWithoutLosingAcceptedRegions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		captureQuestion(robot, "Q7");

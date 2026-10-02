@@ -62,7 +62,6 @@ class CorpusDashboardPaneTest {
 		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
 				.queryAs(TableView.class);
 		Label coverage = robot.lookup("#corpus-dashboard-mcq-coverage").queryAs(Label.class);
-
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
 
 		// Paper 1 has no ordinary incomplete Question work in the representative
@@ -70,13 +69,10 @@ class CorpusDashboardPaneTest {
 		assertEquals(0, questions.getItems().size());
 		assertTrue(coverage.isVisible());
 		assertTrue(coverage.getText().contains("1 / 2 eligible Questions"));
-
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
-
 		assertEquals(3, questions.getItems().size());
 		assertTrue(questions.getItems().stream()
 				.allMatch(item -> item.question().getBooklet().getId() == fixture.paper2.getId()));
-
 		Label warning = robot.lookup("#corpus-dashboard-booklet-warning").queryAs(Label.class);
 		assertTrue(warning.isVisible());
 		assertTrue(warning.getText().contains("Expected 30 top-level Questions"));
@@ -93,9 +89,14 @@ class CorpusDashboardPaneTest {
 		Label selectedState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
 		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
 		Label selectedBooklet = robot.lookup("#corpus-dashboard-selected-booklet").queryAs(Label.class);
-
 		assertEquals("Chemistry", workingSubject.getText());
 		assertEquals(2, exams.getItems().size());
+
+		// Dashboard terminology must use the agreed user-facing corpus concepts rather
+		// than the internal generic asset terminology.
+		assertEquals("Question Booklets", exams.getColumns().get(4).getText());
+		assertEquals("Answer Booklets", exams.getColumns().get(5).getText());
+		assertEquals("Question PDF", booklets.getColumns().get(2).getText());
 
 		// First visible Exam is selected automatically, while booklet scope initially
 		// remains the whole Exam.
@@ -106,7 +107,6 @@ class CorpusDashboardPaneTest {
 		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / 1"));
 		assertTrue(selectedCounts.getText().contains("Questions: 54"));
 		assertTrue(selectedCounts.getText().contains("Need work: 3"));
-
 		assertEquals(2, booklets.getItems().size());
 		assertNull(booklets.getSelectionModel().getSelectedItem());
 		assertEquals("Selected booklet: All booklets", selectedBooklet.getText());
@@ -120,20 +120,16 @@ class CorpusDashboardPaneTest {
 		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
 				.queryAs(TableView.class);
 		ComboBox<ExamCaptureState> state = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
-
 		robot.interact(() -> state.setValue(ExamCaptureState.ACTIVE));
-
 		assertEquals(1, exams.getItems().size());
 		assertEquals(fixture.activeExamStatus, exams.getSelectionModel().getSelectedItem());
 		assertEquals(1, booklets.getItems().size());
-
 		Label selectedState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
 		assertEquals("Declared state: ACTIVE", selectedState.getText());
 
 		// The representative ACTIVE Question is complete, so the default Needs
 		// attention view contains no Question work.
 		assertEquals(0, questions.getItems().size());
-
 		Button total = robot.lookup("#corpus-dashboard-summary-total").queryButton();
 		Button attention = robot.lookup("#corpus-dashboard-summary-attention").queryButton();
 		assertEquals("1 Questions", total.getText());
@@ -143,14 +139,12 @@ class CorpusDashboardPaneTest {
 	@Test
 	void refreshIsDisabledUntilOwningWorkflowSuppliesReloadHandler(FxRobot robot) {
 		Button refresh = robot.lookup("#corpus-dashboard-refresh").queryButton();
-
 		assertTrue(refresh.isDisable());
-
 		robot.interact(() -> pane.setRefreshHandler(() -> {
+
 			// This test verifies only explicit installation of the persistence reload
 			// responsibility.
 		}));
-
 		assertFalse(refresh.isDisable());
 	}
 
@@ -158,20 +152,15 @@ class CorpusDashboardPaneTest {
 	void selectsVisibleUnknownQuestionsForBulkResponseTypeResolution(FxRobot robot) {
 		AtomicReference<List<Question>> selectedQuestions = new AtomicReference<>();
 		AtomicReference<QuestionResponseType> selectedResponseType = new AtomicReference<>();
-
 		robot.interact(() -> pane.setBulkResponseTypeHandler((questions, responseType) -> {
 			selectedQuestions.set(List.copyOf(questions));
 			selectedResponseType.set(responseType);
 		}));
-
 		Button selectUnknown = robot.lookup("#corpus-dashboard-select-all-unknown").queryButton();
 		Button writtenResponse = robot.lookup("#corpus-dashboard-set-written-response").queryButton();
-
 		robot.interact(selectUnknown::fire);
 		assertFalse(writtenResponse.isDisable());
-
 		robot.interact(writtenResponse::fire);
-
 		assertEquals(1, selectedQuestions.get().size());
 		assertEquals("Q18a", selectedQuestions.get().getFirst().getQuestionCode());
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, selectedResponseType.get());
@@ -180,12 +169,45 @@ class CorpusDashboardPaneTest {
 	@Start
 	void start(Stage stage) {
 		fixture = new Fixture();
-
 		pane = new CorpusDashboardPane(fixture.chemistry, List.of(fixture.completeExamStatus, fixture.activeExamStatus),
 				fixture.questions());
-
 		stage.setScene(new Scene(pane, 1100, 850));
 		stage.show();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void structuralFindingsRouteSelectedExamAndAffectedBooklet(FxRobot robot) {
+		AtomicReference<Exam> routedExam = new AtomicReference<>();
+		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
+		robot.interact(() -> pane.setExamAssetsHandler((exam, booklet) -> {
+			routedExam.set(exam);
+			routedBooklet.set(booklet);
+		}));
+		Button manageAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+
+		// The initially selected complete Exam has no Exam-wide structural finding and
+		// no booklet is selected.
+		assertTrue(manageAssets.isDisable());
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
+		assertFalse(manageAssets.isDisable());
+
+		// Paper 2 itself has the expected-versus-found structural mismatch, so the
+		// structural route preserves that booklet identity.
+		robot.interact(manageAssets::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertEquals(fixture.paper2.getId(), routedBooklet.get().getId());
+		ComboBox<ExamCaptureState> state = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
+		robot.interact(() -> state.setValue(ExamCaptureState.ACTIVE));
+		assertFalse(manageAssets.isDisable());
+
+		// The ACTIVE Exam has an Exam-wide booklet-count mismatch. With no booklet
+		// selected, the route must remain Exam-wide rather than blaming one booklet.
+		routedBooklet.set(fixture.paper1);
+		robot.interact(manageAssets::fire);
+		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
+		assertNull(routedBooklet.get());
 	}
 
 	@Test
@@ -194,11 +216,9 @@ class CorpusDashboardPaneTest {
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
 				.queryAs(TableView.class);
-
 		Button total = robot.lookup("#corpus-dashboard-summary-total").queryButton();
 		Button attention = robot.lookup("#corpus-dashboard-summary-attention").queryButton();
 		Button missingAnswer = robot.lookup("#corpus-dashboard-summary-missing-answer").queryButton();
-
 		assertEquals("5 Questions", total.getText());
 		assertEquals("3 Need attention", attention.getText());
 		assertEquals("2 Missing answers", missingAnswer.getText());
@@ -206,7 +226,6 @@ class CorpusDashboardPaneTest {
 		// Default Question view is Needs attention for the selected 2025 Exam.
 		assertEquals(3, questions.getItems().size());
 		assertEquals(fixture.completeExamStatus, exams.getSelectionModel().getSelectedItem());
-
 		robot.interact(missingAnswer::fire);
 		assertEquals(2, questions.getItems().size());
 		assertTrue(questions.getItems().stream().allMatch(item -> item.status()
@@ -219,12 +238,27 @@ class CorpusDashboardPaneTest {
 		assertEquals(fixture.completeExamStatus, exams.getSelectionModel().getSelectedItem());
 	}
 
+	@Test
+	void unsetExpectedCountsAreShownExplicitly(FxRobot robot) {
+		ExamCorpusStatus unsetExpectations = new ExamCorpusStatus(fixture.completeExam,
+				new ExamAssetExpectations(null, 2, null, 1), fixture.completeExamStatus.bookletStatuses(),
+				fixture.completeExamStatus.questionSummary(), fixture.completeExamStatus.mcqExplanationSummary(),
+				EnumSet.noneOf(ExamCorpusFinding.class));
+		robot.interact(
+				() -> pane.replaceData(List.of(unsetExpectations, fixture.activeExamStatus), fixture.questions()));
+		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
+
+		// Missing planning metadata must be distinguishable from a genuine zero count
+		// and from the dash used to represent no ordinary work.
+		assertTrue(selectedCounts.getText().contains("Question booklets: 2 / not recorded"));
+		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / not recorded"));
+	}
+
 	private static final class Fixture {
 
 		private final Subject chemistry = new Subject(1, "Chemistry");
 		private final ExamProvider qcaa = new ExamProvider(2, "QCAA");
 		private final Descriptor classification = classification(chemistry, 100);
-
 		private final Exam completeExam = new Exam(10, chemistry, qcaa, 2025, "External Assessment",
 				ExamCaptureState.COMPLETE);
 		private final ExamBooklet paper1 = new ExamBooklet(20, completeExam, "Paper 1",
@@ -233,30 +267,24 @@ class CorpusDashboardPaneTest {
 				new SourceDocument(23, "Chemistry/2025/paper2.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE, 30);
 		private final AnswerFile markingGuide = new AnswerFile(24, completeExam, "Marking guide",
 				new SourceDocument(25, "Chemistry/2025/answers.pdf"), true);
-
 		private final BookletCorpusStatus paper1Status = new BookletCorpusStatus(paper1, true, markingGuide, 20, 20,
 				new QuestionCorpusSummary(20, 20, 0, 0, 0, 0, 0), new McqExplanationCoverage(true, 2, 1),
 				EnumSet.noneOf(BookletCorpusFinding.class));
-
 		private final BookletCorpusStatus paper2Status = new BookletCorpusStatus(paper2, true, markingGuide, 29, 34,
 				new QuestionCorpusSummary(34, 31, 3, 1, 2, 1, 1), new McqExplanationCoverage(true, 0, 0),
 				EnumSet.of(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
-
 		private final ExamCorpusStatus completeExamStatus = new ExamCorpusStatus(completeExam,
 				new ExamAssetExpectations(2, 2, 1, 1), List.of(paper1Status, paper2Status),
 				new QuestionCorpusSummary(54, 51, 3, 1, 2, 1, 1), new McqExplanationSummary(2, 2, 1),
 				EnumSet.noneOf(ExamCorpusFinding.class));
-
 		private final Exam activeExam = new Exam(30, chemistry, qcaa, 2024, "External Assessment",
 				ExamCaptureState.ACTIVE);
 		private final ExamBooklet activePaper = new ExamBooklet(31, activeExam, "Paper 1",
 				new SourceDocument(32, "Chemistry/2024/paper1.pdf"), ExamBookletQuestionFormat.MIXED, 10);
-
 		private final BookletCorpusStatus activePaperStatus = new BookletCorpusStatus(activePaper, false, null, 8, 8,
 				new QuestionCorpusSummary(8, 8, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.of(BookletCorpusFinding.MISSING_QUESTION_PDF,
 						BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
-
 		private final ExamCorpusStatus activeExamStatus = new ExamCorpusStatus(activeExam,
 				new ExamAssetExpectations(2, 1, 0, 0), List.of(activePaperStatus),
 				new QuestionCorpusSummary(8, 8, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0),
@@ -288,15 +316,12 @@ class CorpusDashboardPaneTest {
 		private List<Question> questions() {
 			Question completeMcq = question(200, paper1, "Q1", QuestionResponseType.MULTIPLE_CHOICE, true, false);
 			completeMcq.setAnswer(new Answer(300, "A", List.of()));
-
 			Question missingContent = question(201, paper2, "Q7", QuestionResponseType.WRITTEN_RESPONSE, false, false);
 			Question missingAnswer = question(202, paper2, "Q12", QuestionResponseType.WRITTEN_RESPONSE, true, false);
 			Question unknownShared = question(203, paper2, "Q18a", QuestionResponseType.UNKNOWN, true, true);
-
 			Question activeComplete = question(204, activePaper, "Q2", QuestionResponseType.MULTIPLE_CHOICE, true,
 					false);
 			activeComplete.setAnswer(new Answer(301, "B", List.of()));
-
 			return List.of(unknownShared, activeComplete, missingAnswer, completeMcq, missingContent);
 		}
 	}

@@ -41,7 +41,6 @@ public final class BookletCorpusAudit {
 		if (questions == null) {
 			throw new NullPointerException("questions");
 		}
-
 		for (Question question : questions) {
 			if (question == null) {
 				throw new NullPointerException("questions contains null");
@@ -52,19 +51,16 @@ public final class BookletCorpusAudit {
 		// reconstructed domain objects are handled correctly.
 		List<Question> bookletQuestions = questions.stream()
 				.filter(question -> question.getBooklet().getId() == booklet.getId()).toList();
-
 		int encounteredTopLevelQuestions = countEncounteredTopLevelQuestions(bookletQuestions);
 		QuestionCorpusSummary questionSummary = QuestionCorpusQueue.summarise(bookletQuestions);
 		McqExplanationCoverage explanationCoverage = assessMcqExplanationCoverage(bookletQuestions, assignedAnswerFile);
 		EnumSet<BookletCorpusFinding> findings = EnumSet.noneOf(BookletCorpusFinding.class);
-
 		if (!questionPdfAvailable) {
 
 			// Missing physical source material is an advisory audit finding. It does not
 			// rewrite the user's Exam lifecycle declaration.
 			findings.add(BookletCorpusFinding.MISSING_QUESTION_PDF);
 		}
-
 		Integer expectedQuestionCount = booklet.getExpectedQuestionCount();
 		if (expectedQuestionCount != null && expectedQuestionCount.intValue() != encounteredTopLevelQuestions) {
 
@@ -87,10 +83,8 @@ public final class BookletCorpusAudit {
 			// AnswerFile explicitly declares explanation material.
 			return new McqExplanationCoverage(false, 0, 0);
 		}
-
 		int eligibleQuestions = 0;
 		int capturedExplanations = 0;
-
 		for (Question question : questions) {
 			if (question.getResponseType() != QuestionResponseType.MULTIPLE_CHOICE) {
 				continue;
@@ -101,9 +95,7 @@ public final class BookletCorpusAudit {
 			if (!QuestionCorpusAudit.assess(question).answerComplete()) {
 				continue;
 			}
-
 			eligibleQuestions++;
-
 			if (!question.getAnswer().getRegions().isEmpty()) {
 
 				// For an MCQ, persisted Answer regions are supplementary explanation
@@ -111,13 +103,11 @@ public final class BookletCorpusAudit {
 				capturedExplanations++;
 			}
 		}
-
 		return new McqExplanationCoverage(true, eligibleQuestions, capturedExplanations);
 	}
 
 	private static int countEncounteredTopLevelQuestions(List<Question> questions) {
 		Set<TopLevelQuestionKey> encountered = new HashSet<>();
-
 		for (Question question : questions) {
 			if (question.hasSourceQuestion()) {
 
@@ -131,7 +121,6 @@ public final class BookletCorpusAudit {
 			// top-level Questions.
 			encountered.add(TopLevelQuestionKey.question(question.getId()));
 		}
-
 		return encountered.size();
 	}
 

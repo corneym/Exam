@@ -3,6 +3,8 @@ package au.edu.eq.questionbank.ui.audit;
 import java.util.List;
 import java.util.function.BiConsumer;
 
+import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
@@ -25,7 +27,6 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 
 	private static final int DIALOG_WIDTH = 1200;
 	private static final int DIALOG_HEIGHT = 850;
-
 	private final CorpusDashboardPane dashboardPane;
 
 	/**
@@ -56,29 +57,30 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		initOwner(owner);
 		setTitle("Corpus Dashboard");
 		setResizable(true);
-
 		dashboardPane = new CorpusDashboardPane(workingSubject, examStatuses, questions);
+		dashboardPane.setExamAssetsHandler((exam, booklet) -> {
 
+			// The Dashboard is modal. Return the structural target first, then let the
+			// application replace the main workspace after showAndWait() exits.
+			setResult(ResolutionRequest.forExamAssets(exam, booklet));
+			close();
+		});
 		ButtonType resolveButtonType = new ButtonType("Resolve Selected", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(resolveButtonType, ButtonType.CLOSE);
 		getDialogPane().setContent(dashboardPane);
-
 		Button resolveButton = (Button) getDialogPane().lookupButton(resolveButtonType);
 		resolveButton.setId("corpus-resolve-selected");
 		resolveButton.setTooltip(
 				new Tooltip("Open the correction workflow for the selected Question's next unresolved problem."));
-
 		resolveButton.disableProperty()
 				.bind(Bindings.createBooleanBinding(
 						() -> dashboardPane.selectedWorkItems().size() != 1
 								|| resolutionTarget(dashboardPane.getSelectedWorkItem()) == null,
 						dashboardPane.selectedWorkItems()));
-
 		setResultConverter(buttonType -> {
 			if (buttonType != resolveButtonType || dashboardPane.selectedWorkItems().size() != 1) {
 				return null;
 			}
-
 			QuestionCorpusWorkItem item = dashboardPane.getSelectedWorkItem();
 			ResolutionTarget target = resolutionTarget(item);
 			if (item == null || target == null) {
@@ -89,7 +91,6 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 			// with direct Dashboard actions.
 			return new ResolutionRequest(item.question(), target);
 		});
-
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
 	}
@@ -140,14 +141,12 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
-
 		dashboardPane.setBulkResponseTypeHandler((questions, responseType) -> {
 			String responseTypeLabel = switch (responseType) {
 			case MULTIPLE_CHOICE -> "Multiple choice";
 			case WRITTEN_RESPONSE -> "Written response";
 			case UNKNOWN -> throw new IllegalArgumentException("UNKNOWN cannot be applied as a bulk resolution");
 			};
-
 			ButtonType applyButton = new ButtonType("Apply", ButtonBar.ButtonData.OK_DONE);
 			Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
 			confirmation.initOwner(getOwner());
@@ -156,12 +155,10 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 					.setHeaderText("Set " + questions.size() + " selected question(s) to " + responseTypeLabel + "?");
 			confirmation.setContentText("Only the response type will be changed.");
 			confirmation.getButtonTypes().setAll(applyButton, ButtonType.CANCEL);
-
 			ButtonType decision = confirmation.showAndWait().orElse(ButtonType.CANCEL);
 			if (decision != applyButton) {
 				return;
 			}
-
 			handler.accept(questions, responseType);
 		});
 	}
@@ -187,24 +184,67 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		/** Question metadata correction. */
 		METADATA,
 		/** Answer capture or correction. */
-		ANSWER
+		ANSWER,
+		/** Structural Exam or booklet correction through Exam/Assets. */
+		EXAM_ASSETS
 	}
 
 	/**
-	 * Requested Question and correction workflow selected by the Dashboard dialog.
+	 * Requested correction workflow selected by the Dashboard.
 	 *
-	 * @param question Question to correct
-	 * @param target   correction workflow to launch
+	 * @param question Question to correct for Question-level workflows, otherwise
+	 *                 {@code null}
+	 * @param target   correction workflow
+	 * @param exam     Exam to manage for structural correction, otherwise
+	 *                 {@code null}
+	 * @param booklet  specific structurally affected booklet, or {@code null} for
+	 *                 an Exam-wide structural finding
 	 */
-	public record ResolutionRequest(Question question, ResolutionTarget target) {
+	public record ResolutionRequest(Question question, ResolutionTarget target, Exam exam, ExamBooklet booklet) {
 
-		/** Validates a resolution request. */
+		/**
+		 * Creates a Question-level correction request.
+		 *
+		 * @param question Question to correct
+		 * @param target   Question-level correction target
+		 */
+		public ResolutionRequest(Question question, ResolutionTarget target) {
+			this(question, target, null, null);
+		}
+
+		/**
+		 * Creates an Exam/Assets structural correction request.
+		 *
+		 * @param exam    Exam requiring structural review
+		 * @param booklet specific affected booklet, or {@code null} for Exam-wide work
+		 * @return structural correction request
+		 */
+		public static ResolutionRequest forExamAssets(Exam exam, ExamBooklet booklet) {
+			return new ResolutionRequest(null, ResolutionTarget.EXAM_ASSETS, exam, booklet);
+		}
+
+		/** Validates the correction request. */
 		public ResolutionRequest {
-			if (question == null) {
-				throw new NullPointerException("question");
-			}
 			if (target == null) {
 				throw new NullPointerException("target");
+			}
+			if (target == ResolutionTarget.EXAM_ASSETS) {
+				if (exam == null) {
+					throw new NullPointerException("exam");
+				}
+				if (question != null) {
+					throw new IllegalArgumentException("Exam/Assets requests cannot contain a Question");
+				}
+				if (booklet != null && booklet.getExam().getId() != exam.getId()) {
+					throw new IllegalArgumentException("Booklet must belong to the requested Exam");
+				}
+			} else {
+				if (question == null) {
+					throw new NullPointerException("question");
+				}
+				if (exam != null || booklet != null) {
+					throw new IllegalArgumentException("Question correction requests cannot contain Exam assets");
+				}
 			}
 		}
 	}

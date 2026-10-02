@@ -76,7 +76,6 @@ public final class ExamCorpusAuditService {
 		// reloading it for every Exam or booklet.
 		List<Question> subjectQuestions = questionRepository.findAll().stream()
 				.filter(question -> question.getExam().getSubject().getId() == subject.getId()).toList();
-
 		List<ExamCorpusStatus> statuses = new ArrayList<>();
 		for (Exam exam : examWriter.findExamsForSubject(subject)) {
 
@@ -89,7 +88,6 @@ public final class ExamCorpusAuditService {
 
 	private ExamCorpusStatus assessExam(Exam exam, List<Question> subjectQuestions) throws SQLException {
 		List<BookletCorpusStatus> bookletStatuses = new ArrayList<>();
-
 		for (ExamBooklet booklet : examWriter.findExamBooklets(exam)) {
 			AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(booklet);
 			boolean questionPdfAvailable = isQuestionPdfAvailable(booklet);
@@ -99,7 +97,6 @@ public final class ExamCorpusAuditService {
 			bookletStatuses.add(
 					BookletCorpusAudit.assess(booklet, subjectQuestions, assignedAnswerFile, questionPdfAvailable));
 		}
-
 		ExamAssetExpectations assetExpectations = examWriter.findExamAssetExpectations(exam);
 
 		// ExamCorpusAudit keeps user-declared lifecycle state separate from the

@@ -43,4 +43,19 @@ class HelpResourcesTest {
 		assertTrue(html.contains("href=\"revision-output.html\""));
 		assertTrue(html.contains("href=\"data-safety.html\""));
 	}
+
+	@Test
+	void questionHelpUsesCorpusDashboardTerminology() throws IOException {
+		URL questionSearch = HelpResourcesTest.class.getResource(HELP_ROOT + "question-search.html");
+		assertNotNull(questionSearch);
+		String html;
+		try (var input = questionSearch.openStream()) {
+			html = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+		}
+
+		// User Help must describe the current operational Dashboard rather than the
+		// retired ListView-based Corpus Audit UI.
+		assertTrue(html.contains("Corpus Dashboard"));
+		assertTrue(html.contains("Questions → Corpus Dashboard..."));
+	}
 }
