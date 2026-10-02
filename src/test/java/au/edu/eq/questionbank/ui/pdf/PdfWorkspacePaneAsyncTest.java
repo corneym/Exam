@@ -222,6 +222,26 @@ class PdfWorkspacePaneAsyncTest {
 	}
 
 	@Test
+	void loadsExamPdfAsynchronously(FxRobot robot) throws Exception {
+		Path path = createPdf("exam-async.pdf");
+		CountDownLatch done = new CountDownLatch(1);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		robot.interact(() -> pane.openExamPdfAsync(path, error -> {
+			failure.set(error);
+			done.countDown();
+		}));
+
+		// Completion proves the worker opened and rendered the document before JavaFX
+		// published it into the workspace.
+		assertTrue(done.await(10, TimeUnit.SECONDS));
+		assertNull(failure.get());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pane.getDisplayedDocument());
+		assertNotNull(pane.getExamPdfSession());
+		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
+		assertNotNull(pageView.getImage());
+	}
+
+	@Test
 	void ordinaryViewerDoesNotRetainInspectionCompletionAction(FxRobot robot) throws Exception {
 		Path inspectionPath = createPdf("inspection.pdf");
 		Path ordinaryViewerPath = createPdf("ordinary-viewer.pdf");

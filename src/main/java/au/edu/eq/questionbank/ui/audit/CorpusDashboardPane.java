@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
@@ -28,10 +29,12 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.ListChangeListener;
-import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.SelectionMode;
@@ -51,7 +54,15 @@ final class CorpusDashboardPane extends VBox {
 	private static final Insets PADDING = new Insets(10);
 	private static final double EXAM_TABLE_HEIGHT = 190.0;
 	private static final double BOOKLET_TABLE_HEIGHT = 190.0;
-	private static final double QUESTION_TABLE_HEIGHT = 260.0;
+	private static final double QUESTION_TABLE_HEIGHT = 180.0;
+
+	// Booklet scope must retain at least several immediately visible rows even when
+	// the dialog is vertically constrained.
+	private static final double BOOKLET_TABLE_MAX_HEIGHT = 280.0;
+	private static final double BOOKLET_TABLE_MIN_HEIGHT = 125.0;
+
+	// Question work is intentionally more compact because it remains scrollable.
+	private static final double QUESTION_TABLE_MAX_HEIGHT = 210.0;
 	private final Subject workingSubject;
 	private List<ExamCorpusStatus> examStatuses;
 	private List<Question> questions;
@@ -92,6 +103,15 @@ final class CorpusDashboardPane extends VBox {
 	private final Button manageExamAssetsButton = new Button("Manage Exam / Assets");
 	private BiConsumer<Exam, ExamBooklet> examAssetsHandler = (_, _) -> {
 	};
+	private Consumer<Question> answerCaptureHandler = _ -> {
+	};
+	private final Button captureQuestionsButton = new Button("Capture Questions");
+	private final Button captureAnswersButton = new Button("Capture Answers");
+	private final Button completeSelectedQuestionButton = new Button("Complete Selected Question");
+	private Consumer<ExamBooklet> newQuestionCaptureHandler = _ -> {
+	};
+	private Consumer<Question> questionCorrectionHandler = _ -> {
+	};
 
 	CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions) {
 		if (workingSubject == null) {
@@ -108,13 +128,6 @@ final class CorpusDashboardPane extends VBox {
 		buildContent();
 		populateFilterOptions();
 		refreshDashboard();
-	}
-
-	QuestionCorpusWorkItem getSelectedWorkItem() {
-
-		// The dialog owns routing while the Dashboard pane owns visible Question
-		// selection.
-		return questionTable.getSelectionModel().getSelectedItem();
 	}
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
@@ -162,11 +175,14 @@ final class CorpusDashboardPane extends VBox {
 		}
 	}
 
-	ObservableList<QuestionCorpusWorkItem> selectedWorkItems() {
+	void setAnswerCaptureHandler(Consumer<Question> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
 
-		// Expose the observable selection directly so the dialog's Resolve button can
-		// retain its existing binding behaviour.
-		return questionTable.getSelectionModel().getSelectedItems();
+		// Answer capture remains application-owned because it coordinates the shared
+		// PDF workspace and capture lifecycle.
+		answerCaptureHandler = handler;
 	}
 
 	void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
@@ -185,6 +201,26 @@ final class CorpusDashboardPane extends VBox {
 
 		// Structural correction is owned by the existing Exam/Assets workspace.
 		examAssetsHandler = handler;
+	}
+
+	void setNewQuestionCaptureHandler(Consumer<ExamBooklet> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// New Question capture is booklet-level work because no Question row exists yet
+		// for source Questions that have not been captured.
+		newQuestionCaptureHandler = handler;
+	}
+
+	void setQuestionCorrectionHandler(Consumer<Question> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Existing incomplete Question correction remains distinct from adding new
+		// Questions to an incomplete booklet.
+		questionCorrectionHandler = handler;
 	}
 
 	void setRefreshHandler(Runnable handler) {
@@ -257,21 +293,30 @@ final class CorpusDashboardPane extends VBox {
 	private String bookletWarningText(BookletCorpusStatus status) {
 		StringBuilder text = new StringBuilder();
 		if (status.hasFinding(BookletCorpusFinding.MISSING_QUESTION_PDF)) {
-			text.append("Question PDF is missing.");
+			text.append("Question PDF is missing. Use Manage Exam / Assets before Question capture.");
 		}
 		if (status.hasFinding(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH)) {
 			if (!text.isEmpty()) {
 				text.append("  ");
 			}
 
-			// Do not infer whether the expected or encountered count is incorrect.
+			// Expected-versus-encountered is advisory: either the corpus is incomplete
+			// or the recorded expectation is wrong.
 			text.append("Expected ").append(status.expectedTopLevelQuestionCount())
 					.append(" top-level Questions; encountered ").append(status.encounteredTopLevelQuestionCount())
-					.append(". Investigation required.");
+					.append(". ");
+			if (status.booklet().getExam().isComplete()) {
+				text.append(
+						"If Questions are missing, reactivate the Exam in Manage Exam / Assets, then use Capture Questions. ");
+			} else {
+				text.append("If Questions are missing, use Capture Questions. ");
+			}
+			text.append("If the expected count is wrong, correct it in Manage Exam / Assets.");
 		}
 		return text.toString();
 	}
 
+	// TODO Refacator
 	private void buildContent() {
 		Label heading = new Label("CORPUS DASHBOARD");
 		heading.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
@@ -301,22 +346,76 @@ final class CorpusDashboardPane extends VBox {
 		bookletsHeading.setStyle("-fx-font-weight: bold;");
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
+
+		// Booklet actions operate on the selected source booklet rather than an
+		// arbitrary existing Question row.
+		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton);
+		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
 		Label questionWorkHeading = new Label("QUESTION WORK");
 		questionWorkHeading.setStyle("-fx-font-weight: bold;");
 		HBox questionFilterRow = new HBox(SPACING, new Label("Show"), questionViewBox, questionResultCountLabel);
 		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
+
+		// Existing Question content and Shared Context correction remains a
+		// Question-row
+		// operation.
+		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton);
+		questionActionsRow.setAlignment(Pos.CENTER_LEFT);
 		HBox bulkResponseTypeRow = new HBox(SPACING, selectAllUnknownButton, setSelectedMultipleChoiceButton,
 				setSelectedWrittenResponseButton);
 		bulkResponseTypeRow.setAlignment(Pos.CENTER_LEFT);
 		mcqExplanationCoverageLabel.setWrapText(true);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
-		VBox.setVgrow(questionTable, Priority.ALWAYS);
+
+		// Extra vertical space belongs primarily to booklet scope. Question work
+		// remains
+		// a compact, independently scrollable table.
+		VBox.setVgrow(bookletTable, Priority.ALWAYS);
+		VBox.setVgrow(questionTable, Priority.NEVER);
 		getChildren().addAll(headingRow, filterRow, summaryRowOne, summaryRowTwo, examsHeading, examTable,
 				selectedExamHeading, selectedExamTitleRow, selectedExamCountsLabel, bookletsHeading, bookletTable,
-				selectedBookletLabel, bookletWarningLabel, questionWorkHeading, questionFilterRow, questionTable,
-				bulkResponseTypeRow, mcqExplanationCoverageLabel);
+				selectedBookletLabel, bookletWarningLabel, bookletActionsRow, questionWorkHeading, questionFilterRow,
+				questionTable, questionActionsRow, bulkResponseTypeRow, mcqExplanationCoverageLabel);
 		setSpacing(SPACING);
 		setPadding(PADDING);
+	}
+
+	private boolean canCompleteSelectedQuestion(QuestionCorpusWorkItem item) {
+		if (item == null || !item.status().responseTypeResolved()) {
+			return false;
+		}
+
+		// This action owns existing Question-content and Shared Context work only.
+		// Missing Answers have their own explicit booklet-level capture action.
+		return item.status().hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT)
+				|| item.status().hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT);
+	}
+
+	private void captureAnswers() {
+		Question question = firstMissingAnswerQuestion();
+		if (question == null) {
+			return;
+		}
+
+		// Begin with the first source-ordered ready Question in the selected booklet.
+		answerCaptureHandler.accept(question);
+	}
+
+	private void captureQuestions() {
+		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+		if (selected == null || captureQuestionsButton.isDisable()) {
+			return;
+		}
+
+		// A booklet may remain structurally open even after its expected Question count
+		// has already been reached. Require an explicit decision before over-capturing.
+		if (!confirmQuestionCaptureBeyondExpected(selected)) {
+			return;
+		}
+
+		// The selected booklet supplies the source PDF and structural identity for new
+		// Question capture.
+		newQuestionCaptureHandler.accept(selected.booklet());
 	}
 
 	private void clearFilters() {
@@ -342,8 +441,19 @@ final class CorpusDashboardPane extends VBox {
 		setVisibleAndManaged(bookletWarningLabel, false);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 
-		// No selected Exam means there can be no structural correction target.
+		// No selected Exam or booklet can supply either capture or structural work.
+		updateCaptureActionState();
 		updateExamAssetsActionState();
+	}
+
+	private void completeSelectedQuestion() {
+		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
+		if (!canCompleteSelectedQuestion(selected)) {
+			return;
+		}
+
+		// Correct exactly the one Question explicitly selected in the current scope.
+		questionCorrectionHandler.accept(selected.question());
 	}
 
 	private String completionLabel(QuestionCorpusCompletionFilter completion) {
@@ -354,6 +464,7 @@ final class CorpusDashboardPane extends VBox {
 		};
 	}
 
+	// TODO Refactor into single concerns
 	private void configureActions() {
 		refreshButton.setOnAction(_ -> refreshHandler.run());
 		clearFiltersButton.setOnAction(_ -> clearFilters());
@@ -407,27 +518,43 @@ final class CorpusDashboardPane extends VBox {
 				selectedBookletLabel.setText("Selected booklet: All booklets");
 				setVisibleAndManaged(bookletWarningLabel, false);
 				setVisibleAndManaged(mcqExplanationCoverageLabel, false);
+				updateCaptureActionState();
 				updateExamAssetsActionState();
 				refreshQuestionWork();
 				return;
 			}
 
-			// Booklet selection narrows Question work without changing Exam selection.
+			// Booklet selection narrows both visible Question work and the explicit
+			// capture actions.
 			showSelectedBooklet(selected);
 			refreshQuestionWork();
 		});
+		captureAnswersButton.setOnAction(_ -> captureAnswers());
+		captureQuestionsButton.setOnAction(_ -> captureQuestions());
+		completeSelectedQuestionButton.setOnAction(_ -> completeSelectedQuestion());
 		selectAllUnknownButton.setOnAction(_ -> selectAllUnknownShown());
 		setSelectedMultipleChoiceButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.MULTIPLE_CHOICE));
 		setSelectedWrittenResponseButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.WRITTEN_RESPONSE));
 		questionTable.getSelectionModel().getSelectedItems()
-				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> updateBulkActionState());
+				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> {
+
+					// Bulk response-type resolution and single-Question correction derive
+					// independently from the same explicit table selection.
+					updateBulkActionState();
+					updateQuestionActionState();
+				});
 		manageExamAssetsButton.setOnAction(_ -> manageSelectedExamAssets());
 	}
 
 	private void configureBookletTable() {
 		bookletTable.setId("corpus-dashboard-booklets");
 		bookletTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+
+		// Preserve enough space for the header plus at least three ordinary booklet
+		// rows, while preventing a small booklet list from consuming the whole dialog.
+		bookletTable.setMinHeight(BOOKLET_TABLE_MIN_HEIGHT);
 		bookletTable.setPrefHeight(BOOKLET_TABLE_HEIGHT);
+		bookletTable.setMaxHeight(BOOKLET_TABLE_MAX_HEIGHT);
 		TableColumn<BookletCorpusStatus, String> bookletColumn = new TableColumn<>("Booklet");
 		bookletColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().booklet().getName()));
 		TableColumn<BookletCorpusStatus, String> formatColumn = new TableColumn<>("Format");
@@ -488,9 +615,20 @@ final class CorpusDashboardPane extends VBox {
 		selectedBookletLabel.setId("corpus-dashboard-selected-booklet");
 		bookletWarningLabel.setId("corpus-dashboard-booklet-warning");
 		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
+		captureAnswersButton.setId("corpus-dashboard-capture-answers");
+		captureAnswersButton.setTooltip(new Tooltip(
+				"Start Answer capture at the first ready Question with a missing Answer in the selected booklet."));
+		captureAnswersButton.setDisable(true);
+		captureQuestionsButton.setId("corpus-dashboard-capture-questions");
+		captureQuestionsButton.setTooltip(new Tooltip(
+				"Start new Question capture for the selected booklet. COMPLETE Exams must be reactivated first."));
+		captureQuestionsButton.setDisable(true);
+		completeSelectedQuestionButton.setId("corpus-dashboard-complete-question");
+		completeSelectedQuestionButton.setTooltip(new Tooltip(
+				"Complete missing Question content or unresolved Shared Context for the selected Question."));
+		completeSelectedQuestionButton.setDisable(true);
 		manageExamAssetsButton.setId("corpus-dashboard-manage-exam-assets");
-		manageExamAssetsButton.setTooltip(
-				new Tooltip("Open the selected Exam or booklet in Exam / Assets to investigate structural findings."));
+		manageExamAssetsButton.setTooltip(new Tooltip("Open the selected Exam or booklet in Exam / Assets."));
 		manageExamAssetsButton.setDisable(true);
 	}
 
@@ -542,7 +680,11 @@ final class CorpusDashboardPane extends VBox {
 		questionViewBox.setValue(QuestionCorpusCompletionFilter.INCOMPLETE);
 		questionViewBox.setConverter(new QuestionCorpusAuditFilterConverter<>(this::completionLabel));
 		questionTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+
+		// Question work is deliberately shorter than booklet scope and uses scrolling
+		// when more work items are present.
 		questionTable.setPrefHeight(QUESTION_TABLE_HEIGHT);
+		questionTable.setMaxHeight(QUESTION_TABLE_MAX_HEIGHT);
 		questionTable.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 		TableColumn<QuestionCorpusWorkItem, String> questionColumn = new TableColumn<>("Question");
 		questionColumn
@@ -577,6 +719,41 @@ final class CorpusDashboardPane extends VBox {
 		mcqExplanationSummaryLabel.setId("corpus-dashboard-summary-mcq-explanations");
 	}
 
+	private boolean confirmQuestionCaptureBeyondExpected(BookletCorpusStatus status) {
+		Integer expected = status.expectedTopLevelQuestionCount();
+		int found = status.encounteredTopLevelQuestionCount();
+
+		// An unknown expectation, or a genuine shortfall, requires no warning.
+		if (expected == null || found < expected.intValue()) {
+			return true;
+		}
+		ButtonType captureButton = new ButtonType("Capture Another Question", ButtonBar.ButtonData.OK_DONE);
+		Alert confirmation = new Alert(Alert.AlertType.WARNING);
+
+		// Keep this warning owned by the Dashboard when it is currently displayed.
+		if (getScene() != null && getScene().getWindow() != null) {
+			confirmation.initOwner(getScene().getWindow());
+		}
+		confirmation.setTitle("Capture Questions");
+		confirmation.getDialogPane().setId("corpus-dashboard-capture-count-confirmation");
+		if (found == expected.intValue()) {
+			confirmation.setHeaderText("Expected Question count already reached.");
+			confirmation.setContentText("This booklet records " + expected + " expected top-level Questions and "
+					+ found + " have already been found.\n\n"
+					+ "Capture another Question only if the source genuinely contains another Question. "
+					+ "If the expected count is wrong, correct it in Exam / Assets.");
+		} else {
+			confirmation.setHeaderText("Found Question count already exceeds the expectation.");
+			confirmation.setContentText("This booklet records " + expected + " expected top-level Questions, but "
+					+ found + " have already been found.\n\n" + "Check the booklet before capturing another Question. "
+					+ "If the expected count is wrong, correct it in Exam / Assets.");
+		}
+		confirmation.getButtonTypes().setAll(captureButton, ButtonType.CANCEL);
+
+		// Only the explicit Capture Another Question decision may continue.
+		return confirmation.showAndWait().orElse(ButtonType.CANCEL) == captureButton;
+	}
+
 	private int examWorkCount(ExamCorpusStatus status) {
 
 		// "Work" in the approved Dashboard means Question correction work. Structural
@@ -605,6 +782,23 @@ final class CorpusDashboardPane extends VBox {
 		return questions.stream().filter(question -> visibleExamIds.contains(question.getExam().getId())).toList();
 	}
 
+	private Question firstMissingAnswerQuestion() {
+		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+		if (selected == null) {
+			return null;
+		}
+		QuestionCorpusFilter filter = new QuestionCorpusFilter(workingSubject.getId(), null, null,
+				selected.booklet().getId(), QuestionCorpusCompletionFilter.INCOMPLETE,
+				QuestionCorpusProblem.MISSING_ANSWER);
+		return QuestionCorpusQueue.build(questions, filter).stream()
+
+				// Do not send the user to Answer capture while Question content, Shared
+				// Context or response type still requires earlier correction.
+				.filter(item -> item.status().questionContentCaptured() && item.status().sharedContextResolved()
+						&& item.status().responseTypeResolved())
+				.map(QuestionCorpusWorkItem::question).findFirst().orElse(null);
+	}
+
 	private void manageSelectedExamAssets() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
 		if (selectedExam == null) {
@@ -612,15 +806,10 @@ final class CorpusDashboardPane extends VBox {
 		}
 		BookletCorpusStatus selectedBooklet = bookletTable.getSelectionModel().getSelectedItem();
 
-		// Preserve booklet scope only when the booklet itself has a structural finding.
-		// An Exam-wide count mismatch routes to the Exam rather than implying that the
-		// currently selected booklet is responsible.
-		ExamBooklet targetBooklet = selectedBooklet != null && !selectedBooklet.findings().isEmpty()
-				? selectedBooklet.booklet()
-				: null;
-		if (selectedExam.findings().isEmpty() && targetBooklet == null) {
-			return;
-		}
+		// Exam / Assets is a general Dashboard management route, not merely a repair
+		// action. Preserve booklet scope whenever the user has deliberately selected
+		// one.
+		ExamBooklet targetBooklet = selectedBooklet == null ? null : selectedBooklet.booklet();
 		examAssetsHandler.accept(selectedExam.exam(), targetBooklet);
 	}
 
@@ -749,8 +938,15 @@ final class CorpusDashboardPane extends VBox {
 		List<QuestionCorpusWorkItem> workItems = QuestionCorpusQueue.build(questionsForSelectedScope(),
 				questionWorkFilter());
 		questionTable.getItems().setAll(workItems);
+
+		// A scope rebuild must never transfer the old selected row index onto a
+		// different Question. Any deliberate post-correction restoration occurs later
+		// by persistent Question ID.
+		questionTable.getSelectionModel().clearSelection();
 		questionResultCountLabel.setText(String.format("Showing %d Questions", workItems.size()));
 		updateBulkActionState();
+		updateCaptureActionState();
+		updateQuestionActionState();
 	}
 
 	private void refreshSummaryControls() {
@@ -837,8 +1033,9 @@ final class CorpusDashboardPane extends VBox {
 		}
 		setVisibleAndManaged(mcqExplanationCoverageLabel, true);
 
-		// A selected booklet may introduce a structural correction target even when its
-		// Exam has no Exam-wide finding.
+		// Structural investigation and operational capture remain independent actions
+		// for the same selected booklet.
+		updateCaptureActionState();
 		updateExamAssetsActionState();
 	}
 
@@ -859,8 +1056,9 @@ final class CorpusDashboardPane extends VBox {
 		setVisibleAndManaged(bookletWarningLabel, false);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 
-		// Exam-wide structural findings are actionable even before one booklet is
-		// selected.
+		// Booklet capture requires an explicit booklet selection. Exam-wide structural
+		// findings remain independently actionable.
+		updateCaptureActionState();
 		updateExamAssetsActionState();
 		if (preferredBookletId == null) {
 			return;
@@ -872,6 +1070,15 @@ final class CorpusDashboardPane extends VBox {
 			bookletTable.getSelectionModel().select(preferred);
 			showSelectedBooklet(preferred);
 		}
+	}
+
+	private QuestionCorpusWorkItem singleSelectedQuestionWorkItem() {
+		List<QuestionCorpusWorkItem> selected = List.copyOf(questionTable.getSelectionModel().getSelectedItems());
+
+		// Direct capture actions operate on exactly one explicit Question.
+		// Multi-selection
+		// remains reserved for the existing bulk UNKNOWN response-type workflow.
+		return selected.size() == 1 ? selected.getFirst() : null;
 	}
 
 	private List<ExamCorpusStatus> statusesForWorkingSubject(List<ExamCorpusStatus> statuses) {
@@ -898,15 +1105,36 @@ final class CorpusDashboardPane extends VBox {
 		setSelectedWrittenResponseButton.setDisable(!validSelection);
 	}
 
+	private void updateCaptureActionState() {
+		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+
+		// New Questions may be added only to an ACTIVE Exam whose authoritative
+		// Question PDF is available.
+		boolean questionCaptureAvailable = selected != null && selected.questionPdfAvailable()
+				&& !selected.booklet().getExam().isComplete();
+		captureQuestionsButton.setDisable(!questionCaptureAvailable);
+
+		// Answer capture begins only when this booklet contains a missing Answer whose
+		// earlier Question-side prerequisites have already been resolved.
+		captureAnswersButton.setDisable(selected == null || firstMissingAnswerQuestion() == null);
+	}
+
 	private void updateExamAssetsActionState() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
-		BookletCorpusStatus selectedBooklet = bookletTable.getSelectionModel().getSelectedItem();
-		boolean examFinding = selectedExam != null && !selectedExam.findings().isEmpty();
-		boolean bookletFinding = selectedBooklet != null && !selectedBooklet.findings().isEmpty();
 
-		// Question incompleteness alone belongs to Question/Answer correction and must
-		// not enable the structural Exam/Assets route.
-		manageExamAssetsButton.setDisable(!examFinding && !bookletFinding);
+		// Exam / Assets is available for every selected Exam. Audit findings may
+		// explain
+		// why the user should visit it, but they do not control access to the
+		// workspace.
+		manageExamAssetsButton.setDisable(selectedExam == null);
+	}
+
+	private void updateQuestionActionState() {
+		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
+
+		// UNKNOWN response type is deliberately resolved first through the explicit
+		// response-type controls rather than through Question-region correction.
+		completeSelectedQuestionButton.setDisable(!canCompleteSelectedQuestion(selected));
 	}
 
 	private String workLabel(ExamCorpusStatus status) {

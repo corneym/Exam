@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -571,6 +572,94 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		} catch (Exception e) {
 			throw new RuntimeException("Unable to open PDF", e);
 		}
+	}
+
+	/**
+	 * Loads and renders the first Exam page away from the JavaFX application
+	 * thread.
+	 *
+	 * @param path      Exam PDF to load
+	 * @param completed callback receiving {@code null} on success or the failure
+	 */
+	public void openExamPdfAsync(Path path, Consumer<Throwable> completed) {
+		if (path == null) {
+			throw new NullPointerException("path");
+		}
+		if (completed == null) {
+			throw new NullPointerException("completed");
+		}
+		if (closed) {
+			completed.accept(new CancellationException("PDF workspace has closed"));
+			return;
+		}
+		Path normalizedPath = path.toAbsolutePath().normalize();
+		long request = ++documentRequest;
+		Task<LoadedExamPage> task = new Task<>() {
+
+			@Override
+			protected LoadedExamPage call() throws Exception {
+				PdfSession session = PdfSession.open(normalizedPath);
+				try {
+
+					// Opening and rendering are the expensive operations. Keep both off the
+					// JavaFX thread before handing the completed first page to the workspace.
+					BufferedImage rendered = session.renderPage(1, DISPLAY_DPI);
+					return new LoadedExamPage(session, SwingFXUtils.toFXImage(rendered, null));
+				} catch (Exception | Error failure) {
+					try {
+						session.close();
+					} catch (Exception closeFailure) {
+						failure.addSuppressed(closeFailure);
+					}
+					throw failure;
+				}
+			}
+		};
+		task.setOnSucceeded(_ -> {
+			LoadedExamPage loaded = task.getValue();
+			if (request != documentRequest) {
+
+				// A later document operation owns the workspace. Close this stale worker
+				// result instead of allowing it to replace the current document.
+				CancellationException stale = new CancellationException("PDF view changed during loading");
+				Exception closeFailure = closeSession(loaded.session(), null);
+				if (closeFailure != null) {
+					stale.addSuppressed(closeFailure);
+				}
+				completed.accept(stale);
+				return;
+			}
+			Exception closeFailure = closeSession(examPdfSession, null);
+			examPdfSession = null;
+			if (closeFailure != null) {
+
+				// The newly loaded session must not leak when replacement of the old Exam
+				// session cannot be completed cleanly.
+				Exception loadedCloseFailure = closeSession(loaded.session(), null);
+				if (loadedCloseFailure != null) {
+					closeFailure.addSuppressed(loadedCloseFailure);
+				}
+				completed.accept(closeFailure);
+				return;
+			}
+			rememberCurrentPageNumber();
+			clearSelection();
+			clearStoredRegionHighlights();
+			examPdfSession = loaded.session();
+			displayedDocument = DocumentMode.EXAM;
+			examPageNumber = 1;
+			currentPageNumber = examPageNumber;
+			pagePane.setCursor(Cursor.DEFAULT);
+			fullWidthSelectionCheckBox.setVisible(true);
+			fullWidthSelectionCheckBox.setManaged(true);
+			applyPageImage(loaded.image(), examPdfSession);
+			completed.accept(null);
+		});
+		task.setOnFailed(_ -> completed.accept(request == documentRequest ? task.getException()
+				: new CancellationException("PDF view changed during loading")));
+
+		// A virtual thread keeps PDFBox open/render work completely outside JavaFX.
+		Thread.ofVirtual().name("exam-pdf-load").start(task);
 	}
 
 	/**
@@ -1327,6 +1416,17 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 */
 	public record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width,
 			double height) {
+	}
+
+	private record LoadedExamPage(PdfSession session, Image image) {
+
+		private LoadedExamPage {
+
+			// A completed worker result must contain both ownership of its PDF session and
+			// the rendered first page that will be published to JavaFX.
+			Objects.requireNonNull(session, "session");
+			Objects.requireNonNull(image, "image");
+		}
 	}
 
 	private record StoredRegionHighlight(RegionSelection region, Rectangle rectangle) {

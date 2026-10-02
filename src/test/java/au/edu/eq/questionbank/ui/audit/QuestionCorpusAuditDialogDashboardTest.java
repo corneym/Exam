@@ -44,6 +44,14 @@ class QuestionCorpusAuditDialogDashboardTest {
 	private QuestionCorpusAuditDialog dialog;
 
 	@Test
+	void dialogProvidesTallOperationalWorkspace() {
+
+		// The Dashboard needs enough initial height for Exam scope, at least several
+		// booklet rows and a compact Question-work table at the same time.
+		assertTrue(dialog.getDialogPane().getPrefHeight() >= 940.0);
+	}
+
+	@Test
 	void dialogUsesOperationalDashboardPane(FxRobot robot) {
 		assertInstanceOf(CorpusDashboardPane.class, dialog.getDialogPane().getContent());
 		var refresh = robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-refresh").queryButton();
@@ -53,6 +61,16 @@ class QuestionCorpusAuditDialogDashboardTest {
 			// Persistence reload is owned by the application in production.
 		}));
 		assertTrue(!refresh.isDisable());
+
+		// Capture and correction actions are explicit. The former generic dialog-level
+		// Resolve Selected action must not return.
+		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-capture-questions").tryQuery()
+				.isPresent());
+		assertTrue(
+				robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-capture-answers").tryQuery().isPresent());
+		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-complete-question").tryQuery()
+				.isPresent());
+		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-resolve-selected").tryQuery().isEmpty());
 	}
 
 	@Start

@@ -11,13 +11,10 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
-import javafx.beans.binding.Bindings;
 import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
-import javafx.scene.control.Tooltip;
 import javafx.stage.Window;
 
 /**
@@ -26,7 +23,7 @@ import javafx.stage.Window;
 public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditDialog.ResolutionRequest> {
 
 	private static final int DIALOG_WIDTH = 1200;
-	private static final int DIALOG_HEIGHT = 850;
+	private static final int DIALOG_HEIGHT = 940;
 	private final CorpusDashboardPane dashboardPane;
 
 	/**
@@ -58,39 +55,24 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		setTitle("Corpus Dashboard");
 		setResizable(true);
 		dashboardPane = new CorpusDashboardPane(workingSubject, examStatuses, questions);
-		dashboardPane.setExamAssetsHandler((exam, booklet) -> {
+		dashboardPane.setAnswerCaptureHandler(
+				question -> completeResolution(new ResolutionRequest(question, ResolutionTarget.ANSWER)));
+		dashboardPane.setExamAssetsHandler(
+				(exam, booklet) -> completeResolution(ResolutionRequest.forExamAssets(exam, booklet)));
+		dashboardPane.setNewQuestionCaptureHandler(
+				booklet -> completeResolution(ResolutionRequest.forNewQuestionCapture(booklet)));
+		dashboardPane.setQuestionCorrectionHandler(
+				question -> completeResolution(new ResolutionRequest(question, ResolutionTarget.QUESTION)));
 
-			// The Dashboard is modal. Return the structural target first, then let the
-			// application replace the main workspace after showAndWait() exits.
-			setResult(ResolutionRequest.forExamAssets(exam, booklet));
-			close();
-		});
-		ButtonType resolveButtonType = new ButtonType("Resolve Selected", ButtonBar.ButtonData.OK_DONE);
-		getDialogPane().getButtonTypes().addAll(resolveButtonType, ButtonType.CLOSE);
+		// Every operational action is now named inside the Dashboard itself. The dialog
+		// therefore needs only its ordinary Close control.
+		getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+
+		// Closing the modal Dashboard is navigation, not a correction request. Without
+		// an explicit converter JavaFX attempts to cast ButtonType.CLOSE to
+		// ResolutionRequest.
+		setResultConverter(_ -> null);
 		getDialogPane().setContent(dashboardPane);
-		Button resolveButton = (Button) getDialogPane().lookupButton(resolveButtonType);
-		resolveButton.setId("corpus-resolve-selected");
-		resolveButton.setTooltip(
-				new Tooltip("Open the correction workflow for the selected Question's next unresolved problem."));
-		resolveButton.disableProperty()
-				.bind(Bindings.createBooleanBinding(
-						() -> dashboardPane.selectedWorkItems().size() != 1
-								|| resolutionTarget(dashboardPane.getSelectedWorkItem()) == null,
-						dashboardPane.selectedWorkItems()));
-		setResultConverter(buttonType -> {
-			if (buttonType != resolveButtonType || dashboardPane.selectedWorkItems().size() != 1) {
-				return null;
-			}
-			QuestionCorpusWorkItem item = dashboardPane.getSelectedWorkItem();
-			ResolutionTarget target = resolutionTarget(item);
-			if (item == null || target == null) {
-				return null;
-			}
-
-			// Preserve the existing correction-routing contract until #61 replaces it
-			// with direct Dashboard actions.
-			return new ResolutionRequest(item.question(), target);
-		});
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
 	}
@@ -177,14 +159,24 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		dashboardPane.setRefreshHandler(handler);
 	}
 
-	/** Resolution workflow to launch for an incomplete Question. */
+	private void completeResolution(ResolutionRequest request) {
+
+		// Publish the explicit Dashboard action before closing the modal dialog so the
+		// application can launch exactly that workflow.
+		setResult(request);
+		close();
+	}
+
+	/** Resolution workflow to launch for an incomplete corpus item. */
 	public enum ResolutionTarget {
 		/** Question source or shared-context correction. */
 		QUESTION,
 		/** Question metadata correction. */
 		METADATA,
-		/** Answer capture or correction. */
+		/** Answer capture. */
 		ANSWER,
+		/** Start capture for Questions not yet represented by persisted rows. */
+		NEW_QUESTION_CAPTURE,
 		/** Structural Exam or booklet correction through Exam/Assets. */
 		EXAM_ASSETS
 	}
@@ -213,6 +205,22 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		}
 
 		/**
+		 * Creates a request to add new Questions to an existing booklet.
+		 *
+		 * @param booklet exact booklet selected for new-Question capture
+		 * @return new-Question capture request
+		 */
+		public static ResolutionRequest forNewQuestionCapture(ExamBooklet booklet) {
+			if (booklet == null) {
+				throw new NullPointerException("booklet");
+			}
+
+			// No persisted Question exists for the missing source Questions, so booklet
+			// identity is the authoritative routing target.
+			return new ResolutionRequest(null, ResolutionTarget.NEW_QUESTION_CAPTURE, booklet.getExam(), booklet);
+		}
+
+		/**
 		 * Creates an Exam/Assets structural correction request.
 		 *
 		 * @param exam    Exam requiring structural review
@@ -236,6 +244,16 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 					throw new IllegalArgumentException("Exam/Assets requests cannot contain a Question");
 				}
 				if (booklet != null && booklet.getExam().getId() != exam.getId()) {
+					throw new IllegalArgumentException("Booklet must belong to the requested Exam");
+				}
+			} else if (target == ResolutionTarget.NEW_QUESTION_CAPTURE) {
+				if (exam == null || booklet == null) {
+					throw new NullPointerException("New Question capture requires an Exam and booklet");
+				}
+				if (question != null) {
+					throw new IllegalArgumentException("New Question capture cannot contain an existing Question");
+				}
+				if (booklet.getExam().getId() != exam.getId()) {
 					throw new IllegalArgumentException("Booklet must belong to the requested Exam");
 				}
 			} else {

@@ -836,6 +836,17 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Starts the same new-Question workflow exposed by the visible capture-mode
+	 * control.
+	 */
+	public void startNewQuestionCapture() {
+
+		// Programmatic Dashboard routing must use the normal capture transition rather
+		// than duplicating its state changes.
+		showNewQuestionCapture();
+	}
+
+	/**
 	 * Attempts to edit a question without a completion callback.
 	 *
 	 * @param question the persisted question to load
@@ -1402,6 +1413,8 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void configureCaptureWorkflowActions() {
+
+		// Both visible mode controls use the existing guarded capture transitions.
 		importedQuestionBox.setOnAction(_ -> checkImportedQuestionBox());
 		newQuestionsModeButton.setOnAction(_ -> showNewQuestionCapture());
 		importedQuestionsModeButton.setOnAction(_ -> showImportedQuestionCapture());
@@ -1592,6 +1605,9 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private HBox createCaptureModeControls() {
+
+		// Capture-mode selection remains one compact row; Dashboard navigation belongs
+		// to the application-level Exam/booklet context instead.
 		HBox controls = new HBox(CONTROL_SPACING, newQuestionsModeButton, importedQuestionsModeButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
@@ -2542,6 +2558,9 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshSaveButtonState() {
+
+		// Content actions and persistence readiness derive independently from the same
+		// current Question-capture state.
 		refreshQuestionContentActionState();
 		refreshQuestionSaveActionState();
 	}

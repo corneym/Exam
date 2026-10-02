@@ -15,6 +15,7 @@ import java.util.function.Supplier;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Subject;
@@ -117,6 +118,15 @@ public final class ExamAssetsPane extends VBox {
 	private final Button legacyImportRecheckButton = new Button("Recheck and Import");
 	private final Button legacyImportCancelButton = new Button("Cancel Import");
 	private boolean legacyImportPending;
+
+	// Exam-level planning counts are distinct from each booklet's Expected
+	// Questions value and are edited with the persisted Exam itself.
+	private final TextField expectedAnswerBookletsField = new TextField();
+	private final TextField expectedQuestionBookletsField = new TextField();
+
+	// Keep the persistence snapshot used to distinguish edited planning values from
+	// the currently available asset counts.
+	private ExamAssetExpectations selectedExamAssetExpectations;
 
 	// TODO
 	// The EXAM label and its components should be surrounded with a border. The
@@ -536,9 +546,7 @@ public final class ExamAssetsPane extends VBox {
 	private void applyExamSnapshot(ExamSnapshot snapshot) {
 		Exam exam = snapshot.exam();
 
-		// Authoritative Exam metadata also repairs the local suggestion cache
-		// introduced
-		// by the completed #74 behaviour.
+		// Authoritative Exam metadata also repairs the local reusable suggestion cache.
 		rememberPersistedExamMetadata(exam);
 		stateLabel.setText("State: " + exam.getCaptureState());
 		String providerName = exam.getProvider().getName();
@@ -554,6 +562,11 @@ public final class ExamAssetsPane extends VBox {
 		String assessmentName = exam.getName();
 		assessmentField.setValue(assessmentName);
 		assessmentField.getEditor().setText(assessmentName);
+		selectedExamAssetExpectations = snapshot.assetExpectations();
+		expectedQuestionBookletsField
+				.setText(formatExpectedAssetCount(selectedExamAssetExpectations.expectedQuestionBookletCount()));
+		expectedAnswerBookletsField
+				.setText(formatExpectedAssetCount(selectedExamAssetExpectations.expectedAnswerFileCount()));
 		List<ExamBooklet> booklets = snapshot.booklets().stream().map(BookletSnapshot::booklet).toList();
 		refreshBookletNameSuggestions(booklets);
 		availableAnswerFiles = snapshot.answerFiles();
@@ -564,7 +577,7 @@ public final class ExamAssetsPane extends VBox {
 			for (BookletSnapshot bookletSnapshot : snapshot.booklets()) {
 
 				// All persistence was completed before publication; row construction is
-				// now JavaFX-only.
+				// JavaFX-only.
 				rows.add(createQuestionBookletRow(bookletSnapshot.booklet(), bookletSnapshot.assignedAnswerFile()));
 			}
 			questionBookletsBox.getChildren().setAll(rows);
@@ -576,6 +589,19 @@ public final class ExamAssetsPane extends VBox {
 					.setAll(availableAnswerFiles.stream().map(this::createAnswerFileRow).toList());
 		}
 		setExamDetailsEditing(false);
+	}
+
+	private boolean assetExpectationsChanged() {
+		if (selectedExamAssetExpectations == null) {
+			return false;
+		}
+
+		// Compare editor text with the authoritative nullable planning values. Invalid
+		// edited text still counts as dirty so Save can report its validation error.
+		return !expectedQuestionBookletsField.getText().strip()
+				.equals(formatExpectedAssetCount(selectedExamAssetExpectations.expectedQuestionBookletCount()))
+				|| !expectedAnswerBookletsField.getText().strip()
+						.equals(formatExpectedAssetCount(selectedExamAssetExpectations.expectedAnswerFileCount()));
 	}
 
 	private void beginAnswerBookletAdd() {
@@ -628,13 +654,21 @@ public final class ExamAssetsPane extends VBox {
 		}
 
 		// Reassert the persisted values directly into the editable ComboBox editors.
-		// This prevents suggestion-list state from clearing the metadata when Edit is
-		// entered.
+		// This prevents suggestion-list state from clearing metadata when Edit begins.
 		providerField.setValue(selectedExam.getProvider().getName());
 		providerField.getEditor().setText(selectedExam.getProvider().getName());
 		yearField.setValue(selectedExam.getYear());
 		assessmentField.setValue(selectedExam.getName());
 		assessmentField.getEditor().setText(selectedExam.getName());
+		if (selectedExamAssetExpectations != null) {
+
+			// Exam-level expected asset counts belong to this same authoritative Exam
+			// snapshot, not to individual Question-booklet editors.
+			expectedQuestionBookletsField
+					.setText(formatExpectedAssetCount(selectedExamAssetExpectations.expectedQuestionBookletCount()));
+			expectedAnswerBookletsField
+					.setText(formatExpectedAssetCount(selectedExamAssetExpectations.expectedAnswerFileCount()));
+		}
 		setExamDetailsEditing(true);
 	}
 
@@ -851,6 +885,9 @@ public final class ExamAssetsPane extends VBox {
 		assessmentField.getSelectionModel().clearSelection();
 		assessmentField.setValue(null);
 		assessmentField.getEditor().clear();
+		expectedQuestionBookletsField.clear();
+		expectedAnswerBookletsField.clear();
+		selectedExamAssetExpectations = null;
 
 		// Row editors belong to the currently displayed persisted Exam only.
 		editingBookletEditor = null;
@@ -924,11 +961,22 @@ public final class ExamAssetsPane extends VBox {
 			yearField.getItems().add(year);
 		}
 
-		// Save availability follows semantic metadata changes rather than merely the
-		// fact that Edit mode is active.
+		// Exam-level expectations are compact nullable whole-number planning fields.
+		// They deliberately do not duplicate per-booklet Expected Questions.
+		expectedQuestionBookletsField.setId("exam-assets-expected-question-booklets");
+		expectedQuestionBookletsField.setPrefColumnCount(3);
+		expectedQuestionBookletsField.setMaxWidth(Region.USE_PREF_SIZE);
+		expectedAnswerBookletsField.setId("exam-assets-expected-answer-booklets");
+		expectedAnswerBookletsField.setPrefColumnCount(3);
+		expectedAnswerBookletsField.setMaxWidth(Region.USE_PREF_SIZE);
+
+		// Save availability follows both identity metadata and Exam-level planning
+		// metadata rather than merely the fact that Edit mode is active.
 		providerField.getEditor().textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
 		yearField.valueProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
 		assessmentField.getEditor().textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
+		expectedQuestionBookletsField.textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
+		expectedAnswerBookletsField.textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
 		questionBookletsBox.setId("exam-assets-question-booklets");
 		answerBookletsBox.setId("exam-assets-answer-booklets");
 		editExamButton.setId("exam-assets-edit");
@@ -1104,9 +1152,18 @@ public final class ExamAssetsPane extends VBox {
 		GridPane details = new GridPane();
 		details.setHgap(SPACING);
 		details.setVgap(ROW_SPACING);
-		details.addRow(0, new Label("Provider"), providerField);
-		details.addRow(1, new Label("Year"), yearField);
-		details.addRow(2, new Label("Assessment"), assessmentField);
+		Label providerLabel = createNonShrinkingExamDetailsLabel("Provider", "exam-assets-provider-label");
+		Label yearLabel = createNonShrinkingExamDetailsLabel("Year", "exam-assets-year-label");
+		Label assessmentLabel = createNonShrinkingExamDetailsLabel("Assessment", "exam-assets-assessment-label");
+		Label expectedQuestionBookletsLabel = createNonShrinkingExamDetailsLabel("Expected Question booklets",
+				"exam-assets-expected-question-booklets-label");
+		Label expectedAnswerBookletsLabel = createNonShrinkingExamDetailsLabel("Expected Answer booklets",
+				"exam-assets-expected-answer-booklets-label");
+		details.addRow(0, providerLabel, providerField);
+		details.addRow(1, yearLabel, yearField);
+		details.addRow(2, assessmentLabel, assessmentField);
+		details.addRow(3, expectedQuestionBookletsLabel, expectedQuestionBookletsField);
+		details.addRow(4, expectedAnswerBookletsLabel, expectedAnswerBookletsField);
 		GridPane.setHgrow(providerField, Priority.ALWAYS);
 		GridPane.setHgrow(yearField, Priority.ALWAYS);
 		GridPane.setHgrow(assessmentField, Priority.ALWAYS);
@@ -1135,6 +1192,16 @@ public final class ExamAssetsPane extends VBox {
 		actionRow.setVisible(false);
 		actionRow.setManaged(false);
 		return actionRow;
+	}
+
+	private Label createNonShrinkingExamDetailsLabel(String text, String id) {
+		Label label = new Label(text);
+		label.setId(id);
+
+		// Exam Details labels describe authoritative metadata and must remain readable
+		// instead of collapsing to an ellipsis beside expandable editors.
+		label.setMinWidth(Region.USE_PREF_SIZE);
+		return label;
 	}
 
 	private VBox createQuestionBookletRow(ExamBooklet booklet, AnswerFile assignedAnswerFile) {
@@ -1238,11 +1305,27 @@ public final class ExamAssetsPane extends VBox {
 		return field.getEditor().getText().strip();
 	}
 
+	private boolean examIdentityChanged(Exam persistedExam) {
+		String providerName = editedText(providerField);
+		Integer year = yearField.getValue();
+		String assessmentName = editedText(assessmentField);
+
+		// Provider, Year and Assessment remain the filesystem-affecting Exam identity.
+		return !providerName.equals(persistedExam.getProvider().getName()) || year == null
+				|| year.intValue() != persistedExam.getYear() || !assessmentName.equals(persistedExam.getName());
+	}
+
 	private String formatExam(Exam exam) {
 
 		// Match the agreed compact selector presentation: year, provider and
 		// assessment identify one persisted Exam without repeating Subject.
 		return "%d %s %s".formatted(exam.getYear(), exam.getProvider().getName(), exam.getName());
+	}
+
+	private String formatExpectedAssetCount(Integer value) {
+
+		// Blank text is the editable representation of persisted "not recorded".
+		return value == null ? "" : value.toString();
 	}
 
 	private boolean isExamDetailsDirty() {
@@ -1251,13 +1334,9 @@ public final class ExamAssetsPane extends VBox {
 			return false;
 		}
 
-		// Compare the proposed editor values with the persisted Exam that was selected
-		// when editing began. Outer whitespace is not a meaningful metadata change.
-		String providerName = editedText(providerField);
-		Integer year = yearField.getValue();
-		String assessmentName = editedText(assessmentField);
-		return !providerName.equals(persistedExam.getProvider().getName()) || year == null
-				|| year.intValue() != persistedExam.getYear() || !assessmentName.equals(persistedExam.getName());
+		// One Save owns both ordinary Exam identity and its Exam-level asset planning
+		// fields, while booklet-specific metadata remains in booklet editors.
+		return examIdentityChanged(persistedExam) || assetExpectationsChanged();
 	}
 
 	private boolean isNewExamDetailsComplete() {
@@ -1278,7 +1357,11 @@ public final class ExamAssetsPane extends VBox {
 			// presentation-only.
 			bookletSnapshots.add(new BookletSnapshot(booklet, answerWriter.findAnswerFile(booklet)));
 		}
-		return new ExamSnapshot(exam, bookletSnapshots, answerFiles);
+		ExamAssetExpectations assetExpectations = examWriter.findExamAssetExpectations(exam);
+
+		// Expected and available Exam-level counts come from the same persistence
+		// generation as the visible booklet and AnswerFile rows.
+		return new ExamSnapshot(exam, assetExpectations, bookletSnapshots, answerFiles);
 	}
 
 	private void loadSelectedExam(Exam exam) throws SQLException {
@@ -1331,6 +1414,26 @@ public final class ExamAssetsPane extends VBox {
 			selectedExam = exams.getFirst();
 		}
 		return new SubjectSnapshot(subject, exams, loadExamSnapshot(selectedExam));
+	}
+
+	private Integer parseExpectedAssetCount(TextField field, String label, boolean zeroAllowed) {
+		String text = field.getText().strip();
+		if (text.isBlank()) {
+
+			// Blank explicitly retains the persisted "not recorded" state.
+			return null;
+		}
+		try {
+			int value = Integer.parseInt(text);
+			int minimum = zeroAllowed ? 0 : 1;
+			if (value < minimum) {
+				throw new IllegalArgumentException(
+						label + (zeroAllowed ? " must be zero or greater." : " must be one or greater."));
+			}
+			return Integer.valueOf(value);
+		} catch (NumberFormatException exception) {
+			throw new IllegalArgumentException(label + " must be a whole number.");
+		}
 	}
 
 	private void refreshBookletNameSuggestions(List<ExamBooklet> booklets) {
@@ -1485,15 +1588,44 @@ public final class ExamAssetsPane extends VBox {
 			showCorrectionError("Complete Provider, Year and Assessment before saving.");
 			return;
 		}
+		Integer expectedQuestionBooklets;
+		Integer expectedAnswerBooklets;
 		try {
-			Exam corrected = correctionHandler.correct(selectedExam, providerName, year.intValue(), assessmentName);
+			expectedQuestionBooklets = parseExpectedAssetCount(expectedQuestionBookletsField,
+					"Expected Question booklets", false);
+			expectedAnswerBooklets = parseExpectedAssetCount(expectedAnswerBookletsField, "Expected Answer booklets",
+					true);
+		} catch (IllegalArgumentException exception) {
+			showCorrectionError(exception.getMessage());
+			return;
+		}
+		boolean identityChanged = examIdentityChanged(selectedExam);
+		boolean expectationsChanged = assetExpectationsChanged();
+		try {
+			Exam corrected = selectedExam;
+			if (identityChanged) {
 
-			// Retain useful suggestions independently of the Exam identity itself.
-			optionsRepository.addProvider(corrected.getProvider().getName());
-			optionsRepository.addAssessment(corrected.getName());
+				// Filesystem-moving Exam identity correction remains isolated from a
+				// planning-only Save.
+				corrected = correctionHandler.correct(selectedExam, providerName, year.intValue(), assessmentName);
 
-			// A fresh repository read proves the workspace is showing authoritative
-			// persisted values rather than only the object returned by the correction.
+				// Retain useful suggestions independently of the Exam identity itself.
+				optionsRepository.addProvider(corrected.getProvider().getName());
+				optionsRepository.addAssessment(corrected.getName());
+			}
+			if (expectationsChanged) {
+				if (corrected.isComplete()) {
+
+					// Exam-level expectations describe structure and therefore use the same
+					// ACTIVE-only lifecycle rule as structural asset creation.
+					throw new IllegalStateException(
+							"Reactivate the Exam before changing expected Question or Answer booklet counts.");
+				}
+				examWriter.updateExamAssetExpectations(corrected, expectedQuestionBooklets, expectedAnswerBooklets);
+			}
+
+			// A fresh repository read proves both identity and planning fields are
+			// presenting authoritative persistence rather than staged editor values.
 			refresh(corrected.getSubject());
 			setExamDetailsEditing(false);
 		} catch (SQLException | IOException | IllegalArgumentException | IllegalStateException exception) {
@@ -1549,12 +1681,19 @@ public final class ExamAssetsPane extends VBox {
 	private void setExamDetailsEditing(boolean editing) {
 		editingExamDetails = editing;
 
-		// Metadata remains visible at all times and becomes mutable only after the
-		// explicit Edit action.
+		// Identity metadata remains visible at all times and becomes mutable only after
+		// the explicit Edit action.
 		providerField.setDisable(!editing);
 		yearField.setDisable(!editing);
 		assessmentField.setDisable(!editing);
-		editExamButton.setDisable(editing || examBox.getValue() == null);
+		Exam selectedExam = examBox.getValue();
+		boolean planningEditable = editing && selectedExam != null && !selectedExam.isComplete();
+
+		// Expected asset counts are structural metadata, so COMPLETE Exams expose them
+		// read-only until the Exam is explicitly reactivated.
+		expectedQuestionBookletsField.setDisable(!planningEditable);
+		expectedAnswerBookletsField.setDisable(!planningEditable);
+		editExamButton.setDisable(editing || selectedExam == null);
 
 		// Cancel remains available throughout an edit. Save requires an actual change.
 		cancelButton.setDisable(!editing);
@@ -1828,11 +1967,13 @@ public final class ExamAssetsPane extends VBox {
 	/**
 	 * Persistence snapshot for the Exam currently selected in Exam/Assets.
 	 *
-	 * @param exam        persisted Exam
-	 * @param booklets    Question booklets and their AnswerFile assignments
-	 * @param answerFiles AnswerFiles owned by the Exam
+	 * @param exam              persisted Exam
+	 * @param assetExpectations persisted Exam-level expected/available asset counts
+	 * @param booklets          Question booklets and their AnswerFile assignments
+	 * @param answerFiles       AnswerFiles owned by the Exam
 	 */
-	public record ExamSnapshot(Exam exam, List<BookletSnapshot> booklets, List<AnswerFile> answerFiles) {
+	public record ExamSnapshot(Exam exam, ExamAssetExpectations assetExpectations, List<BookletSnapshot> booklets,
+			List<AnswerFile> answerFiles) {
 
 		/**
 		 * Validates and freezes the selected Exam snapshot.
@@ -1840,6 +1981,9 @@ public final class ExamAssetsPane extends VBox {
 		public ExamSnapshot {
 			if (exam == null) {
 				throw new NullPointerException("exam");
+			}
+			if (assetExpectations == null) {
+				throw new NullPointerException("assetExpectations");
 			}
 			if (booklets == null) {
 				throw new NullPointerException("booklets");

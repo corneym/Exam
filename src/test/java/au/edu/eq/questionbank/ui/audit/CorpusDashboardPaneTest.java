@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
+import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
@@ -39,11 +42,17 @@ import au.edu.eq.questionbank.service.audit.ExamCorpusFinding;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.McqExplanationCoverage;
 import au.edu.eq.questionbank.service.audit.McqExplanationSummary;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusCompletionFilter;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
+import javafx.application.Platform;
+import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.TableView;
 import javafx.stage.Stage;
@@ -77,6 +86,66 @@ class CorpusDashboardPaneTest {
 		assertTrue(warning.isVisible());
 		assertTrue(warning.getText().contains("Expected 30 top-level Questions"));
 		assertTrue(warning.getText().contains("encountered 29"));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void captureQuestionsWarnsWhenExpectedCountAlreadyReached(FxRobot robot) throws TimeoutException {
+		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
+		BookletCorpusStatus atExpectedCount = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		robot.interact(() -> pane.setNewQuestionCaptureHandler(routedBooklet::set));
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		robot.interact(() -> {
+
+			// Construct the exact live-data condition under test: ACTIVE booklet, PDF
+			// available, and encountered count equal to its expected count.
+			booklets.getItems().setAll(atExpectedCount);
+			booklets.getSelectionModel().select(atExpectedCount);
+		});
+		assertFalse(captureQuestions.isDisable());
+		Platform.runLater(captureQuestions::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isPresent());
+		DialogPane warning = robot.lookup("#corpus-dashboard-capture-count-confirmation").queryAs(DialogPane.class);
+		assertTrue(warning.getContentText().contains("10 expected top-level Questions"));
+		assertTrue(warning.getContentText().contains("10 have already been found"));
+		Node cancelNode = warning.lookupButton(ButtonType.CANCEL);
+		assertTrue(cancelNode instanceof Button);
+
+		// Cancelling the warning must not route into capture.
+		robot.interact(((Button) cancelNode)::fire);
+		assertNull(routedBooklet.get());
+		Platform.runLater(captureQuestions::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isPresent());
+		warning = robot.lookup("#corpus-dashboard-capture-count-confirmation").queryAs(DialogPane.class);
+		ButtonType proceedType = warning.getButtonTypes().stream()
+				.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
+		Node proceedNode = warning.lookupButton(proceedType);
+		assertTrue(proceedNode instanceof Button);
+
+		// Only an explicit second decision allows capture beyond the recorded count.
+		robot.interact(((Button) proceedNode)::fire);
+		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void dashboardReservesBookletRowsAndCapsQuestionWorkHeight(FxRobot robot) {
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> questionWork = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+
+		// Booklet scope has a real minimum rather than being compressed whenever the
+		// surrounding dialog becomes crowded.
+		assertTrue(booklets.getMinHeight() >= 125.0);
+
+		// Question work remains available through scrolling without taking the majority
+		// of the Dashboard's vertical space.
+		assertTrue(questionWork.getMaxHeight() <= 210.0);
 	}
 
 	@Test
@@ -137,6 +206,86 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void explicitCaptureActionsUseBookletAndQuestionScope(FxRobot robot) {
+		AtomicReference<ExamBooklet> questionCapture = new AtomicReference<>();
+		AtomicReference<Question> answerCapture = new AtomicReference<>();
+		AtomicReference<Question> questionCorrection = new AtomicReference<>();
+		robot.interact(() -> {
+			pane.setAnswerCaptureHandler(answerCapture::set);
+			pane.setNewQuestionCaptureHandler(questionCapture::set);
+			pane.setQuestionCorrectionHandler(questionCorrection::set);
+		});
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		Button captureAnswers = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		Button completeQuestion = robot.lookup("#corpus-dashboard-complete-question").queryButton();
+
+		// No booklet selection means there is no unambiguous capture target.
+		assertTrue(captureAnswers.isDisable());
+		assertTrue(captureQuestions.isDisable());
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
+
+		// The COMPLETE Exam cannot accept new Questions until it is reactivated, but
+		// ordinary missing-Answer correction remains available.
+		assertTrue(captureQuestions.isDisable());
+		assertFalse(captureAnswers.isDisable());
+		robot.interact(captureAnswers::fire);
+
+		// Q7 is missing Question content, so Answer capture skips it and begins at the
+		// first Question whose earlier prerequisites have been resolved.
+		assertEquals("Q12", answerCapture.get().getQuestionCode());
+		QuestionCorpusWorkItem missingContent = questions.getItems().stream()
+				.filter(item -> "Q7".equals(item.question().getQuestionCode())).findFirst().orElseThrow();
+		robot.interact(() -> questions.getSelectionModel().select(missingContent));
+		assertFalse(completeQuestion.isDisable());
+		robot.interact(completeQuestion::fire);
+		assertEquals("Q7", questionCorrection.get().getQuestionCode());
+		ComboBox<ExamCaptureState> state = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
+		robot.interact(() -> state.setValue(ExamCaptureState.ACTIVE));
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
+		assertFalse(captureQuestions.isDisable());
+		robot.interact(captureQuestions::fire);
+		assertEquals(fixture.activePaper.getId(), questionCapture.get().getId());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void manageExamAssetsRoutesSelectedExamAndBookletWithoutRequiringFindings(FxRobot robot) {
+		AtomicReference<Exam> routedExam = new AtomicReference<>();
+		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
+		robot.interact(() -> pane.setExamAssetsHandler((exam, booklet) -> {
+			routedExam.set(exam);
+			routedBooklet.set(booklet);
+		}));
+		Button manageAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+
+		// The selected Exam is manageable even when it has no structural finding and no
+		// booklet has been selected.
+		assertFalse(manageAssets.isDisable());
+		robot.interact(manageAssets::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertNull(routedBooklet.get());
+
+		// Explicit booklet selection is preserved regardless of whether that booklet
+		// happens to have an audit finding.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
+		robot.interact(manageAssets::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertEquals(fixture.paper1.getId(), routedBooklet.get().getId());
+
+		// A booklet with a structural finding follows the same general management
+		// route.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
+		robot.interact(manageAssets::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertEquals(fixture.paper2.getId(), routedBooklet.get().getId());
+	}
+
+	@Test
 	void refreshIsDisabledUntilOwningWorkflowSuppliesReloadHandler(FxRobot robot) {
 		Button refresh = robot.lookup("#corpus-dashboard-refresh").queryButton();
 		assertTrue(refresh.isDisable());
@@ -146,6 +295,33 @@ class CorpusDashboardPaneTest {
 			// responsibility.
 		}));
 		assertFalse(refresh.isDisable());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void scopeChangeClearsQuestionSelectionBeforeRebuildingWork(FxRobot robot) {
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		ComboBox<QuestionCorpusCompletionFilter> view = robot.lookup("#corpus-dashboard-question-view")
+				.queryAs(ComboBox.class);
+		Button completeQuestion = robot.lookup("#corpus-dashboard-complete-question").queryButton();
+		robot.interact(() -> {
+			view.setValue(QuestionCorpusCompletionFilter.ALL);
+			booklets.getSelectionModel().select(fixture.paper2Status);
+		});
+		QuestionCorpusWorkItem missingContent = questions.getItems().stream()
+				.filter(item -> "Q7".equals(item.question().getQuestionCode())).findFirst().orElseThrow();
+		robot.interact(() -> questions.getSelectionModel().select(missingContent));
+		assertFalse(completeQuestion.isDisable());
+
+		// Paper 1 also has a visible Question in ALL mode. This reproduces the original
+		// defect: carrying the selected row index into the new scope could make an
+		// action
+		// target a Question the teacher never selected.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
+		assertNull(questions.getSelectionModel().getSelectedItem());
+		assertTrue(completeQuestion.isDisable());
 	}
 
 	@Test
@@ -173,41 +349,6 @@ class CorpusDashboardPaneTest {
 				fixture.questions());
 		stage.setScene(new Scene(pane, 1100, 850));
 		stage.show();
-	}
-
-	@Test
-	@SuppressWarnings("unchecked")
-	void structuralFindingsRouteSelectedExamAndAffectedBooklet(FxRobot robot) {
-		AtomicReference<Exam> routedExam = new AtomicReference<>();
-		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
-		robot.interact(() -> pane.setExamAssetsHandler((exam, booklet) -> {
-			routedExam.set(exam);
-			routedBooklet.set(booklet);
-		}));
-		Button manageAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
-		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-
-		// The initially selected complete Exam has no Exam-wide structural finding and
-		// no booklet is selected.
-		assertTrue(manageAssets.isDisable());
-		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
-		assertFalse(manageAssets.isDisable());
-
-		// Paper 2 itself has the expected-versus-found structural mismatch, so the
-		// structural route preserves that booklet identity.
-		robot.interact(manageAssets::fire);
-		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
-		assertEquals(fixture.paper2.getId(), routedBooklet.get().getId());
-		ComboBox<ExamCaptureState> state = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
-		robot.interact(() -> state.setValue(ExamCaptureState.ACTIVE));
-		assertFalse(manageAssets.isDisable());
-
-		// The ACTIVE Exam has an Exam-wide booklet-count mismatch. With no booklet
-		// selected, the route must remain Exam-wide rather than blaming one booklet.
-		routedBooklet.set(fixture.paper1);
-		robot.interact(manageAssets::fire);
-		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
-		assertNull(routedBooklet.get());
 	}
 
 	@Test
@@ -281,10 +422,9 @@ class CorpusDashboardPaneTest {
 				ExamCaptureState.ACTIVE);
 		private final ExamBooklet activePaper = new ExamBooklet(31, activeExam, "Paper 1",
 				new SourceDocument(32, "Chemistry/2024/paper1.pdf"), ExamBookletQuestionFormat.MIXED, 10);
-		private final BookletCorpusStatus activePaperStatus = new BookletCorpusStatus(activePaper, false, null, 8, 8,
+		private final BookletCorpusStatus activePaperStatus = new BookletCorpusStatus(activePaper, true, null, 8, 8,
 				new QuestionCorpusSummary(8, 8, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
-				EnumSet.of(BookletCorpusFinding.MISSING_QUESTION_PDF,
-						BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
+				EnumSet.of(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
 		private final ExamCorpusStatus activeExamStatus = new ExamCorpusStatus(activeExam,
 				new ExamAssetExpectations(2, 1, 0, 0), List.of(activePaperStatus),
 				new QuestionCorpusSummary(8, 8, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0),

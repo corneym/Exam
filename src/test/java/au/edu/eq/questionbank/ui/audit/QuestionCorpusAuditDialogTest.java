@@ -49,20 +49,6 @@ class QuestionCorpusAuditDialogTest {
 	}
 
 	@Test
-	void examAssetRequestCarriesExamAndOptionalBooklet() {
-		Exam exam = question.getExam();
-		ExamBooklet booklet = question.getBooklet();
-		QuestionCorpusAuditDialog.ResolutionRequest request = QuestionCorpusAuditDialog.ResolutionRequest
-				.forExamAssets(exam, booklet);
-
-		// Structural routing is intentionally separate from Question correction.
-		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.EXAM_ASSETS, request.target());
-		assertNull(request.question());
-		assertEquals(exam.getId(), request.exam().getId());
-		assertEquals(booklet.getId(), request.booklet().getId());
-	}
-
-	@Test
 	void missingAnswerRoutesToAnswerCapture() {
 		QuestionCorpusWorkItem item = item(QuestionCorpusProblem.MISSING_ANSWER);
 		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.ANSWER,
@@ -75,6 +61,20 @@ class QuestionCorpusAuditDialogTest {
 				QuestionCorpusProblem.MISSING_ANSWER);
 		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.QUESTION,
 				QuestionCorpusAuditDialog.resolutionTarget(item));
+	}
+
+	@Test
+	void newQuestionRequestCarriesExactBooklet() {
+		ExamBooklet booklet = question.getBooklet();
+		QuestionCorpusAuditDialog.ResolutionRequest request = QuestionCorpusAuditDialog.ResolutionRequest
+				.forNewQuestionCapture(booklet);
+
+		// Booklet-level new Question capture deliberately contains no arbitrary
+		// existing Question.
+		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.NEW_QUESTION_CAPTURE, request.target());
+		assertNull(request.question());
+		assertEquals(booklet.getExam().getId(), request.exam().getId());
+		assertEquals(booklet.getId(), request.booklet().getId());
 	}
 
 	@Test

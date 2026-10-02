@@ -1266,22 +1266,34 @@ Unresolved Shared Context
 
 Implementation status (Sprint 12.4):
 
-Dashboard correction routing now uses the existing authoritative workflows:
+Manual live-data validation identified that the original generic
+`Resolve Selected` action obscured the distinction between booklet-level and
+Question-level work. It has therefore been replaced by explicit operational
+actions:
 
-- structural Exam and booklet findings route to the corresponding Exam/Assets
-  record;
-- missing Question content and unresolved Shared Context route to Question
-  capture;
-- missing Answers route to Answer capture;
-- unknown response types route to the existing metadata or bulk correction
-  workflow; and
-- completed corrective work reloads authoritative Dashboard state before the
-  Dashboard is shown again.
+- `Capture Questions` starts new Question capture for the selected ACTIVE
+  booklet when its Question PDF is available;
+- `Capture Answers` starts at the first ready missing Answer in the selected
+  booklet;
+- `Complete Selected Question` handles missing Question content or unresolved
+  Shared Context for one explicitly selected existing Question;
+- response-type correction remains explicit through the existing Multiple
+  choice / Written controls; and
+- `Manage Exam / Assets` remains the structural correction route.
 
-When Exam/Assets is opened from a structural Dashboard finding, it provides an
-explicit Return to Corpus Dashboard action. That action is disabled while an
-Exam, Question-booklet, Answer-booklet or legacy-import structural transaction
-is staged, so returning cannot silently discard unsaved work.
+Changing Exam, booklet or Question-work scope clears the Question-table
+selection before rebuilding the work queue. A selected row index therefore
+cannot silently transfer to a different Question after a scope change.
+
+An expected-versus-encountered Question-count mismatch is advisory. If the Exam
+is COMPLETE, it must first be reactivated through Manage Exam / Assets before
+new Questions can be captured. If the expected count itself is wrong, that
+planning value is corrected through Manage Exam / Assets.
+
+Dashboard-launched Question and Answer capture expose one common
+`Return to Corpus Dashboard` action in the main Capture workspace. Returning is
+blocked while unsaved Question, Shared Context or Answer capture work is staged.
+The Dashboard reloads authoritative persistence state when it is reopened.
 
 ### 7.8 Curriculum mapping reporting
 

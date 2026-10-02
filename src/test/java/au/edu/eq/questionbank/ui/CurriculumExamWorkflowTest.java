@@ -29,6 +29,7 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
@@ -58,6 +59,8 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.Region;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -385,6 +388,50 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardAnswerCaptureCanReturnWithoutSaving(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "DASH-ANSWER");
+		AtomicBoolean returned = new AtomicBoolean();
+		Boolean started = WaitForAsyncUtils.asyncFx(() -> (Boolean) invoke(application, "showDashboardAnswerCapture",
+				new Class<?>[] { Question.class, Runnable.class }, question, (Runnable) () -> returned.set(true)))
+				.get();
+		assertTrue(started.booleanValue());
+		Button returnToDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+		assertTrue(returnToDashboard.isVisible());
+		assertTrue(returnToDashboard.isManaged());
+
+		// The user can recognise an accidental Answer-capture route and return without
+		// needing to save or switch capture modes.
+		robot.interact(returnToDashboard::fire);
+		assertTrue(returned.get());
+		assertFalse(returnToDashboard.isVisible());
+		assertFalse(returnToDashboard.isManaged());
+	}
+
+	@Test
+	void dashboardAnswerCaptureDisablesClassificationUntilReturn(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "DASH-CLASSIFICATION");
+		Node classification = robot.lookup("#classification-context").query();
+		assertFalse(classification.isDisable());
+		AtomicBoolean returned = new AtomicBoolean();
+		Boolean started = WaitForAsyncUtils.asyncFx(() -> (Boolean) invoke(application, "showDashboardAnswerCapture",
+				new Class<?>[] { Question.class, Runnable.class }, question, (Runnable) () -> returned.set(true)))
+				.get();
+		assertTrue(started.booleanValue());
+
+		// Classification is authoritative Question metadata and must not be editable
+		// while the Dashboard has routed the teacher into Answer capture.
+		assertTrue(classification.isDisable());
+		Button returnToDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+		robot.interact(returnToDashboard::fire);
+		assertTrue(returned.get());
+
+		// Leaving the Answer workflow restores normal Classification availability.
+		assertFalse(classification.isDisable());
+	}
+
+	@Test
 	void dashboardExamAssetsReturnWaitsForStructuralWorkToFinish(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -418,6 +465,32 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardNewQuestionCaptureReturnClosesManagedPdf(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		AtomicBoolean returned = new AtomicBoolean();
+		Boolean started = WaitForAsyncUtils
+				.asyncFx(() -> (Boolean) invoke(application, "showDashboardNewQuestionCapture",
+						new Class<?>[] { ExamBooklet.class, ApplicationConfig.class, Runnable.class }, booklet,
+						applicationConfig, (Runnable) () -> returned.set(true)))
+				.get();
+		assertTrue(started.booleanValue());
+		ImageView pageView = lookup(robot, "#pdf-page-view", ImageView.class);
+
+		// Prove the Dashboard route really opened the managed Question PDF before
+		// exercising the return path.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> pageView.getImage() != null);
+		Button returnToDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+		robot.interact(returnToDashboard::fire);
+		assertTrue(returned.get());
+
+		// Returning from Dashboard-owned capture must not leave the temporary Exam PDF
+		// visible underneath the Dashboard.
+		assertNull(pageView.getImage());
+	}
+
+	@Test
 	void dashboardStructuralRouteOpensRequestedExamAndBooklet(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -444,6 +517,51 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Structural routing selects the booklet for management but must not itself
 		// change authoritative capture activation.
 		assertEquals(booklet.getId(), examMetadataPane().getBooklet().getId());
+	}
+
+	@Test
+	void examAssetsEditsExamLevelAssetExpectationsAndKeepsLabelsReadable(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showExamAssetsMode", new Class<?>[0]);
+			return null;
+		}).get();
+		Label providerLabel = lookup(robot, "#exam-assets-provider-label", Label.class);
+		Label expectedQuestionLabel = lookup(robot, "#exam-assets-expected-question-booklets-label", Label.class);
+		Label expectedAnswerLabel = lookup(robot, "#exam-assets-expected-answer-booklets-label", Label.class);
+
+		// Exam Details labels must retain their complete text beside expandable
+		// editors.
+		assertEquals(Region.USE_PREF_SIZE, providerLabel.getMinWidth());
+		assertEquals(Region.USE_PREF_SIZE, expectedQuestionLabel.getMinWidth());
+		assertEquals(Region.USE_PREF_SIZE, expectedAnswerLabel.getMinWidth());
+		TextField expectedQuestions = lookup(robot, "#exam-assets-expected-question-booklets", TextField.class);
+		TextField expectedAnswers = lookup(robot, "#exam-assets-expected-answer-booklets", TextField.class);
+		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
+		Button save = lookup(robot, "#exam-assets-save", Button.class);
+		assertTrue(expectedQuestions.isDisabled());
+		assertTrue(expectedAnswers.isDisabled());
+		robot.interact(edit::fire);
+		assertFalse(expectedQuestions.isDisabled());
+		assertFalse(expectedAnswers.isDisabled());
+		robot.interact(() -> {
+
+			// These are Exam-level asset expectations, not Expected Questions within an
+			// individual Question booklet.
+			expectedQuestions.setText("1");
+			expectedAnswers.setText("0");
+		});
+		assertFalse(save.isDisable());
+		robot.interact(save::fire);
+		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Exam> exams = field(assets, "examBox", ComboBox.class);
+		Exam persistedExam = exams.getValue();
+		assertNotNull(persistedExam);
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		ExamAssetExpectations expectations = writer.findExamAssetExpectations(persistedExam);
+		assertEquals(Integer.valueOf(1), expectations.expectedQuestionBookletCount());
+		assertEquals(Integer.valueOf(0), expectations.expectedAnswerFileCount());
 	}
 
 	@Test
@@ -878,6 +996,32 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Close the actual DialogPane-owned control without pointer hit-testing.
 		robot.interact(((Button) okNode)::fire);
 		waitForDialogHidden(robot, "Working Subject");
+	}
+
+	@Test
+	void workspaceBusyOverlayShowsAndClears(FxRobot robot) throws Exception {
+		WaitForAsyncUtils.asyncFx(() -> {
+
+			// Reproduce the real Dashboard transition that previously removed the busy
+			// overlay from the workspace host.
+			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
+			invoke(application, "showWorkspaceBusy", new Class<?>[] { String.class }, "Opening Question booklet...");
+			return null;
+		}).get();
+		Node overlay = lookup(robot, "#workspace-busy-overlay", Node.class);
+		Label message = lookup(robot, "#workspace-busy-label", Label.class);
+		assertTrue(overlay.isVisible());
+		assertTrue(overlay.isManaged());
+		assertEquals("Opening Question booklet...", message.getText());
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "hideWorkspaceBusy", new Class<?>[0]);
+			return null;
+		}).get();
+
+		// Completion hides progress without removing it from the reusable workspace.
+		assertFalse(overlay.isVisible());
+		assertFalse(overlay.isManaged());
+		assertNotNull(overlay.getParent());
 	}
 
 	private Path createReplacementQuestionPdf(Path path) throws Exception {

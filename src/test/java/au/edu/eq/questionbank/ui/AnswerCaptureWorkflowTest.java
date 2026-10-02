@@ -47,6 +47,7 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
 import javafx.scene.Node;
@@ -56,8 +57,10 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -108,6 +111,31 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertNotNull(unansweredQuestions.getValue());
 		assertEquals(question.getId(), unansweredQuestions.getValue().getId());
 		assertEquals(chemistry, field(answerCapturePane(), "workingSubject", Subject.class));
+	}
+
+	@Test
+	void acceptedAnswerRegionPreviewUsesStableViewportWidth(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "STABLE-ANSWER");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-answer-region");
+		AnswerCapturePane pane = answerCapturePane();
+		ScrollPane regions = field(pane, "answerRegionsScrollPane", ScrollPane.class);
+		VBox list = field(pane, "answerRegionListBox", VBox.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> !list.getChildren().isEmpty() && regions.getViewportBounds().getWidth() > 0.0);
+
+		// Reserving scrollbar width removes the appear/disappear threshold that could
+		// feed repeated width changes back into preview height.
+		assertEquals(ScrollPane.ScrollBarPolicy.ALWAYS, regions.getVbarPolicy());
+		VBox row = (VBox) list.getChildren().getFirst();
+		assertTrue(row.getChildren().getFirst() instanceof ImageView);
+		ImageView preview = (ImageView) row.getChildren().getFirst();
+		assertTrue(preview.getFitWidth() > 0.0);
+		assertTrue(preview.getFitWidth() < regions.getViewportBounds().getWidth());
 	}
 
 	@Test
@@ -237,6 +265,27 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button remainingRemoveButton = robot.lookup("Remove").queryButton();
 		fireControl(robot, remainingRemoveButton);
 		assertEquals("Regions: 0", lookup(robot, "#answer-region-count", Label.class).getText());
+	}
+
+	@Test
+	void captureAnswerReopensAssignedPdfAfterManagedSessionWasClosed(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "REOPEN-ANSWER");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		assertNotNull(pdfWorkspace().getAnswerPdfSession());
+		robot.interact(pdfWorkspace()::closeAnswerPdf);
+		assertNull(pdfWorkspace().getAnswerPdfSession());
+		Boolean started = WaitForAsyncUtils.asyncFx(() -> answerCapturePane().captureAnswer(question)).get();
+		assertTrue(started.booleanValue());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> pdfWorkspace().getAnswerPdfSession() != null);
+
+		// Retaining the same AnswerFile identity after Dashboard cleanup must reopen
+		// its
+		// PDF rather than trying to redisplay a nonexistent session.
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
+		assertNotNull(pdfWorkspace().getAnswerPdfSession());
 	}
 
 	@Test

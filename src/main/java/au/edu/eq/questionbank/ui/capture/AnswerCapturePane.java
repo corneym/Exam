@@ -655,11 +655,18 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private double answerRegionsPreferredHeight() {
+		double viewportWidth = answerRegionsScrollPane.getViewportBounds().getWidth();
+		if (viewportWidth <= 0.0) {
 
-		// Measure what the accepted-region content wants to be, rather than its
-		// current laid-out height. The latter can still be near zero immediately
-		// after the first preview is added.
-		double contentHeight = answerRegionListBox.prefHeight(answerRegionListBox.getWidth());
+			// During the first layout pulse the viewport may not yet have a real width.
+			// Fall back to the containing pane without creating a permanent binding to it.
+			viewportWidth = Math.max(0.0, getWidth() - REGION_PREVIEW_HORIZONTAL_INSET);
+		}
+
+		// Measure the preview list against the stable inner viewport rather than
+		// against
+		// a width which may change when scrollbars appear or disappear.
+		double contentHeight = answerRegionListBox.prefHeight(viewportWidth);
 		return Math.min(ANSWER_REGIONS_VIEWPORT_HEIGHT, contentHeight + REGION_VIEWPORT_EXTRA_HEIGHT);
 	}
 
@@ -951,16 +958,23 @@ public final class AnswerCapturePane extends VBox {
 	private void configureAnswerRegionPreview() {
 		answerRegionsScrollPane.setFitToWidth(true);
 		answerRegionsScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-		answerRegionsScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+		// Reserve the vertical-scrollbar width whenever accepted Answer regions are
+		// visible. AS_NEEDED can repeatedly change viewport width at the exact
+		// threshold
+		// where preview height causes the scrollbar to appear, producing a layout loop.
+		answerRegionsScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.ALWAYS);
 		answerRegionListBox.setFillWidth(true);
 		answerRegionListBox.setMaxWidth(Double.MAX_VALUE);
 		answerRegionsScrollPane.setMinHeight(0);
 		answerRegionsScrollPane.setMaxHeight(ANSWER_REGIONS_VIEWPORT_HEIGHT);
 
-		// Size the accepted-region area from its actual preview content rather than
-		// immediately claiming the complete maximum viewport height.
-		answerRegionsScrollPane.prefHeightProperty().bind(Bindings.createDoubleBinding(
-				this::answerRegionsPreferredHeight, answerRegionListBox.getChildren(), widthProperty()));
+		// Preferred height now depends on the stable viewport geometry and preview
+		// collection only. It no longer feeds the containing pane's width back into
+		// itself.
+		answerRegionsScrollPane.prefHeightProperty()
+				.bind(Bindings.createDoubleBinding(this::answerRegionsPreferredHeight,
+						answerRegionListBox.getChildren(), answerRegionsScrollPane.viewportBoundsProperty()));
 		answerRegionsScrollPane.setMaxWidth(Double.MAX_VALUE);
 		setVisibleAndManaged(answerRegionsScrollPane, false);
 	}
@@ -1065,11 +1079,14 @@ public final class AnswerCapturePane extends VBox {
 			previewView.setSmooth(true);
 			previewView.setCache(true);
 
-			// Bind to the containing Answer pane rather than the ScrollPane viewport. The
-			// Answer pane is already laid out when the first region is accepted, and its
-			// width is unaffected by the ScrollPane's vertical scrollbar.
-			previewView.fitWidthProperty().bind(Bindings.createDoubleBinding(
-					() -> Math.max(0.0, getWidth() - REGION_PREVIEW_HORIZONTAL_INSET), widthProperty()));
+			// Size the preview from the reserved ScrollPane viewport. This avoids a
+			// self-referential pane-width -> preview-height -> pane-layout cycle.
+			previewView.fitWidthProperty()
+					.bind(Bindings.createDoubleBinding(
+							() -> Math.max(0.0,
+									answerRegionsScrollPane.getViewportBounds().getWidth()
+											- REGION_PREVIEW_HORIZONTAL_INSET),
+							answerRegionsScrollPane.viewportBoundsProperty()));
 			return previewView;
 		} catch (IOException e) {
 			throw new RuntimeException("Unable to preview accepted answer region", e);
@@ -1617,12 +1634,19 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private boolean redisplayAssignedAnswerFile(Question question, AnswerFile assignedAnswerFile) {
+		if (answerPdfSessionSupplier.get() == null) {
+
+			// Dashboard return deliberately closes managed PDF sessions. The retained
+			// AnswerFile identity therefore cannot prove that its PDF is still open.
+			// Reopen the authoritative assigned file instead of trying to redisplay a
+			// session that no longer exists.
+			return openDifferentAssignedAnswerFile(question, assignedAnswerFile);
+		}
 		answerFile = assignedAnswerFile;
 		selectedAnswerPdfLabel.setText(assignedAnswerFile.getName());
 		try {
 
-			// Reuse the already-open document when consecutive Questions deliberately
-			// share one persisted AnswerFile.
+			// Consecutive Questions may genuinely share one still-open AnswerFile.
 			answerDocumentHandler.run();
 		} catch (RuntimeException exception) {
 			showAnswerFileRequired(question);
