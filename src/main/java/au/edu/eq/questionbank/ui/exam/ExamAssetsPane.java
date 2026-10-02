@@ -1737,6 +1737,10 @@ public final class ExamAssetsPane extends VBox {
 	private void updateUseSelectedBookletState() {
 		boolean structuralTransactionActive = structuralTransactionActive();
 
+		// A new legacy import cannot replace an unresolved import or overlap another
+		// staged structural transaction.
+		importLegacyQuestionsButton.setDisable(!canBeginLegacyQuestionImport());
+
 		// Capture activation must never abandon staged Exam, Question-booklet,
 		// Answer-booklet or legacy-import structural work.
 		useSelectedBookletButton
