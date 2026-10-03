@@ -23,6 +23,7 @@ import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.model.Subject;
@@ -220,7 +221,6 @@ public final class AnswerCapturePane extends VBox {
 		this.questionExtractor = questionExtractor;
 		this.answerPdfSessionSupplier = answerPdfSessionSupplier;
 		this.answerPageNavigationHandler = answerPageNavigationHandler;
-
 		configureControls();
 		configureActions();
 		getChildren().addAll(createSectionLabel("Answer"), unansweredQuestionField,
@@ -474,6 +474,7 @@ public final class AnswerCapturePane extends VBox {
 		// Questions unanswered again.
 		locallyAnsweredQuestionIds.clear();
 		answerFile = null;
+
 		// Exam / Assets may have changed the authoritative assignment.
 		selectedAnswerPdfLabel.setText("No Answer PDF assigned");
 		refreshQuestions();
@@ -1269,6 +1270,7 @@ public final class AnswerCapturePane extends VBox {
 		} else {
 			answerRegionStatusLabel.setText("Answer saved — next PDF could not be loaded");
 			showAnswerFileError("Answer saved, but the next question's PDF could not be loaded.",
+
 					// Source correction belongs to Exam / Assets rather than Answer capture.
 					"Your answer is stored. Correct the Answer PDF assignment in Exam / Assets before continuing. "
 							+ failure.getMessage());
@@ -1543,6 +1545,7 @@ public final class AnswerCapturePane extends VBox {
 
 	private void openNextAnswerDocument(AnswerFile file) {
 		try {
+
 			// Resolve the persisted managed relative path against the Answer PDF store.
 			Path path = new PdfStore(pdfDataRoot).resolve(file.getSourceDocument().getRelativePath());
 			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfDataRoot);

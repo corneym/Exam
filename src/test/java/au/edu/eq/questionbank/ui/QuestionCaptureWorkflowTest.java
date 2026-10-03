@@ -202,6 +202,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void captureEntryPointsUseTaskBasedLabels(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 
 		// Question capture entry points belong to the visible Question pane rather
@@ -612,7 +613,8 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void legacyQuestionControlsAreHiddenDuringNormalCapture(FxRobot robot) {
+	void legacyQuestionControlsAreHiddenDuringNormalCapture(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
 		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
 		assertFalse(legacyControls.isVisible());
 		assertFalse(legacyControls.isManaged());

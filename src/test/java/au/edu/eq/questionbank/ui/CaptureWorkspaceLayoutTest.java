@@ -279,16 +279,13 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Question question = captureQuestion(robot, "Q1");
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
-
 		Label selectedPdf = lookup(robot, "#selected-answer-pdf", Label.class);
 		javafx.scene.layout.VBox pdfControls = lookup(robot, "#answer-pdf-controls", javafx.scene.layout.VBox.class);
 
 		// Answer capture must expose no second source-selection control.
 		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
-
 		robot.interact(() -> selectedPdf
 				.setText("Queensland-Chemistry-External-Assessment-2024-Marking-Guide-With-A-Very-Long-Filename.pdf"));
-
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
 		robot.interact(() -> {
@@ -420,7 +417,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void captureModeIsHostedBelowApplicationSubject(FxRobot robot) {
+	void captureModeIsHostedBelowApplicationSubject(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
 		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
 		Node modeHost = lookup(robot, "#workspace-mode-host", Node.class);
 		Node captureMode = lookup(robot, "#capture-workspace-mode", Node.class);
@@ -445,7 +443,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void captureWorkspaceContainsSeparateClassificationQuestionAndAnswerSections(FxRobot robot) {
+	void captureWorkspaceContainsSeparateClassificationQuestionAndAnswerSections(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
 		Node captureWorkspace = lookup(robot, "#capture-workspace", Node.class);
 		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
 		Node activeExam = lookup(robot, "#active-exam-context", Node.class);
@@ -1828,7 +1827,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void workingSubjectIsVisuallySeparateFromClassification(FxRobot robot) {
+	void workingSubjectIsVisuallySeparateFromClassification(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
 		ComboBox<?> subject = lookup(robot, "#curriculum-subject", ComboBox.class);
 		Node workingSubjectContext = lookup(robot, "#working-subject-context", Node.class);
 		Node classificationContext = lookup(robot, "#classification-context", Node.class);

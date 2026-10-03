@@ -1715,7 +1715,6 @@ public final class QuestionCapturePane extends VBox {
 						() -> Math.min(REGIONS_VIEWPORT_HEIGHT,
 								regionPreviewBox.getLayoutBounds().getHeight() + REGION_VIEWPORT_EXTRA_HEIGHT),
 						regionPreviewBox.layoutBoundsProperty()));
-
 		regionsScrollPane.setVisible(false);
 		regionsScrollPane.setManaged(false);
 		return regionsScrollPane;

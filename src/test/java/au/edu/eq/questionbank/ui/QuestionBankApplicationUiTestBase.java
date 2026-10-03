@@ -488,6 +488,19 @@ abstract class QuestionBankApplicationUiTestBase {
 		}
 	}
 
+	void showCaptureWorkspaceForTest() throws Exception {
+		WaitForAsyncUtils.asyncFx(() -> {
+
+			// Dashboard is the application home. Tests that directly inspect Capture
+			// controls must explicitly enter the specialised Capture workspace first.
+			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
+			return null;
+		}).get();
+
+		// Allow TestFX selector lookup to see the dynamically mounted Capture subtree.
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
 	void showImportedQuestionCaptureForTest(QuestionCapturePane pane) {
 		try {
 			invoke(pane, "showImportedQuestionCapture", new Class<?>[0]);

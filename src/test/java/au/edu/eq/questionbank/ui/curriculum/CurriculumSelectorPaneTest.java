@@ -167,7 +167,6 @@ public class CurriculumSelectorPaneTest {
 		// Re-parenting JavaFX nodes must occur on the application thread.
 		robot.interact(() -> detachedContext.set(pane.detachSubjectContext()));
 		VBox subjectContext = detachedContext.get();
-
 		assertEquals("working-subject-context", subjectContext.getId());
 		assertEquals(originalSubjectBox, subjectContext.lookup("#curriculum-subject"));
 		assertFalse(pane.getChildren().contains(subjectContext));
@@ -181,7 +180,6 @@ public class CurriculumSelectorPaneTest {
 		robot.interact(() -> pane.selectSubject(null));
 		assertNull(originalSubjectBox.getValue());
 		assertNull(model.getSubject());
-
 		robot.interact(() -> pane.selectSubject(chemistry));
 		assertEquals(chemistry, originalSubjectBox.getValue());
 		assertEquals(chemistry, model.getSubject());

@@ -131,9 +131,11 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(multipleChoiceControls.isManaged());
 		assertTrue(pdfControls.isVisible());
 		assertTrue(pdfControls.isManaged());
+
 		// The assigned marking document remains relevant, but selection/replacement is
 		// owned exclusively by Exam / Assets.
 		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
+
 		// The default AnswerFile has not been marked as containing explanations, so
 		// this MCQ remains a simple A-D Answer workflow with no region controls.
 		assertFalse(addRegion.isVisible());

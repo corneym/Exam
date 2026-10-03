@@ -231,6 +231,7 @@ public class QuestionBankApplication extends Application {
 	private CorpusDashboardPane corpusDashboardPane;
 	private BorderPane rootLayout;
 	private BorderPane applicationBody;
+
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
 	private Function<Subject, CurriculumSelectionModel.SubjectSnapshot> workingSubjectCurriculumSnapshotLoader;
@@ -676,7 +677,6 @@ public class QuestionBankApplication extends Application {
 		if (questions.isEmpty()) {
 			return;
 		}
-
 		String responseTypeLabel = switch (responseType) {
 		case MULTIPLE_CHOICE -> "Multiple choice";
 		case WRITTEN_RESPONSE -> "Written response";
@@ -697,7 +697,6 @@ public class QuestionBankApplication extends Application {
 		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != applyButton) {
 			return;
 		}
-
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(
 				new SqliteDatabase(applicationConfig.databasePath()));
 		try {
@@ -1266,7 +1265,6 @@ public class QuestionBankApplication extends Application {
 		corpusDashboardHost.setId("corpus-dashboard-home-content");
 		VBox.setVgrow(corpusDashboardHost, Priority.ALWAYS);
 		showCorpusDashboardNoSubject();
-
 		VBox home = new VBox(SECTION_SPACING, corpusDashboardHost);
 		home.setId("corpus-dashboard-home");
 		home.setPadding(PREVIEW_PANE_PADDING);
@@ -1517,7 +1515,6 @@ public class QuestionBankApplication extends Application {
 		workspaceSplitPane = new SplitPane(previewScrollPane, pdfWorkspace);
 		workspaceSplitPane.setId("workspace-split-pane");
 		workspaceSplitPane.setDividerPositions(INITIAL_WORKSPACE_DIVIDER_POSITION);
-
 		corpusDashboardHomePane = createCorpusDashboardHomePane();
 
 		// Keep one permanent application body. Navigation changes only its centre node,
@@ -1527,7 +1524,6 @@ public class QuestionBankApplication extends Application {
 		applicationBody.setTop(subjectContext);
 		BorderPane.setMargin(subjectContext, new Insets(10, 10, 0, 10));
 		applicationBody.setCenter(corpusDashboardHomePane);
-
 		rootLayout.setCenter(applicationBody);
 		return rootLayout;
 	}
@@ -2077,6 +2073,7 @@ public class QuestionBankApplication extends Application {
 		// structural planning against the same authoritative repository.
 		examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
 		// The embedded Dashboard reuses the same authoritative repositories as capture
 		// and Exam / Assets rather than constructing a parallel corpus model.
 		corpusDashboardAuditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
@@ -3135,7 +3132,6 @@ public class QuestionBankApplication extends Application {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
-
 		clearCorpusDashboardCaptureReturn();
 		showCaptureWorkspaceMode();
 
@@ -3170,7 +3166,6 @@ public class QuestionBankApplication extends Application {
 		});
 		dashboard.setQuestionCorrectionHandler(this::showCorpusDashboardQuestionCorrection);
 		dashboard.setRefreshHandler(() -> refreshCorpusDashboardHome(-1L));
-
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}
@@ -3664,6 +3659,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
+
 		// Retain immutable application paths for asynchronous Dashboard refreshes and
 		// Dashboard-owned workflow routing.
 		applicationConfig = config;
@@ -3906,7 +3902,6 @@ public class QuestionBankApplication extends Application {
 		Label loading = new Label("Loading " + subject.getName() + " corpus...");
 		loading.setId("corpus-dashboard-loading");
 		corpusDashboardHost.getChildren().setAll(loading);
-
 		loadCorpusDashboardHome(subject, generation, -1L);
 	}
 

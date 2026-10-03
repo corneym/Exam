@@ -290,6 +290,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void capturesQuestionThenSavesRegionAnswer(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
 		assertInitialAnswerControlsDisabled(robot);
 		prepareExamAndClassification(robot);
 		Question savedQuestion = captureQuestion(robot, "Q1");
@@ -804,14 +805,11 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question question = captureQuestion(robot, "56");
 		ComboBox<Question> questions = unansweredQuestions(robot);
 		robot.interact(() -> questions.getSelectionModel().select(question));
-
 		Node pdfControls = field(answerCapturePane(), "answerPdfControls", Node.class);
 		Label selectedPdf = lookup(robot, "#selected-answer-pdf", Label.class);
-
 		assertTrue(pdfControls.isVisible());
 		assertTrue(pdfControls.isManaged());
 		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
-
 		openAnswerPdfForTest(question);
 		WaitForAsyncUtils.waitForFxEvents();
 

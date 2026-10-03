@@ -265,6 +265,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void clearingSyllabusThenSubjectClearsDependentControls(FxRobot robot) throws Exception {
+
 		// Classification is now a specialised Capture surface rather than startup
 		// content. Enter Capture before testing its syllabus hierarchy.
 		WaitForAsyncUtils.asyncFx(() -> {
@@ -272,6 +273,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return null;
 		}).get();
 
+		// Dynamic re-parenting is complete on the FX thread, but TestFX selector lookup
+		// needs the following JavaFX pulse before querying the newly mounted subtree.
+		WaitForAsyncUtils.waitForFxEvents();
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
@@ -353,7 +357,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		Subject workingSubject = field(application, "workingSubject", Subject.class);
 		assertNotNull(workingSubject);
-
 		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
 		MenuItem dashboardItem = questionMenu.getItems().stream()
@@ -365,7 +368,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(dashboardItem::fire);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
-
 		Node home = robot.lookup("#corpus-dashboard-home").query();
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		assertTrue(home.isVisible());
@@ -389,7 +391,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SyllabusVersion targetVersion = curriculumRepository.findVersionsForSubject(chemistry).stream()
 				.filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
 		CurriculumNode sourceDescriptor = curriculumRepository.findByCode(sourceVersion, "3.1.1").orElseThrow();
-
 		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
 		MenuItem dashboardItem = questionMenu.getItems().stream()
@@ -401,11 +402,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(dashboardItem::fire);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-mapping-review").tryQuery().isPresent());
-
 		Label mappingReview = lookup(robot, "#corpus-dashboard-mapping-review", Label.class);
 		Button needsAttention = lookup(robot, "#corpus-dashboard-summary-attention", Button.class);
 		Button refresh = lookup(robot, "#corpus-dashboard-refresh", Button.class);
-
 		assertTrue(mappingReview.getText().contains("2019 \u2192 2025"));
 		assertTrue(mappingReview.getText().contains("0/1 resolved"));
 		assertTrue(mappingReview.getText().contains("1 remaining"));
@@ -413,7 +412,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Persist a real review decision while the home Dashboard remains visible.
 		new SqliteCurriculumMappingReviewWriter(database).confirmNoMatch(sourceDescriptor, targetVersion);
-
 		robot.interact(refresh::fire);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> mappingReview.getText().contains("complete (1/1 resolved)"));
@@ -425,11 +423,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void corpusDashboardRemainsUsableWithoutWorkingSubject(FxRobot robot) throws Exception {
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-
 		robot.interact(() -> subjects.getSelectionModel().clearSelection());
 		WaitForAsyncUtils.waitForFxEvents();
 		assertNull(field(application, "workingSubject", Subject.class));
-
 		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
 		MenuItem dashboardItem = questionMenu.getItems().stream()
@@ -439,7 +435,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// No prerequisite dialog is required because Subject selection itself now lives
 		// on the home surface.
 		robot.interact(dashboardItem::fire);
-
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#corpus-dashboard-no-subject").tryQuery().isPresent());
 		assertTrue(robot.lookup("#curriculum-subject").tryQuery().isPresent());
@@ -976,12 +971,17 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void resettingClassificationWithoutSyllabusKeepsUnitsDisabled(FxRobot robot) throws Exception {
+
 		// Classification controls live in the Capture workspace now that Dashboard is
 		// the application home surface.
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
 			return null;
 		}).get();
+
+		// Allow the dynamically mounted Capture subtree to participate in the scene
+		// before TestFX performs selector-based lookup.
+		WaitForAsyncUtils.waitForFxEvents();
 		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
 
 		// This test exercises CurriculumSelectorPane dependency state rather than the
@@ -1132,6 +1132,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "showWorkspaceBusy", new Class<?>[] { String.class }, "Opening Question booklet...");
 			return null;
 		}).get();
+
+		// The workspace was dynamically re-parented into the application body. Wait for
+		// its JavaFX pulse before locating controls through TestFX.
+		WaitForAsyncUtils.waitForFxEvents();
 		Node overlay = lookup(robot, "#workspace-busy-overlay", Node.class);
 		Label message = lookup(robot, "#workspace-busy-label", Label.class);
 		assertTrue(overlay.isVisible());
