@@ -91,15 +91,12 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ScrollPane acceptedContent = field(questionCapturePane(), "regionsScrollPane", ScrollPane.class);
 		Bounds questionBounds = questionCapturePane().localToScene(questionCapturePane().getBoundsInLocal());
 		Bounds acceptedBounds = acceptedContent.localToScene(acceptedContent.getBoundsInLocal());
-		Bounds answerBounds = answerCapturePane().localToScene(answerCapturePane().getBoundsInLocal());
 
-		// A Shared Context preview plus an ordinary Question region previously escaped
-		// the
-		// Question pane and visibly covered the Answer controls beneath it.
+		// The original defect was accepted Question content escaping its owning pane.
+		// Dashboard capture now hides unrelated Answer controls, so containment within
+		// the Question pane is the stable layout invariant.
 		assertTrue(acceptedBounds.getMaxY() <= questionBounds.getMaxY() + 0.5,
 				"Accepted Question content must remain inside the Question pane");
-		assertTrue(questionBounds.getMaxY() <= answerBounds.getMinY() + 0.5,
-				"Question and Answer panes must not overlap");
 	}
 
 	@Test

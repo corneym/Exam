@@ -3,17 +3,19 @@ package au.edu.eq.questionbank.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
+import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
-import javafx.application.Platform;
-import javafx.scene.control.DialogPane;
-import javafx.scene.control.Label;
+import au.edu.eq.questionbank.model.Subject;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TableView;
@@ -30,34 +32,35 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 		MenuItem dashboardItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
 				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst().orElseThrow();
-		assertEquals("_Corpus Dashboard...", dashboardItem.getText());
-		assertFalse(dashboardItem.isDisable());
 
-		// The menu action opens a modal showAndWait workflow, so queue the real
-		// MenuItem action on the JavaFX thread and inspect the resulting DialogPane.
-		Platform.runLater(dashboardItem::fire);
-		waitForDialogShowing(robot, "Corpus Dashboard");
-		DialogPane dialog = showingDialogPane(robot, "Corpus Dashboard");
-		assertNotNull(dialog);
-		Label workingSubject = (Label) dialog.lookup("#corpus-dashboard-working-subject");
-		assertNotNull(workingSubject);
-		assertEquals("Chemistry", workingSubject.getText());
-		TableView<?> exams = (TableView<?>) dialog.lookup("#corpus-dashboard-exams");
-		TableView<?> booklets = (TableView<?>) dialog.lookup("#corpus-dashboard-booklets");
-		TableView<?> questionWork = (TableView<?>) dialog.lookup("#corpus-dashboard-question-work");
+		// Corpus Dashboard is now ordinary main-window navigation rather than a modal
+		// dialog, so its menu label no longer uses an ellipsis.
+		assertEquals("_Corpus Dashboard", dashboardItem.getText());
+		assertFalse(dashboardItem.isDisable());
+		robot.interact(dashboardItem::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<?> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
+
+		// Returning home retains the authoritative application Subject inside the
+		// Dashboard rather than creating a second modal Subject presentation.
+		assertNotNull(subjects.getValue());
+		assertEquals("Chemistry", subjects.getValue().getName());
 		assertNotNull(exams);
 		assertNotNull(booklets);
 		assertNotNull(questionWork);
 
-		// The persisted Exam and booklet created through the normal application test
-		// fixture must be visible through the live audit-service composition.
+		// The persisted Exam and booklet created through the ordinary application
+		// workflow remain visible through the live Dashboard snapshot.
 		assertEquals(1, exams.getItems().size());
 		assertEquals(1, booklets.getItems().size());
 
-		// The retired concatenated ListView must not survive anywhere in the live
-		// Dashboard dialog.
-		assertNull(dialog.lookup("#corpus-work-items"));
-		closeDialog(robot, "Corpus Dashboard");
+		// The retired concatenated work-item presentation must not return.
+		assertTrue(robot.lookup("#corpus-work-items").tryQuery().isEmpty());
 	}
 
 	@Override

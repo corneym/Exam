@@ -110,6 +110,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void applicationStartsOnCorpusDashboardHome(FxRobot robot) {
 		Node home = robot.lookup("#corpus-dashboard-home").query();
+		Node dashboardSection = robot.lookup("#corpus-dashboard-home-section").query();
+		Node subjectHost = robot.lookup("#corpus-dashboard-subject-host").query();
+		Node subjectContext = robot.lookup("#working-subject-context").query();
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 
 		// The application opens on its operational home surface before any Subject has
@@ -117,6 +120,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(home.isVisible());
 		assertNull(subjects.getValue());
 		assertTrue(robot.lookup("#corpus-dashboard-no-subject").tryQuery().isPresent());
+
+		// The one authoritative Subject row now belongs inside the Dashboard title
+		// region rather than a full-width strip above the application.
+		assertEquals(subjectHost, subjectContext.getParent());
+		assertNotNull(dashboardSection);
+		assertTrue(robot.lookup("#corpus-dashboard-refresh").tryQuery().isEmpty());
 
 		// Capture remains constructed and reusable, but it is not the startup surface.
 		assertTrue(robot.lookup("#workspace-split-pane").tryQuery().isEmpty());
@@ -404,15 +413,18 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#corpus-dashboard-mapping-review").tryQuery().isPresent());
 		Label mappingReview = lookup(robot, "#corpus-dashboard-mapping-review", Label.class);
 		Button needsAttention = lookup(robot, "#corpus-dashboard-summary-attention", Button.class);
-		Button refresh = lookup(robot, "#corpus-dashboard-refresh", Button.class);
 		assertTrue(mappingReview.getText().contains("2019 \u2192 2025"));
 		assertTrue(mappingReview.getText().contains("0/1 resolved"));
 		assertTrue(mappingReview.getText().contains("1 remaining"));
 		String corpusAttentionBeforeReview = needsAttention.getText();
 
-		// Persist a real review decision while the home Dashboard remains visible.
+		// Persist a real review decision, then exercise the application-owned automatic
+		// Dashboard refresh boundary used when curriculum workflows return home.
 		new SqliteCurriculumMappingReviewWriter(database).confirmNoMatch(sourceDescriptor, targetVersion);
-		robot.interact(refresh::fire);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshCorpusDashboardHome", new Class<?>[] { long.class }, -1L);
+			return null;
+		}).get();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> mappingReview.getText().contains("complete (1/1 resolved)"));
 
@@ -463,10 +475,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void dashboardAnswerCaptureDisablesClassificationUntilReturn(FxRobot robot) throws Exception {
+	void dashboardAnswerCaptureHidesClassificationUntilReturn(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "DASH-CLASSIFICATION");
 		Node classification = robot.lookup("#classification-context").query();
+		assertTrue(classification.isVisible());
+		assertTrue(classification.isManaged());
 		assertFalse(classification.isDisable());
 		AtomicBoolean returned = new AtomicBoolean();
 		Boolean started = WaitForAsyncUtils.asyncFx(() -> (Boolean) invoke(application, "showDashboardAnswerCapture",
@@ -474,14 +488,18 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.get();
 		assertTrue(started.booleanValue());
 
-		// Classification is authoritative Question metadata and must not be editable
-		// while the Dashboard has routed the teacher into Answer capture.
-		assertTrue(classification.isDisable());
+		// Answer capture uses already-persisted Question classification. Classification
+		// is therefore removed from layout entirely rather than merely disabled.
+		assertFalse(classification.isVisible());
+		assertFalse(classification.isManaged());
 		Button returnToDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		robot.interact(returnToDashboard::fire);
 		assertTrue(returned.get());
 
-		// Leaving the Answer workflow restores normal Classification availability.
+		// Ending the Dashboard task restores the reusable Capture workspace state for
+		// whichever specialised workflow is entered next.
+		assertTrue(classification.isVisible());
+		assertTrue(classification.isManaged());
 		assertFalse(classification.isDisable());
 	}
 

@@ -1370,10 +1370,22 @@ Subject [ Chemistry ▼ ] [+]
 Subject-scoped operational work
 ```
 
-The Dashboard will own the authoritative Working Subject selector rather than
-requiring Subject selection in the Capture workspace. Changing Subject will
-refresh the Dashboard for that Subject, and specialised workflows opened from the
-Dashboard will inherit that same application context.
+The Dashboard owns the authoritative Subject selector. On the home surface the
+single live Subject control is displayed inside the bordered `CORPUS DASHBOARD`
+region beside the Dashboard context rather than in a full-width application
+strip. Specialised Capture and Exam / Assets work re-parents that same live
+control into the left workspace; a second Subject selector is never created.
+
+The Dashboard refreshes automatically after Subject changes and after returning
+from Dashboard-owned Question capture, Answer capture, Exam / Assets,
+curriculum authoring and curriculum-mapping review. The prominent manual
+`Refresh` action is therefore removed from the home surface.
+
+The Dashboard is visually divided into bordered responsibility areas for Exams,
+Question Booklets, Question Work and Curriculum. The Curriculum region reports
+mapping-review status independently from corpus completeness and provides
+`Add Curriculum` and `Map Curriculum` routes into the existing curriculum
+workflows.
 
 The Dashboard must preserve direct access to the application's specialised
 workflows, including:
@@ -1393,14 +1405,14 @@ No Exams have been added.
     [ Add Exam ]
 
 No curriculum has been added.
-    [ Add Curriculum ]
+    [+] Add curriculum
 
 Subject [ Chemistry ▼ ] [+]
 ```
 
 `Add Exam` will route into the normal Exam/Assets workflow for the selected
 Subject rather than introducing a second Exam-creation implementation.
-`Add Curriculum` will likewise route into the existing curriculum-authoring
+`[+] Add Curriculum` will likewise route into the existing curriculum-authoring
 workflow.
 
 Creating a Subject does not require immediate creation of either an Exam or
@@ -1408,9 +1420,32 @@ curriculum. Exam setup may occur before curriculum entry. Question capture still
 requires a valid persisted Question classification and therefore cannot complete
 until usable curriculum data exists.
 
-Until Issue #65 is implemented, the existing application-level Working Subject
-selector remains authoritative and the Corpus Dashboard continues to be entered
-through the Questions menu.
+The Corpus Dashboard is the only application surface from which the
+authoritative Subject may be changed or created. Specialised workspaces retain
+the same Subject context but display it read-only; they do not expose a Subject
+selector or Add Subject action.
+
+Dashboard-launched capture is task-specific:
+
+- `Capture Questions` displays Classification and Question capture controls and
+  hides Answer capture;
+- `Capture Answers` displays Answer capture controls and hides Classification
+  and Question capture; and
+- Dashboard Answer capture is restricted to unanswered, ready Questions in the
+  selected Exam, beginning with the first applicable Question in the selected
+  booklet.
+
+The Curriculum section uses a compact `+` action. It offers either PDF-assisted
+curriculum authoring or Excel curriculum import. Both inherit the Dashboard
+Subject. Curriculum Mapping likewise inherits that Subject and does not expose
+an independent Subject selector. These rules implement the authoritative
+Subject scope tracked by Issue #76.
+
+Issue #65 now uses the Corpus Dashboard as the application startup surface and
+the Dashboard-owned Subject selector as the authoritative application context.
+Remaining Issue #65 work includes the final empty-corpus onboarding actions and
+task-specific Question-versus-Answer capture presentation.
+
 ## 8. Explicitly outside Sprint 12
 
 The following are not Sprint 12 work:

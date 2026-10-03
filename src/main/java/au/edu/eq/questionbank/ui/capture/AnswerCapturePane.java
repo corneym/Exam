@@ -20,6 +20,7 @@ import java.util.function.Supplier;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -149,6 +150,14 @@ public final class AnswerCapturePane extends VBox {
 	private Runnable answerCaptureCompletedHandler = () -> {
 	};
 
+	// Dashboard-owned Answer capture may further restrict the Subject queue to one
+	// selected Exam without changing any persisted Question state.
+	private Exam examScope;
+
+	// Retain the complete most recently published Question snapshot so changing
+	// transient Exam scope never requires a synchronous repository reload.
+	private List<Question> questionSnapshot = List.of();
+
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
 	 *
@@ -252,13 +261,23 @@ public final class AnswerCapturePane extends VBox {
 	 */
 	static List<Question> unansweredQuestionsInSourceOrder(List<Question> questions,
 			Set<Long> locallyAnsweredQuestionIds, Subject workingSubject) {
+
+		// Ordinary Answer capture remains Subject-scoped but not Exam-scoped.
+		return unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds, workingSubject, null);
+	}
+
+	static List<Question> unansweredQuestionsInSourceOrder(List<Question> questions,
+			Set<Long> locallyAnsweredQuestionIds, Subject workingSubject, Exam examScope) {
 		Objects.requireNonNull(questions, "questions");
 		Objects.requireNonNull(locallyAnsweredQuestionIds, "locallyAnsweredQuestionIds");
 
-		// Subject filtering is transient workspace state. It removes unrelated
-		// Questions from the active queue without altering any persisted Question.
+		// Subject is the application boundary. Dashboard Answer capture may
+		// additionally
+		// constrain the queue to the Exam from which that workflow was launched.
 		return questions.stream()
-				.filter(question -> workingSubject == null || question.getExam().getSubject().equals(workingSubject))
+				.filter(question -> workingSubject == null
+						|| question.getExam().getSubject().getId() == workingSubject.getId())
+				.filter(question -> examScope == null || question.getExam().getId() == examScope.getId())
 				.filter(question -> !question.hasAnswer() && !locallyAnsweredQuestionIds.contains(question.getId()))
 				.sorted(QuestionSourceOrder.comparator()).toList();
 	}
@@ -498,13 +517,14 @@ public final class AnswerCapturePane extends VBox {
 	 * @param questions complete Questions to filter and order
 	 */
 	public void refreshQuestions(List<Question> questions) {
+		questionSnapshot = List.copyOf(questions);
 		Question editTarget = editingAnswerQuestion;
 		Question selected = editTarget == null ? unansweredQuestionField.getValue() : editTarget;
 
 		// Build the Answer queue independently of repository insertion order and apply
 		// only the transient Working Subject filter.
-		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questions, locallyAnsweredQuestionIds,
-				workingSubject);
+		List<Question> unansweredQuestions = unansweredQuestionsInSourceOrder(questionSnapshot,
+				locallyAnsweredQuestionIds, workingSubject, examScope);
 		Question matching = editTarget == null ? findQuestionById(unansweredQuestions, selected) : editTarget;
 		replaceUnansweredQuestionsSilently(unansweredQuestions, matching);
 
@@ -532,6 +552,30 @@ public final class AnswerCapturePane extends VBox {
 			return;
 		}
 		applyUnansweredQuestionChange(question);
+	}
+
+	/**
+	 * Restricts Answer capture to one Exam, or removes that restriction.
+	 * <p>
+	 * This is transient Dashboard workflow state and does not alter persisted
+	 * Question or Exam data.
+	 *
+	 * @param examScope Exam whose unanswered Questions are available, or
+	 *                  {@code null} for the complete Working Subject
+	 */
+	public void setExamScope(Exam examScope) {
+		Question previouslySelected = unansweredQuestionField.getValue();
+		this.examScope = examScope;
+
+		// Re-filter the already-published application snapshot rather than performing a
+		// repository read merely because the Dashboard changed workflow scope.
+		refreshQuestions(questionSnapshot);
+		if (previouslySelected != null && unansweredQuestionField.getValue() == null) {
+
+			// Presentation belonging to an Exam that has just left scope must not survive
+			// beside the replacement queue.
+			applyUnansweredQuestionChange(null, false);
+		}
 	}
 
 	/**
@@ -569,6 +613,11 @@ public final class AnswerCapturePane extends VBox {
 			resetMcqExplanationPresentation();
 		}
 		this.workingSubject = workingSubject;
+
+		// Exam scope belongs to one Dashboard launch and cannot survive an
+		// authoritative
+		// Subject transition.
+		examScope = null;
 		refreshMcqExplanationActionState();
 
 		// Reuse the application-owned corpus snapshot instead of independently reading

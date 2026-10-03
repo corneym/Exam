@@ -18,6 +18,7 @@ import au.edu.eq.questionbank.model.Subject;
 import javafx.scene.Scene;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.StackPane;
@@ -51,6 +52,28 @@ class NewCurriculumDialogTest {
 		assertTrue(newSubject.isDisabled());
 		assertEquals(chemistry, subjects.getValue());
 		assertEquals("Chemistry", dialog.getSubjectName());
+		robot.interact(dialog::close);
+	}
+
+	@Test
+	void fixedSubjectModeDoesNotOfferSubjectSelection(FxRobot robot) {
+		Subject chemistry = new Subject(1, "Chemistry");
+		AtomicReference<NewCurriculumDialog> dialogRef = new AtomicReference<>();
+		robot.interact(() -> {
+			NewCurriculumDialog dialog = new NewCurriculumDialog(owner, chemistry);
+			dialogRef.set(dialog);
+			dialog.show();
+		});
+		NewCurriculumDialog dialog = dialogRef.get();
+		Label fixedSubject = robot.lookup("#new-curriculum-fixed-subject").queryAs(Label.class);
+		assertEquals("Chemistry", fixedSubject.getText());
+		assertEquals("Chemistry", dialog.getSubjectName());
+
+		// Dashboard-owned curriculum creation cannot switch or create another Subject.
+		assertTrue(robot.lookup("#existing-curriculum-subject").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#new-curriculum-subject").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#new-curriculum-subject-box").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#new-curriculum-subject-name").tryQuery().isEmpty());
 		robot.interact(dialog::close);
 	}
 

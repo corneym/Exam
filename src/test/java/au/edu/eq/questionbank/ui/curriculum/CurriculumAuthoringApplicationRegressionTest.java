@@ -47,8 +47,8 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
+import javafx.scene.control.Label;
 import javafx.scene.control.MenuBar;
-import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TreeView;
@@ -149,12 +149,74 @@ class CurriculumAuthoringApplicationRegressionTest {
 	}
 
 	@Test
+	void dashboardAddedSubjectCanReceiveNewCurriculumWithoutRestart(FxRobot robot) throws Exception {
+		Button addSubject = robot.lookup("#add-subject").queryAs(Button.class);
+		Platform.runLater(addSubject::fire);
+		awaitVisibleDialog(robot, "Create a new Subject");
+		TextField subjectName = robot.lookup("#new-subject-name").queryAs(TextField.class);
+		robot.interact(() -> subjectName.setText("Engineering"));
+		fireDialogButton(robot, "Create a new Subject", "OK");
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubject = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> workingSubject.getValue() != null && "Engineering".equals(workingSubject.getValue().getName()));
+
+		// Curriculum creation now inherits the Dashboard Subject and therefore offers
+		// no
+		// second Subject selector.
+		openAuthoringChooser(robot);
+		fireDialogButton(robot, "Open or create curriculum for Engineering", "New Curriculum");
+		Label fixedSubject = robot.lookup("#new-curriculum-fixed-subject").queryAs(Label.class);
+		TextField versionName = robot.lookup("#new-curriculum-version").queryAs(TextField.class);
+		CheckBox currentVersion = robot.lookup("#new-curriculum-current").queryAs(CheckBox.class);
+		Button createCurriculum = robot.lookup("#create-curriculum").queryAs(Button.class);
+		assertEquals("Engineering", fixedSubject.getText());
+		assertTrue(robot.lookup("#new-curriculum-subject").tryQuery().isEmpty());
+		robot.interact(() -> {
+			versionName.setText("2025");
+			if (!currentVersion.isSelected()) {
+				currentVersion.fire();
+			}
+			createCurriculum.fire();
+		});
+		awaitAuthoring(robot);
+		CurriculumAuthoringPane pane = (CurriculumAuthoringPane) robot.lookup("#curriculum-draft-tree").query()
+				.getScene().getRoot();
+		Path pdf = createSyllabusPdf();
+		robot.interact(() -> {
+			try {
+				pane.attachSyllabusPdf(pdf);
+			} catch (Exception e) {
+				throw new RuntimeException(e);
+			}
+			captureText(robot, "Fundamentals", "#add-curriculum-unit");
+			captureText(robot, "Forces", "#add-curriculum-topic");
+			var tree = tree(robot);
+			tree.getSelectionModel().select(tree.getRoot().getChildren().getFirst().getChildren().getFirst());
+			captureText(robot, "Resolve forces", "#add-curriculum-descriptor");
+			robot.lookup("#save-curriculum").queryAs(Button.class).fire();
+		});
+		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
+		Subject engineering = repository.findAllSubjects().stream()
+				.filter(subject -> subject.getName().equals("Engineering")).findFirst().orElseThrow();
+		var version = repository.findVersionsForSubject(engineering).getFirst();
+		assertEquals("Resolve forces", repository.findByCode(version, "1.1.1").orElseThrow().getName());
+		Stage authoring = authoringStage(robot);
+		robot.interact(() -> Event.fireEvent(authoring, new WindowEvent(authoring, WindowEvent.WINDOW_CLOSE_REQUEST)));
+
+		// Closing authoring keeps the Dashboard-created Subject authoritative and makes
+		// its newly persisted curriculum immediately available.
+		assertTrue(subjects(robot, "#curriculum-subject").contains(engineering));
+		assertEquals(engineering, workingSubject.getValue());
+	}
+
+	@Test
 	void differentSyllabusVersionsCanBeOpenTogether(FxRobot robot) throws Exception {
 		openExisting(robot);
 		Subject subject = new SqliteCurriculumRepository(database).findAllSubjects().getFirst();
 		new SqliteCurriculumWriter(database).insertSyllabusVersion(subject, "2026", false);
 		openAuthoringChooser(robot);
-		fireDialogButton(robot, "Open or create a curriculum", "Open Existing");
+		fireDialogButton(robot, "Open or create curriculum for Chemistry", "Open Existing");
 		DialogPane existingDialog = awaitVisibleDialog(robot, "Choose an existing syllabus to edit");
 		robot.interact(() -> {
 			DialogPane dialog = existingDialog;
@@ -197,77 +259,17 @@ class CurriculumAuthoringApplicationRegressionTest {
 	}
 
 	@Test
-	void newlyAuthoredSubjectBecomesAvailableToCaptureWithoutRestart(FxRobot robot) throws Exception {
-		openAuthoringChooser(robot);
-
-		// The chooser is a modal DialogPane. Fire its real button rather than using
-		// pointer hit-testing against visible button text under Xvfb.
-		fireDialogButton(robot, "Open or create a curriculum", "New Curriculum");
-		RadioButton createNewSubject = robot.lookup("#new-curriculum-subject").queryAs(RadioButton.class);
-		TextField subjectName = robot.lookup("#new-curriculum-subject-name").queryAs(TextField.class);
-		TextField versionName = robot.lookup("#new-curriculum-version").queryAs(TextField.class);
-		CheckBox currentVersion = robot.lookup("#new-curriculum-current").queryAs(CheckBox.class);
-		Button createCurriculum = robot.lookup("#create-curriculum").queryAs(Button.class);
-		robot.interact(() -> {
-
-			// Activate ordinary semantic controls directly so this workflow does not
-			// depend on screen coordinates or virtual-display hit-testing.
-			createNewSubject.fire();
-			subjectName.setText("Engineering");
-			versionName.setText("2025");
-			if (!currentVersion.isSelected()) {
-				currentVersion.fire();
-			}
-
-			// Submit through the actual DialogPane-owned Create control so validation and
-			// the production dialog result path are still exercised.
-			createCurriculum.fire();
-		});
-
-		// Wait for the observable result of Create rather than assuming the dialog
-		// transition completed synchronously.
-		awaitAuthoring(robot);
-		CurriculumAuthoringPane pane = (CurriculumAuthoringPane) robot.lookup("#curriculum-draft-tree").query()
-				.getScene().getRoot();
-		Path pdf = createSyllabusPdf();
-		robot.interact(() -> {
-			try {
-				pane.attachSyllabusPdf(pdf);
-			} catch (Exception e) {
-				throw new RuntimeException(e);
-			}
-
-			// These helpers exercise the real authoring operations after the application
-			// has successfully transitioned out of the New Curriculum dialog.
-			captureText(robot, "Fundamentals", "#add-curriculum-unit");
-			captureText(robot, "Forces", "#add-curriculum-topic");
-			var tree = tree(robot);
-			tree.getSelectionModel().select(tree.getRoot().getChildren().getFirst().getChildren().getFirst());
-			captureText(robot, "Resolve forces", "#add-curriculum-descriptor");
-			robot.lookup("#save-curriculum").queryAs(Button.class).fire();
-		});
-		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
-		Subject engineering = repository.findAllSubjects().stream()
-				.filter(subject -> subject.getName().equals("Engineering")).findFirst().orElseThrow();
-		var version = repository.findVersionsForSubject(engineering).getFirst();
-		assertEquals("Resolve forces", repository.findByCode(version, "1.1.1").orElseThrow().getName());
-		Stage authoring = authoringStage(robot);
-		robot.interact(() -> Event.fireEvent(authoring, new WindowEvent(authoring, WindowEvent.WINDOW_CLOSE_REQUEST)));
-
-		// Closing the authoring window must refresh the already-running application's
-		// authoritative Subject selector without requiring an application restart.
-		assertTrue(subjects(robot, "#curriculum-subject").contains(engineering),
-				"Classification must offer the newly authored subject");
-	}
-
-	@Test
 	void savedAuthoringChangesRefreshExistingClassificationChoices(FxRobot robot) throws Exception {
 		ComboBox<?> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+
+		// Subject selection belongs to Dashboard home. Classification controls are not
+		// mounted until a specialised Capture workspace is entered.
+		robot.interact(() -> subjects.getSelectionModel().selectFirst());
+		showCaptureWorkspaceForTest();
 		ComboBox<?> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
 		ComboBox<?> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
 		ComboBox<?> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
 		ComboBox<?> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
-		robot.interact(() -> subjects.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			AtomicBoolean loaded = new AtomicBoolean();
 			robot.interact(() ->
@@ -336,7 +338,7 @@ class CurriculumAuthoringApplicationRegressionTest {
 
 	private void assertDuplicateRejected(FxRobot robot) throws Exception {
 		openAuthoringChooser(robot);
-		fireDialogButton(robot, "Open or create a curriculum", "Open Existing");
+		fireDialogButton(robot, "Open or create curriculum for Chemistry", "Open Existing");
 		fireDialogButton(robot, "Choose an existing syllabus to edit", "OK");
 		awaitVisibleDialog(robot, "This curriculum is already open for editing.");
 		robot.interact(() -> assertEquals(1, authoringWindows().size()));
@@ -451,18 +453,47 @@ class CurriculumAuthoringApplicationRegressionTest {
 	}
 
 	private void openAuthoringChooser(FxRobot robot) throws Exception {
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		if (subjects.getValue() == null) {
+
+			// Curriculum workflows no longer choose their own Subject. Existing authoring
+			// tests therefore establish application Subject before opening the menu action.
+			robot.interact(() -> subjects.getSelectionModel().selectFirst());
+			WaitForAsyncUtils.waitForFxEvents();
+		}
 		MenuBar menuBar = robot.lookup(node -> node instanceof MenuBar).queryAs(MenuBar.class);
 		var item = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
 				.filter(menu -> "author-curriculum-pdf".equals(menu.getId())).findFirst().orElseThrow();
 		Platform.runLater(item::fire);
-		awaitVisibleDialog(robot, "Open or create a curriculum");
+		awaitVisibleDialog(robot, "Open or create curriculum for " + subjects.getValue().getName());
 	}
 
 	private void openExisting(FxRobot robot) throws Exception {
 		openAuthoringChooser(robot);
-		fireDialogButton(robot, "Open or create a curriculum", "Open Existing");
+		fireDialogButton(robot, "Open or create curriculum for Chemistry", "Open Existing");
 		fireDialogButton(robot, "Choose an existing syllabus to edit", "OK");
 		awaitAuthoring(robot);
+	}
+
+	private void showCaptureWorkspaceForTest() throws Exception {
+		WaitForAsyncUtils.asyncFx(() -> {
+			try {
+
+				// Classification controls are mounted only while the specialised Capture
+				// workspace is active.
+				Method method = QuestionBankApplication.class.getDeclaredMethod("showCaptureWorkspaceMode");
+				method.setAccessible(true);
+				method.invoke(application);
+				return null;
+			} catch (ReflectiveOperationException exception) {
+				throw new IllegalStateException(exception);
+			}
+		}).get();
+
+		// Allow the dynamically mounted Capture subtree to enter the scene graph before
+		// TestFX performs selector lookup.
+		WaitForAsyncUtils.waitForFxEvents();
 	}
 
 	private List<Subject> subjects(FxRobot robot, String id) {

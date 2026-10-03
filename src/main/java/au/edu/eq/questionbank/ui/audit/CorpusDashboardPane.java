@@ -33,6 +33,7 @@ import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.ListChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
@@ -46,6 +47,7 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 /**
@@ -69,8 +71,6 @@ public final class CorpusDashboardPane extends VBox {
 	private final Subject workingSubject;
 	private List<ExamCorpusStatus> examStatuses;
 	private List<Question> questions;
-	private final Label workingSubjectLabel = new Label();
-	private final Button refreshButton = new Button("Refresh");
 	private final ComboBox<ExamProvider> providerBox = new ComboBox<>();
 	private final ComboBox<Integer> yearBox = new ComboBox<>();
 	private final ComboBox<ExamCaptureState> examStateBox = new ComboBox<>();
@@ -99,8 +99,6 @@ public final class CorpusDashboardPane extends VBox {
 	private QuestionCorpusProblem selectedQuestionProblem;
 	private boolean changingScopeFilters;
 	private boolean changingQuestionFilter;
-	private Runnable refreshHandler = () -> {
-	};
 	private BiConsumer<List<Question>, QuestionResponseType> bulkResponseTypeHandler = (_, _) -> {
 	};
 	private final Button manageExamAssetsButton = new Button("Manage Exam / Assets");
@@ -121,6 +119,12 @@ public final class CorpusDashboardPane extends VBox {
 	private List<CurriculumMappingCoverage> mappingCoverages;
 	private final Label curriculumMappingSummaryLabel = new Label();
 	private boolean summaryQuestionFilterActive;
+	private final Button addCurriculumButton = new Button("+");
+	private Runnable addCurriculumHandler = () -> {
+	};
+	private final Button mapCurriculumButton = new Button("Map Curriculum");
+	private Runnable mapCurriculumHandler = () -> {
+	};
 
 	public CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions,
 			List<CurriculumMappingCoverage> mappingCoverages) {
@@ -189,6 +193,16 @@ public final class CorpusDashboardPane extends VBox {
 		}
 	}
 
+	public void setAddCurriculumHandler(Runnable handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Curriculum creation remains application-owned because it opens the existing
+		// authoring workflow and refreshes authoritative persistence afterwards.
+		addCurriculumHandler = handler;
+	}
+
 	public void setAnswerCaptureHandler(Consumer<Question> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -217,6 +231,16 @@ public final class CorpusDashboardPane extends VBox {
 		examAssetsHandler = handler;
 	}
 
+	public void setMapCurriculumHandler(Runnable handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Mapping review remains application-owned because it opens the existing
+		// persistence-backed review workflow.
+		mapCurriculumHandler = handler;
+	}
+
 	public void setNewQuestionCaptureHandler(Consumer<ExamBooklet> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -235,16 +259,6 @@ public final class CorpusDashboardPane extends VBox {
 		// Existing incomplete Question correction remains distinct from adding new
 		// Questions to an incomplete booklet.
 		questionCorrectionHandler = handler;
-	}
-
-	public void setRefreshHandler(Runnable handler) {
-		if (handler == null) {
-			throw new NullPointerException("handler");
-		}
-
-		// The owning workflow supplies the persistence reload boundary.
-		refreshHandler = handler;
-		refreshButton.setDisable(false);
 	}
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
@@ -347,60 +361,49 @@ public final class CorpusDashboardPane extends VBox {
 
 	// TODO Refacator
 	private void buildContent() {
-		Label heading = new Label("CORPUS DASHBOARD");
-		heading.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
-		HBox subjectRow = new HBox(SPACING, createBoldLabel("Working Subject:"), workingSubjectLabel);
-		subjectRow.setAlignment(Pos.CENTER_LEFT);
-		HBox.setHgrow(subjectRow, Priority.ALWAYS);
-		HBox headingRow = new HBox(SPACING, heading, subjectRow, refreshButton);
-		headingRow.setAlignment(Pos.CENTER_LEFT);
-		HBox.setHgrow(subjectRow, Priority.ALWAYS);
 		HBox filterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
 				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
 		filterRow.setAlignment(Pos.CENTER_LEFT);
-		Region summarySpacer = new Region();
-		HBox.setHgrow(summarySpacer, Priority.ALWAYS);
 
-		// Keep all Subject-level Question indicators on one compact row. Less common
-		// problem categories remain visually grouped on the right.
+		// All Subject-level corpus indicators occupy one compact row immediately below
+		// the Subject selector in the outer CORPUS DASHBOARD section.
 		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
-				missingAnswerButton, summarySpacer, unknownTypeButton, sharedContextButton, mcqExplanationSummaryLabel);
+				missingAnswerButton, unknownTypeButton, sharedContextButton, mcqExplanationSummaryLabel);
 		summaryRow.setAlignment(Pos.CENTER_LEFT);
-		HBox mappingReviewRow = new HBox(SPACING, createBoldLabel("Curriculum mapping review:"),
-				curriculumMappingSummaryLabel);
-		mappingReviewRow.setAlignment(Pos.CENTER_LEFT);
-		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
-		Label examsHeading = new Label("EXAMS");
-		examsHeading.setStyle("-fx-font-weight: bold;");
-		Label selectedExamHeading = new Label("SELECTED EXAM");
-		selectedExamHeading.setStyle("-fx-font-weight: bold;");
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel,
 				manageExamAssetsButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
-		Label bookletsHeading = new Label("BOOKLETS");
-		bookletsHeading.setStyle("-fx-font-weight: bold;");
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
 		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton);
 		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
-		Label questionWorkHeading = new Label("QUESTION WORK");
-		questionWorkHeading.setStyle("-fx-font-weight: bold;");
 		HBox questionFilterRow = new HBox(SPACING, createBoldLabel("Show"), questionViewBox, questionResultCountLabel);
 		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
-		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton);
+
+		// Question correction and bulk response-type resolution share one action row
+		// instead of consuming two separate rows beneath the Question table.
+		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton, selectAllUnknownButton,
+				setSelectedMultipleChoiceButton, setSelectedWrittenResponseButton);
 		questionActionsRow.setAlignment(Pos.CENTER_LEFT);
-		HBox bulkResponseTypeRow = new HBox(SPACING, selectAllUnknownButton, setSelectedMultipleChoiceButton,
-				setSelectedWrittenResponseButton);
-		bulkResponseTypeRow.setAlignment(Pos.CENTER_LEFT);
 		mcqExplanationCoverageLabel.setWrapText(true);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
+		HBox mappingReviewRow = new HBox(SPACING, createBoldLabel("Mapping review"), curriculumMappingSummaryLabel);
+		mappingReviewRow.setAlignment(Pos.CENTER_LEFT);
+		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
+		HBox curriculumActionsRow = new HBox(SPACING, addCurriculumButton, mapCurriculumButton);
+		curriculumActionsRow.setAlignment(Pos.CENTER_LEFT);
+		StackPane examsSection = createTitledSection("corpus-dashboard-exams-section", "EXAMS", filterRow, examTable,
+				selectedExamTitleRow, selectedExamCountsLabel);
+		StackPane bookletsSection = createTitledSection("corpus-dashboard-booklets-section", "QUESTION BOOKLETS",
+				bookletTable, selectedBookletLabel, bookletWarningLabel, bookletActionsRow);
+		StackPane questionWorkSection = createTitledSection("corpus-dashboard-question-work-section", "QUESTION WORK",
+				questionFilterRow, questionTable, questionActionsRow, mcqExplanationCoverageLabel);
+		StackPane curriculumSection = createTitledSection("corpus-dashboard-curriculum-section", "CURRICULUM",
+				mappingReviewRow, curriculumActionsRow);
 		VBox.setVgrow(bookletTable, Priority.ALWAYS);
 		VBox.setVgrow(questionTable, Priority.NEVER);
-		getChildren().addAll(headingRow, filterRow, summaryRow, mappingReviewRow, examsHeading, examTable,
-				selectedExamHeading, selectedExamTitleRow, selectedExamCountsLabel, bookletsHeading, bookletTable,
-				selectedBookletLabel, bookletWarningLabel, bookletActionsRow, questionWorkHeading, questionFilterRow,
-				questionTable, questionActionsRow, bulkResponseTypeRow, mcqExplanationCoverageLabel);
+		getChildren().addAll(summaryRow, examsSection, bookletsSection, questionWorkSection, curriculumSection);
 		setSpacing(SPACING);
 		setPadding(PADDING);
 	}
@@ -500,7 +503,6 @@ public final class CorpusDashboardPane extends VBox {
 
 	// TODO Refactor into single concerns
 	private void configureActions() {
-		refreshButton.setOnAction(_ -> refreshHandler.run());
 		clearFiltersButton.setOnAction(_ -> clearFilters());
 		providerBox.valueProperty().addListener((_, _, _) -> {
 			if (!changingScopeFilters) {
@@ -581,6 +583,8 @@ public final class CorpusDashboardPane extends VBox {
 					updateQuestionActionState();
 				});
 		manageExamAssetsButton.setOnAction(_ -> manageSelectedExamAssets());
+		addCurriculumButton.setOnAction(_ -> addCurriculumHandler.run());
+		mapCurriculumButton.setOnAction(_ -> mapCurriculumHandler.run());
 	}
 
 	private void configureBookletTable() {
@@ -635,14 +639,17 @@ public final class CorpusDashboardPane extends VBox {
 
 	// TODO Refactor into separate concerns
 	private void configureControls() {
-		workingSubjectLabel.setId("corpus-dashboard-working-subject");
-		workingSubjectLabel.setText(workingSubject.getName());
-		refreshButton.setId("corpus-dashboard-refresh");
-
-		// Persistence reload is supplied later by the owning dialog/application.
-		refreshButton.setDisable(true);
 		curriculumMappingSummaryLabel.setId("corpus-dashboard-mapping-review");
 		curriculumMappingSummaryLabel.setWrapText(true);
+		addCurriculumButton.setId("corpus-dashboard-add-curriculum");
+		addCurriculumButton.setAccessibleText("Add Curriculum");
+		addCurriculumButton.setTooltip(new Tooltip("Add curriculum to the current Subject."));
+		addCurriculumButton.setPadding(new Insets(2, 7, 2, 7));
+		addCurriculumButton.setMinWidth(Region.USE_PREF_SIZE);
+		addCurriculumButton.setMaxWidth(Region.USE_PREF_SIZE);
+		mapCurriculumButton.setId("corpus-dashboard-map-curriculum");
+		mapCurriculumButton
+				.setTooltip(new Tooltip("Review mappings between historical and current curriculum versions."));
 
 		// Selected-scope descriptions act as field labels as well as status text, so
 		// emphasise them consistently with the Dashboard's other metadata labels.
@@ -663,7 +670,7 @@ public final class CorpusDashboardPane extends VBox {
 		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
 		captureAnswersButton.setId("corpus-dashboard-capture-answers");
 		captureAnswersButton.setTooltip(new Tooltip(
-				"Start Answer capture at the first ready Question with a missing Answer in the selected booklet."));
+				"Start with the selected booklet, then continue through ready unanswered Questions in the selected Exam."));
 		captureAnswersButton.setDisable(true);
 		captureQuestionsButton.setId("corpus-dashboard-capture-questions");
 		captureQuestionsButton.setTooltip(new Tooltip(
@@ -807,6 +814,25 @@ public final class CorpusDashboardPane extends VBox {
 		// describe.
 		label.setStyle("-fx-font-weight: bold;");
 		return label;
+	}
+
+	private StackPane createTitledSection(String id, String title, Node... content) {
+		Label titleLabel = new Label(title);
+		titleLabel.setStyle("-fx-font-weight: bold; -fx-background-color: -fx-background; -fx-padding: 0 5 0 5;");
+		VBox body = new VBox(SPACING, content);
+		body.setPadding(new Insets(14, 10, 10, 10));
+		body.setStyle("-fx-border-color: #b0b0b0; -fx-border-width: 1; -fx-border-radius: 3;");
+
+		// The title label sits over the upper border, giving the Dashboard the compact
+		// titled-border appearance without using collapsible TitledPane controls.
+		StackPane section = new StackPane(body, titleLabel);
+		section.setId(id);
+		section.setPadding(new Insets(4, 0, 0, 0));
+		StackPane.setAlignment(titleLabel, Pos.TOP_LEFT);
+
+		// Position the legend across the border rather than below it.
+		StackPane.setMargin(titleLabel, new Insets(-3, 0, 0, 10));
+		return section;
 	}
 
 	private int examWorkCount(ExamCorpusStatus status) {
@@ -1025,10 +1051,12 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void refreshCurriculumMappingSummary() {
+		mapCurriculumButton.setDisable(mappingCoverages.isEmpty());
 		if (mappingCoverages.isEmpty()) {
 
-			// One-syllabus Subjects have no historical-to-current mapping pair to review.
-			curriculumMappingSummaryLabel.setText("not applicable");
+			// No historical-to-current pair currently exists. Add Curriculum remains
+			// available independently so the Subject can acquire another syllabus version.
+			curriculumMappingSummaryLabel.setText("No mapping review is currently available.");
 			return;
 		}
 		StringBuilder summary = new StringBuilder();

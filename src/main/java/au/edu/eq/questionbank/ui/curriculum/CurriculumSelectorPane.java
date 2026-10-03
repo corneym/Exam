@@ -24,6 +24,7 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 /**
@@ -60,6 +61,7 @@ public class CurriculumSelectorPane extends VBox {
 	private boolean refreshingCode;
 	private VBox classificationContext;
 	private VBox subjectContext;
+	private final Label readOnlySubjectLabel = new Label();
 
 	// The desktop application owns asynchronous Working Subject transitions. A
 	// standalone selector keeps its existing synchronous Subject behaviour.
@@ -360,6 +362,25 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
+	 * Chooses whether the authoritative Subject may be changed from the currently
+	 * displayed application surface.
+	 *
+	 * @param enabled whether Subject selection and Subject creation are available
+	 */
+	public void setSubjectEditingEnabled(boolean enabled) {
+
+		// The Dashboard is the only editing surface. Specialised workspaces retain
+		// Subject context but replace the selector and + action with a read-only value.
+		subjectBox.setVisible(enabled);
+		subjectBox.setManaged(enabled);
+		addSubjectButton.setVisible(enabled);
+		addSubjectButton.setManaged(enabled);
+		readOnlySubjectLabel.setVisible(!enabled);
+		readOnlySubjectLabel.setManaged(!enabled);
+		updateReadOnlySubject(subjectBox.getValue());
+	}
+
+	/**
 	 * Chooses whether Subject-dependent persistence refresh is coordinated by the
 	 * containing application rather than by this pane's synchronous action handler.
 	 *
@@ -462,10 +483,12 @@ public class CurriculumSelectorPane extends VBox {
 		Label subjectLabel = new Label("Subject");
 		subjectLabel.setId("working-subject-label");
 		subjectLabel.setStyle(HEADING_STYLE);
-		HBox subjectControls = new HBox(ROW_GAP, subjectBox, addSubjectButton);
+		StackPane subjectValue = new StackPane(subjectBox, readOnlySubjectLabel);
+		subjectValue.setMaxWidth(Double.MAX_VALUE);
+		HBox.setHgrow(subjectValue, Priority.ALWAYS);
+		HBox subjectControls = new HBox(ROW_GAP, subjectValue, addSubjectButton);
 		subjectControls.setAlignment(Pos.CENTER_LEFT);
 		subjectControls.setMaxWidth(Double.MAX_VALUE);
-		HBox.setHgrow(subjectBox, Priority.ALWAYS);
 		GridPane subjectRow = createTwoColumnGrid();
 		subjectRow.addRow(0, subjectLabel, subjectControls);
 		GridPane.setHgrow(subjectControls, Priority.ALWAYS);
@@ -600,6 +623,11 @@ public class CurriculumSelectorPane extends VBox {
 		// Standalone selector instances do not own Subject persistence. The containing
 		// application enables this action when it supplies the persistence callback.
 		addSubjectButton.setDisable(true);
+		readOnlySubjectLabel.setId("working-subject-value");
+		readOnlySubjectLabel.setMaxWidth(Double.MAX_VALUE);
+		readOnlySubjectLabel.setStyle(HEADING_STYLE);
+		readOnlySubjectLabel.setVisible(false);
+		readOnlySubjectLabel.setManaged(false);
 		syllabusBox.setDisable(true);
 		unitBox.setDisable(true);
 		topicBox.setDisable(true);
@@ -625,6 +653,7 @@ public class CurriculumSelectorPane extends VBox {
 
 	private void configureSelectionHandlers() {
 		subjectBox.setOnAction(_ -> handleSubjectSelection());
+		subjectBox.valueProperty().addListener((_, _, subject) -> updateReadOnlySubject(subject));
 		syllabusBox.setOnAction(_ -> handleSyllabusSelection());
 		unitBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleUnitSelection());
 		topicBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleTopicSelection());
@@ -1059,6 +1088,13 @@ public class CurriculumSelectorPane extends VBox {
 		}
 		CurriculumNode selected = deepestSelectedNode();
 		setCodeText(selected == null ? "" : selected.getCode());
+	}
+
+	private void updateReadOnlySubject(Subject subject) {
+
+		// Specialised application surfaces show context only. The actual Subject
+		// selection remains owned by the hidden authoritative ComboBox.
+		readOnlySubjectLabel.setText(subject == null ? "No Subject selected" : subject.getName());
 	}
 
 	private record ClassificationPath(CurriculumNode unit, CurriculumNode topic, CurriculumNode subtopic,

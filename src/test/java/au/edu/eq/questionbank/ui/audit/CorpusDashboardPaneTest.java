@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui.audit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -182,6 +183,27 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void curriculumSectionRoutesAuthoringAndMappingActions(FxRobot robot) {
+		AtomicReference<Boolean> addCalled = new AtomicReference<>(Boolean.FALSE);
+		AtomicReference<Boolean> mapCalled = new AtomicReference<>(Boolean.FALSE);
+		robot.interact(() -> {
+			pane.setAddCurriculumHandler(() -> addCalled.set(Boolean.TRUE));
+			pane.setMapCurriculumHandler(() -> mapCalled.set(Boolean.TRUE));
+		});
+		Button addCurriculum = robot.lookup("#corpus-dashboard-add-curriculum").queryButton();
+		Button mapCurriculum = robot.lookup("#corpus-dashboard-map-curriculum").queryButton();
+		assertFalse(addCurriculum.isDisable());
+		assertFalse(mapCurriculum.isDisable());
+		assertEquals(addCurriculum.getParent(), mapCurriculum.getParent());
+		robot.interact(addCurriculum::fire);
+		robot.interact(mapCurriculum::fire);
+
+		// Dashboard controls delegate to the existing application-owned workflows.
+		assertTrue(addCalled.get().booleanValue());
+		assertTrue(mapCalled.get().booleanValue());
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void dashboardReservesBookletRowsAndCapsQuestionWorkHeight(FxRobot robot) {
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
@@ -198,16 +220,42 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void dashboardUsesTitledSectionsAndSingleQuestionActionRow(FxRobot robot) {
+		Node examsSection = robot.lookup("#corpus-dashboard-exams-section").query();
+		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
+		Node questionSection = robot.lookup("#corpus-dashboard-question-work-section").query();
+		Node curriculumSection = robot.lookup("#corpus-dashboard-curriculum-section").query();
+		Button completeQuestion = robot.lookup("#corpus-dashboard-complete-question").queryButton();
+		Button selectUnknown = robot.lookup("#corpus-dashboard-select-all-unknown").queryButton();
+		Button multipleChoice = robot.lookup("#corpus-dashboard-set-multiple-choice").queryButton();
+		Button writtenResponse = robot.lookup("#corpus-dashboard-set-written-response").queryButton();
+
+		// Major Dashboard responsibilities are visually separated without consuming a
+		// separate heading row for each section.
+		assertNotNull(examsSection);
+		assertNotNull(bookletsSection);
+		assertNotNull(questionSection);
+		assertNotNull(curriculumSection);
+
+		// Manual persistence refresh has been replaced by automatic refresh on Subject
+		// change and return from Dashboard-owned workflows.
+		assertTrue(robot.lookup("#corpus-dashboard-refresh").tryQuery().isEmpty());
+
+		// Question correction and response-type actions occupy one compact row.
+		assertEquals(completeQuestion.getParent(), selectUnknown.getParent());
+		assertEquals(completeQuestion.getParent(), multipleChoice.getParent());
+		assertEquals(completeQuestion.getParent(), writtenResponse.getParent());
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void displaysApprovedExamAndBookletHierarchy(FxRobot robot) {
-		Label workingSubject = robot.lookup("#corpus-dashboard-working-subject").queryAs(Label.class);
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		Label selectedExam = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
 		Label selectedState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
 		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
 		Label selectedBooklet = robot.lookup("#corpus-dashboard-selected-booklet").queryAs(Label.class);
-		assertEquals("Chemistry", workingSubject.getText());
 		assertEquals(2, exams.getItems().size());
 
 		// Dashboard terminology must use the agreed user-facing corpus concepts rather
@@ -332,18 +380,6 @@ class CorpusDashboardPaneTest {
 		robot.interact(manageAssets::fire);
 		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
 		assertEquals(fixture.paper2.getId(), routedBooklet.get().getId());
-	}
-
-	@Test
-	void refreshIsDisabledUntilOwningWorkflowSuppliesReloadHandler(FxRobot robot) {
-		Button refresh = robot.lookup("#corpus-dashboard-refresh").queryButton();
-		assertTrue(refresh.isDisable());
-		robot.interact(() -> pane.setRefreshHandler(() -> {
-
-			// This test verifies only explicit installation of the persistence reload
-			// responsibility.
-		}));
-		assertFalse(refresh.isDisable());
 	}
 
 	@Test

@@ -24,7 +24,9 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
@@ -318,6 +320,31 @@ public class CurriculumSelectorPaneTest {
 		pane.selectSubject(chemistry);
 		stage.setScene(new Scene(pane, 700, 420));
 		stage.show();
+	}
+
+	@Test
+	public void subjectEditingCanBeDisabledOutsideDashboard(FxRobot robot) {
+		ComboBox<?> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		Button addSubject = robot.lookup("#add-subject").queryAs(Button.class);
+		Label readOnlySubject = robot.lookup("#working-subject-value").queryAs(Label.class);
+		robot.interact(() -> pane.setSubjectEditingEnabled(false));
+
+		// Specialised work retains clear Subject context but exposes neither a selector
+		// nor the Subject-creation action.
+		assertFalse(subjects.isVisible());
+		assertFalse(subjects.isManaged());
+		assertFalse(addSubject.isVisible());
+		assertFalse(addSubject.isManaged());
+		assertTrue(readOnlySubject.isVisible());
+		assertTrue(readOnlySubject.isManaged());
+		assertEquals("Chemistry", readOnlySubject.getText());
+		robot.interact(() -> pane.setSubjectEditingEnabled(true));
+		assertTrue(subjects.isVisible());
+		assertTrue(subjects.isManaged());
+		assertTrue(addSubject.isVisible());
+		assertTrue(addSubject.isManaged());
+		assertFalse(readOnlySubject.isVisible());
+		assertFalse(readOnlySubject.isManaged());
 	}
 
 	@Test

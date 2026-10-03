@@ -182,20 +182,6 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		});
 	}
 
-	/**
-	 * Installs the explicit Dashboard persistence reload operation.
-	 *
-	 * @param handler refresh operation
-	 */
-	public void setRefreshHandler(Runnable handler) {
-		if (handler == null) {
-			throw new NullPointerException("handler");
-		}
-
-		// The pane owns presentation while the application owns repository access.
-		dashboardPane.setRefreshHandler(handler);
-	}
-
 	private void completeResolution(ResolutionRequest request) {
 
 		// Publish the explicit Dashboard action before closing the modal dialog so the

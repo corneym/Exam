@@ -471,6 +471,51 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardCaptureRoutesExposeOnlyTaskRelevantSections(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Node classification = lookup(robot, "#classification-context", Node.class);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showDashboardQuestionCaptureWorkspace", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Question capture requires Classification and Question controls but no Answer
+		// controls.
+		assertTrue(classification.isVisible());
+		assertTrue(classification.isManaged());
+		assertTrue(questionCapturePane().isVisible());
+		assertTrue(questionCapturePane().isManaged());
+		assertFalse(answerCapturePane().isVisible());
+		assertFalse(answerCapturePane().isManaged());
+		Exam exam = examMetadataPane().getBooklet().getExam();
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showDashboardAnswerCaptureWorkspace", new Class<?>[] { Exam.class }, exam);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Answer capture uses persisted Question classification and therefore needs
+		// only
+		// Answer controls.
+		assertFalse(classification.isVisible());
+		assertFalse(classification.isManaged());
+		assertFalse(questionCapturePane().isVisible());
+		assertFalse(questionCapturePane().isManaged());
+		assertTrue(answerCapturePane().isVisible());
+		assertTrue(answerCapturePane().isManaged());
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
+			return null;
+		}).get();
+
+		// Generic Capture remains available and restores the reusable full workspace.
+		assertTrue(classification.isVisible());
+		assertTrue(questionCapturePane().isVisible());
+		assertTrue(answerCapturePane().isVisible());
+	}
+
+	@Test
 	void editingQuestionBookletUsesInspectionWithoutChangingCaptureBooklet(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
@@ -1621,6 +1666,36 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("QCAA 2024 External Assessment — Paper 2 [ACTIVE]", activeExam.getText());
 	}
 
+	@Test
+	void specialisedWorkspaceShowsSubjectReadOnlyAndDashboardRestoresEditing(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> subjects = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Button addSubject = lookup(robot, "#add-subject", Button.class);
+		Label readOnlySubject = lookup(robot, "#working-subject-value", Label.class);
+
+		// Capture and Exam / Assets may display Subject context but cannot change it.
+		assertFalse(subjects.isVisible());
+		assertFalse(subjects.isManaged());
+		assertFalse(addSubject.isVisible());
+		assertFalse(addSubject.isManaged());
+		assertTrue(readOnlySubject.isVisible());
+		assertTrue(readOnlySubject.isManaged());
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Returning home restores the one authoritative editing surface.
+		assertTrue(subjects.isVisible());
+		assertTrue(subjects.isManaged());
+		assertTrue(addSubject.isVisible());
+		assertTrue(addSubject.isManaged());
+		assertFalse(readOnlySubject.isVisible());
+		assertFalse(readOnlySubject.isManaged());
+	}
+
 	@Override
 	@Start
 	void start(Stage stage) throws Exception {
@@ -1707,26 +1782,30 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void workingSubjectContextUsesSingleSubjectRow(FxRobot robot) {
 		ComboBox<?> subject = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Label readOnlySubject = lookup(robot, "#working-subject-value", Label.class);
 		Label subjectLabel = lookup(robot, "#working-subject-label", Label.class);
 		Button addSubject = lookup(robot, "#add-subject", Button.class);
 		Parent workingSubjectContext = lookup(robot, "#working-subject-context", Parent.class);
 
-		// Working Subject still consists of exactly one layout row after adding the
-		// compact Subject-creation action.
+		// Subject context still occupies exactly one application-context row. The
+		// editable selector and read-only presentation share the same value position.
 		assertEquals(1, workingSubjectContext.getChildrenUnmodifiable().size());
 		Node subjectRow = workingSubjectContext.getChildrenUnmodifiable().getFirst();
 		assertTrue(subjectRow instanceof javafx.scene.layout.GridPane);
 		assertEquals(subjectRow, subjectLabel.getParent());
 		assertEquals("Subject", subjectLabel.getText());
 
-		// Subject selection and its compact + action share the control side of that
-		// same GridPane row rather than introducing a second row.
-		assertEquals(subject.getParent(), addSubject.getParent());
-		assertEquals(subjectRow, subject.getParent().getParent());
+		// The selector and read-only value are alternatives in one StackPane. That
+		// value and the compact + action then share the control side of the same row.
+		Parent subjectValue = subject.getParent();
+		assertTrue(subjectValue instanceof javafx.scene.layout.StackPane);
+		assertEquals(subjectValue, readOnlySubject.getParent());
+		assertEquals(subjectValue.getParent(), addSubject.getParent());
+		assertEquals(subjectRow, addSubject.getParent().getParent());
 		assertEquals("+", addSubject.getText());
 		assertEquals("Add Subject", addSubject.getTooltip().getText());
 
-		// Subject remains the visual heading for the application-level context.
+		// Subject remains the visual heading for application-level context.
 		primaryStage.getScene().getRoot().applyCss();
 		assertTrue(subjectLabel.getFont().getStyle().contains("Bold"));
 	}

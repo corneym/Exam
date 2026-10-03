@@ -231,6 +231,7 @@ public class QuestionBankApplication extends Application {
 	private CorpusDashboardPane corpusDashboardPane;
 	private BorderPane rootLayout;
 	private BorderPane applicationBody;
+	private VBox classificationContext;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
@@ -273,6 +274,9 @@ public class QuestionBankApplication extends Application {
 	private final ProgressIndicator workspaceBusyIndicator = new ProgressIndicator();
 	private final Label workspaceBusyLabel = new Label();
 	private final VBox workspaceBusyOverlay = new VBox(8.0);
+	private final HBox corpusDashboardSubjectHost = new HBox();
+	private VBox workingSubjectContext;
+	private final VBox workspaceSubjectHost = new VBox();
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -1246,7 +1250,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private VBox createCaptureWorkspacePane() {
-		VBox classificationContext = curriculumSelectorPane.detachClassificationContext();
+		classificationContext = curriculumSelectorPane.detachClassificationContext();
 		VBox captureWorkspace = new VBox(SECTION_SPACING, classificationContext, questionCapturePane,
 				answerCapturePane);
 		captureWorkspace.setId("capture-workspace");
@@ -1259,16 +1263,34 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private VBox createCorpusDashboardHomePane() {
-
-		// Dashboard content occupies the application surface beneath the permanent
-		// Working Subject context.
 		corpusDashboardHost.setId("corpus-dashboard-home-content");
 		VBox.setVgrow(corpusDashboardHost, Priority.ALWAYS);
 		showCorpusDashboardNoSubject();
-		VBox home = new VBox(SECTION_SPACING, corpusDashboardHost);
+		corpusDashboardSubjectHost.setId("corpus-dashboard-subject-host");
+		corpusDashboardSubjectHost.setAlignment(Pos.CENTER_LEFT);
+		Label heading = new Label("CORPUS DASHBOARD");
+		heading.setStyle(
+				"-fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: -fx-background; -fx-padding: 0 5 0 5;");
+		VBox dashboardBody = new VBox(SECTION_SPACING, corpusDashboardSubjectHost, corpusDashboardHost);
+		dashboardBody.setPadding(new Insets(14, 10, 10, 10));
+		dashboardBody.setStyle("-fx-border-color: #b0b0b0; -fx-border-width: 1; -fx-border-radius: 3;");
+		VBox.setVgrow(corpusDashboardHost, Priority.ALWAYS);
+
+		// The Dashboard title sits in its border while Subject selection and all
+		// Subject-level work remain inside the same visual region.
+		StackPane dashboardSection = new StackPane(dashboardBody, heading);
+		dashboardSection.setId("corpus-dashboard-home-section");
+		dashboardSection.setPadding(new Insets(4, 0, 0, 0));
+		StackPane.setAlignment(heading, Pos.TOP_LEFT);
+
+		// Lift the legend slightly across the upper border rather than letting it sit
+		// visually inside the section body.
+		StackPane.setMargin(heading, new Insets(-3, 0, 0, 10));
+		VBox home = new VBox(dashboardSection);
 		home.setId("corpus-dashboard-home");
 		home.setPadding(PREVIEW_PANE_PADDING);
 		home.setFillWidth(true);
+		VBox.setVgrow(dashboardSection, Priority.ALWAYS);
 		return home;
 	}
 
@@ -1399,9 +1421,9 @@ public class QuestionBankApplication extends Application {
 		return item;
 	}
 
-	private CurriculumAuthoringSession createNewCurriculum(Stage primaryStage,
+	private CurriculumAuthoringSession createNewCurriculum(Stage primaryStage, Subject subject,
 			SqliteCurriculumRepository curriculumRepository, CurriculumAuthoringCreationService creationService) {
-		NewCurriculumDialog dialog = new NewCurriculumDialog(primaryStage, curriculumRepository.findAllSubjects());
+		NewCurriculumDialog dialog = new NewCurriculumDialog(primaryStage, subject);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return null;
@@ -1419,9 +1441,9 @@ public class QuestionBankApplication extends Application {
 
 	private VBox createPreviewPane() {
 
-		// Working Subject is permanent application context. Everything beneath it is
-		// hosted separately so Capture and Exam/Assets can occupy the same left-hand
-		// workspace without rebuilding or duplicating Subject selection.
+		// The one live Subject context moves here while specialised left-hand work is
+		// active. Dashboard navigation moves it back into the Dashboard title region.
+		workspaceSubjectHost.setId("workspace-subject-host");
 		captureWorkspaceModePane = createCaptureWorkspaceModePane();
 		workspaceModeHost = new StackPane(captureWorkspaceModePane);
 		workspaceModeHost.setId("workspace-mode-host");
@@ -1441,11 +1463,10 @@ public class QuestionBankApplication extends Application {
 		workspaceBusyOverlay.setVisible(false);
 		workspaceBusyOverlay.setManaged(false);
 
-		// The overlay sits above the active workspace and intercepts conflicting
-		// capture
-		// actions while the asynchronous transition owns the workspace.
+		// The overlay sits above whichever Capture or Exam / Assets mode currently owns
+		// the left workspace.
 		workspaceModeHost.getChildren().add(workspaceBusyOverlay);
-		VBox previewPane = new VBox(SECTION_SPACING, curriculumSelectorPane, workspaceModeHost);
+		VBox previewPane = new VBox(SECTION_SPACING, workspaceSubjectHost, workspaceModeHost);
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
 		previewPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
 		previewPane.setPrefWidth(PREVIEW_PANE_INITIAL_WIDTH);
@@ -1505,24 +1526,23 @@ public class QuestionBankApplication extends Application {
 		rootLayout = new BorderPane();
 		rootLayout.setTop(createMenuBar(primaryStage, config));
 
-		// Working Subject is permanent application context. Dashboard, Capture and
-		// Exam / Assets all operate beneath this same live Subject selector.
-		Node subjectContext = curriculumSelectorPane.detachSubjectContext();
-
-		// Construct the existing Capture/PDF workspace once. It is mounted only when
-		// specialised work requires it.
+		// Detach the one authoritative Subject row once. Navigation subsequently
+		// re-parents this same live control between Dashboard and specialised work.
+		workingSubjectContext = curriculumSelectorPane.detachSubjectContext();
+		workingSubjectContext.setPadding(Insets.EMPTY);
+		workingSubjectContext.setStyle("");
+		workingSubjectContext.setMaxWidth(Region.USE_PREF_SIZE);
 		previewScrollPane = createPreviewScrollPane();
 		workspaceSplitPane = new SplitPane(previewScrollPane, pdfWorkspace);
 		workspaceSplitPane.setId("workspace-split-pane");
 		workspaceSplitPane.setDividerPositions(INITIAL_WORKSPACE_DIVIDER_POSITION);
 		corpusDashboardHomePane = createCorpusDashboardHomePane();
+		showWorkingSubjectInDashboard();
 
-		// Keep one permanent application body. Navigation changes only its centre node,
-		// so Working Subject can never disappear when moving between workflows.
+		// The application body now switches only between Dashboard home and the
+		// specialised Capture/PDF workspace. There is no full-width Subject strip.
 		applicationBody = new BorderPane();
 		applicationBody.setId("application-body");
-		applicationBody.setTop(subjectContext);
-		BorderPane.setMargin(subjectContext, new Insets(10, 10, 0, 10));
 		applicationBody.setCenter(corpusDashboardHomePane);
 		rootLayout.setCenter(applicationBody);
 		return rootLayout;
@@ -1943,12 +1963,15 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
-		CurriculumImportDialog dialog = new CurriculumImportDialog(primaryStage, config.curriculumDataRoot());
-		Optional<ButtonType> result = dialog.showAndWait();
-		if (result.isEmpty()) {
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, "Curriculum Import", "No Subject is selected.",
+					"Select a Subject on the Corpus Dashboard before importing curriculum.");
 			return;
 		}
-		if (result.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+		Subject subject = workingSubject;
+		CurriculumImportDialog dialog = new CurriculumImportDialog(primaryStage, config.curriculumDataRoot(), subject);
+		Optional<ButtonType> result = dialog.showAndWait();
+		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
 		try {
@@ -1957,16 +1980,20 @@ public class QuestionBankApplication extends Application {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 			SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
-			CurriculumImportResult importResult = importer.importSyllabusWithResult(dialog.getSubjectName(),
+			CurriculumImportResult importResult = importer.importSyllabusWithResult(subject.getName(),
 					dialog.getVersionName(), dialog.isCurrent(), rows);
 			curriculumSelectorPane.refreshSubjects();
 			examMetadataPane.refreshSubjects();
+
+			// The current Subject has gained or confirmed curriculum data. Rebuild the
+			// complete application Subject snapshot, including Dashboard mapping status.
+			startWorkingSubjectRefresh(subject);
 			if (importResult.imported()) {
 				showAlert(Alert.AlertType.INFORMATION, "Curriculum Import", "Curriculum imported successfully.",
-						dialog.getSubjectName() + " " + dialog.getVersionName());
+						subject.getName() + " " + dialog.getVersionName());
 			} else {
 				showAlert(Alert.AlertType.INFORMATION, "Curriculum Import", "Curriculum already imported.",
-						dialog.getSubjectName() + " " + dialog.getVersionName()
+						subject.getName() + " " + dialog.getVersionName()
 								+ " is already imported. No changes were required.");
 			}
 		} catch (IOException e) {
@@ -2193,6 +2220,7 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && questionCapturePane.canCaptureRegions();
 	}
 
+	// TODO Refactor to remove inner class
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
 		Task<CorpusDashboardSnapshot> task = new Task<>() {
 
@@ -2440,8 +2468,24 @@ public class QuestionBankApplication extends Application {
 				showAlert(Alert.AlertType.WARNING, "Curriculum Authoring",
 						"The curriculum authoring workspace could not be closed cleanly.", e.getMessage());
 			} finally {
-				curriculumSelectorPane.refreshSubjects();
-				examMetadataPane.refreshSubjects();
+				var classificationToRestore = curriculumSelectorPane.selectedClassificationProperty().get();
+				Subject subjectToRefresh = workingSubject;
+				if (subjectToRefresh != null) {
+
+					// Rebuild curriculum, capture queues, Exam/Assets and Dashboard reporting from
+					// authoritative persistence without performing a second synchronous curriculum
+					// read on the JavaFX thread.
+					startWorkingSubjectRefresh(subjectToRefresh);
+					if (classificationToRestore != null
+							&& classificationToRestore.getSyllabusVersion().getSubject().equals(subjectToRefresh)) {
+
+						// startWorkingSubjectRefresh has already cleared the old hierarchy. Asking
+						// for the previous persistent classification now records it as deferred;
+						// applySubjectSnapshot will resolve the same IDs against the freshly loaded
+						// curriculum, including any edited names.
+						curriculumSelectorPane.selectClassificationPath(classificationToRestore);
+					}
+				}
 			}
 		});
 		authoringStage.show();
@@ -2468,15 +2512,24 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(true);
 	}
 
+	private Stage primaryStage() {
+		Window window = primaryWindow();
+		if (window instanceof Stage stage) {
+			return stage;
+		}
+
+		// The desktop composition is always hosted by the JavaFX primary Stage.
+		throw new IllegalStateException("Primary application window is not a Stage");
+	}
+
 	private Window primaryWindow() {
-		if (workspaceSplitPane == null || workspaceSplitPane.getScene() == null
-				|| workspaceSplitPane.getScene().getWindow() == null) {
+		if (rootLayout == null || rootLayout.getScene() == null || rootLayout.getScene().getWindow() == null) {
 			throw new IllegalStateException("Primary application window is not available");
 		}
 
-		// Resolve ownership from the live scene graph rather than retaining another
-		// Stage reference solely for Help presentation.
-		return workspaceSplitPane.getScene().getWindow();
+		// Dashboard home may be visible while the reusable PDF split workspace is
+		// detached, so window ownership must come from the permanent application root.
+		return rootLayout.getScene().getWindow();
 	}
 
 	private void reactivateActiveExam() {
@@ -2920,8 +2973,11 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Classification becomes ordinary workspace state again after the Dashboard
-		// Answer-capture session has ended.
+		// Dashboard task-specific visibility and Exam scope belong only to the
+		// completed
+		// capture session. Restore the reusable workspace before its next entry.
+		answerCapturePane.setExamScope(null);
+		setCaptureWorkspaceSectionVisibility(true, true, true);
 		curriculumSelectorPane.setClassificationControlsDisabled(false);
 
 		// Consume the session before starting the asynchronous Dashboard refresh so an
@@ -2932,6 +2988,12 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, "Curriculum Mapping", "No Subject is selected.",
+					"Select a Subject on the Corpus Dashboard before reviewing curriculum mappings.");
+			return;
+		}
+		Subject subject = workingSubject;
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			CurriculumRepository repository = new SqliteCurriculumRepository(database);
@@ -2945,10 +3007,13 @@ public class QuestionBankApplication extends Application {
 			SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
 			SubtopicMappingEvidenceService subtopicEvidenceService = new SubtopicMappingEvidenceService(repository,
 					reviewRepository);
-			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, repository,
+			CurriculumMappingReviewDialog dialog = new CurriculumMappingReviewDialog(primaryStage, subject, repository,
 					descriptorSuggester, subtopicSuggester, subtopicEvidenceService, reviewRepository,
 					mappingRepository, coverageService, reviewWriter);
 			dialog.showAndWait();
+
+			// Mapping review affects only the independent Curriculum Dashboard status.
+			refreshCorpusDashboardHome(-1L);
 		} catch (IllegalStateException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Mapping", "Could not load curriculum mappings.",
 					e.getMessage());
@@ -3001,6 +3066,19 @@ public class QuestionBankApplication extends Application {
 		return destination;
 	}
 
+	private void setCaptureWorkspaceSectionVisibility(boolean classificationVisible, boolean questionVisible,
+			boolean answerVisible) {
+
+		// Dashboard routes expose only controls relevant to the requested task. Generic
+		// Capture mode can restore all three sections through the same method.
+		classificationContext.setVisible(classificationVisible);
+		classificationContext.setManaged(classificationVisible);
+		questionCapturePane.setVisible(questionVisible);
+		questionCapturePane.setManaged(questionVisible);
+		answerCapturePane.setVisible(answerVisible);
+		answerCapturePane.setManaged(answerVisible);
+	}
+
 	private void setCorpusDashboardCaptureReturn(Runnable handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -3035,13 +3113,17 @@ public class QuestionBankApplication extends Application {
 			throw new NullPointerException("content");
 		}
 
+		// Specialised work keeps the authoritative Subject selector on the left rather
+		// than in a full-width strip above the whole application.
+		showWorkingSubjectInWorkspace();
+
 		// Replace only the specialised left-hand workspace while retaining the busy
 		// overlay that belongs to the reusable Capture/Exam-Assets shell.
 		workspaceModeHost.getChildren().setAll(content, workspaceBusyOverlay);
 		workspaceBusyOverlay.toFront();
 
-		// Mount the complete Capture/PDF split workspace directly into the permanent
-		// application body. Working Subject remains mounted above it.
+		// Mount the complete Capture/PDF split workspace into the permanent application
+		// body.
 		applicationBody.setCenter(workspaceSplitPane);
 	}
 
@@ -3088,12 +3170,11 @@ public class QuestionBankApplication extends Application {
 
 	private void showCaptureWorkspaceMode() {
 
-		// Reattach the original live Capture controls while retaining the permanent
-		// asynchronous-work overlay above the active workspace.
+		// Generic Capture restores the complete reusable workspace. Dashboard-specific
+		// entry points narrow it again for their individual tasks.
+		answerCapturePane.setExamScope(null);
+		setCaptureWorkspaceSectionVisibility(true, true, true);
 		setWorkspaceMode(captureWorkspaceModePane);
-
-		// Any later Exam/Assets changes must be reflected immediately when the user
-		// returns to Capture mode.
 		refreshActiveExamContext();
 	}
 
@@ -3102,8 +3183,8 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Returning home changes only the operational centre. Working Subject remains
-		// permanently mounted in applicationBody.top.
+		// Dashboard home owns the Subject selector inside its own titled border.
+		showWorkingSubjectInDashboard();
 		applicationBody.setCenter(corpusDashboardHomePane);
 	}
 
@@ -3133,7 +3214,7 @@ public class QuestionBankApplication extends Application {
 			throw new NullPointerException("question");
 		}
 		clearCorpusDashboardCaptureReturn();
-		showCaptureWorkspaceMode();
+		showDashboardQuestionCaptureWorkspace();
 
 		// Existing incomplete Question work uses the established imported-Question
 		// correction workflow. Successful Save returns through the same home callback
@@ -3149,6 +3230,8 @@ public class QuestionBankApplication extends Application {
 	private void showCorpusDashboardSnapshot(Subject dashboardSubject, CorpusDashboardSnapshot snapshot) {
 		CorpusDashboardPane dashboard = new CorpusDashboardPane(dashboardSubject, snapshot.examStatuses(),
 				snapshot.questions(), snapshot.mappingCoverages());
+		dashboard.setAddCurriculumHandler(() -> showDashboardAddCurriculum(primaryStage(), applicationConfig));
+		dashboard.setMapCurriculumHandler(() -> reviewCurriculumMappings(primaryStage(), applicationConfig));
 
 		// Every Dashboard operation routes into an existing authoritative workflow.
 		dashboard.setAnswerCaptureHandler(question -> {
@@ -3165,12 +3248,17 @@ public class QuestionBankApplication extends Application {
 			}
 		});
 		dashboard.setQuestionCorrectionHandler(this::showCorpusDashboardQuestionCorrection);
-		dashboard.setRefreshHandler(() -> refreshCorpusDashboardHome(-1L));
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}
 
 	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, "Curriculum Authoring", "No Subject is selected.",
+					"Select a Subject on the Corpus Dashboard before opening curriculum authoring.");
+			return;
+		}
+		Subject subject = workingSubject;
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
@@ -3180,19 +3268,20 @@ public class QuestionBankApplication extends Application {
 				draftLoader);
 		CurriculumAuthoringCreationService creationService = new CurriculumAuthoringCreationService(
 				new SqliteCurriculumImporter(database, curriculumWriter), draftLoader);
-		List<SyllabusVersion> versions = openService.availableVersions();
+		List<SyllabusVersion> versions = openService.availableVersions().stream()
+				.filter(version -> version.getSubject().getId() == subject.getId()).toList();
 		ButtonType openExistingButton = new ButtonType("Open Existing", ButtonBar.ButtonData.OK_DONE);
 		ButtonType newCurriculumButton = new ButtonType("New Curriculum", ButtonBar.ButtonData.OTHER);
 		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
 		Alert chooser = new Alert(Alert.AlertType.CONFIRMATION);
 		chooser.initOwner(primaryStage);
 		chooser.setTitle("Curriculum Authoring");
-		chooser.setHeaderText("Open or create a curriculum");
+		chooser.setHeaderText("Open or create curriculum for " + subject.getName());
 		if (versions.isEmpty()) {
-			chooser.setContentText("No existing curricula are available.");
+			chooser.setContentText("No existing curriculum is available for this Subject.");
 			chooser.getButtonTypes().setAll(newCurriculumButton, cancelButton);
 		} else {
-			chooser.setContentText("Choose whether to continue an existing curriculum or create a new one.");
+			chooser.setContentText("Choose whether to continue an existing curriculum or create a new version.");
 			chooser.getButtonTypes().setAll(openExistingButton, newCurriculumButton, cancelButton);
 		}
 		ButtonType action = chooser.showAndWait().orElse(cancelButton);
@@ -3201,7 +3290,7 @@ public class QuestionBankApplication extends Application {
 		}
 		CurriculumAuthoringSession session;
 		if (action == newCurriculumButton) {
-			session = createNewCurriculum(primaryStage, curriculumRepository, creationService);
+			session = createNewCurriculum(primaryStage, subject, curriculumRepository, creationService);
 		} else {
 			session = chooseExistingCurriculum(primaryStage, versions, openService);
 		}
@@ -3211,6 +3300,32 @@ public class QuestionBankApplication extends Application {
 		openCurriculumAuthoringWindow(primaryStage, config, database, session);
 	}
 
+	private void showDashboardAddCurriculum(Stage primaryStage, ApplicationConfig config) {
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, "Add Curriculum", "No Subject is selected.",
+					"Select or add a Subject on the Corpus Dashboard first.");
+			return;
+		}
+		Subject subject = workingSubject;
+		ButtonType authorFromPdfButton = new ButtonType("Author from PDF", ButtonBar.ButtonData.OK_DONE);
+		ButtonType importExcelButton = new ButtonType("Import from Excel", ButtonBar.ButtonData.OTHER);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert chooser = new Alert(Alert.AlertType.CONFIRMATION);
+		chooser.initOwner(primaryStage);
+		chooser.setTitle("Add Curriculum");
+		chooser.setHeaderText("Add curriculum for " + subject.getName());
+		chooser.setContentText("Choose the curriculum source.");
+		chooser.getButtonTypes().setAll(authorFromPdfButton, importExcelButton, cancelButton);
+		ButtonType action = chooser.showAndWait().orElse(cancelButton);
+		if (action == authorFromPdfButton) {
+			showNewCurriculumAuthoring(primaryStage, config, subject);
+			return;
+		}
+		if (action == importExcelButton) {
+			importCurriculum(primaryStage, config);
+		}
+	}
+
 	private boolean showDashboardAnswerCapture(Question question, Runnable returnHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -3218,20 +3333,33 @@ public class QuestionBankApplication extends Application {
 		if (returnHandler == null) {
 			throw new NullPointerException("returnHandler");
 		}
-		showCaptureWorkspaceMode();
+
+		// Dashboard Answer capture remains within the selected Exam even after the
+		// initial selected-booklet Question has been completed.
+		showDashboardAnswerCaptureWorkspace(question.getExam());
 		boolean started = answerCapturePane.captureAnswer(question);
 		if (!started) {
 
-			// A rejected Answer transition owns no special Classification state.
-			curriculumSelectorPane.setClassificationControlsDisabled(false);
+			// A rejected transition owns no persistent Exam scope.
+			answerCapturePane.setExamScope(null);
+			setCaptureWorkspaceSectionVisibility(true, true, true);
 			return false;
 		}
-
-		// Answer capture uses the Question's already-persisted classification. Disable
-		// the unrelated Classification editor for the duration of this Dashboard route.
-		curriculumSelectorPane.setClassificationControlsDisabled(true);
 		setCorpusDashboardCaptureReturn(returnHandler);
 		return true;
+	}
+
+	private void showDashboardAnswerCaptureWorkspace(Exam exam) {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+
+		// The Question is already persisted and classified. Dashboard Answer capture
+		// therefore needs only Answer controls and the assigned Answer PDF.
+		answerCapturePane.setExamScope(exam);
+		setCaptureWorkspaceSectionVisibility(false, false, true);
+		setWorkspaceMode(captureWorkspaceModePane);
+		refreshActiveExamContext();
 	}
 
 	private boolean showDashboardNewQuestionCapture(ExamBooklet booklet, ApplicationConfig config,
@@ -3274,8 +3402,7 @@ public class QuestionBankApplication extends Application {
 			// Remove any managed document belonging to the previous capture session before
 			// the worker starts opening the new Question source.
 			pdfWorkspace.closeManagedPdfSessions();
-			showCaptureWorkspaceMode();
-			curriculumSelectorPane.setClassificationControlsDisabled(false);
+			showDashboardQuestionCaptureWorkspace();
 			setCorpusDashboardCaptureReturn(returnHandler);
 
 			// Opening and rendering the managed source can be noticeable on large PDFs.
@@ -3298,6 +3425,17 @@ public class QuestionBankApplication extends Application {
 					failureMessage(exception));
 			return false;
 		}
+	}
+
+	private void showDashboardQuestionCaptureWorkspace() {
+
+		// New or corrective Question work requires Classification and Question capture,
+		// but Answer controls are unrelated to the current task.
+		answerCapturePane.setExamScope(null);
+		curriculumSelectorPane.setClassificationControlsDisabled(false);
+		setCaptureWorkspaceSectionVisibility(true, true, false);
+		setWorkspaceMode(captureWorkspaceModePane);
+		refreshActiveExamContext();
 	}
 
 	private void showExamAssetsMode() {
@@ -3390,6 +3528,25 @@ public class QuestionBankApplication extends Application {
 		// Exam and booklet structure is now managed exclusively by Exam/Assets and is
 		// therefore deliberately absent from the legacy-import result count.
 		showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy Question metadata imported.", message);
+	}
+
+	private void showNewCurriculumAuthoring(Stage primaryStage, ApplicationConfig config, Subject subject) {
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		CurriculumDraftLoader draftLoader = new CurriculumDraftLoader(
+				new SqliteCurriculumAuthoringRepository(database));
+		CurriculumAuthoringCreationService creationService = new CurriculumAuthoringCreationService(
+				new SqliteCurriculumImporter(database, curriculumWriter), draftLoader);
+
+		// Dashboard + means add a new curriculum to the already-selected Subject. It
+		// therefore skips the separate Open Existing/New Curriculum chooser.
+		CurriculumAuthoringSession session = createNewCurriculum(primaryStage, subject, curriculumRepository,
+				creationService);
+		if (session == null) {
+			return;
+		}
+		openCurriculumAuthoringWindow(primaryStage, config, database, session);
 	}
 
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
@@ -3644,6 +3801,30 @@ public class QuestionBankApplication extends Application {
 		alert.setHeaderText("Exam Question Bank");
 		alert.setContentText(information);
 		alert.showAndWait();
+	}
+
+	private void showWorkingSubjectInDashboard() {
+		if (workingSubjectContext == null) {
+			return;
+		}
+
+		// Dashboard home is the only application surface allowed to change or create
+		// the authoritative Subject.
+		curriculumSelectorPane.setSubjectEditingEnabled(true);
+		workspaceSubjectHost.getChildren().remove(workingSubjectContext);
+		corpusDashboardSubjectHost.getChildren().setAll(workingSubjectContext);
+	}
+
+	private void showWorkingSubjectInWorkspace() {
+		if (workingSubjectContext == null) {
+			return;
+		}
+
+		// Specialised work displays the same Subject context but provides no Subject
+		// selector and no Subject-creation action.
+		curriculumSelectorPane.setSubjectEditingEnabled(false);
+		corpusDashboardSubjectHost.getChildren().remove(workingSubjectContext);
+		workspaceSubjectHost.getChildren().setAll(workingSubjectContext);
 	}
 
 	private void showWorkspaceBusy(String message) {

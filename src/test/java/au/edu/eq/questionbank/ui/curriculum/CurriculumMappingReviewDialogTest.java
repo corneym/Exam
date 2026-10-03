@@ -84,6 +84,20 @@ class CurriculumMappingReviewDialogTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void dashboardMappingReviewUsesFixedSubject() throws Exception {
+		ComboBox<Subject> subjectBox = field("subjectBox", ComboBox.class);
+		Label fixedSubject = field("fixedSubjectLabel", Label.class);
+
+		// The inherited Subject still drives the existing internal version-loading
+		// machinery, but the selector itself is not part of the dialog scene.
+		assertEquals(subject, subjectBox.getValue());
+		assertEquals("Chemistry", fixedSubject.getText());
+		assertEquals(null, subjectBox.getParent());
+		assertTrue(fixedSubject.getParent() != null);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void displaysPairWideMappingCoverage(FxRobot robot) throws Exception {
 		ComboBox<Subject> subjectBox = field("subjectBox", ComboBox.class);
 		ComboBox<SyllabusVersion> sourceVersionBox = field("sourceVersionBox", ComboBox.class);
@@ -134,8 +148,9 @@ class CurriculumMappingReviewDialogTest {
 				reviewRepository);
 		CurriculumMappingCoverageService coverageService = new CurriculumMappingCoverageService(repository,
 				mappingRepository, reviewRepository);
-		dialog = new CurriculumMappingReviewDialog(stage, repository, descriptorSuggester, emptySubtopicSuggester,
-				evidenceService, reviewRepository, mappingRepository, coverageService, reviewWriter);
+		dialog = new CurriculumMappingReviewDialog(stage, subject, repository, descriptorSuggester,
+				emptySubtopicSuggester, evidenceService, reviewRepository, mappingRepository, coverageService,
+				reviewWriter);
 	}
 
 	@Test

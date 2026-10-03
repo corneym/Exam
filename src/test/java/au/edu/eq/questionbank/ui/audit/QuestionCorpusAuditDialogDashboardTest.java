@@ -54,15 +54,13 @@ class QuestionCorpusAuditDialogDashboardTest {
 	@Test
 	void dialogUsesOperationalDashboardPane(FxRobot robot) {
 		assertInstanceOf(CorpusDashboardPane.class, dialog.getDialogPane().getContent());
-		var refresh = robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-refresh").queryButton();
-		assertTrue(refresh.isDisable());
-		robot.interact(() -> dialog.setRefreshHandler(() -> {
 
-			// Persistence reload is owned by the application in production.
-		}));
-		assertTrue(!refresh.isDisable());
+		// Dashboard persistence refresh is now automatic on Subject changes and return
+		// from Dashboard-owned workflows. The former manual Refresh action is retired.
+		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-refresh").tryQuery().isEmpty());
 
-		// Capture and correction actions are explicit. The former generic dialog-level
+		// Capture and correction actions remain explicit. The former generic
+		// dialog-level
 		// Resolve Selected action must not return.
 		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-capture-questions").tryQuery()
 				.isPresent());
