@@ -517,9 +517,23 @@ multipart Question-row count.
 The current PDF-region-only Question-source audit must be corrected so
 clipboard/image-only Questions count as having authoritative Question content.
 
-The Dashboard should provide useful tables, summary counts, filtering,
-correction routing and refresh after work is completed. Curriculum mapping
-review coverage remains a separate reporting dimension.
+The operational Corpus Dashboard is now implemented with Exam/booklet/Question
+scope, completeness summaries, expected-versus-present asset reporting, explicit
+Question and Answer capture actions, response-type correction and direct
+Exam/Assets routing.
+
+Issue #61 adds the correction-routing circuit around that Dashboard. Dashboard
+actions now enter the existing authoritative Question capture, Answer capture and
+Exam/Assets workflows and return through refreshed persistence state. Manage
+Exam / Assets is available for any selected Exam and preserves an explicitly
+selected booklet. The latest routing, responsive-workspace and Subject-change
+safeguards have passed manual acceptance and feature-branch CI.
+
+Issue #65 owns the next application-shell step: make the Corpus Dashboard the
+default home screen, move authoritative Subject selection into that surface and
+provide useful empty-Subject actions such as Add Exam and Add Curriculum.
+
+Curriculum mapping review coverage remains a separate reporting dimension.
 
 Detailed working design and implementation status are maintained in
 `docs/design/sprint-12-release-0.2.md`.

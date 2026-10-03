@@ -52,10 +52,13 @@ Sprint 11 delivered:
 Sprint 11 closeout is complete. Release 0.1 implementation, local release
 verification, feature-branch CI and protected-main merge are all complete.
 
-Sprint 12 is reserved for Corpus Audit -> Corpus Dashboard redesign and richer
-Question filtering.
+Sprint 12 is in implementation on `feature/sprint-12` and targets Release 0.2.
+Its active scope covers Exam intake and asset management, streamlined capture,
+optional MCQ explanation regions, and evolution of Corpus Audit into the
+operational Corpus Dashboard. Richer retrieval-oriented Question Search
+filtering has been deferred.
 
-The latest supported SQLite schema is version **14**.
+The current implemented SQLite schema is version **18**.
 
 ## Status vocabulary
 

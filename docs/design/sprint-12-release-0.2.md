@@ -1281,20 +1281,35 @@ actions:
   choice / Written controls; and
 - `Manage Exam / Assets` remains the structural correction route.
 
-Changing Exam, booklet or Question-work scope clears the Question-table
-selection before rebuilding the work queue. A selected row index therefore
-cannot silently transfer to a different Question after a scope change.
-
-An expected-versus-encountered Question-count mismatch is advisory. If the Exam
-is COMPLETE, it must first be reactivated through Manage Exam / Assets before
-new Questions can be captured. If the expected count itself is wrong, that
-planning value is corrected through Manage Exam / Assets.
-
 Dashboard-launched Question and Answer capture expose one common
 `Return to Corpus Dashboard` action in the main Capture workspace. Returning is
 blocked while unsaved Question, Shared Context or Answer capture work is staged.
-The Dashboard reloads authoritative persistence state when it is reopened.
+Managed capture PDF sessions are closed before returning, and Dashboard
+reconstruction is performed asynchronously from authoritative persistence.
 
+Potentially noticeable Dashboard transitions expose a busy indicator rather than
+blocking the JavaFX application thread. Dashboard-launched Question capture opens
+and renders the selected Exam PDF asynchronously. Answer capture reopens the
+assigned Answer PDF when a previous Dashboard return has closed its managed
+session. Classification controls are disabled while Dashboard Answer capture owns
+the workspace and are restored when that workflow ends.
+
+`Manage Exam / Assets` is a general management route for every selected Exam, not
+only a response to an audit finding. If the user has selected a booklet, that
+booklet scope is preserved when Exam/Assets opens. Structural findings remain
+useful evidence, but they do not control access to Exam/Assets.
+
+A Working Subject change invalidates Dashboard-return ownership belonging to the
+previous Subject. This prevents an old Dashboard session from being reopened
+against newly authoritative Subject context. Issue #65 removes this transitional
+case by moving Subject selection into the Dashboard when it becomes the
+application home screen.
+
+Issue #61 direct-routing acceptance has been manually verified against live data:
+ordinary Exams can open Manage Exam / Assets, Exam/Assets remains within the
+normal workspace width, Dashboard capture/return transitions remain responsive,
+and changing Working Subject during Dashboard-launched Exam/Assets no longer
+leaves an indefinite busy state. The corresponding feature-branch CI is green.
 ### 7.8 Curriculum mapping reporting
 
 Curriculum mapping review coverage may be surfaced through the existing
@@ -1313,44 +1328,63 @@ region has been captured.
 
 ### 7.10 Dashboard as the Subject home screen
 
-By Sprint 12 closeout the intended application flow is:
+Promotion of the Corpus Dashboard to the application home screen is tracked by
+Issue #65. It follows completion and live-data validation of the operational
+Dashboard and its correction-routing workflows.
 
-``` text
+The intended application flow is:
+
+```text
 Application start
     ↓
-Select Subject
-    ↓
 Corpus Dashboard
+    ↓
+Subject [ Chemistry ▼ ] [+]
+    ↓
+Subject-scoped operational work
 ```
 
-The Dashboard becomes the main working surface for the selected Subject rather
-than remaining only a modal audit dialog.
-The Dashboard must preserve access to the application's specialised workflows,
-including Exam setup, Question capture, Answer capture, Search, curriculum
-management and output.
-A Subject with little or no corpus data must not display only an empty work
-queue.
-Useful empty-state actions include at minimum:
+The Dashboard will own the authoritative Working Subject selector rather than
+requiring Subject selection in the Capture workspace. Changing Subject will
+refresh the Dashboard for that Subject, and specialised workflows opened from the
+Dashboard will inherit that same application context.
 
-```
+The Dashboard must preserve direct access to the application's specialised
+workflows, including:
+
+- Exam setup and asset management;
+- Question capture;
+- Answer capture;
+- Search;
+- curriculum management; and
+- output workflows.
+
+A Subject with little or no corpus data must provide useful onboarding actions
+rather than displaying only an empty work queue. At minimum:
+
+```text
 No Exams have been added.
-    [Add Exam]
+    [ Add Exam ]
 
 No curriculum has been added.
-    [Add Curriculum]
+    [ Add Curriculum ]
 
-Application-level Subject context provides:
 Subject [ Chemistry ▼ ] [+]
 ```
 
-Creating a Subject does not require immediate creation of either an Exam or a
-curriculum.
-Exam setup may occur before curriculum entry. Question capture still requires a
-valid persisted Question classification and therefore cannot complete until
-usable curriculum data exists.
-The Dashboard should make such dependencies visible through actionable status
-rather than treating an empty Subject as an error.
+`Add Exam` will route into the normal Exam/Assets workflow for the selected
+Subject rather than introducing a second Exam-creation implementation.
+`Add Curriculum` will likewise route into the existing curriculum-authoring
+workflow.
 
+Creating a Subject does not require immediate creation of either an Exam or
+curriculum. Exam setup may occur before curriculum entry. Question capture still
+requires a valid persisted Question classification and therefore cannot complete
+until usable curriculum data exists.
+
+Until Issue #65 is implemented, the existing application-level Working Subject
+selector remains authoritative and the Corpus Dashboard continues to be entered
+through the Questions menu.
 ## 8. Explicitly outside Sprint 12
 
 The following are not Sprint 12 work:
