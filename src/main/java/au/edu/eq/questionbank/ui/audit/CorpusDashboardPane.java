@@ -113,6 +113,14 @@ public final class CorpusDashboardPane extends VBox {
 	};
 	private Consumer<Question> questionCorrectionHandler = _ -> {
 	};
+	private final Button addExamButton = new Button("Add Exam");
+	private Runnable addExamHandler = () -> {
+	};
+	private HBox examEmptyStateRow;
+	private VBox examOperationalContent;
+	private final Label noExamsLabel = new Label("No Exams have been added.");
+	private StackPane bookletsSection;
+	private StackPane questionWorkSection;
 
 	// Curriculum mapping review is a Subject-level reporting dimension independent
 	// of ordinary Question and Exam completeness.
@@ -125,9 +133,28 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button mapCurriculumButton = new Button("Map Curriculum");
 	private Runnable mapCurriculumHandler = () -> {
 	};
+	private boolean curriculumAvailable;
 
 	public CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions,
 			List<CurriculumMappingCoverage> mappingCoverages) {
+
+		// Existing callers predate explicit curriculum-presence reporting and therefore
+		// retain their previous non-empty curriculum presentation.
+		this(workingSubject, examStatuses, questions, mappingCoverages, true);
+	}
+
+	/**
+	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
+	 *
+	 * @param workingSubject      authoritative application Subject
+	 * @param examStatuses        structural Exam audit state
+	 * @param questions           current Question corpus
+	 * @param mappingCoverages    curriculum mapping-review coverage
+	 * @param curriculumAvailable whether at least one curriculum version exists for
+	 *                            the Subject
+	 */
+	public CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions,
+			List<CurriculumMappingCoverage> mappingCoverages, boolean curriculumAvailable) {
 		if (workingSubject == null) {
 			throw new NullPointerException("workingSubject");
 		}
@@ -138,6 +165,7 @@ public final class CorpusDashboardPane extends VBox {
 		this.examStatuses = statusesForWorkingSubject(examStatuses);
 		this.questions = questionsForWorkingSubject(questions);
 		this.mappingCoverages = mappingCoveragesForWorkingSubject(mappingCoverages);
+		this.curriculumAvailable = curriculumAvailable;
 		configureControls();
 		configureActions();
 		buildContent();
@@ -152,8 +180,22 @@ public final class CorpusDashboardPane extends VBox {
 		this(workingSubject, examStatuses, questions, List.of());
 	}
 
+	/**
+	 * Replaces the complete persistence-derived Dashboard generation while
+	 * retaining compatible local filters and selection.
+	 *
+	 * @param updatedStatuses            refreshed Exam audit state
+	 * @param updatedQuestions           refreshed Question corpus
+	 * @param updatedMappingCoverages    refreshed curriculum mapping coverage
+	 * @param updatedCurriculumAvailable whether the Subject has at least one
+	 *                                   curriculum version
+	 * @param preferredQuestionId        Question to restore when still visible, or
+	 *                                   a non-positive value for no preferred
+	 *                                   Question
+	 */
 	public void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
-			List<CurriculumMappingCoverage> updatedMappingCoverages, long preferredQuestionId) {
+			List<CurriculumMappingCoverage> updatedMappingCoverages, boolean updatedCurriculumAvailable,
+			long preferredQuestionId) {
 		Long selectedExamId = selectedExamId();
 		Long selectedBookletId = selectedBookletId();
 		Long providerId = providerBox.getValue() == null ? null : providerBox.getValue().getId();
@@ -165,6 +207,7 @@ public final class CorpusDashboardPane extends VBox {
 		examStatuses = statusesForWorkingSubject(updatedStatuses);
 		questions = questionsForWorkingSubject(updatedQuestions);
 		mappingCoverages = mappingCoveragesForWorkingSubject(updatedMappingCoverages);
+		curriculumAvailable = updatedCurriculumAvailable;
 		changingScopeFilters = true;
 		try {
 			populateFilterOptions();
@@ -193,6 +236,16 @@ public final class CorpusDashboardPane extends VBox {
 		}
 	}
 
+	public void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
+			List<CurriculumMappingCoverage> updatedMappingCoverages, long preferredQuestionId) {
+
+		// Callers that do not publish curriculum-presence information retain the
+		// current
+		// value from the Dashboard generation already on screen.
+		replaceData(updatedStatuses, updatedQuestions, updatedMappingCoverages, curriculumAvailable,
+				preferredQuestionId);
+	}
+
 	public void setAddCurriculumHandler(Runnable handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -201,6 +254,23 @@ public final class CorpusDashboardPane extends VBox {
 		// Curriculum creation remains application-owned because it opens the existing
 		// authoring workflow and refreshes authoritative persistence afterwards.
 		addCurriculumHandler = handler;
+	}
+
+	/**
+	 * Supplies the application-owned route for creating the first Exam for the
+	 * current Subject.
+	 *
+	 * @param handler operation that opens the normal Exam / Assets New Exam
+	 *                workflow
+	 */
+	public void setAddExamHandler(Runnable handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Dashboard onboarding delegates to Exam / Assets rather than introducing a
+		// second Exam-creation implementation.
+		addExamHandler = handler;
 	}
 
 	public void setAnswerCaptureHandler(Consumer<Question> handler) {
@@ -370,10 +440,18 @@ public final class CorpusDashboardPane extends VBox {
 		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
 				missingAnswerButton, unknownTypeButton, sharedContextButton, mcqExplanationSummaryLabel);
 		summaryRow.setAlignment(Pos.CENTER_LEFT);
+		examEmptyStateRow = new HBox(SPACING, noExamsLabel, addExamButton);
+		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
+		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel,
 				manageExamAssetsButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
+
+		// The ordinary Exam catalogue disappears when a Subject has no Exams. The
+		// onboarding row then becomes the only content inside the EXAMS section.
+		examOperationalContent = new VBox(SPACING, filterRow, examTable, selectedExamTitleRow, selectedExamCountsLabel);
+		examOperationalContent.setId("corpus-dashboard-exam-operational-content");
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
 		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton);
@@ -393,11 +471,11 @@ public final class CorpusDashboardPane extends VBox {
 		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
 		HBox curriculumActionsRow = new HBox(SPACING, addCurriculumButton, mapCurriculumButton);
 		curriculumActionsRow.setAlignment(Pos.CENTER_LEFT);
-		StackPane examsSection = createTitledSection("corpus-dashboard-exams-section", "EXAMS", filterRow, examTable,
-				selectedExamTitleRow, selectedExamCountsLabel);
-		StackPane bookletsSection = createTitledSection("corpus-dashboard-booklets-section", "QUESTION BOOKLETS",
-				bookletTable, selectedBookletLabel, bookletWarningLabel, bookletActionsRow);
-		StackPane questionWorkSection = createTitledSection("corpus-dashboard-question-work-section", "QUESTION WORK",
+		StackPane examsSection = createTitledSection("corpus-dashboard-exams-section", "EXAMS", examEmptyStateRow,
+				examOperationalContent);
+		bookletsSection = createTitledSection("corpus-dashboard-booklets-section", "QUESTION BOOKLETS", bookletTable,
+				selectedBookletLabel, bookletWarningLabel, bookletActionsRow);
+		questionWorkSection = createTitledSection("corpus-dashboard-question-work-section", "QUESTION WORK",
 				questionFilterRow, questionTable, questionActionsRow, mcqExplanationCoverageLabel);
 		StackPane curriculumSection = createTitledSection("corpus-dashboard-curriculum-section", "CURRICULUM",
 				mappingReviewRow, curriculumActionsRow);
@@ -503,6 +581,7 @@ public final class CorpusDashboardPane extends VBox {
 
 	// TODO Refactor into single concerns
 	private void configureActions() {
+		addExamButton.setOnAction(_ -> addExamHandler.run());
 		clearFiltersButton.setOnAction(_ -> clearFilters());
 		providerBox.valueProperty().addListener((_, _, _) -> {
 			if (!changingScopeFilters) {
@@ -650,6 +729,11 @@ public final class CorpusDashboardPane extends VBox {
 		mapCurriculumButton.setId("corpus-dashboard-map-curriculum");
 		mapCurriculumButton
 				.setTooltip(new Tooltip("Review mappings between historical and current curriculum versions."));
+		noExamsLabel.setId("corpus-dashboard-no-exams");
+		noExamsLabel.setWrapText(true);
+		addExamButton.setId("corpus-dashboard-add-exam");
+		addExamButton.setTooltip(new Tooltip("Add an Exam to the current Subject."));
+		addExamButton.setMinWidth(Region.USE_PREF_SIZE);
 
 		// Selected-scope descriptions act as field labels as well as status text, so
 		// emphasise them consistently with the Dashboard's other metadata labels.
@@ -1051,11 +1135,19 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void refreshCurriculumMappingSummary() {
+		if (!curriculumAvailable) {
+
+			// No syllabus version exists for this Subject yet. Distinguish that onboarding
+			// state from a valid curriculum that simply has no historical mapping pair.
+			mapCurriculumButton.setDisable(true);
+			curriculumMappingSummaryLabel.setText("No curriculum has been added.");
+			return;
+		}
 		mapCurriculumButton.setDisable(mappingCoverages.isEmpty());
 		if (mappingCoverages.isEmpty()) {
 
-			// No historical-to-current pair currently exists. Add Curriculum remains
-			// available independently so the Subject can acquire another syllabus version.
+			// Curriculum exists, but no historical-to-current pair currently requires
+			// mapping review.
 			curriculumMappingSummaryLabel.setText("No mapping review is currently available.");
 			return;
 		}
@@ -1085,6 +1177,7 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void refreshExamTable(Long preferredExamId, Long preferredBookletId) {
+		updateExamEmptyState();
 		List<ExamCorpusStatus> filtered = filteredExamStatuses();
 		examTable.getItems().setAll(filtered);
 		ExamCorpusStatus preferred = preferredExamId == null ? null
@@ -1201,9 +1294,9 @@ public final class CorpusDashboardPane extends VBox {
 		return selected.stream().map(QuestionCorpusWorkItem::question).toList();
 	}
 
-	private void setVisibleAndManaged(Label label, boolean visible) {
-		label.setVisible(visible);
-		label.setManaged(visible);
+	private void setVisibleAndManaged(Node node, boolean visible) {
+		node.setVisible(visible);
+		node.setManaged(visible);
 	}
 
 	private void showSelectedBooklet(BookletCorpusStatus status) {
@@ -1325,6 +1418,18 @@ public final class CorpusDashboardPane extends VBox {
 		// why the user should visit it, but they do not control access to the
 		// workspace.
 		manageExamAssetsButton.setDisable(selectedExam == null);
+	}
+
+	private void updateExamEmptyState() {
+		boolean noExams = examStatuses.isEmpty();
+
+		// A Subject with no Exams should present a direct next action rather than an
+		// empty filter/table hierarchy. Booklet and Question sections become meaningful
+		// only after an Exam exists.
+		setVisibleAndManaged(examEmptyStateRow, noExams);
+		setVisibleAndManaged(examOperationalContent, !noExams);
+		setVisibleAndManaged(bookletsSection, !noExams);
+		setVisibleAndManaged(questionWorkSection, !noExams);
 	}
 
 	private void updateQuestionActionState() {

@@ -1371,10 +1371,11 @@ Subject-scoped operational work
 ```
 
 The Dashboard owns the authoritative Subject selector. On the home surface the
-single live Subject control is displayed inside the bordered `CORPUS DASHBOARD`
-region beside the Dashboard context rather than in a full-width application
-strip. Specialised Capture and Exam / Assets work re-parents that same live
-control into the left workspace; a second Subject selector is never created.
+single editable Subject control is displayed inside the bordered
+`CORPUS DASHBOARD` region rather than in a full-width application strip.
+Specialised Capture and Exam / Assets work display the same authoritative
+Subject as read-only context. Subject selection and Subject creation are
+available only from the Dashboard.
 
 The Dashboard refreshes automatically after Subject changes and after returning
 from Dashboard-owned Question capture, Answer capture, Exam / Assets,
@@ -1410,10 +1411,15 @@ No curriculum has been added.
 Subject [ Chemistry ▼ ] [+]
 ```
 
-`Add Exam` will route into the normal Exam/Assets workflow for the selected
-Subject rather than introducing a second Exam-creation implementation.
-`[+] Add Curriculum` will likewise route into the existing curriculum-authoring
-workflow.
+The empty-corpus onboarding actions are implemented. `Add Exam` routes directly
+into the normal Exam / Assets New Exam transaction for the selected Subject
+rather than introducing a second Exam-creation implementation. While that
+structural transaction is active, Dashboard return is disabled until the
+transaction is saved or cancelled.
+
+The Curriculum region distinguishes a Subject with no curriculum from one that
+has curriculum but no historical-to-current mapping pair. Its compact `+`
+action routes to the existing PDF-authoring or Excel-import workflow.
 
 Creating a Subject does not require immediate creation of either an Exam or
 curriculum. Exam setup may occur before curriculum entry. Question capture still
@@ -1443,8 +1449,9 @@ Subject scope tracked by Issue #76.
 
 Issue #65 now uses the Corpus Dashboard as the application startup surface and
 the Dashboard-owned Subject selector as the authoritative application context.
-Remaining Issue #65 work includes the final empty-corpus onboarding actions and
-task-specific Question-versus-Answer capture presentation.
+Task-specific Question-versus-Answer capture presentation and empty-corpus
+onboarding are implemented. Issue #67 owns the Dashboard onboarding behaviour
+for Subjects with little or no data.
 
 ## 8. Explicitly outside Sprint 12
 

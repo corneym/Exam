@@ -504,6 +504,48 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardEmptyExamStateStartsNormalNewExamWorkflow(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> subjects.getSelectionModel().selectFirst());
+
+		// A newly selected Subject has curriculum fixture data but no Exam records.
+		// Wait
+		// for the asynchronous Dashboard generation before inspecting its onboarding
+		// UI.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
+		Label noExams = lookup(robot, "#corpus-dashboard-no-exams", Label.class);
+		Button addExam = lookup(robot, "#corpus-dashboard-add-exam", Button.class);
+		assertEquals("No Exams have been added.", noExams.getText());
+		assertFalse(addExam.isDisable());
+		robot.interact(addExam::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		Label examState = lookup(robot, "#exam-assets-state", Label.class);
+		Label readOnlySubject = lookup(robot, "#working-subject-value", Label.class);
+		Button cancelNewExam = lookup(robot, "#exam-assets-new-exam-cancel", Button.class);
+		Button returnToDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
+
+		// Dashboard onboarding must enter the same New Exam transaction already owned
+		// by
+		// Exam / Assets rather than constructing a second Exam-entry form.
+		assertEquals("NEW EXAM", examState.getText());
+		assertEquals(subjects.getValue().getName(), readOnlySubject.getText());
+		assertTrue(readOnlySubject.isVisible());
+		assertTrue(returnToDashboard.isVisible());
+		assertTrue(returnToDashboard.isDisable());
+		robot.interact(cancelNewExam::fire);
+
+		// Cancelling the unsaved structural transaction makes the Dashboard route
+		// usable
+		// again without creating an Exam.
+		assertFalse(returnToDashboard.isDisable());
+		robot.interact(returnToDashboard::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-no-exams").tryQuery().isPresent());
+		assertEquals("No Exams have been added.", lookup(robot, "#corpus-dashboard-no-exams", Label.class).getText());
+	}
+
+	@Test
 	void dashboardExamAssetsFitsInitialWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();

@@ -2247,7 +2247,7 @@ public class QuestionBankApplication extends Application {
 			// Ordinary refresh retains Dashboard-local filters and selection where they
 			// remain valid.
 			corpusDashboardPane.replaceData(snapshot.examStatuses(), snapshot.questions(), snapshot.mappingCoverages(),
-					preferredQuestionId);
+					snapshot.curriculumAvailable(), preferredQuestionId);
 		});
 		task.setOnFailed(_ -> {
 			if (!isCurrentWorkingSubjectRefresh(dashboardSubject, generation)) {
@@ -2273,16 +2273,16 @@ public class QuestionBankApplication extends Application {
 			throw new NullPointerException("dashboardSubject");
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		CurriculumDashboardState curriculumState = loadCurriculumDashboardState(database, dashboardSubject);
 
-		// Structural audit, Question state and mapping-review coverage are loaded as
-		// one
+		// Structural audit, Question state and curriculum state are loaded as one
 		// Dashboard generation even though their completeness semantics remain
 		// separate.
 		return new CorpusDashboardSnapshot(auditService.assessSubject(dashboardSubject), questionRepository.findAll(),
-				loadCurriculumMappingCoverages(database, dashboardSubject));
+				curriculumState.mappingCoverages(), curriculumState.curriculumAvailable());
 	}
 
-	private List<CurriculumMappingCoverage> loadCurriculumMappingCoverages(SqliteDatabase database, Subject subject) {
+	private CurriculumDashboardState loadCurriculumDashboardState(SqliteDatabase database, Subject subject) {
 		if (database == null) {
 			throw new NullPointerException("database");
 		}
@@ -2291,12 +2291,18 @@ public class QuestionBankApplication extends Application {
 		}
 		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		List<SyllabusVersion> versions = curriculumRepository.findVersionsForSubject(subject);
+		if (versions.isEmpty()) {
+
+			// Curriculum absence is an onboarding state and must not be confused with a
+			// curriculum that simply has no historical version requiring mapping.
+			return new CurriculumDashboardState(List.of(), false);
+		}
 		List<SyllabusVersion> currentVersions = versions.stream().filter(SyllabusVersion::isCurrent).toList();
 
-		// A Subject without a current syllabus has no valid historical-to-current pair
-		// and therefore no mapping-review status to report.
+		// Existing curriculum without a current syllabus is still curriculum data, but
+		// it has no valid historical-to-current mapping-review pair.
 		if (currentVersions.isEmpty()) {
-			return List.of();
+			return new CurriculumDashboardState(List.of(), true);
 		}
 		if (currentVersions.size() > 1) {
 			throw new IllegalStateException("Working Subject has more than one current syllabus version.");
@@ -2308,10 +2314,10 @@ public class QuestionBankApplication extends Application {
 				mappingRepository, reviewRepository);
 
 		// Every historical syllabus is reviewed independently against the one current
-		// target syllabus. Target-only content is reported by the service but does not
-		// become outstanding source-review work.
-		return versions.stream().filter(version -> !version.isCurrent())
+		// target syllabus.
+		List<CurriculumMappingCoverage> coverages = versions.stream().filter(version -> !version.isCurrent())
 				.map(version -> coverageService.calculateCoverage(version, targetVersion)).toList();
+		return new CurriculumDashboardState(coverages, true);
 	}
 
 	private void markActiveExamComplete(Stage primaryStage) {
@@ -3229,7 +3235,8 @@ public class QuestionBankApplication extends Application {
 
 	private void showCorpusDashboardSnapshot(Subject dashboardSubject, CorpusDashboardSnapshot snapshot) {
 		CorpusDashboardPane dashboard = new CorpusDashboardPane(dashboardSubject, snapshot.examStatuses(),
-				snapshot.questions(), snapshot.mappingCoverages());
+				snapshot.questions(), snapshot.mappingCoverages(), snapshot.curriculumAvailable());
+		dashboard.setAddExamHandler(this::showExamAssetsModeForNewExam);
 		dashboard.setAddCurriculumHandler(() -> showDashboardAddCurriculum(primaryStage(), applicationConfig));
 		dashboard.setMapCurriculumHandler(() -> reviewCurriculumMappings(primaryStage(), applicationConfig));
 
@@ -3504,6 +3511,33 @@ public class QuestionBankApplication extends Application {
 		} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
 			examAssetsPane.clearCorpusDashboardReturnHandler();
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The requested Exam assets could not be opened.",
+					exception.getMessage());
+		}
+	}
+
+	private void showExamAssetsModeForNewExam() {
+		if (!allowExamAssetsTransition()) {
+			return;
+		}
+
+		// Dashboard onboarding belongs to the currently selected application Subject.
+		clearCorpusDashboardCaptureReturn();
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "No Subject is selected.",
+					"Select or add a Subject on the Corpus Dashboard first.");
+			return;
+		}
+		try {
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+			examAssetsPane.showForNewExam(workingSubject);
+
+			// New Exam is still the ordinary Exam / Assets transaction. Once it is saved
+			// or cancelled, the explicit return reloads the Dashboard from persistence.
+			examAssetsPane.setCorpusDashboardReturnHandler(this::refreshAndShowCorpusDashboardHome);
+			setWorkspaceMode(examAssetsPane);
+		} catch (SQLException | IllegalStateException exception) {
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "A new Exam could not be started.",
 					exception.getMessage());
 		}
 	}
@@ -4254,7 +4288,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions,
-			List<CurriculumMappingCoverage> mappingCoverages) {
+			List<CurriculumMappingCoverage> mappingCoverages, boolean curriculumAvailable) {
 
 		private CorpusDashboardSnapshot {
 			if (examStatuses == null) {
@@ -4271,6 +4305,20 @@ public class QuestionBankApplication extends Application {
 			// Dashboard generation to JavaFX.
 			examStatuses = List.copyOf(examStatuses);
 			questions = List.copyOf(questions);
+			mappingCoverages = List.copyOf(mappingCoverages);
+		}
+	}
+
+	private record CurriculumDashboardState(List<CurriculumMappingCoverage> mappingCoverages,
+			boolean curriculumAvailable) {
+
+		private CurriculumDashboardState {
+			if (mappingCoverages == null) {
+				throw new NullPointerException("mappingCoverages");
+			}
+
+			// Freeze curriculum reporting before it crosses from the persistence worker to
+			// the JavaFX application thread.
 			mappingCoverages = List.copyOf(mappingCoverages);
 		}
 	}

@@ -484,6 +484,31 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
+	 * Opens Exam / Assets directly in its existing New Exam transaction for one
+	 * authoritative application Subject.
+	 *
+	 * @param subject Subject that will own the new Exam
+	 * @throws SQLException          if the Subject's existing Exam hierarchy cannot
+	 *                               be loaded
+	 * @throws NullPointerException  if {@code subject} is {@code null}
+	 * @throws IllegalStateException if the New Exam transaction cannot be started
+	 */
+	public void showForNewExam(Subject subject) throws SQLException {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+
+		// Load authoritative persisted state first. The ordinary New Exam transaction
+		// then owns all metadata validation and persistence exactly as it does when
+		// entered from inside Exam / Assets.
+		refresh(subject);
+		if (!canBeginNewExam()) {
+			throw new IllegalStateException("A new Exam cannot be started while structural work is pending.");
+		}
+		beginNewExam();
+	}
+
+	/**
 	 * Presents unresolved Question-booklet identities reported by legacy workbook
 	 * preflight.
 	 *
@@ -699,6 +724,11 @@ public final class ExamAssetsPane extends VBox {
 		examBox.getSelectionModel().clearSelection();
 		clearSelectedExam();
 		showNewExamPresentation();
+
+		// Dashboard return remains visible for a Dashboard-launched New Exam session
+		// but
+		// cannot abandon the active structural transaction.
+		updateCorpusDashboardReturnState();
 	}
 
 	private void beginQuestionBookletAdd() {
@@ -837,6 +867,10 @@ public final class ExamAssetsPane extends VBox {
 		creatingNewExam = false;
 		newExamReturnExamId = null;
 		restoreNormalExamPresentation();
+
+		// Cancelling removes the structural transaction and therefore makes the
+		// Dashboard return action available again.
+		updateCorpusDashboardReturnState();
 		if (returnExamId != null) {
 			Exam returnExam = examBox.getItems().stream().filter(exam -> exam.getId() == returnExamId.longValue())
 					.findFirst().orElse(null);
@@ -1674,6 +1708,10 @@ public final class ExamAssetsPane extends VBox {
 			creatingNewExam = false;
 			newExamReturnExamId = null;
 			restoreNormalExamPresentation();
+
+			// The newly persisted Exam ends the New Exam transaction. A Dashboard-launched
+			// session may now return and refresh its authoritative Subject snapshot.
+			updateCorpusDashboardReturnState();
 
 			// Reload from SQLite rather than treating the returned object as sufficient
 			// proof of authoritative workspace state.

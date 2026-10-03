@@ -279,6 +279,48 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void emptySubjectCorpusOffersExamAndCurriculumOnboarding(FxRobot robot) {
+		AtomicReference<Boolean> addExamCalled = new AtomicReference<>(Boolean.FALSE);
+		AtomicReference<Boolean> addCurriculumCalled = new AtomicReference<>(Boolean.FALSE);
+		robot.interact(() -> {
+			pane.setAddExamHandler(() -> addExamCalled.set(Boolean.TRUE));
+			pane.setAddCurriculumHandler(() -> addCurriculumCalled.set(Boolean.TRUE));
+
+			// Simulate a newly created Subject: no Exam hierarchy and no curriculum
+			// versions have yet been persisted.
+			pane.replaceData(List.of(), List.of(), List.of(), false, -1L);
+		});
+		Label noExams = robot.lookup("#corpus-dashboard-no-exams").queryAs(Label.class);
+		Button addExam = robot.lookup("#corpus-dashboard-add-exam").queryButton();
+		Label curriculumStatus = robot.lookup("#corpus-dashboard-mapping-review").queryAs(Label.class);
+		Button addCurriculum = robot.lookup("#corpus-dashboard-add-curriculum").queryButton();
+		Button mapCurriculum = robot.lookup("#corpus-dashboard-map-curriculum").queryButton();
+		Node examOperationalContent = robot.lookup("#corpus-dashboard-exam-operational-content").query();
+		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
+		Node questionSection = robot.lookup("#corpus-dashboard-question-work-section").query();
+		assertTrue(noExams.isVisible());
+		assertTrue(noExams.isManaged());
+		assertEquals("No Exams have been added.", noExams.getText());
+		assertFalse(addExam.isDisable());
+
+		// Empty structural hierarchy is replaced by one direct next action rather than
+		// three meaningless empty tables.
+		assertFalse(examOperationalContent.isVisible());
+		assertFalse(examOperationalContent.isManaged());
+		assertFalse(bookletsSection.isVisible());
+		assertFalse(bookletsSection.isManaged());
+		assertFalse(questionSection.isVisible());
+		assertFalse(questionSection.isManaged());
+		assertEquals("No curriculum has been added.", curriculumStatus.getText());
+		assertFalse(addCurriculum.isDisable());
+		assertTrue(mapCurriculum.isDisable());
+		robot.interact(addExam::fire);
+		robot.interact(addCurriculum::fire);
+		assertTrue(addExamCalled.get().booleanValue());
+		assertTrue(addCurriculumCalled.get().booleanValue());
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void examStateFilterChangesSummaryExamAndQuestionScope(FxRobot robot) {
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
