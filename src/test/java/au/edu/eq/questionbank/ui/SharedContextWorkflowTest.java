@@ -35,6 +35,7 @@ import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
+import javafx.geometry.Bounds;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -43,6 +44,7 @@ import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.stage.Stage;
 
@@ -85,6 +87,19 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(2, previewBox.getChildren().size());
 		assertEquals("question-shared-context-preview", previewBox.getChildren().get(0).getId());
 		assertEquals("question-content-part-0", previewBox.getChildren().get(1).getId());
+		WaitForAsyncUtils.waitForFxEvents();
+		ScrollPane acceptedContent = field(questionCapturePane(), "regionsScrollPane", ScrollPane.class);
+		Bounds questionBounds = questionCapturePane().localToScene(questionCapturePane().getBoundsInLocal());
+		Bounds acceptedBounds = acceptedContent.localToScene(acceptedContent.getBoundsInLocal());
+		Bounds answerBounds = answerCapturePane().localToScene(answerCapturePane().getBoundsInLocal());
+
+		// A Shared Context preview plus an ordinary Question region previously escaped
+		// the
+		// Question pane and visibly covered the Answer controls beneath it.
+		assertTrue(acceptedBounds.getMaxY() <= questionBounds.getMaxY() + 0.5,
+				"Accepted Question content must remain inside the Question pane");
+		assertTrue(questionBounds.getMaxY() <= answerBounds.getMinY() + 0.5,
+				"Question and Answer panes must not overlap");
 	}
 
 	@Test

@@ -21,6 +21,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
@@ -43,8 +44,11 @@ import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.McqExplanationCoverage;
 import au.edu.eq.questionbank.service.audit.McqExplanationSummary;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusCompletionFilter;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -130,6 +134,51 @@ class CorpusDashboardPaneTest {
 		// Only an explicit second decision allows capture beyond the recorded count.
 		robot.interact(((Button) proceedNode)::fire);
 		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void clearRestoresFullHierarchyAfterSummaryDrillDown(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		ComboBox<QuestionCorpusCompletionFilter> questionView = robot.lookup("#corpus-dashboard-question-view")
+				.queryAs(ComboBox.class);
+		Button missingAnswers = robot.lookup("#corpus-dashboard-summary-missing-answer").queryButton();
+		Button clear = robot.lookup("#corpus-dashboard-clear-filters").queryButton();
+
+		// Missing Answers deliberately narrows all three Dashboard hierarchy levels.
+		robot.interact(missingAnswers::fire);
+		assertEquals(1, exams.getItems().size());
+		assertEquals(1, booklets.getItems().size());
+		assertEquals(2, questions.getItems().size());
+
+		// Clear means remove every Dashboard-local restriction, not merely the
+		// Provider/Year/Exam-state controls.
+		robot.interact(clear::fire);
+		assertEquals(2, exams.getItems().size());
+		assertEquals(2, booklets.getItems().size());
+		assertEquals(4, questions.getItems().size());
+		assertEquals(QuestionCorpusCompletionFilter.ALL, questionView.getValue());
+	}
+
+	@Test
+	void curriculumMappingReviewIsSeparateFromCorpusCompleteness(FxRobot robot) {
+		Label mappingReview = robot.lookup("#corpus-dashboard-mapping-review").queryAs(Label.class);
+		Button needsAttention = robot.lookup("#corpus-dashboard-summary-attention").queryButton();
+
+		// Mapping review reports the historical-to-current syllabus pair and its own
+		// unresolved work.
+		assertTrue(mappingReview.getText().contains("2019 \u2192 2025"));
+		assertTrue(mappingReview.getText().contains("11/15 resolved"));
+		assertTrue(mappingReview.getText().contains("4 remaining"));
+		assertTrue(mappingReview.getText().contains("3 unreviewed"));
+		assertTrue(mappingReview.getText().contains("1 inconsistent"));
+
+		// Four outstanding mapping reviews must not become four additional incomplete
+		// Questions.
+		assertEquals("3 Need attention", needsAttention.getText());
 	}
 
 	@Test
@@ -345,10 +394,35 @@ class CorpusDashboardPaneTest {
 	@Start
 	void start(Stage stage) {
 		fixture = new Fixture();
+
+		// Dashboard tests include representative mapping-review work beside ordinary
+		// Exam and Question audit state.
 		pane = new CorpusDashboardPane(fixture.chemistry, List.of(fixture.completeExamStatus, fixture.activeExamStatus),
-				fixture.questions());
+				fixture.questions(), List.of(fixture.mappingCoverage));
 		stage.setScene(new Scene(pane, 1100, 850));
 		stage.show();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void subjectSummaryDrillDownNarrowsExamBookletAndQuestionRows(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		Button missingAnswers = robot.lookup("#corpus-dashboard-summary-missing-answer").queryButton();
+		String subjectCount = missingAnswers.getText();
+
+		// The Subject-level Missing Answers summary must narrow every lower hierarchy
+		// level to records that actually contribute to that count.
+		robot.interact(missingAnswers::fire);
+		assertTrue(exams.getItems().stream().allMatch(status -> status.questionSummary().missingAnswer() > 0));
+		assertTrue(booklets.getItems().stream().allMatch(status -> status.questionSummary().missingAnswer() > 0));
+		assertTrue(questions.getItems().stream()
+				.allMatch(item -> item.status().hasProblem(QuestionCorpusProblem.MISSING_ANSWER)));
+
+		// Drill-down must not rewrite its own Subject-level summary count.
+		assertEquals(subjectCount, missingAnswers.getText());
 	}
 
 	@Test
@@ -429,6 +503,14 @@ class CorpusDashboardPaneTest {
 				new ExamAssetExpectations(2, 1, 0, 0), List.of(activePaperStatus),
 				new QuestionCorpusSummary(8, 8, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0),
 				EnumSet.of(ExamCorpusFinding.EXPECTED_QUESTION_BOOKLET_COUNT_MISMATCH));
+
+		// Mapping coverage deliberately contains unresolved work so the Dashboard test
+		// can prove that it remains separate from ordinary Question completeness.
+		private final SyllabusVersion historicalSyllabus = new SyllabusVersion(400, chemistry, "2019", false);
+		private final SyllabusVersion currentSyllabus = new SyllabusVersion(401, chemistry, "2025", true);
+		private final CurriculumMappingCoverage mappingCoverage = new CurriculumMappingCoverage(historicalSyllabus,
+				currentSyllabus, new CurriculumMappingLevelCoverage(CurriculumLevel.DESCRIPTOR, 10, 6, 1, 2, 1, 0),
+				new CurriculumMappingLevelCoverage(CurriculumLevel.SUBTOPIC, 5, 3, 1, 1, 0, 2));
 
 		private static Descriptor classification(Subject subject, long baseId) {
 			SyllabusVersion syllabus = new SyllabusVersion(baseId, subject, "2025", true);

@@ -1310,13 +1310,39 @@ ordinary Exams can open Manage Exam / Assets, Exam/Assets remains within the
 normal workspace width, Dashboard capture/return transitions remain responsive,
 and changing Working Subject during Dashboard-launched Exam/Assets no longer
 leaves an indefinite busy state. The corresponding feature-branch CI is green.
+
 ### 7.8 Curriculum mapping reporting
 
-Curriculum mapping review coverage may be surfaced through the existing
-`CurriculumMappingCoverageService`.
+Curriculum mapping review coverage is now reported directly on the Corpus
+Dashboard through the existing `CurriculumMappingCoverageService`.
 
-Mapping review remains a separate reporting dimension and does not make an
-otherwise complete Question or Exam automatically incomplete.
+For each historical-to-current syllabus pair, the Dashboard reports:
+
+- deliberately resolved Descriptor/Subtopic reviews;
+- remaining unreviewed nodes;
+- inconsistent review/mapping state;
+- completed review state; and
+- `not applicable` when no historical-to-current mapping pair requires review.
+
+Mapping review remains a separate Subject-level reporting dimension. It does not
+make an otherwise complete Question incomplete, does not affect Exam structural
+findings and does not contribute to the Dashboard `Need attention` count.
+
+Dashboard summary buttons now act as Subject-level drill-down controls. Selecting
+`Need attention`, `Missing content`, `Missing answers`, `Unknown type` or
+`Shared Context` narrows the visible Exam -> booklet -> Question hierarchy to
+records contributing to that summary. `Questions` restores unrestricted Question
+scope, while `Clear` removes all Dashboard-local Provider, Year, Exam-state and
+summary restrictions and restores the complete Working Subject hierarchy.
+
+Manual live-data acceptance confirmed that mapping status is visually distinct
+from corpus completeness, completed and not-applicable states display correctly,
+and summary drill-down/clear behaviour is consistent. Automated persistence
+coverage confirms that Dashboard Refresh rereads mapping-review decisions without
+altering ordinary Question-completeness totals.
+
+Automatic refresh when returning from Dashboard-owned workflows remains part of
+Issue #65, when the Corpus Dashboard becomes the application home screen.
 
 ### 7.9 MCQ explanation reporting
 

@@ -26,6 +26,8 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusQueue;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.ListChangeListener;
@@ -43,6 +45,7 @@ import javafx.scene.control.TableView;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 /**
@@ -113,16 +116,31 @@ final class CorpusDashboardPane extends VBox {
 	private Consumer<Question> questionCorrectionHandler = _ -> {
 	};
 
+	// Curriculum mapping review is a Subject-level reporting dimension independent
+	// of ordinary Question and Exam completeness.
+	private List<CurriculumMappingCoverage> mappingCoverages;
+	private final Label curriculumMappingSummaryLabel = new Label();
+	private boolean summaryQuestionFilterActive;
+
 	CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions) {
+
+		// Existing callers without mapping information retain an explicit
+		// not-applicable mapping-review state.
+		this(workingSubject, examStatuses, questions, List.of());
+	}
+
+	CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions,
+			List<CurriculumMappingCoverage> mappingCoverages) {
 		if (workingSubject == null) {
 			throw new NullPointerException("workingSubject");
 		}
 
-		// Working Subject remains authoritative application state for both the
-		// calculated Exam snapshots and the Question work queue.
+		// Working Subject remains authoritative application state for calculated Exam,
+		// Question and curriculum-mapping snapshots.
 		this.workingSubject = workingSubject;
 		this.examStatuses = statusesForWorkingSubject(examStatuses);
 		this.questions = questionsForWorkingSubject(questions);
+		this.mappingCoverages = mappingCoveragesForWorkingSubject(mappingCoverages);
 		configureControls();
 		configureActions();
 		buildContent();
@@ -132,22 +150,24 @@ final class CorpusDashboardPane extends VBox {
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
 
-		// Ordinary Refresh has no preferred Question to restore.
-		replaceData(updatedStatuses, updatedQuestions, -1L);
+		// Ordinary refresh retains the current mapping snapshot unless the application
+		// supplies a replacement generation explicitly.
+		replaceData(updatedStatuses, updatedQuestions, mappingCoverages, -1L);
 	}
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
-			long preferredQuestionId) {
+			List<CurriculumMappingCoverage> updatedMappingCoverages, long preferredQuestionId) {
 		Long selectedExamId = selectedExamId();
 		Long selectedBookletId = selectedBookletId();
 		Long providerId = providerBox.getValue() == null ? null : providerBox.getValue().getId();
 		Integer year = yearBox.getValue();
 		ExamCaptureState examState = examStateBox.getValue();
 
-		// Replace both representations from the same persistence refresh so structural
-		// summaries and Question work cannot drift across separate UI snapshots.
+		// Replace all Subject-level reporting snapshots from the same persistence
+		// generation without allowing mapping status to alter corpus completeness.
 		examStatuses = statusesForWorkingSubject(updatedStatuses);
 		questions = questionsForWorkingSubject(updatedQuestions);
+		mappingCoverages = mappingCoveragesForWorkingSubject(updatedMappingCoverages);
 		changingScopeFilters = true;
 		try {
 			populateFilterOptions();
@@ -160,6 +180,7 @@ final class CorpusDashboardPane extends VBox {
 			changingScopeFilters = false;
 		}
 		refreshSummaryControls();
+		refreshCurriculumMappingSummary();
 		refreshExamTable(selectedExamId, selectedBookletId);
 		refreshQuestionWork();
 		if (preferredQuestionId > 0) {
@@ -173,6 +194,13 @@ final class CorpusDashboardPane extends VBox {
 				questionTable.scrollTo(preferred);
 			}
 		}
+	}
+
+	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
+			long preferredQuestionId) {
+
+		// Correction-only callers preserve the current independent mapping snapshot.
+		replaceData(updatedStatuses, updatedQuestions, mappingCoverages, preferredQuestionId);
 	}
 
 	void setAnswerCaptureHandler(Consumer<Question> handler) {
@@ -276,10 +304,11 @@ final class CorpusDashboardPane extends VBox {
 			changingQuestionFilter = false;
 		}
 
-		// Summary buttons select one ordinary Question problem without changing the
-		// current Exam or booklet selection.
+		// Subject-level summary buttons narrow the complete Exam -> booklet -> Question
+		// hierarchy rather than filtering only the previously selected Question scope.
 		selectedQuestionProblem = problem;
-		refreshQuestionWork();
+		summaryQuestionFilterActive = true;
+		refreshDashboard();
 	}
 
 	private String bookletProblemLabel(BookletCorpusStatus status) {
@@ -320,20 +349,27 @@ final class CorpusDashboardPane extends VBox {
 	private void buildContent() {
 		Label heading = new Label("CORPUS DASHBOARD");
 		heading.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
-		HBox subjectRow = new HBox(SPACING, new Label("Working Subject:"), workingSubjectLabel);
+		HBox subjectRow = new HBox(SPACING, createBoldLabel("Working Subject:"), workingSubjectLabel);
 		subjectRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(subjectRow, Priority.ALWAYS);
 		HBox headingRow = new HBox(SPACING, heading, subjectRow, refreshButton);
 		headingRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(subjectRow, Priority.ALWAYS);
-		HBox filterRow = new HBox(SPACING, new Label("Provider"), providerBox, new Label("Year"), yearBox,
-				new Label("Exam state"), examStateBox, clearFiltersButton);
+		HBox filterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
+				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
 		filterRow.setAlignment(Pos.CENTER_LEFT);
-		HBox summaryRowOne = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
-				missingAnswerButton);
-		summaryRowOne.setAlignment(Pos.CENTER_LEFT);
-		HBox summaryRowTwo = new HBox(SPACING, unknownTypeButton, sharedContextButton, mcqExplanationSummaryLabel);
-		summaryRowTwo.setAlignment(Pos.CENTER_LEFT);
+		Region summarySpacer = new Region();
+		HBox.setHgrow(summarySpacer, Priority.ALWAYS);
+
+		// Keep all Subject-level Question indicators on one compact row. Less common
+		// problem categories remain visually grouped on the right.
+		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
+				missingAnswerButton, summarySpacer, unknownTypeButton, sharedContextButton, mcqExplanationSummaryLabel);
+		summaryRow.setAlignment(Pos.CENTER_LEFT);
+		HBox mappingReviewRow = new HBox(SPACING, createBoldLabel("Curriculum mapping review:"),
+				curriculumMappingSummaryLabel);
+		mappingReviewRow.setAlignment(Pos.CENTER_LEFT);
+		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
 		Label examsHeading = new Label("EXAMS");
 		examsHeading.setStyle("-fx-font-weight: bold;");
 		Label selectedExamHeading = new Label("SELECTED EXAM");
@@ -346,19 +382,12 @@ final class CorpusDashboardPane extends VBox {
 		bookletsHeading.setStyle("-fx-font-weight: bold;");
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
-
-		// Booklet actions operate on the selected source booklet rather than an
-		// arbitrary existing Question row.
 		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton);
 		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
 		Label questionWorkHeading = new Label("QUESTION WORK");
 		questionWorkHeading.setStyle("-fx-font-weight: bold;");
-		HBox questionFilterRow = new HBox(SPACING, new Label("Show"), questionViewBox, questionResultCountLabel);
+		HBox questionFilterRow = new HBox(SPACING, createBoldLabel("Show"), questionViewBox, questionResultCountLabel);
 		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
-
-		// Existing Question content and Shared Context correction remains a
-		// Question-row
-		// operation.
 		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton);
 		questionActionsRow.setAlignment(Pos.CENTER_LEFT);
 		HBox bulkResponseTypeRow = new HBox(SPACING, selectAllUnknownButton, setSelectedMultipleChoiceButton,
@@ -366,13 +395,9 @@ final class CorpusDashboardPane extends VBox {
 		bulkResponseTypeRow.setAlignment(Pos.CENTER_LEFT);
 		mcqExplanationCoverageLabel.setWrapText(true);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
-
-		// Extra vertical space belongs primarily to booklet scope. Question work
-		// remains
-		// a compact, independently scrollable table.
 		VBox.setVgrow(bookletTable, Priority.ALWAYS);
 		VBox.setVgrow(questionTable, Priority.NEVER);
-		getChildren().addAll(headingRow, filterRow, summaryRowOne, summaryRowTwo, examsHeading, examTable,
+		getChildren().addAll(headingRow, filterRow, summaryRow, mappingReviewRow, examsHeading, examTable,
 				selectedExamHeading, selectedExamTitleRow, selectedExamCountsLabel, bookletsHeading, bookletTable,
 				selectedBookletLabel, bookletWarningLabel, bookletActionsRow, questionWorkHeading, questionFilterRow,
 				questionTable, questionActionsRow, bulkResponseTypeRow, mcqExplanationCoverageLabel);
@@ -420,15 +445,24 @@ final class CorpusDashboardPane extends VBox {
 
 	private void clearFilters() {
 		changingScopeFilters = true;
+		changingQuestionFilter = true;
 		try {
 
-			// Clear only Dashboard-local scope. Working Subject remains authoritative.
+			// Clear every Dashboard-local restriction while retaining the authoritative
+			// Working Subject.
 			providerBox.setValue(null);
 			yearBox.setValue(null);
 			examStateBox.setValue(null);
+			questionViewBox.setValue(QuestionCorpusCompletionFilter.ALL);
+			selectedQuestionProblem = null;
+			summaryQuestionFilterActive = false;
 		} finally {
+			changingQuestionFilter = false;
 			changingScopeFilters = false;
 		}
+
+		// Rebuild the complete Exam -> booklet -> Question hierarchy after all local
+		// filters have been reset together.
 		refreshDashboard();
 	}
 
@@ -498,9 +532,12 @@ final class CorpusDashboardPane extends VBox {
 				return;
 			}
 
-			// Choosing a general Show mode clears any problem-specific summary filter.
+			// A direct Show selection is Question-table filtering rather than a
+			// Subject-level
+			// summary drill-down. Restore the complete structural hierarchy first.
 			selectedQuestionProblem = null;
-			refreshQuestionWork();
+			summaryQuestionFilterActive = false;
+			refreshDashboard();
 		});
 		examTable.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
 			if (selected == null) {
@@ -596,6 +633,7 @@ final class CorpusDashboardPane extends VBox {
 		setSelectedWrittenResponseButton.setDisable(true);
 	}
 
+	// TODO Refactor into separate concerns
 	private void configureControls() {
 		workingSubjectLabel.setId("corpus-dashboard-working-subject");
 		workingSubjectLabel.setText(workingSubject.getName());
@@ -603,6 +641,14 @@ final class CorpusDashboardPane extends VBox {
 
 		// Persistence reload is supplied later by the owning dialog/application.
 		refreshButton.setDisable(true);
+		curriculumMappingSummaryLabel.setId("corpus-dashboard-mapping-review");
+		curriculumMappingSummaryLabel.setWrapText(true);
+
+		// Selected-scope descriptions act as field labels as well as status text, so
+		// emphasise them consistently with the Dashboard's other metadata labels.
+		declaredExamStateLabel.setStyle("-fx-font-weight: bold;");
+		selectedExamCountsLabel.setStyle("-fx-font-weight: bold;");
+		selectedBookletLabel.setStyle("-fx-font-weight: bold;");
 		configureFilterControls();
 		configureSummaryControls();
 		configureExamTable();
@@ -754,6 +800,15 @@ final class CorpusDashboardPane extends VBox {
 		return confirmation.showAndWait().orElse(ButtonType.CANCEL) == captureButton;
 	}
 
+	private Label createBoldLabel(String text) {
+		Label label = new Label(text);
+
+		// Dashboard field names should remain visually distinct from the values they
+		// describe.
+		label.setStyle("-fx-font-weight: bold;");
+		return label;
+	}
+
 	private int examWorkCount(ExamCorpusStatus status) {
 
 		// "Work" in the approved Dashboard means Question correction work. Structural
@@ -761,24 +816,46 @@ final class CorpusDashboardPane extends VBox {
 		return status.questionSummary().incompleteQuestions();
 	}
 
+	private List<BookletCorpusStatus> filteredBookletStatuses(ExamCorpusStatus status) {
+		if (!summaryQuestionFilterActive) {
+			return status.bookletStatuses();
+		}
+		Set<Long> matchingBookletIds = new HashSet<>();
+		for (QuestionCorpusWorkItem item : summaryFilteredQuestionWork()) {
+			if (item.question().getExam().getId() == status.exam().getId()) {
+				matchingBookletIds.add(item.question().getBooklet().getId());
+			}
+		}
+
+		// Once an Exam has survived a summary drill-down, show only its booklets that
+		// actually contribute Questions to that selected summary category.
+		return status.bookletStatuses().stream()
+				.filter(bookletStatus -> matchingBookletIds.contains(bookletStatus.booklet().getId())).toList();
+	}
+
 	private List<ExamCorpusStatus> filteredExamStatuses() {
-		ExamProvider provider = providerBox.getValue();
-		Integer year = yearBox.getValue();
-		ExamCaptureState state = examStateBox.getValue();
-		return examStatuses.stream()
-				.filter(status -> provider == null || status.exam().getProvider().getId() == provider.getId())
-				.filter(status -> year == null || status.exam().getYear() == year.intValue())
-				.filter(status -> state == null || status.declaredCaptureState() == state).toList();
+		List<ExamCorpusStatus> scoped = scopeFilteredExamStatuses();
+		if (!summaryQuestionFilterActive) {
+			return scoped;
+		}
+		Set<Long> matchingExamIds = new HashSet<>();
+		for (QuestionCorpusWorkItem item : summaryFilteredQuestionWork()) {
+			matchingExamIds.add(item.question().getExam().getId());
+		}
+
+		// A Subject-level summary drill-down keeps only Exams that actually contain
+		// Questions represented by that summary count.
+		return scoped.stream().filter(status -> matchingExamIds.contains(status.exam().getId())).toList();
 	}
 
 	private List<Question> filteredSummaryQuestions() {
 		Set<Long> visibleExamIds = new HashSet<>();
-		for (ExamCorpusStatus status : filteredExamStatuses()) {
+		for (ExamCorpusStatus status : scopeFilteredExamStatuses()) {
 			visibleExamIds.add(status.exam().getId());
 		}
 
-		// Top summary counts follow Provider/Year/Exam-state scope but remain
-		// independent of the currently selected Exam or booklet.
+		// Headline counts follow only the ordinary structural filters. Selecting one of
+		// those headline counts must not recalculate the number printed on the button.
 		return questions.stream().filter(question -> visibleExamIds.contains(question.getExam().getId())).toList();
 	}
 
@@ -799,6 +876,30 @@ final class CorpusDashboardPane extends VBox {
 				.map(QuestionCorpusWorkItem::question).findFirst().orElse(null);
 	}
 
+	private String formatCurriculumMappingCoverage(CurriculumMappingCoverage coverage) {
+		CurriculumMappingLevelCoverage descriptors = coverage.descriptorCoverage();
+		CurriculumMappingLevelCoverage subtopics = coverage.subtopicCoverage();
+		int total = descriptors.total() + subtopics.total();
+		int reviewed = descriptors.deliberatelyReviewed() + subtopics.deliberatelyReviewed();
+		int unreviewed = descriptors.unreviewed() + subtopics.unreviewed();
+		int inconsistent = descriptors.inconsistent() + subtopics.inconsistent();
+		int remaining = unreviewed + inconsistent;
+		String pair = coverage.sourceVersion().getName() + " \u2192 " + coverage.targetVersion().getName();
+
+		// A syllabus pair with no applicable Descriptor or Subtopic source nodes has no
+		// review work and must not be presented as incomplete.
+		if (total == 0) {
+			return pair + ": not applicable";
+		}
+
+		// Completed mapping review remains independent of Question/Exam completeness.
+		if (remaining == 0) {
+			return pair + ": complete (" + reviewed + "/" + total + " resolved)";
+		}
+		return pair + ": " + reviewed + "/" + total + " resolved; " + remaining + " remaining (" + unreviewed
+				+ " unreviewed, " + inconsistent + " inconsistent)";
+	}
+
 	private void manageSelectedExamAssets() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
 		if (selectedExam == null) {
@@ -811,6 +912,25 @@ final class CorpusDashboardPane extends VBox {
 		// one.
 		ExamBooklet targetBooklet = selectedBooklet == null ? null : selectedBooklet.booklet();
 		examAssetsHandler.accept(selectedExam.exam(), targetBooklet);
+	}
+
+	private List<CurriculumMappingCoverage> mappingCoveragesForWorkingSubject(
+			List<CurriculumMappingCoverage> sourceCoverages) {
+		if (sourceCoverages == null) {
+			throw new NullPointerException("mappingCoverages");
+		}
+		for (CurriculumMappingCoverage coverage : sourceCoverages) {
+			if (coverage == null) {
+				throw new NullPointerException("mappingCoverages contains null");
+			}
+		}
+
+		// Persistent Subject identity is the authoritative Dashboard boundary for
+		// mapping review just as it is for Exam and Question state.
+		return sourceCoverages.stream()
+				.filter(coverage -> coverage.sourceVersion().getSubject().getId() == workingSubject.getId()
+						&& coverage.targetVersion().getSubject().getId() == workingSubject.getId())
+				.toList();
 	}
 
 	private String nullableCount(Integer count) {
@@ -904,10 +1024,34 @@ final class CorpusDashboardPane extends VBox {
 		return new QuestionCorpusFilter(workingSubject.getId(), null, null, null, completion, selectedQuestionProblem);
 	}
 
+	private void refreshCurriculumMappingSummary() {
+		if (mappingCoverages.isEmpty()) {
+
+			// One-syllabus Subjects have no historical-to-current mapping pair to review.
+			curriculumMappingSummaryLabel.setText("not applicable");
+			return;
+		}
+		StringBuilder summary = new StringBuilder();
+		for (CurriculumMappingCoverage coverage : mappingCoverages) {
+			if (!summary.isEmpty()) {
+				summary.append("    |    ");
+			}
+			summary.append(formatCurriculumMappingCoverage(coverage));
+		}
+
+		// Mapping review is deliberately displayed without changing any corpus summary
+		// counts or ordinary Question-work filters.
+		curriculumMappingSummaryLabel.setText(summary.toString());
+	}
+
 	private void refreshDashboard() {
 		Long preferredExamId = selectedExamId();
 		Long preferredBookletId = selectedBookletId();
 		refreshSummaryControls();
+
+		// Curriculum mapping review is a parallel Subject status dimension rather than
+		// part of Exam or Question completeness.
+		refreshCurriculumMappingSummary();
 		refreshExamTable(preferredExamId, preferredBookletId);
 		refreshQuestionWork();
 	}
@@ -959,7 +1103,7 @@ final class CorpusDashboardPane extends VBox {
 		sharedContextButton.setText(summary.unresolvedSharedContext() + " Shared Context");
 		int eligibleExplanations = 0;
 		int capturedExplanations = 0;
-		for (ExamCorpusStatus status : filteredExamStatuses()) {
+		for (ExamCorpusStatus status : scopeFilteredExamStatuses()) {
 			eligibleExplanations += status.mcqExplanationSummary().eligibleQuestionCount();
 			capturedExplanations += status.mcqExplanationSummary().capturedExplanationCount();
 		}
@@ -976,6 +1120,22 @@ final class CorpusDashboardPane extends VBox {
 		case WRITTEN_RESPONSE -> "Written";
 		case UNKNOWN -> "UNKNOWN";
 		};
+	}
+
+	private List<ExamCorpusStatus> scopeFilteredExamStatuses() {
+		ExamProvider provider = providerBox.getValue();
+		Integer year = yearBox.getValue();
+		ExamCaptureState state = examStateBox.getValue();
+
+		// Provider, year and declared state define the ordinary structural scope.
+		// Summary
+		// drill-down is deliberately applied later so headline counts do not change
+		// when
+		// one of their own buttons is selected.
+		return examStatuses.stream()
+				.filter(status -> provider == null || status.exam().getProvider().getId() == provider.getId())
+				.filter(status -> year == null || status.exam().getYear() == year.intValue())
+				.filter(status -> state == null || status.declaredCaptureState() == state).toList();
 	}
 
 	private void selectAllUnknownShown() {
@@ -1050,20 +1210,21 @@ final class CorpusDashboardPane extends VBox {
 						expectations.expectedQuestionBookletCount()),
 				presentExpected(expectations.availableAnswerFileCount(), expectations.expectedAnswerFileCount()),
 				status.questionSummary().totalQuestions(), examWorkCount(status)));
-		bookletTable.getItems().setAll(status.bookletStatuses());
+		List<BookletCorpusStatus> displayedBooklets = filteredBookletStatuses(status);
+		bookletTable.getItems().setAll(displayedBooklets);
 		bookletTable.getSelectionModel().clearSelection();
 		selectedBookletLabel.setText("Selected booklet: All booklets");
 		setVisibleAndManaged(bookletWarningLabel, false);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 
 		// Booklet capture requires an explicit booklet selection. Exam-wide structural
-		// findings remain independently actionable.
+		// management remains independently actionable.
 		updateCaptureActionState();
 		updateExamAssetsActionState();
 		if (preferredBookletId == null) {
 			return;
 		}
-		BookletCorpusStatus preferred = status.bookletStatuses().stream()
+		BookletCorpusStatus preferred = displayedBooklets.stream()
 				.filter(bookletStatus -> bookletStatus.booklet().getId() == preferredBookletId.longValue()).findFirst()
 				.orElse(null);
 		if (preferred != null) {
@@ -1094,6 +1255,15 @@ final class CorpusDashboardPane extends VBox {
 		// Persistent Subject identity is the authoritative Dashboard boundary.
 		return statuses.stream().filter(status -> status.exam().getSubject().getId() == workingSubject.getId())
 				.toList();
+	}
+
+	private List<QuestionCorpusWorkItem> summaryFilteredQuestionWork() {
+
+		// Summary buttons are calculated over Provider/Year/Exam-state scope rather
+		// than over an already selected Exam or booklet.
+		QuestionCorpusFilter filter = new QuestionCorpusFilter(workingSubject.getId(), null, null, null,
+				questionViewBox.getValue(), selectedQuestionProblem);
+		return QuestionCorpusQueue.build(filteredSummaryQuestions(), filter);
 	}
 
 	private void updateBulkActionState() {

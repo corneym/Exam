@@ -533,7 +533,15 @@ Issue #65 owns the next application-shell step: make the Corpus Dashboard the
 default home screen, move authoritative Subject selection into that surface and
 provide useful empty-Subject actions such as Add Exam and Add Curriculum.
 
-Curriculum mapping review coverage remains a separate reporting dimension.
+Curriculum mapping review coverage is now implemented as a separate Subject-level
+Dashboard reporting dimension through `CurriculumMappingCoverageService`.
+Historical-to-current review progress, unresolved work and inconsistent state are
+reported without changing Exam structural completeness, Question/Answer
+completeness or `Need attention` totals.
+
+Dashboard Subject-summary controls also now drill down the visible Exam ->
+booklet -> Question hierarchy, while `Clear` restores the complete Working
+Subject view and removes all Dashboard-local filters.
 
 Detailed working design and implementation status are maintained in
 `docs/design/sprint-12-release-0.2.md`.

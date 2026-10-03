@@ -109,6 +109,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringOpenService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringSession;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraftLoader;
 import au.edu.eq.questionbank.service.curriculum.CurriculumLifecycleService;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
@@ -2083,6 +2084,59 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && questionCapturePane.canCaptureRegions();
 	}
 
+	private CorpusDashboardSnapshot loadCorpusDashboardSnapshot(ApplicationConfig config,
+			ExamCorpusAuditService auditService, Subject dashboardSubject) throws SQLException {
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		if (auditService == null) {
+			throw new NullPointerException("auditService");
+		}
+		if (dashboardSubject == null) {
+			throw new NullPointerException("dashboardSubject");
+		}
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+		// Structural audit, Question state and mapping-review coverage are loaded as
+		// one
+		// Dashboard generation even though their completeness semantics remain
+		// separate.
+		return new CorpusDashboardSnapshot(auditService.assessSubject(dashboardSubject), questionRepository.findAll(),
+				loadCurriculumMappingCoverages(database, dashboardSubject));
+	}
+
+	private List<CurriculumMappingCoverage> loadCurriculumMappingCoverages(SqliteDatabase database, Subject subject) {
+		if (database == null) {
+			throw new NullPointerException("database");
+		}
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		List<SyllabusVersion> versions = curriculumRepository.findVersionsForSubject(subject);
+		List<SyllabusVersion> currentVersions = versions.stream().filter(SyllabusVersion::isCurrent).toList();
+
+		// A Subject without a current syllabus has no valid historical-to-current pair
+		// and therefore no mapping-review status to report.
+		if (currentVersions.isEmpty()) {
+			return List.of();
+		}
+		if (currentVersions.size() > 1) {
+			throw new IllegalStateException("Working Subject has more than one current syllabus version.");
+		}
+		SyllabusVersion targetVersion = currentVersions.getFirst();
+		CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
+		CurriculumMappingReviewRepository reviewRepository = new SqliteCurriculumMappingReviewRepository(database);
+		CurriculumMappingCoverageService coverageService = new CurriculumMappingCoverageService(curriculumRepository,
+				mappingRepository, reviewRepository);
+
+		// Every historical syllabus is reviewed independently against the one current
+		// target syllabus. Target-only content is reported by the service but does not
+		// become outstanding source-review work.
+		return versions.stream().filter(version -> !version.isCurrent())
+				.map(version -> coverageService.calculateCoverage(version, targetVersion)).toList();
+	}
+
 	private void markActiveExamComplete(Stage primaryStage) {
 		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
 		if (activeBooklet == null) {
@@ -2337,13 +2391,14 @@ public class QuestionBankApplication extends Application {
 				exam.getName(), booklet.getName(), lifecycle));
 	}
 
-	private boolean refreshCorpusDashboard(QuestionCorpusAuditDialog dialog, ExamCorpusAuditService auditService,
-			Subject dashboardSubject, long preferredQuestionId) {
+	private boolean refreshCorpusDashboard(ApplicationConfig config, QuestionCorpusAuditDialog dialog,
+			ExamCorpusAuditService auditService, Subject dashboardSubject, long preferredQuestionId) {
 		try {
 
-			// Always rebuild Exam/booklet calculations from persistence before replacing
-			// the Question work snapshot.
-			dialog.refreshData(auditService.assessSubject(dashboardSubject), questionRepository.findAll(),
+			// Rebuild structural, Question and curriculum-mapping reporting from one
+			// persistence generation before replacing the live Dashboard.
+			CorpusDashboardSnapshot snapshot = loadCorpusDashboardSnapshot(config, auditService, dashboardSubject);
+			dialog.refreshData(snapshot.examStatuses(), snapshot.questions(), snapshot.mappingCoverages(),
 					preferredQuestionId);
 			return true;
 		} catch (SQLException | IllegalStateException exception) {
@@ -2368,8 +2423,9 @@ public class QuestionBankApplication extends Application {
 				// Corpus reconstruction can involve many SQLite reads. Perform all of them
 				// away from the JavaFX application thread so Return to Dashboard never freezes
 				// the main window.
-				return new CorpusDashboardSnapshot(auditService.assessSubject(dashboardSubject),
-						questionRepository.findAll());
+				// Reload mapping coverage with the same authoritative Dashboard generation as
+				// structural and Question status.
+				return loadCorpusDashboardSnapshot(config, auditService, dashboardSubject);
 			}
 		};
 		task.setOnSucceeded(_ -> {
@@ -2383,7 +2439,9 @@ public class QuestionBankApplication extends Application {
 			CorpusDashboardSnapshot snapshot = task.getValue();
 
 			// Publish the complete persistence generation together on the JavaFX thread.
-			dialog.refreshData(snapshot.examStatuses(), snapshot.questions(), preferredQuestionId);
+			// Publish all three independent Dashboard status dimensions together.
+			dialog.refreshData(snapshot.examStatuses(), snapshot.questions(), snapshot.mappingCoverages(),
+					preferredQuestionId);
 
 			// The complete authoritative snapshot is ready; remove progress before showing
 			// it.
@@ -3219,10 +3277,11 @@ public class QuestionBankApplication extends Application {
 		QuestionCorpusAuditDialog dialog;
 		try {
 
-			// Structural audit snapshots and Question work come from one initial
+			// Structural, Question and mapping-review snapshots form one initial
 			// persistence generation before the modal Dashboard is displayed.
-			dialog = new QuestionCorpusAuditDialog(primaryStage, workingSubject,
-					auditService.assessSubject(workingSubject), questionRepository.findAll());
+			CorpusDashboardSnapshot snapshot = loadCorpusDashboardSnapshot(config, auditService, workingSubject);
+			dialog = new QuestionCorpusAuditDialog(primaryStage, workingSubject, snapshot.examStatuses(),
+					snapshot.questions(), snapshot.mappingCoverages());
 		} catch (SQLException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be loaded.",
 					exception.getMessage());
@@ -3230,23 +3289,23 @@ public class QuestionBankApplication extends Application {
 		}
 		Subject dashboardSubject = workingSubject;
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
-		dialog.setRefreshHandler(() -> refreshCorpusDashboard(dialog, auditService, dashboardSubject, -1L));
+		dialog.setRefreshHandler(() -> refreshCorpusDashboard(config, dialog, auditService, dashboardSubject, -1L));
 		dialog.setBulkResponseTypeHandler((questions, responseType) -> {
 			try {
 				metadataService.resolveUnknownResponseTypes(questions, responseType);
 				questionCapturePane.refreshImportedQuestions();
 				answerCapturePane.refreshQuestions();
 
-				// A successful bulk correction reloads both structural and Question
-				// Dashboard state together.
-				refreshCorpusDashboard(dialog, auditService, dashboardSubject, -1L);
+				// A successful bulk correction reloads every Dashboard status dimension
+				// together.
+				refreshCorpusDashboard(config, dialog, auditService, dashboardSubject, -1L);
 			} catch (IllegalArgumentException | IllegalStateException exception) {
 				showAlert(Alert.AlertType.ERROR, "Resolve Response Types",
 						"The selected response types could not be saved.", exception.getMessage());
 
 				// Re-read authoritative persistence after failure while attempting to
 				// preserve the first affected Question selection.
-				refreshCorpusDashboard(dialog, auditService, dashboardSubject, questions.getFirst().getId());
+				refreshCorpusDashboard(config, dialog, auditService, dashboardSubject, questions.getFirst().getId());
 			}
 		});
 		showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService, dashboardSubject);
@@ -3944,7 +4003,8 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions) {
+	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions,
+			List<CurriculumMappingCoverage> mappingCoverages) {
 
 		private CorpusDashboardSnapshot {
 			if (examStatuses == null) {
@@ -3953,10 +4013,15 @@ public class QuestionBankApplication extends Application {
 			if (questions == null) {
 				throw new NullPointerException("questions");
 			}
+			if (mappingCoverages == null) {
+				throw new NullPointerException("mappingCoverages");
+			}
 
-			// Freeze worker-thread repository results before publishing them to JavaFX.
+			// Freeze worker-thread repository results before publishing the complete
+			// Dashboard generation to JavaFX.
 			examStatuses = List.copyOf(examStatuses);
 			questions = List.copyOf(questions);
+			mappingCoverages = List.copyOf(mappingCoverages);
 		}
 	}
 

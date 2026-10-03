@@ -11,6 +11,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
+import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
@@ -36,6 +37,24 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 	 */
 	public QuestionCorpusAuditDialog(Window owner, Subject workingSubject, List<ExamCorpusStatus> examStatuses,
 			List<Question> questions) {
+
+		// Existing callers without mapping reporting retain an explicit empty mapping
+		// snapshot.
+		this(owner, workingSubject, examStatuses, questions, List.of());
+	}
+
+	/**
+	 * Creates the Corpus Dashboard scoped to the application's Working Subject.
+	 *
+	 * @param owner            owner window
+	 * @param workingSubject   authoritative Working Subject
+	 * @param examStatuses     calculated Exam and booklet audit snapshots
+	 * @param questions        current Question snapshot
+	 * @param mappingCoverages curriculum mapping-review coverage for historical to
+	 *                         current syllabus pairs
+	 */
+	public QuestionCorpusAuditDialog(Window owner, Subject workingSubject, List<ExamCorpusStatus> examStatuses,
+			List<Question> questions, List<CurriculumMappingCoverage> mappingCoverages) {
 		if (owner == null) {
 			throw new NullPointerException("owner");
 		}
@@ -48,13 +67,16 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		if (questions == null) {
 			throw new NullPointerException("questions");
 		}
+		if (mappingCoverages == null) {
+			throw new NullPointerException("mappingCoverages");
+		}
 
-		// The Dashboard inherits authoritative Subject scope and calculated corpus
-		// state from the application composition root.
+		// The Dashboard inherits authoritative Subject scope and all reporting
+		// snapshots from the application composition root.
 		initOwner(owner);
 		setTitle("Corpus Dashboard");
 		setResizable(true);
-		dashboardPane = new CorpusDashboardPane(workingSubject, examStatuses, questions);
+		dashboardPane = new CorpusDashboardPane(workingSubject, examStatuses, questions, mappingCoverages);
 		dashboardPane.setAnswerCaptureHandler(
 				question -> completeResolution(new ResolutionRequest(question, ResolutionTarget.ANSWER)));
 		dashboardPane.setExamAssetsHandler(
@@ -64,13 +86,11 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 		dashboardPane.setQuestionCorrectionHandler(
 				question -> completeResolution(new ResolutionRequest(question, ResolutionTarget.QUESTION)));
 
-		// Every operational action is now named inside the Dashboard itself. The dialog
+		// Every operational action is named inside the Dashboard itself. The dialog
 		// therefore needs only its ordinary Close control.
 		getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
 
-		// Closing the modal Dashboard is navigation, not a correction request. Without
-		// an explicit converter JavaFX attempts to cast ButtonType.CLOSE to
-		// ResolutionRequest.
+		// Closing the modal Dashboard is navigation, not a correction request.
 		setResultConverter(_ -> null);
 		getDialogPane().setContent(dashboardPane);
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
@@ -97,6 +117,23 @@ public final class QuestionCorpusAuditDialog extends Dialog<QuestionCorpusAuditD
 			return ResolutionTarget.ANSWER;
 		}
 		return null;
+	}
+
+	/**
+	 * Replaces the complete Dashboard persistence and mapping-review snapshot.
+	 *
+	 * @param examStatuses        refreshed Exam/booklet audit state
+	 * @param questions           refreshed Questions
+	 * @param mappingCoverages    refreshed curriculum mapping-review coverage
+	 * @param preferredQuestionId Question to reselect when it remains visible, or a
+	 *                            non-positive value for no preferred selection
+	 */
+	public void refreshData(List<ExamCorpusStatus> examStatuses, List<Question> questions,
+			List<CurriculumMappingCoverage> mappingCoverages, long preferredQuestionId) {
+
+		// Publish mapping reporting beside, but independently from, ordinary corpus
+		// completeness state.
+		dashboardPane.replaceData(examStatuses, questions, mappingCoverages, preferredQuestionId);
 	}
 
 	/**

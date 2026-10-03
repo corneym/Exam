@@ -39,6 +39,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -386,6 +387,61 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Failure at the application boundary must occur before the actual Dashboard
 		// surface is constructed.
 		assertTrue(robot.lookup("#corpus-dashboard-working-subject").tryQuery().isEmpty());
+	}
+
+	@Test
+	void corpusDashboardRefreshesPersistedMappingReviewStatusWithoutChangingCorpusCompleteness(FxRobot robot)
+			throws Exception {
+		prepareExamAndClassification(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		Subject chemistry = curriculumRepository.findAllSubjects().stream()
+				.filter(subject -> "Chemistry".equals(subject.getName())).findFirst().orElseThrow();
+		SyllabusVersion sourceVersion = curriculumRepository.findVersionsForSubject(chemistry).stream()
+				.filter(version -> "2019".equals(version.getName())).findFirst().orElseThrow();
+		SyllabusVersion targetVersion = curriculumRepository.findVersionsForSubject(chemistry).stream()
+				.filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
+		CurriculumNode sourceDescriptor = curriculumRepository.findByCode(sourceVersion, "3.1.1").orElseThrow();
+		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
+		MenuItem dashboardItem = questionMenu.getItems().stream()
+				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
+				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
+
+		// Open the production Dashboard so mapping coverage is calculated through the
+		// real application composition root.
+		Platform.runLater(dashboardItem::fire);
+		waitForDialogShowing(robot, "Corpus Dashboard");
+		DialogPane dashboard = showingDialogPane(robot, "Corpus Dashboard");
+		Label mappingReview = (Label) dashboard.lookup("#corpus-dashboard-mapping-review");
+		Button needsAttention = (Button) dashboard.lookup("#corpus-dashboard-summary-attention");
+		Button refresh = (Button) dashboard.lookup("#corpus-dashboard-refresh");
+		assertNotNull(mappingReview);
+		assertNotNull(needsAttention);
+		assertNotNull(refresh);
+
+		// The fixture contains one unresolved historical Chemistry descriptor.
+		assertTrue(mappingReview.getText().contains("2019 \u2192 2025"));
+		assertTrue(mappingReview.getText().contains("0/1 resolved"));
+		assertTrue(mappingReview.getText().contains("1 remaining"));
+		String corpusAttentionBeforeReview = needsAttention.getText();
+
+		// Persist a real mapping-review decision while the Dashboard is open.
+		new SqliteCurriculumMappingReviewWriter(database).confirmNoMatch(sourceDescriptor, targetVersion);
+
+		// Dashboard Refresh must recalculate mapping coverage from persistence rather
+		// than retaining the snapshot from when the dialog was opened.
+		robot.interact(refresh::fire);
+		assertTrue(mappingReview.getText().contains("2019 \u2192 2025"));
+		assertTrue(mappingReview.getText().contains("complete (1/1 resolved)"));
+
+		// Mapping-review completion is deliberately independent of ordinary Question
+		// completeness and therefore must not change Need-attention totals.
+		assertEquals(corpusAttentionBeforeReview, needsAttention.getText());
+		Node closeNode = dashboard.lookupButton(ButtonType.CLOSE);
+		assertTrue(closeNode instanceof Button);
+		robot.interact(((Button) closeNode)::fire);
+		waitForDialogHidden(robot, "Corpus Dashboard");
 	}
 
 	@Test
