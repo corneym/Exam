@@ -742,19 +742,27 @@ public final class ExamAssetsPane extends VBox {
 		VBox examDetails = createExamDetailsSection();
 		newExamActionRow = createNewExamActionRow();
 
-		// New Exam transaction controls belong to the Exam they are creating, so keep
-		// them inside the same bordered EXAM area as selector and Exam Details.
+		// New Exam transaction controls belong to the Exam they are creating.
 		VBox examContent = new VBox(ROW_SPACING, examSelectorGrid, examDetails, newExamActionRow);
 		VBox examSection = createWorkspaceSection("exam-assets-exam-section", "EXAM", null, examContent);
 		VBox questionBooklets = createQuestionBookletsSection();
 		VBox answerBooklets = createAnswerBookletsSection();
-		Region workspaceActionSpacer = new Region();
-		HBox.setHgrow(workspaceActionSpacer, Priority.ALWAYS);
+		Region navigationSpacer = new Region();
+		HBox.setHgrow(navigationSpacer, Priority.ALWAYS);
 
-		// Legacy intake starts independently of the currently selected Exam. Capture
-		// activation remains the explicit structural transition back to Capture.
-		HBox workspaceActions = new HBox(SPACING, importLegacyQuestionsButton, workspaceActionSpacer,
-				returnToCorpusDashboardButton, useSelectedBookletButton);
+		// Legacy import and Dashboard return are navigation actions. Keeping them on
+		// their own row prevents the three long workspace buttons from forcing the pane
+		// wider than the left-hand viewport.
+		HBox navigationActions = new HBox(SPACING, importLegacyQuestionsButton, navigationSpacer,
+				returnToCorpusDashboardButton);
+		Region captureSpacer = new Region();
+		HBox.setHgrow(captureSpacer, Priority.ALWAYS);
+
+		// Capture activation remains a separate structural action and can occupy its
+		// own
+		// row without competing for horizontal space.
+		HBox captureActions = new HBox(SPACING, captureSpacer, useSelectedBookletButton);
+		VBox workspaceActions = new VBox(ROW_SPACING, navigationActions, captureActions);
 		workspaceActions.setId("exam-assets-workspace-actions");
 
 		// The legacy requirements panel is part of Exam/Assets because unresolved
@@ -1121,25 +1129,27 @@ public final class ExamAssetsPane extends VBox {
 		Label heading = new Label(answerFile.getName());
 		heading.setStyle(HEADING_STYLE);
 		Label source = new Label(sourceFileName(answerFile.getSourceDocument().getRelativePath()));
-		Region sourceSpacer = new Region();
-		HBox.setHgrow(sourceSpacer, Priority.ALWAYS);
+		source.setMinWidth(0);
+		source.setMaxWidth(Double.MAX_VALUE);
 		Button viewButton = new Button("View");
 		viewButton.setId("exam-assets-answer-view-" + answerFile.getId());
 		viewButton.setMinWidth(Region.USE_PREF_SIZE);
 
+		// The filename absorbs whatever horizontal space remains while View stays fully
+		// visible at the right edge of the workspace.
+		HBox.setHgrow(source, Priority.ALWAYS);
+		HBox sourceRow = new HBox(SPACING, source, viewButton);
+
 		// Answer booklet inspection remains independent of Question/Answer capture.
 		viewButton.setOnAction(_ -> answerFileViewHandler.accept(answerFile));
-		HBox sourceRow = new HBox(SPACING, source, sourceSpacer, viewButton);
 		CheckBox explanations = new CheckBox("Contains answer explanations");
 		explanations.setId("exam-assets-answer-explanations-" + answerFile.getId());
 
-		// The checkbox always reflects authoritative persisted AnswerFile metadata
-		// when the row is constructed.
+		// The checkbox always reflects authoritative persisted AnswerFile metadata.
 		explanations.setSelected(answerFile.hasAnswerExplanations());
 
 		// Explanation presence is descriptive AnswerFile metadata rather than Exam
-		// structure, so it can be corrected directly without entering a structural
-		// Exam or booklet edit transaction.
+		// structure, so it can be corrected directly.
 		explanations.setOnAction(_ -> updateAnswerFileExplanationMetadata(answerFile, explanations));
 		VBox row = new VBox(ROW_SPACING, heading, sourceRow, explanations);
 		row.setId("exam-assets-answer-file-" + answerFile.getId());
@@ -2491,12 +2501,21 @@ public final class ExamAssetsPane extends VBox {
 		private VBox createRow() {
 			heading.setStyle(HEADING_STYLE);
 			Label source = new Label(sourceFileName(booklet.getSourceDocument().getRelativePath()));
+			source.setId("exam-assets-question-source-" + booklet.getId());
+			source.setMinWidth(0);
+			source.setMaxWidth(Double.MAX_VALUE);
 			Region headingSpacer = new Region();
 			HBox.setHgrow(headingSpacer, Priority.ALWAYS);
 
-			// Keep the booklet identity, source filename and inspection action together
-			// on one compact line rather than spending a separate row on the filename.
-			HBox headingRow = new HBox(SPACING, selectionButton, heading, source, headingSpacer, viewButton);
+			// Booklet identity and View remain on the compact action row. The potentially
+			// long source filename gets the full width of a separate row below it.
+			HBox headingRow = new HBox(SPACING, selectionButton, heading, headingSpacer, viewButton);
+
+			// Give the source filename the available width and allow JavaFX to abbreviate
+			// it
+			// rather than allowing it to force the complete workspace wider.
+			HBox sourceRow = new HBox(source);
+			HBox.setHgrow(source, Priority.ALWAYS);
 
 			// Question format is one mutually exclusive value, so all three alternatives
 			// remain on one compact horizontal row.
@@ -2515,9 +2534,9 @@ public final class ExamAssetsPane extends VBox {
 			HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 			HBox actions = new HBox(SPACING, actionSpacer, editButton, cancelButton, saveButton);
 
-			// The source filename no longer needs its own vertical row; the remaining
-			// rows are the editable structural metadata and their transaction actions.
-			VBox row = new VBox(ROW_SPACING, headingRow, metadata, actions);
+			// The source filename has its own responsive row; metadata and transaction
+			// controls therefore remain within the normal left workspace width.
+			VBox row = new VBox(ROW_SPACING, headingRow, sourceRow, metadata, actions);
 			row.setId("exam-assets-question-booklet-" + booklet.getId());
 			row.setPadding(SECTION_PADDING);
 			row.setStyle(BORDER_STYLE);

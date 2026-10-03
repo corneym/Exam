@@ -1756,6 +1756,18 @@ public class QuestionBankApplication extends Application {
 		workingSubject = newSubject;
 		if (subjectValueChanged) {
 
+			// A Dashboard return belongs to the Subject from which that workflow was
+			// launched. Once Working Subject changes, that old Dashboard is no longer a
+			// valid return destination.
+			if (examAssetsPane != null) {
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+			}
+			clearCorpusDashboardCaptureReturn();
+
+			// A Subject change also invalidates any in-flight Dashboard transition
+			// presentation belonging to the previous Subject.
+			hideWorkspaceBusy();
+
 			// Pending legacy preflight belongs to the previous authoritative Subject
 			// and cannot survive an accepted application-level Subject transition.
 			cancelPendingLegacyQuestionImport();
@@ -2363,7 +2375,9 @@ public class QuestionBankApplication extends Application {
 		task.setOnSucceeded(_ -> {
 			if (!Objects.equals(workingSubject, dashboardSubject)) {
 
-				// A later Subject change supersedes this old Dashboard-return request.
+				// The user changed Working Subject while the old Dashboard refresh was in
+				// flight. Discard that stale result and always release its busy presentation.
+				hideWorkspaceBusy();
 				return;
 			}
 			CorpusDashboardSnapshot snapshot = task.getValue();

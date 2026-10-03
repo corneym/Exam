@@ -57,6 +57,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.image.ImageView;
@@ -429,6 +430,33 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Leaving the Answer workflow restores normal Classification availability.
 		assertFalse(classification.isDisable());
+	}
+
+	@Test
+	void dashboardExamAssetsFitsInitialWorkspaceWidth(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showExamAssetsMode", new Class<?>[] { Exam.class, ExamBooklet.class, Runnable.class },
+					booklet.getExam(), booklet, (Runnable) () -> {
+					});
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
+		ScrollPane preview = field(application, "previewScrollPane", ScrollPane.class);
+
+		// The Dashboard return action is the extra control that exposed the regression.
+		Button returnButton = lookup(robot, "#exam-assets-return-dashboard", Button.class);
+		assertTrue(returnButton.isVisible());
+
+		// Fit-to-width must be able to size Exam/Assets inside the normal left
+		// viewport;
+		// its minimum-content width must not push controls underneath the split
+		// divider.
+		assertTrue(assets.getWidth() <= preview.getViewportBounds().getWidth() + 0.5,
+				"Exam / Assets must fit inside the left workspace viewport");
 	}
 
 	@Test
@@ -946,6 +974,37 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	@Test
+	void subjectChangeInvalidatesDashboardExamAssetsReturn(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		AtomicInteger returned = new AtomicInteger();
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showExamAssetsMode", new Class<?>[] { Exam.class, ExamBooklet.class, Runnable.class },
+					booklet.getExam(), booklet, (Runnable) returned::incrementAndGet);
+			return null;
+		}).get();
+		Button returnToDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
+		assertTrue(returnToDashboard.isVisible());
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject otherSubject = subjects.getItems().stream().filter(subject -> !subject.equals(subjects.getValue()))
+				.findFirst().orElseThrow();
+
+		// Changing the authoritative Working Subject invalidates the Dashboard session
+		// from which Exam/Assets was originally launched.
+		robot.interact(() -> subjects.setValue(otherSubject));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !returnToDashboard.isVisible());
+		assertFalse(returnToDashboard.isVisible());
+		assertFalse(returnToDashboard.isManaged());
+		assertEquals(0, returned.get());
+		Node busyOverlay = lookup(robot, "#workspace-busy-overlay", Node.class);
+
+		// No stale transition from the previous Subject may leave the workspace covered
+		// by an indefinite spinner.
+		assertFalse(busyOverlay.isVisible());
 	}
 
 	@Test
