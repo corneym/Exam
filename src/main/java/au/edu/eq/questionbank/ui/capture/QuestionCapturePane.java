@@ -1704,19 +1704,18 @@ public final class QuestionCapturePane extends VBox {
 		regionsScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 		regionsScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
-		// Accepted content prefers enough height to display naturally up to the
-		// viewport
-		// cap, but it must remain shrinkable when the enclosing capture workspace has
-		// less vertical room. The inner ScrollPane then scrolls rather than drawing
-		// over
-		// the Answer pane below it.
-		regionsScrollPane.setMinHeight(0);
+		// Accepted Question content keeps its content-derived preferred height up to
+		// the
+		// viewport cap. If the complete capture workspace is taller than the available
+		// window, the application's outer ScrollPane owns that scrolling.
+		regionsScrollPane.setMinHeight(Region.USE_PREF_SIZE);
 		regionsScrollPane.setMaxHeight(REGIONS_VIEWPORT_HEIGHT);
 		regionsScrollPane.prefHeightProperty()
 				.bind(Bindings.createDoubleBinding(
 						() -> Math.min(REGIONS_VIEWPORT_HEIGHT,
 								regionPreviewBox.getLayoutBounds().getHeight() + REGION_VIEWPORT_EXTRA_HEIGHT),
 						regionPreviewBox.layoutBoundsProperty()));
+
 		regionsScrollPane.setVisible(false);
 		regionsScrollPane.setManaged(false);
 		return regionsScrollPane;

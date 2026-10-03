@@ -20,11 +20,9 @@ import java.util.function.Supplier;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
-import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
-
 //Reuse the shared provider/year/booklet/natural Question ordering policy.
 import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.model.Subject;
@@ -34,7 +32,6 @@ import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
-import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
@@ -55,7 +52,6 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
-import javafx.stage.Stage;
 
 /**
  * Owns unanswered-question selection, answer source and region state, textual
@@ -79,8 +75,8 @@ public final class AnswerCapturePane extends VBox {
 	private final QuestionRepository questionRepository;
 	private final QuestionExtractor questionExtractor;
 	private final Supplier<PdfSession> answerPdfSessionSupplier;
-	private final PdfFilePicker pdfFilePicker;
 	private final Consumer<SelectedPdf> answerPdfHandler;
+	private final Path pdfDataRoot;
 	private final BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader;
 	private final Runnable selectionClearHandler;
 	private final Runnable answerDocumentHandler;
@@ -91,8 +87,7 @@ public final class AnswerCapturePane extends VBox {
 	// Question and answer source selection.
 	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
 	private final Label selectedAnswerQuestionLabel = new Label("No question selected");
-	private final Button chooseAnswerPdfButton = new Button("Choose PDF...");
-	private final Label selectedAnswerPdfLabel = new Label("No PDF selected");
+	private final Label selectedAnswerPdfLabel = new Label("No Answer PDF assigned");
 
 	// Answer content and region controls.
 	private final ToggleGroup multipleChoiceAnswerGroup = new ToggleGroup();
@@ -156,25 +151,23 @@ public final class AnswerCapturePane extends VBox {
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
 	 *
-	 * @param stage                       owner used by PDF selection
 	 * @param questionRepository          source of persisted Questions
 	 * @param answerWriter                writer for Answer persistence
-	 * @param pdfFilePicker               managed PDF-selection service
-	 * @param answerPdfHandler            callback that registers a selected Answer
-	 *                                    PDF
+	 * @param pdfDataRoot                 managed PDF storage root
+	 * @param answerPdfHandler            callback that opens an assigned Answer PDF
 	 * @param answerDocumentHandler       callback that displays the Answer document
 	 * @param answerTransitionAllowed     guard for changing Answer targets
+	 * @param activeBookletSupplier       supplier of the Question booklet currently
+	 *                                    active for capture
 	 * @param selectionClearHandler       callback that clears the shared PDF
 	 *                                    selection
 	 * @param questionExtractor           extractor used to preview accepted regions
 	 * @param answerPdfSessionSupplier    supplier of the active Answer PDF session
 	 * @param answerPageNavigationHandler callback that navigates Answer pages
 	 * @param answerPdfLoader             asynchronous Answer PDF loader
-	 * @param activeBookletSupplier       supplier of the Question booklet currently
-	 *                                    active for capture
 	 */
-	public AnswerCapturePane(Stage stage, QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
-			PdfFilePicker pdfFilePicker, Consumer<SelectedPdf> answerPdfHandler, Runnable answerDocumentHandler,
+	public AnswerCapturePane(QuestionRepository questionRepository, SqliteAnswerWriter answerWriter, Path pdfDataRoot,
+			Consumer<SelectedPdf> answerPdfHandler, Runnable answerDocumentHandler,
 			BooleanSupplier answerTransitionAllowed, Supplier<ExamBooklet> activeBookletSupplier,
 			Runnable selectionClearHandler, QuestionExtractor questionExtractor,
 			Supplier<PdfSession> answerPdfSessionSupplier, IntConsumer answerPageNavigationHandler,
@@ -182,11 +175,23 @@ public final class AnswerCapturePane extends VBox {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
-		if (pdfFilePicker == null) {
-			throw new NullPointerException("pdfFilePicker");
+		if (answerWriter == null) {
+			throw new NullPointerException("answerWriter");
+		}
+		if (pdfDataRoot == null) {
+			throw new NullPointerException("pdfDataRoot");
 		}
 		if (answerPdfHandler == null) {
 			throw new NullPointerException("answerPdfHandler");
+		}
+		if (answerDocumentHandler == null) {
+			throw new NullPointerException("answerDocumentHandler");
+		}
+		if (answerTransitionAllowed == null) {
+			throw new NullPointerException("answerTransitionAllowed");
+		}
+		if (activeBookletSupplier == null) {
+			throw new NullPointerException("activeBookletSupplier");
 		}
 		if (selectionClearHandler == null) {
 			throw new NullPointerException("selectionClearHandler");
@@ -200,32 +205,24 @@ public final class AnswerCapturePane extends VBox {
 		if (answerPageNavigationHandler == null) {
 			throw new NullPointerException("answerPageNavigationHandler");
 		}
-		if (answerWriter == null) {
-			throw new NullPointerException("answerWriter");
-		}
-		if (answerDocumentHandler == null) {
-			throw new NullPointerException("answerDocumentHandler");
-		}
-		if (answerTransitionAllowed == null) {
-			throw new NullPointerException("answerTransitionAllowed");
-		}
-		if (activeBookletSupplier == null) {
-			throw new NullPointerException("activeBookletSupplier");
-		}
+
+		// Answer capture consumes authoritative AnswerFile assignments created through
+		// Exam / Assets. It no longer owns native PDF selection.
 		this.questionRepository = questionRepository;
-		this.pdfFilePicker = pdfFilePicker;
+		this.answerWriter = answerWriter;
+		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
 		this.answerPdfHandler = answerPdfHandler;
 		this.answerPdfLoader = Objects.requireNonNull(answerPdfLoader, "answerPdfLoader");
+		this.answerDocumentHandler = answerDocumentHandler;
+		this.answerTransitionAllowed = answerTransitionAllowed;
+		this.activeBookletSupplier = activeBookletSupplier;
 		this.selectionClearHandler = selectionClearHandler;
 		this.questionExtractor = questionExtractor;
 		this.answerPdfSessionSupplier = answerPdfSessionSupplier;
 		this.answerPageNavigationHandler = answerPageNavigationHandler;
-		this.answerWriter = answerWriter;
-		this.answerDocumentHandler = answerDocumentHandler;
-		this.answerTransitionAllowed = answerTransitionAllowed;
-		this.activeBookletSupplier = activeBookletSupplier;
+
 		configureControls();
-		configureActions(stage);
+		configureActions();
 		getChildren().addAll(createSectionLabel("Answer"), unansweredQuestionField,
 				createMcqExplanationWorkflowControls(), selectedAnswerQuestionLabel, createAnswerPdfControls(),
 				createAnswerRegionControls(), answerRegionsScrollPane, createMultipleChoiceAnswerControls());
@@ -477,7 +474,8 @@ public final class AnswerCapturePane extends VBox {
 		// Questions unanswered again.
 		locallyAnsweredQuestionIds.clear();
 		answerFile = null;
-		selectedAnswerPdfLabel.setText("No PDF selected");
+		// Exam / Assets may have changed the authoritative assignment.
+		selectedAnswerPdfLabel.setText("No Answer PDF assigned");
 		refreshQuestions();
 
 		// refreshQuestions deliberately suppresses its selection listener, so
@@ -527,7 +525,7 @@ public final class AnswerCapturePane extends VBox {
 		// The old AnswerFile object contains the pre-correction SourceDocument path.
 		// Force a fresh database lookup rather than reusing that stale object.
 		answerFile = null;
-		selectedAnswerPdfLabel.setText("No PDF selected");
+		selectedAnswerPdfLabel.setText("No Answer PDF assigned");
 		if (question == null || !usesAnswerDocument(question)) {
 			updateAnswerPdfControlsVisibility(question);
 			return;
@@ -754,28 +752,6 @@ public final class AnswerCapturePane extends VBox {
 		finishAnswerEdit(!mcqExplanationMode);
 	}
 
-	private void chooseAnswerPdf(Stage stage) {
-		Question question = unansweredQuestionField.getValue();
-		if (question == null) {
-			showError("Select a question first.");
-			return;
-		}
-		if (!usesAnswerDocument(question)) {
-
-			// UNKNOWN response types must be resolved before an Answer source is
-			// attached.
-			return;
-		}
-		Path sourcePath = pdfFilePicker.chooseAnyPdf(stage, "Choose answer PDF");
-		if (sourcePath == null || !answerTransitionAllowed.getAsBoolean()) {
-			return;
-		}
-		if (hasAcceptedRegions()) {
-			clearPendingAnswerRegions();
-		}
-		importSelectedAnswerPdf(question, sourcePath);
-	}
-
 	private void clearAnswerCaptureCompletion() {
 		answerCaptureCompletionQuestionId = -1L;
 		answerCaptureCompletedHandler = () -> {
@@ -891,9 +867,8 @@ public final class AnswerCapturePane extends VBox {
 		loadNextAnswerDocument(nextQuestion);
 	}
 
-	private void configureActions(Stage stage) {
+	private void configureActions() {
 		addAnswerRegionButton.setOnAction(_ -> addCurrentAnswerRegion());
-		chooseAnswerPdfButton.setOnAction(_ -> chooseAnswerPdf(stage));
 		clearAnswerSelectionButton.setOnAction(_ -> clearCurrentAnswerSelection());
 		saveAnswerButton.setOnAction(_ -> validateAnswerForSave());
 		cancelAnswerEditButton.setOnAction(_ -> cancelAnswerEdit());
@@ -911,17 +886,13 @@ public final class AnswerCapturePane extends VBox {
 
 	private void configureAnswerPdfControls() {
 		answerPdfControls.setId("answer-pdf-controls");
-		chooseAnswerPdfButton.setId("choose-answer-pdf");
-		chooseAnswerPdfButton.setDisable(true);
-		chooseAnswerPdfButton.setMinWidth(Region.USE_PREF_SIZE);
-		chooseAnswerPdfButton.setTooltip(new Tooltip(
-				"Choose the Answer PDF assigned to this booklet before capturing written-response regions."));
 
-		// The filename receives its own wrapping row so it cannot force the PDF action
-		// below its readable preferred width.
+		// Answer source identity is informational here. Assignment and replacement are
+		// owned by Exam / Assets.
 		selectedAnswerPdfLabel.setId("selected-answer-pdf");
 		selectedAnswerPdfLabel.setWrapText(true);
 		selectedAnswerPdfLabel.setMaxWidth(Double.MAX_VALUE);
+		selectedAnswerPdfLabel.setTooltip(new Tooltip("Answer PDFs are assigned and replaced through Exam / Assets."));
 	}
 
 	private void configureAnswerPersistenceControls() {
@@ -1095,10 +1066,9 @@ public final class AnswerCapturePane extends VBox {
 
 	private VBox createAnswerPdfControls() {
 
-		// A filename can be much wider than the capture workspace. Give it a dedicated
-		// wrapping row so it can never force the Choose PDF action below its readable
-		// width.
-		answerPdfControls.getChildren().setAll(chooseAnswerPdfButton, selectedAnswerPdfLabel);
+		// Answer capture displays the authoritative assigned source but provides no
+		// second path for selecting or replacing it.
+		answerPdfControls.getChildren().setAll(selectedAnswerPdfLabel);
 		answerPdfControls.setFillWidth(true);
 		return answerPdfControls;
 	}
@@ -1273,7 +1243,7 @@ public final class AnswerCapturePane extends VBox {
 		clearPendingAnswerRegions();
 		clearMultipleChoiceAnswer();
 		answerFile = null;
-		selectedAnswerPdfLabel.setText("No PDF selected");
+		selectedAnswerPdfLabel.setText("No Answer PDF assigned");
 		unansweredQuestionField.setDisable(false);
 		cancelAnswerEditButton.setVisible(false);
 		cancelAnswerEditButton.setManaged(false);
@@ -1299,7 +1269,9 @@ public final class AnswerCapturePane extends VBox {
 		} else {
 			answerRegionStatusLabel.setText("Answer saved — next PDF could not be loaded");
 			showAnswerFileError("Answer saved, but the next question's PDF could not be loaded.",
-					"Your answer is stored. Choose an answer PDF to continue. " + failure.getMessage());
+					// Source correction belongs to Exam / Assets rather than Answer capture.
+					"Your answer is stored. Correct the Answer PDF assignment in Exam / Assets before continuing. "
+							+ failure.getMessage());
 		}
 
 		// Direct Dashboard correction returns only after the complete Answer save
@@ -1359,7 +1331,9 @@ public final class AnswerCapturePane extends VBox {
 			answerFile = file;
 			selectedAnswerPdfLabel.setText(file.getName());
 		} else {
-			clearAnswerFile("Choose an answer PDF");
+
+			// Failure does not create an alternative capture-side source-selection path.
+			clearAnswerFile("No Answer PDF assigned");
 		}
 		finishAnswerSaveTransition(failure);
 	}
@@ -1420,7 +1394,8 @@ public final class AnswerCapturePane extends VBox {
 		if (file == null) {
 
 			// Never carry the preceding booklet's PDF into an unresolved booklet.
-			clearAnswerFile("Choose an answer PDF");
+			// Missing source assignment is corrected in Exam / Assets.
+			clearAnswerFile("No Answer PDF assigned");
 			finishAnswerSaveTransition(null);
 			return;
 		}
@@ -1431,7 +1406,7 @@ public final class AnswerCapturePane extends VBox {
 
 		// A failed lookup must not leave the preceding booklet's AnswerFile appearing
 		// to belong to the new Question.
-		clearAnswerFile("Choose an answer PDF");
+		clearAnswerFile("No Answer PDF assigned");
 		finishAnswerSaveTransition(failure);
 	}
 
@@ -1461,21 +1436,6 @@ public final class AnswerCapturePane extends VBox {
 		// An A-D choice can exist without any Answer regions. It must not be silently
 		// discarded merely because the user enters explanation-retrofit mode.
 		return !currentAnswerText().isBlank();
-	}
-
-	private void importSelectedAnswerPdf(Question question, Path sourcePath) {
-		Exam exam = question.getExam();
-		PdfStore pdfStore = new PdfStore(pdfFilePicker.dataRoot());
-		try {
-
-			// Import into managed Exam storage before registering the booklet mapping.
-			Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(),
-					exam.getProvider().getName(), exam.getYear());
-			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfFilePicker.dataRoot());
-			selectAnswerPdf(question, selectedPdf);
-		} catch (IOException exception) {
-			showAnswerPdfError(exception.getMessage());
-		}
 	}
 
 	private boolean isMultipleChoiceQuestion(Question question) {
@@ -1527,7 +1487,7 @@ public final class AnswerCapturePane extends VBox {
 
 			// Nothing remains that may legitimately retain the previous booklet's
 			// Answer source.
-			clearAnswerFile("No PDF selected");
+			clearAnswerFile("No Answer PDF assigned");
 			finishAnswerSaveTransition(null);
 			return;
 		}
@@ -1583,8 +1543,9 @@ public final class AnswerCapturePane extends VBox {
 
 	private void openNextAnswerDocument(AnswerFile file) {
 		try {
-			Path path = new PdfStore(pdfFilePicker.dataRoot()).resolve(file.getSourceDocument().getRelativePath());
-			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfFilePicker.dataRoot());
+			// Resolve the persisted managed relative path against the Answer PDF store.
+			Path path = new PdfStore(pdfDataRoot).resolve(file.getSourceDocument().getRelativePath());
+			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfDataRoot);
 
 			// Save transition remains active until the asynchronous PDF loader reports
 			// completion.
@@ -1602,7 +1563,7 @@ public final class AnswerCapturePane extends VBox {
 			showAnswerFileError("The registered answer PDF is unavailable.", pdfPath.toString());
 			return false;
 		}
-		SelectedPdf selectedPdf = new SelectedPdf(pdfPath.toFile(), pdfPath, pdfFilePicker.dataRoot());
+		SelectedPdf selectedPdf = new SelectedPdf(pdfPath.toFile(), pdfPath, pdfDataRoot);
 		try {
 			answerPdfHandler.accept(selectedPdf);
 		} catch (RuntimeException e) {
@@ -1629,7 +1590,7 @@ public final class AnswerCapturePane extends VBox {
 		if (!usesAnswerDocument) {
 
 			// UNKNOWN response types cannot retain a booklet-specific Answer source.
-			clearAnswerFile("No PDF selected");
+			clearAnswerFile("No Answer PDF assigned");
 		}
 	}
 
@@ -1666,7 +1627,6 @@ public final class AnswerCapturePane extends VBox {
 		updateAnswerRegionControlsVisibility(question);
 
 		// Both supported response types may own an Answer document.
-		chooseAnswerPdfButton.setDisable(!usesAnswerDocument);
 		updateAnswerPdfControlsVisibility(question);
 		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — response type unresolved; "
@@ -1808,7 +1768,7 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private Path resolveRegisteredAnswerFile(AnswerFile registeredAnswerFile) {
-		PdfStore pdfStore = new PdfStore(pdfFilePicker.dataRoot());
+		PdfStore pdfStore = new PdfStore(pdfDataRoot);
 		try {
 			return pdfStore.resolve(registeredAnswerFile.getSourceDocument().getRelativePath());
 		} catch (IllegalArgumentException e) {
@@ -1978,15 +1938,11 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void showAnswerFileRequired(Question question) {
-		clearAnswerFile("Choose an answer PDF");
-		updateAnswerPdfControlsVisibility(question);
-	}
 
-	private void showAnswerPdfError(String message) {
-		Alert alert = new Alert(Alert.AlertType.ERROR);
-		alert.setHeaderText("The answer PDF could not be imported.");
-		alert.setContentText(message);
-		alert.showAndWait();
+		// Answer capture cannot manufacture missing assessment structure. The source
+		// must be assigned through the Exam / Assets workflow.
+		clearAnswerFile("No Answer PDF assigned - use Exam / Assets");
+		updateAnswerPdfControlsVisibility(question);
 	}
 
 	private void showAnswerWorkflowWarning(String header, String message) {
@@ -2023,12 +1979,11 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void showNoAnswerQuestion() {
-		clearAnswerFile("No PDF selected");
+		clearAnswerFile("No Answer PDF assigned");
 		selectedAnswerQuestionLabel.setText("No question selected");
 		updateMultipleChoiceAnswerVisibility(null);
 		updateAnswerRegionControlsVisibility(null);
 		saveAnswerButton.setDisable(true);
-		chooseAnswerPdfButton.setDisable(true);
 		saveAnswerButton.setText("Save Answer");
 		answerRegionCountLabel.setText("Regions: 0");
 		answerRegionStatusLabel.setText("");
@@ -2073,12 +2028,10 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void updateAnswerPdfControlsVisibility(Question question) {
-		boolean usesAnswerDocument = usesAnswerDocument(question);
+		boolean visible = usesAnswerDocument(question);
 
-		// answerFile is maintained as the file resolved for the currently selected
-		// booklet. A null value therefore means this booklet still needs a PDF choice.
-		boolean answerPdfKnown = usesAnswerDocument && answerFile != null;
-		boolean visible = usesAnswerDocument && !answerPdfKnown;
+		// The row now reports the authoritative Exam/Assets assignment rather than
+		// appearing only when capture wants the user to choose a source.
 		answerPdfControls.setVisible(visible);
 		answerPdfControls.setManaged(visible);
 	}

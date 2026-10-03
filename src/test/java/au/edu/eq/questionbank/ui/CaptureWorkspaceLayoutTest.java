@@ -274,42 +274,39 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void answerPdfControlsRemainReadableAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
+	void answerPdfSourceRemainsReadableAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "Q1");
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
-		Button choosePdf = lookup(robot, "#choose-answer-pdf", Button.class);
+
 		Label selectedPdf = lookup(robot, "#selected-answer-pdf", Label.class);
 		javafx.scene.layout.VBox pdfControls = lookup(robot, "#answer-pdf-controls", javafx.scene.layout.VBox.class);
 
-		// Exercise a filename deliberately much longer than the supported narrow
-		// workspace. Real imported files can contain similarly descriptive names.
+		// Answer capture must expose no second source-selection control.
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
+
 		robot.interact(() -> selectedPdf
 				.setText("Queensland-Chemistry-External-Assessment-2024-Marking-Guide-With-A-Very-Long-Filename.pdf"));
+
 		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
 				javafx.scene.control.SplitPane.class);
 		robot.interact(() -> {
 
 			// Force the capture pane to the application's configured minimum width, then
-			// perform a complete CSS/layout pass before measuring controls.
+			// perform a complete CSS/layout pass before measuring source presentation.
 			splitPane.setDividerPosition(0, 0.0);
 			primaryStage.getScene().getRoot().applyCss();
 			primaryStage.getScene().getRoot().layout();
 		});
 		WaitForAsyncUtils.waitForFxEvents();
 
-		// The action must not be compressed below its JavaFX minimum readable width.
-		assertTrue(choosePdf.getWidth() + 0.5 >= choosePdf.minWidth(choosePdf.getHeight()),
-				"Choose PDF must remain fully readable at minimum workspace width");
-
-		// The filename occupies its own wrapping row rather than sharing horizontal
-		// space with the action.
+		// The authoritative source filename remains readable without introducing a
+		// capture-side Choose PDF action.
 		assertTrue(selectedPdf.isWrapText());
-		assertEquals(pdfControls, choosePdf.getParent());
 		assertEquals(pdfControls, selectedPdf.getParent());
 		assertTrue(selectedPdf.getWidth() <= pdfControls.getWidth() + 0.5,
-				"Selected PDF filename must stay within the Answer controls width");
+				"Selected Answer PDF filename must stay within the Answer controls width");
 	}
 
 	@Test

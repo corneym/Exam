@@ -382,6 +382,19 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
+	 * Reports whether Exam / Assets currently owns unsaved structural work that
+	 * must be saved or cancelled before navigation may leave the workspace.
+	 *
+	 * @return {@code true} while a structural transaction is active
+	 */
+	public boolean hasPendingStructuralWork() {
+
+		// Expose only the navigation decision; ownership of the actual transaction
+		// remains inside ExamAssetsPane.
+		return structuralTransactionActive();
+	}
+
+	/**
 	 * Loads all persistence data needed for the initial Exam/Assets presentation of
 	 * one Subject without touching JavaFX controls.
 	 *

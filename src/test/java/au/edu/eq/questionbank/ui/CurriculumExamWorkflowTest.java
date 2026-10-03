@@ -108,6 +108,21 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void applicationStartsOnCorpusDashboardHome(FxRobot robot) {
+		Node home = robot.lookup("#corpus-dashboard-home").query();
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+
+		// The application opens on its operational home surface before any Subject has
+		// been chosen.
+		assertTrue(home.isVisible());
+		assertNull(subjects.getValue());
+		assertTrue(robot.lookup("#corpus-dashboard-no-subject").tryQuery().isPresent());
+
+		// Capture remains constructed and reusable, but it is not the startup surface.
+		assertTrue(robot.lookup("#workspace-split-pane").tryQuery().isEmpty());
+	}
+
+	@Test
 	void canSelectAndPersistHistoricalSyllabusClassification(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
@@ -250,6 +265,13 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void clearingSyllabusThenSubjectClearsDependentControls(FxRobot robot) throws Exception {
+		// Classification is now a specialised Capture surface rather than startup
+		// content. Enter Capture before testing its syllabus hierarchy.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
+			return null;
+		}).get();
+
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
@@ -329,64 +351,29 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void corpusAuditInheritsWorkingSubject(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-		Subject workingSubject = subjects.getValue();
+		Subject workingSubject = field(application, "workingSubject", Subject.class);
 		assertNotNull(workingSubject);
 
-		// Exercise the real Questions menu action through its stable control identity
-		// rather than coupling the workflow regression to visible menu wording.
 		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
 		MenuItem dashboardItem = questionMenu.getItems().stream()
 				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
 				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
 
-		// The Dashboard enters a modal showAndWait() loop, so schedule the action and
-		// leave the test thread available to inspect and close the dialog.
-		Platform.runLater(dashboardItem::fire);
-		waitForDialogShowing(robot, "Corpus Dashboard");
-		DialogPane dashboard = showingDialogPane(robot, "Corpus Dashboard");
-		Node workingSubjectNode = dashboard.lookup("#corpus-dashboard-working-subject");
-		assertTrue(workingSubjectNode instanceof Label);
-		assertEquals(workingSubject.getName(), ((Label) workingSubjectNode).getText());
+		// Corpus Dashboard is now ordinary main-window navigation rather than a modal
+		// dialog.
+		robot.interact(dashboardItem::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
 
-		// The Dashboard inherits application-level Working Subject and must not expose
-		// an independent Subject filter.
-		assertNull(dashboard.lookup("#corpus-dashboard-filter-subject"));
-		Node closeNode = dashboard.lookupButton(ButtonType.CLOSE);
-		assertTrue(closeNode instanceof Button);
-		robot.interact(((Button) closeNode)::fire);
-		waitForDialogHidden(robot, "Corpus Dashboard");
-	}
-
-	@Test
-	void corpusAuditRequiresWorkingSubject(FxRobot robot) throws Exception {
+		Node home = robot.lookup("#corpus-dashboard-home").query();
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		assertTrue(home.isVisible());
+		assertEquals(workingSubject, subjects.getValue());
 
-		// Remove the authoritative application Subject before entering the Dashboard.
-		robot.interact(() -> subjects.getSelectionModel().clearSelection());
-		WaitForAsyncUtils.waitForFxEvents();
-		assertNull(field(application, "workingSubject", Subject.class));
-		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
-				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
-		MenuItem dashboardItem = questionMenu.getItems().stream()
-				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
-				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
-
-		// The prerequisite warning is modal, so schedule the real menu action rather
-		// than blocking the test thread inside the action itself.
-		Platform.runLater(dashboardItem::fire);
-		waitForDialogShowing(robot, "Corpus Dashboard");
-		DialogPane warning = showingDialogPane(robot, "Corpus Dashboard");
-		assertEquals("No Working Subject is selected.", warning.getHeaderText());
-		Node okNode = warning.lookupButton(ButtonType.OK);
-		assertTrue(okNode instanceof Button);
-		robot.interact(((Button) okNode)::fire);
-		waitForDialogHidden(robot, "Corpus Dashboard");
-
-		// Failure at the application boundary must occur before the actual Dashboard
-		// surface is constructed.
-		assertTrue(robot.lookup("#corpus-dashboard-working-subject").tryQuery().isEmpty());
+		// The moved selector is the authoritative application control; no second
+		// Dashboard Subject filter exists.
+		assertNull(home.lookup("#corpus-dashboard-filter-subject"));
 	}
 
 	@Test
@@ -402,46 +389,61 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SyllabusVersion targetVersion = curriculumRepository.findVersionsForSubject(chemistry).stream()
 				.filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
 		CurriculumNode sourceDescriptor = curriculumRepository.findByCode(sourceVersion, "3.1.1").orElseThrow();
+
 		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
 		MenuItem dashboardItem = questionMenu.getItems().stream()
 				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
 				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
 
-		// Open the production Dashboard so mapping coverage is calculated through the
-		// real application composition root.
-		Platform.runLater(dashboardItem::fire);
-		waitForDialogShowing(robot, "Corpus Dashboard");
-		DialogPane dashboard = showingDialogPane(robot, "Corpus Dashboard");
-		Label mappingReview = (Label) dashboard.lookup("#corpus-dashboard-mapping-review");
-		Button needsAttention = (Button) dashboard.lookup("#corpus-dashboard-summary-attention");
-		Button refresh = (Button) dashboard.lookup("#corpus-dashboard-refresh");
-		assertNotNull(mappingReview);
-		assertNotNull(needsAttention);
-		assertNotNull(refresh);
+		// Navigate back to the embedded production Dashboard and wait for its
+		// asynchronous persistence generation.
+		robot.interact(dashboardItem::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-mapping-review").tryQuery().isPresent());
 
-		// The fixture contains one unresolved historical Chemistry descriptor.
+		Label mappingReview = lookup(robot, "#corpus-dashboard-mapping-review", Label.class);
+		Button needsAttention = lookup(robot, "#corpus-dashboard-summary-attention", Button.class);
+		Button refresh = lookup(robot, "#corpus-dashboard-refresh", Button.class);
+
 		assertTrue(mappingReview.getText().contains("2019 \u2192 2025"));
 		assertTrue(mappingReview.getText().contains("0/1 resolved"));
 		assertTrue(mappingReview.getText().contains("1 remaining"));
 		String corpusAttentionBeforeReview = needsAttention.getText();
 
-		// Persist a real mapping-review decision while the Dashboard is open.
+		// Persist a real review decision while the home Dashboard remains visible.
 		new SqliteCurriculumMappingReviewWriter(database).confirmNoMatch(sourceDescriptor, targetVersion);
 
-		// Dashboard Refresh must recalculate mapping coverage from persistence rather
-		// than retaining the snapshot from when the dialog was opened.
 		robot.interact(refresh::fire);
-		assertTrue(mappingReview.getText().contains("2019 \u2192 2025"));
-		assertTrue(mappingReview.getText().contains("complete (1/1 resolved)"));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> mappingReview.getText().contains("complete (1/1 resolved)"));
 
-		// Mapping-review completion is deliberately independent of ordinary Question
-		// completeness and therefore must not change Need-attention totals.
+		// Mapping review remains independent of ordinary corpus completeness.
 		assertEquals(corpusAttentionBeforeReview, needsAttention.getText());
-		Node closeNode = dashboard.lookupButton(ButtonType.CLOSE);
-		assertTrue(closeNode instanceof Button);
-		robot.interact(((Button) closeNode)::fire);
-		waitForDialogHidden(robot, "Corpus Dashboard");
+	}
+
+	@Test
+	void corpusDashboardRemainsUsableWithoutWorkingSubject(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+
+		robot.interact(() -> subjects.getSelectionModel().clearSelection());
+		WaitForAsyncUtils.waitForFxEvents();
+		assertNull(field(application, "workingSubject", Subject.class));
+
+		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
+		MenuItem dashboardItem = questionMenu.getItems().stream()
+				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
+				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
+
+		// No prerequisite dialog is required because Subject selection itself now lives
+		// on the home surface.
+		robot.interact(dashboardItem::fire);
+
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(robot.lookup("#corpus-dashboard-no-subject").tryQuery().isPresent());
+		assertTrue(robot.lookup("#curriculum-subject").tryQuery().isPresent());
+		assertTrue(robot.lookup("#corpus-dashboard-exams").tryQuery().isEmpty());
 	}
 
 	@Test
@@ -584,8 +586,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Exercise the application-level structural route rather than manipulating the
 		// Exam/Assets controls directly.
 		WaitForAsyncUtils.asyncFx(() -> {
-			invoke(application, "showExamAssetsMode", new Class<?>[] { Exam.class, ExamBooklet.class },
-					booklet.getExam(), booklet);
+			invoke(application, "showExamAssetsMode", new Class<?>[] { Exam.class, ExamBooklet.class, Runnable.class },
+					booklet.getExam(), booklet, (Runnable) () -> {
+					});
 			return null;
 		}).get();
 		@SuppressWarnings("unchecked")
@@ -973,6 +976,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void resettingClassificationWithoutSyllabusKeepsUnitsDisabled(FxRobot robot) throws Exception {
+		// Classification controls live in the Capture workspace now that Dashboard is
+		// the application home surface.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
+			return null;
+		}).get();
 		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
 
 		// This test exercises CurriculumSelectorPane dependency state rather than the

@@ -59,6 +59,7 @@ public class CurriculumSelectorPane extends VBox {
 	private boolean refreshingSubjects;
 	private boolean refreshingCode;
 	private VBox classificationContext;
+	private VBox subjectContext;
 
 	// The desktop application owns asynchronous Working Subject transitions. A
 	// standalone selector keeps its existing synchronous Subject behaviour.
@@ -204,6 +205,24 @@ public class CurriculumSelectorPane extends VBox {
 		// The controls themselves are not recreated. Their listeners and selection
 		// model therefore continue operating exactly as before after re-parenting.
 		return classificationContext;
+	}
+
+	/**
+	 * Detaches the authoritative Working Subject section so the application can
+	 * place the existing live selector inside the Corpus Dashboard home surface.
+	 *
+	 * @return the existing Working Subject section and all of its live controls
+	 * @throws IllegalStateException if the Working Subject section has already been
+	 *                               detached
+	 */
+	public VBox detachSubjectContext() {
+		if (subjectContext == null || !getChildren().remove(subjectContext)) {
+			throw new IllegalStateException("Working Subject context has already been detached");
+		}
+
+		// Re-parent the actual application Subject controls rather than creating a
+		// second selector with competing state.
+		return subjectContext;
 	}
 
 	/**
@@ -450,7 +469,7 @@ public class CurriculumSelectorPane extends VBox {
 		GridPane subjectRow = createTwoColumnGrid();
 		subjectRow.addRow(0, subjectLabel, subjectControls);
 		GridPane.setHgrow(subjectControls, Priority.ALWAYS);
-		VBox subjectContext = new VBox(subjectRow);
+		subjectContext = new VBox(subjectRow);
 		subjectContext.setId("working-subject-context");
 		subjectContext.setPadding(PANEL_PADDING);
 		subjectContext.setStyle(BORDER_STYLE);

@@ -122,7 +122,6 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> questions.getSelectionModel().select(question));
 		Node multipleChoiceControls = lookup(robot, "#multiple-choice-answer-controls", Node.class);
 		Node pdfControls = lookup(robot, "#answer-pdf-controls", Node.class);
-		Button choosePdf = lookup(robot, "#choose-answer-pdf", Button.class);
 		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
 		Button save = lookup(robot, "#save-answer", Button.class);
 
@@ -132,8 +131,9 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(multipleChoiceControls.isManaged());
 		assertTrue(pdfControls.isVisible());
 		assertTrue(pdfControls.isManaged());
-		assertFalse(choosePdf.isDisabled());
-
+		// The assigned marking document remains relevant, but selection/replacement is
+		// owned exclusively by Exam / Assets.
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
 		// The default AnswerFile has not been marked as containing explanations, so
 		// this MCQ remains a simple A-D Answer workflow with no region controls.
 		assertFalse(addRegion.isVisible());

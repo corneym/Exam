@@ -51,7 +51,7 @@ import javafx.scene.layout.VBox;
 /**
  * Displays the operational Exam -> booklet -> Question Corpus Dashboard.
  */
-final class CorpusDashboardPane extends VBox {
+public final class CorpusDashboardPane extends VBox {
 
 	private static final double SPACING = 8.0;
 	private static final Insets PADDING = new Insets(10);
@@ -122,14 +122,7 @@ final class CorpusDashboardPane extends VBox {
 	private final Label curriculumMappingSummaryLabel = new Label();
 	private boolean summaryQuestionFilterActive;
 
-	CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions) {
-
-		// Existing callers without mapping information retain an explicit
-		// not-applicable mapping-review state.
-		this(workingSubject, examStatuses, questions, List.of());
-	}
-
-	CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions,
+	public CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions,
 			List<CurriculumMappingCoverage> mappingCoverages) {
 		if (workingSubject == null) {
 			throw new NullPointerException("workingSubject");
@@ -148,14 +141,14 @@ final class CorpusDashboardPane extends VBox {
 		refreshDashboard();
 	}
 
-	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
+	CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions) {
 
-		// Ordinary refresh retains the current mapping snapshot unless the application
-		// supplies a replacement generation explicitly.
-		replaceData(updatedStatuses, updatedQuestions, mappingCoverages, -1L);
+		// Existing callers without mapping information retain an explicit
+		// not-applicable mapping-review state.
+		this(workingSubject, examStatuses, questions, List.of());
 	}
 
-	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
+	public void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
 			List<CurriculumMappingCoverage> updatedMappingCoverages, long preferredQuestionId) {
 		Long selectedExamId = selectedExamId();
 		Long selectedBookletId = selectedBookletId();
@@ -196,14 +189,7 @@ final class CorpusDashboardPane extends VBox {
 		}
 	}
 
-	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
-			long preferredQuestionId) {
-
-		// Correction-only callers preserve the current independent mapping snapshot.
-		replaceData(updatedStatuses, updatedQuestions, mappingCoverages, preferredQuestionId);
-	}
-
-	void setAnswerCaptureHandler(Consumer<Question> handler) {
+	public void setAnswerCaptureHandler(Consumer<Question> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
@@ -213,7 +199,7 @@ final class CorpusDashboardPane extends VBox {
 		answerCaptureHandler = handler;
 	}
 
-	void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
+	public void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
@@ -222,7 +208,7 @@ final class CorpusDashboardPane extends VBox {
 		bulkResponseTypeHandler = handler;
 	}
 
-	void setExamAssetsHandler(BiConsumer<Exam, ExamBooklet> handler) {
+	public void setExamAssetsHandler(BiConsumer<Exam, ExamBooklet> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
@@ -231,7 +217,7 @@ final class CorpusDashboardPane extends VBox {
 		examAssetsHandler = handler;
 	}
 
-	void setNewQuestionCaptureHandler(Consumer<ExamBooklet> handler) {
+	public void setNewQuestionCaptureHandler(Consumer<ExamBooklet> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
@@ -241,7 +227,7 @@ final class CorpusDashboardPane extends VBox {
 		newQuestionCaptureHandler = handler;
 	}
 
-	void setQuestionCorrectionHandler(Consumer<Question> handler) {
+	public void setQuestionCorrectionHandler(Consumer<Question> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
@@ -251,7 +237,7 @@ final class CorpusDashboardPane extends VBox {
 		questionCorrectionHandler = handler;
 	}
 
-	void setRefreshHandler(Runnable handler) {
+	public void setRefreshHandler(Runnable handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
 		}
@@ -259,6 +245,20 @@ final class CorpusDashboardPane extends VBox {
 		// The owning workflow supplies the persistence reload boundary.
 		refreshHandler = handler;
 		refreshButton.setDisable(false);
+	}
+
+	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
+
+		// Ordinary refresh retains the current mapping snapshot unless the application
+		// supplies a replacement generation explicitly.
+		replaceData(updatedStatuses, updatedQuestions, mappingCoverages, -1L);
+	}
+
+	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
+			long preferredQuestionId) {
+
+		// Correction-only callers preserve the current independent mapping snapshot.
+		replaceData(updatedStatuses, updatedQuestions, mappingCoverages, preferredQuestionId);
 	}
 
 	private String answerAssetCount(ExamCorpusStatus status) {

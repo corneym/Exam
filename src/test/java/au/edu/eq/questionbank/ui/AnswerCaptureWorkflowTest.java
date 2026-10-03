@@ -192,7 +192,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// An unresolved booklet must not inherit Paper 2's file merely because both
 		// Questions belong to the same Exam.
 		assertNull(field(answerCapturePane(), "answerFile", AnswerFile.class));
-		assertEquals("Choose an answer PDF", selectedPdf.getText());
+		assertEquals("No Answer PDF assigned - use Exam / Assets", selectedPdf.getText());
 		assertTrue(pdfControls.isVisible());
 		assertTrue(pdfControls.isManaged());
 	}
@@ -503,34 +503,6 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void hidesAnswerPdfControlsWhenAnswerPdfIsKnown(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		Question question = captureQuestion(robot, "56");
-		ComboBox<Question> questions = unansweredQuestions(robot);
-		robot.interact(() -> questions.getSelectionModel().select(question));
-		Node pdfControls = field(answerCapturePane(), "answerPdfControls", Node.class);
-		assertTrue(pdfControls.isVisible());
-		assertTrue(pdfControls.isManaged());
-		openAnswerPdfForTest(question);
-		WaitForAsyncUtils.waitForFxEvents();
-
-		// Selecting an Answer PDF is also the explicit booklet-to-AnswerFile mapping.
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(new SqliteDatabase(databasePath),
-				new SqliteExamWriter(new SqliteDatabase(databasePath)));
-		AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
-		assertNotNull(assignedAnswerFile);
-		assertEquals("exam.pdf", assignedAnswerFile.getName());
-
-		// The managed Answer PDF must have its byte identity persisted at selection
-		// time, not only its filename and path.
-		Path managedAnswerPath = pdfDataRoot.resolve(assignedAnswerFile.getSourceDocument().getRelativePath());
-		String expectedHash = new SourceDocumentHashService().sha256(managedAnswerPath);
-		assertEquals(expectedHash, assignedAnswerFile.getSourceDocument().getContentSha256());
-		assertFalse(pdfControls.isVisible());
-		assertFalse(pdfControls.isManaged());
-	}
-
-	@Test
 	void multipleChoiceCanSaveChoiceWithOptionalExplanationRegion(FxRobot robot) throws Exception {
 		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -826,6 +798,44 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(fixture.answersA().getId(), storedPaper1.getAnswer().getRegions().getFirst().answerFile().getId());
 	}
 
+	@Test
+	void showsAssignedAnswerPdfWithoutSourceSelectionControl(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "56");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+
+		Node pdfControls = field(answerCapturePane(), "answerPdfControls", Node.class);
+		Label selectedPdf = lookup(robot, "#selected-answer-pdf", Label.class);
+
+		assertTrue(pdfControls.isVisible());
+		assertTrue(pdfControls.isManaged());
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
+
+		openAnswerPdfForTest(question);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The registered AnswerFile remains authoritative even though Answer capture no
+		// longer provides a second source-selection workflow.
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(new SqliteDatabase(databasePath),
+				new SqliteExamWriter(new SqliteDatabase(databasePath)));
+		AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
+		assertNotNull(assignedAnswerFile);
+		assertEquals("exam.pdf", assignedAnswerFile.getName());
+
+		// The managed Answer PDF must retain its persisted byte identity.
+		Path managedAnswerPath = pdfDataRoot.resolve(assignedAnswerFile.getSourceDocument().getRelativePath());
+		String expectedHash = new SourceDocumentHashService().sha256(managedAnswerPath);
+		assertEquals(expectedHash, assignedAnswerFile.getSourceDocument().getContentSha256());
+
+		// Once assigned, the row stays visible as source information rather than
+		// disappearing as the old Choose-PDF workflow did.
+		assertTrue(pdfControls.isVisible());
+		assertTrue(pdfControls.isManaged());
+		assertEquals("exam.pdf", selectedPdf.getText());
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
+	}
+
 	@Override
 	@Start
 	void start(Stage stage) throws Exception {
@@ -834,12 +844,14 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	private void assertAnswerEntryControlsEnabled(FxRobot robot) {
 		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
-		assertFalse(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
+
+		// Answer capture no longer offers an independent PDF-selection workflow.
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
 	}
 
 	private void assertInitialAnswerControlsDisabled(FxRobot robot) {
 		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
-		assertTrue(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
 		assertTrue(lookup(robot, "#add-answer-region", Button.class).isDisabled());
 		assertTrue(lookup(robot, "#clear-answer-selection", Button.class).isDisabled());
 	}

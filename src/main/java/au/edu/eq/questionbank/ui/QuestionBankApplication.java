@@ -29,6 +29,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -49,7 +50,6 @@ import au.edu.eq.questionbank.output.scorm.ScormManifestWriter;
 import au.edu.eq.questionbank.output.scorm.ScormPackageValidator;
 import au.edu.eq.questionbank.output.scorm.ScormSchemaSupport;
 import au.edu.eq.questionbank.output.scorm.ScormZipWriter;
-import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
@@ -123,7 +123,7 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
-import au.edu.eq.questionbank.ui.audit.QuestionCorpusAuditDialog;
+import au.edu.eq.questionbank.ui.audit.CorpusDashboardPane;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.capture.SharedContextCapturePane;
@@ -170,7 +170,6 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextInputDialog;
-import javafx.scene.image.Image;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -225,7 +224,13 @@ public class QuestionBankApplication extends Application {
 	private SqliteExamWriter examWriter;
 	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
 	private final Button changeExamAssetsButton = new Button("Change Exam");
-
+	private ApplicationConfig applicationConfig;
+	private ExamCorpusAuditService corpusDashboardAuditService;
+	private final StackPane corpusDashboardHost = new StackPane();
+	private VBox corpusDashboardHomePane;
+	private CorpusDashboardPane corpusDashboardPane;
+	private BorderPane rootLayout;
+	private BorderPane applicationBody;
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
 	private Function<Subject, CurriculumSelectionModel.SubjectSnapshot> workingSubjectCurriculumSnapshotLoader;
@@ -382,6 +387,11 @@ public class QuestionBankApplication extends Application {
 			// context so Capture immediately reflects the newly active booklet.
 			questionCapturePane.refreshImportedQuestions();
 			answerCapturePane.refreshQuestions();
+
+			// Activating a booklet explicitly means entering the Capture workspace. This
+			// keeps existing activation callers compatible now that the application starts
+			// on the Dashboard home surface.
+			showCaptureWorkspaceMode();
 			return true;
 		} catch (RuntimeException exception) {
 			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture",
@@ -531,6 +541,23 @@ public class QuestionBankApplication extends Application {
 		return false;
 	}
 
+	private boolean allowCorpusDashboardHomeTransition() {
+		if (!allowCorpusDashboardReturn()) {
+			return false;
+		}
+		if (examAssetsPane != null && workspaceModeHost != null
+				&& workspaceModeHost.getChildren().contains(examAssetsPane)
+				&& examAssetsPane.hasPendingStructuralWork()) {
+
+			// Main-window navigation must obey the same structural transaction boundary
+			// as the explicit Exam / Assets Return to Dashboard action.
+			showAlert(Alert.AlertType.WARNING, "Corpus Dashboard", "Exam / Assets work is in progress",
+					"Save or cancel the current Exam, Question booklet or Answer booklet changes before returning to the Corpus Dashboard.");
+			return false;
+		}
+		return true;
+	}
+
 	private boolean allowCorpusDashboardReturn() {
 		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
 				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
@@ -637,6 +664,58 @@ public class QuestionBankApplication extends Application {
 		// Read the Maven-filtered application metadata so About, backups, version
 		// information and later packaging all use the same authoritative version.
 		return au.edu.eq.questionbank.ApplicationVersion.current();
+	}
+
+	private void applyCorpusDashboardBulkResponseType(List<Question> questions, QuestionResponseType responseType) {
+		if (questions == null) {
+			throw new NullPointerException("questions");
+		}
+		if (responseType == null) {
+			throw new NullPointerException("responseType");
+		}
+		if (questions.isEmpty()) {
+			return;
+		}
+
+		String responseTypeLabel = switch (responseType) {
+		case MULTIPLE_CHOICE -> "Multiple choice";
+		case WRITTEN_RESPONSE -> "Written response";
+		case UNKNOWN -> throw new IllegalArgumentException("UNKNOWN cannot be applied as a bulk resolution");
+		};
+		ButtonType applyButton = new ButtonType("Apply", ButtonBar.ButtonData.OK_DONE);
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		if (corpusDashboardHomePane != null && corpusDashboardHomePane.getScene() != null) {
+
+			// Keep confirmation attached to the main application window now that the
+			// Dashboard is no longer a modal Dialog.
+			confirmation.initOwner(corpusDashboardHomePane.getScene().getWindow());
+		}
+		confirmation.setTitle("Resolve Response Types");
+		confirmation.setHeaderText("Set " + questions.size() + " selected question(s) to " + responseTypeLabel + "?");
+		confirmation.setContentText("Only the response type will be changed.");
+		confirmation.getButtonTypes().setAll(applyButton, ButtonType.CANCEL);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != applyButton) {
+			return;
+		}
+
+		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(
+				new SqliteDatabase(applicationConfig.databasePath()));
+		try {
+
+			// Preserve the existing bulk-resolution persistence boundary, then rebuild
+			// both capture queues and the home Dashboard from authoritative persistence.
+			metadataService.resolveUnknownResponseTypes(questions, responseType);
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+			refreshCorpusDashboardHome(questions.getFirst().getId());
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Resolve Response Types",
+					"The selected response types could not be saved.", exception.getMessage());
+
+			// Failed persistence is followed by a fresh Dashboard generation so stale
+			// presentation never survives the error.
+			refreshCorpusDashboardHome(questions.getFirst().getId());
+		}
 	}
 
 	private void backupNow(Stage primaryStage, ApplicationConfig config) {
@@ -1180,6 +1259,21 @@ public class QuestionBankApplication extends Application {
 		return captureWorkspace;
 	}
 
+	private VBox createCorpusDashboardHomePane() {
+
+		// Dashboard content occupies the application surface beneath the permanent
+		// Working Subject context.
+		corpusDashboardHost.setId("corpus-dashboard-home-content");
+		VBox.setVgrow(corpusDashboardHost, Priority.ALWAYS);
+		showCorpusDashboardNoSubject();
+
+		VBox home = new VBox(SECTION_SPACING, corpusDashboardHost);
+		home.setId("corpus-dashboard-home");
+		home.setPadding(PREVIEW_PANE_PADDING);
+		home.setFillWidth(true);
+		return home;
+	}
+
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu curriculumMenu = createMenu("_Curriculum");
 		MenuItem authorItem = createMenuItem("_Author / Edit...", () -> showCurriculumAuthoring(primaryStage, config));
@@ -1378,16 +1472,12 @@ public class QuestionBankApplication extends Application {
 	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu questionMenu = createMenu("_Questions");
 
-		// Capture modes are selected directly in the visible Question pane.
-		// Keep this menu for operations that open separate question workflows.
+		// Search remains a specialised modal workflow. Corpus Dashboard is now the
+		// application's main-window home surface rather than another dialog.
 		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
-
-		// The former Corpus Audit action now opens the operational Exam -> booklet ->
-		// Question Dashboard.
-		MenuItem corpusAuditItem = createMenuItem("_Corpus Dashboard...",
-				() -> showQuestionCorpusAudit(primaryStage, config));
-		corpusAuditItem.setId("question-corpus-audit");
-		questionMenu.getItems().addAll(searchItem, corpusAuditItem);
+		MenuItem corpusDashboardItem = createMenuItem("_Corpus Dashboard", this::showCorpusDashboardHomeFromMenu);
+		corpusDashboardItem.setId("question-corpus-audit");
+		questionMenu.getItems().addAll(searchItem, corpusDashboardItem);
 		return questionMenu;
 	}
 
@@ -1414,14 +1504,32 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private BorderPane createRootLayout(Stage primaryStage, ApplicationConfig config) {
-		BorderPane root = new BorderPane();
-		root.setTop(createMenuBar(primaryStage, config));
+		rootLayout = new BorderPane();
+		rootLayout.setTop(createMenuBar(primaryStage, config));
+
+		// Working Subject is permanent application context. Dashboard, Capture and
+		// Exam / Assets all operate beneath this same live Subject selector.
+		Node subjectContext = curriculumSelectorPane.detachSubjectContext();
+
+		// Construct the existing Capture/PDF workspace once. It is mounted only when
+		// specialised work requires it.
 		previewScrollPane = createPreviewScrollPane();
 		workspaceSplitPane = new SplitPane(previewScrollPane, pdfWorkspace);
 		workspaceSplitPane.setId("workspace-split-pane");
 		workspaceSplitPane.setDividerPositions(INITIAL_WORKSPACE_DIVIDER_POSITION);
-		root.setCenter(workspaceSplitPane);
-		return root;
+
+		corpusDashboardHomePane = createCorpusDashboardHomePane();
+
+		// Keep one permanent application body. Navigation changes only its centre node,
+		// so Working Subject can never disappear when moving between workflows.
+		applicationBody = new BorderPane();
+		applicationBody.setId("application-body");
+		applicationBody.setTop(subjectContext);
+		BorderPane.setMargin(subjectContext, new Insets(10, 10, 0, 10));
+		applicationBody.setCenter(corpusDashboardHomePane);
+
+		rootLayout.setCenter(applicationBody);
+		return rootLayout;
 	}
 
 	private ScormExportService createScormExportService(ApplicationConfig config) {
@@ -1950,8 +2058,8 @@ public class QuestionBankApplication extends Application {
 				name.strip(), relativePath, questionFormat, expectedQuestionCount, storedHash);
 	}
 
-	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
-			PdfFilePicker answerPdfPicker) {
+	// TODO Refactor to smaller methods?
+	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database) {
 		questionRepository = new SqliteQuestionRepository(database);
 
 		// Curriculum Subject state is persistence-only at this boundary and can be
@@ -1969,6 +2077,10 @@ public class QuestionBankApplication extends Application {
 		// structural planning against the same authoritative repository.
 		examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		// The embedded Dashboard reuses the same authoritative repositories as capture
+		// and Exam / Assets rather than constructing a parallel corpus model.
+		corpusDashboardAuditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
+				new PdfStore(config.pdfDataRoot()));
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 
 		// Exam correction owns both filesystem relocation and the atomic Exam /
@@ -2043,7 +2155,7 @@ public class QuestionBankApplication extends Application {
 		// The selector receives application-level Subject creation through the same
 		// database used by the rest of the capture workflow.
 		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
-		answerCapturePane = new AnswerCapturePane(primaryStage, questionRepository, answerWriter, answerPdfPicker,
+		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter, config.pdfDataRoot(),
 				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
 				this::allowAnswerCaptureTransition, examMetadataPane::getBooklet,
 				() -> clearCaptureSelection(CaptureSelectionOwner.ANSWER), questionExtractor,
@@ -2082,6 +2194,46 @@ public class QuestionBankApplication extends Application {
 
 		// An active booklet alone no longer implies that Question capture has begun.
 		return examMetadataPane.getBooklet() != null && questionCapturePane.canCaptureRegions();
+	}
+
+	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
+		Task<CorpusDashboardSnapshot> task = new Task<>() {
+
+			@Override
+			protected CorpusDashboardSnapshot call() throws Exception {
+
+				// Structural audit, Question status and curriculum mapping coverage remain
+				// one authoritative persistence generation.
+				return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject);
+			}
+		};
+		task.setOnSucceeded(_ -> {
+			if (!isCurrentWorkingSubjectRefresh(dashboardSubject, generation)) {
+
+				// A later Subject selection owns the home surface.
+				return;
+			}
+			CorpusDashboardSnapshot snapshot = task.getValue();
+			if (corpusDashboardPane == null) {
+				showCorpusDashboardSnapshot(dashboardSubject, snapshot);
+				return;
+			}
+
+			// Ordinary refresh retains Dashboard-local filters and selection where they
+			// remain valid.
+			corpusDashboardPane.replaceData(snapshot.examStatuses(), snapshot.questions(), snapshot.mappingCoverages(),
+					preferredQuestionId);
+		});
+		task.setOnFailed(_ -> {
+			if (!isCurrentWorkingSubjectRefresh(dashboardSubject, generation)) {
+				return;
+			}
+			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
+					failureMessage(task.getException()));
+		});
+		Thread thread = new Thread(task, "corpus-dashboard-home-refresh-" + generation);
+		thread.setDaemon(true);
+		thread.start();
 	}
 
 	private CorpusDashboardSnapshot loadCorpusDashboardSnapshot(ApplicationConfig config,
@@ -2391,79 +2543,24 @@ public class QuestionBankApplication extends Application {
 				exam.getName(), booklet.getName(), lifecycle));
 	}
 
-	private boolean refreshCorpusDashboard(ApplicationConfig config, QuestionCorpusAuditDialog dialog,
-			ExamCorpusAuditService auditService, Subject dashboardSubject, long preferredQuestionId) {
-		try {
+	private void refreshAndShowCorpusDashboardHome() {
 
-			// Rebuild structural, Question and curriculum-mapping reporting from one
-			// persistence generation before replacing the live Dashboard.
-			CorpusDashboardSnapshot snapshot = loadCorpusDashboardSnapshot(config, auditService, dashboardSubject);
-			dialog.refreshData(snapshot.examStatuses(), snapshot.questions(), snapshot.mappingCoverages(),
-					preferredQuestionId);
-			return true;
-		} catch (SQLException | IllegalStateException exception) {
-			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
-					exception.getMessage());
-			return false;
-		}
+		// Returning from a specialised workflow exposes the home immediately, then
+		// replaces its data from authoritative persistence asynchronously.
+		showCorpusDashboardHome();
+		refreshCorpusDashboardHome(-1L);
 	}
 
-	private void reopenCorpusDashboardAfterCorrection(Stage primaryStage, ApplicationConfig config,
-			QuestionCorpusAuditDialog dialog, ExamCorpusAuditService auditService, Subject dashboardSubject,
-			long preferredQuestionId) {
+	private void refreshCorpusDashboardHome(long preferredQuestionId) {
+		Subject dashboardSubject = workingSubject;
+		if (dashboardSubject == null) {
+			showCorpusDashboardNoSubject();
+			return;
+		}
 
-		// Dashboard reconstruction may take long enough to be noticeable on a real
-		// corpus.
-		showWorkspaceBusy("Refreshing Corpus Dashboard...");
-		Task<CorpusDashboardSnapshot> task = new Task<>() {
-
-			@Override
-			protected CorpusDashboardSnapshot call() throws Exception {
-
-				// Corpus reconstruction can involve many SQLite reads. Perform all of them
-				// away from the JavaFX application thread so Return to Dashboard never freezes
-				// the main window.
-				// Reload mapping coverage with the same authoritative Dashboard generation as
-				// structural and Question status.
-				return loadCorpusDashboardSnapshot(config, auditService, dashboardSubject);
-			}
-		};
-		task.setOnSucceeded(_ -> {
-			if (!Objects.equals(workingSubject, dashboardSubject)) {
-
-				// The user changed Working Subject while the old Dashboard refresh was in
-				// flight. Discard that stale result and always release its busy presentation.
-				hideWorkspaceBusy();
-				return;
-			}
-			CorpusDashboardSnapshot snapshot = task.getValue();
-
-			// Publish the complete persistence generation together on the JavaFX thread.
-			// Publish all three independent Dashboard status dimensions together.
-			dialog.refreshData(snapshot.examStatuses(), snapshot.questions(), snapshot.mappingCoverages(),
-					preferredQuestionId);
-
-			// The complete authoritative snapshot is ready; remove progress before showing
-			// it.
-			hideWorkspaceBusy();
-
-			// Task completion already arrives through the JavaFX event queue, so the
-			// capture operation that initiated the return has finished its event first.
-			showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService, dashboardSubject);
-		});
-		task.setOnFailed(_ -> {
-			if (!Objects.equals(workingSubject, dashboardSubject)) {
-
-				// Failure belonging to an abandoned Subject must not interrupt the current
-				// workspace.
-				return;
-			}
-			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
-					failureMessage(task.getException()));
-		});
-		Thread thread = new Thread(task, "corpus-dashboard-refresh-" + dashboardSubject.getId());
-		thread.setDaemon(true);
-		thread.start();
+		// Reuse the current accepted Subject generation. If Subject changes while this
+		// task is running, its result is discarded.
+		loadCorpusDashboardHome(dashboardSubject, workingSubjectRefreshGeneration, preferredQuestionId);
 	}
 
 	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {
@@ -2941,11 +3038,14 @@ public class QuestionBankApplication extends Application {
 			throw new NullPointerException("content");
 		}
 
-		// The busy overlay is permanent application chrome. Changing workspace content
-		// must replace only the underlying mode and retain progress presentation above
-		// it.
+		// Replace only the specialised left-hand workspace while retaining the busy
+		// overlay that belongs to the reusable Capture/Exam-Assets shell.
 		workspaceModeHost.getChildren().setAll(content, workspaceBusyOverlay);
 		workspaceBusyOverlay.toFront();
+
+		// Mount the complete Capture/PDF split workspace directly into the permanent
+		// application body. Working Subject remains mounted above it.
+		applicationBody.setCenter(workspaceSplitPane);
 	}
 
 	private void showAbout() {
@@ -2998,6 +3098,81 @@ public class QuestionBankApplication extends Application {
 		// Any later Exam/Assets changes must be reflected immediately when the user
 		// returns to Capture mode.
 		refreshActiveExamContext();
+	}
+
+	private void showCorpusDashboardHome() {
+		if (applicationBody == null || corpusDashboardHomePane == null) {
+			return;
+		}
+
+		// Returning home changes only the operational centre. Working Subject remains
+		// permanently mounted in applicationBody.top.
+		applicationBody.setCenter(corpusDashboardHomePane);
+	}
+
+	private void showCorpusDashboardHomeFromMenu() {
+		if (!allowCorpusDashboardHomeTransition()) {
+			return;
+		}
+
+		// Explicit Home navigation also performs the persistence refresh that
+		// previously
+		// required the Dashboard's manual Refresh button.
+		refreshAndShowCorpusDashboardHome();
+	}
+
+	private void showCorpusDashboardNoSubject() {
+		corpusDashboardPane = null;
+		Label message = new Label("Select or add a Subject to view its corpus.");
+		message.setId("corpus-dashboard-no-subject");
+
+		// A Subject is application context, not a prerequisite dialog. The empty home
+		// remains usable so the existing + Subject action is always available.
+		corpusDashboardHost.getChildren().setAll(message);
+	}
+
+	private void showCorpusDashboardQuestionCorrection(Question question) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+
+		clearCorpusDashboardCaptureReturn();
+		showCaptureWorkspaceMode();
+
+		// Existing incomplete Question work uses the established imported-Question
+		// correction workflow. Successful Save returns through the same home callback
+		// as
+		// the visible Return to Corpus Dashboard action.
+		if (!questionCapturePane.captureImportedQuestion(question, this::returnToCorpusDashboardFromCapture)) {
+			showCorpusDashboardHome();
+			return;
+		}
+		setCorpusDashboardCaptureReturn(this::refreshAndShowCorpusDashboardHome);
+	}
+
+	private void showCorpusDashboardSnapshot(Subject dashboardSubject, CorpusDashboardSnapshot snapshot) {
+		CorpusDashboardPane dashboard = new CorpusDashboardPane(dashboardSubject, snapshot.examStatuses(),
+				snapshot.questions(), snapshot.mappingCoverages());
+
+		// Every Dashboard operation routes into an existing authoritative workflow.
+		dashboard.setAnswerCaptureHandler(question -> {
+			if (!showDashboardAnswerCapture(question, this::refreshAndShowCorpusDashboardHome)) {
+				showCorpusDashboardHome();
+			}
+		});
+		dashboard.setBulkResponseTypeHandler(this::applyCorpusDashboardBulkResponseType);
+		dashboard.setExamAssetsHandler(
+				(exam, booklet) -> showExamAssetsMode(exam, booklet, this::refreshAndShowCorpusDashboardHome));
+		dashboard.setNewQuestionCaptureHandler(booklet -> {
+			if (!showDashboardNewQuestionCapture(booklet, applicationConfig, this::refreshAndShowCorpusDashboardHome)) {
+				showCorpusDashboardHome();
+			}
+		});
+		dashboard.setQuestionCorrectionHandler(this::showCorpusDashboardQuestionCorrection);
+		dashboard.setRefreshHandler(() -> refreshCorpusDashboardHome(-1L));
+
+		corpusDashboardPane = dashboard;
+		corpusDashboardHost.getChildren().setAll(dashboard);
 	}
 
 	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
@@ -3162,13 +3337,6 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void showExamAssetsMode(Exam exam, ExamBooklet booklet) {
-
-		// Ordinary structural routing has no Dashboard-return owner. Retain this
-		// established entry point and delegate to the correction-aware overload.
-		showExamAssetsMode(exam, booklet, null);
-	}
-
 	private void showExamAssetsMode(Exam exam, ExamBooklet booklet, Runnable returnHandler) {
 		if (exam == null) {
 			throw new NullPointerException("exam");
@@ -3250,113 +3418,6 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", e.getMessage());
 		} catch (IOException e) {
 			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.", e.getMessage());
-		}
-	}
-
-	private void showQuestionCorpusAudit(Stage primaryStage, ApplicationConfig config) {
-		if (blockWhileCaptureSaveInProgress(primaryStage, "opening the corpus audit")) {
-			return;
-		}
-		if (workingSubject == null) {
-
-			// Corpus Dashboard uses the same authoritative application Subject boundary
-			// as capture and Search Questions.
-			showAlert(Alert.AlertType.WARNING, "Corpus Dashboard", "No Working Subject is selected.",
-					"Select a Working Subject before opening the Corpus Dashboard.");
-			return;
-		}
-
-		// Opening the Dashboard directly supersedes any earlier Dashboard-launched
-		// capture-session return callback.
-		clearCorpusDashboardCaptureReturn();
-		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
-		ExamCorpusAuditService auditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
-				new PdfStore(config.pdfDataRoot()));
-		QuestionCorpusAuditDialog dialog;
-		try {
-
-			// Structural, Question and mapping-review snapshots form one initial
-			// persistence generation before the modal Dashboard is displayed.
-			CorpusDashboardSnapshot snapshot = loadCorpusDashboardSnapshot(config, auditService, workingSubject);
-			dialog = new QuestionCorpusAuditDialog(primaryStage, workingSubject, snapshot.examStatuses(),
-					snapshot.questions(), snapshot.mappingCoverages());
-		} catch (SQLException | IllegalStateException exception) {
-			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be loaded.",
-					exception.getMessage());
-			return;
-		}
-		Subject dashboardSubject = workingSubject;
-		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
-		dialog.setRefreshHandler(() -> refreshCorpusDashboard(config, dialog, auditService, dashboardSubject, -1L));
-		dialog.setBulkResponseTypeHandler((questions, responseType) -> {
-			try {
-				metadataService.resolveUnknownResponseTypes(questions, responseType);
-				questionCapturePane.refreshImportedQuestions();
-				answerCapturePane.refreshQuestions();
-
-				// A successful bulk correction reloads every Dashboard status dimension
-				// together.
-				refreshCorpusDashboard(config, dialog, auditService, dashboardSubject, -1L);
-			} catch (IllegalArgumentException | IllegalStateException exception) {
-				showAlert(Alert.AlertType.ERROR, "Resolve Response Types",
-						"The selected response types could not be saved.", exception.getMessage());
-
-				// Re-read authoritative persistence after failure while attempting to
-				// preserve the first affected Question selection.
-				refreshCorpusDashboard(config, dialog, auditService, dashboardSubject, questions.getFirst().getId());
-			}
-		});
-		showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService, dashboardSubject);
-	}
-
-	private void showQuestionCorpusAuditDialog(Stage primaryStage, ApplicationConfig config,
-			QuestionCorpusAuditDialog dialog, ExamCorpusAuditService auditService, Subject dashboardSubject) {
-		Optional<QuestionCorpusAuditDialog.ResolutionRequest> result = dialog.showAndWait();
-		if (result.isEmpty()) {
-			return;
-		}
-		QuestionCorpusAuditDialog.ResolutionRequest request = result.get();
-		Question question = request.question();
-		switch (request.target()) {
-		case METADATA -> editCorpusQuestionMetadata(primaryStage, config, question,
-				() -> reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog, auditService, dashboardSubject,
-						question.getId()));
-		case QUESTION -> {
-			Runnable returnHandler = () -> reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog,
-					auditService, dashboardSubject, question.getId());
-			showCaptureWorkspaceMode();
-			setCorpusDashboardCaptureReturn(returnHandler);
-
-			// Existing incomplete Question work remains a single-Question correction.
-			// Successful Save returns automatically; the visible return button also lets
-			// the user leave before saving when no capture work has been staged.
-			if (!questionCapturePane.captureImportedQuestion(question, this::returnToCorpusDashboardFromCapture)) {
-				clearCorpusDashboardCaptureReturn();
-				Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService,
-						dashboardSubject));
-			}
-		}
-		case ANSWER -> {
-			Runnable returnHandler = () -> reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog,
-					auditService, dashboardSubject, -1L);
-			if (!showDashboardAnswerCapture(question, returnHandler)) {
-				Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService,
-						dashboardSubject));
-			}
-		}
-		case NEW_QUESTION_CAPTURE -> {
-			Runnable returnHandler = () -> reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog,
-					auditService, dashboardSubject, -1L);
-			if (!showDashboardNewQuestionCapture(request.booklet(), config, returnHandler)) {
-				Platform.runLater(() -> showQuestionCorpusAuditDialog(primaryStage, config, dialog, auditService,
-						dashboardSubject));
-			}
-		}
-		case EXAM_ASSETS -> showExamAssetsMode(request.exam(), request.booklet(),
-				() -> reopenCorpusDashboardAfterCorrection(primaryStage, config, dialog, auditService, dashboardSubject,
-						-1L));
 		}
 	}
 
@@ -3603,15 +3664,18 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
+		// Retain immutable application paths for asynchronous Dashboard refreshes and
+		// Dashboard-owned workflow routing.
+		applicationConfig = config;
 		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
-		PdfFilePicker answerPdfPicker = new PdfFilePicker(config.pdfDataRoot());
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		configureShutdown(config);
-		initialiseCaptureWorkflow(primaryStage, config, database, answerPdfPicker);
+		initialiseCaptureWorkflow(primaryStage, config, database);
 		configurePdfWorkspace();
 		configurePrimaryStage(primaryStage, config);
 	}
 
+	// TODO remove/extract inner class
 	private void startDashboardQuestionCaptureRefresh(ExamBooklet booklet, Path storedPath, Runnable returnHandler) {
 		Task<List<Question>> task = new Task<>() {
 
@@ -3657,6 +3721,7 @@ public class QuestionBankApplication extends Application {
 		Thread.ofVirtual().name("dashboard-question-capture-refresh").start(task);
 	}
 
+	// TODO remove/extract inner class
 	private void startLegacyQuestionCaptureRefresh(Subject subject, LegacyQuestionImportResult importResult) {
 		if (subject == null) {
 			throw new NullPointerException("subject");
@@ -3786,6 +3851,7 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
+	// TODO remove/extract inner class
 	private void startWorkingSubjectCaptureRefresh(Subject subject, long generation) {
 
 		// Remove curriculum state belonging to the previous Subject immediately while
@@ -3828,6 +3894,23 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
+	private void startWorkingSubjectDashboardRefresh(Subject subject, long generation) {
+		if (subject == null) {
+			showCorpusDashboardNoSubject();
+			return;
+		}
+
+		// A Subject transition discards all Dashboard-local filters belonging to the
+		// previous Subject rather than attempting to transfer them across corpora.
+		corpusDashboardPane = null;
+		Label loading = new Label("Loading " + subject.getName() + " corpus...");
+		loading.setId("corpus-dashboard-loading");
+		corpusDashboardHost.getChildren().setAll(loading);
+
+		loadCorpusDashboardHome(subject, generation, -1L);
+	}
+
+	// TODO remove/extract inner class
 	private void startWorkingSubjectExamAssetsRefresh(Subject subject, long generation) {
 		if (examAssetsPane == null || workspaceModeHost == null
 				|| !workspaceModeHost.getChildren().contains(examAssetsPane)) {
@@ -3886,10 +3969,11 @@ public class QuestionBankApplication extends Application {
 	private void startWorkingSubjectRefresh(Subject subject) {
 		long generation = ++workingSubjectRefreshGeneration;
 
-		// Curriculum, Question/Answer capture and visible Exam/Assets all belong to
-		// this accepted application transition and share one stale-result generation.
+		// Curriculum, capture queues, visible Exam/Assets and Dashboard reporting all
+		// belong to this one accepted Working Subject generation.
 		startWorkingSubjectCaptureRefresh(subject, generation);
 		startWorkingSubjectExamAssetsRefresh(subject, generation);
+		startWorkingSubjectDashboardRefresh(subject, generation);
 	}
 
 	private boolean transferQuestionSelectionToSharedContext() {
@@ -3902,12 +3986,9 @@ public class QuestionBankApplication extends Application {
 
 	private void useExamAssetsBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
 
-		// Do not leave Exam/Assets unless the selected booklet has been successfully
-		// opened and activated as the authoritative capture source.
-		if (!activateBookletForCapture(booklet, config)) {
-			return;
-		}
-		showCaptureWorkspaceMode();
+		// Successful activation now owns the top-level transition into Capture as well
+		// as the authoritative booklet/PDF state.
+		activateBookletForCapture(booklet, config);
 	}
 
 	private void viewAnswerFileFromExamAssets(AnswerFile answerFile, ApplicationConfig config) {
@@ -3992,15 +4073,8 @@ public class QuestionBankApplication extends Application {
 		viewExamAssetPdf(booklet.getSourceDocument().getRelativePath(), "Question booklet", config);
 	}
 
-	private record LoadedExamPage(PdfSession session, Image image) {
-
-		private LoadedExamPage {
-
-			// A completed worker result must contain both ownership of its PDF session and
-			// the rendered first page that will be published to JavaFX.
-			Objects.requireNonNull(session, "session");
-			Objects.requireNonNull(image, "image");
-		}
+	private enum BackupFailureDecision {
+		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
 
 	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions,
@@ -4044,10 +4118,6 @@ public class QuestionBankApplication extends Application {
 				throw new IllegalArgumentException("Legacy import syllabus does not belong to Working Subject");
 			}
 		}
-	}
-
-	private enum BackupFailureDecision {
-		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
 
 	private record WorkingSubjectCaptureSnapshot(CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot,

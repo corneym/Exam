@@ -69,7 +69,7 @@ For every Java code-change instruction, always give:
 
 If EDIT is the instruction, give the starting instruction and the final instruction as bounds on the EDIT.
 
-There is no need to give placement.  No need to give import instructions.  Eclipse sorts methods and adds imports.
+There is no need to give placement.  No need to give import instructions.  Eclipse sorts methods and adds imports. DO NOT use fully qualified types with their package names.  I will pick the import.
 
 Do not use vague instructions such as "put this near..." or "add this somewhere
 below...".

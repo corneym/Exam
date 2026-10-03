@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.scene.Scene;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -154,6 +156,35 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(descriptor3111, model.getDescriptor());
 		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
 		assertTrue(pane.classificationSelectedProperty().get());
+	}
+
+	@Test
+	public void detachingSubjectContextPreservesLiveSelectorAndClassification(FxRobot robot) {
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> originalSubjectBox = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		AtomicReference<javafx.scene.layout.VBox> detachedContext = new AtomicReference<>();
+
+		// Re-parenting JavaFX nodes must occur on the application thread.
+		robot.interact(() -> detachedContext.set(pane.detachSubjectContext()));
+		VBox subjectContext = detachedContext.get();
+
+		assertEquals("working-subject-context", subjectContext.getId());
+		assertEquals(originalSubjectBox, subjectContext.lookup("#curriculum-subject"));
+		assertFalse(pane.getChildren().contains(subjectContext));
+
+		// Classification remains owned by CurriculumSelectorPane for later placement in
+		// the Capture workspace.
+		assertTrue(pane.getChildren().stream().anyMatch(node -> "classification-context".equals(node.getId())));
+
+		// The detached Subject control remains bound to the same selection model and
+		// application-facing API after re-parenting.
+		robot.interact(() -> pane.selectSubject(null));
+		assertNull(originalSubjectBox.getValue());
+		assertNull(model.getSubject());
+
+		robot.interact(() -> pane.selectSubject(chemistry));
+		assertEquals(chemistry, originalSubjectBox.getValue());
+		assertEquals(chemistry, model.getSubject());
 	}
 
 	@Test
