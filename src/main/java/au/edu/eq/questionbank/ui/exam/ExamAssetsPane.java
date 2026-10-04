@@ -544,16 +544,28 @@ public final class ExamAssetsPane extends VBox {
 		if (requirements.isEmpty()) {
 			throw new IllegalArgumentException("requirements must not be empty");
 		}
+
 		legacyImportPending = true;
+
 		Label heading = new Label("LEGACY IMPORT");
 		heading.setStyle(HEADING_STYLE);
+
 		Path filename = workbookPath.getFileName();
 		Label context = new Label("Syllabus: " + syllabusName + "\nWorkbook: "
 				+ (filename == null ? workbookPath.toString() : filename.toString()));
 		context.setWrapText(true);
+
 		Label instruction = new Label(
-				"Create or add the following Question booklets through Exam/Assets, then choose Recheck and Import.");
+				"""
+						Each requirement below must match a saved Question booklet by Provider, Year and booklet Name exactly.
+
+						If its PDF is already present under a different Name, edit that existing booklet rather than adding another copy.
+
+						Recheck and Import validates the saved Exam/Assets again and imports the Question metadata immediately once every requirement is satisfied.
+						""");
+		instruction.setId("exam-assets-legacy-import-instruction");
 		instruction.setWrapText(true);
+
 		VBox requirementRows = new VBox(ROW_SPACING);
 		for (int index = 0; index < requirements.size(); index++) {
 			LegacyBookletRequirement requirement = requirements.get(index);
@@ -563,18 +575,20 @@ public final class ExamAssetsPane extends VBox {
 			row.setWrapText(true);
 			requirementRows.getChildren().add(row);
 		}
+
 		Region actionSpacer = new Region();
 		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 		HBox actions = new HBox(SPACING, legacyImportCancelButton, actionSpacer, legacyImportRecheckButton);
 
-		// Recheck deliberately performs no implicit structure creation. It asks the
-		// application to inspect the authoritative persistence again.
+		// Recheck performs no implicit structure creation. It reads saved Exam/Assets
+		// again and imports only when every listed identity can be resolved.
 		legacyImportRecheckButton.setOnAction(_ -> {
 			if (canRecheckLegacyQuestionImport()) {
 				recheckAction.run();
 			}
 		});
 		legacyImportCancelButton.setOnAction(_ -> cancelAction.run());
+
 		legacyImportRequirementsBox.getChildren().setAll(heading, context, instruction, requirementRows, actions);
 		legacyImportRequirementsBox.setVisible(true);
 		legacyImportRequirementsBox.setManaged(true);

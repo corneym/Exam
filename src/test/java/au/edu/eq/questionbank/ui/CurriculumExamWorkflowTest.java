@@ -105,6 +105,30 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Subject creation must likewise create no implicit Exam structure.
 		SqliteExamWriter storedExamWriter = new SqliteExamWriter(new SqliteDatabase(databasePath));
 		assertTrue(storedExamWriter.findExamsForSubject(geography).isEmpty());
+
+		// Wait for the asynchronous Dashboard generation rather than treating Subject
+		// selection alone as proof that its persistence-backed home state has loaded.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-no-exams").tryQuery().map(Node::isVisible).orElse(false));
+
+		Label noExams = lookup(robot, "#corpus-dashboard-no-exams", Label.class);
+		Button addExam = lookup(robot, "#corpus-dashboard-add-exam", Button.class);
+		Label curriculumStatus = lookup(robot, "#corpus-dashboard-mapping-review", Label.class);
+		Button addCurriculum = lookup(robot, "#corpus-dashboard-add-curriculum", Button.class);
+		Button mapCurriculum = lookup(robot, "#corpus-dashboard-map-curriculum", Button.class);
+
+		// A genuinely empty persisted Subject must present useful onboarding actions
+		// instead of empty Exam, booklet and Question work tables.
+		assertEquals("No Exams have been added.", noExams.getText());
+		assertTrue(noExams.isVisible());
+		assertFalse(addExam.isDisable());
+
+		// Curriculum absence is distinct from a curriculum whose mapping review is not
+		// applicable. Creation remains available while mapping remains unavailable.
+		assertEquals("No curriculum has been added.", curriculumStatus.getText());
+		assertEquals("+", addCurriculum.getText());
+		assertFalse(addCurriculum.isDisable());
+		assertTrue(mapCurriculum.isDisable());
 	}
 
 	@Test

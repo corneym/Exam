@@ -39,7 +39,6 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
-import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
@@ -201,41 +200,33 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void captureEntryPointsUseTaskBasedLabels(FxRobot robot) throws Exception {
-		showCaptureWorkspaceForTest();
-		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+	void bookletActivationStartsQuestionCaptureWithoutSecondaryStartAction(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		QuestionCapturePane pane = questionCapturePane();
+		Node classification = lookup(robot, "#classification-context", Node.class);
+		Node questionWork = lookup(robot, "#question-capture-work", Node.class);
+		Button addRegion = lookup(robot, "#add-question-region", Button.class);
 
-		// Question capture entry points belong to the visible Question pane rather
-		// than duplicating navigation in the application menu.
-		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.anyMatch(item -> "capture-new-questions".equals(item.getId())));
-		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.anyMatch(item -> "capture-imported-questions".equals(item.getId())));
-		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
-		ToggleButton importedMode = lookup(robot, "#capture-mode-imported", ToggleButton.class);
-		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
-		assertEquals("Start New Question Capture", newMode.getText());
-		assertEquals("Complete Imported Question", importedMode.getText());
+		// Choosing a real booklet for capture is already the explicit entry into new
+		// Question capture. The Question pane must not ask for the same decision again.
+		assertTrue(robot.lookup("#capture-mode-new").tryQuery().isEmpty());
+		assertFalse(classification.isDisabled());
+		assertFalse(questionWork.isDisabled());
+		assertTrue(pane.canCaptureRegions());
 
-		// Ordinary capture begins idle.
-		assertFalse(newMode.isSelected());
-		assertFalse(importedMode.isSelected());
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 
-		// Imported capture is operational work and therefore does not clutter the
-		// workspace when its filtered queue is empty.
-		assertFalse(importedMode.isVisible());
-		assertFalse(importedMode.isManaged());
-		assertFalse(legacyControls.isVisible());
-		assertFalse(legacyControls.isManaged());
-		fireControl(robot, newMode);
-		assertTrue(newMode.isSelected());
-		assertFalse(importedMode.isSelected());
-		MenuItem examAssetsItem = menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
-				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
+		// The selected booklet's Exam PDF is immediately ready for Question-region
+		// work.
+		dragRegionOnDisplayedPage(robot);
+		assertTrue(selectionState.hasPendingSelection());
+		assertFalse(addRegion.isDisabled());
 
-		// Exam management now enters the main-window workspace directly. The former
-		// modal Exam Setup / Add Exam wording is no longer part of the normal workflow.
-		assertEquals("_Exam / Assets...", examAssetsItem.getText());
+		// Leave no transient rectangle behind for test cleanup. Pointer interaction is
+		// intentional here because PDF click-away cancellation itself is under test.
+		robot.clickOn("#pdf-page-view");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(selectionState.hasPendingSelection());
 	}
 
 	@Test
@@ -303,10 +294,10 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(importedControls.isVisible());
 		assertFalse(importedControls.isManaged());
 
-		// Exhausting imported work returns to explicit idle rather than silently
-		// starting ordinary new-Question capture.
-		ToggleButton newQuestionAction = lookup(robot, "#capture-mode-new", ToggleButton.class);
-		assertFalse(newQuestionAction.isSelected());
+		// Exhausting imported work returns to idle rather than silently starting
+		// another Question. New capture can be entered again only through its
+		// task-level route.
+		assertTrue(robot.lookup("#capture-mode-new").tryQuery().isEmpty());
 		assertFalse(pane.canCaptureRegions());
 	}
 
@@ -323,6 +314,32 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Answer capture cannot silently operate against different Subjects.
 		assertEquals(workingSubject, field(questionPane, "workingSubject", Subject.class));
 		assertEquals(workingSubject, field(answerPane, "workingSubject", Subject.class));
+	}
+
+	@Test
+	void dashboardHomeMenusRemoveRedundantNavigation(FxRobot robot) throws Exception {
+		MenuBar menuBar = lookup(robot, ".menu-bar", MenuBar.class);
+		Menu examMenu = menuBar.getMenus().stream().filter(menu -> "_Exam".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		Menu questionMenu = menuBar.getMenus().stream().filter(menu -> "_Questions".equals(menu.getText())).findFirst()
+				.orElseThrow();
+
+		// Exam/Assets is now reached from the Dashboard's Manage Exam / Assets action,
+		// so the former parallel Exam-menu entry must not survive.
+		assertFalse(examMenu.getItems().stream().anyMatch(item -> "open-exam-for-capture".equals(item.getId())));
+
+		// Active-context lifecycle and source-replacement operations remain legitimate
+		// Exam-menu commands.
+		assertTrue(examMenu.getItems().stream().anyMatch(item -> "mark-active-exam-complete".equals(item.getId())));
+		assertTrue(examMenu.getItems().stream().anyMatch(item -> "reactivate-active-exam".equals(item.getId())));
+		assertTrue(examMenu.getItems().stream().anyMatch(item -> "replace-active-question-pdf".equals(item.getId())));
+		assertTrue(examMenu.getItems().stream().anyMatch(item -> "replace-active-answer-pdf".equals(item.getId())));
+
+		// Dashboard is already Home. Questions therefore needs only the specialised
+		// Search workflow rather than a redundant route back to the current surface.
+		assertEquals(1, questionMenu.getItems().size());
+		assertEquals("_Search...", questionMenu.getItems().getFirst().getText());
+		assertFalse(questionMenu.getItems().stream().anyMatch(item -> "question-corpus-audit".equals(item.getId())));
 	}
 
 	@Test
@@ -433,33 +450,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void examMenuRoutesDirectlyToExamAssetsWorkspace(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		MenuBar menuBar = lookup(robot, ".menu-bar", MenuBar.class);
-		Menu examMenu = menuBar.getMenus().stream().filter(menu -> "_Exam".equals(menu.getText())).findFirst()
-				.orElseThrow();
-		MenuItem examAssetsItem = examMenu.getItems().stream()
-				.filter(item -> "open-exam-for-capture".equals(item.getId())).findFirst().orElseThrow();
-		assertEquals("_Exam / Assets...", examAssetsItem.getText());
-
-		// Legacy Question intake is now owned by Exam/Assets and must not remain as a
-		// second standalone Exam-menu workflow.
-		assertFalse(examMenu.getItems().stream().filter(item -> item.getText() != null)
-				.anyMatch(item -> item.getText().contains("Legacy Question Metadata")));
-
-		// Menu activation switches the existing main-window host rather than opening
-		// any superseded modal Exam-management workflow.
-		robot.interact(examAssetsItem::fire);
-		WaitForAsyncUtils.waitForFxEvents();
-		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
-		assertTrue(robot.lookup("#workspace-mode-host").tryQuery().isPresent());
-
-		// Legacy metadata intake is now visible only as an Exam/Assets workspace
-		// operation.
-		assertTrue(robot.lookup("#exam-assets-import-legacy-questions").tryQuery().isPresent());
-	}
-
-	@Test
 	void finishingQuestionEditReturnsCaptureWorkspaceToIdle(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "32");
@@ -468,17 +458,21 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> editStarted[0] = pane.editQuestion(question, () -> {
 		}));
 		assertTrue(editStarted[0]);
+
 		Node classification = lookup(robot, "#classification-context", Node.class);
 		Node questionWork = lookup(robot, "#question-capture-work", Node.class);
-		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
 		Button cancel = lookup(robot, "#cancel-question-edit", Button.class);
 		assertFalse(classification.isDisabled());
 		assertFalse(questionWork.isDisabled());
 		assertTrue(cancel.isVisible());
+
 		fireControl(robot, cancel);
 
-		// Ending the edit does not silently begin a new Question.
-		assertFalse(newMode.isSelected());
+		// Ending an edit does not silently start another Question. There is
+		// deliberately
+		// no local Start New Question Capture control with which to bypass task
+		// routing.
+		assertTrue(robot.lookup("#capture-mode-new").tryQuery().isEmpty());
 		assertTrue(classification.isDisabled());
 		assertTrue(questionWork.isDisabled());
 		assertFalse(pane.canCaptureRegions());
@@ -685,44 +679,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void newQuestionCaptureRequiresExplicitStart(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		QuestionCapturePane pane = questionCapturePane();
-
-		// Re-enter the state produced by activating a booklet before the teacher
-		// explicitly starts a Question.
-		robot.interact(pane::refreshForActiveBooklet);
-		ToggleButton startCapture = lookup(robot, "#capture-mode-new", ToggleButton.class);
-		Node workingSubject = lookup(robot, "#working-subject-context", Node.class);
-		Node classification = lookup(robot, "#classification-context", Node.class);
-		Node questionWork = lookup(robot, "#question-capture-work", Node.class);
-		Button addRegion = lookup(robot, "#add-question-region", Button.class);
-		assertEquals("Start New Question Capture", startCapture.getText());
-		assertFalse(startCapture.isSelected());
-
-		// Working Subject is application context and remains available.
-		assertFalse(workingSubject.isDisabled());
-		assertTrue(classification.isDisabled());
-		assertTrue(questionWork.isDisabled());
-		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
-
-		// Merely drawing on the Exam PDF must not silently begin Question capture.
-		dragRegionOnDisplayedPage(robot);
-		assertFalse(selectionState.hasPendingSelection());
-		assertTrue(addRegion.isDisabled());
-		fireControl(robot, startCapture);
-		assertTrue(startCapture.isSelected());
-		assertFalse(classification.isDisabled());
-		assertFalse(questionWork.isDisabled());
-
-		// Once capture is explicitly active, the Exam PDF again accepts Question
-		// selections.
-		dragRegionOnDisplayedPage(robot);
-		assertTrue(selectionState.hasPendingSelection());
-		assertFalse(addRegion.isDisabled());
-	}
-
-	@Test
 	void pastedImageCanBeOrderedWithPdfRegionAndSavedAsMixedQuestion(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
@@ -824,6 +780,25 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(originalClassification,
 				field(application, "curriculumSelectionModel", CurriculumSelectionModel.class).getClassification());
 		assertClassificationControlShows(robot, originalClassification);
+	}
+
+	@Test
+	void questionPaneKeepsOnlyImportedCorrectionEntryAction(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
+		ToggleButton importedMode = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		Node legacyControls = lookup(robot, "#legacy-question-capture", Node.class);
+
+		// New Question capture is owned by Dashboard or Exam/Assets and must not be
+		// duplicated inside the Question pane.
+		assertTrue(robot.lookup("#capture-mode-new").tryQuery().isEmpty());
+
+		// Imported/incomplete Question correction remains a conditional local workflow.
+		assertEquals("Complete Imported Question", importedMode.getText());
+		assertFalse(importedMode.isSelected());
+		assertFalse(importedMode.isVisible());
+		assertFalse(importedMode.isManaged());
+		assertFalse(legacyControls.isVisible());
+		assertFalse(legacyControls.isManaged());
 	}
 
 	@Test
@@ -997,29 +972,27 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void savingNewQuestionKeepsNewCaptureActiveForNextQuestion(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		QuestionCapturePane pane = questionCapturePane();
-		ToggleButton newMode = lookup(robot, "#capture-mode-new", ToggleButton.class);
 		Node classification = lookup(robot, "#classification-context", Node.class);
 		Node questionWork = lookup(robot, "#question-capture-work", Node.class);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		captureQuestion(robot, "31");
 
-		// A successful new-Question save deliberately keeps the capture session
-		// active so the teacher can proceed directly to the following Question.
-		assertTrue(newMode.isSelected());
+		// A successful new-Question save keeps the task-level capture session active so
+		// the teacher can proceed directly to the following Question.
+		assertTrue(robot.lookup("#capture-mode-new").tryQuery().isEmpty());
 		assertFalse(classification.isDisabled());
 		assertFalse(questionWork.isDisabled());
 		assertTrue(pane.canCaptureRegions());
 
 		// The previous Question itself has been cleared ready for fresh metadata and
-		// content, while the new-Question workflow remains active.
+		// content while the existing booklet capture session remains active.
 		assertEquals("", questionCode.getText());
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 		dragRegionOnDisplayedPage(robot);
 		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
 
-		// Leave no transient rectangle behind for test cleanup.
-		// Click away using the production cancellation path rather than a dedicated
-		// clear-selection action.
+		// Leave no transient rectangle behind for test cleanup. Pointer interaction is
+		// intentional because PDF click-away cancellation is the behaviour being used.
 		robot.clickOn("#pdf-page-view");
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(selectionState.hasPendingSelection());

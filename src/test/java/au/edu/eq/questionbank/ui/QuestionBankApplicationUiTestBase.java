@@ -423,8 +423,8 @@ abstract class QuestionBankApplicationUiTestBase {
 		Boolean activated = (Boolean) WaitForAsyncUtils.asyncFx(() -> {
 			try {
 
-				// Exercise the real capture-activation boundary rather than the
-				// retired modal Exam-import workflow.
+				// Exercise the real Exam/Assets capture boundary. Selecting a booklet for
+				// capture now enters ordinary new-Question capture directly.
 				return invoke(application, "activateBookletForCapture",
 						new Class<?>[] { ExamBooklet.class, ApplicationConfig.class }, booklet, applicationConfig);
 			} catch (Exception exception) {
@@ -433,20 +433,18 @@ abstract class QuestionBankApplicationUiTestBase {
 		}).get();
 		assertEquals(Boolean.TRUE, activated);
 		WaitForAsyncUtils.waitForFxEvents();
+
 		@SuppressWarnings("unchecked")
 		ComboBox<SyllabusVersion> syllabusBox = lookup(robot, "#curriculum-syllabus", ComboBox.class);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			AtomicReference<Boolean> curriculumLoaded = new AtomicReference<>(Boolean.FALSE);
 			robot.interact(() ->
 
-			// The production Subject transition is now asynchronous. Wait for its
-			// observable syllabus publication rather than racing the worker thread.
+			// The production Subject transition is asynchronous. Wait for its observable
+			// syllabus publication rather than racing the worker thread.
 			curriculumLoaded.set(Boolean.valueOf(!syllabusBox.getItems().isEmpty())));
 			return curriculumLoaded.get().booleanValue();
 		});
-
-		// Workflow fixtures deliberately enter new-Question capture.
-		fireControl(robot, "#capture-mode-new");
 
 		// Classification remains independent of booklet Question format.
 		selectFirst(robot, "#curriculum-unit");

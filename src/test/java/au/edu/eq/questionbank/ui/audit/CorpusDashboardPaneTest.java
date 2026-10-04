@@ -51,6 +51,7 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
 import javafx.application.Platform;
+import javafx.geometry.Orientation;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -59,7 +60,11 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableView;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -204,19 +209,35 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
-	void dashboardReservesBookletRowsAndCapsQuestionWorkHeight(FxRobot robot) {
-		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		TableView<QuestionCorpusWorkItem> questionWork = robot.lookup("#corpus-dashboard-question-work")
-				.queryAs(TableView.class);
+	void dashboardPlacesCurriculumAboveAdjustableWorkSplit(FxRobot robot) {
+		Node curriculumSection = robot.lookup("#corpus-dashboard-curriculum-section").query();
+		Node summaryRow = robot.lookup("#corpus-dashboard-summary-row").query();
+		Node hierarchyRow = robot.lookup("#corpus-dashboard-hierarchy-row").query();
+		Node examsSection = robot.lookup("#corpus-dashboard-exams-section").query();
+		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
+		Node questionSection = robot.lookup("#corpus-dashboard-question-work-section").query();
+		SplitPane workSplit = robot.lookup("#corpus-dashboard-work-split").queryAs(SplitPane.class);
 
-		// Booklet scope has a real minimum rather than being compressed whenever the
-		// surrounding dialog becomes crowded.
-		assertTrue(booklets.getMinHeight() >= 125.0);
+		// Curriculum is Subject-level context and therefore appears before corpus
+		// summary
+		// and before any Exam-specific structure.
+		assertTrue(pane.getChildren().indexOf(curriculumSection) < pane.getChildren().indexOf(summaryRow));
+		assertTrue(pane.getChildren().indexOf(summaryRow) < pane.getChildren().indexOf(workSplit));
 
-		// Question work remains available through scrolling without taking the majority
-		// of the Dashboard's vertical space.
-		assertTrue(questionWork.getMaxHeight() <= 210.0);
+		// Exam and booklet structure retain the accepted side-by-side hierarchy.
+		assertTrue(hierarchyRow instanceof HBox);
+		assertEquals(hierarchyRow, examsSection.getParent());
+		assertEquals(hierarchyRow, bookletsSection.getParent());
+
+		// A real vertical SplitPane makes hierarchy versus Question Work height
+		// directly
+		// adjustable without introducing persistent application settings.
+		assertEquals(Orientation.VERTICAL, workSplit.getOrientation());
+		assertEquals(2, workSplit.getItems().size());
+		assertEquals(hierarchyRow, workSplit.getItems().get(0));
+		assertEquals(questionSection, workSplit.getItems().get(1));
+		assertEquals(1, workSplit.getDividers().size());
+		assertEquals(Priority.ALWAYS, VBox.getVgrow(workSplit));
 	}
 
 	@Test
@@ -226,12 +247,13 @@ class CorpusDashboardPaneTest {
 		Node questionSection = robot.lookup("#corpus-dashboard-question-work-section").query();
 		Node curriculumSection = robot.lookup("#corpus-dashboard-curriculum-section").query();
 		Button completeQuestion = robot.lookup("#corpus-dashboard-complete-question").queryButton();
+		Button completeAnswer = robot.lookup("#corpus-dashboard-complete-answer").queryButton();
 		Button selectUnknown = robot.lookup("#corpus-dashboard-select-all-unknown").queryButton();
 		Button multipleChoice = robot.lookup("#corpus-dashboard-set-multiple-choice").queryButton();
 		Button writtenResponse = robot.lookup("#corpus-dashboard-set-written-response").queryButton();
 
-		// Major Dashboard responsibilities are visually separated without consuming a
-		// separate heading row for each section.
+		// Major Dashboard responsibilities remain visually separated even though Exam
+		// and booklet structure now share one horizontal hierarchy row.
 		assertNotNull(examsSection);
 		assertNotNull(bookletsSection);
 		assertNotNull(questionSection);
@@ -241,7 +263,9 @@ class CorpusDashboardPaneTest {
 		// change and return from Dashboard-owned workflows.
 		assertTrue(robot.lookup("#corpus-dashboard-refresh").tryQuery().isEmpty());
 
-		// Question correction and response-type actions occupy one compact row.
+		// All selected-Question correction and response-type actions occupy one compact
+		// action row beneath the Question Work table.
+		assertEquals(completeQuestion.getParent(), completeAnswer.getParent());
 		assertEquals(completeQuestion.getParent(), selectUnknown.getParent());
 		assertEquals(completeQuestion.getParent(), multipleChoice.getParent());
 		assertEquals(completeQuestion.getParent(), writtenResponse.getParent());
@@ -279,17 +303,18 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
-	void emptySubjectCorpusOffersExamAndCurriculumOnboarding(FxRobot robot) {
+	void emptySubjectCorpusOffersExamOnlyAfterCurriculumExists(FxRobot robot) {
 		AtomicReference<Boolean> addExamCalled = new AtomicReference<>(Boolean.FALSE);
 		AtomicReference<Boolean> addCurriculumCalled = new AtomicReference<>(Boolean.FALSE);
+
 		robot.interact(() -> {
 			pane.setAddExamHandler(() -> addExamCalled.set(Boolean.TRUE));
 			pane.setAddCurriculumHandler(() -> addCurriculumCalled.set(Boolean.TRUE));
 
-			// Simulate a newly created Subject: no Exam hierarchy and no curriculum
-			// versions have yet been persisted.
+			// A newly created Subject has neither curriculum nor Exam structure.
 			pane.replaceData(List.of(), List.of(), List.of(), false, -1L);
 		});
+
 		Label noExams = robot.lookup("#corpus-dashboard-no-exams").queryAs(Label.class);
 		Button addExam = robot.lookup("#corpus-dashboard-add-exam").queryButton();
 		Label curriculumStatus = robot.lookup("#corpus-dashboard-mapping-review").queryAs(Label.class);
@@ -298,26 +323,41 @@ class CorpusDashboardPaneTest {
 		Node examOperationalContent = robot.lookup("#corpus-dashboard-exam-operational-content").query();
 		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
 		Node questionSection = robot.lookup("#corpus-dashboard-question-work-section").query();
-		assertTrue(noExams.isVisible());
-		assertTrue(noExams.isManaged());
-		assertEquals("No Exams have been added.", noExams.getText());
-		assertFalse(addExam.isDisable());
 
-		// Empty structural hierarchy is replaced by one direct next action rather than
-		// three meaningless empty tables.
+		// Curriculum is the first valid onboarding step. Exam creation remains visible
+		// as context but cannot be invoked before that prerequisite exists.
+		assertEquals("No curriculum has been added.", curriculumStatus.getText());
+		assertFalse(addCurriculum.isDisable());
+		assertTrue(mapCurriculum.isDisable());
+		assertEquals("Add curriculum before adding an Exam.", noExams.getText());
+		assertTrue(addExam.isDisable());
+
 		assertFalse(examOperationalContent.isVisible());
 		assertFalse(examOperationalContent.isManaged());
 		assertFalse(bookletsSection.isVisible());
 		assertFalse(bookletsSection.isManaged());
 		assertFalse(questionSection.isVisible());
 		assertFalse(questionSection.isManaged());
-		assertEquals("No curriculum has been added.", curriculumStatus.getText());
-		assertFalse(addCurriculum.isDisable());
-		assertTrue(mapCurriculum.isDisable());
+
 		robot.interact(addExam::fire);
+		assertFalse(addExamCalled.get().booleanValue());
+
 		robot.interact(addCurriculum::fire);
-		assertTrue(addExamCalled.get().booleanValue());
 		assertTrue(addCurriculumCalled.get().booleanValue());
+
+		robot.interact(() -> {
+
+			// Once curriculum exists, the same empty Subject can proceed to Exam creation
+			// without recreating the Dashboard or changing Subject.
+			pane.replaceData(List.of(), List.of(), List.of(), true, -1L);
+		});
+
+		assertEquals("No mapping review is currently available.", curriculumStatus.getText());
+		assertEquals("No Exams have been added.", noExams.getText());
+		assertFalse(addExam.isDisable());
+
+		robot.interact(addExam::fire);
+		assertTrue(addExamCalled.get().booleanValue());
 	}
 
 	@Test
@@ -350,19 +390,23 @@ class CorpusDashboardPaneTest {
 		AtomicReference<ExamBooklet> questionCapture = new AtomicReference<>();
 		AtomicReference<Question> answerCapture = new AtomicReference<>();
 		AtomicReference<Question> questionCorrection = new AtomicReference<>();
+
 		robot.interact(() -> {
 			pane.setAnswerCaptureHandler(answerCapture::set);
 			pane.setNewQuestionCaptureHandler(questionCapture::set);
 			pane.setQuestionCorrectionHandler(questionCorrection::set);
 		});
+
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
 				.queryAs(TableView.class);
 		Button captureAnswers = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
 		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		Button completeAnswer = robot.lookup("#corpus-dashboard-complete-answer").queryButton();
 		Button completeQuestion = robot.lookup("#corpus-dashboard-complete-question").queryButton();
 
-		// No booklet selection means there is no unambiguous capture target.
+		// No booklet selection means there is no unambiguous booklet-level capture
+		// target.
 		assertTrue(captureAnswers.isDisable());
 		assertTrue(captureQuestions.isDisable());
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
@@ -373,21 +417,76 @@ class CorpusDashboardPaneTest {
 		assertFalse(captureAnswers.isDisable());
 		robot.interact(captureAnswers::fire);
 
-		// Q7 is missing Question content, so Answer capture skips it and begins at the
-		// first Question whose earlier prerequisites have been resolved.
+		// Q7 still has earlier Question work, so booklet-level Answer capture correctly
+		// skips to the first Question ready for Answer completion.
 		assertEquals("Q12", answerCapture.get().getQuestionCode());
+
+		QuestionCorpusWorkItem missingAnswer = questions.getItems().stream()
+				.filter(item -> "Q12".equals(item.question().getQuestionCode())).findFirst().orElseThrow();
+		robot.interact(() -> {
+			questions.getSelectionModel().clearSelection();
+			questions.getSelectionModel().select(missingAnswer);
+		});
+
+		// Question Work can now route the exact selected Missing Answer rather than
+		// requiring a separate booklet-level search.
+		assertFalse(completeAnswer.isDisable());
+		assertTrue(completeQuestion.isDisable());
+		answerCapture.set(null);
+		robot.interact(completeAnswer::fire);
+		assertEquals("Q12", answerCapture.get().getQuestionCode());
+
 		QuestionCorpusWorkItem missingContent = questions.getItems().stream()
 				.filter(item -> "Q7".equals(item.question().getQuestionCode())).findFirst().orElseThrow();
-		robot.interact(() -> questions.getSelectionModel().select(missingContent));
+		robot.interact(() -> {
+			questions.getSelectionModel().clearSelection();
+			questions.getSelectionModel().select(missingContent);
+		});
+
+		// Missing Answer may also be reported for Q7, but its earlier Question-content
+		// prerequisite keeps Answer completion disabled until Question work is
+		// resolved.
+		assertTrue(completeAnswer.isDisable());
 		assertFalse(completeQuestion.isDisable());
 		robot.interact(completeQuestion::fire);
 		assertEquals("Q7", questionCorrection.get().getQuestionCode());
+
 		ComboBox<ExamCaptureState> state = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
 		robot.interact(() -> state.setValue(ExamCaptureState.ACTIVE));
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
 		assertFalse(captureQuestions.isDisable());
 		robot.interact(captureQuestions::fire);
 		assertEquals(fixture.activePaper.getId(), questionCapture.get().getId());
+	}
+
+	@Test
+	void legacyQuestionImportIsSubjectLevelAndRequiresCurriculum(FxRobot robot) {
+		AtomicReference<Boolean> importCalled = new AtomicReference<>(Boolean.FALSE);
+		robot.interact(() -> pane.setLegacyQuestionImportHandler(() -> importCalled.set(Boolean.TRUE)));
+		Button importLegacy = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
+
+		// Populated Subjects keep legacy intake on the existing Exam filter row rather
+		// than reserving another complete Dashboard row.
+		assertEquals("Import Legacy", importLegacy.getText());
+		assertEquals("corpus-dashboard-exam-filter-row", importLegacy.getParent().getId());
+		assertFalse(importLegacy.isDisable());
+
+		robot.interact(importLegacy::fire);
+		assertTrue(importCalled.get().booleanValue());
+
+		robot.interact(() -> {
+
+			// Empty Subject onboarding reuses the same action beside Add Exam.
+			pane.replaceData(List.of(), List.of(), List.of(), false, -1L);
+		});
+
+		assertTrue(importLegacy.isVisible());
+		assertTrue(importLegacy.isManaged());
+		assertEquals("corpus-dashboard-exam-empty-state", importLegacy.getParent().getId());
+
+		// The workbook classification cannot be resolved without an authoritative
+		// curriculum version for this Subject.
+		assertTrue(importLegacy.isDisable());
 	}
 
 	@Test

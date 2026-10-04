@@ -114,7 +114,6 @@ public final class QuestionCapturePane extends VBox {
 	private final LegacyQuestionSplitService legacyQuestionSplitService;
 
 	// Capture mode and imported-question selection.
-	private final ToggleButton newQuestionsModeButton = new ToggleButton("Start New Question Capture");
 	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Complete Imported Question");
 	private final ToggleGroup captureModeGroup = new ToggleGroup();
 	private final ComboBox<Question> importedQuestionBox = new ComboBox<>();
@@ -915,8 +914,8 @@ public final class QuestionCapturePane extends VBox {
 	void showNewQuestionCapture() {
 		if (!importedCaptureMode && editingQuestion == null && legacySplitCaptureState == null) {
 
-			// Idle-to-new is the normal explicit workflow transition. Re-firing the
-			// action while already capturing simply keeps that workflow active.
+			// Dashboard and Exam/Assets have already established the authoritative
+			// booklet before entering ordinary new-Question capture.
 			selectCaptureModeToggle(false);
 			setLegacyCaptureControlsVisible(false);
 			showNewQuestionMode();
@@ -927,8 +926,8 @@ public final class QuestionCapturePane extends VBox {
 			return;
 		}
 
-		// Explicitly leaving imported correction abandons any Dashboard return callback
-		// associated with that unfinished Question.
+		// Explicit task-level new capture abandons any unfinished imported correction
+		// only after the ordinary transition guard accepts the change.
 		clearImportedCaptureCompletion();
 		questionEditCompletedHandler = () -> {
 		};
@@ -1391,15 +1390,13 @@ public final class QuestionCapturePane extends VBox {
 
 	private void configureCaptureModeControls() {
 
-		// Ordinary Question capture is explicit rather than a default-selected mode.
-		newQuestionsModeButton.setId("capture-mode-new");
+		// Ordinary new-Question capture is entered by the application-level Dashboard
+		// or Exam/Assets route. Only imported/incomplete work needs a local mode
+		// action.
 		importedQuestionsModeButton.setId("capture-mode-imported");
-		newQuestionsModeButton.setTooltip(new Tooltip("Start capture of a new Question from the active Exam PDF."));
 		importedQuestionsModeButton.setTooltip(new Tooltip(
 				"Complete outstanding Question content or Shared Context work for an imported/incomplete Question."));
-		newQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
 		importedQuestionsModeButton.setMinWidth(Region.USE_PREF_SIZE);
-		newQuestionsModeButton.setToggleGroup(captureModeGroup);
 		importedQuestionsModeButton.setToggleGroup(captureModeGroup);
 
 		// Imported capture is operational work. Do not expose its entry point until
@@ -1407,16 +1404,17 @@ public final class QuestionCapturePane extends VBox {
 		importedQuestionsModeButton.setVisible(false);
 		importedQuestionsModeButton.setManaged(false);
 
-		// Opening the application does not implicitly begin Question capture.
+		// New capture has no local toggle; the group records only imported-mode
+		// presentation when that workflow is active.
 		captureModeGroup.selectToggle(null);
 		legacyCaptureBox.setId("legacy-question-capture");
 	}
 
 	private void configureCaptureWorkflowActions() {
 
-		// Both visible mode controls use the existing guarded capture transitions.
+		// New capture is application-routed. The Question pane retains only the
+		// conditional imported/incomplete Question workflow action.
 		importedQuestionBox.setOnAction(_ -> checkImportedQuestionBox());
-		newQuestionsModeButton.setOnAction(_ -> showNewQuestionCapture());
 		importedQuestionsModeButton.setOnAction(_ -> showImportedQuestionCapture());
 	}
 
@@ -1606,9 +1604,10 @@ public final class QuestionCapturePane extends VBox {
 
 	private HBox createCaptureModeControls() {
 
-		// Capture-mode selection remains one compact row; Dashboard navigation belongs
-		// to the application-level Exam/booklet context instead.
-		HBox controls = new HBox(CONTROL_SPACING, newQuestionsModeButton, importedQuestionsModeButton);
+		// Imported correction remains a local Question-pane action because it selects
+		// from persisted outstanding work. New capture is entered from Dashboard or
+		// Exam/Assets and therefore needs no duplicate control here.
+		HBox controls = new HBox(CONTROL_SPACING, importedQuestionsModeButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
 	}
@@ -2752,10 +2751,15 @@ public final class QuestionCapturePane extends VBox {
 
 	private void selectCaptureModeToggle(boolean imported) {
 		if (imported) {
+
+			// Imported/incomplete Question work has a visible local mode indicator.
 			importedQuestionsModeButton.setSelected(true);
-		} else {
-			newQuestionsModeButton.setSelected(true);
+			return;
 		}
+
+		// Ordinary new capture has no local mode button. Clearing the imported toggle
+		// leaves the task-level route as the only visible new-capture entry point.
+		captureModeGroup.selectToggle(null);
 	}
 
 	private int selectedImportedQuestionIndex() {
@@ -2788,9 +2792,8 @@ public final class QuestionCapturePane extends VBox {
 
 	private void setCaptureModeControlsDisabled(boolean disabled) {
 
-		// A split is one correction workflow. New/imported capture cannot be entered
-		// part-way through it.
-		newQuestionsModeButton.setDisable(disabled);
+		// A split may not be interrupted by switching into imported/incomplete work.
+		// Ordinary new capture is no longer entered from this pane.
 		importedQuestionsModeButton.setDisable(disabled);
 	}
 

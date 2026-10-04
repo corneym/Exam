@@ -1707,30 +1707,39 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
+
 		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
 		AtomicBoolean rechecked = new AtomicBoolean(false);
 		AtomicBoolean cancelled = new AtomicBoolean(false);
+
 		List<LegacyBookletRequirement> requirements = List.of(new LegacyBookletRequirement("QCAA", 2020, "Paper 1"),
 				new LegacyBookletRequirement("QCAA", 2020, "Paper 2"));
+
 		robot.interact(() -> pane.showLegacyImportRequirements("2019", Path.of("legacy-questions.xlsx"), requirements,
 				() -> rechecked.set(true), () -> {
 					cancelled.set(true);
 
-					// Production cancellation clears the application-owned pending import
-					// and its Exam/Assets presentation together.
+					// This test represents import started directly from Exam/Assets, so
+					// cancellation clears the intake but deliberately stays in this workspace.
 					pane.clearLegacyImportRequirements();
 				}));
+
 		VBox status = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
 		Button startImport = lookup(robot, "#exam-assets-import-legacy-questions", Button.class);
 		Button recheck = lookup(robot, "#exam-assets-legacy-import-recheck", Button.class);
 		Button cancel = lookup(robot, "#exam-assets-legacy-import-cancel", Button.class);
+		Label instruction = lookup(robot, "#exam-assets-legacy-import-instruction", Label.class);
 		Label firstRequirement = lookup(robot, "#exam-assets-legacy-import-requirement-0", Label.class);
 		Label secondRequirement = lookup(robot, "#exam-assets-legacy-import-requirement-1", Label.class);
 
-		// Unresolved workbook identities remain visible beside the ordinary structural
-		// controls rather than opening the former parallel booklet-creation dialog.
+		// The workspace states the exact persistence identity required by preflight and
+		// explicitly warns against duplicating an already-present differently named
+		// PDF.
 		assertTrue(status.isVisible());
 		assertTrue(status.isManaged());
+		assertTrue(instruction.getText().contains("booklet Name exactly"));
+		assertTrue(instruction.getText().contains("edit that existing booklet"));
+		assertTrue(instruction.getText().contains("imports the Question metadata immediately"));
 		assertEquals("QCAA 2020 — Paper 1", firstRequirement.getText());
 		assertEquals("QCAA 2020 — Paper 2", secondRequirement.getText());
 
@@ -1741,8 +1750,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, recheck);
 		assertTrue(rechecked.get());
 
-		// Cancelling removes only the legacy intake state; Exam/Assets itself remains
-		// active and available for normal management.
+		// Direct Exam/Assets cancellation clears only the intake transaction.
 		fireControl(robot, cancel);
 		assertTrue(cancelled.get());
 		assertFalse(status.isVisible());

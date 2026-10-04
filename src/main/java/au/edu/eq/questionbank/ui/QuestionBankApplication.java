@@ -232,6 +232,7 @@ public class QuestionBankApplication extends Application {
 	private BorderPane rootLayout;
 	private BorderPane applicationBody;
 	private VBox classificationContext;
+	private boolean legacyQuestionImportDashboardOwned;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
@@ -358,45 +359,31 @@ public class QuestionBankApplication extends Application {
 			return false;
 		}
 
-		// A read-only Exam/Assets View may currently own the PDF pane. Close that
-		// temporary viewer session before making a Question booklet authoritative.
+		Path storedPath = resolveQuestionBookletCapturePath(booklet, config);
+		if (storedPath == null) {
+			return false;
+		}
+
+		// A read-only Exam/Assets preview may own the PDF pane. Remove only that
+		// temporary viewer before activating the authoritative capture document.
 		if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
 			pdfWorkspace.closeViewerPdf();
 		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
-		Path storedPath;
-		try {
 
-			// Capture always opens the authoritative managed Question source rather than
-			// an external file chosen independently of persistence.
-			storedPath = pdfStore.resolve(booklet.getSourceDocument().getRelativePath());
-		} catch (IllegalArgumentException exception) {
-			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture", "The stored Question PDF path is invalid.",
-					exception.getMessage());
-			return false;
-		}
-		if (!Files.isRegularFile(storedPath)) {
-			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture", "The stored Question PDF is unavailable.",
-					storedPath.toString());
-			return false;
-		}
 		try {
 			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, config.pdfDataRoot());
 
-			// Reuse the established activation sequence so PDF state and Question entry
-			// state are reset exactly as they are for the existing workflow.
+			// This synchronous route remains useful for test setup and established direct
+			// callers. The visible Exam/Assets button uses the asynchronous path below.
 			openExamPdf(selectedPdf);
 			examMetadataPane.activateExistingBooklet(booklet, storedPath);
-
-			// Rebuild both persisted capture queues after changing structural source
-			// context so Capture immediately reflects the newly active booklet.
 			questionCapturePane.refreshImportedQuestions();
 			answerCapturePane.refreshQuestions();
 
-			// Activating a booklet explicitly means entering the Capture workspace. This
-			// keeps existing activation callers compatible now that the application starts
-			// on the Dashboard home surface.
+			// Selecting a persisted booklet is already the explicit request to start
+			// ordinary new-Question capture; no second Start button is required.
 			showCaptureWorkspaceMode();
+			questionCapturePane.startNewQuestionCapture();
 			return true;
 		} catch (RuntimeException exception) {
 			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture",
@@ -738,6 +725,20 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void bindExamAssetsDashboardReturn(Runnable handler) {
+		if (handler == null) {
+
+			// Ordinary Exam/Assets use has no Dashboard navigation session to preserve.
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+			return;
+		}
+
+		// Keep one application-level Dashboard session while its visible Return action
+		// moves between Exam/Assets and Capture.
+		setCorpusDashboardCaptureReturn(handler);
+		examAssetsPane.setCorpusDashboardReturnHandler(this::returnToCorpusDashboardFromExamAssets);
+	}
+
 	private boolean blockWhileCaptureSaveInProgress(Stage primaryStage, String actionDescription) {
 		boolean questionSaveInProgress = questionCapturePane != null && questionCapturePane.isSaveInProgress();
 		boolean answerSaveInProgress = answerCapturePane != null && answerCapturePane.isSaveInProgress();
@@ -750,13 +751,11 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void cancelPendingLegacyQuestionImport() {
-		pendingLegacyQuestionImport = null;
 
-		// Presentation follows the application-owned pending state rather than
-		// retaining an independently meaningful legacy transaction.
-		if (examAssetsPane != null) {
-			examAssetsPane.clearLegacyImportRequirements();
-		}
+		// User cancellation abandons the pending workbook transaction but may also need
+		// to return control to the Dashboard that originally launched it.
+		clearPendingLegacyQuestionImport();
+		finishLegacyQuestionImportDashboardReturn();
 	}
 
 	private Path chooseAnswerBookletSource(Stage primaryStage, ApplicationConfig config) {
@@ -863,6 +862,16 @@ public class QuestionBankApplication extends Application {
 			// already accepted Subject transition.
 			showAlert(Alert.AlertType.ERROR, "Working Subject",
 					"The previous PDF workspace could not be closed cleanly.", failureMessage(exception));
+		}
+	}
+
+	private void clearPendingLegacyQuestionImport() {
+		pendingLegacyQuestionImport = null;
+
+		// Presentation follows the application-owned pending state rather than
+		// retaining an independently meaningful legacy transaction.
+		if (examAssetsPane != null) {
+			examAssetsPane.clearLegacyImportRequirements();
 		}
 	}
 
@@ -1126,40 +1135,60 @@ public class QuestionBankApplication extends Application {
 
 	private void continueLegacyQuestionImport(Stage primaryStage, ApplicationConfig config,
 			PendingLegacyQuestionImport pending) {
+
+		// Initial preflight and explicit Recheck share the same validation. Only
+		// Recheck
+		// needs an additional message when requirements remain unresolved.
+		continueLegacyQuestionImport(primaryStage, config, pending, false);
+	}
+
+	private void continueLegacyQuestionImport(Stage primaryStage, ApplicationConfig config,
+			PendingLegacyQuestionImport pending, boolean recheck) {
 		if (!Objects.equals(workingSubject, pending.subject())) {
 
-			// A later Working Subject has become authoritative. Silently abandon the
-			// obsolete callback rather than importing into stale application context.
-			cancelPendingLegacyQuestionImport();
+			// A later Working Subject has become authoritative. Abandon the obsolete
+			// transaction without navigating back to the previous Subject's Dashboard.
+			resetLegacyQuestionImportState();
 			return;
 		}
+
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
 			List<LegacyBookletRequirement> missing = importer.findMissingBooklets(pending.workbookPath(),
 					pending.subject().getName(), pending.syllabusVersion().getName());
+
 			if (!missing.isEmpty()) {
 				pendingLegacyQuestionImport = pending;
 
-				// Historical workbook evidence may identify provider/year/booklet but
-				// cannot manufacture authoritative Exam planning or source assets.
+				// Workbook evidence identifies the exact provider/year/booklet identity
+				// required for import. Existing differently named booklets must be edited,
+				// not duplicated.
 				examAssetsPane.showLegacyImportRequirements(pending.syllabusVersion().getName(), pending.workbookPath(),
 						missing, () -> recheckPendingLegacyQuestionImport(primaryStage, config),
 						this::cancelPendingLegacyQuestionImport);
+
+				if (recheck) {
+
+					// Recheck must produce an observable result. Rebuilding an unchanged
+					// requirements pane alone looked like a failed button press in live use.
+					showLegacyQuestionImportStillIncomplete(missing);
+				}
 				return;
 			}
 
-			// Only a completely resolved and unambiguous authoritative booklet hierarchy
-			// may receive the legacy Question rows.
+			// Once every authoritative booklet identity resolves, Recheck and Import
+			// immediately performs the existing atomic metadata import.
 			LegacyQuestionImportResult importResult = importer.importWorkbook(pending.workbookPath(),
 					pending.subject().getName(), pending.syllabusVersion().getName());
 
-			// The structural preflight is now complete. Remove its workspace state before
-			// refreshing the capture queues from the committed corpus.
-			cancelPendingLegacyQuestionImport();
+			// The structural preflight is complete. Remove its presentation while retaining
+			// Dashboard-origin ownership until post-import refresh/result handling
+			// finishes.
+			clearPendingLegacyQuestionImport();
 
-			// Corpus loading is deliberately separated from the atomic import so the
-			// potentially large post-import repository read cannot block JavaFX.
+			// Corpus loading remains separate from the atomic import so the potentially
+			// large post-import repository read cannot block JavaFX.
 			startLegacyQuestionCaptureRefresh(pending.subject(), importResult);
 		} catch (IOException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
@@ -1324,12 +1353,6 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createExamMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu examMenu = createMenu("_Exam");
-		MenuItem examAssetsItem = createMenuItem("_Exam / Assets...", this::showExamAssetsMode);
-
-		// Exam/Assets is the single Exam-management entry point. Legacy Question
-		// intake now begins inside that workspace rather than from a parallel menu
-		// item.
-		examAssetsItem.setId("open-exam-for-capture");
 		MenuItem markCompleteItem = createMenuItem("_Mark Active Exam Complete...",
 				() -> markActiveExamComplete(primaryStage));
 		markCompleteItem.setId("mark-active-exam-complete");
@@ -1339,13 +1362,14 @@ public class QuestionBankApplication extends Application {
 				() -> replaceActiveQuestionPdf(primaryStage, config));
 		replaceQuestionPdfItem.setId("replace-active-question-pdf");
 
-		// Answer correction remains booklet-scoped. A genuinely shared AnswerFile is
-		// preserved while only the active booklet assignment is corrected.
+		// Exam setup and structural asset management now belong to the Dashboard's
+		// Manage Exam / Assets route. The Exam menu retains only operations on the
+		// currently active Exam or booklet.
 		MenuItem replaceAnswerPdfItem = createMenuItem("Replace Active _Answer PDF...",
 				() -> replaceActiveAnswerPdf(primaryStage, config));
 		replaceAnswerPdfItem.setId("replace-active-answer-pdf");
-		examMenu.getItems().addAll(examAssetsItem, new SeparatorMenuItem(), markCompleteItem, reactivateItem,
-				new SeparatorMenuItem(), replaceQuestionPdfItem, replaceAnswerPdfItem);
+		examMenu.getItems().addAll(markCompleteItem, reactivateItem, new SeparatorMenuItem(), replaceQuestionPdfItem,
+				replaceAnswerPdfItem);
 		return examMenu;
 	}
 
@@ -1444,6 +1468,8 @@ public class QuestionBankApplication extends Application {
 		// The one live Subject context moves here while specialised left-hand work is
 		// active. Dashboard navigation moves it back into the Dashboard title region.
 		workspaceSubjectHost.setId("workspace-subject-host");
+		workspaceSubjectHost.setPadding(new Insets(8));
+		workspaceSubjectHost.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
 		captureWorkspaceModePane = createCaptureWorkspaceModePane();
 		workspaceModeHost = new StackPane(captureWorkspaceModePane);
 		workspaceModeHost.setId("workspace-mode-host");
@@ -1491,12 +1517,10 @@ public class QuestionBankApplication extends Application {
 	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu questionMenu = createMenu("_Questions");
 
-		// Search remains a specialised modal workflow. Corpus Dashboard is now the
-		// application's main-window home surface rather than another dialog.
+		// The Corpus Dashboard is now the main application home surface, so navigation
+		// back to Home does not need a duplicate Questions-menu action.
 		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
-		MenuItem corpusDashboardItem = createMenuItem("_Corpus Dashboard", this::showCorpusDashboardHomeFromMenu);
-		corpusDashboardItem.setId("question-corpus-audit");
-		questionMenu.getItems().addAll(searchItem, corpusDashboardItem);
+		questionMenu.getItems().add(searchItem);
 		return questionMenu;
 	}
 
@@ -1651,6 +1675,27 @@ public class QuestionBankApplication extends Application {
 		returnHandler.run();
 	}
 
+	private void failExamAssetsQuestionCaptureRefresh(Throwable failure) {
+		Throwable effectiveFailure = failure == null
+				? new IllegalStateException("Question capture could not be prepared.")
+				: failure;
+
+		try {
+
+			// The new PDF had already replaced the previous capture document before the
+			// corpus refresh failed. Remove it so Exam/Assets is not paired with stale
+			// capture metadata.
+			pdfWorkspace.closeExamPdf();
+		} catch (RuntimeException closeFailure) {
+			effectiveFailure.addSuppressed(closeFailure);
+		}
+
+		// Exam/Assets remains mounted and retains its Dashboard Return action.
+		hideWorkspaceBusy();
+		showAlert(Alert.AlertType.ERROR, "Open Exam for Capture",
+				"The selected Question booklet could not be prepared for capture.", failureMessage(effectiveFailure));
+	}
+
 	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
 		finishRevisionExport();
 		progressAlert.close();
@@ -1752,6 +1797,29 @@ public class QuestionBankApplication extends Application {
 					+ " is recorded as having a shared context, but no shared context could be found");
 		}
 		return matchingContext;
+	}
+
+	private void finishLegacyQuestionImportDashboardReturn() {
+		boolean returnToDashboard = legacyQuestionImportDashboardOwned;
+		legacyQuestionImportDashboardOwned = false;
+
+		if (!returnToDashboard) {
+
+			// A legacy import started directly from Exam/Assets remains there when it
+			// finishes or is cancelled.
+			return;
+		}
+
+		if (corpusDashboardCaptureReturnHandler != null) {
+
+			// Dashboard-owned Exam/Assets already holds the authoritative return session.
+			returnToCorpusDashboardFromExamAssets();
+			return;
+		}
+
+		// Defensive fallback still restores the operational home if the visible return
+		// callback was lost while the modal import dialog was open.
+		refreshAndShowCorpusDashboardHome();
 	}
 
 	private void finishRevisionExport() {
@@ -1894,8 +1962,10 @@ public class QuestionBankApplication extends Application {
 			hideWorkspaceBusy();
 
 			// Pending legacy preflight belongs to the previous authoritative Subject
-			// and cannot survive an accepted application-level Subject transition.
-			cancelPendingLegacyQuestionImport();
+			// and cannot survive an accepted application-level Subject transition. This
+			// is context invalidation, not user cancellation, so never navigate back to
+			// the Dashboard belonging to the old Subject.
+			resetLegacyQuestionImportState();
 
 			// The PDF workspace is Subject-dependent application context. Remove any
 			// document that still belongs to the previous Subject before replacement
@@ -2008,21 +2078,34 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void importLegacyQuestionMetadata(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
 
-			// Legacy intake cannot establish its own Subject.
+		// The permanent Exam/Assets action starts and finishes inside Exam/Assets.
+		importLegacyQuestionMetadata(primaryStage, config, false);
+	}
+
+	private void importLegacyQuestionMetadata(Stage primaryStage, ApplicationConfig config, boolean dashboardOwned) {
+		legacyQuestionImportDashboardOwned = dashboardOwned;
+
+		if (workingSubject == null) {
 			showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "No Working Subject is selected.",
 					"Select a Working Subject before importing legacy Question metadata.");
+			cancelPendingLegacyQuestionImport();
 			return;
 		}
+
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 			Subject subject = workingSubject;
 			LegacyQuestionImportDialog dialog = new LegacyQuestionImportDialog(primaryStage, subject,
 					curriculumRepository);
+
 			Optional<ButtonType> result = dialog.showAndWait();
 			if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
+
+				// Dashboard-owned intake returns home on dialog cancellation. Direct
+				// Exam/Assets intake deliberately remains in Exam/Assets.
+				cancelPendingLegacyQuestionImport();
 				return;
 			}
 
@@ -2030,10 +2113,15 @@ public class QuestionBankApplication extends Application {
 			// editing must not alter which Subject, syllabus or workbook is being imported.
 			PendingLegacyQuestionImport pending = new PendingLegacyQuestionImport(subject,
 					dialog.getSelectedSyllabusVersion(), dialog.getSelectedFile());
+
 			continueLegacyQuestionImport(primaryStage, config, pending);
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import could not start.",
 					exception.getMessage());
+
+			// Failed Dashboard-owned intake should not strand the user in the structural
+			// workspace after the modal workflow has ended.
+			cancelPendingLegacyQuestionImport();
 		}
 	}
 
@@ -2371,7 +2459,7 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage, Question question,
+	private boolean offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage, Question question,
 			Runnable completedHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -2395,19 +2483,23 @@ public class QuestionBankApplication extends Application {
 		ButtonType decision = alert.showAndWait().orElse(keepButton);
 		if (decision != recaptureButton) {
 			completedHandler.run();
-			return;
+			return false;
 		}
 		boolean recaptureStarted = questionCapturePane.recaptureQuestion(question, () -> {
 
-			// Recapture explicitly opened the source Exam PDF. Once the
-			// recapture is saved or cancelled, that temporary document must
-			// no longer remain active.
+			// Recapture explicitly opened the source Exam PDF. Once the recapture is
+			// saved or cancelled, that temporary document must no longer remain active.
 			pdfWorkspace.closeExamPdf();
 			completedHandler.run();
 		});
 		if (!recaptureStarted) {
 			completedHandler.run();
+			return false;
 		}
+
+		// The caller decides which workspace owns the successful recapture. This method
+		// is shared by Search and non-Search correction workflows.
+		return true;
 	}
 
 	private void offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage,
@@ -2415,7 +2507,14 @@ public class QuestionBankApplication extends Application {
 			LegacyQuestionMetadataService metadataService) {
 		Runnable resumeSearch = () -> resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(),
 				curriculumRepository, metadataService);
-		offerQuestionRecaptureAfterSharedContextConversion(primaryStage, question, resumeSearch);
+		boolean recaptureStarted = offerQuestionRecaptureAfterSharedContextConversion(primaryStage, question,
+				resumeSearch);
+		if (recaptureStarted) {
+
+			// Search owns this particular recapture, so it also owns the transition from
+			// the modal Search dialog into the prepared Question workspace.
+			showSearchQuestionCaptureWorkspace(question);
+		}
 	}
 
 	private void openAnswerPdf(SelectedPdf selectedPdf) {
@@ -2574,29 +2673,21 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Recheck executes the same authoritative preflight as the initial intake.
-		// Saving an Exam or booklet never bypasses validation.
-		continueLegacyQuestionImport(primaryStage, config, pending);
+		// Recheck reruns authoritative preflight. If requirements remain, the user gets
+		// an explicit result; if none remain, import proceeds immediately.
+		continueLegacyQuestionImport(primaryStage, config, pending, true);
 	}
 
 	private void refreshActiveExamContext() {
-		changeExamAssetsButton.setDisable(workingSubject == null);
-		if (examMetadataPane == null) {
-			activeExamBookletLabel.setText("No Exam booklet selected");
-			return;
-		}
-		ExamBooklet booklet = examMetadataPane.getBooklet();
-		if (booklet == null) {
-			activeExamBookletLabel.setText("No Exam booklet selected");
-			return;
-		}
-		Exam exam = booklet.getExam();
-		String lifecycle = exam.isComplete() ? "COMPLETE" : "ACTIVE";
 
-		// Keep the active structural context visible independently of Question
-		// classification and Answer workflow state.
-		activeExamBookletLabel.setText("%s %d %s — %s [%s]".formatted(exam.getProvider().getName(), exam.getYear(),
-				exam.getName(), booklet.getName(), lifecycle));
+		// Generic and Dashboard capture permit structural navigation. Search-owned
+		// editing overrides this immediately with read-only task context.
+		changeExamAssetsButton.setVisible(true);
+		changeExamAssetsButton.setManaged(true);
+		changeExamAssetsButton.setDisable(workingSubject == null);
+
+		ExamBooklet booklet = examMetadataPane == null ? null : examMetadataPane.getBooklet();
+		setActiveExamBookletContext(booklet);
 	}
 
 	private void refreshAndShowCorpusDashboardHome() {
@@ -2881,6 +2972,37 @@ public class QuestionBankApplication extends Application {
 						+ ". Resolve the duplicate managed documents before adding another asset.");
 	}
 
+	private void resetLegacyQuestionImportState() {
+
+		// Context invalidation clears both pending persistence intent and navigation
+		// ownership without treating it as an explicit Cancel action.
+		clearPendingLegacyQuestionImport();
+		legacyQuestionImportDashboardOwned = false;
+	}
+
+	private Path resolveQuestionBookletCapturePath(ExamBooklet booklet, ApplicationConfig config) {
+		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		Path storedPath;
+		try {
+
+			// Capture must always resolve the managed source owned by the persisted
+			// ExamBooklet rather than allowing an unrelated external PDF.
+			storedPath = pdfStore.resolve(booklet.getSourceDocument().getRelativePath());
+		} catch (IllegalArgumentException exception) {
+			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture", "The stored Question PDF path is invalid.",
+					exception.getMessage());
+			return null;
+		}
+
+		if (!Files.isRegularFile(storedPath)) {
+			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture", "The stored Question PDF is unavailable.",
+					storedPath.toString());
+			return null;
+		}
+
+		return storedPath;
+	}
+
 	private void restoreBackup(Stage primaryStage, ApplicationConfig config) {
 		if (blockWhileCaptureSaveInProgress(primaryStage, "restoring a backup")) {
 			return;
@@ -2959,7 +3081,15 @@ public class QuestionBankApplication extends Application {
 
 	private void resumeSearchAfterEdit(Stage primaryStage, QuestionSearchDialog dialog, long questionId,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
+
+		// Refresh the reusable Search dialog from persistence before displaying it
+		// again so saved corrections are immediately visible.
 		dialog.refreshAfterEdit(questionId);
+
+		// Search capture corrections temporarily replace the Dashboard with Capture.
+		// Restore and refresh Home before reopening Search so closing Search cannot
+		// expose an obsolete or hidden capture workspace.
+		refreshAndShowCorpusDashboardHome();
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
@@ -2989,6 +3119,22 @@ public class QuestionBankApplication extends Application {
 		// Consume the session before starting the asynchronous Dashboard refresh so an
 		// obsolete return action cannot survive while persistence is loading.
 		Runnable handler = corpusDashboardCaptureReturnHandler;
+		clearCorpusDashboardCaptureReturn();
+		handler.run();
+	}
+
+	private void returnToCorpusDashboardFromExamAssets() {
+		Runnable handler = corpusDashboardCaptureReturnHandler;
+		if (handler == null) {
+
+			// A stale Exam/Assets callback must not manufacture a Dashboard session.
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+			return;
+		}
+
+		// Consume both presentations of the same navigation session before beginning
+		// the asynchronous Dashboard refresh.
+		examAssetsPane.clearCorpusDashboardReturnHandler();
 		clearCorpusDashboardCaptureReturn();
 		handler.run();
 	}
@@ -3070,6 +3216,20 @@ public class QuestionBankApplication extends Application {
 			suffix++;
 		}
 		return destination;
+	}
+
+	private void setActiveExamBookletContext(ExamBooklet booklet) {
+		if (booklet == null) {
+			activeExamBookletLabel.setText("No Exam booklet selected");
+			return;
+		}
+		Exam exam = booklet.getExam();
+		String lifecycle = exam.isComplete() ? "COMPLETE" : "ACTIVE";
+
+		// The banner reports the authoritative structural source without implying that
+		// it may be changed from every specialised workflow.
+		activeExamBookletLabel.setText("%s %d %s — %s [%s]".formatted(exam.getProvider().getName(), exam.getYear(),
+				exam.getName(), booklet.getName(), lifecycle));
 	}
 
 	private void setCaptureWorkspaceSectionVisibility(boolean classificationVisible, boolean questionVisible,
@@ -3194,17 +3354,6 @@ public class QuestionBankApplication extends Application {
 		applicationBody.setCenter(corpusDashboardHomePane);
 	}
 
-	private void showCorpusDashboardHomeFromMenu() {
-		if (!allowCorpusDashboardHomeTransition()) {
-			return;
-		}
-
-		// Explicit Home navigation also performs the persistence refresh that
-		// previously
-		// required the Dashboard's manual Refresh button.
-		refreshAndShowCorpusDashboardHome();
-	}
-
 	private void showCorpusDashboardNoSubject() {
 		corpusDashboardPane = null;
 		Label message = new Label("Select or add a Subject to view its corpus.");
@@ -3238,6 +3387,7 @@ public class QuestionBankApplication extends Application {
 				snapshot.questions(), snapshot.mappingCoverages(), snapshot.curriculumAvailable());
 		dashboard.setAddExamHandler(this::showExamAssetsModeForNewExam);
 		dashboard.setAddCurriculumHandler(() -> showDashboardAddCurriculum(primaryStage(), applicationConfig));
+		dashboard.setLegacyQuestionImportHandler(this::showLegacyQuestionImportFromDashboard);
 		dashboard.setMapCurriculumHandler(() -> reviewCurriculumMappings(primaryStage(), applicationConfig));
 
 		// Every Dashboard operation routes into an existing authoritative workflow.
@@ -3450,28 +3600,28 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Leaving a Dashboard-launched Capture session deliberately abandons its
-		// special return ownership.
-		clearCorpusDashboardCaptureReturn();
+		// Change Exam may be invoked from Dashboard-owned Capture. Retain that session
+		// instead of discarding the only route back to the home screen.
+		Runnable dashboardReturnHandler = corpusDashboardCaptureReturnHandler;
+
 		if (workingSubject == null) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "No Working Subject is selected.",
 					"Select a Working Subject before managing Exam assets.");
 			return;
 		}
+
 		try {
 
-			// Ordinary workspace entry must not inherit a Dashboard return callback from
-			// an earlier structural correction session.
+			// Always reconstruct structural state from persistence before exposing it.
 			examAssetsPane.clearCorpusDashboardReturnHandler();
-
-			// Re-read the current Subject's Exam hierarchy every time this workspace is
-			// entered so the screen never relies on stale modal-setup state.
 			examAssetsPane.refresh(workingSubject);
-
-			// Replace only the underlying workspace so asynchronous progress presentation
-			// remains available.
+			bindExamAssetsDashboardReturn(dashboardReturnHandler);
 			setWorkspaceMode(examAssetsPane);
 		} catch (SQLException exception) {
+
+			// Capture remains mounted if loading fails, so its existing Dashboard session
+			// must remain untouched.
+			examAssetsPane.clearCorpusDashboardReturnHandler();
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
 					exception.getMessage());
 		}
@@ -3485,31 +3635,27 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Structural routing owns its own Dashboard return lifecycle.
+		// This overload is a fresh structural route, normally from Dashboard Home.
 		clearCorpusDashboardCaptureReturn();
+
 		if (workingSubject == null || exam.getSubject().getId() != workingSubject.getId()) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "The requested Exam is outside the Working Subject.",
 					"Return to the Dashboard for the current Working Subject and try again.");
 			return;
 		}
-		try {
 
-			// Clear any previous correction-session ownership before reconstructing the
-			// requested Exam from authoritative persistence.
+		try {
 			examAssetsPane.clearCorpusDashboardReturnHandler();
 			examAssetsPane.showForCorrection(workingSubject, exam.getId(),
 					booklet == null ? null : Long.valueOf(booklet.getId()));
-			if (returnHandler != null) {
 
-				// Only Dashboard-launched structural correction exposes an explicit route
-				// back to that Dashboard instance.
-				examAssetsPane.setCorpusDashboardReturnHandler(returnHandler);
-			}
-
-			// Dashboard structural routing also retains the permanent progress overlay.
+			// Dashboard ownership is retained at application level so selecting a booklet
+			// can later transfer the same Return action into Capture.
+			bindExamAssetsDashboardReturn(returnHandler);
 			setWorkspaceMode(examAssetsPane);
 		} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
 			examAssetsPane.clearCorpusDashboardReturnHandler();
+			clearCorpusDashboardCaptureReturn();
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The requested Exam assets could not be opened.",
 					exception.getMessage());
 		}
@@ -3520,23 +3666,26 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Dashboard onboarding belongs to the currently selected application Subject.
+		// Add Exam starts a fresh Dashboard-owned structural transaction.
 		clearCorpusDashboardCaptureReturn();
+
 		if (workingSubject == null) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "No Subject is selected.",
 					"Select or add a Subject on the Corpus Dashboard first.");
 			return;
 		}
+
 		try {
 			examAssetsPane.clearCorpusDashboardReturnHandler();
 			examAssetsPane.showForNewExam(workingSubject);
 
-			// New Exam is still the ordinary Exam / Assets transaction. Once it is saved
-			// or cancelled, the explicit return reloads the Dashboard from persistence.
-			examAssetsPane.setCorpusDashboardReturnHandler(this::refreshAndShowCorpusDashboardHome);
+			// Saving or cancelling structural work restores Return availability. The same
+			// session also survives if the new booklet is subsequently activated.
+			bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
 			setWorkspaceMode(examAssetsPane);
 		} catch (SQLException | IllegalStateException exception) {
 			examAssetsPane.clearCorpusDashboardReturnHandler();
+			clearCorpusDashboardCaptureReturn();
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "A new Exam could not be started.",
 					exception.getMessage());
 		}
@@ -3551,6 +3700,41 @@ public class QuestionBankApplication extends Application {
 		dialog.showAndWait();
 	}
 
+	private void showLegacyQuestionImportFromDashboard() {
+		if (!allowExamAssetsTransition()) {
+			return;
+		}
+
+		// Legacy intake begins a fresh Dashboard-owned structural workflow.
+		clearCorpusDashboardCaptureReturn();
+
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "No Working Subject is selected.",
+					"Select a Working Subject before importing legacy Question metadata.");
+			return;
+		}
+
+		try {
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+			examAssetsPane.refresh(workingSubject);
+
+			// Exam/Assets remains authoritative for structural preflight while the same
+			// Dashboard session owns cancellation and successful completion.
+			bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
+			setWorkspaceMode(examAssetsPane);
+
+			importLegacyQuestionMetadata(primaryStage(), applicationConfig, true);
+		} catch (SQLException exception) {
+			resetLegacyQuestionImportState();
+			examAssetsPane.clearCorpusDashboardReturnHandler();
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import",
+					"Exam assets could not be prepared for legacy Question import.", exception.getMessage());
+
+			// The Dashboard launched this failed transition, so restore it immediately.
+			refreshAndShowCorpusDashboardHome();
+		}
+	}
+
 	private void showLegacyQuestionImportResult(LegacyQuestionImportResult importResult) {
 		String message = """
 				Questions imported: %d
@@ -3562,6 +3746,40 @@ public class QuestionBankApplication extends Application {
 		// Exam and booklet structure is now managed exclusively by Exam/Assets and is
 		// therefore deliberately absent from the legacy-import result count.
 		showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy Question metadata imported.", message);
+	}
+
+	private void showLegacyQuestionImportStillIncomplete(List<LegacyBookletRequirement> requirements) {
+		if (requirements == null) {
+			throw new NullPointerException("requirements");
+		}
+		if (requirements.isEmpty()) {
+			throw new IllegalArgumentException("requirements must not be empty");
+		}
+
+		StringBuilder remaining = new StringBuilder();
+		for (LegacyBookletRequirement requirement : requirements) {
+			if (!remaining.isEmpty()) {
+				remaining.append(System.lineSeparator());
+			}
+
+			// Show the exact persisted identity that preflight is attempting to resolve.
+			remaining.append("• %s %d — %s".formatted(requirement.providerName(), requirement.year(),
+					requirement.bookletName()));
+		}
+
+		showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "Import not ready — booklet requirements remain.",
+				"""
+						Recheck found %d required Question booklet(s) that still do not match saved Exam/Assets:
+
+						%s
+
+						Provider, Year and Question booklet Name must match each requirement exactly.
+
+						If the PDF is already present under a different booklet Name, edit that existing booklet rather than adding a duplicate.
+
+						After saving the corrections, choose Recheck and Import again.
+						"""
+						.formatted(requirements.size(), remaining));
 	}
 
 	private void showNewCurriculumAuthoring(Stage primaryStage, ApplicationConfig config, Subject subject) {
@@ -3656,22 +3874,26 @@ public class QuestionBankApplication extends Application {
 		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_CONTEXT) {
 			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question, () -> {
 
-				// Shared-context correction temporarily owns the Question's
-				// Exam PDF. Release it after either Save or Cancel.
+				// Shared-context correction temporarily owns the Question's Exam PDF.
+				// Release it after either Save or Cancel.
 				pdfWorkspace.closeExamPdf();
 				resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
 			});
 			if (!correctionStarted) {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
+				return;
 			}
+
+			// Search closed before starting the correction. Explicitly replace Dashboard
+			// Home with read-only context for this persisted Question.
+			showSearchQuestionCaptureWorkspace(question);
 			return;
 		}
 		if (request.target() == QuestionSearchDialog.EditTarget.QUESTION) {
 			boolean editingStarted = questionCapturePane.editQuestion(question, () -> {
 
-				// Search temporarily opened this Question's Exam PDF for
-				// editing. Save and Cancel both release it before Search
-				// becomes active again.
+				// Search temporarily opened this Question's Exam PDF for editing. Save and
+				// Cancel both release it before Search becomes active again.
 				pdfWorkspace.closeExamPdf();
 				resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
 			});
@@ -3680,23 +3902,31 @@ public class QuestionBankApplication extends Application {
 				return;
 			}
 
-			// The Question editor now owns the correct Exam document. Display the
-			// persisted regions as informational grey overlays and focus the first one.
+			// The edit state and source PDF are ready. Mount the Question editor with the
+			// selected Question's Exam/booklet shown only as informational context.
+			showSearchQuestionCaptureWorkspace(question);
 			focusStoredQuestionRegions(question);
 			return;
 		}
 
-		// ANswer editing
+		// Search editing is not a Dashboard missing-Answer queue, so discard any
+		// Dashboard-specific Exam scope before selecting this exact persisted Answer.
+		answerCapturePane.setExamScope(null);
 		boolean editingStarted = answerCapturePane.editAnswer(question, () -> {
 
-			// The Answer PDF was opened for this temporary edit. It must
-			// not remain active after either Save or Cancel.
+			// The Answer PDF was opened for this temporary edit. It must not remain
+			// active after either Save or Cancel.
 			pdfWorkspace.closeAnswerPdf();
 			resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
 		});
 		if (!editingStarted) {
 			showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
+			return;
 		}
+
+		// Existing Answer regions have now been loaded into edit state. Expose that
+		// state with the selected Question's Exam/booklet as read-only context.
+		showSearchAnswerCaptureWorkspace(question);
 	}
 
 	private void showResourceCloseFailure(Stage primaryStage, Throwable failure) {
@@ -3795,6 +4025,42 @@ public class QuestionBankApplication extends Application {
 				result.getStatistics().getSharedContextReviewQuestions());
 		showAlert(Alert.AlertType.INFORMATION, "Export Revision SCORM", "SCORM package exported successfully.",
 				message);
+	}
+
+	private void showSearchAnswerCaptureWorkspace(Question question) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+
+		// Search has already selected the exact persisted Answer being edited. Mount
+		// only the Answer controls without replacing that edit state.
+		setCaptureWorkspaceSectionVisibility(false, false, true);
+		setWorkspaceMode(captureWorkspaceModePane);
+		showSearchCaptureContext(question);
+	}
+
+	private void showSearchCaptureContext(Question question) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+
+		// Search correction is bound to the selected persisted Question. Its source
+		// Exam/booklet is informative context, not a navigation choice.
+		setActiveExamBookletContext(question.getBooklet());
+		changeExamAssetsButton.setVisible(false);
+		changeExamAssetsButton.setManaged(false);
+	}
+
+	private void showSearchQuestionCaptureWorkspace(Question question) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+
+		// Question corrections establish their own classification and capture state
+		// before this transition. Mount that prepared state without altering it.
+		setCaptureWorkspaceSectionVisibility(true, true, false);
+		setWorkspaceMode(captureWorkspaceModePane);
+		showSearchCaptureContext(question);
 	}
 
 	private void showStage(Stage primaryStage, BorderPane root) {
@@ -3932,6 +4198,48 @@ public class QuestionBankApplication extends Application {
 		Thread.ofVirtual().name("dashboard-question-capture-refresh").start(task);
 	}
 
+	private void startExamAssetsQuestionCaptureRefresh(ExamBooklet booklet, Path storedPath) {
+		Task<List<Question>> task = new Task<>() {
+
+			@Override
+			protected List<Question> call() {
+
+				// Rebuild both capture panes from one persistence snapshot rather than
+				// blocking JavaFX with two synchronous repository refreshes.
+				return List.copyOf(questionRepository.findAll());
+			}
+		};
+
+		task.setOnSucceeded(_ -> {
+			try {
+				Subject subject = booklet.getExam().getSubject();
+
+				// Publish structural identity only after the managed PDF and corpus
+				// snapshot are both ready.
+				examMetadataPane.activateExistingBooklet(booklet, storedPath);
+				List<Question> questions = task.getValue();
+				questionCapturePane.setWorkingSubject(subject, questions);
+				answerCapturePane.setWorkingSubject(subject, questions);
+
+				// Exam/Assets has handed the Dashboard-owned session to Capture. Remove
+				// only the hidden Exam/Assets presentation of the Return action.
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+
+				showCaptureWorkspaceMode();
+				questionCapturePane.startNewQuestionCapture();
+				hideWorkspaceBusy();
+			} catch (RuntimeException exception) {
+				failExamAssetsQuestionCaptureRefresh(exception);
+			}
+		});
+
+		task.setOnFailed(_ -> failExamAssetsQuestionCaptureRefresh(task.getException()));
+
+		// Corpus reconstruction is persistence work and should not stall JavaFX after
+		// the PDF has already loaded.
+		Thread.ofVirtual().name("exam-assets-question-capture-refresh").start(task);
+	}
+
 	// TODO remove/extract inner class
 	private void startLegacyQuestionCaptureRefresh(Subject subject, LegacyQuestionImportResult importResult) {
 		if (subject == null) {
@@ -3940,6 +4248,7 @@ public class QuestionBankApplication extends Application {
 		if (importResult == null) {
 			throw new NullPointerException("importResult");
 		}
+
 		Task<List<Question>> task = new Task<>() {
 
 			@Override
@@ -3950,35 +4259,46 @@ public class QuestionBankApplication extends Application {
 				return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
 			}
 		};
+
 		task.setOnSucceeded(_ -> {
 			if (!Objects.equals(workingSubject, subject)) {
 
 				// A later Working Subject owns the application now. Imported persistence
 				// remains valid, but its old Subject must not overwrite current UI state.
+				resetLegacyQuestionImportState();
 				return;
 			}
+
 			List<Question> questions = task.getValue();
 
-			// Both capture panes consume exactly the same post-import corpus read.
+			// Both capture panes consume exactly the same post-import corpus read. This is
+			// what makes imported Questions immediately available to Dashboard/capture
+			// work.
 			questionCapturePane.setWorkingSubject(subject, questions);
 			answerCapturePane.setWorkingSubject(subject, questions);
 
-			// setWorkingSubject(...) already recalculates imported/incomplete Question
-			// availability, so do not call showLegacyCaptureControls(), which would
-			// perform another repository-backed refresh.
 			showLegacyQuestionImportResult(importResult);
+
+			// A Dashboard-launched import returns to a freshly audited home only after the
+			// user has seen the committed import result.
+			finishLegacyQuestionImportDashboardReturn();
 		});
+
 		task.setOnFailed(_ -> {
 			if (!Objects.equals(workingSubject, subject)) {
-
-				// A refresh failure for application context the user has already left is
-				// stale and must not interrupt the current workflow.
+				resetLegacyQuestionImportState();
 				return;
 			}
+
 			showAlert(Alert.AlertType.WARNING, "Legacy Question Import",
 					"Question metadata was imported, but capture state could not be refreshed.",
 					"The imported metadata is stored safely. " + failureMessage(task.getException()));
+
+			// Persistence already succeeded, so Dashboard-owned intake should still return
+			// home where the next refresh can reconstruct the committed work.
+			finishLegacyQuestionImportDashboardReturn();
 		});
+
 		Thread thread = new Thread(task, "legacy-question-capture-refresh");
 		thread.setDaemon(true);
 		thread.start();
@@ -4001,21 +4321,26 @@ public class QuestionBankApplication extends Application {
 		Optional<LegacyQuestionSplitDialog.Result> splitDefinition = splitDialog.showAndWait();
 		if (splitDefinition.isEmpty()) {
 
-			// Cancelling the definition phase changes nothing and returns directly to
-			// the existing Search dialog.
+			// Cancelling the definition phase changes nothing and returns directly to the
+			// existing Search dialog.
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
 			return;
 		}
 		boolean captureStarted = questionCapturePane.beginLegacyQuestionSplit(question, splitDefinition.get(), () -> {
 
-			// Split correction uses the original Question's Exam PDF only
-			// for the lifetime of the correction workflow.
+			// Split correction uses the original Question's Exam PDF only for the
+			// lifetime of the correction workflow.
 			pdfWorkspace.closeExamPdf();
 			resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository, metadataService);
 		});
 		if (!captureStarted) {
 			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
 		}
+
+		// The split definition dialog has closed and staged capture now owns the source
+		// PDF. The selected Question's Exam/booklet remains read-only context.
+		showSearchQuestionCaptureWorkspace(question);
 	}
 
 	private void startRevisionExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
@@ -4195,10 +4520,51 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void useExamAssetsBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		if (!allowExamImportConfirmation()) {
+			return;
+		}
 
-		// Successful activation now owns the top-level transition into Capture as well
-		// as the authoritative booklet/PDF state.
-		activateBookletForCapture(booklet, config);
+		Path storedPath = resolveQuestionBookletCapturePath(booklet, config);
+		if (storedPath == null) {
+			return;
+		}
+
+		try {
+			if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
+
+				// A temporary Exam/Assets preview must not remain underneath the capture
+				// document being activated.
+				pdfWorkspace.closeViewerPdf();
+			}
+
+			// Give immediate feedback while PDFBox opens/renders and the corpus snapshot
+			// is reconstructed away from JavaFX.
+			showWorkspaceBusy("Opening Question booklet...");
+
+			pdfWorkspace.openExamPdfAsync(storedPath, failure -> {
+				if (failure != null) {
+
+					// Failed PDF loading leaves Exam/Assets and its Dashboard Return route
+					// authoritative.
+					hideWorkspaceBusy();
+					showAlert(Alert.AlertType.ERROR, "Open Exam for Capture",
+							"The selected Question booklet could not be opened.", failureMessage(failure));
+					return;
+				}
+
+				startExamAssetsQuestionCaptureRefresh(booklet, storedPath);
+			});
+		} catch (RuntimeException exception) {
+			hideWorkspaceBusy();
+			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture",
+					"The selected Question booklet could not be opened.", failureMessage(exception));
+		}
 	}
 
 	private void viewAnswerFileFromExamAssets(AnswerFile answerFile, ApplicationConfig config) {

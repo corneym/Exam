@@ -14,6 +14,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -237,13 +238,15 @@ public final class LegacyQuestionMetadataImporter {
 		return providerName + " " + row.year() + " " + bookletName(row.paperCode()) + " question " + row.questionCode();
 	}
 
-	private long findBookletId(Connection connection, long subjectId, String providerName, LegacyQuestionRow row)
-			throws SQLException {
+	private ResolvedBooklet findBooklet(Connection connection, long subjectId, String providerName,
+			LegacyQuestionRow row) throws SQLException {
 
-		// The workbook has no assessment name; require a unique match across exams for
-		// this identity.
+		// The workbook has no assessment name; require one unique authoritative booklet
+		// across all Exams matching Subject, provider and year.
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT eb.id
+				SELECT
+				    eb.id,
+				    eb.question_format
 				FROM exam_booklets eb
 				JOIN exams e
 				    ON e.id = eb.exam_id
@@ -259,17 +262,23 @@ public final class LegacyQuestionMetadataImporter {
 			statement.setString(2, providerName);
 			statement.setInt(3, row.year());
 			statement.setString(4, bookletName(row.paperCode()));
+
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new IllegalArgumentException(
 							"No existing exam booklet for " + description(providerName, row));
 				}
-				long bookletId = result.getLong("id");
+
+				// Booklet format is authoritative structural evidence and therefore belongs
+				// to legacy response-type resolution.
+				ResolvedBooklet booklet = new ResolvedBooklet(result.getLong("id"),
+						ExamBookletQuestionFormat.valueOf(result.getString("question_format")));
+
 				if (result.next()) {
 					throw new IllegalArgumentException(
 							"More than one exam booklet matches " + description(providerName, row));
 				}
-				return bookletId;
+				return booklet;
 			}
 		}
 	}
@@ -330,28 +339,37 @@ public final class LegacyQuestionMetadataImporter {
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
-				    id,
-				    classification_node_id,
-				    marks,
-				    shared_context_capture_required,
-				    source_question_id,
-				    response_type
-				FROM questions
-				WHERE booklet_id = ?
-				  AND question_code = ?
+				    q.id,
+				    q.classification_node_id,
+				    cn.curriculum_code AS classification_code,
+				    q.marks,
+				    q.shared_context_capture_required,
+				    q.source_question_id,
+				    q.response_type
+				FROM questions q
+				JOIN curriculum_nodes cn
+				  ON cn.id = q.classification_node_id
+				WHERE q.booklet_id = ?
+				  AND q.question_code = ?
 				""")) {
 			statement.setLong(1, bookletId);
 			statement.setString(2, questionCode);
+
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					return null;
 				}
+
 				Long sourceQuestionId = null;
 				if (result.getObject("source_question_id") != null) {
 					sourceQuestionId = Long.valueOf(result.getLong("source_question_id"));
 				}
+
+				// Preserve the human-readable classification code as well as its database
+				// identity so a merge conflict can explain exactly what must be corrected.
 				return new ExistingQuestion(result.getLong("id"), result.getLong("classification_node_id"),
-						result.getInt("marks"), result.getInt("shared_context_capture_required") != 0, sourceQuestionId,
+						result.getString("classification_code"), result.getInt("marks"),
+						result.getInt("shared_context_capture_required") != 0, sourceQuestionId,
 						QuestionResponseType.valueOf(result.getString("response_type")));
 			}
 		}
@@ -480,6 +498,18 @@ public final class LegacyQuestionMetadataImporter {
 		}
 	}
 
+	private boolean isLegacyMultipleChoiceAnswer(String answer) {
+		if (answer == null) {
+			return false;
+		}
+
+		// A-D is explicit legacy MCQ evidence. Other historical answer text is retained
+		// by import but must not silently classify an otherwise ambiguous Question.
+		String normalized = answer.strip();
+		return normalized.equalsIgnoreCase("A") || normalized.equalsIgnoreCase("B") || normalized.equalsIgnoreCase("C")
+				|| normalized.equalsIgnoreCase("D");
+	}
+
 	private void requireBookletExamActive(Connection connection, long bookletId) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT e.capture_state
@@ -506,58 +536,85 @@ public final class LegacyQuestionMetadataImporter {
 		List<ResolvedQuestion> resolved = new ArrayList<>();
 
 		// Detect duplicate persisted identities across the whole workbook, including
-		// separate sheets.
+		// separate worksheets.
 		Set<QuestionKey> workbookQuestions = new HashSet<>();
 		for (LegacyQuestionSheet sheet : sheets) {
 			for (LegacyQuestionRow row : sheet.questions()) {
-				long bookletId = findBookletId(connection, context.subjectId(), sheet.providerName(), row);
+				ResolvedBooklet booklet = findBooklet(connection, context.subjectId(), sheet.providerName(), row);
+				long bookletId = booklet.id();
 
 				// Legacy import establishes Question/source-question structure. A completed
-				// Exam must therefore be explicitly reactivated before importing it.
+				// Exam must therefore be deliberately reactivated before import.
 				requireBookletExamActive(connection, bookletId);
+
 				long classificationNodeId = findClassificationNodeId(connection, context.syllabusVersionId(),
 						sheet.providerName(), row);
+
 				QuestionKey key = new QuestionKey(bookletId, row.questionCode());
 				if (!workbookQuestions.add(key)) {
 					throw new IllegalArgumentException(
 							"Duplicate workbook question: " + description(sheet.providerName(), row));
 				}
+
 				Long sourceQuestionId = findOrCreateSourceQuestionId(connection, bookletId, row.questionCode());
-				QuestionResponseType importedResponseType = responseType(row.paperCode());
+
+				// Combine authoritative booklet structure with explicit row-level legacy
+				// evidence instead of treating every numbered paper as UNKNOWN.
+				QuestionResponseType importedResponseType = responseType(sheet.providerName(), row,
+						booklet.questionFormat());
+
 				ExistingQuestion existing = findExistingQuestion(connection, bookletId, row.questionCode());
 				Long existingQuestionId = null;
 				boolean insertAnswer = row.answer() != null;
 				boolean updateExistingResponseType = false;
+
 				if (existing != null) {
 					verifyExistingQuestion(existing, classificationNodeId, sourceQuestionId, sheet.providerName(), row);
 					existingQuestionId = existing.id();
 
-					// UNKNOWN means no authoritative decision has yet been made. Explicit MCQ
-					// workbook evidence may therefore resolve it.
-					//
-					// A non-UNKNOWN value is deliberately preserved because it may have been
-					// corrected after the legacy import.
+					// UNKNOWN represents unresolved historical metadata. Newly available
+					// authoritative booklet or MCQ evidence may resolve it, while a deliberate
+					// later non-UNKNOWN correction remains untouched.
 					updateExistingResponseType = existing.responseType() == QuestionResponseType.UNKNOWN
 							&& importedResponseType != QuestionResponseType.UNKNOWN;
 					insertAnswer = shouldInsertAnswer(connection, existing.id(), sheet.providerName(), row);
 				}
+
 				resolved.add(new ResolvedQuestion(bookletId, classificationNodeId, sheet.providerName(), row.year(),
 						row.paperCode(), importedResponseType, row.questionCode(), row.marks(), row.answer(),
 						row.sharedContextCaptureRequired(), sourceQuestionId, existingQuestionId, insertAnswer,
 						updateExistingResponseType));
 			}
 		}
+
 		return resolved;
 	}
 
-	private QuestionResponseType responseType(String paperCode) {
+	private QuestionResponseType responseType(String providerName, LegacyQuestionRow row,
+			ExamBookletQuestionFormat bookletFormat) {
 
-		// Only the explicit MCQ paper code establishes response type; numbered papers
-		// leave it unknown.
-		return switch (paperCode) {
-		case "MCQ" -> QuestionResponseType.MULTIPLE_CHOICE;
-		case "1", "2" -> QuestionResponseType.UNKNOWN;
-		default -> throw new IllegalArgumentException("Unsupported paper code: " + paperCode);
+		// The dedicated MCQ paper code and a valid A-D answer are both explicit
+		// row-level evidence that this legacy Question is multiple choice.
+		boolean legacyMultipleChoiceEvidence = "MCQ".equals(row.paperCode())
+				|| isLegacyMultipleChoiceAnswer(row.answer());
+
+		if (bookletFormat == ExamBookletQuestionFormat.WRITTEN_RESPONSE && legacyMultipleChoiceEvidence) {
+
+			// Conflicting authoritative structure and workbook evidence must be corrected
+			// rather than silently choosing one interpretation during import.
+			throw new IllegalArgumentException("Legacy MCQ evidence conflicts with Written Response booklet for "
+					+ description(providerName, row));
+		}
+
+		return switch (bookletFormat) {
+		case MULTIPLE_CHOICE -> QuestionResponseType.MULTIPLE_CHOICE;
+		case WRITTEN_RESPONSE -> QuestionResponseType.WRITTEN_RESPONSE;
+
+		// Mixed and older unclassified booklets cannot determine response type alone.
+		// Use explicit row evidence where available and leave genuine ambiguity visible
+		// to the Dashboard otherwise.
+		case MIXED, UNSPECIFIED ->
+			legacyMultipleChoiceEvidence ? QuestionResponseType.MULTIPLE_CHOICE : QuestionResponseType.UNKNOWN;
 		};
 	}
 
@@ -616,15 +673,24 @@ public final class LegacyQuestionMetadataImporter {
 	private void verifyExistingQuestion(ExistingQuestion existing, long classificationNodeId, Long sourceQuestionId,
 			String providerName, LegacyQuestionRow row) {
 		String description = description(providerName, row);
+
 		if (existing.classificationNodeId() != classificationNodeId) {
-			throw new IllegalArgumentException("Existing classification conflicts with " + description);
+
+			// Never overwrite a manually established classification during legacy import.
+			// Report both codes so the existing Question can be corrected deliberately.
+			throw new IllegalArgumentException(
+					"Existing classification %s conflicts with workbook classification %s for %s"
+							.formatted(existing.classificationCode(), row.classificationCode(), description));
 		}
+
 		if (existing.marks() != row.marks()) {
 			throw new IllegalArgumentException("Existing marks conflict with " + description);
 		}
+
 		if (existing.sharedContextCaptureRequired() != row.sharedContextCaptureRequired()) {
 			throw new IllegalArgumentException("Existing shared context metadata conflicts with " + description);
 		}
+
 		if (sourceQuestionId != null && existing.sourceQuestionId() != null
 				&& !sourceQuestionId.equals(existing.sourceQuestionId())) {
 			throw new IllegalArgumentException("Existing source-question relationship conflicts with " + description);
@@ -663,10 +729,16 @@ public final class LegacyQuestionMetadataImporter {
 	}
 
 	private record ExistingAnswer(boolean exists, String answerText) {
+
+		// Legacy re-import distinguishes no stored Answer from an existing Answer whose
+		// value must be checked before any additional persistence is attempted.
 	}
 
-	private record ExistingQuestion(long id, long classificationNodeId, int marks, boolean sharedContextCaptureRequired,
-			Long sourceQuestionId, QuestionResponseType responseType) {
+	private record ResolvedBooklet(long id, ExamBookletQuestionFormat questionFormat) {
+	}
+
+	private record ExistingQuestion(long id, long classificationNodeId, String classificationCode, int marks,
+			boolean sharedContextCaptureRequired, Long sourceQuestionId, QuestionResponseType responseType) {
 	}
 
 	private record ImportContext(long subjectId, long syllabusVersionId) {
