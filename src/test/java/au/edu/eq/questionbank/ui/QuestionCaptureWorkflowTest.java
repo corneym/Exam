@@ -323,19 +323,18 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Menu questionMenu = menuBar.getMenus().stream().filter(menu -> "_Questions".equals(menu.getText())).findFirst()
 				.orElseThrow();
 
-		// Exam/Assets is now reached from the Dashboard's Manage Exam / Assets action,
-		// so the former parallel Exam-menu entry must not survive.
+		// Exam/Assets is reached from Dashboard selection rather than a parallel
+		// Exam-menu entry.
 		assertFalse(examMenu.getItems().stream().anyMatch(item -> "open-exam-for-capture".equals(item.getId())));
 
-		// Active-context lifecycle and source-replacement operations remain legitimate
-		// Exam-menu commands.
-		assertTrue(examMenu.getItems().stream().anyMatch(item -> "mark-active-exam-complete".equals(item.getId())));
-		assertTrue(examMenu.getItems().stream().anyMatch(item -> "reactivate-active-exam".equals(item.getId())));
+		// Exam lifecycle is also Dashboard-selection state now. Only source replacement
+		// remains appropriate as active-capture Exam menu work.
+		assertFalse(examMenu.getItems().stream().anyMatch(item -> "mark-active-exam-complete".equals(item.getId())));
+		assertFalse(examMenu.getItems().stream().anyMatch(item -> "reactivate-active-exam".equals(item.getId())));
 		assertTrue(examMenu.getItems().stream().anyMatch(item -> "replace-active-question-pdf".equals(item.getId())));
 		assertTrue(examMenu.getItems().stream().anyMatch(item -> "replace-active-answer-pdf".equals(item.getId())));
 
-		// Dashboard is already Home. Questions therefore needs only the specialised
-		// Search workflow rather than a redundant route back to the current surface.
+		// Dashboard is already Home, so Questions contains only specialised Search.
 		assertEquals(1, questionMenu.getItems().size());
 		assertEquals("_Search...", questionMenu.getItems().getFirst().getText());
 		assertFalse(questionMenu.getItems().stream().anyMatch(item -> "question-corpus-audit".equals(item.getId())));

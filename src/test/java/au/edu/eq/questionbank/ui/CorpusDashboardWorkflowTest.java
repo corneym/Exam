@@ -313,8 +313,11 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return null;
 		}).get();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-			return !booklets.getItems().isEmpty();
+
+			// Dashboard reconstruction is asynchronous. Absence during an early polling
+			// iteration means "not ready yet", not a failed TestFX query.
+			return robot.lookup("#corpus-dashboard-booklets").tryQuery().filter(TableView.class::isInstance)
+					.map(TableView.class::cast).map(table -> !table.getItems().isEmpty()).orElse(false);
 		});
 		TableView<?> dashboardBooklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		robot.interact(() -> dashboardBooklets.getSelectionModel().selectFirst());

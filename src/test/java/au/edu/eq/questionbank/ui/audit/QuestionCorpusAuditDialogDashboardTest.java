@@ -1,6 +1,8 @@
 package au.edu.eq.questionbank.ui.audit;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.EnumSet;
@@ -9,7 +11,6 @@ import java.util.List;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 
@@ -52,23 +53,20 @@ class QuestionCorpusAuditDialogDashboardTest {
 	}
 
 	@Test
-	void dialogUsesOperationalDashboardPane(FxRobot robot) {
-		assertInstanceOf(CorpusDashboardPane.class, dialog.getDialogPane().getContent());
+	void dialogUsesOperationalDashboardPane() {
+		CorpusDashboardPane dashboard = assertInstanceOf(CorpusDashboardPane.class,
+				dialog.getDialogPane().getContent());
 
-		// Dashboard persistence refresh is now automatic on Subject changes and return
-		// from Dashboard-owned workflows. The former manual Refresh action is retired.
-		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-refresh").tryQuery().isEmpty());
+		// Inspect the Dialog's owned Dashboard tree directly. The Dialog need not be
+		// showing for this structural regression.
+		assertNull(dashboard.lookup("#corpus-dashboard-refresh"));
 
-		// Capture and correction actions remain explicit. The former generic
-		// dialog-level
-		// Resolve Selected action must not return.
-		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-capture-questions").tryQuery()
-				.isPresent());
-		assertTrue(
-				robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-capture-answers").tryQuery().isPresent());
-		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-dashboard-complete-question").tryQuery()
-				.isPresent());
-		assertTrue(robot.from(dialog.getDialogPane()).lookup("#corpus-resolve-selected").tryQuery().isEmpty());
+		// Capture and correction actions remain part of the operational Dashboard while
+		// the former generic Resolve Selected action remains retired.
+		assertNotNull(dashboard.lookup("#corpus-dashboard-capture-questions"));
+		assertNotNull(dashboard.lookup("#corpus-dashboard-capture-answers"));
+		assertNotNull(dashboard.lookup("#corpus-dashboard-complete-question"));
+		assertNull(dashboard.lookup("#corpus-resolve-selected"));
 	}
 
 	@Start
@@ -84,7 +82,7 @@ class QuestionCorpusAuditDialogDashboardTest {
 		Question question = new Question(10, booklet, "Q1", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20)), descriptor, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-		BookletCorpusStatus bookletStatus = new BookletCorpusStatus(booklet, true, null, 1, 1,
+		BookletCorpusStatus bookletStatus = new BookletCorpusStatus(booklet, true, null, 1, 1, 0,
 				new QuestionCorpusSummary(1, 0, 1, 0, 1, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.noneOf(BookletCorpusFinding.class));
 		ExamCorpusStatus examStatus = new ExamCorpusStatus(exam, new ExamAssetExpectations(1, 1, 0, 0),

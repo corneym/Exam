@@ -101,6 +101,20 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void bookletTableReportsQuestionsWithoutDescriptorClassification(FxRobot robot) {
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableColumn<BookletCorpusStatus, Number> noDescriptorColumn = booklets.getColumns().stream()
+				.filter(column -> "No descriptor".equals(column.getText()))
+				.map(column -> (TableColumn<BookletCorpusStatus, Number>) column).findFirst().orElseThrow();
+
+		// The booklet table reports descriptor coverage independently from ordinary
+		// completeness and structural Problems.
+		assertEquals(0, noDescriptorColumn.getCellData(fixture.paper1Status).intValue());
+		assertEquals(3, noDescriptorColumn.getCellData(fixture.paper2Status).intValue());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void captureQuestionsCompletesExistingQuestionWorkBeforeOfferingNewQuestion(FxRobot robot) {
 		AtomicReference<Question> routedQuestion = new AtomicReference<>();
 		AtomicReference<ExamBooklet> routedNewBooklet = new AtomicReference<>();
@@ -109,8 +123,9 @@ class CorpusDashboardPaneTest {
 		// Questions
 		// in the booklet still require Question-content capture.
 		BookletCorpusStatus atExpectedWithExistingWork = new BookletCorpusStatus(fixture.paper2, true,
-				fixture.markingGuide, 30, 34, fixture.paper2Status.questionSummary(),
-				fixture.paper2Status.mcqExplanationCoverage(), EnumSet.noneOf(BookletCorpusFinding.class));
+				fixture.markingGuide, 30, 34, fixture.paper2Status.questionsWithoutDescriptorCount(),
+				fixture.paper2Status.questionSummary(), fixture.paper2Status.mcqExplanationCoverage(),
+				EnumSet.noneOf(BookletCorpusFinding.class));
 		robot.interact(() -> {
 			pane.setNewQuestionCaptureHandler(routedNewBooklet::set);
 			pane.setQuestionCorrectionHandler(routedQuestion::set);
@@ -140,7 +155,7 @@ class CorpusDashboardPaneTest {
 	@SuppressWarnings("unchecked")
 	void captureQuestionsWarnsWhenExpectedCountAlreadyReached(FxRobot robot) throws TimeoutException {
 		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
-		BookletCorpusStatus atExpectedCount = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10,
+		BookletCorpusStatus atExpectedCount = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
 				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.noneOf(BookletCorpusFinding.class));
 		robot.interact(() -> pane.setNewQuestionCaptureHandler(routedBooklet::set));
@@ -414,7 +429,7 @@ class CorpusDashboardPaneTest {
 		// count mismatches, so completion remains unavailable.
 		assertEquals("Mark Complete", lifecycle.getText());
 		assertTrue(lifecycle.isDisable());
-		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10,
+		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
 				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.noneOf(BookletCorpusFinding.class));
 		ExamCorpusStatus readyExam = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(1, 1, 0, 0),
@@ -482,9 +497,11 @@ class CorpusDashboardPaneTest {
 		assertTrue(captureQuestions.isDisable());
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
 
-		// The COMPLETE Exam cannot accept new Questions until it is reactivated, but
-		// ordinary missing-Answer correction remains available.
-		assertTrue(captureQuestions.isDisable());
+		// COMPLETE blocks creation of genuinely new Questions, but this booklet already
+		// contains Question-side completion work. Capture Questions therefore remains
+		// available and routes to that persisted work rather than adding another
+		// Question.
+		assertFalse(captureQuestions.isDisable());
 		assertFalse(captureAnswers.isDisable());
 		robot.interact(captureAnswers::fire);
 
@@ -782,10 +799,10 @@ class CorpusDashboardPaneTest {
 				new SourceDocument(23, "Chemistry/2025/paper2.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE, 30);
 		private final AnswerFile markingGuide = new AnswerFile(24, completeExam, "Marking guide",
 				new SourceDocument(25, "Chemistry/2025/answers.pdf"), true);
-		private final BookletCorpusStatus paper1Status = new BookletCorpusStatus(paper1, true, markingGuide, 20, 20,
+		private final BookletCorpusStatus paper1Status = new BookletCorpusStatus(paper1, true, markingGuide, 20, 20, 0,
 				new QuestionCorpusSummary(20, 20, 0, 0, 0, 0, 0), new McqExplanationCoverage(true, 2, 1),
 				EnumSet.noneOf(BookletCorpusFinding.class));
-		private final BookletCorpusStatus paper2Status = new BookletCorpusStatus(paper2, true, markingGuide, 29, 34,
+		private final BookletCorpusStatus paper2Status = new BookletCorpusStatus(paper2, true, markingGuide, 29, 34, 3,
 				new QuestionCorpusSummary(34, 31, 3, 1, 2, 1, 1), new McqExplanationCoverage(true, 0, 0),
 				EnumSet.of(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
 		private final ExamCorpusStatus completeExamStatus = new ExamCorpusStatus(completeExam,
@@ -796,7 +813,7 @@ class CorpusDashboardPaneTest {
 				ExamCaptureState.ACTIVE);
 		private final ExamBooklet activePaper = new ExamBooklet(31, activeExam, "Paper 1",
 				new SourceDocument(32, "Chemistry/2024/paper1.pdf"), ExamBookletQuestionFormat.MIXED, 10);
-		private final BookletCorpusStatus activePaperStatus = new BookletCorpusStatus(activePaper, true, null, 8, 8,
+		private final BookletCorpusStatus activePaperStatus = new BookletCorpusStatus(activePaper, true, null, 8, 8, 0,
 				new QuestionCorpusSummary(8, 8, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.of(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
 		private final ExamCorpusStatus activeExamStatus = new ExamCorpusStatus(activeExam,

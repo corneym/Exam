@@ -227,9 +227,9 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#exam-assets-use-selected-booklet");
 		WaitForAsyncUtils.waitForFxEvents();
 
-		// Reactivation establishes the booklet target but leaves new-Question capture
-		// explicit, as in the normal application workflow.
-		fireControl(robot, "#capture-mode-new");
+		// Selecting the persisted booklet for Capture is itself the explicit request to
+		// begin ordinary new-Question capture; the retired second Start action must not
+		// be required.
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 
 		// The persisted MCQ-only booklet fixes the next genuinely new Question.

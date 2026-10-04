@@ -33,6 +33,7 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
@@ -120,11 +121,11 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button addCurriculum = lookup(robot, "#corpus-dashboard-add-curriculum", Button.class);
 		Button mapCurriculum = lookup(robot, "#corpus-dashboard-map-curriculum", Button.class);
 
-		// A genuinely empty persisted Subject must present useful onboarding actions
-		// instead of empty Exam, booklet and Question work tables.
-		assertEquals("No Exams have been added.", noExams.getText());
+		// A new Subject has no curriculum yet. Exam creation remains unavailable until
+		// that authoritative prerequisite has been added.
+		assertEquals("Add curriculum before adding an Exam.", noExams.getText());
 		assertTrue(noExams.isVisible());
-		assertFalse(addExam.isDisable());
+		assertTrue(addExam.isDisable());
 
 		// Curriculum absence is distinct from a curriculum whose mapping review is not
 		// applicable. Creation remains available while mapping remains unavailable.
@@ -358,9 +359,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		});
 
 		// Classification controls are deliberately inactive while Question capture is
-		// idle. Enter the production new-Question workflow before testing hierarchy
-		// enablement rules.
-		fireControl(robot, "#capture-mode-new");
+		// idle. Start the production new-Question state directly because ordinary new
+		// capture is now entered from Dashboard or Exam/Assets rather than a local
+		// button.
+		robot.interact(questionCapturePane()::startNewQuestionCapture);
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
@@ -419,24 +421,22 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		Subject workingSubject = field(application, "workingSubject", Subject.class);
 		assertNotNull(workingSubject);
-		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
-				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
-		MenuItem dashboardItem = questionMenu.getItems().stream()
-				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
-				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
+		WaitForAsyncUtils.asyncFx(() -> {
 
-		// Corpus Dashboard is now ordinary main-window navigation rather than a modal
-		// dialog.
-		robot.interact(dashboardItem::fire);
+			// Corpus Dashboard is the application home surface, so return directly to it
+			// rather than reconstructing the retired Questions-menu navigation action.
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
-		Node home = robot.lookup("#corpus-dashboard-home").query();
+		Node home = lookup(robot, "#corpus-dashboard-home", Node.class);
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		assertTrue(home.isVisible());
 		assertEquals(workingSubject, subjects.getValue());
 
-		// The moved selector is the authoritative application control; no second
-		// Dashboard Subject filter exists.
+		// The authoritative selector is reparented into Home; no second Dashboard
+		// Subject filter exists.
 		assertNull(home.lookup("#corpus-dashboard-filter-subject"));
 	}
 
@@ -453,26 +453,24 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SyllabusVersion targetVersion = curriculumRepository.findVersionsForSubject(chemistry).stream()
 				.filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
 		CurriculumNode sourceDescriptor = curriculumRepository.findByCode(sourceVersion, "3.1.1").orElseThrow();
-		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
-				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
-		MenuItem dashboardItem = questionMenu.getItems().stream()
-				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
-				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
+		WaitForAsyncUtils.asyncFx(() -> {
 
-		// Navigate back to the embedded production Dashboard and wait for its
-		// asynchronous persistence generation.
-		robot.interact(dashboardItem::fire);
+			// Dashboard is Home, so use its application-owned return/refresh boundary
+			// instead of the retired Questions-menu navigation item.
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-mapping-review").tryQuery().isPresent());
 		Label mappingReview = lookup(robot, "#corpus-dashboard-mapping-review", Label.class);
 		Button needsAttention = lookup(robot, "#corpus-dashboard-summary-attention", Button.class);
-		assertTrue(mappingReview.getText().contains("2019 \u2192 2025"));
+		assertTrue(mappingReview.getText().contains("2019 → 2025"));
 		assertTrue(mappingReview.getText().contains("0/1 resolved"));
 		assertTrue(mappingReview.getText().contains("1 remaining"));
 		String corpusAttentionBeforeReview = needsAttention.getText();
 
-		// Persist a real review decision, then exercise the application-owned automatic
-		// Dashboard refresh boundary used when curriculum workflows return home.
+		// Persist one real mapping-review decision and then exercise the same automatic
+		// Dashboard refresh used when a curriculum workflow returns home.
 		new SqliteCurriculumMappingReviewWriter(database).confirmNoMatch(sourceDescriptor, targetVersion);
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "refreshCorpusDashboardHome", new Class<?>[] { long.class }, -1L);
@@ -489,17 +487,12 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void corpusDashboardRemainsUsableWithoutWorkingSubject(FxRobot robot) throws Exception {
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		robot.interact(() -> subjects.getSelectionModel().clearSelection());
-		WaitForAsyncUtils.waitForFxEvents();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-no-subject").tryQuery().isPresent());
 		assertNull(field(application, "workingSubject", Subject.class));
-		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
-				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
-		MenuItem dashboardItem = questionMenu.getItems().stream()
-				.filter(item -> "question-corpus-audit".equals(item.getId())).findFirst()
-				.orElseThrow(() -> new AssertionError("Questions -> Corpus Dashboard menu item not found"));
 
-		// No prerequisite dialog is required because Subject selection itself now lives
-		// on the home surface.
-		robot.interact(dashboardItem::fire);
+		// Dashboard is already Home. Clearing Subject replaces its Subject-scoped
+		// content with the normal no-Subject onboarding state.
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#corpus-dashboard-no-subject").tryQuery().isPresent());
 		assertTrue(robot.lookup("#curriculum-subject").tryQuery().isPresent());
@@ -684,6 +677,11 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 					booklet.getExam(), booklet, (Runnable) returned::incrementAndGet);
 			return null;
 		}).get();
+
+		// Exam/Assets now contains an internal ScrollPane. Allow its skin/content
+		// subtree
+		// to participate in the scene before querying structural controls.
+		WaitForAsyncUtils.waitForFxEvents();
 		Button returnToDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(returnToDashboard.isVisible());
 		assertTrue(returnToDashboard.isManaged());
@@ -769,6 +767,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "showExamAssetsMode", new Class<?>[0]);
 			return null;
 		}).get();
+
+		// The structural form now lives inside the Exam/Assets body ScrollPane, so wait
+		// for that subtree to be realised before selector-based inspection.
+		WaitForAsyncUtils.waitForFxEvents();
 		Label providerLabel = lookup(robot, "#exam-assets-provider-label", Label.class);
 		Label expectedQuestionLabel = lookup(robot, "#exam-assets-expected-question-booklets-label", Label.class);
 		Label expectedAnswerLabel = lookup(robot, "#exam-assets-expected-answer-booklets-label", Label.class);
@@ -941,19 +943,22 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
 		assertNotNull(activeBooklet);
 		assertFalse(activeBooklet.getExam().isComplete());
-		MenuItem markComplete = examMenuItem("mark-active-exam-complete");
+		Platform.runLater(() -> {
+			try {
 
-		// The menu action opens a modal confirmation, so schedule it on the FX thread
-		// and let the test thread handle the resulting dialogs.
-		Platform.runLater(markComplete::fire);
+				// Exercise the application handler now owned by Dashboard lifecycle rather
+				// than the retired Exam-menu action.
+				invoke(application, "changeCorpusDashboardExamState",
+						new Class<?>[] { Exam.class, ExamCaptureState.class }, activeBooklet.getExam(),
+						ExamCaptureState.COMPLETE);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
 		waitForDialogShowing(robot, "Mark Exam Complete");
 		fireDialogButton(robot, "Mark Complete");
-
-		// Successful persistence produces the production confirmation alert.
-		waitForDialogShowing(robot, "Exam State");
-		fireDialogButton(robot, "OK");
-
-		// The active capture object must immediately reflect the persisted lifecycle.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> examMetadataPane().getBooklet() != null
+				&& examMetadataPane().getBooklet().getExam().isComplete());
 		ExamBooklet completedBooklet = examMetadataPane().getBooklet();
 		assertNotNull(completedBooklet);
 		assertTrue(completedBooklet.getExam().isComplete());
@@ -962,12 +967,11 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findExamBookletBySourceDocumentPath(activeBooklet.getSourceDocument().getRelativePath());
 		assertNotNull(reloaded);
 
-		// A fresh read proves COMPLETE was persisted rather than existing only in the
-		// JavaFX-side Exam object.
+		// A fresh persistence read proves Dashboard lifecycle handling committed
+		// COMPLETE rather than changing only application state.
 		assertTrue(reloaded.getExam().isComplete());
 
-		// Booklet planning is structural and therefore provides a direct regression
-		// check that completion now activates the repository lock.
+		// Booklet planning is structural and is therefore locked by COMPLETE.
 		assertThrows(IllegalStateException.class,
 				() -> writer.updateExamBookletPlanning(reloaded, reloaded.getQuestionFormat(), 20));
 	}
@@ -997,22 +1001,33 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
-		MenuItem markComplete = examMenuItem("mark-active-exam-complete");
+		Platform.runLater(() -> {
+			try {
 
-		// First move the Exam through the real user-facing completion workflow.
-		Platform.runLater(markComplete::fire);
+				// First exercise the Dashboard-owned ACTIVE -> COMPLETE application
+				// transition.
+				invoke(application, "changeCorpusDashboardExamState",
+						new Class<?>[] { Exam.class, ExamCaptureState.class }, originalBooklet.getExam(),
+						ExamCaptureState.COMPLETE);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
 		waitForDialogShowing(robot, "Mark Exam Complete");
 		fireDialogButton(robot, "Mark Complete");
-		waitForDialogShowing(robot, "Exam State");
-		fireDialogButton(robot, "OK");
-		assertTrue(examMetadataPane().getBooklet().getExam().isComplete());
-		MenuItem reactivate = examMenuItem("reactivate-active-exam");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> examMetadataPane().getBooklet() != null
+				&& examMetadataPane().getBooklet().getExam().isComplete());
+		Exam completedExam = examMetadataPane().getBooklet().getExam();
+		WaitForAsyncUtils.asyncFx(() -> {
 
-		// Reactivation itself does not require destructive confirmation, but the
-		// production action reports successful persistence with an information alert.
-		Platform.runLater(reactivate::fire);
-		waitForDialogShowing(robot, "Exam State");
-		fireDialogButton(robot, "OK");
+			// COMPLETE -> ACTIVE is deliberately reversible without a second modal
+			// confirmation.
+			invoke(application, "changeCorpusDashboardExamState", new Class<?>[] { Exam.class, ExamCaptureState.class },
+					completedExam, ExamCaptureState.ACTIVE);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> examMetadataPane().getBooklet() != null
+				&& !examMetadataPane().getBooklet().getExam().isComplete());
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
 		assertNotNull(activeBooklet);
 		assertFalse(activeBooklet.getExam().isComplete());
@@ -1021,8 +1036,8 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
 		assertNotNull(reloaded);
 
-		// Reloading proves Reactivate persisted ACTIVE rather than merely changing the
-		// active UI object.
+		// Reloading proves Reactivate persisted ACTIVE rather than changing only the
+		// current JavaFX domain object.
 		assertFalse(reloaded.getExam().isComplete());
 
 		// Structural editing must work again after explicit reactivation.
@@ -1146,8 +1161,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		CurriculumSelectorPane pane = field(application, "curriculumSelectorPane", CurriculumSelectorPane.class);
 
 		// This test exercises CurriculumSelectorPane dependency state rather than the
-		// application's idle-capture state, so activate Classification first.
-		fireControl(robot, "#capture-mode-new");
+		// application's idle-capture state, so activate the same Question state entered
+		// by Dashboard or Exam/Assets capture.
+		robot.interact(questionCapturePane()::startNewQuestionCapture);
 		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
 		robot.interact(pane::clearClassificationBelowSubject);
@@ -1324,16 +1340,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			document.save(path.toFile());
 		}
 		return path;
-	}
-
-	private MenuItem examMenuItem(String itemId) throws Exception {
-
-		// Build the production Exam menu so the test fires the same action handler as
-		// the real menu rather than invoking lifecycle persistence directly.
-		Menu examMenu = (Menu) invoke(application, "createExamMenu",
-				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
-		return examMenu.getItems().stream().filter(item -> itemId.equals(item.getId())).findFirst()
-				.orElseThrow(() -> new AssertionError("Exam menu item not found: " + itemId));
 	}
 
 	private void selectSubject(FxRobot robot, String subjectName) {

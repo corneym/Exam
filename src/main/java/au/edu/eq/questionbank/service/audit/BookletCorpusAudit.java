@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -52,6 +53,7 @@ public final class BookletCorpusAudit {
 		List<Question> bookletQuestions = questions.stream()
 				.filter(question -> question.getBooklet().getId() == booklet.getId()).toList();
 		int encounteredTopLevelQuestions = countEncounteredTopLevelQuestions(bookletQuestions);
+		int questionsWithoutDescriptor = countQuestionsWithoutDescriptor(bookletQuestions);
 		QuestionCorpusSummary questionSummary = QuestionCorpusQueue.summarise(bookletQuestions);
 		McqExplanationCoverage explanationCoverage = assessMcqExplanationCoverage(bookletQuestions, assignedAnswerFile);
 		EnumSet<BookletCorpusFinding> findings = EnumSet.noneOf(BookletCorpusFinding.class);
@@ -69,10 +71,11 @@ public final class BookletCorpusAudit {
 			findings.add(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH);
 		}
 
-		// AnswerFile assignment and explanation coverage are descriptive state. Missing
-		// explanations never manufacture an ordinary completeness finding.
+		// Descriptor coverage is descriptive classification state. A Subtopic-only
+		// classification remains a valid Question but is reported for later curriculum
+		// mapping work.
 		return new BookletCorpusStatus(booklet, questionPdfAvailable, assignedAnswerFile, encounteredTopLevelQuestions,
-				bookletQuestions.size(), questionSummary, explanationCoverage, findings);
+				bookletQuestions.size(), questionsWithoutDescriptor, questionSummary, explanationCoverage, findings);
 	}
 
 	private static McqExplanationCoverage assessMcqExplanationCoverage(List<Question> questions,
@@ -122,6 +125,20 @@ public final class BookletCorpusAudit {
 			encountered.add(TopLevelQuestionKey.question(question.getId()));
 		}
 		return encountered.size();
+	}
+
+	private static int countQuestionsWithoutDescriptor(List<Question> questions) {
+		int count = 0;
+		for (Question question : questions) {
+
+			// Question persistence permits either SUBTOPIC or DESCRIPTOR classification.
+			// Only DESCRIPTOR represents the fully classified state needed for reliable
+			// historical-to-current syllabus mapping.
+			if (question.getClassification().getLevel() != CurriculumLevel.DESCRIPTOR) {
+				count++;
+			}
+		}
+		return count;
 	}
 
 	private record TopLevelQuestionKey(boolean sourceQuestionIdentity, long id) {

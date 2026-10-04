@@ -26,6 +26,7 @@ import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
@@ -57,6 +58,23 @@ class BookletCorpusAuditTest {
 		// Dashboard consumers receive the authoritative booklet assignment alongside
 		// calculated Question counts.
 		assertSame(fixture.answerFile, status.assignedAnswerFile());
+	}
+
+	@Test
+	void countsQuestionsWhoseClassificationHasNotReachedDescriptorLevel() {
+		Subtopic subtopic = new Subtopic(60, fixture.syllabus, fixture.topic, "1.1.0", "Legacy subtopic", 1);
+		Question descriptorQuestion = fixture.question(170, fixture.booklet, "1", null);
+		QuestionRegion subtopicRegion = new QuestionRegion(fixture.booklet, 1, 0.10, 0.10, 0.70, 0.20);
+		Question subtopicQuestion = new Question(171, fixture.booklet, "2", "", 2, List.of(subtopicRegion), subtopic,
+				false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+		BookletCorpusStatus status = BookletCorpusAudit.assess(fixture.booklet,
+				List.of(descriptorQuestion, subtopicQuestion), fixture.answerFile, true);
+
+		// Descriptor classification is already complete. The legacy Subtopic-only
+		// classification remains valid persisted metadata but must be reported as work
+		// for later descriptor-level curriculum mapping.
+		assertEquals(2, status.questionPartCount());
+		assertEquals(1, status.questionsWithoutDescriptorCount());
 	}
 
 	@Test

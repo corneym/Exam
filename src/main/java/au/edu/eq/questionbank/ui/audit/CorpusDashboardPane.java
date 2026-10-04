@@ -486,6 +486,11 @@ public final class CorpusDashboardPane extends VBox {
 		// row.
 		examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
 				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
+
+		// Retain a stable structural identity because the single Subject-level Legacy
+		// Import action is deliberately reparented between this row and empty
+		// onboarding.
+		examFilterRow.setId("corpus-dashboard-exam-filter-row");
 		examFilterRow.setAlignment(Pos.CENTER_LEFT);
 
 		// Subject-level corpus indicators remain immediately below the Subject-level
@@ -829,13 +834,19 @@ public final class CorpusDashboardPane extends VBox {
 				data -> new ReadOnlyObjectWrapper<>(data.getValue().encounteredTopLevelQuestionCount()));
 		TableColumn<BookletCorpusStatus, Number> partsColumn = new TableColumn<>("Parts");
 		partsColumn.setCellValueFactory(data -> new ReadOnlyObjectWrapper<>(data.getValue().questionPartCount()));
+		TableColumn<BookletCorpusStatus, Number> noDescriptorColumn = new TableColumn<>("No descriptor");
+		noDescriptorColumn.setCellValueFactory(
+				data -> new ReadOnlyObjectWrapper<>(data.getValue().questionsWithoutDescriptorCount()));
 		TableColumn<BookletCorpusStatus, String> problemsColumn = new TableColumn<>("Problems");
 		problemsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(bookletProblemLabel(data.getValue())));
 
-		// Use the collection overload so mixed TableColumn value types do not create
-		// a generic varargs array warning.
-		bookletTable.getColumns().setAll(List.<TableColumn<BookletCorpusStatus, ?>>of(bookletColumn, formatColumn,
-				pdfColumn, answerFileColumn, expectedColumn, foundColumn, partsColumn, problemsColumn));
+		// Descriptor coverage sits beside the Question counts because it describes how
+		// many persisted Question records still require finer curriculum
+		// classification.
+		bookletTable.getColumns()
+				.setAll(List.<TableColumn<BookletCorpusStatus, ?>>of(bookletColumn, formatColumn, pdfColumn,
+						answerFileColumn, expectedColumn, foundColumn, partsColumn, noDescriptorColumn,
+						problemsColumn));
 	}
 
 	private void configureBulkResponseTypeControls() {

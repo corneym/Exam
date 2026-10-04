@@ -95,9 +95,9 @@ class ExamCorpusAuditTest {
 
 	@Test
 	void completionReadinessRequiresExplicitCompleteCorpusStructure() {
-		BookletCorpusStatus readyPaper1 = new BookletCorpusStatus(fixture.paper1, true, fixture.answerFile, 1, 1,
+		BookletCorpusStatus readyPaper1 = new BookletCorpusStatus(fixture.paper1, true, fixture.answerFile, 1, 1, 0,
 				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
-		BookletCorpusStatus readyPaper2 = new BookletCorpusStatus(fixture.paper2, true, fixture.answerFile, 1, 1,
+		BookletCorpusStatus readyPaper2 = new BookletCorpusStatus(fixture.paper2, true, fixture.answerFile, 1, 1, 0,
 				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
 		ExamCorpusStatus ready = new ExamCorpusStatus(fixture.exam, new ExamAssetExpectations(2, 2, 1, 1),
 				List.of(readyPaper1, readyPaper2), new QuestionCorpusSummary(2, 2, 0, 0, 0, 0, 0),
@@ -111,7 +111,7 @@ class ExamCorpusAuditTest {
 				List.of(readyPaper1, readyPaper2), new QuestionCorpusSummary(2, 2, 0, 0, 0, 0, 0),
 				new McqExplanationSummary(0, 0, 0), Set.of());
 		assertFalse(unplanned.isReadyForCompletion());
-		BookletCorpusStatus missingPdf = new BookletCorpusStatus(fixture.paper1, false, fixture.answerFile, 1, 1,
+		BookletCorpusStatus missingPdf = new BookletCorpusStatus(fixture.paper1, false, fixture.answerFile, 1, 1, 0,
 				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				Set.of(BookletCorpusFinding.MISSING_QUESTION_PDF));
 		ExamCorpusStatus missingSource = new ExamCorpusStatus(fixture.exam, new ExamAssetExpectations(1, 1, 1, 1),
@@ -119,7 +119,7 @@ class ExamCorpusAuditTest {
 				Set.of());
 		assertFalse(missingSource.isReadyForCompletion());
 		BookletCorpusStatus incompleteQuestion = new BookletCorpusStatus(fixture.paper1, true, fixture.answerFile, 1, 1,
-				new QuestionCorpusSummary(1, 0, 1, 1, 1, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
+				0, new QuestionCorpusSummary(1, 0, 1, 1, 1, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
 		ExamCorpusStatus questionWorkRemaining = new ExamCorpusStatus(fixture.exam,
 				new ExamAssetExpectations(1, 1, 1, 1), List.of(incompleteQuestion),
 				new QuestionCorpusSummary(1, 0, 1, 1, 1, 0, 0), new McqExplanationSummary(0, 0, 0), Set.of());

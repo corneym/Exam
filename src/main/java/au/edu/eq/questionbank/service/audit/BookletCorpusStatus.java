@@ -18,13 +18,16 @@ import au.edu.eq.questionbank.model.ExamBooklet;
  *                                         Questions
  * @param questionPartCount                stored Question records belonging to
  *                                         the booklet
+ * @param questionsWithoutDescriptorCount  stored Questions whose classification
+ *                                         has not reached descriptor level
  * @param questionSummary                  aggregate Question-level audit state
  * @param mcqExplanationCoverage           optional MCQ explanation coverage
  * @param findings                         advisory booklet-level findings
  */
 public record BookletCorpusStatus(ExamBooklet booklet, boolean questionPdfAvailable, AnswerFile assignedAnswerFile,
-		int encounteredTopLevelQuestionCount, int questionPartCount, QuestionCorpusSummary questionSummary,
-		McqExplanationCoverage mcqExplanationCoverage, Set<BookletCorpusFinding> findings) {
+		int encounteredTopLevelQuestionCount, int questionPartCount, int questionsWithoutDescriptorCount,
+		QuestionCorpusSummary questionSummary, McqExplanationCoverage mcqExplanationCoverage,
+		Set<BookletCorpusFinding> findings) {
 
 	/**
 	 * Creates an immutable booklet audit snapshot.
@@ -39,8 +42,17 @@ public record BookletCorpusStatus(ExamBooklet booklet, boolean questionPdfAvaila
 		if (questionPartCount < 0) {
 			throw new IllegalArgumentException("questionPartCount must not be negative");
 		}
+		if (questionsWithoutDescriptorCount < 0) {
+			throw new IllegalArgumentException("questionsWithoutDescriptorCount must not be negative");
+		}
 		if (encounteredTopLevelQuestionCount > questionPartCount) {
 			throw new IllegalArgumentException("Top-level Question count cannot exceed Question-part count");
+		}
+		if (questionsWithoutDescriptorCount > questionPartCount) {
+
+			// Descriptor coverage is counted from the same booklet Question records, so
+			// it can never exceed the total number of stored parts.
+			throw new IllegalArgumentException("Questions without descriptors cannot exceed Question-part count");
 		}
 		if (questionSummary == null) {
 			throw new NullPointerException("questionSummary");
@@ -103,8 +115,8 @@ public record BookletCorpusStatus(ExamBooklet booklet, boolean questionPdfAvaila
 	 */
 	public boolean requiresAttention() {
 
-		// Explanation coverage is deliberately excluded. An MCQ with a valid A-D
-		// Answer remains complete when no explanation region has been captured.
+		// Explanation coverage and descriptor-classification coverage are deliberately
+		// reporting dimensions. Neither changes ordinary Question completeness.
 		return !findings.isEmpty() || questionSummary.incompleteQuestions() > 0;
 	}
 }
