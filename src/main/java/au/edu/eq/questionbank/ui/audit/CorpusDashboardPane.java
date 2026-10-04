@@ -1645,12 +1645,13 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateExamAssetsActionState() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		boolean activeExamSelected = selectedExam != null
+				&& selectedExam.declaredCaptureState() == ExamCaptureState.ACTIVE;
 
-		// Exam / Assets is available for every selected Exam. Audit findings may
-		// explain
-		// why the user should visit it, but they do not control access to the
-		// workspace.
-		manageExamAssetsButton.setDisable(selectedExam == null);
+		// Exam / Assets changes authoritative Exam structure and source assets. A
+		// COMPLETE Exam must first be deliberately reactivated through the lifecycle
+		// action before structural management becomes available again.
+		manageExamAssetsButton.setDisable(!activeExamSelected);
 	}
 
 	private void updateExamEmptyState() {

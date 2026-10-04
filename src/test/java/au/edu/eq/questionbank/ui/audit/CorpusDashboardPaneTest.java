@@ -559,7 +559,7 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
-	void manageExamAssetsRoutesSelectedExamAndBookletWithoutRequiringFindings(FxRobot robot) {
+	void manageExamAssetsRequiresSelectedActiveExam(FxRobot robot) {
 		AtomicReference<Exam> routedExam = new AtomicReference<>();
 		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
 		robot.interact(() -> pane.setExamAssetsHandler((exam, booklet) -> {
@@ -569,26 +569,29 @@ class CorpusDashboardPaneTest {
 		Button manageAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 
-		// The selected Exam is manageable even when it has no structural finding and no
-		// booklet has been selected.
+		// The initially selected Exam is COMPLETE. Structural Exam/asset management
+		// remains locked until the user deliberately marks that Exam ACTIVE again.
+		assertTrue(manageAssets.isDisable());
+		robot.interact(manageAssets::fire);
+		assertNull(routedExam.get());
+		assertNull(routedBooklet.get());
+		robot.interact(() -> pane.replaceData(List.of(fixture.activeExamStatus), List.of()));
+
+		// An ACTIVE Exam remains manageable regardless of whether its audit currently
+		// reports structural findings.
 		assertFalse(manageAssets.isDisable());
 		robot.interact(manageAssets::fire);
-		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
 		assertNull(routedBooklet.get());
+		routedExam.set(null);
+		routedBooklet.set(null);
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
 
-		// Explicit booklet selection is preserved regardless of whether that booklet
-		// happens to have an audit finding.
-		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
+		// Explicit booklet selection is preserved when routing the ACTIVE Exam into the
+		// existing Exam / Assets workspace.
 		robot.interact(manageAssets::fire);
-		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
-		assertEquals(fixture.paper1.getId(), routedBooklet.get().getId());
-
-		// A booklet with a structural finding follows the same general management
-		// route.
-		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
-		robot.interact(manageAssets::fire);
-		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
-		assertEquals(fixture.paper2.getId(), routedBooklet.get().getId());
+		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
+		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
 	}
 
 	@Test

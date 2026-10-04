@@ -33,7 +33,7 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
-import javafx.scene.control.Separator;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Toggle;
 import javafx.scene.control.ToggleGroup;
@@ -87,11 +87,6 @@ public final class ExamAssetsPane extends VBox {
 	private final Consumer<ExamBooklet> captureBookletHandler;
 	private final ToggleGroup questionBookletSelectionGroup = new ToggleGroup();
 	private final Button useSelectedBookletButton = new Button("Use Selected Booklet for Capture");
-
-	// Legacy Question intake is a workspace-level operation because the Working
-	// Subject and authoritative Exam hierarchy already belong to Exam/Assets.
-	private final Runnable legacyQuestionImportHandler;
-	private final Button importLegacyQuestionsButton = new Button("Import Legacy Questions...");
 
 	// Booklet labels from the selected Exam extend the standard reusable
 	// suggestions.
@@ -188,9 +183,6 @@ public final class ExamAssetsPane extends VBox {
 	 *                                                 document
 	 * @param questionBookletCreationHandler           imports and persists a new
 	 *                                                 Question booklet
-	 * @param legacyQuestionImportHandler              opens legacy Question intake
-	 *                                                 for the current Working
-	 *                                                 Subject
 	 * @throws NullPointerException if any argument is {@code null}
 	 */
 	public ExamAssetsPane(SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter,
@@ -200,7 +192,7 @@ public final class ExamAssetsPane extends VBox {
 			Consumer<ExamBooklet> bookletMetadataUpdatedHandler, Supplier<Path> answerBookletSourceChooser,
 			AnswerBookletCreationHandler answerBookletCreationHandler, Supplier<Path> questionBookletSourceChooser,
 			Predicate<Path> questionBookletSourcePreviewHandler, Runnable questionBookletSourcePreviewCloseHandler,
-			QuestionBookletCreationHandler questionBookletCreationHandler, Runnable legacyQuestionImportHandler) {
+			QuestionBookletCreationHandler questionBookletCreationHandler) {
 		if (examWriter == null) {
 			throw new NullPointerException("examWriter");
 		}
@@ -246,9 +238,6 @@ public final class ExamAssetsPane extends VBox {
 		if (questionBookletSourcePreviewCloseHandler == null) {
 			throw new NullPointerException("questionBookletSourcePreviewCloseHandler");
 		}
-		if (legacyQuestionImportHandler == null) {
-			throw new NullPointerException("legacyQuestionImportHandler");
-		}
 		this.examWriter = examWriter;
 		this.answerWriter = answerWriter;
 		this.optionsRepository = optionsRepository;
@@ -273,10 +262,6 @@ public final class ExamAssetsPane extends VBox {
 		// because the shared PdfWorkspacePane is application-owned.
 		this.questionBookletSourcePreviewHandler = questionBookletSourcePreviewHandler;
 		this.questionBookletSourcePreviewCloseHandler = questionBookletSourcePreviewCloseHandler;
-
-		// Legacy intake is initiated here, but dialog construction and import
-		// coordination remain application-level responsibilities.
-		this.legacyQuestionImportHandler = legacyQuestionImportHandler;
 
 		// Exam/Assets owns structural asset editing while application-level callbacks
 		// keep an already-active Capture booklet synchronised after persistence
@@ -797,29 +782,32 @@ public final class ExamAssetsPane extends VBox {
 		VBox examSection = createWorkspaceSection("exam-assets-exam-section", "EXAM", null, examContent);
 		VBox questionBooklets = createQuestionBookletsSection();
 		VBox answerBooklets = createAnswerBookletsSection();
-		Region navigationSpacer = new Region();
-		HBox.setHgrow(navigationSpacer, Priority.ALWAYS);
 
-		// Legacy import and Dashboard return are navigation actions. Keeping them on
-		// their own row prevents the three long workspace buttons from forcing the pane
-		// wider than the left-hand viewport.
-		HBox navigationActions = new HBox(SPACING, importLegacyQuestionsButton, navigationSpacer,
-				returnToCorpusDashboardButton);
-		Region captureSpacer = new Region();
-		HBox.setHgrow(captureSpacer, Priority.ALWAYS);
+		// Dashboard return is workspace navigation rather than structural Exam content.
+		// Keep it outside the scroll pane so the route home remains visible regardless
+		// of how far down the Exam asset list the user has moved.
+		HBox dashboardNavigation = new HBox(returnToCorpusDashboardButton);
+		dashboardNavigation.setId("exam-assets-dashboard-navigation");
+		dashboardNavigation.visibleProperty().bind(returnToCorpusDashboardButton.visibleProperty());
+		dashboardNavigation.managedProperty().bind(returnToCorpusDashboardButton.managedProperty());
 
-		// Capture activation remains a separate structural action and can occupy its
-		// own
-		// row without competing for horizontal space.
-		HBox captureActions = new HBox(SPACING, captureSpacer, useSelectedBookletButton);
-		VBox workspaceActions = new VBox(ROW_SPACING, navigationActions, captureActions);
-		workspaceActions.setId("exam-assets-workspace-actions");
+		// All structural Exam and booklet work belongs to one scrolling body. Pending
+		// legacy requirements remain here because they are resolved using these same
+		// authoritative controls.
+		VBox body = new VBox(ROW_SPACING, examSection, questionBooklets, answerBooklets, legacyImportRequirementsBox);
+		body.setId("exam-assets-scroll-content");
+		body.setFillWidth(true);
+		ScrollPane bodyScroll = new ScrollPane(body);
+		bodyScroll.setId("exam-assets-body-scroll");
+		bodyScroll.setFitToWidth(true);
+		bodyScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		bodyScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+		bodyScroll.setMinHeight(0);
+		VBox.setVgrow(bodyScroll, Priority.ALWAYS);
 
-		// The legacy requirements panel is part of Exam/Assets because unresolved
-		// provider/year/booklet identities must be corrected with these normal
-		// controls.
-		getChildren().addAll(examSection, questionBooklets, answerBooklets, legacyImportRequirementsBox,
-				new Separator(), workspaceActions);
+		// Only the structural body scrolls. Subject remains fixed by the application
+		// shell and Dashboard return remains fixed by this pane.
+		getChildren().addAll(dashboardNavigation, bodyScroll);
 	}
 
 	private boolean canBeginAnswerBookletAdd(Exam exam) {
@@ -828,15 +816,6 @@ public final class ExamAssetsPane extends VBox {
 		// neither may begin while the other is pending.
 		return exam != null && !exam.isComplete() && !editingExamDetails && editingBookletEditor == null
 				&& pendingAnswerBookletEditor == null && pendingQuestionBookletEditor == null;
-	}
-
-	private boolean canBeginLegacyQuestionImport() {
-
-		// A new intake cannot replace an unresolved preflight or overlap an unsaved
-		// Exam/asset structural transaction.
-		return workingSubject != null && !legacyImportPending && !creatingNewExam && !editingExamDetails
-				&& editingBookletEditor == null && pendingQuestionBookletEditor == null
-				&& pendingAnswerBookletEditor == null;
 	}
 
 	private boolean canBeginNewExam() {
@@ -1081,18 +1060,6 @@ public final class ExamAssetsPane extends VBox {
 		cancelNewExamButton.setOnAction(_ -> cancelNewExam());
 		saveNewExamButton.setId("exam-assets-new-exam-save");
 		saveNewExamButton.setOnAction(_ -> saveNewExam());
-
-		// Legacy intake belongs to the whole Working Subject rather than whichever
-		// persisted Exam happens to be selected.
-		importLegacyQuestionsButton.setId("exam-assets-import-legacy-questions");
-		importLegacyQuestionsButton.setMinWidth(Region.USE_PREF_SIZE);
-		importLegacyQuestionsButton.setOnAction(_ -> {
-			if (canBeginLegacyQuestionImport()) {
-
-				// Application code owns the modal import workflow and its persistence.
-				legacyQuestionImportHandler.run();
-			}
-		});
 		legacyImportRecheckButton.setId("exam-assets-legacy-import-recheck");
 		legacyImportRecheckButton.setMinWidth(Region.USE_PREF_SIZE);
 		legacyImportCancelButton.setId("exam-assets-legacy-import-cancel");
@@ -1234,9 +1201,12 @@ public final class ExamAssetsPane extends VBox {
 		Region actionSpacer = new Region();
 		HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 
-		// Persisted Exam correction retains its existing Edit / Cancel / Save
-		// transaction. New Exam mode temporarily hides this complete action row.
-		examDetailsActionRow = new HBox(SPACING, actionSpacer, editExamButton, cancelButton, saveButton);
+		// Capture activation belongs with the selected Exam and booklet context. Keep
+		// it
+		// on the left while persisted Exam correction retains Edit / Cancel / Save on
+		// the right.
+		examDetailsActionRow = new HBox(SPACING, useSelectedBookletButton, actionSpacer, editExamButton, cancelButton,
+				saveButton);
 		examDetailsActionRow.setId("exam-assets-details-actions");
 		VBox section = createSection("Exam Details", new VBox(ROW_SPACING, details, examDetailsActionRow));
 		section.setId("exam-assets-details-section");
@@ -1944,16 +1914,13 @@ public final class ExamAssetsPane extends VBox {
 	private void updateUseSelectedBookletState() {
 		boolean structuralTransactionActive = structuralTransactionActive();
 
-		// A new legacy import cannot replace an unresolved import or overlap another
-		// staged structural transaction.
-		importLegacyQuestionsButton.setDisable(!canBeginLegacyQuestionImport());
-
 		// Capture activation must never abandon staged Exam, Question-booklet,
-		// Answer-booklet or legacy-import structural work.
+		// Answer-booklet or pending legacy-import structural work.
 		useSelectedBookletButton
 				.setDisable(structuralTransactionActive || questionBookletSelectionGroup.getSelectedToggle() == null);
 
-		// Dashboard return follows the same structural transaction boundary.
+		// Dashboard return follows the same structural transaction boundary, including
+		// a pending legacy-import preflight awaiting Recheck or Cancel.
 		updateCorpusDashboardReturnState();
 	}
 

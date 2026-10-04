@@ -212,7 +212,6 @@ public class QuestionBankApplication extends Application {
 	private ExamMetadataPane examMetadataPane;
 	private QuestionCapturePane questionCapturePane;
 	private AnswerCapturePane answerCapturePane;
-	private ScrollPane previewScrollPane;
 	private Runnable applicationExitAction = Platform::exit;
 	private ShutdownCoordinator shutdownCoordinator;
 	private boolean resourcesClosedForRestore;
@@ -278,6 +277,14 @@ public class QuestionBankApplication extends Application {
 	private final HBox corpusDashboardSubjectHost = new HBox();
 	private VBox workingSubjectContext;
 	private final VBox workspaceSubjectHost = new VBox();
+
+	// Capture scrolls only its task-specific Classification/Question/Answer body so
+	// the Subject and Active Exam context remain continuously visible.
+	private ScrollPane captureWorkspaceScrollPane;
+
+	// The complete left workspace owns fixed context above the mode-specific
+	// scrollable content and is the node mounted into the main SplitPane.
+	private BorderPane workspacePreviewPane;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -1337,12 +1344,24 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private VBox createCaptureWorkspaceModePane() {
+		VBox captureWorkspace = createCaptureWorkspacePane();
 
-		// Capture mode owns both the active Exam/booklet context and the existing
-		// Classification/Question/Answer workspace. A later Exam/Assets mode can
-		// replace this whole unit without disturbing the application Working Subject.
-		VBox captureModePane = new VBox(SECTION_SPACING, createActiveExamContextPane(), createCaptureWorkspacePane());
+		// Classification plus Question/Answer work may grow beyond the available
+		// vertical space. Scroll only that task-specific body.
+		captureWorkspaceScrollPane = new ScrollPane(captureWorkspace);
+		captureWorkspaceScrollPane.setId("capture-workspace-scroll");
+		captureWorkspaceScrollPane.setFitToWidth(true);
+		captureWorkspaceScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		captureWorkspaceScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+		captureWorkspaceScrollPane.setMinHeight(0);
+		VBox.setVgrow(captureWorkspaceScrollPane, Priority.ALWAYS);
+
+		// Active Exam / Booklet is deliberately outside the scroll pane so the source
+		// context remains visible throughout Question and Answer work.
+		VBox captureModePane = new VBox(SECTION_SPACING, createActiveExamContextPane(), captureWorkspaceScrollPane);
 		captureModePane.setId("capture-workspace-mode");
+		captureModePane.setMinHeight(0);
+		captureModePane.setFillWidth(true);
 		return captureModePane;
 	}
 
@@ -1526,16 +1545,17 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private VBox createPreviewPane() {
+	private BorderPane createPreviewPane() {
 
-		// The one live Subject context moves here while specialised left-hand work is
-		// active. Dashboard navigation moves it back into the Dashboard title region.
+		// The one authoritative Subject context moves here while specialised left-hand
+		// work is active. It remains outside every mode-specific scroll pane.
 		workspaceSubjectHost.setId("workspace-subject-host");
 		workspaceSubjectHost.setPadding(new Insets(8));
 		workspaceSubjectHost.setStyle("-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;" + "-fx-border-radius: 3;");
 		captureWorkspaceModePane = createCaptureWorkspaceModePane();
 		workspaceModeHost = new StackPane(captureWorkspaceModePane);
 		workspaceModeHost.setId("workspace-mode-host");
+		workspaceModeHost.setMinHeight(0);
 
 		// Long-running Dashboard transitions remain asynchronous and expose their state
 		// visibly instead of leaving the teacher wondering whether the action
@@ -1552,11 +1572,16 @@ public class QuestionBankApplication extends Application {
 		workspaceBusyOverlay.setVisible(false);
 		workspaceBusyOverlay.setManaged(false);
 
-		// The overlay sits above whichever Capture or Exam / Assets mode currently owns
-		// the left workspace.
+		// The overlay covers the changing work area without replacing or scrolling the
+		// fixed Working Subject context.
 		workspaceModeHost.getChildren().add(workspaceBusyOverlay);
-		VBox previewPane = new VBox(SECTION_SPACING, workspaceSubjectHost, workspaceModeHost);
+		BorderPane previewPane = new BorderPane();
+		previewPane.setId("workspace-preview-pane");
+		previewPane.setTop(workspaceSubjectHost);
+		previewPane.setCenter(workspaceModeHost);
+		BorderPane.setMargin(workspaceModeHost, new Insets(SECTION_SPACING, 0, 0, 0));
 		previewPane.setPadding(PREVIEW_PANE_PADDING);
+		previewPane.setMinHeight(0);
 		previewPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
 		previewPane.setPrefWidth(PREVIEW_PANE_INITIAL_WIDTH);
 
@@ -1564,17 +1589,6 @@ public class QuestionBankApplication extends Application {
 		// and Answer capture.
 		refreshActiveExamContext();
 		return previewPane;
-	}
-
-	private ScrollPane createPreviewScrollPane() {
-		ScrollPane scrollPane = new ScrollPane(createPreviewPane());
-		scrollPane.setFitToWidth(true);
-		scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-		scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-		scrollPane.setMinHeight(0);
-		scrollPane.setMinWidth(PREVIEW_PANE_MIN_WIDTH);
-		scrollPane.setPrefWidth(PREVIEW_PANE_INITIAL_WIDTH);
-		return scrollPane;
 	}
 
 	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
@@ -1619,15 +1633,18 @@ public class QuestionBankApplication extends Application {
 		workingSubjectContext.setPadding(Insets.EMPTY);
 		workingSubjectContext.setStyle("");
 		workingSubjectContext.setMaxWidth(Region.USE_PREF_SIZE);
-		previewScrollPane = createPreviewScrollPane();
-		workspaceSplitPane = new SplitPane(previewScrollPane, pdfWorkspace);
+
+		// The specialised left workspace now owns its fixed Subject context separately
+		// from the scrollable content within Capture and Exam/Assets.
+		workspacePreviewPane = createPreviewPane();
+		workspaceSplitPane = new SplitPane(workspacePreviewPane, pdfWorkspace);
 		workspaceSplitPane.setId("workspace-split-pane");
 		workspaceSplitPane.setDividerPositions(INITIAL_WORKSPACE_DIVIDER_POSITION);
 		corpusDashboardHomePane = createCorpusDashboardHomePane();
 		showWorkingSubjectInDashboard();
 
-		// The application body now switches only between Dashboard home and the
-		// specialised Capture/PDF workspace. There is no full-width Subject strip.
+		// The application body switches only between Dashboard home and the specialised
+		// Capture/PDF workspace.
 		applicationBody = new BorderPane();
 		applicationBody.setId("application-body");
 		applicationBody.setCenter(corpusDashboardHomePane);
@@ -1894,8 +1911,8 @@ public class QuestionBankApplication extends Application {
 		legacyQuestionImportDashboardOwned = false;
 		if (!returnToDashboard) {
 
-			// A legacy import started directly from Exam/Assets remains there when it
-			// finishes or is cancelled.
+			// No Dashboard-owned legacy intake is active, so there is no navigation
+			// transition to complete.
 			return;
 		}
 		if (corpusDashboardCaptureReturnHandler != null) {
@@ -2165,12 +2182,6 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void importLegacyQuestionMetadata(Stage primaryStage, ApplicationConfig config) {
-
-		// The permanent Exam/Assets action starts and finishes inside Exam/Assets.
-		importLegacyQuestionMetadata(primaryStage, config, false);
-	}
-
 	private void importLegacyQuestionMetadata(Stage primaryStage, ApplicationConfig config, boolean dashboardOwned) {
 		legacyQuestionImportDashboardOwned = dashboardOwned;
 		if (workingSubject == null) {
@@ -2188,8 +2199,8 @@ public class QuestionBankApplication extends Application {
 			Optional<ButtonType> result = dialog.showAndWait();
 			if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 
-				// Dashboard-owned intake returns home on dialog cancellation. Direct
-				// Exam/Assets intake deliberately remains in Exam/Assets.
+				// Dashboard owns legacy intake, so cancelling the initial dialog abandons the
+				// intake transaction and restores the operational home.
 				cancelPendingLegacyQuestionImport();
 				return;
 			}
@@ -2324,16 +2335,13 @@ public class QuestionBankApplication extends Application {
 				// mode.
 				this::viewPendingQuestionBookletSourceFromExamAssets,
 
-				// Cancelling or completing the pending transaction restores the prior PDF view.
+				// Cancelling or completing the pending transaction restores the prior PDF
+				// view.
 				this::closePendingQuestionBookletSourceFromExamAssets,
 
 				// Save imports, hashes and persists the managed Question booklet.
 				(exam, sourcePath, name, questionFormat, expectedQuestionCount) -> importQuestionBookletFromExamAssets(
-						exam, sourcePath, name, questionFormat, expectedQuestionCount, config),
-
-				// Legacy intake is launched from Exam/Assets but remains coordinated by
-				// the application because it spans dialogs, persistence and capture state.
-				() -> importLegacyQuestionMetadata(primaryStage, config));
+						exam, sourcePath, name, questionFormat, expectedQuestionCount, config));
 		workingSubjectExamAssetsSnapshotLoader = subject -> {
 			try {
 
@@ -3261,18 +3269,24 @@ public class QuestionBankApplication extends Application {
 
 	private void setViewerMode(boolean viewerMode) {
 		if (viewerMode) {
-			if (workspaceSplitPane.getItems().contains(previewScrollPane)) {
+			if (workspaceSplitPane.getItems().contains(workspacePreviewPane)) {
 				if (!workspaceSplitPane.getDividers().isEmpty()) {
+
+					// Preserve the teacher's Capture/PDF divider position while the left
+					// workspace is temporarily hidden in PDF-only viewer mode.
 					captureDividerPosition = workspaceSplitPane.getDividers().getFirst().getPosition();
 				}
-				workspaceSplitPane.getItems().remove(previewScrollPane);
+				workspaceSplitPane.getItems().remove(workspacePreviewPane);
 			}
 			return;
 		}
-		if (workspaceSplitPane.getItems().contains(previewScrollPane)) {
+		if (workspaceSplitPane.getItems().contains(workspacePreviewPane)) {
 			return;
 		}
-		workspaceSplitPane.getItems().add(0, previewScrollPane);
+
+		// Restore the complete fixed-header left workspace rather than only a scrolling
+		// child within it.
+		workspaceSplitPane.getItems().add(0, workspacePreviewPane);
 		Platform.runLater(() -> workspaceSplitPane.setDividerPositions(captureDividerPosition));
 	}
 

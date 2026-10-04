@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -62,7 +63,10 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -271,6 +275,32 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(CurriculumLevel.SUBTOPIC, savedQuestion.getClassification().getLevel());
 		assertEquals(savedQuestion.getExam().getSubject(),
 				savedQuestion.getClassification().getSyllabusVersion().getSubject());
+	}
+
+	@Test
+	void captureWorkspaceKeepsSubjectAndActiveExamFixedAboveScrollableWork(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+		BorderPane preview = field(application, "workspacePreviewPane", BorderPane.class);
+		Node subjectHost = lookup(robot, "#workspace-subject-host", Node.class);
+		VBox captureMode = lookup(robot, "#capture-workspace-mode", VBox.class);
+		Node activeExam = lookup(robot, "#active-exam-context", Node.class);
+		ScrollPane captureScroll = lookup(robot, "#capture-workspace-scroll", ScrollPane.class);
+		Node captureWork = lookup(robot, "#capture-workspace", Node.class);
+
+		// Working Subject belongs to the permanent left-workspace header and therefore
+		// cannot move when the Capture body scrolls.
+		assertSame(subjectHost, preview.getTop());
+
+		// Active Exam / Booklet and the scroll pane are siblings. Only Classification,
+		// Question and Answer content is inside the scrollable viewport.
+		assertSame(captureMode, activeExam.getParent());
+		assertSame(captureMode, captureScroll.getParent());
+		assertSame(captureWork, captureScroll.getContent());
 	}
 
 	@Test
@@ -581,18 +611,66 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		}).get();
 		WaitForAsyncUtils.waitForFxEvents();
 		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
-		ScrollPane preview = field(application, "previewScrollPane", ScrollPane.class);
-
-		// The Dashboard return action is the extra control that exposed the regression.
+		BorderPane preview = field(application, "workspacePreviewPane", BorderPane.class);
+		Node subjectHost = lookup(robot, "#workspace-subject-host", Node.class);
+		Node navigation = lookup(robot, "#exam-assets-dashboard-navigation", Node.class);
 		Button returnButton = lookup(robot, "#exam-assets-return-dashboard", Button.class);
+		ScrollPane bodyScroll = lookup(robot, "#exam-assets-body-scroll", ScrollPane.class);
+		Node body = lookup(robot, "#exam-assets-scroll-content", Node.class);
+
+		// Working Subject remains outside the complete mode-specific work area.
+		assertSame(subjectHost, preview.getTop());
+
+		// Dashboard navigation and structural content are siblings, so scrolling the
+		// Exam/Assets body cannot move the route back to the Dashboard.
+		assertSame(assets, navigation.getParent());
+		assertSame(assets, bodyScroll.getParent());
+		assertSame(navigation, returnButton.getParent());
+		assertSame(body, bodyScroll.getContent());
 		assertTrue(returnButton.isVisible());
 
-		// Fit-to-width must be able to size Exam/Assets inside the normal left
-		// viewport;
-		// its minimum-content width must not push controls underneath the split
-		// divider.
-		assertTrue(assets.getWidth() <= preview.getViewportBounds().getWidth() + 0.5,
-				"Exam / Assets must fit inside the left workspace viewport");
+		// The structural workspace must still fit within the normal left side of the
+		// application after introducing its internal scroll boundary.
+		assertTrue(assets.getWidth() <= preview.getWidth() + 0.5, "Exam / Assets must fit inside the left workspace");
+	}
+
+	@Test
+	void dashboardExamAssetsPlacesNavigationAndCaptureActionsWithExamDetails(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showExamAssetsMode", new Class<?>[] { Exam.class, ExamBooklet.class, Runnable.class },
+					booklet.getExam(), booklet, (Runnable) () -> {
+					});
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+		Node workspace = lookup(robot, "#exam-assets-workspace", Node.class);
+		Node dashboardNavigation = lookup(robot, "#exam-assets-dashboard-navigation", Node.class);
+		Button returnToDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
+		Node examSection = lookup(robot, "#exam-assets-exam-section", Node.class);
+		HBox detailsActions = lookup(robot, "#exam-assets-details-actions", HBox.class);
+		Button useSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
+		Button cancel = lookup(robot, "#exam-assets-cancel", Button.class);
+		Button save = lookup(robot, "#exam-assets-save", Button.class);
+
+		// Dashboard navigation is a top-level workspace action immediately above the
+		// EXAM section rather than an action buried at the bottom of Exam/Assets.
+		assertSame(workspace, dashboardNavigation.getParent());
+		assertSame(dashboardNavigation, returnToDashboard.getParent());
+		assertTrue(dashboardNavigation.getBoundsInParent().getMinY() < examSection.getBoundsInParent().getMinY());
+
+		// Capture activation now shares the Exam Details action row. Its position is
+		// deliberately left of the correction transaction controls.
+		assertSame(detailsActions, useSelected.getParent());
+		assertSame(detailsActions, edit.getParent());
+		assertSame(detailsActions, cancel.getParent());
+		assertSame(detailsActions, save.getParent());
+		assertTrue(detailsActions.getChildren().indexOf(useSelected) < detailsActions.getChildren().indexOf(edit));
+		assertTrue(detailsActions.getChildren().indexOf(edit) < detailsActions.getChildren().indexOf(cancel));
+		assertTrue(detailsActions.getChildren().indexOf(cancel) < detailsActions.getChildren().indexOf(save));
 	}
 
 	@Test

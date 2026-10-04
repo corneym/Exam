@@ -132,17 +132,17 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button importLegacy = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
 		assertFalse(importLegacy.isDisable());
 
-		// Import opens a modal intake dialog after first mounting Exam/Assets. Queue
-		// the
-		// action so the test thread remains available to close the dialog.
+		// Import opens the existing modal intake dialog after mounting Exam/Assets for
+		// any structural preflight work that may be required.
 		Platform.runLater(importLegacy::fire);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-question-import-syllabus").tryQuery().isPresent());
 
-		// The existing Exam/Assets workspace owns the structural side of legacy intake,
-		// including any missing Exam/booklet requirements discovered by preflight.
+		// Exam/Assets remains available underneath Dashboard-started intake for
+		// structural resolution, but it must not expose a second import launcher.
 		Node examAssetsWorkspace = lookup(robot, "#exam-assets-workspace", Node.class);
 		assertTrue(examAssetsWorkspace.isVisible());
+		assertTrue(robot.lookup("#exam-assets-import-legacy-questions").tryQuery().isEmpty());
 		Button returnDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(returnDashboard.isVisible());
 		assertTrue(returnDashboard.isManaged());
@@ -150,12 +150,14 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Node cancelNode = importDialog.lookupButton(ButtonType.CANCEL);
 		assertTrue(cancelNode instanceof Button);
 
-		// Cancelling intake leaves structural management available and preserves the
-		// explicit route back to the Dashboard that launched the workflow.
+		// Cancelling the initial Dashboard-owned intake abandons that transaction and
+		// returns directly home; there is no remaining Exam/Assets Return action to
+		// invoke afterwards.
 		robot.interact(((Button) cancelNode)::fire);
-		fireControl(robot, "#exam-assets-return-dashboard");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isEmpty());
 	}
 
 	@Test
