@@ -504,6 +504,34 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void mcqExplanationEntryRequiresFlaggedActiveBookletAnswerFile(FxRobot robot) throws Exception {
+		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+
+		// Activate the real MCQ booklet while its assigned AnswerFile still has the
+		// default "no explanations" metadata.
+		robot.interact(() -> examMetadataPane().activateExistingBooklet(fixture.mcqQuestion().getBooklet(), examPdf));
+		robot.interact(() -> refreshAnswerQuestionsForTest(repository.findAll()));
+		WaitForAsyncUtils.waitForFxEvents();
+		Button captureExplanations = lookup(robot, "#capture-mcq-explanations", Button.class);
+
+		// Merely having an MCQ booklet and an AnswerFile must not offer explanation
+		// capture when that source has not been marked as containing explanations.
+		assertTrue(captureExplanations.isDisabled());
+		AnswerFile explanationFile = answerWriter.setContainsAnswerExplanations(fixture.answersA(), true);
+		assertTrue(explanationFile.hasAnswerExplanations());
+
+		// Republish the current Answer state exactly as an application refresh does so
+		// availability is recalculated from the authoritative persisted metadata.
+		robot.interact(() -> refreshAnswerQuestionsForTest(repository.findAll()));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !captureExplanations.isDisabled());
+		assertFalse(captureExplanations.isDisabled());
+	}
+
+	@Test
 	void multipleChoiceCanSaveChoiceWithOptionalExplanationRegion(FxRobot robot) throws Exception {
 		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
 		SqliteDatabase database = new SqliteDatabase(databasePath);

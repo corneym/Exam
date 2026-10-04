@@ -433,7 +433,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		}).get();
 		assertEquals(Boolean.TRUE, activated);
 		WaitForAsyncUtils.waitForFxEvents();
-
 		@SuppressWarnings("unchecked")
 		ComboBox<SyllabusVersion> syllabusBox = lookup(robot, "#curriculum-syllabus", ComboBox.class);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {

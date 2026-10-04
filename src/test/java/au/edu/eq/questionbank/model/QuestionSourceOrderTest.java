@@ -34,30 +34,39 @@ class QuestionSourceOrderTest {
 	}
 
 	@Test
-	void sortsByProviderYearBookletAndNaturalQuestionCode() {
+	void sortsByProviderYearExamBookletAndNaturalQuestionCode() {
 		ExamProvider alpha = new ExamProvider(10, "Alpha Authority");
 		ExamProvider beta = new ExamProvider(11, "Beta Authority");
-		Exam alpha2023 = new Exam(20, chemistry, alpha, 2023, "External Assessment");
-		Exam alpha2024 = new Exam(21, chemistry, alpha, 2024, "External Assessment");
-		Exam beta2022 = new Exam(22, chemistry, beta, 2022, "External Assessment");
-		ExamBooklet alpha2023Paper1 = booklet(30, alpha2023, "Paper 1", "alpha-2023-paper1.pdf");
-		ExamBooklet alpha2023Paper2 = booklet(31, alpha2023, "Paper 2", "alpha-2023-paper2.pdf");
-		ExamBooklet alpha2024Paper1 = booklet(32, alpha2024, "Paper 1", "alpha-2024-paper1.pdf");
-		ExamBooklet beta2022Paper1 = booklet(33, beta2022, "Paper 1", "beta-2022-paper1.pdf");
-		Question alpha2023Question10 = question(40, alpha2023Paper1, "10");
-		Question alpha2023Question3b = question(41, alpha2023Paper1, "3b");
-		Question alpha2023Question3 = question(42, alpha2023Paper1, "3");
-		Question alpha2023Question3a = question(43, alpha2023Paper1, "3a");
-		Question alpha2023Paper2Question1 = question(44, alpha2023Paper2, "1");
-		Question alpha2024Question1 = question(45, alpha2024Paper1, "1");
-		Question beta2022Question1 = question(46, beta2022Paper1, "1");
-		List<Question> questions = new ArrayList<>(List.of(beta2022Question1, alpha2024Question1, alpha2023Question10,
-				alpha2023Paper2Question1, alpha2023Question3b, alpha2023Question3a, alpha2023Question3));
+		Exam alpha2023External = new Exam(20, chemistry, alpha, 2023, "External Assessment");
+		Exam alpha2023Trial = new Exam(21, chemistry, alpha, 2023, "Trial Assessment");
+		Exam alpha2024External = new Exam(22, chemistry, alpha, 2024, "External Assessment");
+		Exam beta2022External = new Exam(23, chemistry, beta, 2022, "External Assessment");
+		ExamBooklet alpha2023ExternalPaper1 = booklet(30, alpha2023External, "Paper 1",
+				"alpha-2023-external-paper1.pdf");
+		ExamBooklet alpha2023ExternalPaper2 = booklet(31, alpha2023External, "Paper 2",
+				"alpha-2023-external-paper2.pdf");
+		ExamBooklet alpha2023TrialPaper1 = booklet(32, alpha2023Trial, "Paper 1", "alpha-2023-trial-paper1.pdf");
+		ExamBooklet alpha2024Paper1 = booklet(33, alpha2024External, "Paper 1", "alpha-2024-paper1.pdf");
+		ExamBooklet beta2022Paper1 = booklet(34, beta2022External, "Paper 1", "beta-2022-paper1.pdf");
+		Question alpha2023Question10 = question(40, alpha2023ExternalPaper1, "10");
+		Question alpha2023Question22b = question(41, alpha2023ExternalPaper1, "22b");
+		Question alpha2023Question1 = question(42, alpha2023ExternalPaper1, "1");
+		Question alpha2023Question22 = question(43, alpha2023ExternalPaper1, "22");
+		Question alpha2023Question22a = question(44, alpha2023ExternalPaper1, "22a");
+		Question alpha2023ExternalPaper2Question1 = question(45, alpha2023ExternalPaper2, "1");
+		Question alpha2023TrialQuestion1 = question(46, alpha2023TrialPaper1, "1");
+		Question alpha2024Question1 = question(47, alpha2024Paper1, "1");
+		Question beta2022Question1 = question(48, beta2022Paper1, "1");
+		List<Question> questions = new ArrayList<>(List.of(beta2022Question1, alpha2023TrialQuestion1,
+				alpha2024Question1, alpha2023Question22b, alpha2023ExternalPaper2Question1, alpha2023Question10,
+				alpha2023Question22a, alpha2023Question1, alpha2023Question22));
 
-		// Apply the complete provider/year/booklet/Question source-order policy.
+		// Complete source order groups provider, year, Exam and booklet before applying
+		// natural numeric/alphabetic Question-code ordering.
 		questions.sort(QuestionSourceOrder.comparator());
-		assertEquals(List.of(alpha2023Question3, alpha2023Question3a, alpha2023Question3b, alpha2023Question10,
-				alpha2023Paper2Question1, alpha2024Question1, beta2022Question1), questions);
+		assertEquals(List.of(alpha2023Question1, alpha2023Question10, alpha2023Question22, alpha2023Question22a,
+				alpha2023Question22b, alpha2023ExternalPaper2Question1, alpha2023TrialQuestion1, alpha2024Question1,
+				beta2022Question1), questions);
 	}
 
 	private ExamBooklet booklet(long id, Exam exam, String name, String relativePath) {

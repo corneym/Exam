@@ -1443,7 +1443,6 @@ public final class QuestionCapturePane extends VBox {
 		// work,
 		// including Dashboard-launched sequential completion.
 		importedQuestionQueueLabel.setId("imported-question-queue-label");
-
 		importedQuestionBox.setId("imported-question");
 		importedQuestionBox.setPromptText("Select imported question");
 		importedQuestionBox.setTooltip(new Tooltip(
@@ -1451,7 +1450,6 @@ public final class QuestionCapturePane extends VBox {
 		importedQuestionBox.setMaxWidth(Double.MAX_VALUE);
 		importedQuestionBox.setConverter(new ImportedQuestionStringConverter());
 		importedQuestionBox.setOnShowing(_ -> showSelectedImportedQuestionDocument());
-
 		importedClassificationLabel.setId("imported-classification");
 		importedClassificationLabel.setWrapText(true);
 		importedClassificationLabel.setVisible(false);
@@ -3172,7 +3170,6 @@ public final class QuestionCapturePane extends VBox {
 		boolean showEntryAction = available && !importedCaptureMode;
 		importedQuestionsModeButton.setVisible(showEntryAction);
 		importedQuestionsModeButton.setManaged(showEntryAction);
-
 		if (available) {
 			return;
 		}

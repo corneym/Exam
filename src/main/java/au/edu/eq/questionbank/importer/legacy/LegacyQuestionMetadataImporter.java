@@ -262,7 +262,6 @@ public final class LegacyQuestionMetadataImporter {
 			statement.setString(2, providerName);
 			statement.setInt(3, row.year());
 			statement.setString(4, bookletName(row.paperCode()));
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new IllegalArgumentException(
@@ -273,7 +272,6 @@ public final class LegacyQuestionMetadataImporter {
 				// to legacy response-type resolution.
 				ResolvedBooklet booklet = new ResolvedBooklet(result.getLong("id"),
 						ExamBookletQuestionFormat.valueOf(result.getString("question_format")));
-
 				if (result.next()) {
 					throw new IllegalArgumentException(
 							"More than one exam booklet matches " + description(providerName, row));
@@ -354,12 +352,10 @@ public final class LegacyQuestionMetadataImporter {
 				""")) {
 			statement.setLong(1, bookletId);
 			statement.setString(2, questionCode);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					return null;
 				}
-
 				Long sourceQuestionId = null;
 				if (result.getObject("source_question_id") != null) {
 					sourceQuestionId = Long.valueOf(result.getLong("source_question_id"));
@@ -546,28 +542,23 @@ public final class LegacyQuestionMetadataImporter {
 				// Legacy import establishes Question/source-question structure. A completed
 				// Exam must therefore be deliberately reactivated before import.
 				requireBookletExamActive(connection, bookletId);
-
 				long classificationNodeId = findClassificationNodeId(connection, context.syllabusVersionId(),
 						sheet.providerName(), row);
-
 				QuestionKey key = new QuestionKey(bookletId, row.questionCode());
 				if (!workbookQuestions.add(key)) {
 					throw new IllegalArgumentException(
 							"Duplicate workbook question: " + description(sheet.providerName(), row));
 				}
-
 				Long sourceQuestionId = findOrCreateSourceQuestionId(connection, bookletId, row.questionCode());
 
 				// Combine authoritative booklet structure with explicit row-level legacy
 				// evidence instead of treating every numbered paper as UNKNOWN.
 				QuestionResponseType importedResponseType = responseType(sheet.providerName(), row,
 						booklet.questionFormat());
-
 				ExistingQuestion existing = findExistingQuestion(connection, bookletId, row.questionCode());
 				Long existingQuestionId = null;
 				boolean insertAnswer = row.answer() != null;
 				boolean updateExistingResponseType = false;
-
 				if (existing != null) {
 					verifyExistingQuestion(existing, classificationNodeId, sourceQuestionId, sheet.providerName(), row);
 					existingQuestionId = existing.id();
@@ -579,14 +570,12 @@ public final class LegacyQuestionMetadataImporter {
 							&& importedResponseType != QuestionResponseType.UNKNOWN;
 					insertAnswer = shouldInsertAnswer(connection, existing.id(), sheet.providerName(), row);
 				}
-
 				resolved.add(new ResolvedQuestion(bookletId, classificationNodeId, sheet.providerName(), row.year(),
 						row.paperCode(), importedResponseType, row.questionCode(), row.marks(), row.answer(),
 						row.sharedContextCaptureRequired(), sourceQuestionId, existingQuestionId, insertAnswer,
 						updateExistingResponseType));
 			}
 		}
-
 		return resolved;
 	}
 
@@ -597,7 +586,6 @@ public final class LegacyQuestionMetadataImporter {
 		// row-level evidence that this legacy Question is multiple choice.
 		boolean legacyMultipleChoiceEvidence = "MCQ".equals(row.paperCode())
 				|| isLegacyMultipleChoiceAnswer(row.answer());
-
 		if (bookletFormat == ExamBookletQuestionFormat.WRITTEN_RESPONSE && legacyMultipleChoiceEvidence) {
 
 			// Conflicting authoritative structure and workbook evidence must be corrected
@@ -605,7 +593,6 @@ public final class LegacyQuestionMetadataImporter {
 			throw new IllegalArgumentException("Legacy MCQ evidence conflicts with Written Response booklet for "
 					+ description(providerName, row));
 		}
-
 		return switch (bookletFormat) {
 		case MULTIPLE_CHOICE -> QuestionResponseType.MULTIPLE_CHOICE;
 		case WRITTEN_RESPONSE -> QuestionResponseType.WRITTEN_RESPONSE;
@@ -673,7 +660,6 @@ public final class LegacyQuestionMetadataImporter {
 	private void verifyExistingQuestion(ExistingQuestion existing, long classificationNodeId, Long sourceQuestionId,
 			String providerName, LegacyQuestionRow row) {
 		String description = description(providerName, row);
-
 		if (existing.classificationNodeId() != classificationNodeId) {
 
 			// Never overwrite a manually established classification during legacy import.
@@ -682,15 +668,12 @@ public final class LegacyQuestionMetadataImporter {
 					"Existing classification %s conflicts with workbook classification %s for %s"
 							.formatted(existing.classificationCode(), row.classificationCode(), description));
 		}
-
 		if (existing.marks() != row.marks()) {
 			throw new IllegalArgumentException("Existing marks conflict with " + description);
 		}
-
 		if (existing.sharedContextCaptureRequired() != row.sharedContextCaptureRequired()) {
 			throw new IllegalArgumentException("Existing shared context metadata conflicts with " + description);
 		}
-
 		if (sourceQuestionId != null && existing.sourceQuestionId() != null
 				&& !sourceQuestionId.equals(existing.sourceQuestionId())) {
 			throw new IllegalArgumentException("Existing source-question relationship conflicts with " + description);

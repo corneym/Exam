@@ -61,6 +61,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -96,6 +97,43 @@ class CorpusDashboardPaneTest {
 		assertTrue(warning.isVisible());
 		assertTrue(warning.getText().contains("Expected 30 top-level Questions"));
 		assertTrue(warning.getText().contains("encountered 29"));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void captureQuestionsCompletesExistingQuestionWorkBeforeOfferingNewQuestion(FxRobot robot) {
+		AtomicReference<Question> routedQuestion = new AtomicReference<>();
+		AtomicReference<ExamBooklet> routedNewBooklet = new AtomicReference<>();
+
+		// Reproduce the legacy condition: Expected equals Found, but persisted
+		// Questions
+		// in the booklet still require Question-content capture.
+		BookletCorpusStatus atExpectedWithExistingWork = new BookletCorpusStatus(fixture.paper2, true,
+				fixture.markingGuide, 30, 34, fixture.paper2Status.questionSummary(),
+				fixture.paper2Status.mcqExplanationCoverage(), EnumSet.noneOf(BookletCorpusFinding.class));
+		robot.interact(() -> {
+			pane.setNewQuestionCaptureHandler(routedNewBooklet::set);
+			pane.setQuestionCorrectionHandler(routedQuestion::set);
+		});
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		robot.interact(() -> {
+			booklets.getItems().setAll(atExpectedWithExistingWork);
+			booklets.getSelectionModel().select(atExpectedWithExistingWork);
+		});
+
+		// Existing Question work remains actionable even though the Exam is COMPLETE
+		// and
+		// the booklet has already reached its expected Question count.
+		assertFalse(captureQuestions.isDisable());
+		robot.interact(captureQuestions::fire);
+
+		// Capture Questions must resolve the first existing Question-side task rather
+		// than offer to create an additional Question.
+		assertNotNull(routedQuestion.get());
+		assertEquals("Q7", routedQuestion.get().getQuestionCode());
+		assertNull(routedNewBooklet.get());
+		assertTrue(robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isEmpty());
 	}
 
 	@Test
@@ -306,7 +344,6 @@ class CorpusDashboardPaneTest {
 	void emptySubjectCorpusOffersExamOnlyAfterCurriculumExists(FxRobot robot) {
 		AtomicReference<Boolean> addExamCalled = new AtomicReference<>(Boolean.FALSE);
 		AtomicReference<Boolean> addCurriculumCalled = new AtomicReference<>(Boolean.FALSE);
-
 		robot.interact(() -> {
 			pane.setAddExamHandler(() -> addExamCalled.set(Boolean.TRUE));
 			pane.setAddCurriculumHandler(() -> addCurriculumCalled.set(Boolean.TRUE));
@@ -314,7 +351,6 @@ class CorpusDashboardPaneTest {
 			// A newly created Subject has neither curriculum nor Exam structure.
 			pane.replaceData(List.of(), List.of(), List.of(), false, -1L);
 		});
-
 		Label noExams = robot.lookup("#corpus-dashboard-no-exams").queryAs(Label.class);
 		Button addExam = robot.lookup("#corpus-dashboard-add-exam").queryButton();
 		Label curriculumStatus = robot.lookup("#corpus-dashboard-mapping-review").queryAs(Label.class);
@@ -331,33 +367,70 @@ class CorpusDashboardPaneTest {
 		assertTrue(mapCurriculum.isDisable());
 		assertEquals("Add curriculum before adding an Exam.", noExams.getText());
 		assertTrue(addExam.isDisable());
-
 		assertFalse(examOperationalContent.isVisible());
 		assertFalse(examOperationalContent.isManaged());
 		assertFalse(bookletsSection.isVisible());
 		assertFalse(bookletsSection.isManaged());
 		assertFalse(questionSection.isVisible());
 		assertFalse(questionSection.isManaged());
-
 		robot.interact(addExam::fire);
 		assertFalse(addExamCalled.get().booleanValue());
-
 		robot.interact(addCurriculum::fire);
 		assertTrue(addCurriculumCalled.get().booleanValue());
-
 		robot.interact(() -> {
 
 			// Once curriculum exists, the same empty Subject can proceed to Exam creation
 			// without recreating the Dashboard or changing Subject.
 			pane.replaceData(List.of(), List.of(), List.of(), true, -1L);
 		});
-
 		assertEquals("No mapping review is currently available.", curriculumStatus.getText());
 		assertEquals("No Exams have been added.", noExams.getText());
 		assertFalse(addExam.isDisable());
-
 		robot.interact(addExam::fire);
 		assertTrue(addExamCalled.get().booleanValue());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void examLifecycleActionUsesSelectedExamAuditState(FxRobot robot) {
+		AtomicReference<Exam> routedExam = new AtomicReference<>();
+		AtomicReference<ExamCaptureState> routedState = new AtomicReference<>();
+		robot.interact(() -> pane.setExamLifecycleHandler((exam, state) -> {
+			routedExam.set(exam);
+			routedState.set(state);
+		}));
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+
+		// The initially selected COMPLETE Exam can always be reopened, even though its
+		// current audit contains unfinished corpus work.
+		assertEquals("Mark Active", lifecycle.getText());
+		assertFalse(lifecycle.isDisable());
+		robot.interact(lifecycle::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertEquals(ExamCaptureState.ACTIVE, routedState.get());
+		robot.interact(() -> pane.replaceData(List.of(fixture.activeExamStatus), List.of()));
+
+		// ACTIVE lifecycle alone is insufficient. This fixture still has structural
+		// count mismatches, so completion remains unavailable.
+		assertEquals("Mark Complete", lifecycle.getText());
+		assertTrue(lifecycle.isDisable());
+		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		ExamCorpusStatus readyExam = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(readyBooklet), new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
+		robot.interact(() -> pane.replaceData(List.of(readyExam), List.of()));
+
+		// Once every recorded structural expectation and ordinary Question task is
+		// complete, the same selected ACTIVE Exam becomes completable.
+		assertEquals("Mark Complete", lifecycle.getText());
+		assertFalse(lifecycle.isDisable());
+		routedExam.set(null);
+		routedState.set(null);
+		robot.interact(lifecycle::fire);
+		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
+		assertEquals(ExamCaptureState.COMPLETE, routedState.get());
 	}
 
 	@Test
@@ -390,13 +463,11 @@ class CorpusDashboardPaneTest {
 		AtomicReference<ExamBooklet> questionCapture = new AtomicReference<>();
 		AtomicReference<Question> answerCapture = new AtomicReference<>();
 		AtomicReference<Question> questionCorrection = new AtomicReference<>();
-
 		robot.interact(() -> {
 			pane.setAnswerCaptureHandler(answerCapture::set);
 			pane.setNewQuestionCaptureHandler(questionCapture::set);
 			pane.setQuestionCorrectionHandler(questionCorrection::set);
 		});
-
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
 				.queryAs(TableView.class);
@@ -417,10 +488,10 @@ class CorpusDashboardPaneTest {
 		assertFalse(captureAnswers.isDisable());
 		robot.interact(captureAnswers::fire);
 
-		// Q7 still has earlier Question work, so booklet-level Answer capture correctly
-		// skips to the first Question ready for Answer completion.
+		// Booklet-level sequential Answer capture still chooses the first Question
+		// whose
+		// ordinary Answer workflow is immediately ready.
 		assertEquals("Q12", answerCapture.get().getQuestionCode());
-
 		QuestionCorpusWorkItem missingAnswer = questions.getItems().stream()
 				.filter(item -> "Q12".equals(item.question().getQuestionCode())).findFirst().orElseThrow();
 		robot.interact(() -> {
@@ -428,29 +499,29 @@ class CorpusDashboardPaneTest {
 			questions.getSelectionModel().select(missingAnswer);
 		});
 
-		// Question Work can now route the exact selected Missing Answer rather than
-		// requiring a separate booklet-level search.
+		// A row containing only missing Answer work exposes only Answer completion.
 		assertFalse(completeAnswer.isDisable());
 		assertTrue(completeQuestion.isDisable());
 		answerCapture.set(null);
 		robot.interact(completeAnswer::fire);
 		assertEquals("Q12", answerCapture.get().getQuestionCode());
-
-		QuestionCorpusWorkItem missingContent = questions.getItems().stream()
+		QuestionCorpusWorkItem missingContentAndAnswer = questions.getItems().stream()
 				.filter(item -> "Q7".equals(item.question().getQuestionCode())).findFirst().orElseThrow();
 		robot.interact(() -> {
 			questions.getSelectionModel().clearSelection();
-			questions.getSelectionModel().select(missingContent);
+			questions.getSelectionModel().select(missingContentAndAnswer);
 		});
 
-		// Missing Answer may also be reported for Q7, but its earlier Question-content
-		// prerequisite keeps Answer completion disabled until Question work is
-		// resolved.
-		assertTrue(completeAnswer.isDisable());
+		// Question content and Answer capture are independent. When both are missing,
+		// either task can be performed first from the selected Question Work row.
+		assertFalse(completeAnswer.isDisable());
 		assertFalse(completeQuestion.isDisable());
+		answerCapture.set(null);
+		robot.interact(completeAnswer::fire);
+		assertEquals("Q7", answerCapture.get().getQuestionCode());
+		questionCorrection.set(null);
 		robot.interact(completeQuestion::fire);
 		assertEquals("Q7", questionCorrection.get().getQuestionCode());
-
 		ComboBox<ExamCaptureState> state = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
 		robot.interact(() -> state.setValue(ExamCaptureState.ACTIVE));
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
@@ -470,16 +541,13 @@ class CorpusDashboardPaneTest {
 		assertEquals("Import Legacy", importLegacy.getText());
 		assertEquals("corpus-dashboard-exam-filter-row", importLegacy.getParent().getId());
 		assertFalse(importLegacy.isDisable());
-
 		robot.interact(importLegacy::fire);
 		assertTrue(importCalled.get().booleanValue());
-
 		robot.interact(() -> {
 
 			// Empty Subject onboarding reuses the same action beside Add Exam.
 			pane.replaceData(List.of(), List.of(), List.of(), false, -1L);
 		});
-
 		assertTrue(importLegacy.isVisible());
 		assertTrue(importLegacy.isManaged());
 		assertEquals("corpus-dashboard-exam-empty-state", importLegacy.getParent().getId());
@@ -521,6 +589,58 @@ class CorpusDashboardPaneTest {
 		robot.interact(manageAssets::fire);
 		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
 		assertEquals(fixture.paper2.getId(), routedBooklet.get().getId());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void missingQuestionContentUsesExplicitDashboardWording(FxRobot robot) {
+		Button missingContentSummary = robot.lookup("#corpus-dashboard-summary-missing-content").queryButton();
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+
+		// The summary must describe the missing part of an existing Question rather
+		// than implying that the Question record itself is absent.
+		assertEquals("1 Missing question content", missingContentSummary.getText());
+		QuestionCorpusWorkItem missingContent = questions.getItems().stream()
+				.filter(item -> "Q7".equals(item.question().getQuestionCode())).findFirst().orElseThrow();
+		TableColumn<QuestionCorpusWorkItem, ?> problemColumn = questions.getColumns().stream()
+				.filter(column -> "Problem".equals(column.getText())).findFirst().orElseThrow();
+
+		// Question Work uses the same explicit terminology while retaining any other
+		// independent problems reported for the row.
+		String problemText = String.valueOf(problemColumn.getCellObservableValue(missingContent).getValue());
+		assertTrue(problemText.contains("Missing question content"));
+		assertTrue(problemText.contains("Missing answer"));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void questionWorkShowsSourceColumnsAndNaturalSourceSort(FxRobot robot) {
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+
+		// Every Question Work row exposes the source hierarchy needed to distinguish
+		// identical Question codes belonging to different Exams or booklets.
+		assertEquals(
+				List.of("Provider", "Year", "Exam", "Booklet", "Question", "Type", "Content", "Answer",
+						"Shared Context", "Problem"),
+				questions.getColumns().stream().map(TableColumn::getText).toList());
+
+		// Dashboard default sorting preserves complete source hierarchy before
+		// comparing
+		// Question codes.
+		assertEquals(List.of("Provider", "Year", "Exam", "Booklet", "Question"),
+				questions.getSortOrder().stream().map(TableColumn::getText).toList());
+		TableColumn<QuestionCorpusWorkItem, String> questionColumn = (TableColumn<QuestionCorpusWorkItem, String>) questions
+				.getColumns().get(4);
+
+		// The visible Question column uses numeric-aware ordering with alphabetic parts
+		// rather than ordinary lexical String ordering.
+		assertTrue(questionColumn.getComparator().compare("1", "10") < 0);
+		assertTrue(questionColumn.getComparator().compare("10", "21") < 0);
+		assertTrue(questionColumn.getComparator().compare("21", "22") < 0);
+		assertTrue(questionColumn.getComparator().compare("22", "22a") < 0);
+		assertTrue(questionColumn.getComparator().compare("22a", "22b") < 0);
 	}
 
 	@Test

@@ -669,6 +669,24 @@ public final class AnswerCapturePane extends VBox {
 		refreshAnswerRegionList();
 	}
 
+	private boolean activeBookletSupportsMcqExplanations(ExamBooklet activeBooklet) {
+		if (activeBooklet == null) {
+			return false;
+		}
+		try {
+
+			// MCQ explanation capture is authoritative only when the AnswerFile assigned
+			// to this exact Question booklet explicitly declares explanation content.
+			AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(activeBooklet);
+			return assignedAnswerFile != null && assignedAnswerFile.hasAnswerExplanations();
+		} catch (SQLException exception) {
+
+			// Failure to verify authoritative metadata must never expose an action whose
+			// prerequisites are unknown.
+			return false;
+		}
+	}
+
 	private void addCurrentAnswerRegion() {
 		if (currentAnswerSelection == null) {
 			return;
@@ -1551,10 +1569,12 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private boolean mcqExplanationCaptureUnavailable() {
+		ExamBooklet activeBooklet = activeBookletSupplier.get();
 
-		// Entry is blocked while another Answer lifecycle owns the workspace.
+		// Entry requires both an idle Answer workflow and an authoritative AnswerFile
+		// explicitly marked as containing MCQ explanations.
 		return mcqExplanationMode || mcqExplanationLoadInProgress || workingSubject == null || answerSaveInProgress
-				|| editingAnswerQuestion != null;
+				|| editingAnswerQuestion != null || !activeBookletSupportsMcqExplanations(activeBooklet);
 	}
 
 	private boolean mcqExplanationRequestIsCurrent(Subject requestedSubject, ExamBooklet requestedBooklet) {
@@ -1708,11 +1728,11 @@ public final class AnswerCapturePane extends VBox {
 	private void refreshMcqExplanationActionState() {
 		ExamBooklet activeBooklet = activeBookletSupplier.get();
 
-		// Retrofit capture always belongs to the explicitly active Question booklet.
-		// Determining whether that booklet's AnswerFile is explanation-capable remains
-		// asynchronous and occurs only after the user enters the workflow.
-		boolean unavailable = workingSubject == null || activeBooklet == null || mcqExplanationLoadInProgress
-				|| mcqExplanationMode || answerSaveInProgress || editingAnswerQuestion != null;
+		// The button represents real available work, so expose it only when the active
+		// booklet's persisted AnswerFile explicitly supports MCQ explanations.
+		boolean unavailable = workingSubject == null || mcqExplanationLoadInProgress || mcqExplanationMode
+				|| answerSaveInProgress || editingAnswerQuestion != null
+				|| !activeBookletSupportsMcqExplanations(activeBooklet);
 		captureMcqExplanationsButton.setDisable(unavailable);
 	}
 

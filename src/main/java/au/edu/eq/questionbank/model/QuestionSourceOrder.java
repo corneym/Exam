@@ -33,6 +33,21 @@ public final class QuestionSourceOrder {
 	}
 
 	/**
+	 * Returns the natural comparator used for Question codes.
+	 * <p>
+	 * Numeric portions compare numerically and alphabetic suffixes follow their
+	 * base Question, giving sequences such as {@code 1, 2, 10, 22, 22a, 22b}.
+	 *
+	 * @return natural Question-code comparator
+	 */
+	public static Comparator<String> questionCodeComparator() {
+
+		// Expose the same code-ordering rule used by complete source ordering so UI
+		// tables never implement a competing lexical Question sort.
+		return QuestionSourceOrder::compareQuestionCodes;
+	}
+
+	/**
 	 * Compares the supported Question-code forms naturally.
 	 * <p>
 	 * Numeric Question numbers compare numerically, so {@code 10} follows
@@ -85,7 +100,8 @@ public final class QuestionSourceOrder {
 		Objects.requireNonNull(left, "left");
 		Objects.requireNonNull(right, "right");
 
-		// Provider is the first source-level grouping required by the capture workflow.
+		// Provider is the first source-level grouping required by corpus and capture
+		// workflows.
 		int providerComparison = compareText(left.getExam().getProvider().getName(),
 				right.getExam().getProvider().getName());
 		if (providerComparison != 0) {
@@ -98,8 +114,14 @@ public final class QuestionSourceOrder {
 			return yearComparison;
 		}
 
-		// Booklets belonging to the same provider/year are grouped by their stored
-		// name.
+		// Separate Exams from the same provider and year before considering booklet
+		// names so similarly named booklets never interleave across assessments.
+		int examComparison = compareText(left.getExam().getName(), right.getExam().getName());
+		if (examComparison != 0) {
+			return examComparison;
+		}
+
+		// Booklets belonging to the same Exam remain grouped by their stored name.
 		int bookletComparison = compareText(left.getBooklet().getName(), right.getBooklet().getName());
 		if (bookletComparison != 0) {
 			return bookletComparison;

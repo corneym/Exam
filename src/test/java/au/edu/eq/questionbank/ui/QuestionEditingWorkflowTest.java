@@ -255,7 +255,6 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		answerWriter.insertAnswer(question, "Stored answer", List.of());
 		Question answeredQuestion = repository.findById(question.getId()).orElseThrow();
 		assertTrue(answeredQuestion.hasAnswer());
-
 		WaitForAsyncUtils.asyncFx(() -> {
 
 			// Reproduce the production route from the Dashboard rather than leaving the
@@ -266,7 +265,6 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		}).get();
 		assertNull(pdfWorkspace().getAnswerPdfSession());
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
-
 		Platform.runLater(() -> {
 			try {
 
@@ -295,6 +293,7 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// not merely establish hidden edit state behind the Dashboard.
 		fireControl(robot, editAnswer);
 		waitForDialogHidden(robot, "Search Questions");
+
 		// Wait for the actual Answer-edit control to become visible, proving that the
 		// application has mounted the Answer capture workspace rather than hidden
 		// state.
@@ -304,6 +303,7 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertNotNull(pdfWorkspace().getAnswerPdfSession());
 		Label selectedAnswerPdf = lookup(robot, "#selected-answer-pdf", Label.class);
 		assertFalse("No Answer PDF assigned".equals(selectedAnswerPdf.getText()));
+
 		// Search editing is tied to this persisted Question. Its Exam/booklet is
 		// visible
 		// as context, but changing structural capture context is deliberately
@@ -318,6 +318,7 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Classification, Question and Answer panels below it.
 		VBox subjectHost = lookup(robot, "#workspace-subject-host", VBox.class);
 		assertTrue(subjectHost.getStyle().contains("-fx-border-color"));
+
 		// Cancelling releases edit state, restores Dashboard Home and then reopens the
 		// reusable Search dialog.
 		fireControlLater(robot, "#cancel-answer-edit");
@@ -420,7 +421,6 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		}).get();
 		assertNull(pdfWorkspace().getExamPdfSession());
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
-
 		Platform.runLater(() -> {
 			try {
 

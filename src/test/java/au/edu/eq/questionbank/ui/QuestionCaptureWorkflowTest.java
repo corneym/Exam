@@ -213,7 +213,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(classification.isDisabled());
 		assertFalse(questionWork.isDisabled());
 		assertTrue(pane.canCaptureRegions());
-
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 
 		// The selected booklet's Exam PDF is immediately ready for Question-region
@@ -458,14 +457,12 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> editStarted[0] = pane.editQuestion(question, () -> {
 		}));
 		assertTrue(editStarted[0]);
-
 		Node classification = lookup(robot, "#classification-context", Node.class);
 		Node questionWork = lookup(robot, "#question-capture-work", Node.class);
 		Button cancel = lookup(robot, "#cancel-question-edit", Button.class);
 		assertFalse(classification.isDisabled());
 		assertFalse(questionWork.isDisabled());
 		assertTrue(cancel.isVisible());
-
 		fireControl(robot, cancel);
 
 		// Ending an edit does not silently start another Question. There is
@@ -535,7 +532,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void importedCaptureAppearsOnlyWhenCurrentContextHasWork(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
 		Node importedControls = lookup(robot, "#legacy-question-capture", Node.class);
 
@@ -545,7 +541,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(importedAction.isManaged());
 		assertFalse(importedControls.isVisible());
 		assertFalse(importedControls.isManaged());
-
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
@@ -556,10 +551,8 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// as relevant imported/incomplete work.
 		Question incomplete = repository.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-
 		QuestionCapturePane pane = questionCapturePane();
 		robot.interact(pane::refreshImportedQuestions);
-
 		assertTrue(importedAction.isVisible());
 		assertTrue(importedAction.isManaged());
 		assertEquals("Complete Imported Question", importedAction.getText());
@@ -567,12 +560,9 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Before entry, the action advertises the available task without cluttering
 		// ordinary new-Question capture with the queue itself.
 		assertFalse(importedControls.isVisible());
-
 		fireControl(robot, importedAction);
-
 		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
 		Label queueLabel = lookup(robot, "#imported-question-queue-label", Label.class);
-
 		assertTrue(importedControls.isVisible());
 		assertTrue(importedControls.isManaged());
 		assertEquals("Question(s) awaiting capture", queueLabel.getText());

@@ -519,23 +519,19 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void dashboardQuestionCorrectionShowsBusyAndContinuesWithNextQuestion(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-
 		Question first = repository.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
 		Question second = repository.save(booklet, "42", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-
 		Node busyOverlay = lookup(robot, "#workspace-busy-overlay", Node.class);
 		Label busyLabel = lookup(robot, "#workspace-busy-label", Label.class);
 		AtomicBoolean busyWasShown = new AtomicBoolean(false);
 		AtomicReference<String> busyMessage = new AtomicReference<>();
-
-		robot.interact(() -> busyOverlay.visibleProperty().addListener((observable, oldValue, visible) -> {
+		robot.interact(() -> busyOverlay.visibleProperty().addListener((_, _, visible) -> {
 			if (visible) {
 
 				// Record the transient state itself rather than racing the asynchronous PDF
@@ -544,31 +540,25 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 				busyMessage.set(busyLabel.getText());
 			}
 		}));
-
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, first);
 			return null;
 		}).get();
-
 		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
 
 		// Completion of the transition is observable when the requested persisted
 		// Question owns the imported queue and the busy overlay has been dismissed.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> importedQuestions.getValue() != null
 				&& importedQuestions.getValue().getId() == first.getId() && !busyOverlay.isVisible());
-
 		assertTrue(busyWasShown.get());
 		assertEquals("Opening Question booklet...", busyMessage.get());
-
 		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		ToggleButton importedEntry = lookup(robot, "#capture-mode-imported", ToggleButton.class);
 		Label queueLabel = lookup(robot, "#imported-question-queue-label", Label.class);
-
 		assertTrue(returnDashboard.isVisible());
 		assertTrue(returnDashboard.isManaged());
 		assertFalse(importedEntry.isVisible());
 		assertEquals("Question(s) awaiting capture", queueLabel.getText());
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
 		fireControl(robot, "#save-question");
@@ -578,7 +568,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// directly to the next outstanding Question rather than navigating home.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> importedQuestions.getValue() != null && importedQuestions.getValue().getId() == second.getId());
-
 		assertEquals(second.getId(), importedQuestions.getValue().getId());
 		assertTrue(returnDashboard.isVisible());
 		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
@@ -594,13 +583,11 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void dashboardSelectedAnswerCaptureTargetsQuestionAndRemainsSequential(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		Question first = captureQuestion(robot, "A1");
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
 		Question second = captureQuestion(robot, "A2");
-
 		AtomicInteger dashboardReturns = new AtomicInteger();
 
 		// Reflection receives its arguments as Object values, so give the callback its
@@ -616,9 +603,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 			return null;
 		}).get();
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertTrue(started.get());
-
 		ComboBox<Question> unanswered = unansweredQuestions(robot);
 		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		Node classification = lookup(robot, "#classification-context", Node.class);
@@ -653,12 +638,10 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> unanswered.getValue() != null && unanswered.getValue().getId() == second.getId());
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertEquals(0, dashboardReturns.get());
 		assertEquals(second.getId(), unanswered.getValue().getId());
 		assertTrue(returnDashboard.isVisible());
 		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
-
 		Question storedFirst = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(first.getId())
 				.orElseThrow();
 		assertTrue(storedFirst.hasAnswer());
@@ -667,7 +650,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Answer capture has advanced.
 		fireControl(robot, returnDashboard);
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertEquals(1, dashboardReturns.get());
 		assertFalse(returnDashboard.isVisible());
 		assertFalse(returnDashboard.isManaged());
@@ -1865,14 +1847,11 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
-
 		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
 		AtomicBoolean rechecked = new AtomicBoolean(false);
 		AtomicBoolean cancelled = new AtomicBoolean(false);
-
 		List<LegacyBookletRequirement> requirements = List.of(new LegacyBookletRequirement("QCAA", 2020, "Paper 1"),
 				new LegacyBookletRequirement("QCAA", 2020, "Paper 2"));
-
 		robot.interact(() -> pane.showLegacyImportRequirements("2019", Path.of("legacy-questions.xlsx"), requirements,
 				() -> rechecked.set(true), () -> {
 					cancelled.set(true);
@@ -1881,7 +1860,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 					// cancellation clears the intake but deliberately stays in this workspace.
 					pane.clearLegacyImportRequirements();
 				}));
-
 		VBox status = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
 		Button startImport = lookup(robot, "#exam-assets-import-legacy-questions", Button.class);
 		Button recheck = lookup(robot, "#exam-assets-legacy-import-recheck", Button.class);

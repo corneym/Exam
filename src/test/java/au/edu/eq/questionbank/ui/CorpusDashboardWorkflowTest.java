@@ -29,10 +29,10 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
+import javafx.scene.control.Label;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TableView;
-import javafx.scene.control.TextField;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -43,7 +43,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void corpusDashboardHomeShowsLiveDashboardForWorkingSubject(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
-
 		WaitForAsyncUtils.asyncFx(() -> {
 
 			// Test the current Dashboard-home navigation model rather than the removed
@@ -53,7 +52,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		}).get();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
 		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
@@ -70,6 +68,12 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
 				.anyMatch(item -> "open-exam-for-capture".equals(item.getId())));
 
+		// Exam lifecycle is now owned by explicit Dashboard Exam selection rather than
+		// the unrelated concept of whichever booklet happens to be active in Capture.
+		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.anyMatch(item -> "mark-active-exam-complete".equals(item.getId())));
+		assertFalse(menuBar.getMenus().stream().flatMap(menu -> menu.getItems().stream())
+				.anyMatch(item -> "reactivate-active-exam".equals(item.getId())));
 		assertNotNull(exams);
 		assertNotNull(booklets);
 		assertNotNull(questionWork);
@@ -87,7 +91,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void dashboardLegacyImportDialogCancelReturnsHome(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
-
 		WaitForAsyncUtils.asyncFx(() -> {
 
 			// Begin on the operational home surface because ownership of cancellation is
@@ -95,10 +98,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isPresent());
-
 		Button importLegacy = lookup(robot, "#corpus-dashboard-import-legacy-questions", Button.class);
 		assertFalse(importLegacy.isDisabled());
 
@@ -106,7 +107,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// thread free to close the real DialogPane.
 		Platform.runLater(importLegacy::fire);
 		waitForDialogShowing(robot, "Import Legacy Question Metadata");
-
 		fireDialogButton(robot, "Cancel");
 		waitForDialogHidden(robot, "Import Legacy Question Metadata");
 
@@ -121,7 +121,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void dashboardLegacyImportEntersExamAssetsOwnedWorkflow(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
-
 		WaitForAsyncUtils.asyncFx(() -> {
 
 			// Return from the fixture's Capture workspace to the operational home surface.
@@ -144,7 +143,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// including any missing Exam/booklet requirements discovered by preflight.
 		Node examAssetsWorkspace = lookup(robot, "#exam-assets-workspace", Node.class);
 		assertTrue(examAssetsWorkspace.isVisible());
-
 		Button returnDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(returnDashboard.isVisible());
 		assertTrue(returnDashboard.isManaged());
@@ -164,147 +162,114 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void dashboardMissingAnswerCompletionRefreshesHomeAfterExplicitReturn(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1");
 
-		TextField questionCode = lookup(robot, "#question-code", TextField.class);
-		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		// Create one persisted Written Response Question whose only remaining corpus
+		// problem is its missing Answer.
+		Question question = captureQuestion(robot, "DASH-A1");
 
-		// Create one complete Question body through the ordinary capture workflow so
-		// its
-		// only remaining corpus problem is the missing written Answer.
-		robot.interact(() -> {
-			questionCode.setText("DASH-A1");
-			if (!marks.isDisabled()) {
-				marks.setText("1");
-			}
-		});
+		// Establish the authoritative AnswerFile mapping before entering the Dashboard.
+		// Closing the managed session afterwards ensures Dashboard capture must reopen
+		// that persisted source rather than accidentally reusing the test setup view.
+		openAnswerPdfForTest(question);
 
-		dragRegionOnDisplayedPage(robot);
-		fireControl(robot, "#add-question-region");
-
-		ComboBox<Question> unanswered = unansweredQuestions(robot);
-		fireControl(robot, "#save-question");
-
-		// Persistence and Answer-queue publication are the durable evidence that
-		// Question
-		// capture completed.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> unanswered.getItems().stream()
-				.anyMatch(question -> "DASH-A1".equals(question.getQuestionCode())));
-		WaitForAsyncUtils.waitForFxEvents();
-
-		Question question = unanswered.getItems().stream()
-				.filter(candidate -> "DASH-A1".equals(candidate.getQuestionCode())).findFirst().orElseThrow();
-
+		// PdfWorkspacePane owns JavaFX presentation state as well as the managed PDF
+		// sessions, so closing it must occur on the JavaFX application thread.
+		WaitForAsyncUtils.asyncFx(() -> {
+			pdfWorkspace().closeManagedPdfSessions();
+			return null;
+		}).get();
 		WaitForAsyncUtils.asyncFx(() -> {
 
-			// Return through the production Dashboard refresh path so the test starts from
-			// authoritative persistence rather than constructing a Dashboard fixture.
+			// Begin from the same authoritative Dashboard refresh used after ordinary
+			// specialised workflow navigation.
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			return robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery().filter(Button.class::isInstance)
-					.map(Button.class::cast).map(Button::getText).filter("1 Missing answers"::equals).isPresent();
-		});
-
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery()
+						.filter(Button.class::isInstance).map(Button.class::cast).map(Button::getText)
+						.filter("1 Missing answers"::equals).isPresent());
 		Button missingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
 		Button totalQuestions = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
 
-		// One persisted Question must be reported as one Missing Answer without
-		// changing
-		// the total corpus size.
+		// The Question is present exactly once and its Answer remains the outstanding
+		// Dashboard task.
 		assertEquals("1 Questions", totalQuestions.getText());
 		assertEquals("1 Missing answers", missingAnswers.getText());
-
 		fireControl(robot, missingAnswers);
-
 		@SuppressWarnings("unchecked")
 		TableView<Object> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> questionWork.getItems().size() == 1);
 
-		// Question Work owns the exact task. Select its only Missing Answer row rather
-		// than falling back to booklet-level Capture Answers.
+		// Route the exact Missing Answer row through the task-specific Dashboard
+		// action.
 		robot.interact(() -> questionWork.getSelectionModel().selectFirst());
-
 		Button completeAnswer = lookup(robot, "#corpus-dashboard-complete-answer", Button.class);
 		assertFalse(completeAnswer.isDisabled());
 		fireControl(robot, completeAnswer);
+		ComboBox<Question> unanswered = unansweredQuestions(robot);
 
-		// The selected persisted Question must become the Answer target in the
-		// Dashboard-owned Answer-only workspace.
+		// The selected persisted Question must own Answer capture.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> unanswered.getValue() != null && unanswered.getValue().getId() == question.getId());
-
 		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+		Label selectedAnswerPdf = lookup(robot, "#selected-answer-pdf", Label.class);
 		assertTrue(returnDashboard.isVisible());
 		assertTrue(returnDashboard.isManaged());
 
-		WaitForAsyncUtils.asyncFx(() -> {
+		// Dashboard Answer capture must reopen the authoritative assigned AnswerFile
+		// rather than depending on whichever document happened to be open previously.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> "exam.pdf".equals(selectedAnswerPdf.getText()));
 
-			// Persist an Answer without introducing unrelated PDF-region gesture behaviour;
-			// this regression is concerned with Dashboard ownership and refresh.
-			invoke(answerCapturePane(), "saveAnswer", new Class<?>[] { Question.class, String.class }, question, "A");
-			return null;
-		}).get();
-
+		// Written Response completion is region-based. Use the real pointer gesture
+		// only
+		// for PDF-region geometry, then semantic control activation for the actions.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-answer-region");
+		Label regionCount = lookup(robot, "#answer-region-count", Label.class);
+		Button saveAnswer = lookup(robot, "#save-answer", Button.class);
+		assertEquals("Regions: 1", regionCount.getText());
+		assertFalse(saveAnswer.isDisabled());
+		fireControl(robot, saveAnswer);
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 
-		// Wait for the durable Answer write rather than a transient save-state flag.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> repository.findById(question.getId()).orElseThrow().hasAnswer());
+		// Persistence is the durable completion condition for the Answer task.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> repository.findById(question.getId())
+				.filter(Question::hasAnswer).map(stored -> stored.getAnswer().getRegions().size() == 1).orElse(false));
 
-		// Save must not redirect automatically. Returning home remains the user's
-		// explicit navigation decision.
+		// Saving must leave Dashboard navigation under explicit user control.
 		assertTrue(returnDashboard.isVisible());
 		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
 		fireControl(robot, returnDashboard);
 
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			return robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery().filter(Button.class::isInstance)
-					.map(Button.class::cast).map(Button::getText).filter("0 Missing answers"::equals).isPresent();
-		});
-
+		// Returning home must reload corpus status from persistence and remove exactly
+		// the completed Missing Answer without creating a replacement Question.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery()
+						.filter(Button.class::isInstance).map(Button.class::cast).map(Button::getText)
+						.filter("0 Missing answers"::equals).isPresent());
 		Button refreshedMissingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
 		Button refreshedTotalQuestions = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
-
-		// Dashboard refresh must remove the completed work while preserving the
-		// original
-		// Question rather than creating a replacement or duplicate.
 		assertEquals("0 Missing answers", refreshedMissingAnswers.getText());
 		assertEquals("1 Questions", refreshedTotalQuestions.getText());
-
-		fireControl(robot, refreshedMissingAnswers);
-
-		@SuppressWarnings("unchecked")
-		TableView<Object> refreshedQuestionWork = robot.lookup("#corpus-dashboard-question-work")
-				.queryAs(TableView.class);
-
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> refreshedQuestionWork.getItems().isEmpty());
-		assertTrue(refreshedQuestionWork.getItems().isEmpty());
 	}
 
 	@Test
 	void dashboardOwnedPendingLegacyImportCancelReturnsHome(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
-
 		WaitForAsyncUtils.asyncFx(() -> {
 
 			// Establish an ordinary Dashboard-owned Exam/Assets return session.
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
-
 		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		robot.interact(() -> exams.getSelectionModel().selectFirst());
 		fireControl(robot, "#corpus-dashboard-manage-exam-assets");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
-
 		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
 
 		// Reproduce the state reached after Dashboard-launched workbook preflight found
@@ -319,7 +284,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 						throw new RuntimeException(exception);
 					}
 				}));
-
 		Button returnDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(returnDashboard.isVisible());
 
@@ -329,7 +293,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// itself.
 		assertTrue(returnDashboard.isDisabled());
 		fireControl(robot, "#exam-assets-legacy-import-cancel");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
@@ -340,7 +303,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
-
 		WaitForAsyncUtils.asyncFx(() -> {
 
 			// Begin from the production home surface so Dashboard-return ownership is
@@ -348,26 +310,20 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 			return !booklets.getItems().isEmpty();
 		});
-
 		TableView<?> dashboardBooklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		robot.interact(() -> dashboardBooklets.getSelectionModel().selectFirst());
-
 		Button manageExamAssets = lookup(robot, "#corpus-dashboard-manage-exam-assets", Button.class);
 		assertFalse(manageExamAssets.isDisabled());
 		fireControl(robot, manageExamAssets);
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
-
 		Button assetsReturn = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(assetsReturn.isVisible());
 		assertTrue(assetsReturn.isManaged());
-
 		RadioButton bookletSelection = lookup(robot, "#exam-assets-question-select-" + booklet.getId(),
 				RadioButton.class);
 		if (!bookletSelection.isSelected()) {
@@ -376,7 +332,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			// to this navigation regression.
 			fireControl(robot, bookletSelection);
 		}
-
 		Button useBooklet = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
 		assertFalse(useBooklet.isDisabled());
 		fireControl(robot, useBooklet);
@@ -385,7 +340,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// not for a transient worker flag.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#capture-workspace").tryQuery().isPresent());
-
 		Button captureReturn = lookup(robot, "#return-corpus-dashboard", Button.class);
 		assertTrue(captureReturn.isVisible());
 		assertTrue(captureReturn.isManaged());
@@ -395,11 +349,9 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
-
 		assetsReturn = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(assetsReturn.isVisible());
 		assertTrue(assetsReturn.isManaged());
-
 		Node busyOverlay = lookup(robot, "#workspace-busy-overlay", Node.class);
 		assertFalse(busyOverlay.isVisible());
 		assertFalse(busyOverlay.isManaged());
@@ -413,10 +365,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void legacyRecheckFeedbackNamesRemainingBookletRequirements(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		List<LegacyBookletRequirement> requirements = List.of(new LegacyBookletRequirement("QCAA", 2020, "MCQ booklet"),
 				new LegacyBookletRequirement("QCAA", 2020, "Paper 1"));
-
 		Platform.runLater(() -> {
 			try {
 
@@ -428,16 +378,13 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-
 		waitForDialogShowing(robot, "Legacy Question Import");
 		DialogPane dialog = showingDialogPane(robot, "Legacy Question Import");
-
 		assertEquals("Import not ready — booklet requirements remain.", dialog.getHeaderText());
 		assertTrue(dialog.getContentText().contains("QCAA 2020 — MCQ booklet"));
 		assertTrue(dialog.getContentText().contains("QCAA 2020 — Paper 1"));
 		assertTrue(dialog.getContentText().contains("booklet Name must match"));
 		assertTrue(dialog.getContentText().contains("edit that existing booklet"));
-
 		fireDialogButton(robot, "OK");
 		waitForDialogHidden(robot, "Legacy Question Import");
 	}

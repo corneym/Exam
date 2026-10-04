@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -90,6 +91,42 @@ class ExamCorpusAuditTest {
 		assertTrue(status.findings().isEmpty());
 		assertTrue(status.requiresAttention());
 		assertEquals(ExamCaptureState.COMPLETE, status.declaredCaptureState());
+	}
+
+	@Test
+	void completionReadinessRequiresExplicitCompleteCorpusStructure() {
+		BookletCorpusStatus readyPaper1 = new BookletCorpusStatus(fixture.paper1, true, fixture.answerFile, 1, 1,
+				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
+		BookletCorpusStatus readyPaper2 = new BookletCorpusStatus(fixture.paper2, true, fixture.answerFile, 1, 1,
+				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
+		ExamCorpusStatus ready = new ExamCorpusStatus(fixture.exam, new ExamAssetExpectations(2, 2, 1, 1),
+				List.of(readyPaper1, readyPaper2), new QuestionCorpusSummary(2, 2, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), Set.of());
+
+		// A fully declared structure with matching source counts and no Question work
+		// is
+		// ready irrespective of whether the persisted lifecycle is already COMPLETE.
+		assertTrue(ready.isReadyForCompletion());
+		ExamCorpusStatus unplanned = new ExamCorpusStatus(fixture.exam, new ExamAssetExpectations(null, 2, null, 1),
+				List.of(readyPaper1, readyPaper2), new QuestionCorpusSummary(2, 2, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), Set.of());
+		assertFalse(unplanned.isReadyForCompletion());
+		BookletCorpusStatus missingPdf = new BookletCorpusStatus(fixture.paper1, false, fixture.answerFile, 1, 1,
+				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				Set.of(BookletCorpusFinding.MISSING_QUESTION_PDF));
+		ExamCorpusStatus missingSource = new ExamCorpusStatus(fixture.exam, new ExamAssetExpectations(1, 1, 1, 1),
+				List.of(missingPdf), new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0),
+				Set.of());
+		assertFalse(missingSource.isReadyForCompletion());
+		BookletCorpusStatus incompleteQuestion = new BookletCorpusStatus(fixture.paper1, true, fixture.answerFile, 1, 1,
+				new QuestionCorpusSummary(1, 0, 1, 1, 1, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
+		ExamCorpusStatus questionWorkRemaining = new ExamCorpusStatus(fixture.exam,
+				new ExamAssetExpectations(1, 1, 1, 1), List.of(incompleteQuestion),
+				new QuestionCorpusSummary(1, 0, 1, 1, 1, 0, 0), new McqExplanationSummary(0, 0, 0), Set.of());
+
+		// Independent Question and Answer work must both be complete before lifecycle
+		// completion becomes available.
+		assertFalse(questionWorkRemaining.isReadyForCompletion());
 	}
 
 	@Test

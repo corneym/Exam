@@ -110,7 +110,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// selection alone as proof that its persistence-backed home state has loaded.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-no-exams").tryQuery().map(Node::isVisible).orElse(false));
-
 		Label noExams = lookup(robot, "#corpus-dashboard-no-exams", Label.class);
 		Button addExam = lookup(robot, "#corpus-dashboard-add-exam", Button.class);
 		Label curriculumStatus = lookup(robot, "#corpus-dashboard-mapping-review", Label.class);

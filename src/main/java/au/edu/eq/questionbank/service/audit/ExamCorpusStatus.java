@@ -92,6 +92,49 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 	}
 
 	/**
+	 * Returns whether this Exam has enough authoritative corpus structure and
+	 * content to be deliberately marked COMPLETE.
+	 * <p>
+	 * Completion requires recorded Exam-level asset expectations, matching
+	 * available assets, recorded and satisfied top-level Question expectations for
+	 * every booklet, available Question PDFs and no remaining ordinary Question
+	 * work. Optional MCQ explanation coverage does not affect lifecycle readiness.
+	 *
+	 * @return whether the audited Exam is ready to be marked COMPLETE
+	 */
+	public boolean isReadyForCompletion() {
+		Integer expectedQuestionBooklets = assetExpectations.expectedQuestionBookletCount();
+		Integer expectedAnswerFiles = assetExpectations.expectedAnswerFileCount();
+
+		// Completion is a deliberate assertion about a known Exam structure. Missing
+		// planning counts must not be interpreted as successful zero-defect counts.
+		if (expectedQuestionBooklets == null || expectedAnswerFiles == null) {
+			return false;
+		}
+		if (expectedQuestionBooklets.intValue() != assetExpectations.availableQuestionBookletCount()
+				|| expectedAnswerFiles.intValue() != assetExpectations.availableAnswerFileCount()) {
+			return false;
+		}
+
+		// Missing Question content, Answers, Shared Context or response type all keep
+		// the Exam operationally incomplete.
+		if (questionSummary.incompleteQuestions() != 0) {
+			return false;
+		}
+		for (BookletCorpusStatus bookletStatus : bookletStatuses) {
+			Integer expectedQuestions = bookletStatus.expectedTopLevelQuestionCount();
+
+			// Every declared Question booklet must still have its authoritative source and
+			// an explicit Question-count expectation that matches the encountered source.
+			if (!bookletStatus.questionPdfAvailable() || expectedQuestions == null
+					|| expectedQuestions.intValue() != bookletStatus.encounteredTopLevelQuestionCount()) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
 	 * Returns the user-declared lifecycle state independently of audit findings.
 	 *
 	 * @return persisted Exam capture state

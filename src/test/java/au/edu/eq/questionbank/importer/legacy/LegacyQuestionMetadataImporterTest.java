@@ -49,7 +49,6 @@ class LegacyQuestionMetadataImporterTest {
 	void ambiguousMixedLegacyQuestionRemainsUnknownDashboardWork() throws Exception {
 		Fixture fixture = createFixture("legacy-mixed-dashboard-work.db", false, false, ExamBookletQuestionFormat.MIXED,
 				null);
-
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
 				"2019");
 
@@ -65,13 +64,11 @@ class LegacyQuestionMetadataImporterTest {
 		assertEquals(0, summary.missingAnswer());
 		assertEquals(1, summary.unresolvedSharedContext());
 		assertEquals(1, summary.unknownResponseType());
-
 		List<QuestionCorpusWorkItem> unknownTypes = QuestionCorpusQueue.build(questions,
 				new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.INCOMPLETE,
 						QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
 		assertEquals(1, unknownTypes.size());
 		assertEquals("21a", unknownTypes.get(0).question().getQuestionCode());
-
 		List<QuestionCorpusWorkItem> missingAnswers = QuestionCorpusQueue.build(questions,
 				new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.INCOMPLETE,
 						QuestionCorpusProblem.MISSING_ANSWER));
@@ -85,7 +82,6 @@ class LegacyQuestionMetadataImporterTest {
 	void authoritativeMultipleChoiceBookletResolvesNumberedLegacyQuestion() throws Exception {
 		Fixture fixture = createFixture("legacy-mcq-format.db", false, false, ExamBookletQuestionFormat.MULTIPLE_CHOICE,
 				null);
-
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
 				"2019");
 
@@ -98,7 +94,6 @@ class LegacyQuestionMetadataImporterTest {
 	void authoritativeWrittenResponseBookletResolvesNumberedLegacyQuestion() throws Exception {
 		Fixture fixture = createFixture("legacy-written-format.db", false, false,
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, null);
-
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
 				"2019");
 
@@ -112,7 +107,6 @@ class LegacyQuestionMetadataImporterTest {
 		Fixture fixture = createFixture("classification-conflict-detail.db", false);
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
 		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
-
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
 
@@ -128,7 +122,6 @@ class LegacyQuestionMetadataImporterTest {
 					WHERE question_code = '1'
 					""");
 		}
-
 		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
 				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
 
@@ -270,7 +263,6 @@ class LegacyQuestionMetadataImporterTest {
 	void importedWrittenResponseBecomesMissingAnswerDashboardWork() throws Exception {
 		Fixture fixture = createFixture("legacy-written-dashboard-work.db", false, false,
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, null);
-
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
 				"2019");
 
@@ -288,7 +280,6 @@ class LegacyQuestionMetadataImporterTest {
 		assertEquals(1, summary.missingAnswer());
 		assertEquals(1, summary.unresolvedSharedContext());
 		assertEquals(0, summary.unknownResponseType());
-
 		List<QuestionCorpusWorkItem> missingAnswers = QuestionCorpusQueue.build(questions,
 				new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.INCOMPLETE,
 						QuestionCorpusProblem.MISSING_ANSWER));
@@ -297,7 +288,6 @@ class LegacyQuestionMetadataImporterTest {
 		// directly as Answer work rather than first requiring response-type resolution.
 		assertEquals(1, missingAnswers.size());
 		assertEquals("21a", missingAnswers.get(0).question().getQuestionCode());
-
 		List<QuestionCorpusWorkItem> unknownTypes = QuestionCorpusQueue.build(questions,
 				new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.INCOMPLETE,
 						QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
@@ -460,7 +450,6 @@ class LegacyQuestionMetadataImporterTest {
 	@Test
 	void mixedBookletUsesLegacyAnswerAsMultipleChoiceEvidence() throws Exception {
 		Fixture fixture = createFixture("legacy-mixed-answer.db", false, false, ExamBookletQuestionFormat.MIXED, "C");
-
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
 				"2019");
 
@@ -472,7 +461,6 @@ class LegacyQuestionMetadataImporterTest {
 	@Test
 	void mixedBookletWithoutLegacyMcqEvidenceRemainsUnknown() throws Exception {
 		Fixture fixture = createFixture("legacy-mixed-unknown.db", false, false, ExamBookletQuestionFormat.MIXED, null);
-
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
 				"2019");
 
@@ -593,13 +581,10 @@ class LegacyQuestionMetadataImporterTest {
 	void writtenResponseBookletRejectsLegacyMcqEvidence() throws Exception {
 		Fixture fixture = createFixture("legacy-response-conflict.db", false, false,
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, "C");
-
 		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
 				() -> new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(),
 						"Chemistry", "2019"));
-
 		assertTrue(exception.getMessage().contains("Legacy MCQ evidence conflicts"));
-
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
 
@@ -652,19 +637,15 @@ class LegacyQuestionMetadataImporterTest {
 			throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
 		database.initialiseSchema();
-
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
 		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
-
 		Unit unit1 = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
 		Topic topic1 = curriculumWriter.insertTopic(unit1, "1.1", "Topic 1", 1);
 		curriculumWriter.insertSubtopic(topic1, "1.1.1", "Subtopic 1", 1);
-
 		Unit unit2 = curriculumWriter.insertUnit(syllabus, "2", "Unit 2", 2);
 		Topic topic2 = curriculumWriter.insertTopic(unit2, "2.3", "Topic 2.3", 1);
 		curriculumWriter.insertSubtopic(topic2, "2.3.1", "Subtopic 2.3.1", 1);
-
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 
@@ -672,7 +653,6 @@ class LegacyQuestionMetadataImporterTest {
 		// independently sufficient evidence for response-type import.
 		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "MCQ booklet",
 				"Chemistry/2020/mcq.pdf");
-
 		if (paper1Format == null) {
 
 			// Legacy fixtures deliberately retain UNSPECIFIED format so existing tests
@@ -686,7 +666,6 @@ class LegacyQuestionMetadataImporterTest {
 			examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1",
 					"Chemistry/2020/paper1.pdf", paper1Format);
 		}
-
 		Path workbookPath = createWorkbook(invalidSecondClassification, mcqSharedContextRequired, paper1Answer);
 		return new Fixture(database, workbookPath);
 	}
@@ -694,10 +673,8 @@ class LegacyQuestionMetadataImporterTest {
 	private Path createWorkbook(boolean invalidSecondClassification, boolean mcqSharedContextRequired,
 			String paper1Answer) throws Exception {
 		Path path = tempDirectory.resolve("legacy-" + System.nanoTime() + ".xlsx");
-
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("QCAA");
-
 			Row header = sheet.createRow(0);
 			header.createCell(0).setCellValue("Year");
 			header.createCell(1).setCellValue("Paper");
@@ -706,7 +683,6 @@ class LegacyQuestionMetadataImporterTest {
 			header.createCell(4).setCellValue("Topic");
 			header.createCell(5).setCellValue("Answer");
 			header.createCell(6).setCellValue("Preamble");
-
 			Row first = sheet.createRow(1);
 			first.createCell(0).setCellValue(2020);
 			first.createCell(1).setCellValue("MCQ");
@@ -714,32 +690,26 @@ class LegacyQuestionMetadataImporterTest {
 			first.createCell(3).setCellValue(1);
 			first.createCell(4).setCellValue("1.1.1");
 			first.createCell(5).setCellValue("B");
-
 			if (mcqSharedContextRequired) {
 				first.createCell(6).setCellValue(1);
 			}
-
 			Row second = sheet.createRow(2);
 			second.createCell(0).setCellValue(2020);
 			second.createCell(1).setCellValue("1");
 			second.createCell(2).setCellValue("21a");
 			second.createCell(3).setCellValue(3);
 			second.createCell(4).setCellValue(invalidSecondClassification ? "9.9.9" : "2.3.1");
-
 			if (paper1Answer != null && !paper1Answer.isBlank()) {
 
 				// Some historical numbered-paper rows contain an authoritative MCQ letter.
 				// Preserve that evidence exactly as the production workbook reader sees it.
 				second.createCell(5).setCellValue(paper1Answer);
 			}
-
 			second.createCell(6).setCellValue(1);
-
 			try (OutputStream output = Files.newOutputStream(path)) {
 				workbook.write(output);
 			}
 		}
-
 		return path;
 	}
 
