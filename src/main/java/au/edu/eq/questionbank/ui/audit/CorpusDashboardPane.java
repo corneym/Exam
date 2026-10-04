@@ -152,6 +152,17 @@ public final class CorpusDashboardPane extends VBox {
 	private boolean mcqExplanationFilterActive;
 	private final Button missingMcqExplanationButton = new Button();
 
+	/**
+	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
+	 * <p>
+	 * This compatibility constructor assumes curriculum is available for the
+	 * Working Subject.
+	 *
+	 * @param workingSubject   authoritative application Subject
+	 * @param examStatuses     structural Exam audit state
+	 * @param questions        current Question corpus
+	 * @param mappingCoverages curriculum mapping-review coverage
+	 */
 	public CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions,
 			List<CurriculumMappingCoverage> mappingCoverages) {
 
@@ -257,6 +268,16 @@ public final class CorpusDashboardPane extends VBox {
 		}
 	}
 
+	/**
+	 * Replaces the persistence-derived Dashboard data while retaining the current
+	 * curriculum-availability state.
+	 *
+	 * @param updatedStatuses         refreshed Exam audit state
+	 * @param updatedQuestions        refreshed Question corpus
+	 * @param updatedMappingCoverages refreshed curriculum mapping coverage
+	 * @param preferredQuestionId     Question to restore when still visible, or a
+	 *                                non-positive value for no preferred Question
+	 */
 	public void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
 			List<CurriculumMappingCoverage> updatedMappingCoverages, long preferredQuestionId) {
 
@@ -267,6 +288,13 @@ public final class CorpusDashboardPane extends VBox {
 				preferredQuestionId);
 	}
 
+	/**
+	 * Supplies the application-owned action for adding curriculum to the current
+	 * Working Subject.
+	 *
+	 * @param handler operation that opens curriculum creation
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
 	public void setAddCurriculumHandler(Runnable handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -294,6 +322,13 @@ public final class CorpusDashboardPane extends VBox {
 		addExamHandler = handler;
 	}
 
+	/**
+	 * Supplies the application-owned route for completing ordinary Answer work for
+	 * a selected Question.
+	 *
+	 * @param handler operation receiving the Question whose Answer work should open
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
 	public void setAnswerCaptureHandler(Consumer<Question> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -304,6 +339,14 @@ public final class CorpusDashboardPane extends VBox {
 		answerCaptureHandler = handler;
 	}
 
+	/**
+	 * Supplies the persistence action for resolving the response type of selected
+	 * Questions in bulk.
+	 *
+	 * @param handler operation receiving the selected Questions and replacement
+	 *                response type
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
 	public void setBulkResponseTypeHandler(BiConsumer<List<Question>, QuestionResponseType> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -313,6 +356,13 @@ public final class CorpusDashboardPane extends VBox {
 		bulkResponseTypeHandler = handler;
 	}
 
+	/**
+	 * Supplies the application-owned route into Exam / Assets for the selected Exam
+	 * and optional Question booklet.
+	 *
+	 * @param handler operation receiving the Exam and selected booklet context
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
 	public void setExamAssetsHandler(BiConsumer<Exam, ExamBooklet> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -355,6 +405,13 @@ public final class CorpusDashboardPane extends VBox {
 		legacyQuestionImportHandler = handler;
 	}
 
+	/**
+	 * Supplies the application-owned action for reviewing curriculum mappings for
+	 * the current Working Subject.
+	 *
+	 * @param handler operation that opens curriculum mapping review
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
 	public void setMapCurriculumHandler(Runnable handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -382,6 +439,13 @@ public final class CorpusDashboardPane extends VBox {
 		mcqExplanationCaptureHandler = handler;
 	}
 
+	/**
+	 * Supplies the application-owned route for starting new Question capture for a
+	 * selected Question booklet.
+	 *
+	 * @param handler operation receiving the booklet in which capture should start
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
 	public void setNewQuestionCaptureHandler(Consumer<ExamBooklet> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -392,6 +456,14 @@ public final class CorpusDashboardPane extends VBox {
 		newQuestionCaptureHandler = handler;
 	}
 
+	/**
+	 * Supplies the application-owned route for completing Question-side work for an
+	 * existing Question.
+	 *
+	 * @param handler operation receiving the Question whose outstanding work should
+	 *                open
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
 	public void setQuestionCorrectionHandler(Consumer<Question> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
