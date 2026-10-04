@@ -92,13 +92,14 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 	}
 
 	/**
-	 * Returns whether this Exam has enough authoritative corpus structure and
-	 * content to be deliberately marked COMPLETE.
+	 * Returns whether this Exam has enough authoritative corpus structure,
+	 * classification and content to be deliberately marked COMPLETE.
 	 * <p>
 	 * Completion requires recorded Exam-level asset expectations, matching
 	 * available assets, recorded and satisfied top-level Question expectations for
-	 * every booklet, available Question PDFs and no remaining ordinary Question
-	 * work. Optional MCQ explanation coverage does not affect lifecycle readiness.
+	 * every booklet, available Question PDFs, descriptor-level classification for
+	 * every Question and no remaining ordinary Question work. Optional MCQ
+	 * explanation coverage does not affect lifecycle readiness.
 	 *
 	 * @return whether the audited Exam is ready to be marked COMPLETE
 	 */
@@ -122,6 +123,12 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 			return false;
 		}
 		for (BookletCorpusStatus bookletStatus : bookletStatuses) {
+
+			// A Question classified only to Subtopic cannot yet participate reliably in
+			// descriptor-level curriculum mapping, so the Exam is not complete.
+			if (bookletStatus.questionsWithoutDescriptorCount() != 0) {
+				return false;
+			}
 			Integer expectedQuestions = bookletStatus.expectedTopLevelQuestionCount();
 
 			// Every declared Question booklet must still have its authoritative source and

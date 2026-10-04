@@ -406,7 +406,6 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
 	void examLifecycleActionUsesSelectedExamAuditState(FxRobot robot) {
 		AtomicReference<Exam> routedExam = new AtomicReference<>();
 		AtomicReference<ExamCaptureState> routedState = new AtomicReference<>();
@@ -416,8 +415,8 @@ class CorpusDashboardPaneTest {
 		}));
 		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
 
-		// The initially selected COMPLETE Exam can always be reopened, even though its
-		// current audit contains unfinished corpus work.
+		// The initially selected COMPLETE Exam can always be reopened even when its
+		// current audit reports unfinished corpus work.
 		assertEquals("Mark Active", lifecycle.getText());
 		assertFalse(lifecycle.isDisable());
 		robot.interact(lifecycle::fire);
@@ -426,7 +425,20 @@ class CorpusDashboardPaneTest {
 		robot.interact(() -> pane.replaceData(List.of(fixture.activeExamStatus), List.of()));
 
 		// ACTIVE lifecycle alone is insufficient. This fixture still has structural
-		// count mismatches, so completion remains unavailable.
+		// count mismatches.
+		assertEquals("Mark Complete", lifecycle.getText());
+		assertTrue(lifecycle.isDisable());
+		BookletCorpusStatus missingDescriptor = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 1,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		ExamCorpusStatus classificationIncompleteExam = new ExamCorpusStatus(fixture.activeExam,
+				new ExamAssetExpectations(1, 1, 0, 0), List.of(missingDescriptor),
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0),
+				EnumSet.noneOf(ExamCorpusFinding.class));
+		robot.interact(() -> pane.replaceData(List.of(classificationIncompleteExam), List.of()));
+
+		// Matching structural and ordinary Question counts are still insufficient while
+		// even one Question has not reached descriptor-level classification.
 		assertEquals("Mark Complete", lifecycle.getText());
 		assertTrue(lifecycle.isDisable());
 		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
@@ -437,8 +449,8 @@ class CorpusDashboardPaneTest {
 				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
 		robot.interact(() -> pane.replaceData(List.of(readyExam), List.of()));
 
-		// Once every recorded structural expectation and ordinary Question task is
-		// complete, the same selected ACTIVE Exam becomes completable.
+		// Mark Complete becomes available only after structural, ordinary Question and
+		// descriptor-classification work are all complete.
 		assertEquals("Mark Complete", lifecycle.getText());
 		assertFalse(lifecycle.isDisable());
 		routedExam.set(null);

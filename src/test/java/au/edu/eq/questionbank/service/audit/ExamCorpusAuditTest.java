@@ -103,9 +103,7 @@ class ExamCorpusAuditTest {
 				List.of(readyPaper1, readyPaper2), new QuestionCorpusSummary(2, 2, 0, 0, 0, 0, 0),
 				new McqExplanationSummary(0, 0, 0), Set.of());
 
-		// A fully declared structure with matching source counts and no Question work
-		// is
-		// ready irrespective of whether the persisted lifecycle is already COMPLETE.
+		// Every structural, content and classification requirement is satisfied.
 		assertTrue(ready.isReadyForCompletion());
 		ExamCorpusStatus unplanned = new ExamCorpusStatus(fixture.exam, new ExamAssetExpectations(null, 2, null, 1),
 				List.of(readyPaper1, readyPaper2), new QuestionCorpusSummary(2, 2, 0, 0, 0, 0, 0),
@@ -127,6 +125,15 @@ class ExamCorpusAuditTest {
 		// Independent Question and Answer work must both be complete before lifecycle
 		// completion becomes available.
 		assertFalse(questionWorkRemaining.isReadyForCompletion());
+		BookletCorpusStatus missingDescriptor = new BookletCorpusStatus(fixture.paper1, true, fixture.answerFile, 1, 1,
+				1, new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
+		ExamCorpusStatus classificationWorkRemaining = new ExamCorpusStatus(fixture.exam,
+				new ExamAssetExpectations(1, 1, 1, 1), List.of(missingDescriptor),
+				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0), Set.of());
+
+		// Ordinary Question completeness alone is insufficient. Every Question must
+		// reach descriptor-level classification before the Exam can be completed.
+		assertFalse(classificationWorkRemaining.isReadyForCompletion());
 	}
 
 	@Test
