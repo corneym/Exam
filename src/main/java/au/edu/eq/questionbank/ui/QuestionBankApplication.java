@@ -1861,7 +1861,11 @@ public class QuestionBankApplication extends Application {
 		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question);
 		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
 		if (result.isEmpty()) {
-			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+
+			// The metadata Dialog has only just hidden. Reuse the Search Dialog on the
+			// next JavaFX turn so its previous hide lifecycle has fully completed first.
+			Platform.runLater(
+					() -> showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService));
 			return;
 		}
 		LegacyQuestionMetadataDialog.Result replacement = result.get();
@@ -1877,15 +1881,27 @@ public class QuestionBankApplication extends Application {
 			answerCapturePane.refreshQuestions();
 			if (updateResult
 					.sharedContextOutcome() == LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
+
+				// Shared-context conversion deliberately introduces its own follow-up
+				// decision workflow before Search is resumed.
 				offerQuestionRecaptureAfterSharedContextConversion(primaryStage, searchDialog, updated,
 						curriculumRepository, metadataService);
 				return;
 			}
-			resumeSearchAfterEdit(primaryStage, searchDialog, updated.getId(), curriculumRepository, metadataService);
+
+			// A metadata-only correction has no intervening workspace or modal step.
+			// Defer Search reuse until this metadata Dialog's Save event has completely
+			// unwound; otherwise the reusable Search showAndWait() can be lost.
+			Platform.runLater(() -> resumeSearchAfterEdit(primaryStage, searchDialog, updated.getId(),
+					curriculumRepository, metadataService));
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Edit Question Metadata", "The question metadata could not be saved.",
 					exception.getMessage());
-			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+
+			// The error Dialog has also just completed a nested modal lifecycle. Resume
+			// Search on the next JavaFX turn rather than nesting another immediate reuse.
+			Platform.runLater(
+					() -> showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService));
 		}
 	}
 

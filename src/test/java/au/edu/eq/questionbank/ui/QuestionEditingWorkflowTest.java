@@ -38,8 +38,11 @@ import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
@@ -409,9 +412,23 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 			responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE);
 		});
 
-		// Saving resumes modal Search synchronously, so schedule the exact control and
-		// wait on persisted state rather than blocking inside Button.fire().
-		fireControlLaterInShowingDialog(robot, "Edit Question Metadata", "#legacy-metadata-save");
+		// Resolve the actual OK_DONE ButtonType from the currently showing metadata
+		// DialogPane. Search resumption is deferred by the application, so this Save
+		// can
+		// now complete synchronously and prove the persistence action really occurred.
+		DialogPane metadataDialog = showingDialogPane(robot, "Edit Question Metadata");
+		assertNotNull(metadataDialog);
+		ButtonType saveMetadataType = metadataDialog.getButtonTypes().stream()
+				.filter(buttonType -> buttonType.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst()
+				.orElseThrow(() -> new AssertionError("Metadata dialog has no Save action"));
+		Button saveMetadata = (Button) metadataDialog.lookupButton(saveMetadataType);
+		assertNotNull(saveMetadata);
+		assertFalse(saveMetadata.isDisabled());
+
+		// Fire the DialogPane-owned action directly. This completes metadata
+		// persistence
+		// before the test starts waiting for the durable SQLite result.
+		fireControl(robot, saveMetadata);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> repository.findById(metadataOnlyQuestion.getId())
 				.map(question -> "61a".equals(question.getQuestionCode())).orElse(false));
 		Question updated = repository.findById(metadataOnlyQuestion.getId()).orElseThrow();
