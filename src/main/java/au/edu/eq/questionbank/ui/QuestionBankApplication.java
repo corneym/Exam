@@ -234,6 +234,7 @@ public class QuestionBankApplication extends Application {
 	private VBox classificationContext;
 	private boolean legacyQuestionImportDashboardOwned;
 	private SqliteExamAssetDeletionService examAssetDeletionService;
+	private long corpusDashboardRefreshGeneration;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
@@ -2568,6 +2569,15 @@ public class QuestionBankApplication extends Application {
 		questionCapturePane.refreshImportedQuestions();
 	}
 
+	private boolean isCurrentCorpusDashboardRefresh(Subject subject, long subjectGeneration, long dashboardGeneration) {
+
+		// Subject generation rejects work for an obsolete Working Subject. Dashboard
+		// generation additionally rejects an older refresh for the same Subject when a
+		// newer persistence snapshot has already been requested.
+		return dashboardGeneration == corpusDashboardRefreshGeneration
+				&& isCurrentWorkingSubjectRefresh(subject, subjectGeneration);
+	}
+
 	private boolean isCurrentWorkingSubjectRefresh(Subject subject, long generation) {
 
 		// Both generation and Subject identity must still describe the currently
@@ -2589,6 +2599,11 @@ public class QuestionBankApplication extends Application {
 
 	// TODO Refactor to remove inner class
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
+
+		// Several Dashboard refreshes may legitimately be requested within one Working
+		// Subject generation. Only the newest request may publish its snapshot.
+		long dashboardGeneration = ++corpusDashboardRefreshGeneration;
+
 		Task<CorpusDashboardSnapshot> task = new Task<>() {
 
 			@Override
@@ -2600,9 +2615,10 @@ public class QuestionBankApplication extends Application {
 			}
 		};
 		task.setOnSucceeded(_ -> {
-			if (!isCurrentWorkingSubjectRefresh(dashboardSubject, generation)) {
+			if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
 
-				// A later Subject selection owns the home surface.
+				// A later Subject change or later Dashboard refresh already owns the home
+				// surface. Never allow this older snapshot to overwrite newer persisted state.
 				return;
 			}
 			CorpusDashboardSnapshot snapshot = task.getValue();
@@ -2617,13 +2633,19 @@ public class QuestionBankApplication extends Application {
 					snapshot.curriculumAvailable(), preferredQuestionId);
 		});
 		task.setOnFailed(_ -> {
-			if (!isCurrentWorkingSubjectRefresh(dashboardSubject, generation)) {
+			if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
+
+				// Failure from superseded work is no longer relevant to the visible
+				// Dashboard and must not interrupt the newer request.
 				return;
 			}
 			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
 					failureMessage(task.getException()));
 		});
-		Thread thread = new Thread(task, "corpus-dashboard-home-refresh-" + generation);
+
+		// Include both generations in the worker name so concurrent refreshes remain
+		// distinguishable during diagnostics.
+		Thread thread = new Thread(task, "corpus-dashboard-home-refresh-" + generation + "-" + dashboardGeneration);
 		thread.setDaemon(true);
 		thread.start();
 	}
