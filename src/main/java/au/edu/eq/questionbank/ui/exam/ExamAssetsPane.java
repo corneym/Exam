@@ -122,6 +122,9 @@ public final class ExamAssetsPane extends VBox {
 	// Keep the persistence snapshot used to distinguish edited planning values from
 	// the currently available asset counts.
 	private ExamAssetExpectations selectedExamAssetExpectations;
+	private final List<Button> answerFileDeleteButtons = new ArrayList<>();
+	private final Consumer<AnswerFile> answerFileDeleteHandler;
+	private final Consumer<ExamBooklet> questionBookletDeleteHandler;
 
 	// TODO
 	// The EXAM label and its components should be surrounded with a border. The
@@ -157,8 +160,12 @@ public final class ExamAssetsPane extends VBox {
 	 * @param optionsRepository                        reusable Exam metadata labels
 	 * @param correctionHandler                        authoritative Exam metadata
 	 *                                                 correction
+	 * @param questionBookletDeleteHandler             deletes one persisted
+	 *                                                 Question booklet
 	 * @param questionBookletViewHandler               opens a Question booklet
 	 *                                                 read-only
+	 * @param answerFileDeleteHandler                  deletes one persisted Answer
+	 *                                                 booklet
 	 * @param answerFileViewHandler                    opens an Answer booklet
 	 *                                                 read-only
 	 * @param activeBookletSupplier                    current authoritative capture
@@ -187,7 +194,8 @@ public final class ExamAssetsPane extends VBox {
 	 */
 	public ExamAssetsPane(SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter,
 			ExamMetadataOptionsRepository optionsRepository, ExamCorrectionHandler correctionHandler,
-			Consumer<ExamBooklet> questionBookletViewHandler, Consumer<AnswerFile> answerFileViewHandler,
+			Consumer<ExamBooklet> questionBookletDeleteHandler, Consumer<ExamBooklet> questionBookletViewHandler,
+			Consumer<AnswerFile> answerFileDeleteHandler, Consumer<AnswerFile> answerFileViewHandler,
 			Supplier<ExamBooklet> activeBookletSupplier, Consumer<ExamBooklet> captureBookletHandler,
 			Consumer<ExamBooklet> bookletMetadataUpdatedHandler, Supplier<Path> answerBookletSourceChooser,
 			AnswerBookletCreationHandler answerBookletCreationHandler, Supplier<Path> questionBookletSourceChooser,
@@ -205,8 +213,14 @@ public final class ExamAssetsPane extends VBox {
 		if (correctionHandler == null) {
 			throw new NullPointerException("correctionHandler");
 		}
+		if (questionBookletDeleteHandler == null) {
+			throw new NullPointerException("questionBookletDeleteHandler");
+		}
 		if (questionBookletViewHandler == null) {
 			throw new NullPointerException("questionBookletViewHandler");
+		}
+		if (answerFileDeleteHandler == null) {
+			throw new NullPointerException("answerFileDeleteHandler");
 		}
 		if (answerFileViewHandler == null) {
 			throw new NullPointerException("answerFileViewHandler");
@@ -242,7 +256,9 @@ public final class ExamAssetsPane extends VBox {
 		this.answerWriter = answerWriter;
 		this.optionsRepository = optionsRepository;
 		this.correctionHandler = correctionHandler;
+		this.questionBookletDeleteHandler = questionBookletDeleteHandler;
 		this.questionBookletViewHandler = questionBookletViewHandler;
+		this.answerFileDeleteHandler = answerFileDeleteHandler;
 		this.answerFileViewHandler = answerFileViewHandler;
 		this.activeBookletSupplier = activeBookletSupplier;
 		this.captureBookletHandler = captureBookletHandler;
@@ -258,14 +274,10 @@ public final class ExamAssetsPane extends VBox {
 		this.answerBookletSourceChooser = answerBookletSourceChooser;
 		this.answerBookletCreationHandler = answerBookletCreationHandler;
 
-		// Previewing the selected pre-persistence PDF still belongs to the application
-		// because the shared PdfWorkspacePane is application-owned.
+		// Preview and deletion both cross the application-owned persistence/PDF
+		// boundary; the pane only exposes the user's structural intent.
 		this.questionBookletSourcePreviewHandler = questionBookletSourcePreviewHandler;
 		this.questionBookletSourcePreviewCloseHandler = questionBookletSourcePreviewCloseHandler;
-
-		// Exam/Assets owns structural asset editing while application-level callbacks
-		// keep an already-active Capture booklet synchronised after persistence
-		// changes.
 		configureControls();
 		buildContent();
 		setId("exam-assets-workspace");
@@ -600,6 +612,7 @@ public final class ExamAssetsPane extends VBox {
 		List<ExamBooklet> booklets = snapshot.booklets().stream().map(BookletSnapshot::booklet).toList();
 		refreshBookletNameSuggestions(booklets);
 		availableAnswerFiles = snapshot.answerFiles();
+		answerFileDeleteButtons.clear();
 		if (snapshot.booklets().isEmpty()) {
 			questionBookletsBox.getChildren().setAll(new Label("No Question booklets recorded."));
 		} else {
@@ -895,6 +908,11 @@ public final class ExamAssetsPane extends VBox {
 		assessmentField.setValue(null);
 		assessmentField.getEditor().clear();
 
+		// Asset expectations belong to the same New Exam transaction as Provider, Year
+		// and Assessment, so Clear must discard them together.
+		expectedQuestionBookletsField.clear();
+		expectedAnswerBookletsField.clear();
+
 		// Clearing returns the transaction to its incomplete state without leaving New
 		// Exam mode.
 		updateNewExamSaveState();
@@ -930,9 +948,11 @@ public final class ExamAssetsPane extends VBox {
 		expectedAnswerBookletsField.clear();
 		selectedExamAssetExpectations = null;
 
-		// Row editors belong to the currently displayed persisted Exam only.
+		// Row editors and their destructive actions belong only to the currently
+		// displayed persisted Exam.
 		editingBookletEditor = null;
 		questionBookletEditors.clear();
+		answerFileDeleteButtons.clear();
 		bookletNameSuggestions = DEFAULT_BOOKLET_NAME_SUGGESTIONS;
 
 		// Answer choices belong only to the Exam currently displayed.
@@ -1155,14 +1175,26 @@ public final class ExamAssetsPane extends VBox {
 		Button viewButton = new Button("View");
 		viewButton.setId("exam-assets-answer-view-" + answerFile.getId());
 		viewButton.setMinWidth(Region.USE_PREF_SIZE);
-
-		// The filename absorbs whatever horizontal space remains while View stays fully
-		// visible at the right edge of the workspace.
-		HBox.setHgrow(source, Priority.ALWAYS);
-		HBox sourceRow = new HBox(SPACING, source, viewButton);
-
-		// Answer booklet inspection remains independent of Question/Answer capture.
 		viewButton.setOnAction(_ -> answerFileViewHandler.accept(answerFile));
+		Button deleteButton = new Button("Delete");
+		deleteButton.setId("exam-assets-answer-delete-" + answerFile.getId());
+		deleteButton.setMinWidth(Region.USE_PREF_SIZE);
+		deleteButton.setUserData(answerFile);
+		deleteButton.setOnAction(_ -> {
+			if (structuralTransactionActive() || answerFile.getExam().isComplete()) {
+				return;
+			}
+
+			// The application owns confirmation, transactional deletion and managed-file
+			// cleanup. This row publishes only the selected persisted asset.
+			answerFileDeleteHandler.accept(answerFile);
+		});
+		answerFileDeleteButtons.add(deleteButton);
+
+		// The filename absorbs remaining horizontal space while the two asset actions
+		// stay fully visible.
+		HBox.setHgrow(source, Priority.ALWAYS);
+		HBox sourceRow = new HBox(SPACING, source, viewButton, deleteButton);
 		CheckBox explanations = new CheckBox("Contains answer explanations");
 		explanations.setId("exam-assets-answer-explanations-" + answerFile.getId());
 
@@ -1470,6 +1502,24 @@ public final class ExamAssetsPane extends VBox {
 		}
 	}
 
+	private void refreshAnswerFileDeleteStates() {
+		boolean transactionActive = structuralTransactionActive();
+		for (Button deleteButton : answerFileDeleteButtons) {
+			Object value = deleteButton.getUserData();
+			if (!(value instanceof AnswerFile answerFile)) {
+
+				// Every retained button must identify the authoritative AnswerFile row it
+				// controls. An invalid row is safer disabled than guessed.
+				deleteButton.setDisable(true);
+				continue;
+			}
+
+			// Asset deletion is structural and follows the same COMPLETE and staged-work
+			// locks as other Exam/Assets changes.
+			deleteButton.setDisable(transactionActive || answerFile.getExam().isComplete());
+		}
+	}
+
 	private void refreshBookletNameSuggestions(List<ExamBooklet> booklets) {
 		LinkedHashSet<String> suggestions = new LinkedHashSet<>(DEFAULT_BOOKLET_NAME_SUGGESTIONS);
 
@@ -1508,6 +1558,9 @@ public final class ExamAssetsPane extends VBox {
 		for (QuestionBookletEditor editor : questionBookletEditors) {
 			editor.updateActionState();
 		}
+
+		// Answer asset deletion participates in the same structural transaction lock.
+		refreshAnswerFileDeleteStates();
 
 		// New Exam is another structural workspace operation and follows the same
 		// transaction exclusion rules.
@@ -1674,8 +1727,26 @@ public final class ExamAssetsPane extends VBox {
 		String providerName = editedText(providerField);
 		Integer year = yearField.getValue();
 		String assessmentName = editedText(assessmentField);
+		Integer expectedQuestionBooklets;
+		Integer expectedAnswerBooklets;
 		try {
-			Exam created = examWriter.createExam(workingSubject, providerName, year.intValue(), assessmentName);
+
+			// New Exam accepts the same optional planning values and validation rules as
+			// later Exam Details correction.
+			expectedQuestionBooklets = parseExpectedAssetCount(expectedQuestionBookletsField,
+					"Expected Question booklets", false);
+			expectedAnswerBooklets = parseExpectedAssetCount(expectedAnswerBookletsField, "Expected Answer booklets",
+					true);
+		} catch (IllegalArgumentException exception) {
+			showNewExamError(exception.getMessage());
+			return;
+		}
+		try {
+
+			// Persist identity and initial structural expectations together so New Exam
+			// does not require an immediate follow-up Edit.
+			Exam created = examWriter.createExam(workingSubject, providerName, year.intValue(), assessmentName,
+					expectedQuestionBooklets, expectedAnswerBooklets);
 
 			// Successful manual entry also enriches the reusable suggestions presented by
 			// subsequent Exam creation and correction workflows.
@@ -1690,13 +1761,13 @@ public final class ExamAssetsPane extends VBox {
 			// session may now return and refresh its authoritative Subject snapshot.
 			updateCorpusDashboardReturnState();
 
-			// Reload from SQLite rather than treating the returned object as sufficient
-			// proof of authoritative workspace state.
+			// Reload from SQLite so the visible planning values prove that the single Save
+			// committed both identity and structural expectations.
 			reloadSubjectExams(workingSubject, Long.valueOf(createdExamId));
 		} catch (SQLException | IllegalArgumentException exception) {
 
-			// Failed creation leaves all entered values staged so the user can correct the
-			// metadata rather than re-entering the transaction.
+			// Failed creation leaves every entered identity and planning value staged so
+			// the teacher can correct the form without starting again.
 			showNewExamError(exception.getMessage());
 		}
 	}
@@ -1802,11 +1873,13 @@ public final class ExamAssetsPane extends VBox {
 		stateLabel.setText("NEW EXAM");
 		clearNewExamFields();
 
-		// Provider, Year and Assessment are the only Exam identity values entered here.
-		// Subject remains inherited from the permanent Working Subject control.
+		// New Exam owns both identity and initial structural planning. Subject remains
+		// inherited from the permanent Working Subject control.
 		providerField.setDisable(false);
 		yearField.setDisable(false);
 		assessmentField.setDisable(false);
+		expectedQuestionBookletsField.setDisable(false);
+		expectedAnswerBookletsField.setDisable(false);
 		examBox.setDisable(true);
 		addNewExamButton.setDisable(true);
 		examDetailsActionRow.setVisible(false);
@@ -1816,8 +1889,8 @@ public final class ExamAssetsPane extends VBox {
 		questionBookletsBox.getChildren().setAll(new Label("Save the Exam before adding Question booklets."));
 		answerBookletsBox.getChildren().setAll(new Label("Save the Exam before adding Answer booklets."));
 
-		// Assets require a persisted Exam identity, so neither creation action can run
-		// during the unsaved New Exam transaction.
+		// Asset rows still require a persisted Exam identity even though their expected
+		// counts may now be declared before that first Save.
 		addQuestionBookletButton.setDisable(true);
 		addAnswerBookletButton.setDisable(true);
 		useSelectedBookletButton.setDisable(true);
@@ -1918,6 +1991,10 @@ public final class ExamAssetsPane extends VBox {
 		// Answer-booklet or pending legacy-import structural work.
 		useSelectedBookletButton
 				.setDisable(structuralTransactionActive || questionBookletSelectionGroup.getSelectedToggle() == null);
+
+		// Answer deletion is another structural action and must track pending legacy
+		// preflight as well as ordinary edit transactions.
+		refreshAnswerFileDeleteStates();
 
 		// Dashboard return follows the same structural transaction boundary, including
 		// a pending legacy-import preflight awaiting Recheck or Cancel.
@@ -2369,6 +2446,7 @@ public final class ExamAssetsPane extends VBox {
 		private boolean editing;
 		private final ComboBox<AnswerAssignmentChoice> answerField = new ComboBox<>();
 		private AnswerFile assignedAnswerFile;
+		private final Button deleteButton = new Button("Delete");
 
 		// Restore either the exact assigned AnswerFile or the explicit No Answer
 		// Booklet option.
@@ -2477,30 +2555,32 @@ public final class ExamAssetsPane extends VBox {
 			writtenButton.setUserData(ExamBookletQuestionFormat.WRITTEN_RESPONSE);
 			bothButton.setUserData(ExamBookletQuestionFormat.MIXED);
 			expectedField.setId("exam-assets-question-expected-" + bookletId);
-
-			// Expected Question counts are at most two digits, so prevent this field from
-			// expanding to the full metadata-column width.
 			expectedField.setPrefColumnCount(2);
 			expectedField.setMaxWidth(Region.USE_PREF_SIZE);
 			answerField.setId("exam-assets-question-answer-" + bookletId);
 			answerField.setMaxWidth(Double.MAX_VALUE);
-
-			// No Answer Booklet is always available and appears first. Every AnswerFile
-			// registered for the Exam follows it and may be shared by several booklets.
 			List<AnswerAssignmentChoice> answerChoices = new ArrayList<>();
 			answerChoices.add(new AnswerAssignmentChoice(null, NO_ANSWER_BOOKLET));
 
-			// Answer assets are loaded once for the selected Exam by the containing
-			// ExamAssetsPane and are shared by every Question-booklet editor.
+			// Answer assets are loaded once for the selected Exam and shared by every
+			// Question-booklet editor.
 			for (AnswerFile answerFile : ExamAssetsPane.this.availableAnswerFiles) {
 				answerChoices.add(new AnswerAssignmentChoice(answerFile, answerFile.getName()));
 			}
 			answerField.getItems().setAll(answerChoices);
 			viewButton.setId("exam-assets-question-view-" + bookletId);
 			viewButton.setMinWidth(Region.USE_PREF_SIZE);
-
-			// View remains inspection-only and does not activate this booklet for capture.
 			viewButton.setOnAction(_ -> questionBookletViewHandler.accept(booklet));
+			deleteButton.setId("exam-assets-question-delete-" + bookletId);
+			deleteButton.setMinWidth(Region.USE_PREF_SIZE);
+			deleteButton.setOnAction(_ -> {
+				if (structuralTransactionActive() || booklet.getExam().isComplete()) {
+					return;
+				}
+
+				// Confirmation and destructive persistence remain application-owned.
+				questionBookletDeleteHandler.accept(booklet);
+			});
 			editButton.setId("exam-assets-question-edit-" + bookletId);
 			cancelButton.setId("exam-assets-question-cancel-" + bookletId);
 			saveButton.setId("exam-assets-question-save-" + bookletId);
@@ -2532,18 +2612,15 @@ public final class ExamAssetsPane extends VBox {
 			Region headingSpacer = new Region();
 			HBox.setHgrow(headingSpacer, Priority.ALWAYS);
 
-			// Booklet identity and View remain on the compact action row. The potentially
-			// long source filename gets the full width of a separate row below it.
-			HBox headingRow = new HBox(SPACING, selectionButton, heading, headingSpacer, viewButton);
+			// View and Delete operate on the persisted asset as a whole; metadata
+			// transaction controls remain on their existing lower row.
+			HBox headingRow = new HBox(SPACING, selectionButton, heading, headingSpacer, viewButton, deleteButton);
 
 			// Give the source filename the available width and allow JavaFX to abbreviate
 			// it
-			// rather than allowing it to force the complete workspace wider.
+			// rather than forcing the complete workspace wider.
 			HBox sourceRow = new HBox(source);
 			HBox.setHgrow(source, Priority.ALWAYS);
-
-			// Question format is one mutually exclusive value, so all three alternatives
-			// remain on one compact horizontal row.
 			HBox formatControls = new HBox(SPACING, mcqButton, writtenButton, bothButton);
 			formatControls.setId("exam-assets-question-format-row-" + booklet.getId());
 			GridPane metadata = new GridPane();
@@ -2685,12 +2762,14 @@ public final class ExamAssetsPane extends VBox {
 		}
 
 		private void updateActionState() {
+			boolean anotherStructuralTransaction = editingExamDetails || pendingQuestionBookletEditor != null
+					|| pendingAnswerBookletEditor != null
+					|| (editingBookletEditor != null && editingBookletEditor != this) || legacyImportPending;
 
-			// All Question-booklet structural operations share one transaction slot at the
-			// workspace level.
-			editButton.setDisable(editing || editingExamDetails || booklet.getExam().isComplete()
-					|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null
-					|| (editingBookletEditor != null && editingBookletEditor != this));
+			// Editing and deletion are both structural. COMPLETE Exams expose inspection
+			// only, and another staged transaction locks both actions.
+			editButton.setDisable(editing || booklet.getExam().isComplete() || anotherStructuralTransaction);
+			deleteButton.setDisable(editing || booklet.getExam().isComplete() || anotherStructuralTransaction);
 			cancelButton.setDisable(!editing);
 
 			// Save requires a real difference and a completely valid staged row.

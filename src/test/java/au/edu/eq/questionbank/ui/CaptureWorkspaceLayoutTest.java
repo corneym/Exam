@@ -27,9 +27,11 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -103,38 +105,49 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void acceptedQuestionContentKeepsPreferredHeightAcrossWorkspaceRelayout(FxRobot robot) throws Exception {
+	void acceptedQuestionContentRemainsBoundedAcrossReducedWindowHeight(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
+
+		// Two substantial source regions deliberately make accepted content taller than
+		// the Question pane's permitted local viewport.
 		robot.interact(() -> questionCapturePane().acceptSelection(
-				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.70, 0.05)));
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.05, 0.70, 0.35)));
+		fireControl(robot, "#add-question-region");
+		robot.interact(() -> questionCapturePane().acceptSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.55, 0.70, 0.35)));
 		fireControl(robot, "#add-question-region");
 		WaitForAsyncUtils.waitForFxEvents();
-		javafx.scene.control.ScrollPane regionsPane = field(questionCapturePane(), "regionsScrollPane",
-				javafx.scene.control.ScrollPane.class);
-		javafx.scene.layout.VBox regionList = field(questionCapturePane(), "regionPreviewBox",
-				javafx.scene.layout.VBox.class);
+		ScrollPane regionsPane = field(questionCapturePane(), "regionsScrollPane", ScrollPane.class);
+		VBox regionList = field(questionCapturePane(), "regionPreviewBox", VBox.class);
 
-		// A small accepted region must immediately establish a useful content-derived
-		// preferred height rather than collapsing to a few pixels.
-		double expectedHeight = Math.min(300.0, regionList.getLayoutBounds().getHeight() + 4.0);
-		assertTrue(expectedHeight > 4.0, "Accepted Question content must have a measurable preferred height");
-		assertEquals(expectedHeight, regionsPane.getPrefHeight(), 1.0);
-		assertEquals(regionsPane.prefHeight(regionsPane.getWidth()), regionsPane.minHeight(regionsPane.getWidth()),
-				1.0);
-		javafx.scene.control.SplitPane splitPane = field(application, "workspaceSplitPane",
-				javafx.scene.control.SplitPane.class);
+		// Accepted content receives a useful viewport but cannot force the Question
+		// section to grow indefinitely.
+		assertTrue(regionsPane.isVisible());
+		assertTrue(regionsPane.isManaged());
+		assertEquals(96.0, regionsPane.getMinHeight(), 0.1);
+		assertEquals(300.0, regionsPane.getMaxHeight(), 0.1);
+		assertTrue(regionsPane.getPrefHeight() >= 96.0);
+		assertTrue(regionsPane.getPrefHeight() <= 300.0);
+		assertEquals(ScrollPane.ScrollBarPolicy.AS_NEEDED, regionsPane.getVbarPolicy());
+
+		// This fixture deliberately exceeds the local viewport so accepted content must
+		// use its own scrolling rather than enlarging the complete Question pane.
+		assertTrue(regionList.getLayoutBounds().getHeight() > regionsPane.getPrefHeight());
 		robot.interact(() -> {
+			primaryStage.setHeight(560.0);
 
-			// Force the horizontal workspace to perform the relayout that previously
-			// exposed the collapsed Content Parts viewport.
-			splitPane.setDividerPosition(0, 0.25);
+			// Reduced application height reproduces the real failure mode without
+			// changing the horizontal Capture/PDF split.
 			primaryStage.getScene().getRoot().applyCss();
 			primaryStage.getScene().getRoot().layout();
 		});
 		WaitForAsyncUtils.waitForFxEvents();
-		double requiredHeight = regionsPane.minHeight(regionsPane.getWidth());
-		assertTrue(regionsPane.getHeight() + 1.0 >= requiredHeight,
-				"Workspace relayout must not shrink accepted Question content below its preferred height");
+
+		// The local viewport remains bounded after the surrounding Capture workspace
+		// becomes vertically scrollable.
+		assertTrue(regionsPane.getHeight() + 1.0 >= regionsPane.getMinHeight());
+		assertTrue(regionsPane.getHeight() <= regionsPane.getMaxHeight() + 1.0);
+		assertTrue(regionList.getLayoutBounds().getHeight() > regionsPane.getHeight());
 	}
 
 	@Test
@@ -704,6 +717,81 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(1, dashboardReturns.get());
 		assertFalse(returnDashboard.isVisible());
 		assertFalse(returnDashboard.isManaged());
+	}
+
+	@Test
+	void deletingAnswerBookletCascadesAnswersAndManagedPdf(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "DELETE-A");
+		ExamBooklet booklet = question.getBooklet();
+
+		// Use genuinely different bytes so duplicate-content protection does not
+		// obscure
+		// the deletion workflow being exercised.
+		Path answerSource = createPdf(databasePath.getParent().resolve("delete-answer-source.pdf"), 3);
+		AnswerFile answerFile = (AnswerFile) invoke(application, "importAnswerBookletFromExamAssets",
+				new Class<?>[] { Exam.class, Path.class, String.class, boolean.class, ApplicationConfig.class },
+				booklet.getExam(), answerSource, "Delete Test Answers", false, applicationConfig);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		answerWriter.assignAnswerFile(booklet, answerFile);
+		answerWriter.insertAnswer(question, "Stored answer",
+				List.of(new AnswerRegion(answerFile, 1, 0.10, 0.10, 0.70, 0.20)));
+		Path managedPdf = new PdfStore(pdfDataRoot).resolve(answerFile.getSourceDocument().getRelativePath());
+		assertTrue(Files.isRegularFile(managedPdf));
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		Button delete = lookup(robot, "#exam-assets-answer-delete-" + answerFile.getId(), Button.class);
+		assertFalse(delete.isDisabled());
+
+		// Deletion is destructive and therefore must enter the explicit confirmation
+		// dialog before persistence changes.
+		fireControlLater(delete);
+		waitForDialogShowing(robot, "Delete Answer Booklet");
+		fireDialogButton(robot, "Delete Answer Booklet");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> answerWriter.findAnswerFiles(booklet.getExam()).stream()
+				.noneMatch(file -> file.getId() == answerFile.getId()));
+		assertNull(answerWriter.findAnswerFile(booklet));
+		Question reloaded = new SqliteQuestionRepository(database).findById(question.getId()).orElseThrow();
+
+		// The Question itself survives, but Answer metadata and the managed Answer
+		// asset
+		// are gone.
+		assertFalse(reloaded.hasAnswer());
+		assertFalse(Files.exists(managedPdf));
+		assertTrue(robot.lookup("#exam-assets-answer-file-" + answerFile.getId()).tryQuery().isEmpty());
+	}
+
+	@Test
+	void deletingQuestionBookletCascadesQuestionsAndManagedPdf(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "DELETE-Q");
+		ExamBooklet booklet = question.getBooklet();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Path managedPdf = new PdfStore(pdfDataRoot).resolve(booklet.getSourceDocument().getRelativePath());
+		assertTrue(Files.isRegularFile(managedPdf));
+		assertTrue(questionRepository.findById(question.getId()).isPresent());
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		Button delete = lookup(robot, "#exam-assets-question-delete-" + booklet.getId(), Button.class);
+		assertFalse(delete.isDisabled());
+
+		// Schedule the ordinary control because its handler enters a modal confirmation
+		// loop that the test thread must remain free to complete.
+		fireControlLater(delete);
+		waitForDialogShowing(robot, "Delete Question Booklet");
+		fireDialogButton(robot, "Delete Booklet");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> questionRepository.findById(question.getId()).isEmpty());
+
+		// The booklet, its Question graph and its managed source must all disappear.
+		assertTrue(
+				examWriter.findAllExamBooklets().stream().noneMatch(candidate -> candidate.getId() == booklet.getId()));
+		assertFalse(Files.exists(managedPdf));
+		assertNull(examMetadataPane().getBooklet());
+		assertTrue(robot.lookup("#exam-assets-question-booklet-" + booklet.getId()).tryQuery().isEmpty());
 	}
 
 	@Test

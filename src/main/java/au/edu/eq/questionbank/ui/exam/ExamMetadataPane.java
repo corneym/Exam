@@ -199,6 +199,22 @@ public final class ExamMetadataPane extends VBox {
 	}
 
 	/**
+	 * Clears the currently active persisted booklet after that booklet has been
+	 * deleted from authoritative storage.
+	 */
+	public void clearActiveBooklet() {
+
+		// No pending import or managed path may survive the deletion of the active
+		// booklet identity.
+		pendingPdfPath = null;
+		pendingKnownBooklet = null;
+		currentPdfPath = null;
+		clearForNewPdf();
+		selectedPdfLabel.setText("No PDF selected");
+		selectionCursorHandler.accept(false);
+	}
+
+	/**
 	 * Corrects an existing Exam, including relocation of managed booklet and answer
 	 * PDFs when provider or year changes the authoritative storage directory.
 	 *

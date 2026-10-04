@@ -80,6 +80,7 @@ public final class QuestionCapturePane extends VBox {
 	private static final double CONTROL_SPACING = 8.0;
 	private static final double MARKS_FIELD_WIDTH = 60.0;
 	private static final double QUESTION_CODE_FIELD_WIDTH = 80.0;
+	private static final double REGIONS_VIEWPORT_MIN_HEIGHT = 96.0;
 	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
 	private static final double REGION_PREVIEW_HORIZONTAL_INSET = 24.0;
 	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
@@ -1711,17 +1712,19 @@ public final class QuestionCapturePane extends VBox {
 		regionsScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 		regionsScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
-		// Accepted Question content keeps its content-derived preferred height up to
-		// the
-		// viewport cap. If the complete capture workspace is taller than the available
-		// window, the application's outer ScrollPane owns that scrolling.
-		regionsScrollPane.setMinHeight(Region.USE_PREF_SIZE);
+		// Accepted Question content keeps a useful minimum viewport but cannot grow
+		// beyond its local cap. Additional accepted content scrolls inside this pane,
+		// while the application workspace ScrollPane handles whole-pane overflow.
+		regionsScrollPane.setMinHeight(REGIONS_VIEWPORT_MIN_HEIGHT);
 		regionsScrollPane.setMaxHeight(REGIONS_VIEWPORT_HEIGHT);
 		regionsScrollPane.prefHeightProperty()
-				.bind(Bindings.createDoubleBinding(
-						() -> Math.min(REGIONS_VIEWPORT_HEIGHT,
-								regionPreviewBox.getLayoutBounds().getHeight() + REGION_VIEWPORT_EXTRA_HEIGHT),
-						regionPreviewBox.layoutBoundsProperty()));
+				.bind(Bindings
+						.createDoubleBinding(
+								() -> Math.max(REGIONS_VIEWPORT_MIN_HEIGHT,
+										Math.min(REGIONS_VIEWPORT_HEIGHT,
+												regionPreviewBox.getLayoutBounds().getHeight()
+														+ REGION_VIEWPORT_EXTRA_HEIGHT)),
+								regionPreviewBox.layoutBoundsProperty()));
 		regionsScrollPane.setVisible(false);
 		regionsScrollPane.setManaged(false);
 		return regionsScrollPane;

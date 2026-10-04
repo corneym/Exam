@@ -63,6 +63,7 @@ import au.edu.eq.questionbank.repository.assessment.QuestionBookletPdfReplacemen
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamAssetDeletionService;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
@@ -232,6 +233,7 @@ public class QuestionBankApplication extends Application {
 	private BorderPane applicationBody;
 	private VBox classificationContext;
 	private boolean legacyQuestionImportDashboardOwned;
+	private SqliteExamAssetDeletionService examAssetDeletionService;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
@@ -1028,6 +1030,28 @@ public class QuestionBankApplication extends Application {
 				new AutomaticBackupRetention(), pdfWorkspace);
 	}
 
+	private boolean confirmAnswerFileDeletion(AnswerFile answerFile) {
+		ButtonType deleteButton = new ButtonType("Delete Answer Booklet", ButtonBar.ButtonData.OK_DONE);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage());
+		confirmation.setTitle("Delete Answer Booklet");
+		confirmation.setHeaderText("Delete " + answerFile.getName() + "?");
+		confirmation.setContentText("""
+				This permanently deletes this Answer booklet.
+
+				All Answers and Answer regions that depend on this booklet will also be deleted.
+				Question booklet assignments to this Answer booklet will be cleared.
+				The managed PDF will be deleted when no other asset references it.
+
+				This action cannot be undone.
+				""");
+		confirmation.getButtonTypes().setAll(deleteButton, cancelButton);
+
+		// Destructive persistence requires an explicit affirmative choice every time.
+		return confirmation.showAndWait().orElse(cancelButton) == deleteButton;
+	}
+
 	private boolean confirmAnswerPdfReplacement(Stage primaryStage, ExamBooklet booklet,
 			AnswerFileReassignmentService.Impact impact) {
 		ButtonType replaceButton = new ButtonType("Replace Answer PDF", ButtonBar.ButtonData.OK_DONE);
@@ -1131,6 +1155,29 @@ public class QuestionBankApplication extends Application {
 		alert.setContentText("The current question has accepted regions that have not been saved.");
 		Optional<ButtonType> result = alert.showAndWait();
 		return result.isPresent() && result.get() == ButtonType.OK;
+	}
+
+	private boolean confirmQuestionBookletDeletion(ExamBooklet booklet) {
+		ButtonType deleteButton = new ButtonType("Delete Booklet", ButtonBar.ButtonData.OK_DONE);
+		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage());
+		confirmation.setTitle("Delete Question Booklet");
+		confirmation.setHeaderText("Delete " + booklet.getName() + "?");
+		confirmation.setContentText("""
+				This permanently deletes this Question booklet.
+
+				Every Question in the booklet will be deleted together with its Question content,
+				Answers, Answer regions, Shared Contexts and source-question metadata.
+				The managed Question PDF will be deleted when no other asset references it.
+
+				This action cannot be undone.
+				""");
+		confirmation.getButtonTypes().setAll(deleteButton, cancelButton);
+
+		// The warning is unconditional because even an apparently empty booklet is a
+		// persisted structural asset.
+		return confirmation.showAndWait().orElse(cancelButton) == deleteButton;
 	}
 
 	private boolean confirmQuestionPdfReplacement(Stage primaryStage, ExamBooklet booklet,
@@ -1655,6 +1702,124 @@ public class QuestionBankApplication extends Application {
 	private ScormExportService createScormExportService(ApplicationConfig config) {
 		return new ScormExportService(createRevisionExportService(config), new ScormManifestWriter(),
 				new ScormSchemaSupport(), new ScormPackageValidator(), new ScormZipWriter());
+	}
+
+	private void deleteAnswerFileFromExamAssets(AnswerFile answerFile, ApplicationConfig config) {
+		if (answerFile == null) {
+			throw new NullPointerException("answerFile");
+		}
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		if (!confirmAnswerFileDeletion(answerFile)) {
+			return;
+		}
+		SqliteExamAssetDeletionService.DeletionResult result;
+		try {
+
+			// Commit the database deletion atomically before removing the managed file.
+			result = examAssetDeletionService.deleteAnswerFile(answerFile);
+		} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Delete Answer Booklet", "The Answer booklet could not be deleted.",
+					failureMessage(exception));
+			return;
+		}
+		try {
+			if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
+
+				// Exam/Assets may currently be inspecting exactly the file being deleted.
+				pdfWorkspace.closeViewerPdf();
+			}
+			pdfWorkspace.closeAnswerPdf();
+		} catch (RuntimeException exception) {
+
+			// Persistence has already succeeded. Continue refreshing authoritative state
+			// but warn that filesystem cleanup may subsequently be unable to remove a
+			// retained operating-system file handle.
+			showAlert(Alert.AlertType.WARNING, "Delete Answer Booklet",
+					"The Answer booklet metadata was deleted, but its open PDF could not be closed.",
+					failureMessage(exception));
+		}
+
+		// Removing Answer persistence changes the unanswered queue immediately.
+		answerCapturePane.refreshQuestions();
+		refreshExamAssetsAfterAssetDeletion(answerFile.getExam(), null);
+		deleteManagedAssetPdf(result, config, "Answer booklet");
+		refreshActiveExamContext();
+	}
+
+	private void deleteManagedAssetPdf(SqliteExamAssetDeletionService.DeletionResult result, ApplicationConfig config,
+			String assetLabel) {
+		if (!result.sourceDocumentDeleted()) {
+
+			// Another persisted asset still owns this SourceDocument, so deleting the
+			// physical file would corrupt that surviving asset.
+			return;
+		}
+		try {
+			new PdfStore(config.pdfDataRoot()).deleteManagedPdf(result.relativePath());
+		} catch (IOException | IllegalArgumentException exception) {
+
+			// Database deletion is already committed. Report the orphaned physical file
+			// explicitly rather than pretending the complete operation rolled back.
+			showAlert(Alert.AlertType.WARNING, "Delete " + assetLabel,
+					assetLabel + " metadata was deleted, but the managed PDF could not be removed.",
+					failureMessage(exception));
+		}
+	}
+
+	private void deleteQuestionBookletFromExamAssets(ExamBooklet booklet, ApplicationConfig config) {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		if (!confirmQuestionBookletDeletion(booklet)) {
+			return;
+		}
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		boolean deletingActiveBooklet = activeBooklet != null && activeBooklet.getId() == booklet.getId();
+		SqliteExamAssetDeletionService.DeletionResult result;
+		try {
+
+			// All dependent persistence disappears in one transaction before presentation
+			// or managed-file state is changed.
+			result = examAssetDeletionService.deleteQuestionBooklet(booklet);
+		} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
+			showAlert(Alert.AlertType.ERROR, "Delete Question Booklet", "The Question booklet could not be deleted.",
+					failureMessage(exception));
+			return;
+		}
+		try {
+			if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
+				pdfWorkspace.closeViewerPdf();
+			}
+			if (deletingActiveBooklet) {
+
+				// Release the managed source before filesystem cleanup, then remove every
+				// transient capture reference to the deleted booklet identity.
+				pdfWorkspace.closeExamPdf();
+				examMetadataPane.clearActiveBooklet();
+				questionCapturePane.clearForNewPdf();
+			}
+		} catch (RuntimeException exception) {
+			showAlert(Alert.AlertType.WARNING, "Delete Question Booklet",
+					"The Question booklet metadata was deleted, but its open PDF could not be closed.",
+					failureMessage(exception));
+		}
+
+		// Both capture queues can contain Questions belonging to the deleted booklet.
+		questionCapturePane.refreshImportedQuestions();
+		answerCapturePane.refreshQuestions();
+		Long preferredBookletId = null;
+		if (!deletingActiveBooklet && activeBooklet != null
+				&& activeBooklet.getExam().getId() == booklet.getExam().getId()) {
+			preferredBookletId = Long.valueOf(activeBooklet.getId());
+		}
+		refreshExamAssetsAfterAssetDeletion(booklet.getExam(), preferredBookletId);
+		deleteManagedAssetPdf(result, config, "Question booklet");
+		refreshActiveExamContext();
 	}
 
 	private void editCorpusQuestionMetadata(Stage primaryStage, ApplicationConfig config, Question question,
@@ -2282,6 +2447,10 @@ public class QuestionBankApplication extends Application {
 		// Retain the assessment writer because booklet inspection later records
 		// structural planning against the same authoritative repository.
 		examWriter = new SqliteExamWriter(database);
+
+		// Destructive Exam-asset operations share the same lifecycle-aware persistence
+		// boundary as the rest of Exam/Assets.
+		examAssetDeletionService = new SqliteExamAssetDeletionService(database, examWriter);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 
 		// The embedded Dashboard reuses the same authoritative repositories as capture
@@ -2314,7 +2483,9 @@ public class QuestionBankApplication extends Application {
 		// resolution and the shared PDF workspace.
 		examAssetsPane = new ExamAssetsPane(examWriter, answerWriter, examMetadataOptionsRepository,
 				this::correctExamMetadataAndReloadCapture,
+				booklet -> deleteQuestionBookletFromExamAssets(booklet, config),
 				booklet -> viewQuestionBookletFromExamAssets(booklet, config),
+				answerFile -> deleteAnswerFileFromExamAssets(answerFile, config),
 				answerFile -> viewAnswerFileFromExamAssets(answerFile, config), examMetadataPane::getBooklet,
 				booklet -> useExamAssetsBookletForCapture(booklet, config),
 				this::handleExamAssetsBookletMetadataUpdated,
@@ -2720,6 +2891,24 @@ public class QuestionBankApplication extends Application {
 		// Reuse the current accepted Subject generation. If Subject changes while this
 		// task is running, its result is discarded.
 		loadCorpusDashboardHome(dashboardSubject, workingSubjectRefreshGeneration, preferredQuestionId);
+	}
+
+	private void refreshExamAssetsAfterAssetDeletion(Exam exam, Long preferredBookletId) {
+		if (workingSubject == null || workingSubject.getId() != exam.getSubject().getId()) {
+			return;
+		}
+		try {
+
+			// Reconstruct the complete Exam/Assets presentation from persistence instead
+			// of manually removing one JavaFX row and risking stale assignments/counts.
+			examAssetsPane.showForCorrection(workingSubject, exam.getId(), preferredBookletId);
+		} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
+
+			// Deletion has already committed. Distinguish a refresh failure from a failed
+			// destructive operation.
+			showAlert(Alert.AlertType.ERROR, "Exam / Assets",
+					"The asset was deleted, but Exam / Assets could not be refreshed.", failureMessage(exception));
+		}
 	}
 
 	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {

@@ -997,6 +997,58 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void newExamPersistsAssetExpectationsOnFirstSave(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> subjects.getSelectionModel().selectFirst());
+		Subject subject = subjects.getValue();
+		assertNotNull(subject);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
+		Button addExam = lookup(robot, "#corpus-dashboard-add-exam", Button.class);
+		robot.interact(addExam::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		ComboBox<String> provider = comboBox(robot, "#exam-assets-provider");
+		ComboBox<Integer> year = comboBox(robot, "#exam-assets-year");
+		ComboBox<String> assessment = comboBox(robot, "#exam-assets-assessment");
+		TextField expectedQuestions = lookup(robot, "#exam-assets-expected-question-booklets", TextField.class);
+		TextField expectedAnswers = lookup(robot, "#exam-assets-expected-answer-booklets", TextField.class);
+		Button save = lookup(robot, "#exam-assets-new-exam-save", Button.class);
+
+		// Initial planning belongs to New Exam itself. None of these values should
+		// require the teacher to save identity first and then enter Edit mode.
+		assertFalse(expectedQuestions.isDisabled());
+		assertFalse(expectedAnswers.isDisabled());
+		robot.interact(() -> {
+			provider.getEditor().setText("New Exam Provider");
+			year.setValue(year.getItems().getFirst());
+			assessment.getEditor().setText("New Exam Assessment");
+			expectedQuestions.setText("2");
+			expectedAnswers.setText("1");
+		});
+		assertFalse(save.isDisabled());
+		robot.interact(save::fire);
+		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Exam> exams = field(assets, "examBox", ComboBox.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> exams.getValue() != null);
+		Exam created = exams.getValue();
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		ExamAssetExpectations expectations = writer.findExamAssetExpectations(created);
+
+		// One Save must persist both Exam identity and its initial asset plan.
+		assertEquals(subject.getId(), created.getSubject().getId());
+		assertEquals(Integer.valueOf(2), expectations.expectedQuestionBookletCount());
+		assertEquals(Integer.valueOf(1), expectations.expectedAnswerFileCount());
+
+		// Reloaded fields prove the visible Exam/Assets state also came back from
+		// persistence rather than retaining staged New Exam text.
+		assertEquals("2", expectedQuestions.getText());
+		assertEquals("1", expectedAnswers.getText());
+		assertTrue(expectedQuestions.isDisabled());
+		assertTrue(expectedAnswers.isDisabled());
+	}
+
+	@Test
 	void reactivatingCompletedExamRestoresStructuralEditing(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();

@@ -161,17 +161,10 @@ public final class SqliteExamWriter {
 	}
 
 	/**
-	 * Creates a new Exam for an existing Subject, reusing an existing examination
-	 * Provider with the same name or creating that Provider as part of the same
-	 * transaction.
+	 * Creates one ACTIVE Exam with no declared asset expectations.
 	 *
-	 * <p>
-	 * Creating the Exam does not manufacture Question booklets, Answer files or
-	 * source documents. Those assets are added independently through Exam/Assets.
-	 * </p>
-	 *
-	 * @param subject      authoritative Subject owning the Exam
-	 * @param providerName non-blank examination Provider name
+	 * @param subject      owning Subject
+	 * @param providerName non-blank provider name
 	 * @param year         positive Exam year
 	 * @param name         non-blank assessment name
 	 * @return newly persisted ACTIVE Exam
@@ -181,6 +174,32 @@ public final class SqliteExamWriter {
 	 *                                  already exists
 	 */
 	public Exam createExam(Subject subject, String providerName, int year, String name) throws SQLException {
+
+		// Existing callers retain the original behaviour while New Exam may use the
+		// planning-aware overload below.
+		return createExam(subject, providerName, year, name, null, null);
+	}
+
+	/**
+	 * Creates one ACTIVE Exam together with its initial asset-planning
+	 * expectations.
+	 *
+	 * @param subject                      owning Subject
+	 * @param providerName                 non-blank provider name
+	 * @param year                         positive Exam year
+	 * @param name                         non-blank assessment name
+	 * @param expectedQuestionBookletCount expected Question-booklet count, or
+	 *                                     {@code null} when not yet recorded
+	 * @param expectedAnswerFileCount      expected Answer-booklet count, or
+	 *                                     {@code null} when not yet recorded
+	 * @return newly persisted ACTIVE Exam
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if {@code subject} is {@code null}
+	 * @throws IllegalArgumentException if supplied metadata or planning counts are
+	 *                                  invalid, or the Exam already exists
+	 */
+	public Exam createExam(Subject subject, String providerName, int year, String name,
+			Integer expectedQuestionBookletCount, Integer expectedAnswerFileCount) throws SQLException {
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
@@ -193,6 +212,12 @@ public final class SqliteExamWriter {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
 		}
+		if (expectedQuestionBookletCount != null && expectedQuestionBookletCount < 1) {
+			throw new IllegalArgumentException("expectedQuestionBookletCount must be positive when supplied");
+		}
+		if (expectedAnswerFileCount != null && expectedAnswerFileCount < 0) {
+			throw new IllegalArgumentException("expectedAnswerFileCount must not be negative when supplied");
+		}
 		String normalizedProviderName = providerName.strip();
 		String normalizedName = name.strip();
 		try (Connection connection = database.openConnection()) {
@@ -201,28 +226,32 @@ public final class SqliteExamWriter {
 				ExamProvider provider = findExamProviderByName(connection, normalizedProviderName);
 				if (provider == null) {
 
-					// Provider creation is part of the same transaction as Exam creation so
-					// a failed Exam insert cannot leave a partial New Exam workflow behind.
+					// Provider creation and Exam creation remain one transaction so a failed
+					// New Exam save cannot leave an unused provider behind.
 					provider = insertExamProvider(connection, normalizedProviderName);
 				}
 				Exam existing = findExam(connection, subject, provider, year, normalizedName);
 				if (existing != null) {
 
-					// New Exam mode creates a distinct Exam and must not silently reopen an
-					// existing natural-key match.
+					// New Exam mode must never reinterpret an existing natural-key match as
+					// the newly created Exam.
 					throw new IllegalArgumentException(
 							"Exam already exists for " + normalizedProviderName + " " + year + " " + normalizedName);
 				}
-				Exam created = insertExam(connection, subject, provider, year, normalizedName);
-				connection.commit();
 
-				// Schema defaults make a newly created Exam ACTIVE and therefore ready for
-				// subsequent Question and Answer asset configuration.
+				// Identity and initial structural planning are persisted atomically. The
+				// teacher must not need a second Edit transaction immediately after Save.
+				Exam created = insertExam(connection, subject, provider, year, normalizedName,
+						expectedQuestionBookletCount, expectedAnswerFileCount);
+				connection.commit();
 				return created;
 			} catch (SQLException | RuntimeException exception) {
 				try {
 					connection.rollback();
 				} catch (SQLException rollbackFailure) {
+
+					// Preserve rollback failure without concealing the original persistence
+					// problem.
 					exception.addSuppressed(rollbackFailure);
 				}
 				throw exception;
@@ -1115,6 +1144,13 @@ public final class SqliteExamWriter {
 
 	Exam insertExam(Connection connection, Subject subject, ExamProvider provider, int year, String name)
 			throws SQLException {
+
+		// Existing transactional import callers do not declare Exam-level expectations.
+		return insertExam(connection, subject, provider, year, name, null, null);
+	}
+
+	Exam insertExam(Connection connection, Subject subject, ExamProvider provider, int year, String name,
+			Integer expectedQuestionBookletCount, Integer expectedAnswerFileCount) throws SQLException {
 		if (connection == null) {
 			throw new NullPointerException("connection");
 		}
@@ -1130,26 +1166,36 @@ public final class SqliteExamWriter {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
 		}
+		if (expectedQuestionBookletCount != null && expectedQuestionBookletCount < 1) {
+			throw new IllegalArgumentException("expectedQuestionBookletCount must be positive when supplied");
+		}
+		if (expectedAnswerFileCount != null && expectedAnswerFileCount < 0) {
+			throw new IllegalArgumentException("expectedAnswerFileCount must not be negative when supplied");
+		}
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO exams
 				    (subject_id,
 				     provider_id,
 				     exam_year,
-				     exam_name)
-				VALUES (?, ?, ?, ?)
+				     exam_name,
+				     expected_question_booklet_count,
+				     expected_answer_file_count)
+				VALUES (?, ?, ?, ?, ?, ?)
 				RETURNING id
 				""")) {
 			statement.setLong(1, subject.getId());
 			statement.setLong(2, provider.getId());
 			statement.setInt(3, year);
 			statement.setString(4, name);
+			statement.setObject(5, expectedQuestionBookletCount);
+			statement.setObject(6, expectedAnswerFileCount);
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Exam insert did not return an id");
 				}
 
-				// Schema v15 defaults every newly created Exam to ACTIVE until the user
-				// deliberately completes it.
+				// Schema defaults still establish ACTIVE lifecycle state; the additional
+				// columns only establish the initial structural plan.
 				return new Exam(result.getLong("id"), subject, provider, year, name, ExamCaptureState.ACTIVE);
 			}
 		}
