@@ -90,7 +90,7 @@ class BookletCorpusAuditTest {
 	}
 
 	@Test
-	void missingMcqExplanationIsCoverageOnlyAndDoesNotMakeQuestionIncomplete() {
+	void missingMcqExplanationIsSeparateFromOrdinaryAnswerCompletenessButRequiresAttention() {
 		AnswerFile explanations = new AnswerFile(50, fixture.exam, "Solutions",
 				new SourceDocument(51, "Chemistry/2025/solutions.pdf"), true);
 		Question explained = fixture.multipleChoiceQuestion(150, fixture.booklet, "1");
@@ -101,8 +101,8 @@ class BookletCorpusAuditTest {
 				explanations, true);
 		McqExplanationCoverage coverage = status.mcqExplanationCoverage();
 
-		// Both MCQs have authoritative ordinary A-D Answers. Only one has optional
-		// explanation regions, which must remain a separate reporting dimension.
+		// Both A-D Answers remain ordinarily complete. Explanation coverage is a
+		// separate requirement created by the AnswerFile declaration.
 		assertTrue(coverage.explanationCapable());
 		assertEquals(2, coverage.eligibleQuestionCount());
 		assertEquals(1, coverage.capturedExplanationCount());
@@ -111,9 +111,9 @@ class BookletCorpusAuditTest {
 		assertEquals(0, status.questionSummary().missingAnswer());
 		assertTrue(status.findings().isEmpty());
 
-		// Missing optional explanation material must not place the booklet in the
-		// ordinary operational correction queue.
-		assertFalse(status.requiresAttention());
+		// Required explanation work now counts as booklet attention without inventing a
+		// MISSING_ANSWER problem.
+		assertTrue(status.requiresAttention());
 	}
 
 	@Test

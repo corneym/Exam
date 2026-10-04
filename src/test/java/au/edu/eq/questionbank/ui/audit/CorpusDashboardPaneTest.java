@@ -349,7 +349,10 @@ class CorpusDashboardPaneTest {
 		assertTrue(selectedCounts.getText().contains("Question booklets: 2 / 2"));
 		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / 1"));
 		assertTrue(selectedCounts.getText().contains("Questions: 54"));
-		assertTrue(selectedCounts.getText().contains("Need work: 3"));
+
+		// The Exam has three ordinary incomplete Questions plus one required MCQ
+		// explanation, so both work dimensions contribute to the operational total.
+		assertTrue(selectedCounts.getText().contains("Need work: 4"));
 		assertEquals(2, booklets.getItems().size());
 		assertNull(booklets.getSelectionModel().getSelectedItem());
 		assertEquals("Selected booklet: All booklets", selectedBooklet.getText());
@@ -621,6 +624,72 @@ class CorpusDashboardPaneTest {
 		robot.interact(manageAssets::fire);
 		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
 		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void missingMcqExplanationsAreReportedAndRoutedAsSeparateExamWork(FxRobot robot) {
+		AtomicReference<Question> routedQuestion = new AtomicReference<>();
+		robot.interact(() -> pane.setMcqExplanationCaptureHandler(routedQuestion::set));
+		Button missingExplanations = robot.lookup("#corpus-dashboard-summary-missing-mcq-explanations").queryButton();
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+
+		// Subject-level explanation reporting is one actionable missing-work count.
+		// Detailed captured/eligible coverage belongs to the booklet hierarchy.
+		assertEquals("1 Missing MCQ explanations", missingExplanations.getText());
+		assertTrue(robot.lookup("#corpus-dashboard-summary-mcq-explanations").tryQuery().isEmpty());
+		TableColumn<BookletCorpusStatus, String> explanationColumn = booklets.getColumns().stream()
+				.filter(column -> "MCQ explanations".equals(column.getText()))
+				.map(column -> (TableColumn<BookletCorpusStatus, String>) column).findFirst().orElseThrow();
+
+		// Before drill-down, booklet coverage identifies where explanation work
+		// remains.
+		assertEquals("1 / 2", explanationColumn.getCellData(fixture.paper1Status));
+		robot.interact(missingExplanations::fire);
+
+		// Explanation drill-down narrows the complete structural hierarchy to the Exam
+		// and booklet that own the outstanding explanation work.
+		assertEquals(1, exams.getItems().size());
+		assertEquals(fixture.completeExam.getId(), exams.getItems().getFirst().exam().getId());
+		assertEquals(1, booklets.getItems().size());
+		assertEquals(fixture.paper1.getId(), booklets.getItems().getFirst().booklet().getId());
+		TableColumn<BookletCorpusStatus, String> bookletProblemColumn = booklets.getColumns().stream()
+				.filter(column -> "Problems".equals(column.getText()))
+				.map(column -> (TableColumn<BookletCorpusStatus, String>) column).findFirst().orElseThrow();
+
+		// Question Booklets reports the same active work dimension as Question Work.
+		assertEquals("1 missing MCQ explanation", bookletProblemColumn.getCellData(booklets.getItems().getFirst()));
+		assertEquals(1, questions.getItems().size());
+		assertEquals("Q1", questions.getItems().getFirst().question().getQuestionCode());
+		TableColumn<QuestionCorpusWorkItem, String> problemColumn = questions.getColumns().stream()
+				.filter(column -> "Problem".equals(column.getText()))
+				.map(column -> (TableColumn<QuestionCorpusWorkItem, String>) column).findFirst().orElseThrow();
+		assertEquals("Missing MCQ explanation", problemColumn.getCellData(questions.getItems().getFirst()));
+		Button selectedAction = robot.lookup("#corpus-dashboard-complete-answer").queryButton();
+
+		// Selecting the work item changes the Answer-side action to the explanation
+		// task and enables the exact-Question route.
+		robot.interact(() -> questions.getSelectionModel().selectFirst());
+		assertEquals("Capture Explanation", selectedAction.getText());
+		assertFalse(selectedAction.isDisabled());
+
+		// Selected-Question entry routes the exact missing explanation Question.
+		robot.interact(selectedAction::fire);
+		assertNotNull(routedQuestion.get());
+		assertEquals("Q1", routedQuestion.get().getQuestionCode());
+		routedQuestion.set(null);
+		robot.interact(() -> booklets.getSelectionModel().selectFirst());
+		Button bookletAction = robot.lookup("#corpus-dashboard-capture-mcq-explanations").queryButton();
+		assertFalse(bookletAction.isDisabled());
+
+		// Booklet-level entry begins at the first missing MCQ and lets the existing
+		// retrofit workflow advance from there.
+		robot.interact(bookletAction::fire);
+		assertNotNull(routedQuestion.get());
+		assertEquals("Q1", routedQuestion.get().getQuestionCode());
 	}
 
 	@Test

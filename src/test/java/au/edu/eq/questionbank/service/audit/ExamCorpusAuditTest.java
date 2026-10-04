@@ -168,6 +168,30 @@ class ExamCorpusAuditTest {
 		assertFalse(status.hasFinding(ExamCorpusFinding.EXPECTED_ANSWER_FILE_COUNT_MISMATCH));
 	}
 
+	@Test
+	void requiredMcqExplanationCoverageBlocksCompletionReadiness() {
+		AnswerFile explanations = new AnswerFile(50, fixture.exam, "Solutions",
+				new SourceDocument(51, "Chemistry/2025/solutions.pdf"), true);
+		BookletCorpusStatus missingExplanation = new BookletCorpusStatus(fixture.paper1, true, explanations, 1, 1, 0,
+				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(true, 1, 0), Set.of());
+		ExamCorpusStatus incomplete = new ExamCorpusStatus(fixture.exam, new ExamAssetExpectations(1, 1, 1, 1),
+				List.of(missingExplanation), new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(1, 1, 0), Set.of());
+
+		// The A-D Answer is complete, but the explicit AnswerFile declaration makes its
+		// missing explanation a lifecycle-completion requirement.
+		assertFalse(incomplete.isReadyForCompletion());
+		BookletCorpusStatus explained = new BookletCorpusStatus(fixture.paper1, true, explanations, 1, 1, 0,
+				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(true, 1, 1), Set.of());
+		ExamCorpusStatus complete = new ExamCorpusStatus(fixture.exam, new ExamAssetExpectations(1, 1, 1, 1),
+				List.of(explained), new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationSummary(1, 1, 1),
+				Set.of());
+
+		// Once every eligible MCQ has an explanation, this dimension no longer blocks
+		// completion.
+		assertTrue(complete.isReadyForCompletion());
+	}
+
 	private static final class Fixture {
 
 		private final Subject subject = new Subject(1, "Chemistry");

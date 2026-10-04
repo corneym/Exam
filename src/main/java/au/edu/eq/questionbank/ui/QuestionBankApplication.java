@@ -559,16 +559,20 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private boolean allowCorpusDashboardReturn() {
+		boolean blockingAnswerEdit = answerCapturePane.isEditingAnswer()
+				&& !answerCapturePane.canAbandonMcqExplanationCapture();
 		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
 				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
 				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
-				|| answerCapturePane.isSaveInProgress() || answerCapturePane.isEditingAnswer();
+				|| answerCapturePane.isSaveInProgress() || blockingAnswerEdit;
 		if (!captureWorkInProgress) {
 			return true;
 		}
 
-		// Returning to the Dashboard must not silently abandon accepted but unsaved
-		// capture state.
+		// A clean explanation candidate is only a persisted A-D Answer being viewed. It
+		// may be abandoned explicitly by returning to Dashboard. Genuine unsaved
+		// region,
+		// selection, Answer-edit or save state remains protected.
 		showAlert(Alert.AlertType.WARNING, "Corpus Dashboard", "Capture work is in progress",
 				"Save, clear or cancel the current Question, Shared Context or Answer work before returning to the Corpus Dashboard.");
 		return false;
@@ -2603,7 +2607,6 @@ public class QuestionBankApplication extends Application {
 		// Several Dashboard refreshes may legitimately be requested within one Working
 		// Subject generation. Only the newest request may publish its snapshot.
 		long dashboardGeneration = ++corpusDashboardRefreshGeneration;
-
 		Task<CorpusDashboardSnapshot> task = new Task<>() {
 
 			@Override
@@ -3334,6 +3337,13 @@ public class QuestionBankApplication extends Application {
 		if (corpusDashboardCaptureReturnHandler == null || !allowCorpusDashboardReturn()) {
 			return;
 		}
+
+		// A clean explanation candidate is merely the current place in a work queue.
+		// Explicit Dashboard return ends that session without requiring a pointless
+		// Cancel operation first.
+		if (answerCapturePane.canAbandonMcqExplanationCapture()) {
+			answerCapturePane.abandonMcqExplanationCapture();
+		}
 		try {
 
 			// Dashboard-launched capture owns the temporary Exam or Answer document.
@@ -3640,6 +3650,19 @@ public class QuestionBankApplication extends Application {
 				showCorpusDashboardHome();
 			}
 		});
+		dashboard.setMcqExplanationCaptureHandler(question -> {
+			if (!showDashboardMcqExplanationCapture(question, this::refreshAndShowCorpusDashboardHome)) {
+
+				// A failed specialised route returns to the same operational home rather than
+				// leaving an empty Answer workspace mounted.
+				showCorpusDashboardHome();
+			}
+		});
+		dashboard.setMcqExplanationCaptureHandler(question -> {
+			if (!showDashboardMcqExplanationCapture(question, this::refreshAndShowCorpusDashboardHome)) {
+				showCorpusDashboardHome();
+			}
+		});
 		dashboard.setBulkResponseTypeHandler(this::applyCorpusDashboardBulkResponseType);
 		dashboard.setExamAssetsHandler(
 				(exam, booklet) -> showExamAssetsMode(exam, booklet, this::refreshAndShowCorpusDashboardHome));
@@ -3762,6 +3785,32 @@ public class QuestionBankApplication extends Application {
 		setCaptureWorkspaceSectionVisibility(false, false, true);
 		setWorkspaceMode(captureWorkspaceModePane);
 		refreshActiveExamContext();
+	}
+
+	private boolean showDashboardMcqExplanationCapture(Question question, Runnable returnHandler) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (returnHandler == null) {
+			throw new NullPointerException("returnHandler");
+		}
+
+		// Explanation correction uses the Answer-only Dashboard workspace but is scoped
+		// explicitly to the persisted Question's booklet rather than whichever booklet
+		// happens to be active in generic Capture.
+		showDashboardAnswerCaptureWorkspace(question.getExam());
+		setActiveExamBookletContext(question.getBooklet());
+		boolean started = answerCapturePane.captureMcqExplanations(question);
+		if (!started) {
+
+			// A rejected explanation transition must not leave transient Dashboard scope
+			// behind.
+			answerCapturePane.setExamScope(null);
+			setCaptureWorkspaceSectionVisibility(true, true, true);
+			return false;
+		}
+		setCorpusDashboardCaptureReturn(returnHandler);
+		return true;
 	}
 
 	private boolean showDashboardNewQuestionCapture(ExamBooklet booklet, ApplicationConfig config,

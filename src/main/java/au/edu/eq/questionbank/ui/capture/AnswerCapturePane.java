@@ -291,6 +291,40 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Abandons a clean MCQ explanation session before leaving Capture.
+	 * <p>
+	 * Persisted A-D Answer state is retained. The operation is rejected if the
+	 * current explanation edit contains unsaved work.
+	 *
+	 * @throws IllegalStateException if explanation capture contains unsaved work
+	 */
+	public void abandonMcqExplanationCapture() {
+		if (!mcqExplanationMode) {
+			return;
+		}
+		if (!canAbandonMcqExplanationCapture()) {
+			throw new IllegalStateException("MCQ explanation capture contains unsaved work");
+		}
+
+		// Dashboard navigation deliberately abandons only clean transient edit state.
+		// No persistence callback from that edit may fire after the workspace leaves.
+		answerEditCompletedHandler = () -> {
+		};
+		editingAnswerQuestion = null;
+		mcqExplanationEditingQuestion = null;
+		mcqExplanationEditSaved = false;
+		clearPendingAnswerRegions();
+		clearMultipleChoiceAnswer();
+		setVisibleAndManaged(cancelAnswerEditButton, false);
+		saveAnswerButton.setText("Save Answer");
+
+		// The explanation session and its marking-PDF identity belong only to the
+		// Dashboard capture workspace being left.
+		resetMcqExplanationPresentation();
+		clearAnswerFile("No Answer PDF assigned");
+	}
+
+	/**
 	 * Accepts a proportional answer-page selection as the current pending region.
 	 *
 	 * @param selection the selected answer-page rectangle
@@ -309,6 +343,33 @@ public final class AnswerCapturePane extends VBox {
 		answerRegionStatusLabel.setText("Selection pending — Page " + selection.pageNumber());
 		setSelectionActionsEnabled(true);
 		refreshSaveButtonState();
+	}
+
+	/**
+	 * Returns whether the active MCQ explanation session may be abandoned without
+	 * losing unsaved work.
+	 *
+	 * @return {@code true} only for an active, clean explanation session
+	 */
+	public boolean canAbandonMcqExplanationCapture() {
+		if (!mcqExplanationMode || answerSaveInProgress || currentAnswerSelection != null
+				|| !pendingAnswerRegions.isEmpty()) {
+			return false;
+		}
+		if (editingAnswerQuestion == null) {
+
+			// An explanation session waiting at its selector owns no unsaved Answer edit.
+			return true;
+		}
+		String storedAnswer = editingAnswerQuestion.getAnswer().getAnswerText();
+		String currentAnswer = currentAnswerText();
+		String storedChoice = storedAnswer == null ? "" : storedAnswer.strip();
+		String currentChoice = currentAnswer == null ? "" : currentAnswer.strip();
+
+		// Opening a candidate restores its persisted A-D choice. Changing that choice
+		// is
+		// still unsaved Answer work even if no explanation rectangle has been accepted.
+		return storedChoice.equalsIgnoreCase(currentChoice);
 	}
 
 	/**
@@ -375,6 +436,32 @@ public final class AnswerCapturePane extends VBox {
 		answerCaptureCompletionQuestionId = matching.getId();
 		answerCaptureCompletedHandler = completedHandler;
 		return true;
+	}
+
+	/**
+	 * Starts required MCQ explanation capture at one Dashboard-selected Question.
+	 * <p>
+	 * The Answer pane must already be scoped to the Question's Exam. After the
+	 * first Question is saved, the existing retrofit workflow advances through the
+	 * remaining missing explanations in that booklet.
+	 *
+	 * @param question first Question whose explanation is missing
+	 * @return {@code true} when explanation loading was started
+	 * @throws NullPointerException  if {@code question} is {@code null}
+	 * @throws IllegalStateException if Dashboard Exam scope does not match the
+	 *                               Question
+	 */
+	public boolean captureMcqExplanations(Question question) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		if (examScope == null || examScope.getId() != question.getExam().getId()) {
+			throw new IllegalStateException("MCQ explanation capture requires matching Dashboard Exam scope");
+		}
+
+		// Dashboard supplies the exact first Question while the common retrofit loader
+		// reconstructs the authoritative candidate list from persistence.
+		return startMcqExplanationCapture(question.getBooklet(), question, false);
 	}
 
 	/**
@@ -783,30 +870,14 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void beginMcqExplanationCapture() {
-		if (mcqExplanationCaptureUnavailable()) {
-			return;
-		}
 		ExamBooklet requestedBooklet = activeBookletSupplier.get();
 		if (requestedBooklet == null) {
 			return;
 		}
-		if (hasUnsavedOrdinaryAnswerDraft()) {
-			showAnswerWorkflowWarning("Unsaved Answer work",
-					"Save or clear the current Answer work before capturing MCQ explanations.");
-			return;
-		}
-		if (!answerTransitionAllowed.getAsBoolean()) {
-			return;
-		}
-		Subject requestedSubject = workingSubject;
-		beginMcqExplanationCandidateLoad();
-		CaptureBackgroundTask<List<Question>> task = new CaptureBackgroundTask<>(
-				() -> loadMcqExplanationCandidates(questionRepository.findAll(), requestedSubject, requestedBooklet));
-		task.setOnSucceeded(
-				_ -> handleMcqExplanationCandidateLoadSuccess(requestedSubject, requestedBooklet, task.getValue()));
-		task.setOnFailed(
-				_ -> handleMcqExplanationCandidateLoadFailure(requestedSubject, requestedBooklet, task.getException()));
-		startVirtualTask("mcq-explanation-candidates", task);
+
+		// The ordinary Capture entry point still belongs to the active booklet and
+		// begins without preselecting one candidate.
+		startMcqExplanationCapture(requestedBooklet, null, true);
 	}
 
 	private void cancelAnswerEdit() {
@@ -914,14 +985,22 @@ public final class AnswerCapturePane extends VBox {
 		boolean saved = mcqExplanationEditSaved;
 		finishMcqExplanationEditState();
 		if (!saved || completedQuestion == null) {
+
+			// Cancelled edits remain available in the current explanation session.
 			restoreMcqExplanationCandidateAfterCancel();
 			return;
 		}
 		int completedIndex = removeMcqExplanationCandidate(completedQuestion);
 		if (mcqExplanationQuestionField.getItems().isEmpty()) {
-			selectedAnswerQuestionLabel.setText("No remaining MCQ explanation candidates in this booklet.");
+
+			// The final required explanation has been persisted. End the retrofit session
+			// immediately so stale A-D Answer controls are not left active with no
+			// Question remaining to edit.
+			finishMcqExplanationCapture();
 			return;
 		}
+
+		// Continue directly with the next outstanding explanation in source order.
 		selectNextMcqExplanationCandidate(completedIndex);
 	}
 
@@ -968,7 +1047,7 @@ public final class AnswerCapturePane extends VBox {
 		saveAnswerButton.setDisable(true);
 		saveAnswerButton.setText("Save Answer");
 		saveAnswerButton.setTooltip(new Tooltip(
-				"Persist the selected choice and any optional explanation regions, or the required written-response regions."));
+				"Persist the selected choice and captured explanation regions, or the required written-response regions."));
 		saveAnswerButton.setMinWidth(Region.USE_PREF_SIZE);
 		cancelAnswerEditButton.setId("cancel-answer-edit");
 		cancelAnswerEditButton.setMinWidth(Region.USE_PREF_SIZE);
@@ -1045,8 +1124,8 @@ public final class AnswerCapturePane extends VBox {
 		captureMcqExplanationsButton.setId("capture-mcq-explanations");
 		captureMcqExplanationsButton.setMinWidth(Region.USE_PREF_SIZE);
 		captureMcqExplanationsButton.setDisable(true);
-		captureMcqExplanationsButton.setTooltip(new Tooltip(
-				"Add or edit optional marking-PDF explanation regions for already-answered multiple-choice Questions."));
+		captureMcqExplanationsButton.setTooltip(
+				new Tooltip("Capture missing marking-PDF explanation regions for answered multiple-choice Questions."));
 		mcqExplanationQuestionField.setId("mcq-explanation-question");
 		mcqExplanationQuestionField.setPromptText("Select answered MCQ");
 		mcqExplanationQuestionField.setConverter(QUESTION_CODE_CONVERTER);
@@ -1055,7 +1134,8 @@ public final class AnswerCapturePane extends VBox {
 		finishMcqExplanationCaptureButton.setMinWidth(Region.USE_PREF_SIZE);
 
 		// The retrofit selector replaces the normal entry action only while the
-		// explicit MCQ-explanation workflow is active.
+		// explicit
+		// MCQ-explanation workflow is active.
 		HBox.setHgrow(mcqExplanationQuestionField, Priority.ALWAYS);
 		mcqExplanationSelectionControls.getChildren().setAll(mcqExplanationQuestionField,
 				finishMcqExplanationCaptureButton);
@@ -1229,7 +1309,7 @@ public final class AnswerCapturePane extends VBox {
 		return preservedAnswerText == null ? "" : preservedAnswerText;
 	}
 
-	private void enterMcqExplanationCapture(List<Question> candidates) {
+	private void enterMcqExplanationCapture(List<Question> candidates, Long preferredQuestionId) {
 		mcqExplanationMode = true;
 		mcqExplanationReturnQuestion = unansweredQuestionField.getValue();
 
@@ -1246,10 +1326,20 @@ public final class AnswerCapturePane extends VBox {
 			restoringMcqExplanationSelection = false;
 		}
 
-		// Clear the ordinary Answer presentation while retaining its queue for return
-		// when retrofit mode ends.
+		// Clear ordinary Answer presentation while retaining its queue for return when
+		// retrofit mode ends.
 		applyUnansweredQuestionChange(null, false);
 		selectedAnswerQuestionLabel.setText("Select an answered MCQ to capture explanation regions.");
+		if (preferredQuestionId == null) {
+			return;
+		}
+		Question preferred = candidates.stream()
+				.filter(candidate -> candidate.getId() == preferredQuestionId.longValue()).findFirst().orElse(null);
+		if (preferred != null) {
+
+			// Dashboard entry owns an exact work item, so begin that edit immediately.
+			mcqExplanationQuestionField.setValue(preferred);
+		}
 	}
 
 	private void failAnswerSave(Throwable failure) {
@@ -1294,6 +1384,13 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private String findValidationError(Question question, String answerText) {
+		if (mcqExplanationMode && sameQuestion(question, mcqExplanationEditingQuestion)
+				&& currentAnswerSelection == null && pendingAnswerRegions.isEmpty()) {
+
+			// A retrofit candidate exists specifically because its explanation is missing.
+			// Saving the unchanged A-D Answer must not falsely consume that required work.
+			return "Capture at least one MCQ explanation region before saving.";
+		}
 		QuestionResponseType responseType = question == null ? null : question.getResponseType();
 		return AnswerCaptureValidator.findError(new AnswerCaptureValidator.State(question != null, responseType,
 				currentAnswerSelection != null, answerText, pendingAnswerRegions.size()));
@@ -1307,15 +1404,24 @@ public final class AnswerCapturePane extends VBox {
 		Runnable completedHandler = answerEditCompletedHandler;
 		answerEditCompletedHandler = () -> {
 		};
+		boolean explanationEdit = mcqExplanationMode;
 		editingAnswerQuestion = null;
 		clearPendingAnswerRegions();
 		clearMultipleChoiceAnswer();
-		answerFile = null;
-		selectedAnswerPdfLabel.setText("No Answer PDF assigned");
-		unansweredQuestionField.setDisable(false);
 		cancelAnswerEditButton.setVisible(false);
 		cancelAnswerEditButton.setManaged(false);
 		saveAnswerButton.setText("Save Answer");
+		if (explanationEdit) {
+
+			// Every explanation candidate in one retrofit session belongs to the same
+			// AnswerFile. Keep that already-open document and its current page alive while
+			// advancing to the next candidate.
+			unansweredQuestionField.setDisable(true);
+			return completedHandler;
+		}
+		answerFile = null;
+		selectedAnswerPdfLabel.setText("No Answer PDF assigned");
+		unansweredQuestionField.setDisable(false);
 		if (reloadQuestions) {
 			refreshQuestions();
 		} else {
@@ -1408,9 +1514,9 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void handleMcqExplanationCandidateLoadFailure(Subject requestedSubject, ExamBooklet requestedBooklet,
-			Throwable failure) {
+			boolean activeBookletOwned, Throwable failure) {
 		finishMcqExplanationCandidateLoad();
-		if (!mcqExplanationRequestIsCurrent(requestedSubject, requestedBooklet)) {
+		if (!mcqExplanationRequestIsCurrent(requestedSubject, requestedBooklet, activeBookletOwned)) {
 			return;
 		}
 		String message = failure == null || failure.getMessage() == null ? "The eligible Questions could not be loaded."
@@ -1419,17 +1525,24 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void handleMcqExplanationCandidateLoadSuccess(Subject requestedSubject, ExamBooklet requestedBooklet,
-			List<Question> candidates) {
+			boolean activeBookletOwned, Long preferredQuestionId, List<Question> candidates) {
 		finishMcqExplanationCandidateLoad();
-		if (!mcqExplanationRequestIsCurrent(requestedSubject, requestedBooklet)) {
+		if (!mcqExplanationRequestIsCurrent(requestedSubject, requestedBooklet, activeBookletOwned)) {
 			return;
 		}
 		if (candidates.isEmpty()) {
-			selectedAnswerQuestionLabel
-					.setText("No answered MCQs in the active booklet are available for explanation capture.");
+			selectedAnswerQuestionLabel.setText("No MCQs in this booklet are missing required explanation regions.");
 			return;
 		}
-		enterMcqExplanationCapture(candidates);
+		if (preferredQuestionId != null
+				&& candidates.stream().noneMatch(candidate -> candidate.getId() == preferredQuestionId.longValue())) {
+
+			// A Dashboard snapshot can become stale while the worker is loading. Never
+			// silently substitute a different Question for an explicitly selected row.
+			selectedAnswerQuestionLabel.setText("The selected MCQ no longer requires explanation capture.");
+			return;
+		}
+		enterMcqExplanationCapture(candidates, preferredQuestionId);
 	}
 
 	private void handleMcqExplanationQuestionChanged(Question question) {
@@ -1534,20 +1647,25 @@ public final class AnswerCapturePane extends VBox {
 		AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(activeBooklet);
 		if (assignedAnswerFile == null || !assignedAnswerFile.hasAnswerExplanations()) {
 
-			// The active Question booklet has no explanation-capable Answer source, so
-			// no Question from another booklet may substitute for it.
+			// A booklet without declared explanation material has no explanation
+			// requirement and must never inherit candidates from another booklet.
 			return List.of();
 		}
 		return questions.stream().filter(question -> subject.equals(question.getExam().getSubject()))
 				.filter(question -> question.getBooklet().getId() == activeBooklet.getId())
 				.filter(this::isMultipleChoiceQuestion).filter(Question::hasAnswer).filter(question -> {
 
-					// Retrofit enriches an authoritative A-D Answer. Invalid legacy text
+					// Retrofit requires an authoritative A-D Answer. Invalid legacy text
 					// remains ordinary Answer-correction work.
 					String answerText = question.getAnswer().getAnswerText();
 					String validationError = AnswerCaptureValidator.findError(new AnswerCaptureValidator.State(true,
 							QuestionResponseType.MULTIPLE_CHOICE, false, answerText, 0));
 					return validationError == null;
+				}).filter(question -> {
+
+					// Only genuinely missing explanations belong in the work queue. Already
+					// explained MCQs remain authoritative and are not re-presented as work.
+					return question.getAnswer().getRegions().isEmpty();
 				}).sorted(QuestionSourceOrder.comparator()).toList();
 	}
 
@@ -1568,21 +1686,33 @@ public final class AnswerCapturePane extends VBox {
 		startVirtualTask("next-answer-file", task);
 	}
 
-	private boolean mcqExplanationCaptureUnavailable() {
-		ExamBooklet activeBooklet = activeBookletSupplier.get();
+	private boolean mcqExplanationCaptureUnavailable(ExamBooklet requestedBooklet) {
 
-		// Entry requires both an idle Answer workflow and an authoritative AnswerFile
+		// Entry requires an idle Answer workflow and an authoritative AnswerFile
 		// explicitly marked as containing MCQ explanations.
-		return mcqExplanationMode || mcqExplanationLoadInProgress || workingSubject == null || answerSaveInProgress
-				|| editingAnswerQuestion != null || !activeBookletSupportsMcqExplanations(activeBooklet);
+		return requestedBooklet == null || mcqExplanationMode || mcqExplanationLoadInProgress || workingSubject == null
+				|| answerSaveInProgress || editingAnswerQuestion != null
+				|| requestedBooklet.getExam().getSubject().getId() != workingSubject.getId()
+				|| !activeBookletSupportsMcqExplanations(requestedBooklet);
 	}
 
-	private boolean mcqExplanationRequestIsCurrent(Subject requestedSubject, ExamBooklet requestedBooklet) {
+	private boolean mcqExplanationRequestIsCurrent(Subject requestedSubject, ExamBooklet requestedBooklet,
+			boolean activeBookletOwned) {
+		if (!Objects.equals(workingSubject, requestedSubject)) {
 
-		// Both transient Subject and booklet identity must still match before a
-		// background result can modify the current workspace.
-		return Objects.equals(workingSubject, requestedSubject)
-				&& sameBooklet(requestedBooklet, activeBookletSupplier.get());
+			// A later Subject transition always invalidates the completed worker.
+			return false;
+		}
+		if (activeBookletOwned) {
+
+			// Normal Capture owns the active structural booklet throughout candidate
+			// loading.
+			return sameBooklet(requestedBooklet, activeBookletSupplier.get());
+		}
+
+		// Dashboard entry does not change ExamMetadataPane merely to edit Answer
+		// explanations. Its transient Exam scope is therefore the ownership guard.
+		return examScope != null && examScope.getId() == requestedBooklet.getExam().getId();
 	}
 
 	private RadioButton multipleChoiceButtonFor(String answerText) {
@@ -2079,6 +2209,35 @@ public final class AnswerCapturePane extends VBox {
 		Thread thread = new Thread(task, threadName);
 		thread.setDaemon(true);
 		thread.start();
+	}
+
+	private boolean startMcqExplanationCapture(ExamBooklet requestedBooklet, Question preferredQuestion,
+			boolean activeBookletOwned) {
+		if (mcqExplanationCaptureUnavailable(requestedBooklet)) {
+			return false;
+		}
+		if (preferredQuestion != null && preferredQuestion.getBooklet().getId() != requestedBooklet.getId()) {
+			throw new IllegalArgumentException("Preferred MCQ does not belong to the requested booklet");
+		}
+		if (hasUnsavedOrdinaryAnswerDraft()) {
+			showAnswerWorkflowWarning("Unsaved Answer work",
+					"Save or clear the current Answer work before capturing MCQ explanations.");
+			return false;
+		}
+		if (!answerTransitionAllowed.getAsBoolean()) {
+			return false;
+		}
+		Subject requestedSubject = workingSubject;
+		Long preferredQuestionId = preferredQuestion == null ? null : Long.valueOf(preferredQuestion.getId());
+		beginMcqExplanationCandidateLoad();
+		CaptureBackgroundTask<List<Question>> task = new CaptureBackgroundTask<>(
+				() -> loadMcqExplanationCandidates(questionRepository.findAll(), requestedSubject, requestedBooklet));
+		task.setOnSucceeded(_ -> handleMcqExplanationCandidateLoadSuccess(requestedSubject, requestedBooklet,
+				activeBookletOwned, preferredQuestionId, task.getValue()));
+		task.setOnFailed(_ -> handleMcqExplanationCandidateLoadFailure(requestedSubject, requestedBooklet,
+				activeBookletOwned, task.getException()));
+		startVirtualTask("mcq-explanation-candidates", task);
+		return true;
 	}
 
 	private void startVirtualTask(String threadName, Runnable task) {

@@ -98,8 +98,9 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 	 * Completion requires recorded Exam-level asset expectations, matching
 	 * available assets, recorded and satisfied top-level Question expectations for
 	 * every booklet, available Question PDFs, descriptor-level classification for
-	 * every Question and no remaining ordinary Question work. Optional MCQ
-	 * explanation coverage does not affect lifecycle readiness.
+	 * every Question, no remaining ordinary Question work, and complete MCQ
+	 * explanation coverage for every booklet whose AnswerFile explicitly declares
+	 * explanation material.
 	 *
 	 * @return whether the audited Exam is ready to be marked COMPLETE
 	 */
@@ -127,6 +128,13 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 			// A Question classified only to Subtopic cannot yet participate reliably in
 			// descriptor-level curriculum mapping, so the Exam is not complete.
 			if (bookletStatus.questionsWithoutDescriptorCount() != 0) {
+				return false;
+			}
+			McqExplanationCoverage explanationCoverage = bookletStatus.mcqExplanationCoverage();
+			if (explanationCoverage.explanationCapable() && explanationCoverage.missingExplanationCount() != 0) {
+
+				// Marking material explicitly declared as containing explanations creates
+				// a completion requirement for every eligible answered MCQ in that booklet.
 				return false;
 			}
 			Integer expectedQuestions = bookletStatus.expectedTopLevelQuestionCount();
@@ -176,8 +184,8 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 	 */
 	public boolean requiresAttention() {
 
-		// MCQ explanation coverage is deliberately excluded. A valid A-D Answer is
-		// complete even when optional explanation regions have not been captured.
+		// Booklet attention now includes required MCQ explanation work when an assigned
+		// AnswerFile declares that explanation material exists.
 		return !findings.isEmpty() || bookletStatuses.stream().anyMatch(BookletCorpusStatus::requiresAttention);
 	}
 }

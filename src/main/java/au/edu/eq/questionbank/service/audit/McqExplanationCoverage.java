@@ -1,7 +1,11 @@
 package au.edu.eq.questionbank.service.audit;
 
 /**
- * Reports optional MCQ explanation-region coverage for one booklet.
+ * Reports MCQ explanation-region coverage for one booklet.
+ * <p>
+ * Explanation coverage is not ordinary A-D Answer completeness. It becomes
+ * required Exam-completion work only when the booklet's assigned AnswerFile
+ * explicitly declares that explanation material exists.
  *
  * @param explanationCapable       whether the booklet's assigned AnswerFile
  *                                 declares that it contains explanations
@@ -41,8 +45,9 @@ public record McqExplanationCoverage(boolean explanationCapable, int eligibleQue
 	 */
 	public int missingExplanationCount() {
 
-		// Missing explanation material is coverage information only; it is not an
-		// ordinary Answer-completeness problem.
+		// The count remains independent of ordinary Answer completeness, but every
+		// missing item becomes required lifecycle work for an explanation-capable
+		// booklet.
 		return eligibleQuestionCount - capturedExplanationCount;
 	}
 }

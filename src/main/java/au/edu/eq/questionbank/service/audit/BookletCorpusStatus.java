@@ -115,8 +115,10 @@ public record BookletCorpusStatus(ExamBooklet booklet, boolean questionPdfAvaila
 	 */
 	public boolean requiresAttention() {
 
-		// Explanation coverage and descriptor-classification coverage are deliberately
-		// reporting dimensions. Neither changes ordinary Question completeness.
-		return !findings.isEmpty() || questionSummary.incompleteQuestions() > 0;
+		// Ordinary Question problems and structural findings remain independent audit
+		// dimensions. Once an AnswerFile declares MCQ explanations, however, missing
+		// explanation regions are also real outstanding booklet work.
+		return !findings.isEmpty() || questionSummary.incompleteQuestions() > 0
+				|| mcqExplanationCoverage.missingExplanationCount() > 0;
 	}
 }

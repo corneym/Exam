@@ -1,7 +1,7 @@
 package au.edu.eq.questionbank.service.audit;
 
 /**
- * Aggregate optional MCQ explanation coverage across one Exam.
+ * Aggregate MCQ explanation coverage across one Exam.
  *
  * @param explanationCapableBookletCount booklets whose assigned AnswerFile
  *                                       declares explanation material
@@ -38,8 +38,9 @@ public record McqExplanationSummary(int explanationCapableBookletCount, int elig
 	 */
 	public int missingExplanationCount() {
 
-		// This count deliberately remains independent of ordinary Question/Answer
-		// completeness.
+		// Ordinary A-D Answer completeness remains unchanged. This separate count
+		// identifies outstanding explanation work required by explanation-capable
+		// booklets.
 		return eligibleQuestionCount - capturedExplanationCount;
 	}
 }

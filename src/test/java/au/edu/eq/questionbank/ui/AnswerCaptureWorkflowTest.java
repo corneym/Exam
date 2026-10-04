@@ -329,6 +329,43 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardMcqExplanationCaptureOpensExactMissingQuestionAndRequiresARegion(FxRobot robot) throws Exception {
+		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		// Explanation material is authoritative for this booklet and the MCQ has a
+		// complete A-D Answer but no explanation region.
+		answerWriter.setContainsAnswerExplanations(fixture.answersA(), true);
+		answerWriter.insertAnswer(fixture.mcqQuestion(), "B", List.of());
+		AnswerCapturePane answers = answerCapturePane();
+		robot.interact(() -> answers.setExamScope(fixture.mcqQuestion().getExam()));
+		Boolean started = WaitForAsyncUtils.asyncFx(() -> answers.captureMcqExplanations(fixture.mcqQuestion())).get();
+		assertTrue(started.booleanValue());
+		@SuppressWarnings("unchecked")
+		ComboBox<Question> explanationQuestions = lookup(robot, "#mcq-explanation-question", ComboBox.class);
+
+		// Dashboard entry selects its exact requested work item rather than leaving the
+		// teacher to rediscover it in the retrofit selector.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> answers.isEditingAnswer() && explanationQuestions.getValue() != null
+						&& explanationQuestions.getValue().getId() == fixture.mcqQuestion().getId());
+		assertEquals(fixture.mcqQuestion().getId(), explanationQuestions.getValue().getId());
+		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled(),
+				"A missing-explanation candidate must not be consumable without a region");
+
+		// Cancel changes no persistence and leaves the outstanding candidate available.
+		Button cancel = lookup(robot, "#cancel-answer-edit", Button.class);
+		robot.interact(cancel::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(explanationQuestions.getItems().stream()
+				.anyMatch(question -> question.getId() == fixture.mcqQuestion().getId()));
+		Button done = lookup(robot, "#finish-mcq-explanations", Button.class);
+		robot.interact(done::fire);
+	}
+
+	@Test
 	void directAnswerCaptureCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "DASH-A");
@@ -438,6 +475,13 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(addRegion.isVisible());
 		assertTrue(answerCapturePane().isEditingAnswer());
 
+		// Move away from page 1 before saving. Consecutive explanations are commonly
+		// adjacent in the same marking guide, so automatic advancement must preserve
+		// this
+		// working position.
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2));
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
+
 		// PDF dragging remains intentional because region geometry is the behaviour
 		// under test.
 		dragRegionOnDisplayedPage(robot);
@@ -459,8 +503,16 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(retrofitQuestions.getItems().stream()
 				.noneMatch(question -> question.getId() == firstCandidate.getId()));
 		assertEquals(secondMcq.getId(), retrofitQuestions.getValue().getId());
+
+		// Advancing to another candidate in the same AnswerFile must reuse the existing
+		// PDF session rather than reopen it at page 1.
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
 		RadioButton answerC = lookup(robot, "#answer-choice-c", RadioButton.class);
 		assertTrue(answerC.isSelected(), "Automatic advancement must restore the next candidate's stored letter");
+
+		// Merely opening the automatically advanced candidate restores persisted A-D
+		// state and is safe to abandon without forcing an unnecessary Cancel first.
+		assertTrue(answerCapturePane().canAbandonMcqExplanationCapture());
 
 		// Cancelling does not consume the candidate because no successful update was
 		// persisted for it.
@@ -468,9 +520,29 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(cancel::fire);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(retrofitQuestions.getItems().stream().anyMatch(question -> question.getId() == secondMcq.getId()));
-		Button done = lookup(robot, "#finish-mcq-explanations", Button.class);
-		robot.interact(done::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+
+		// Reopen the remaining repository-loaded candidate. The original secondMcq
+		// instance predates insertAnswer(...) and therefore does not contain its
+		// persisted Answer.
+		Question remainingCandidate = retrofitQuestions.getItems().stream()
+				.filter(question -> question.getId() == secondMcq.getId()).findFirst().orElseThrow();
+		robot.interact(() -> retrofitQuestions.getSelectionModel().select(remainingCandidate));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> answerCapturePane().isEditingAnswer() && retrofitQuestions.getValue() != null
+						&& retrofitQuestions.getValue().getId() == remainingCandidate.getId());
+		dragRegionOnDisplayedPage(robot);
+		robot.interact(addRegion::fire);
+		robot.interact(() -> lookup(robot, "#save-answer", Button.class).fire());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findById(secondMcq.getId()).filter(Question::hasAnswer)
+						.map(question -> "C".equals(question.getAnswer().getAnswerText())
+								&& question.getAnswer().getRegions().size() == 1)
+						.orElse(false));
+
+		// Saving the final outstanding explanation completes the retrofit session
+		// automatically. No stale MCQ controls or separate Done action should remain.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> !retrofitControls.isVisible() && !answerCapturePane().isEditingAnswer());
 		assertFalse(retrofitControls.isVisible());
 		assertTrue(beginRetrofit.isVisible());
 	}

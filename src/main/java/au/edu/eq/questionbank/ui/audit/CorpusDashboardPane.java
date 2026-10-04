@@ -21,6 +21,8 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.audit.BookletCorpusFinding;
 import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
+import au.edu.eq.questionbank.service.audit.McqExplanationCoverage;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusAudit;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusCompletionFilter;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusFilter;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
@@ -81,7 +83,6 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button missingAnswerButton = new Button();
 	private final Button unknownTypeButton = new Button();
 	private final Button sharedContextButton = new Button();
-	private final Label mcqExplanationSummaryLabel = new Label();
 	private final TableView<ExamCorpusStatus> examTable = new TableView<>();
 	private final Label selectedExamLabel = new Label();
 	private final Label declaredExamStateLabel = new Label();
@@ -145,6 +146,11 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button examLifecycleButton = new Button("Mark Complete");
 	private BiConsumer<Exam, ExamCaptureState> examLifecycleHandler = (_, _) -> {
 	};
+	private final Button captureMcqExplanationsButton = new Button("Capture MCQ Explanations");
+	private Consumer<Question> mcqExplanationCaptureHandler = _ -> {
+	};
+	private boolean mcqExplanationFilterActive;
+	private final Button missingMcqExplanationButton = new Button();
 
 	public CorpusDashboardPane(Subject workingSubject, List<ExamCorpusStatus> examStatuses, List<Question> questions,
 			List<CurriculumMappingCoverage> mappingCoverages) {
@@ -359,6 +365,23 @@ public final class CorpusDashboardPane extends VBox {
 		mapCurriculumHandler = handler;
 	}
 
+	/**
+	 * Supplies the application-owned route into existing MCQ explanation capture.
+	 *
+	 * @param handler operation receiving the first missing explanation Question to
+	 *                open
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
+	public void setMcqExplanationCaptureHandler(Consumer<Question> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Dashboard identifies explanation work, while AnswerCapturePane remains the
+		// single owner of Answer-region editing and persistence.
+		mcqExplanationCaptureHandler = handler;
+	}
+
 	public void setNewQuestionCaptureHandler(Consumer<ExamBooklet> handler) {
 		if (handler == null) {
 			throw new NullPointerException("handler");
@@ -428,6 +451,25 @@ public final class CorpusDashboardPane extends VBox {
 		bulkResponseTypeHandler.accept(selected, responseType);
 	}
 
+	private void applyMcqExplanationFilter() {
+		changingQuestionFilter = true;
+		try {
+
+			// Missing explanations belong to ordinarily complete MCQ Answers, so the
+			// standard completeness ComboBox cannot represent this separate dimension.
+			questionViewBox.setValue(QuestionCorpusCompletionFilter.ALL);
+		} finally {
+			changingQuestionFilter = false;
+		}
+		selectedQuestionProblem = null;
+		mcqExplanationFilterActive = true;
+		summaryQuestionFilterActive = true;
+
+		// Rebuild Exam -> booklet -> Question scope from the separate explanation
+		// requirement while retaining the Subject-level headline coverage.
+		refreshDashboard();
+	}
+
 	private void applyQuestionFilter(QuestionCorpusCompletionFilter completion, QuestionCorpusProblem problem) {
 		changingQuestionFilter = true;
 		try {
@@ -435,6 +477,10 @@ public final class CorpusDashboardPane extends VBox {
 		} finally {
 			changingQuestionFilter = false;
 		}
+
+		// Returning to an ordinary Question filter ends the separate explanation-work
+		// drill-down.
+		mcqExplanationFilterActive = false;
 
 		// Subject-level summary buttons narrow the complete Exam -> booklet -> Question
 		// hierarchy rather than filtering only the previously selected Question scope.
@@ -444,11 +490,45 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private String bookletProblemLabel(BookletCorpusStatus status) {
+		if (mcqExplanationFilterActive) {
+			int missingExplanations = status.mcqExplanationCoverage().missingExplanationCount();
+			if (missingExplanations == 0) {
+				return "—";
+			}
+
+			// While the Dashboard is explicitly showing missing explanation work, the
+			// booklet Problem column should describe that same work dimension rather than
+			// falling back to ordinary incomplete-Question counts.
+			return missingExplanations == 1 ? "1 missing MCQ explanation"
+					: missingExplanations + " missing MCQ explanations";
+		}
 		int problemCount = status.questionSummary().incompleteQuestions();
 
-		// Structural booklet findings are displayed independently beneath the table,
-		// matching the approved Dashboard design.
+		// Outside the explanation drill-down, preserve the existing ordinary Question
+		// problem count. Structural booklet findings remain in the warning
+		// presentation.
 		return problemCount == 0 ? "—" : Integer.toString(problemCount);
+	}
+
+	private BookletCorpusStatus bookletStatusFor(Question question) {
+		if (question == null) {
+			return null;
+		}
+
+		// Dashboard audit state is already the authoritative Subject snapshot. Match by
+		// persistent identities because repository reads may reconstruct domain
+		// objects.
+		for (ExamCorpusStatus examStatus : examStatuses) {
+			if (examStatus.exam().getId() != question.getExam().getId()) {
+				continue;
+			}
+			for (BookletCorpusStatus bookletStatus : examStatus.bookletStatuses()) {
+				if (bookletStatus.booklet().getId() == question.getBooklet().getId()) {
+					return bookletStatus;
+				}
+			}
+		}
+		return null;
 	}
 
 	private String bookletWarningText(BookletCorpusStatus status) {
@@ -496,7 +576,7 @@ public final class CorpusDashboardPane extends VBox {
 		// Subject-level corpus indicators remain immediately below the Subject-level
 		// Curriculum section rather than between structural work areas.
 		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
-				missingAnswerButton, unknownTypeButton, sharedContextButton, mcqExplanationSummaryLabel);
+				missingAnswerButton, unknownTypeButton, sharedContextButton, missingMcqExplanationButton);
 		summaryRow.setId("corpus-dashboard-summary-row");
 		summaryRow.setAlignment(Pos.CENTER_LEFT);
 		examEmptyStateRow = new HBox(SPACING, noExamsLabel, addExamButton);
@@ -520,7 +600,8 @@ public final class CorpusDashboardPane extends VBox {
 		examOperationalContent.setId("corpus-dashboard-exam-operational-content");
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
-		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton);
+		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton,
+				captureMcqExplanationsButton);
 		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
 		HBox questionFilterRow = new HBox(SPACING, createBoldLabel("Show"), questionViewBox, questionResultCountLabel);
 		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
@@ -607,6 +688,18 @@ public final class CorpusDashboardPane extends VBox {
 		answerCaptureHandler.accept(question);
 	}
 
+	private void captureMcqExplanations() {
+		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+		Question question = firstMissingMcqExplanationQuestion(selected);
+		if (question == null) {
+			return;
+		}
+
+		// Booklet-level entry starts at the first source-ordered outstanding MCQ. The
+		// existing AnswerCapturePane retrofit workflow advances through the remainder.
+		mcqExplanationCaptureHandler.accept(question);
+	}
+
 	private void captureQuestions() {
 		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
 		if (selected == null || captureQuestionsButton.isDisable()) {
@@ -663,6 +756,7 @@ public final class CorpusDashboardPane extends VBox {
 			examStateBox.setValue(null);
 			questionViewBox.setValue(QuestionCorpusCompletionFilter.ALL);
 			selectedQuestionProblem = null;
+			mcqExplanationFilterActive = false;
 			summaryQuestionFilterActive = false;
 		} finally {
 			changingQuestionFilter = false;
@@ -691,12 +785,22 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void completeSelectedAnswer() {
 		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
+		if (selected == null) {
+			return;
+		}
+		if (isMissingMcqExplanation(selected.question())) {
+
+			// Explanation work belongs to an already-complete A-D Answer and therefore
+			// routes to the retrofit explanation workflow rather than ordinary Answer
+			// capture.
+			mcqExplanationCaptureHandler.accept(selected.question());
+			return;
+		}
 		if (!canCompleteSelectedAnswer(selected)) {
 			return;
 		}
 
-		// Question Work identifies the exact Answer task, so route that persisted
-		// Question rather than restarting at the first missing Answer in the booklet.
+		// Ordinary missing-Answer work retains its existing exact-Question route.
 		answerCaptureHandler.accept(selected.question());
 	}
 
@@ -748,13 +852,15 @@ public final class CorpusDashboardPane extends VBox {
 				QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
 		sharedContextButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
+		missingMcqExplanationButton.setOnAction(_ -> applyMcqExplanationFilter());
 		questionViewBox.valueProperty().addListener((_, _, _) -> {
 			if (changingQuestionFilter) {
 				return;
 			}
 
-			// A direct Show selection is Question-table filtering rather than a
-			// Subject-level summary drill-down. Restore the complete structural hierarchy.
+			// A direct Show selection returns to ordinary Question completeness filtering,
+			// ending any separate explanation-work drill-down.
+			mcqExplanationFilterActive = false;
 			selectedQuestionProblem = null;
 			summaryQuestionFilterActive = false;
 			refreshDashboard();
@@ -787,6 +893,7 @@ public final class CorpusDashboardPane extends VBox {
 			refreshQuestionWork();
 		});
 		captureAnswersButton.setOnAction(_ -> captureAnswers());
+		captureMcqExplanationsButton.setOnAction(_ -> captureMcqExplanations());
 		captureQuestionsButton.setOnAction(_ -> captureQuestions());
 		completeSelectedAnswerButton.setOnAction(_ -> completeSelectedAnswer());
 		completeSelectedQuestionButton.setOnAction(_ -> completeSelectedQuestion());
@@ -837,16 +944,18 @@ public final class CorpusDashboardPane extends VBox {
 		TableColumn<BookletCorpusStatus, Number> noDescriptorColumn = new TableColumn<>("No descriptor");
 		noDescriptorColumn.setCellValueFactory(
 				data -> new ReadOnlyObjectWrapper<>(data.getValue().questionsWithoutDescriptorCount()));
+		TableColumn<BookletCorpusStatus, String> mcqExplanationColumn = new TableColumn<>("MCQ explanations");
+		mcqExplanationColumn
+				.setCellValueFactory(data -> new ReadOnlyStringWrapper(mcqExplanationCoverageText(data.getValue())));
 		TableColumn<BookletCorpusStatus, String> problemsColumn = new TableColumn<>("Problems");
 		problemsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(bookletProblemLabel(data.getValue())));
 
-		// Descriptor coverage sits beside the Question counts because it describes how
-		// many persisted Question records still require finer curriculum
-		// classification.
+		// Descriptor coverage and MCQ explanation coverage are independent reporting
+		// dimensions beside the ordinary Question counts.
 		bookletTable.getColumns()
 				.setAll(List.<TableColumn<BookletCorpusStatus, ?>>of(bookletColumn, formatColumn, pdfColumn,
 						answerFileColumn, expectedColumn, foundColumn, partsColumn, noDescriptorColumn,
-						problemsColumn));
+						mcqExplanationColumn, problemsColumn));
 	}
 
 	private void configureBulkResponseTypeControls() {
@@ -907,6 +1016,10 @@ public final class CorpusDashboardPane extends VBox {
 		captureAnswersButton.setTooltip(new Tooltip(
 				"Start with the selected booklet, then continue through ready unanswered Questions in the selected Exam."));
 		captureAnswersButton.setDisable(true);
+		captureMcqExplanationsButton.setId("corpus-dashboard-capture-mcq-explanations");
+		captureMcqExplanationsButton.setTooltip(
+				new Tooltip("Capture required MCQ explanation regions for the selected explanation-capable booklet."));
+		captureMcqExplanationsButton.setDisable(true);
 		captureQuestionsButton.setId("corpus-dashboard-capture-questions");
 		captureQuestionsButton.setTooltip(new Tooltip(
 				"Start new Question capture for the selected booklet. COMPLETE Exams must be reactivated first."));
@@ -1037,7 +1150,9 @@ public final class CorpusDashboardPane extends VBox {
 		missingAnswerButton.setId("corpus-dashboard-summary-missing-answer");
 		unknownTypeButton.setId("corpus-dashboard-summary-unknown-type");
 		sharedContextButton.setId("corpus-dashboard-summary-shared-context");
-		mcqExplanationSummaryLabel.setId("corpus-dashboard-summary-mcq-explanations");
+		missingMcqExplanationButton.setId("corpus-dashboard-summary-missing-mcq-explanations");
+		missingMcqExplanationButton
+				.setTooltip(new Tooltip("Show answered MCQs still missing required explanation regions."));
 	}
 
 	private boolean confirmQuestionCaptureBeyondExpected(BookletCorpusStatus status) {
@@ -1105,9 +1220,10 @@ public final class CorpusDashboardPane extends VBox {
 
 	private int examWorkCount(ExamCorpusStatus status) {
 
-		// "Work" in the approved Dashboard means Question correction work. Structural
-		// findings are visible independently through counts and warnings.
-		return status.questionSummary().incompleteQuestions();
+		// Exam Work now includes both ordinary incomplete Questions and the separate
+		// explanation requirement declared by explanation-capable AnswerFiles.
+		return status.questionSummary().incompleteQuestions()
+				+ status.mcqExplanationSummary().missingExplanationCount();
 	}
 
 	private List<BookletCorpusStatus> filteredBookletStatuses(ExamCorpusStatus status) {
@@ -1170,6 +1286,19 @@ public final class CorpusDashboardPane extends VBox {
 				.map(QuestionCorpusWorkItem::question).findFirst().orElse(null);
 	}
 
+	private Question firstMissingMcqExplanationQuestion(BookletCorpusStatus bookletStatus) {
+		if (bookletStatus == null || !bookletStatus.mcqExplanationCoverage().explanationCapable()) {
+			return null;
+		}
+
+		// Booklet capture must begin at the first outstanding Question in natural
+		// source
+		// order and must never cross into another booklet.
+		return questions.stream().filter(question -> question.getBooklet().getId() == bookletStatus.booklet().getId())
+				.filter(this::isMissingMcqExplanation).sorted(QuestionSourceOrder.comparator()).findFirst()
+				.orElse(null);
+	}
+
 	private Question firstQuestionCaptureWorkQuestion(BookletCorpusStatus selected) {
 		if (selected == null) {
 			return null;
@@ -1210,6 +1339,25 @@ public final class CorpusDashboardPane extends VBox {
 				+ " unreviewed, " + inconsistent + " inconsistent)";
 	}
 
+	private boolean isMissingMcqExplanation(Question question) {
+		if (question == null || question.getResponseType() != QuestionResponseType.MULTIPLE_CHOICE) {
+			return false;
+		}
+		BookletCorpusStatus bookletStatus = bookletStatusFor(question);
+		if (bookletStatus == null || !bookletStatus.mcqExplanationCoverage().explanationCapable()) {
+			return false;
+		}
+
+		// Reuse the same ordinary Answer audit that supplies booklet explanation
+		// eligibility. A malformed or missing A-D Answer remains ordinary Answer work.
+		if (!QuestionCorpusAudit.assess(question).answerComplete()) {
+			return false;
+		}
+
+		// For eligible MCQs, at least one persisted Answer region is the explanation.
+		return question.getAnswer().getRegions().isEmpty();
+	}
+
 	private void manageSelectedExamAssets() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
 		if (selectedExam == null) {
@@ -1241,6 +1389,26 @@ public final class CorpusDashboardPane extends VBox {
 				.filter(coverage -> coverage.sourceVersion().getSubject().getId() == workingSubject.getId()
 						&& coverage.targetVersion().getSubject().getId() == workingSubject.getId())
 				.toList();
+	}
+
+	private String mcqExplanationCoverageText(BookletCorpusStatus status) {
+		McqExplanationCoverage coverage = status.mcqExplanationCoverage();
+		if (!coverage.explanationCapable()) {
+			return "—";
+		}
+
+		// Booklet rows make the location of explanation work visible without requiring
+		// the teacher to select every booklet individually.
+		return coverage.capturedExplanationCount() + " / " + coverage.eligibleQuestionCount();
+	}
+
+	private List<QuestionCorpusWorkItem> missingMcqExplanationWorkItems(List<Question> sourceQuestions) {
+
+		// Reuse ordinary Question audit status for all existing columns. Explanation
+		// absence is a separate Dashboard work dimension rather than a new
+		// QuestionCorpusProblem.
+		return sourceQuestions.stream().filter(this::isMissingMcqExplanation)
+				.map(question -> new QuestionCorpusWorkItem(question, QuestionCorpusAudit.assess(question))).toList();
 	}
 
 	private void moveLegacyImportButton(HBox target) {
@@ -1292,9 +1460,6 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private String problemsLabel(QuestionCorpusWorkItem item) {
-		if (item.status().isComplete()) {
-			return "—";
-		}
 		StringBuilder text = new StringBuilder();
 		for (QuestionCorpusProblem problem : QuestionCorpusProblem.values()) {
 			if (!item.status().hasProblem(problem)) {
@@ -1305,7 +1470,16 @@ public final class CorpusDashboardPane extends VBox {
 			}
 			text.append(problemLabel(problem));
 		}
-		return text.toString();
+		if (isMissingMcqExplanation(item.question())) {
+			if (!text.isEmpty()) {
+				text.append(", ");
+			}
+
+			// Required explanation absence is deliberately a Dashboard work dimension,
+			// not a false MISSING_ANSWER audit problem.
+			text.append("Missing MCQ explanation");
+		}
+		return text.isEmpty() ? "—" : text.toString();
 	}
 
 	private String questionAssetCount(ExamCorpusStatus status) {
@@ -1424,8 +1598,15 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void refreshQuestionWork() {
-		List<QuestionCorpusWorkItem> workItems = QuestionCorpusQueue.build(questionsForSelectedScope(),
-				questionWorkFilter());
+		List<QuestionCorpusWorkItem> workItems;
+		if (mcqExplanationFilterActive) {
+
+			// Missing explanations may belong to ordinarily complete Questions, so they
+			// cannot be obtained from the standard incomplete-Question queue.
+			workItems = missingMcqExplanationWorkItems(questionsForSelectedScope());
+		} else {
+			workItems = QuestionCorpusQueue.build(questionsForSelectedScope(), questionWorkFilter());
+		}
 		questionTable.getItems().setAll(workItems);
 
 		// Reapply the table's current source-aware sort after replacing its rows. The
@@ -1450,17 +1631,13 @@ public final class CorpusDashboardPane extends VBox {
 		missingAnswerButton.setText(summary.missingAnswer() + " Missing answers");
 		unknownTypeButton.setText(summary.unknownResponseType() + " Unknown type");
 		sharedContextButton.setText(summary.unresolvedSharedContext() + " Shared Context");
-		int eligibleExplanations = 0;
-		int capturedExplanations = 0;
-		for (ExamCorpusStatus status : scopeFilteredExamStatuses()) {
-			eligibleExplanations += status.mcqExplanationSummary().eligibleQuestionCount();
-			capturedExplanations += status.mcqExplanationSummary().capturedExplanationCount();
-		}
+		int missingExplanations = scopeFilteredExamStatuses().stream()
+				.mapToInt(status -> status.mcqExplanationSummary().missingExplanationCount()).sum();
 
-		// Explanation coverage is reported independently from ordinary incomplete
-		// Question totals.
-		mcqExplanationSummaryLabel
-				.setText(String.format("MCQ explanations %d / %d", capturedExplanations, eligibleExplanations));
+		// The actionable count is sufficient at Subject level. Detailed
+		// captured/eligible
+		// coverage remains visible on each Question booklet.
+		missingMcqExplanationButton.setText(missingExplanations + " Missing MCQ explanations");
 	}
 
 	private String responseTypeLabel(Question question) {
@@ -1608,6 +1785,12 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private List<QuestionCorpusWorkItem> summaryFilteredQuestionWork() {
+		if (mcqExplanationFilterActive) {
+
+			// Explanation drill-down uses the same Provider/Year/Exam-state Subject scope
+			// as the other headline indicators, but not ordinary Question incompleteness.
+			return missingMcqExplanationWorkItems(filteredSummaryQuestions());
+		}
 
 		// Summary buttons are calculated over Provider/Year/Exam-state scope rather
 		// than over an already selected Exam or booklet.
@@ -1650,8 +1833,14 @@ public final class CorpusDashboardPane extends VBox {
 				&& (existingQuestionWork != null || !selected.booklet().getExam().isComplete());
 		captureQuestionsButton.setDisable(!questionCaptureAvailable);
 
-		// Booklet-level Answer capture retains its sequential Answer workflow.
+		// Booklet-level ordinary Answer capture retains its sequential unanswered
+		// workflow.
 		captureAnswersButton.setDisable(selected == null || firstMissingAnswerQuestion() == null);
+
+		// Explanation capture is correction of already-persisted Answer material and is
+		// therefore valid even when the Exam is already COMPLETE.
+		captureMcqExplanationsButton
+				.setDisable(selected == null || firstMissingMcqExplanationQuestion(selected) == null);
 	}
 
 	private void updateExamAssetsActionState() {
@@ -1706,13 +1895,22 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateQuestionActionState() {
 		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
+		boolean missingExplanation = selected != null && isMissingMcqExplanation(selected.question());
+		if (missingExplanation) {
+			completeSelectedAnswerButton.setText("Capture Explanation");
+			completeSelectedAnswerButton
+					.setTooltip(new Tooltip("Capture the missing MCQ explanation for the selected Question."));
+			completeSelectedAnswerButton.setDisable(false);
+		} else {
+			completeSelectedAnswerButton.setText("Complete Selected Answer");
+			completeSelectedAnswerButton
+					.setTooltip(new Tooltip("Complete the missing Answer for the selected Question."));
+			completeSelectedAnswerButton.setDisable(!canCompleteSelectedAnswer(selected));
+		}
 
-		// Question and Answer correction are separate tasks even when both findings are
-		// reported for the same persisted Question.
-		completeSelectedAnswerButton.setDisable(!canCompleteSelectedAnswer(selected));
-
-		// UNKNOWN response type is deliberately resolved first through the explicit
-		// response-type controls rather than through Question-region correction.
+		// Question-side correction remains independently available if the same
+		// persisted
+		// Question also has Question-content work.
 		completeSelectedQuestionButton.setDisable(!canCompleteSelectedQuestion(selected));
 	}
 
