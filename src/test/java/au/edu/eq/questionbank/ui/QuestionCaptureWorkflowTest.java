@@ -771,9 +771,10 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+
+		// Close the warning through its DialogPane-owned action so a retained or
+		// unrelated text-matched Button cannot satisfy the workflow under Xvfb.
+		fireDialogButton(robot, "OK");
 
 		// The rejected transition must preserve the complete workspace context, not
 		// merely restore the Subject name.

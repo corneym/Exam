@@ -142,9 +142,10 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void answerEditCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "58");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
 				new Class<?>[] { Question.class, String.class }, question, "A")).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, question::hasAnswer));
 		AtomicBoolean callbackRan = new AtomicBoolean();
 		AtomicBoolean saveInProgressAtCompletion = new AtomicBoolean();
 		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, () -> {
@@ -157,8 +158,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(saveInProgressAtCompletion.get(),
 				"Answer edit completion must run after the save-in-progress state is cleared");
 		assertFalse(answerCapturePane().isSaveInProgress());
-		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
-				.orElseThrow();
+		Question stored = repository.findById(question.getId()).orElseThrow();
 		assertEquals("B", stored.getAnswer().getAnswerText());
 	}
 
@@ -257,7 +257,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#add-answer-region");
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		assertEquals("Regions: 2", lookup(robot, "#answer-region-count", Label.class).getText());
 		Button firstRemoveButton = robot.lookup("Remove").queryButton();
 		fireControl(robot, firstRemoveButton);
@@ -318,7 +318,8 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		fireControl(robot, "#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> savedQuestion.hasAnswer() && savedQuestion.getAnswer().getRegions().size() == 1));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(savedQuestion.hasAnswer());
 		assertNull(savedQuestion.getAnswer().getAnswerText());
@@ -391,9 +392,10 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void editingAnswerCompletesWithoutReloadingTheQuestionBank(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "54");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
 				new Class<?>[] { Question.class, String.class }, question, "A")).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, question::hasAnswer));
 		long answerId = question.getAnswer().getId();
 		AtomicInteger completed = new AtomicInteger();
 		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, completed::incrementAndGet)));
@@ -406,10 +408,9 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		});
 		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
 				new Class<?>[] { Question.class, String.class }, question, "B")).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> completed.get() == 1);
 		assertEquals(1, completed.get());
-		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
-				.orElseThrow();
+		Question stored = repository.findById(question.getId()).orElseThrow();
 		assertEquals(answerId, stored.getAnswer().getId());
 		assertEquals("B", stored.getAnswer().getAnswerText());
 		assertTrue(unansweredQuestions(robot).getItems().isEmpty());
@@ -714,7 +715,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new IllegalStateException(e);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answers.isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, question::hasAnswer));
 		WaitForAsyncUtils.waitForFxEvents();
 		robot.interact(() -> refreshAnswerQuestionsForTest(oldSnapshot));
 		assertTrue(unansweredQuestions(robot).getItems().isEmpty());
@@ -733,10 +734,11 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-answer-region");
 		fireControl(robot, "#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> question.hasAnswer() && question.getAnswer().getRegions().size() == 1));
 		WaitForAsyncUtils.waitForFxEvents();
-		Question beforeReplacement = new SqliteQuestionRepository(new SqliteDatabase(databasePath))
-				.findById(question.getId()).orElseThrow();
+		Question beforeReplacement = repository.findById(question.getId()).orElseThrow();
 		assertTrue(beforeReplacement.hasAnswer());
 		assertEquals(1, beforeReplacement.getAnswer().getRegions().size());
 		Path replacementPdf = createReplacementAnswerPdf(databasePath.getParent().resolve("replacement-answer.pdf"));

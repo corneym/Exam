@@ -3658,11 +3658,6 @@ public class QuestionBankApplication extends Application {
 				showCorpusDashboardHome();
 			}
 		});
-		dashboard.setMcqExplanationCaptureHandler(question -> {
-			if (!showDashboardMcqExplanationCapture(question, this::refreshAndShowCorpusDashboardHome)) {
-				showCorpusDashboardHome();
-			}
-		});
 		dashboard.setBulkResponseTypeHandler(this::applyCorpusDashboardBulkResponseType);
 		dashboard.setExamAssetsHandler(
 				(exam, booklet) -> showExamAssetsMode(exam, booklet, this::refreshAndShowCorpusDashboardHome));

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -85,6 +86,17 @@ abstract class QuestionBankApplicationUiTestBase {
 		// Fire the real DialogPane-owned Close control without mouse hit-testing.
 		robot.interact(closeButton::fire);
 		waitForDialogHidden(robot, dialogTitle);
+	}
+
+	static boolean evaluateOnFx(FxRobot robot, BooleanSupplier condition) {
+		AtomicReference<Boolean> result = new AtomicReference<>(Boolean.FALSE);
+		robot.interact(() -> {
+
+			// Workflow completion conditions that read JavaFX-owned or UI-published state
+			// must be observed on the JavaFX thread.
+			result.set(condition.getAsBoolean());
+		});
+		return result.get().booleanValue();
 	}
 
 	static <T> T field(Object owner, String fieldName, Class<T> type) throws Exception {
@@ -215,6 +227,31 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	static <T extends Node> T lookup(FxRobot robot, String selector, Class<T> type) {
 		return robot.lookup(selector).queryAs(type);
+	}
+
+	static <T extends Node> T lookupOnFx(FxRobot robot, Node root, String selector, Class<T> type) {
+		AtomicReference<T> result = new AtomicReference<>();
+		robot.interact(() -> {
+
+			// Scene-graph replacement and CSS lookup must be serialised on the JavaFX
+			// thread. TestFX's ordinary query traversal can otherwise race an asynchronous
+			// Dashboard publication.
+			Node node = root.lookup(selector);
+			if (node != null) {
+				if (!type.isInstance(node)) {
+					throw new AssertionError("Node " + selector + " is not a " + type.getSimpleName());
+				}
+				result.set(type.cast(node));
+			}
+		});
+		return result.get();
+	}
+
+	static boolean nodePresentOnFx(FxRobot robot, Node root, String selector) {
+
+		// A null result is the stable FX-thread observation used while polling an
+		// asynchronous workspace transition.
+		return lookupOnFx(robot, root, selector, Node.class) != null;
 	}
 
 	static <T extends Node> T lookupInShowingDialog(FxRobot robot, String dialogTitle, String selector, Class<T> type) {

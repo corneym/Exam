@@ -86,7 +86,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// the 300 px maximum viewport height.
 		robot.interact(() -> answerCapturePane().acceptSelection(
 				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.ANSWER, 1, 0.10, 0.10, 0.70, 0.05)));
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		WaitForAsyncUtils.waitForFxEvents();
 		javafx.scene.control.ScrollPane regionsPane = field(answerCapturePane(), "answerRegionsScrollPane",
 				javafx.scene.control.ScrollPane.class);
@@ -1559,7 +1559,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Select MCQ before using the existing capture helper. The helper supplies its
 		// written-response default only when no response type has already been chosen.
 		RadioButton multipleChoice = lookup(robot, "#question-response-type-multiple-choice", RadioButton.class);
-		robot.clickOn(multipleChoice);
+		fireControl(robot, multipleChoice);
 		Question question = captureQuestion(robot, "MC1");
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));

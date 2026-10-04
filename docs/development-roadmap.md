@@ -525,13 +525,15 @@ Exam/Assets routing.
 Issue #61 adds the correction-routing circuit around that Dashboard. Dashboard
 actions now enter the existing authoritative Question capture, Answer capture and
 Exam/Assets workflows and return through refreshed persistence state. Manage
-Exam / Assets is available for any selected Exam and preserves an explicitly
-selected booklet. The latest routing, responsive-workspace and Subject-change
-safeguards have passed manual acceptance and feature-branch CI.
+Exam / Assets is available for a selected ACTIVE Exam and preserves an
+explicitly selected booklet. COMPLETE Exams remain inspectable on the Dashboard
+and must be deliberately marked Active before structural asset management. The
+latest routing, responsive-workspace and Subject-change safeguards have passed
+manual acceptance and feature-branch CI.
 
-Issue #65 owns the next application-shell step: make the Corpus Dashboard the
-default home screen, move authoritative Subject selection into that surface and
-provide useful empty-Subject actions such as Add Exam and Add Curriculum.
+Issue #65 made the Corpus Dashboard the default home screen, moved authoritative
+Subject selection into that surface and added empty-Subject actions such as Add
+Exam and Add Curriculum.
 
 Curriculum mapping review coverage is now implemented as a separate Subject-level
 Dashboard reporting dimension through `CurriculumMappingCoverageService`.

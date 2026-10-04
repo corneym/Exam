@@ -49,9 +49,8 @@ import javafx.util.StringConverter;
  * Presents the main-window Exam/Assets workspace for the current Working
  * Subject.
  * <p>
- * This first workspace increment is intentionally read-only. It establishes the
- * authoritative persisted Exam selection and asset presentation before later
- * increments add editing and asset-management actions.
+ * It provides the authoritative persisted Exam selection, lifecycle-safe
+ * metadata correction, asset management and capture-booklet activation.
  */
 public final class ExamAssetsPane extends VBox {
 
@@ -126,11 +125,6 @@ public final class ExamAssetsPane extends VBox {
 	private final Consumer<AnswerFile> answerFileDeleteHandler;
 	private final Consumer<ExamBooklet> questionBookletDeleteHandler;
 
-	// TODO
-	// The EXAM label and its components should be surrounded with a border. The
-	// QUESTION BOOKLETS label and its components should be surrounded with a
-	// border. The ANSWER BOOKLETS and its components should be surrounded with a
-	// border. Low priority but a must for this sprint and slice.
 	// New Exam is a workspace-level structural transaction. It reuses the existing
 	// Exam Details controls but does not create another Subject selector.
 	private final Button addNewExamButton = new Button("Add New Exam");
@@ -974,7 +968,6 @@ public final class ExamAssetsPane extends VBox {
 		updateAddNewExamState();
 	}
 
-	// TODO Refactor this method and maybe the class
 	private void configureControls() {
 		examBox.setId("exam-assets-exam");
 		examBox.setMaxWidth(Double.MAX_VALUE);

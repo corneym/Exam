@@ -738,7 +738,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// create a Question region.
 		dragRegionOnDisplayedPage(robot);
 		assertEquals("Add Context", lookup(robot, "#add-question-region", Button.class).getText());
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(save.isDisabled());
 

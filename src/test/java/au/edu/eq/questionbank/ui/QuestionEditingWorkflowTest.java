@@ -690,9 +690,9 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(1, repository.findAll().size());
 		assertEquals("3", repository.findById(original.getId()).orElseThrow().getQuestionCode());
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertFalse(save.isDisabled());
-		robot.clickOn(save);
+		fireControl(robot, save);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> completed.get() == 1);
 		List<Question> stored = repository.findAll();
 		assertEquals(2, stored.size());

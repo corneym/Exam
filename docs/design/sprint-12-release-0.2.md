@@ -1,6 +1,6 @@
 # Sprint 12 --- Exam Intake, Capture Workflow and Corpus Status
 
-> **Status:** IN IMPLEMENTATION\
+> **Status:** READY FOR PR\
 > **Branch:** `feature/sprint-12`\
 > **Prepared:** 28 September 2026\
 > **Target release:** 0.2
@@ -25,8 +25,8 @@ Sprint 12 is deliberately limited to four related slices:
 4. Corpus Dashboard / Audit refinement.
 
 By Sprint 12 closeout, the selected Subject becomes application-level context
-and the Corpus Dashboard is intended to become the main application working
-surface for that Subject. A Subject with little or no data must present useful
+and the Corpus Dashboard is the main application working surface for that
+Subject. A Subject with little or no data presents useful
 onboarding actions rather than an empty audit display.
 
 Richer Question Search filtering is not Sprint 12 work and has returned to the
@@ -246,13 +246,12 @@ each available version. Switching between current and historical syllabus
 versions after the Subject snapshot has loaded therefore does not return to
 SQLite for root-Unit lookup on the JavaFX thread.
 
-### 3.8 Legacy Question metadata intake uses Exam/Assets
+### 3.8 Legacy Question metadata intake starts from the Dashboard
 
 Legacy Question import is an intake source, not a second Exam-management model.
 
-The implemented Sprint 12 workflow begins from the main-window Exam/Assets
-workspace. It inherits the authoritative Working Subject and does not present
-another Subject selector.
+The implemented Sprint 12 workflow begins from the Corpus Dashboard. It inherits
+the authoritative Working Subject and does not present another Subject selector.
 
 The intake dialog asks only for:
 
@@ -309,8 +308,10 @@ A pending legacy preflight belongs to exactly one Working Subject. An accepted
 Working Subject change cancels that pending intake so stale requirements cannot
 survive into another Subject.
 
-The former standalone Exam-menu legacy-import action is removed. Exam/Assets is
-the single application entry point for legacy Question metadata intake.
+The former standalone Exam-menu legacy-import action is removed. The Corpus
+Dashboard is the single application entry point for legacy Question metadata
+intake; Exam/Assets remains the authoritative place to create or correct any
+missing structural assets found by preflight.
 
 Regression coverage verifies:
 
@@ -530,9 +531,8 @@ Implementation status as at 28 September 2026:
   filename or external path;
 - ambiguous duplicate matches are reported rather than resolved arbitrarily.
 
-Hashing is also used by the Question-PDF replacement workflow described below.
-Answer-PDF replacement remains part of the subsequent Answer-asset correction
-work.
+Hashing is also used by the Question-PDF and Answer-PDF replacement workflows
+described below.
 
 ### 4.7 Answer/marking assets
 
@@ -1205,9 +1205,9 @@ clipboard-image content remains.
 
 ### 7.6 Operational UI
 
-The current concatenated work-item `ListView` should evolve into a useful table.
+The former concatenated work-item `ListView` evolved into a useful table.
 
-The Dashboard should support:
+The Dashboard supports:
 
 - Subject/provider/year/booklet scoping where useful;
 - Exam/booklet selection;
@@ -1341,8 +1341,8 @@ and summary drill-down/clear behaviour is consistent. Automated persistence
 coverage confirms that Dashboard Refresh rereads mapping-review decisions without
 altering ordinary Question-completeness totals.
 
-Automatic refresh when returning from Dashboard-owned workflows remains part of
-Issue #65, when the Corpus Dashboard becomes the application home screen.
+Returning from Dashboard-owned workflows automatically refreshes the Dashboard
+from authoritative persistence.
 
 ### 7.9 MCQ explanation reporting
 
@@ -1354,11 +1354,11 @@ region has been captured.
 
 ### 7.10 Dashboard as the Subject home screen
 
-Promotion of the Corpus Dashboard to the application home screen is tracked by
-Issue #65. It follows completion and live-data validation of the operational
-Dashboard and its correction-routing workflows.
+Issue #65 promoted the Corpus Dashboard to the application home screen after
+completion and live-data validation of the operational Dashboard and its
+correction-routing workflows.
 
-The intended application flow is:
+The implemented application flow is:
 
 ```text
 Application start
@@ -1421,10 +1421,9 @@ The Curriculum region distinguishes a Subject with no curriculum from one that
 has curriculum but no historical-to-current mapping pair. Its compact `+`
 action routes to the existing PDF-authoring or Excel-import workflow.
 
-Creating a Subject does not require immediate creation of either an Exam or
-curriculum. Exam setup may occur before curriculum entry. Question capture still
-requires a valid persisted Question classification and therefore cannot complete
-until usable curriculum data exists.
+Creating a Subject does not immediately create either an Exam or curriculum.
+The Dashboard enables Add Exam only after curriculum exists for the Working
+Subject, ensuring Question capture can obtain a valid persisted classification.
 
 The Corpus Dashboard is the only application surface from which the
 authoritative Subject may be changed or created. Specialised workspaces retain
@@ -1447,11 +1446,10 @@ Subject. Curriculum Mapping likewise inherits that Subject and does not expose
 an independent Subject selector. These rules implement the authoritative
 Subject scope tracked by Issue #76.
 
-Issue #65 now uses the Corpus Dashboard as the application startup surface and
-the Dashboard-owned Subject selector as the authoritative application context.
+Issue #65 uses the Corpus Dashboard as the application startup surface and the
+Dashboard-owned Subject selector as the authoritative application context.
 Task-specific Question-versus-Answer capture presentation and empty-corpus
-onboarding are implemented. Issue #67 owns the Dashboard onboarding behaviour
-for Subjects with little or no data.
+onboarding are implemented for Subjects with little or no data.
 
 ## 8. Explicitly outside Sprint 12
 
@@ -1531,8 +1529,8 @@ Windows packaging/installation verification.
     substantial.
 13. Subject is application-level context rather than Question-classification
     state.
-14. The Corpus Dashboard is intended to become the main Subject working surface
-    by Sprint 12 closeout, including useful empty-state actions.
+14. The Corpus Dashboard is the main Subject working surface, including useful
+    empty-state actions.
 15. New and legacy-imported Exams converge on the same Exam Setup / Asset
     Management model; legacy Question counts are evidence, not authoritative
     expected counts.

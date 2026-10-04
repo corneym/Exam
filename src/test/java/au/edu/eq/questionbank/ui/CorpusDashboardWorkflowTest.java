@@ -50,14 +50,16 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
+		Node applicationRoot = primaryStage.getScene().getRoot();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
+				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-exams"));
 		@SuppressWarnings("unchecked")
-		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
-		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
-		TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		TableView<?> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
-		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		ComboBox<Subject> subjects = lookupOnFx(robot, applicationRoot, "#curriculum-subject", ComboBox.class);
+		TableView<?> exams = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-exams", TableView.class);
+		TableView<?> booklets = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-booklets", TableView.class);
+		TableView<?> questionWork = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-question-work",
+				TableView.class);
+		MenuBar menuBar = lookupOnFx(robot, applicationRoot, ".menu-bar", MenuBar.class);
 
 		// Dashboard Home owns the authoritative application Subject without retaining
 		// either of the redundant navigation entries removed during #65 close-out.
@@ -84,7 +86,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(1, booklets.getItems().size());
 
 		// The retired concatenated work-item presentation must not return.
-		assertTrue(robot.lookup("#corpus-work-items").tryQuery().isEmpty());
+		assertFalse(nodePresentOnFx(robot, applicationRoot, "#corpus-work-items"));
 	}
 
 	@Test
