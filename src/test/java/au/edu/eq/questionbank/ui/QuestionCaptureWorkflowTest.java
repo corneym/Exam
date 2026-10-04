@@ -535,6 +535,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void importedCaptureAppearsOnlyWhenCurrentContextHasWork(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
+
 		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
 		Node importedControls = lookup(robot, "#legacy-question-capture", Node.class);
 
@@ -544,30 +545,45 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(importedAction.isManaged());
 		assertFalse(importedControls.isVisible());
 		assertFalse(importedControls.isManaged());
+
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 
 		// Persist metadata without Question content. The existing queue rules define
-		// this as relevant imported/incomplete work.
+		// this
+		// as relevant imported/incomplete work.
 		Question incomplete = repository.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
+
 		QuestionCapturePane pane = questionCapturePane();
 		robot.interact(pane::refreshImportedQuestions);
+
 		assertTrue(importedAction.isVisible());
 		assertTrue(importedAction.isManaged());
 		assertEquals("Complete Imported Question", importedAction.getText());
 
-		// The selector is still kept out of the ordinary new-Question workspace until
-		// the imported workflow itself is chosen.
+		// Before entry, the action advertises the available task without cluttering
+		// ordinary new-Question capture with the queue itself.
 		assertFalse(importedControls.isVisible());
+
 		fireControl(robot, importedAction);
+
 		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
+		Label queueLabel = lookup(robot, "#imported-question-queue-label", Label.class);
+
 		assertTrue(importedControls.isVisible());
 		assertTrue(importedControls.isManaged());
+		assertEquals("Question(s) awaiting capture", queueLabel.getText());
 		assertEquals(1, importedQuestions.getItems().size());
 		assertEquals(incomplete.getId(), importedQuestions.getItems().getFirst().getId());
+
+		// Once the queue owns the workspace, its entry action is redundant and
+		// therefore
+		// disappears until the teacher deliberately leaves imported capture.
+		assertFalse(importedAction.isVisible());
+		assertFalse(importedAction.isManaged());
 	}
 
 	@Test

@@ -1644,6 +1644,38 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void failCorpusDashboardQuestionCorrection(Runnable returnHandler, Throwable failure) {
+		if (corpusDashboardCaptureReturnHandler != returnHandler) {
+
+			// A later navigation request owns the application now. Do not let obsolete
+			// asynchronous failure replace its workspace.
+			return;
+		}
+
+		Throwable effectiveFailure = failure == null
+				? new IllegalStateException("Question correction could not be prepared.")
+				: failure;
+
+		try {
+
+			// A failed Dashboard transition must not leave a partially opened managed PDF
+			// behind when the persistence-derived home screen is restored.
+			pdfWorkspace.closeManagedPdfSessions();
+		} catch (RuntimeException closeFailure) {
+			effectiveFailure.addSuppressed(closeFailure);
+		}
+
+		hideWorkspaceBusy();
+		clearCorpusDashboardCaptureReturn();
+
+		showAlert(Alert.AlertType.ERROR, "Complete Question", "Question capture could not be opened.",
+				failureMessage(effectiveFailure));
+
+		// Return to the authoritative Dashboard state after the failed correction
+		// transition rather than leaving a half-initialised capture workspace visible.
+		returnHandler.run();
+	}
+
 	private void failDashboardNewQuestionCapture(Runnable returnHandler, Throwable failure) {
 		if (corpusDashboardCaptureReturnHandler != returnHandler) {
 
@@ -3368,18 +3400,20 @@ public class QuestionBankApplication extends Application {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
+
 		clearCorpusDashboardCaptureReturn();
 		showDashboardQuestionCaptureWorkspace();
 
-		// Existing incomplete Question work uses the established imported-Question
-		// correction workflow. Successful Save returns through the same home callback
-		// as
-		// the visible Return to Corpus Dashboard action.
-		if (!questionCapturePane.captureImportedQuestion(question, this::returnToCorpusDashboardFromCapture)) {
-			showCorpusDashboardHome();
-			return;
-		}
-		setCorpusDashboardCaptureReturn(this::refreshAndShowCorpusDashboardHome);
+		// Dashboard owns navigation for the whole imported/incomplete capture session.
+		// Saving one Question therefore advances the queue; only the visible Return
+		// action navigates home.
+		Runnable returnHandler = this::refreshAndShowCorpusDashboardHome;
+		setCorpusDashboardCaptureReturn(returnHandler);
+
+		// Opening and initially rendering a different Question booklet is visibly slow
+		// against real corpus data, so acknowledge the transition immediately.
+		showWorkspaceBusy("Opening Question booklet...");
+		startCorpusDashboardQuestionCorrection(question, returnHandler);
 	}
 
 	private void showCorpusDashboardSnapshot(Subject dashboardSubject, CorpusDashboardSnapshot snapshot) {
@@ -4150,6 +4184,78 @@ public class QuestionBankApplication extends Application {
 		initialiseCaptureWorkflow(primaryStage, config, database);
 		configurePdfWorkspace();
 		configurePrimaryStage(primaryStage, config);
+	}
+
+	private void startCorpusDashboardQuestionCorrection(Question question, Runnable returnHandler) {
+		PdfStore pdfStore = new PdfStore(applicationConfig.pdfDataRoot());
+		Path storedPath;
+
+		try {
+			if (question.getBooklet().getSourceDocument() == null) {
+				throw new IllegalStateException("The Question booklet has no managed Question PDF.");
+			}
+
+			// Dashboard correction always opens the authoritative managed source belonging
+			// to the persisted Question rather than relying on whichever booklet happened
+			// to be active previously.
+			storedPath = pdfStore.resolve(question.getBooklet().getSourceDocument().getRelativePath());
+		} catch (IllegalArgumentException | IllegalStateException exception) {
+			failCorpusDashboardQuestionCorrection(returnHandler, exception);
+			return;
+		}
+
+		if (!Files.isRegularFile(storedPath)) {
+			failCorpusDashboardQuestionCorrection(returnHandler,
+					new IllegalStateException("The stored Question PDF is unavailable: " + storedPath));
+			return;
+		}
+
+		try {
+			if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
+
+				// A read-only Exam/Assets preview cannot remain the document presented for
+				// Question correction.
+				pdfWorkspace.closeViewerPdf();
+			}
+
+			pdfWorkspace.openExamPdfAsync(storedPath, failure -> {
+				if (failure != null) {
+					failCorpusDashboardQuestionCorrection(returnHandler, failure);
+					return;
+				}
+				if (corpusDashboardCaptureReturnHandler != returnHandler) {
+
+					// The user has already left this Dashboard-owned transition.
+					return;
+				}
+
+				try {
+
+					// Publish the authoritative structural context before entering the
+					// imported queue. The pane's ordinary activation guard then sees this
+					// booklet/PDF as already active and does not reopen it synchronously.
+					examMetadataPane.activateExistingBooklet(question.getBooklet(), storedPath);
+					refreshActiveExamContext();
+
+					boolean started = questionCapturePane.captureImportedQuestion(question, () -> {
+						// Dashboard correction is a queue session, not a one-Question modal
+						// operation. Save advances to the next Question and leaves navigation
+						// to the explicit Return to Corpus Dashboard action.
+					});
+					if (!started) {
+						failCorpusDashboardQuestionCorrection(returnHandler,
+								new IllegalStateException("The selected Question is no longer awaiting capture."));
+						return;
+					}
+
+					hideWorkspaceBusy();
+				} catch (RuntimeException exception) {
+					failCorpusDashboardQuestionCorrection(returnHandler, exception);
+				}
+			});
+		} catch (RuntimeException exception) {
+			failCorpusDashboardQuestionCorrection(returnHandler, exception);
+		}
 	}
 
 	// TODO remove/extract inner class

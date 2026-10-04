@@ -18,7 +18,10 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import javafx.application.Platform;
 import javafx.scene.Node;
@@ -29,6 +32,7 @@ import javafx.scene.control.DialogPane;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TableView;
+import javafx.scene.control.TextField;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -154,6 +158,129 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#exam-assets-return-dashboard");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+	}
+
+	@Test
+	void dashboardMissingAnswerCompletionRefreshesHomeAfterExplicitReturn(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1");
+
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+
+		// Create one complete Question body through the ordinary capture workflow so
+		// its
+		// only remaining corpus problem is the missing written Answer.
+		robot.interact(() -> {
+			questionCode.setText("DASH-A1");
+			if (!marks.isDisabled()) {
+				marks.setText("1");
+			}
+		});
+
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+
+		ComboBox<Question> unanswered = unansweredQuestions(robot);
+		fireControl(robot, "#save-question");
+
+		// Persistence and Answer-queue publication are the durable evidence that
+		// Question
+		// capture completed.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> unanswered.getItems().stream()
+				.anyMatch(question -> "DASH-A1".equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		Question question = unanswered.getItems().stream()
+				.filter(candidate -> "DASH-A1".equals(candidate.getQuestionCode())).findFirst().orElseThrow();
+
+		WaitForAsyncUtils.asyncFx(() -> {
+
+			// Return through the production Dashboard refresh path so the test starts from
+			// authoritative persistence rather than constructing a Dashboard fixture.
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			return robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery().filter(Button.class::isInstance)
+					.map(Button.class::cast).map(Button::getText).filter("1 Missing answers"::equals).isPresent();
+		});
+
+		Button missingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
+		Button totalQuestions = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
+
+		// One persisted Question must be reported as one Missing Answer without
+		// changing
+		// the total corpus size.
+		assertEquals("1 Questions", totalQuestions.getText());
+		assertEquals("1 Missing answers", missingAnswers.getText());
+
+		fireControl(robot, missingAnswers);
+
+		@SuppressWarnings("unchecked")
+		TableView<Object> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> questionWork.getItems().size() == 1);
+
+		// Question Work owns the exact task. Select its only Missing Answer row rather
+		// than falling back to booklet-level Capture Answers.
+		robot.interact(() -> questionWork.getSelectionModel().selectFirst());
+
+		Button completeAnswer = lookup(robot, "#corpus-dashboard-complete-answer", Button.class);
+		assertFalse(completeAnswer.isDisabled());
+		fireControl(robot, completeAnswer);
+
+		// The selected persisted Question must become the Answer target in the
+		// Dashboard-owned Answer-only workspace.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> unanswered.getValue() != null && unanswered.getValue().getId() == question.getId());
+
+		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+		assertTrue(returnDashboard.isVisible());
+		assertTrue(returnDashboard.isManaged());
+
+		WaitForAsyncUtils.asyncFx(() -> {
+
+			// Persist an Answer without introducing unrelated PDF-region gesture behaviour;
+			// this regression is concerned with Dashboard ownership and refresh.
+			invoke(answerCapturePane(), "saveAnswer", new Class<?>[] { Question.class, String.class }, question, "A");
+			return null;
+		}).get();
+
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Wait for the durable Answer write rather than a transient save-state flag.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findById(question.getId()).orElseThrow().hasAnswer());
+
+		// Save must not redirect automatically. Returning home remains the user's
+		// explicit navigation decision.
+		assertTrue(returnDashboard.isVisible());
+		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
+		fireControl(robot, returnDashboard);
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			return robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery().filter(Button.class::isInstance)
+					.map(Button.class::cast).map(Button::getText).filter("0 Missing answers"::equals).isPresent();
+		});
+
+		Button refreshedMissingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
+		Button refreshedTotalQuestions = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
+
+		// Dashboard refresh must remove the completed work while preserving the
+		// original
+		// Question rather than creating a replacement or duplicate.
+		assertEquals("0 Missing answers", refreshedMissingAnswers.getText());
+		assertEquals("1 Questions", refreshedTotalQuestions.getText());
+
+		fireControl(robot, refreshedMissingAnswers);
+
+		@SuppressWarnings("unchecked")
+		TableView<Object> refreshedQuestionWork = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> refreshedQuestionWork.getItems().isEmpty());
+		assertTrue(refreshedQuestionWork.getItems().isEmpty());
 	}
 
 	@Test

@@ -459,9 +459,13 @@ public final class CorpusDashboardPane extends VBox {
 
 	// TODO Refacator
 	private void buildContent() {
-		HBox filterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
+		// Keep the Exam filter row as application state because the single Legacy
+		// Import
+		// action moves between this populated-Exam row and the empty-Exam onboarding
+		// row.
+		examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
 				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
-		filterRow.setAlignment(Pos.CENTER_LEFT);
+		examFilterRow.setAlignment(Pos.CENTER_LEFT);
 
 		// Subject-level corpus indicators remain immediately below the Subject-level
 		// Curriculum section rather than between structural work areas.
@@ -481,7 +485,11 @@ public final class CorpusDashboardPane extends VBox {
 
 		// The ordinary Exam catalogue disappears when a Subject has no Exams. The
 		// onboarding row then explains the next valid Subject-level action.
-		examOperationalContent = new VBox(SPACING, filterRow, examTable, selectedExamTitleRow, selectedExamCountsLabel);
+		// Reuse the retained row so Legacy Import can be reparented without
+		// constructing
+		// a second set of Exam filters.
+		examOperationalContent = new VBox(SPACING, examFilterRow, examTable, selectedExamTitleRow,
+				selectedExamCountsLabel);
 		examOperationalContent.setId("corpus-dashboard-exam-operational-content");
 
 		bookletWarningLabel.setWrapText(true);
@@ -1297,21 +1305,7 @@ public final class CorpusDashboardPane extends VBox {
 		refreshExamTable(preferredExamId, preferredBookletId);
 		refreshQuestionWork();
 	}
-	private void updateAddExamActionState() {
 
-		// Every Exam must belong to a Subject with curriculum. Prevent structural Exam
-		// creation until that prerequisite exists instead of allowing an invalid path.
-		addExamButton.setDisable(!curriculumAvailable);
-
-		if (!curriculumAvailable) {
-			noExamsLabel.setText("Add curriculum before adding an Exam.");
-			return;
-		}
-
-		// Once curriculum exists, ordinary Exam onboarding becomes the next structural
-		// action for an otherwise empty Subject.
-		noExamsLabel.setText("No Exams have been added.");
-	}
 	private void refreshExamTable(Long preferredExamId, Long preferredBookletId) {
 		updateExamEmptyState();
 		List<ExamCorpusStatus> filtered = filteredExamStatuses();
@@ -1521,6 +1515,22 @@ public final class CorpusDashboardPane extends VBox {
 		QuestionCorpusFilter filter = new QuestionCorpusFilter(workingSubject.getId(), null, null, null,
 				questionViewBox.getValue(), selectedQuestionProblem);
 		return QuestionCorpusQueue.build(filteredSummaryQuestions(), filter);
+	}
+
+	private void updateAddExamActionState() {
+
+		// Every Exam must belong to a Subject with curriculum. Prevent structural Exam
+		// creation until that prerequisite exists instead of allowing an invalid path.
+		addExamButton.setDisable(!curriculumAvailable);
+
+		if (!curriculumAvailable) {
+			noExamsLabel.setText("Add curriculum before adding an Exam.");
+			return;
+		}
+
+		// Once curriculum exists, ordinary Exam onboarding becomes the next structural
+		// action for an otherwise empty Subject.
+		noExamsLabel.setText("No Exams have been added.");
 	}
 
 	private void updateBulkActionState() {

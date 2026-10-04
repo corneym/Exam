@@ -15,6 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -513,6 +514,163 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(classification.isVisible());
 		assertTrue(questionCapturePane().isVisible());
 		assertTrue(answerCapturePane().isVisible());
+	}
+
+	@Test
+	void dashboardQuestionCorrectionShowsBusyAndContinuesWithNextQuestion(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		Question first = repository.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question second = repository.save(booklet, "42", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		Node busyOverlay = lookup(robot, "#workspace-busy-overlay", Node.class);
+		Label busyLabel = lookup(robot, "#workspace-busy-label", Label.class);
+		AtomicBoolean busyWasShown = new AtomicBoolean(false);
+		AtomicReference<String> busyMessage = new AtomicReference<>();
+
+		robot.interact(() -> busyOverlay.visibleProperty().addListener((observable, oldValue, visible) -> {
+			if (visible) {
+
+				// Record the transient state itself rather than racing the asynchronous PDF
+				// load to inspect it later.
+				busyWasShown.set(true);
+				busyMessage.set(busyLabel.getText());
+			}
+		}));
+
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, first);
+			return null;
+		}).get();
+
+		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
+
+		// Completion of the transition is observable when the requested persisted
+		// Question owns the imported queue and the busy overlay has been dismissed.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> importedQuestions.getValue() != null
+				&& importedQuestions.getValue().getId() == first.getId() && !busyOverlay.isVisible());
+
+		assertTrue(busyWasShown.get());
+		assertEquals("Opening Question booklet...", busyMessage.get());
+
+		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+		ToggleButton importedEntry = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		Label queueLabel = lookup(robot, "#imported-question-queue-label", Label.class);
+
+		assertTrue(returnDashboard.isVisible());
+		assertTrue(returnDashboard.isManaged());
+		assertFalse(importedEntry.isVisible());
+		assertEquals("Question(s) awaiting capture", queueLabel.getText());
+
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+
+		// Saving one Dashboard-selected imported Question remains in capture and
+		// advances
+		// directly to the next outstanding Question rather than navigating home.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> importedQuestions.getValue() != null && importedQuestions.getValue().getId() == second.getId());
+
+		assertEquals(second.getId(), importedQuestions.getValue().getId());
+		assertTrue(returnDashboard.isVisible());
+		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
+		assertFalse(repository.findById(first.getId()).orElseThrow().getContentParts().isEmpty());
+
+		// Dashboard return is now an explicit teacher decision.
+		fireControl(robot, returnDashboard);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+	}
+
+	@Test
+	void dashboardSelectedAnswerCaptureTargetsQuestionAndRemainsSequential(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+
+		Question first = captureQuestion(robot, "A1");
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+		Question second = captureQuestion(robot, "A2");
+
+		AtomicInteger dashboardReturns = new AtomicInteger();
+
+		// Reflection receives its arguments as Object values, so give the callback its
+		// functional-interface type before passing it through the varargs boundary.
+		Runnable dashboardReturn = dashboardReturns::incrementAndGet;
+
+		// Enter the same application-owned Answer workflow used by the Dashboard's
+		// Complete Selected Answer action for one exact persisted Question.
+		AtomicBoolean started = new AtomicBoolean();
+		WaitForAsyncUtils.asyncFx(() -> {
+			started.set((Boolean) invoke(application, "showDashboardAnswerCapture",
+					new Class<?>[] { Question.class, Runnable.class }, first, dashboardReturn));
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertTrue(started.get());
+
+		ComboBox<Question> unanswered = unansweredQuestions(robot);
+		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+		Node classification = lookup(robot, "#classification-context", Node.class);
+
+		// The selected Dashboard row, rather than merely the first Question in the
+		// Exam,
+		// must become the active Answer target.
+		assertNotNull(unanswered.getValue());
+		assertEquals(first.getId(), unanswered.getValue().getId());
+
+		// Dashboard-owned Answer work exposes only the Answer task and keeps explicit
+		// navigation back to Home available.
+		assertFalse(classification.isVisible());
+		assertFalse(classification.isManaged());
+		assertFalse(questionCapturePane().isVisible());
+		assertFalse(questionCapturePane().isManaged());
+		assertTrue(answerCapturePane().isVisible());
+		assertTrue(answerCapturePane().isManaged());
+		assertTrue(returnDashboard.isVisible());
+		assertTrue(returnDashboard.isManaged());
+
+		// Persist an Answer through the pane's normal asynchronous save transition. The
+		// regression concerns Dashboard ownership and queue advancement rather than PDF
+		// region hit-testing, so the direct text-answer save avoids unrelated gestures.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(answerCapturePane(), "saveAnswer", new Class<?>[] { Question.class, String.class }, first, "A");
+			return null;
+		}).get();
+
+		// Saving the selected Question must continue with the next unanswered Question
+		// rather than automatically returning to the Dashboard.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> unanswered.getValue() != null && unanswered.getValue().getId() == second.getId());
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertEquals(0, dashboardReturns.get());
+		assertEquals(second.getId(), unanswered.getValue().getId());
+		assertTrue(returnDashboard.isVisible());
+		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
+
+		Question storedFirst = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(first.getId())
+				.orElseThrow();
+		assertTrue(storedFirst.hasAnswer());
+
+		// Returning to the Dashboard remains an explicit user action after sequential
+		// Answer capture has advanced.
+		fireControl(robot, returnDashboard);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		assertEquals(1, dashboardReturns.get());
+		assertFalse(returnDashboard.isVisible());
+		assertFalse(returnDashboard.isManaged());
 	}
 
 	@Test

@@ -190,6 +190,7 @@ public final class QuestionCapturePane extends VBox {
 	private long importedCaptureCompletionQuestionId = -1L;
 	private Runnable importedCaptureCompletedHandler = () -> {
 	};
+	private final Label importedQuestionQueueLabel = new Label("Question(s) awaiting capture");
 
 	/**
 	 * Creates the question-capture workflow and its repository integration.
@@ -914,8 +915,8 @@ public final class QuestionCapturePane extends VBox {
 	void showNewQuestionCapture() {
 		if (!importedCaptureMode && editingQuestion == null && legacySplitCaptureState == null) {
 
-			// Dashboard and Exam/Assets have already established the authoritative
-			// booklet before entering ordinary new-Question capture.
+			// Idle-to-new is the normal explicit workflow transition. Re-firing the
+			// action while already capturing simply keeps that workflow active.
 			selectCaptureModeToggle(false);
 			setLegacyCaptureControlsVisible(false);
 			showNewQuestionMode();
@@ -926,8 +927,9 @@ public final class QuestionCapturePane extends VBox {
 			return;
 		}
 
-		// Explicit task-level new capture abandons any unfinished imported correction
-		// only after the ordinary transition guard accepts the change.
+		// Explicitly leaving imported correction abandons any direct-correction
+		// callback
+		// associated with that unfinished Question.
 		clearImportedCaptureCompletion();
 		questionEditCompletedHandler = () -> {
 		};
@@ -936,6 +938,10 @@ public final class QuestionCapturePane extends VBox {
 		selectCaptureModeToggle(false);
 		setLegacyCaptureControlsVisible(false);
 		clearImportedQuestionSelection();
+
+		// Leaving the queue makes its entry action useful again if imported/incomplete
+		// work still remains.
+		updateImportedCaptureAvailability(!importedQuestionBox.getItems().isEmpty());
 	}
 
 	private void activateImportedQuestionControls(Question question) {
@@ -1169,7 +1175,7 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void buildContent() {
-		legacyCaptureBox.getChildren().addAll(new Label("Question awaiting capture"), createImportedQuestionControls(),
+		legacyCaptureBox.getChildren().addAll(importedQuestionQueueLabel, createImportedQuestionControls(),
 				importedClassificationLabel, captureHintLabel);
 		sharedContextControlsBox.getChildren().addAll(firstRegionSharedContextCheckBox, sharedContextStatusLabel);
 		setLegacyCaptureControlsVisible(false);
@@ -1433,8 +1439,11 @@ public final class QuestionCapturePane extends VBox {
 
 	private void configureImportedQuestionControls() {
 
-		// The selector itself appears only after imported/incomplete work has been
-		// entered through its conditional capture action.
+		// The queue heading remains visible throughout imported/incomplete Question
+		// work,
+		// including Dashboard-launched sequential completion.
+		importedQuestionQueueLabel.setId("imported-question-queue-label");
+
 		importedQuestionBox.setId("imported-question");
 		importedQuestionBox.setPromptText("Select imported question");
 		importedQuestionBox.setTooltip(new Tooltip(
@@ -1442,6 +1451,7 @@ public final class QuestionCapturePane extends VBox {
 		importedQuestionBox.setMaxWidth(Double.MAX_VALUE);
 		importedQuestionBox.setConverter(new ImportedQuestionStringConverter());
 		importedQuestionBox.setOnShowing(_ -> showSelectedImportedQuestionDocument());
+
 		importedClassificationLabel.setId("imported-classification");
 		importedClassificationLabel.setWrapText(true);
 		importedClassificationLabel.setVisible(false);
@@ -3155,24 +3165,28 @@ public final class QuestionCapturePane extends VBox {
 
 	private void updateImportedCaptureAvailability(boolean available) {
 
-		// The imported workflow is operational work rather than a permanent capture
-		// mode, so expose its entry point only while the filtered queue has work.
-		importedQuestionsModeButton.setVisible(available);
-		importedQuestionsModeButton.setManaged(available);
+		// The entry action is useful only before imported capture has started. Once the
+		// queue itself is visible, "Complete Imported Question" would merely re-enter
+		// the
+		// workflow the user is already using.
+		boolean showEntryAction = available && !importedCaptureMode;
+		importedQuestionsModeButton.setVisible(showEntryAction);
+		importedQuestionsModeButton.setManaged(showEntryAction);
+
 		if (available) {
 			return;
 		}
 
-		// The selector and its supporting status controls must disappear with the
-		// action when no relevant imported/incomplete Question remains.
+		// The selector and its supporting status controls disappear when no relevant
+		// imported/incomplete Question remains.
 		setLegacyCaptureControlsVisible(false);
 		if (!importedCaptureMode) {
 			return;
 		}
 
-		// Exhausting or filtering away the imported queue completes that workflow.
-		// Return to the same explicit idle state used after other correction work
-		// rather than silently starting a new Question.
+		// Exhausting the imported queue returns Question capture to explicit idle. The
+		// user still controls navigation back to the Dashboard through the application
+		// header rather than being redirected automatically after each Save.
 		importedCaptureMode = false;
 		importedQuestion = null;
 		captureModeGroup.selectToggle(null);
