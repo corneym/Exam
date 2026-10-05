@@ -1,19 +1,16 @@
 # Windows Release Build
 
-> **Current release:** 0.1\
-> **Release entry point:** `scripts/build-release.ps1`\
-> **Packaging platform:** Windows\
-> **Updated:** 27 September 2026
+> **Current published release:** 0.1  
+> **Next release candidate:** 0.2 (Sprint 12; issue #64 pending)  
+> **Release entry point:** `scripts/build-release.ps1`  
+> **Packaging platform:** Windows  
+> **Updated:** 5 October 2026
 
-This document describes the repeatable Exam Question Bank Windows release
-process. The scripts and `pom.xml` remain authoritative if this document and the
-implementation ever disagree.
+This document describes the repeatable Exam Question Bank Windows release process. The scripts and `pom.xml` remain authoritative if this document and implementation ever disagree.
 
 ## 1. Release architecture
 
-The release consists of:
-
-``` text
+```text
 Maven project
     ↓
 release gates
@@ -27,382 +24,187 @@ per-user Windows MSI
 
 The final distributable artifact is the MSI, not the development JAR.
 
-The packaging scripts are:
+Packaging scripts:
 
-``` text
+```text
 scripts/build-release.ps1
 scripts/package-windows-app-image.ps1
 scripts/package-windows-installer.ps1
 ```
 
-`build-release.ps1` is the normal release entry point. The lower-level scripts
-exist so packaging can be tested independently while it is being developed.
+`build-release.ps1` is the normal formal entry point. Lower-level scripts are for packaging development/diagnosis.
 
 ## 2. Prerequisites
 
-The tested Release 0.1 Windows toolchain is:
+The tested Windows packaging architecture uses:
 
 - JDK 25 with `jpackage`;
-- Maven Wrapper from the repository;
+- repository Maven Wrapper;
 - WiX Toolset 7.0.0;
-- `WixToolset.Util.wixext` 7.0.0 available to WiX;
+- `WixToolset.Util.wixext` 7.0.0 where required by the installed WiX distribution;
 - Git.
 
-The WiX installation must be usable by `jpackage`. Where the installed WiX
-distribution requires acceptance of its own licensing/EULA before extensions
-can be installed or used, complete that tool setup before attempting MSI
-creation.
-
-`package-windows-app-image.ps1` and `package-windows-installer.ps1` reject a
-`jpackage` version that is not Java 25.
+The package scripts reject a non-Java-25 `jpackage`.
 
 ## 3. Authoritative version
 
-The authoritative application version is the top-level Maven version in
-`pom.xml`.
+The top-level Maven version in `pom.xml` is authoritative. Maven filters the same value into the packaged application properties; About, Version Information, backup metadata, application-image metadata and MSI metadata therefore share one source.
 
-For Release 0.1:
+At the Sprint 12 PR-preparation checkpoint `pom.xml` deliberately remains:
 
-``` xml
+```xml
 <version>0.1</version>
 ```
 
-Maven filters the same value into:
+Issue #64 owns Release 0.2 closeout. The normal release command advances the minor version from 0.1 to 0.2. Documentation must not describe 0.2 as released before that gate succeeds.
 
-``` text
-src/main/resources/au/edu/eq/questionbank/application.properties
+Release versions use `major.minor`, for example `0.1`, `0.10`, `1.0`.
+
+When `build-release.ps1` runs without `-Version`, it treats the current Maven version as the previous successful release identity and increments the minor component:
+
+```text
+0.1 → 0.2
+0.9 → 0.10
+1.4 → 1.5
 ```
 
-`ApplicationVersion.current()` loads that packaged value. About, Version
-Information, backup metadata, application-image metadata and MSI metadata
-therefore share one version source.
+Major transitions are explicit:
 
-### Version format
-
-Release versions must match:
-
-``` text
-major.minor
-```
-
-Examples:
-
-``` text
-0.1
-0.10
-1.0
-2.4
-```
-
-Invalid examples include:
-
-``` text
-01.2
-0.1.1
-v1.0
-1.0-SNAPSHOT
-```
-
-Each component is either `0` or a positive integer without leading zeroes.
-
-### Automatic increment
-
-When `build-release.ps1` is run without `-Version`, it treats the current Maven
-version as the previous successful release identity and increments the minor
-component.
-
-Example:
-
-``` text
-0.1 -> 0.2
-0.9 -> 0.10
-1.4 -> 1.5
-```
-
-Major-version changes are explicit:
-
-``` powershell
+```powershell
 .\scripts\build-release.ps1 -Version 1.0
 ```
 
-If the script changes `pom.xml` and a later release gate fails, it restores the
-original POM/version.
-
-Release 0.1 was deliberately built with an explicit version because the POM
-already contained the intended first release number:
-
-``` powershell
-.\scripts\build-release.ps1 -Version 0.1
-```
+If the release script changes `pom.xml` and a later gate fails, it restores the original POM/version.
 
 ## 4. Clean-tree rule
 
 A formal release requires a clean Git working tree.
 
-Run:
+Normal command:
 
-``` powershell
-git status
-```
-
-before starting a formal release.
-
-The normal release command is:
-
-``` powershell
+```powershell
 .\scripts\build-release.ps1
 ```
 
-During development of the release infrastructure only, `-AllowDirty` bypasses
-the clean-tree check:
-
-``` powershell
-.\scripts\build-release.ps1 -AllowDirty -Version 0.1
-```
-
-Do not use `-AllowDirty` as the normal release procedure.
+`-AllowDirty` exists for development/validation of release infrastructure and is not the normal release procedure.
 
 ## 5. Release gates
 
-`build-release.ps1` runs five gates in order.
+The release script runs these gates in order:
 
-### 1/5 --- Source formatting
+1. `spotless:check`;
+2. non-UI tests;
+3. headless UI tests;
+4. strict Javadoc;
+5. Windows installer packaging.
 
-``` powershell
+Equivalent commands for the first four gates include:
+
+```powershell
 .\mvnw.cmd spotless:check
-```
-
-A release build checks formatting; it does not silently modify source.
-
-If this gate fails during development, correct the source or run:
-
-``` powershell
-.\mvnw.cmd spotless:apply
-```
-
-then start the release gate again.
-
-### 2/5 --- Non-UI tests
-
-Equivalent release command:
-
-``` powershell
 .\mvnw.cmd "-Dsurefire.skipAfterFailureCount=1" test
-```
-
-The release gate stops the suite after the first reported test failure/error so
-an already-invalid candidate does not waste time completing the remaining
-suite.
-
-### 3/5 --- Headless UI tests
-
-Equivalent release command:
-
-``` powershell
 .\mvnw.cmd -Pheadless-ui-tests "-Dsurefire.skipAfterFailureCount=1" test
-```
-
-The same first-failure rule applies.
-
-### 4/5 --- Strict Javadoc
-
-``` powershell
 .\mvnw.cmd javadoc:javadoc
 ```
 
-The Maven Javadoc Plugin is configured with doclint enabled and
-`failOnWarnings=true`, so warnings fail the release gate.
+Javadoc runs with doclint and `failOnWarnings=true`; warnings are release failures, not advisory output.
 
-### 5/5 --- Windows installer
-
-The release script invokes:
-
-``` text
-scripts/package-windows-installer.ps1
-```
-
-No MSI is accepted unless the preceding release gates pass.
+No MSI is accepted unless all preceding gates pass.
 
 ## 6. Application-image packaging
 
-`package-windows-app-image.ps1` performs a fresh package build and constructs the
-self-contained application image.
+`package-windows-app-image.ps1` performs a fresh package build, collects runtime dependencies and invokes Java 25 `jpackage --type app-image`.
 
-It:
+Packaged main class:
 
-1. reads Maven artifact/version metadata from `pom.xml`;
-2. locates Java 25 `jpackage`;
-3. removes the previous application image, retrying when Windows briefly retains
-   a handle on a previously launched executable;
-4. runs:
-
-   ``` powershell
-   .\mvnw.cmd clean package "-DskipTests"
-   ```
-
-5. collects runtime dependencies with Maven Dependency Plugin 3.11.0;
-6. copies the application JAR into the package input directory;
-7. calls `jpackage --type app-image`.
-
-The packaged main class is:
-
-``` text
+```text
 au.edu.eq.questionbank.Launcher
 ```
 
-The application is packaged as a class-path application. This keeps runtime
-dependency packaging straightforward even though the source application is
-modular.
-
-The generated image contains its own Java runtime. `--strip-native-commands`
-means `runtime\bin\java.exe` is intentionally absent; runtime verification
-should use `runtime\release` and the bundled JVM library rather than expecting a
-Java launcher executable.
+The application is packaged as a class-path application with its own stripped Java runtime.
 
 Output:
 
-``` text
+```text
 target\package\Exam Question Bank\Exam Question Bank.exe
 ```
 
 ## 7. MSI packaging
 
-`package-windows-installer.ps1` always rebuilds a fresh application image before
-creating the installer.
-
-The generated MSI is:
-
-- per-user;
-- added to the Windows Start menu;
-- placed in the `Exam Question Bank` Start-menu group;
-- versioned from the Maven project version.
+`package-windows-installer.ps1` rebuilds a fresh app image and creates a per-user Start-menu MSI.
 
 The Windows Installer upgrade UUID is:
 
-``` text
+```text
 29eeeeb7-cbe8-5d98-a67f-36240572d76c
 ```
 
-**Do not change this UUID for future releases.** Windows Installer uses it to
-recognise later packages as upgrades of the same application.
+Do not change this UUID for later releases.
 
-Output:
+Output pattern:
 
-``` text
+```text
 target\installer\Exam Question Bank-<version>.msi
 ```
 
-For Release 0.1:
+For the pending Sprint 12 release candidate, successful issue #64 execution is expected to produce:
 
-``` text
-target\installer\Exam Question Bank-0.1.msi
+```text
+target\installer\Exam Question Bank-0.2.msi
 ```
+
+Only describe that artifact as produced after the release gate has actually completed.
 
 ## 8. Writable configuration and application data
 
-Installed program files are not the owner of user configuration or bank data.
+Installed program files do not own mutable user configuration/bank data.
 
-On Windows:
+Windows configuration:
 
-``` text
+```text
 %LOCALAPPDATA%\Exam Question Bank Data\questionbank.properties
 ```
 
-stores user configuration.
+Default first-run data root:
 
-A fresh installation defaults its `data.root` to:
-
-``` text
+```text
 %LOCALAPPDATA%\Exam Question Bank Data\data
 ```
 
-The actual data root may instead point elsewhere through Options.
+The writable directory remains a sibling of the installer-owned application directory so uninstall cannot remove user-owned configuration/data.
 
-The `Exam Question Bank Data` directory is deliberately a sibling of the
-installer-owned application directory. Do not move writable configuration/data
-back beneath the jpackage product directory: MSI uninstall testing proved that
-installer-owned directories can be removed during uninstall.
-
-When the user-specific configuration does not yet exist,
-`ApplicationConfig.loadOrCreate(...)` can migrate an existing legacy
-working-directory `questionbank.properties`. Otherwise it creates the
-first-run configuration and required managed data directories.
-
-On systems without `LOCALAPPDATA`, `ApplicationPaths` falls back to:
-
-``` text
-<user.home>\.exam-question-bank
-```
+If `LOCALAPPDATA` is unavailable, `ApplicationPaths` falls back beneath the user home directory.
 
 ## 9. Post-build smoke test
 
-The release gate proves build/test/package state. The generated MSI must also be
-tested as an installed application outside Eclipse.
+After the release gate produces the intended MSI, install and launch outside Eclipse.
 
-### Install
-
-From the repository root:
-
-``` powershell
-$msi = (Resolve-Path ".\target\installer\Exam Question Bank-0.1.msi").Path
-
-Start-Process `
-    msiexec.exe `
-    -Wait `
-    -ArgumentList "/i `"$msi`""
-```
-
-Launch **Exam Question Bank** from the Start menu.
-
-Verify:
+Verify at minimum:
 
 - application starts normally;
-- expected existing bank data is visible when using an existing configured data
-  root;
+- expected existing bank data is visible with an existing configured data root;
+- Corpus Dashboard opens as the normal application home for the selected Working Subject;
 - Help opens;
-- About reports the expected release version;
+- About reports the intended release version;
 - application closes normally.
 
-### Uninstall
+Then uninstall and verify the user configuration and configured data root survive unchanged.
 
-Close the application, then run:
+Release 0.1 passed this install/launch/uninstall/configuration-survival check. Release 0.2 must repeat the check under issue #64 before it is considered released.
 
-``` powershell
-Start-Process `
-    msiexec.exe `
-    -Wait `
-    -ArgumentList "/x `"$msi`""
-```
+## 10. Release 0.2 closeout checklist — #64
 
-Verify user configuration survived:
+Release 0.2 is ready for protected-main merge/release closeout only when:
 
-``` powershell
-$cfg = Join-Path `
-    $env:LOCALAPPDATA `
-    "Exam Question Bank Data\questionbank.properties"
-
-Test-Path $cfg
-Get-Content $cfg
-```
-
-`Test-Path` must remain `True`.
-
-If the configured `data.root` is external to the default location, also verify
-that directory remains present and unchanged.
-
-Release 0.1 passed this install/launch/uninstall/configuration-survival check.
-
-## 10. Release closeout
-
-A release is ready for protected-main merge only when:
-
-- release script completed successfully;
-- generated MSI has the intended version;
-- install/launch smoke test passed outside Eclipse;
+- Sprint 12 implementation is in the pull request candidate;
+- release script completes successfully;
+- Maven/application/MSI version is 0.2;
+- generated MSI is present at the expected versioned path;
+- install/launch smoke test passes outside Eclipse;
+- Dashboard, Help and existing data are usable from the installed package;
 - uninstall preserves user configuration/data;
-- documentation matches the implemented release procedure;
-- feature-branch CI is green;
-- final pull request is reviewed/resolved according to repository settings.
+- final feature-branch CI is green;
+- pull-request review comments are resolved;
+- the Sprint 12 document records the final PR/merge/CI/release identifiers after they exist.
 
-After merge, preserve the sprint document as detailed historical evidence and
-record any final merge/CI identifiers required by the project documentation.
+After merge, preserve `docs/design/sprint-12-release-0.2.md` as the detailed historical record and update the roadmap/README with actual merge/release evidence rather than predictions.

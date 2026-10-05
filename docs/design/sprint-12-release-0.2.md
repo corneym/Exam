@@ -1,1536 +1,539 @@
-# Sprint 12 --- Exam Intake, Capture Workflow and Corpus Status
+# Sprint 12 — Exam Intake, Capture Workflow and Corpus Dashboard
 
-> **Status:** READY FOR PR\
-> **Branch:** `feature/sprint-12`\
-> **Prepared:** 28 September 2026\
-> **Target release:** 0.2
+> **Status:** READY FOR PR  
+> **Branch:** `feature/sprint-12`  
+> **Closeout reference:** 5 October 2026  
+> **Target release:** 0.2  
+> **Current Maven version:** 0.1 until formal release issue #64 advances it  
+> **Latest schema:** 19
 >
-> This document is the active Sprint 12 design and working-status record.
-> Durable architecture and forward-plan changes are also reflected in
-> `docs/development-roadmap.md`. Deliberately deferred work remains in
-> `docs/design/backlog.md`.
+> This document is the consolidated Sprint 12 design, implementation and verification record. It supersedes the temporary Sprint 12 screen-design `.txt` files whose useful layouts are incorporated below. Repository code/tests and final GitHub issue acceptance comments remain authoritative where earlier design wording differs.
 
-## 1. Sprint objective
+## 1. Sprint objective and final outcome
 
-Turn the post-0.1 application into a stronger real-corpus collection and
-maintenance tool by making Exam structure explicit before capture, simplifying
-the Question-capture workflow, adding optional MCQ explanation capture, and
-evolving Corpus Audit into an operational Corpus Dashboard.
-
-Sprint 12 is deliberately limited to four related slices:
-
-1. Exam setup, assets, hashes and safe asset correction;
-2. streamlined Question capture;
-3. MCQ explanation regions;
-4. Corpus Dashboard / Audit refinement.
+Sprint 12 turns the post-0.1 application into an operational real-corpus collection and maintenance tool. The main changes are:
 
-By Sprint 12 closeout, the selected Subject becomes application-level context
-and the Corpus Dashboard is the main application working surface for that
-Subject. A Subject with little or no data presents useful
-onboarding actions rather than an empty audit display.
+1. authoritative Exam setup/assets and planning metadata before capture;
+2. safer source-document identity, replacement and deletion;
+3. streamlined sustained-use Question/Answer capture;
+4. AnswerFile-declared MCQ explanation capture and completion requirements;
+5. Exam/booklet/Question audit promoted into the Corpus Dashboard;
+6. Corpus Dashboard promoted to the application home and owner of the Working Subject;
+7. legacy-import intake reconciled through the same authoritative Exam/Assets model;
+8. packaged Help updated to the final workflows.
 
-Richer Question Search filtering is not Sprint 12 work and has returned to the
-backlog.
+Sprint 12 implementation is complete and the feature branch is ready for its Sprint pull request. Pull-request merge and the formal Release 0.2 process (#64) remain to be completed. Do not describe 0.2 as released yet.
 
-Because Sprint 12 materially changes the user interface and capture workflow,
-the intended release target is **0.2**, subject to normal release verification at
-sprint closeout.
+## 2. Evidence model and issue record
 
-## 2. Starting state
+GitHub Issues are a durable part of Sprint 12 evidence. Final acceptance comments supersede early issue wording where implementation/live review refined the design.
 
-Sprint 11 Release 0.1 is complete, verified and merged to protected `main`.
+### Exam/Assets and source management
 
-At Sprint 12 design start:
+- #43 — main-window Exam/Assets workspace;
+- #44 — Question-booklet inspection and expected top-level Question count;
+- #45 — persisted Exam/booklet planning metadata;
+- #46 — managed-document SHA-256 hashing;
+- #47 — safe Question booklet PDF replacement;
+- #48 — safe Answer PDF replacement/reassignment;
+- #49 — ACTIVE/COMPLETE lifecycle and structural locking;
+- #50 — capture workspace organised around explicit Exam/booklet context;
+- #55 and #72 — persisted AnswerFile explanation metadata;
+- #69 — Exam metadata editing moved into Exam/Assets;
+- #74 — removable Provider/Assessment suggestions without mutating persisted Exams;
+- #80 — destructive Question/Answer asset deletion with transactional cleanup.
 
-- Java/JavaFX/Maven application is operational;
-- SQLite is the authoritative runtime datastore;
-- latest supported schema version is 14;
-- Question bodies may contain ordered PDF regions and clipboard images;
-- Question/Answer PDF-region capture is operational;
-- `ExamBooklet` already records booklet question format;
-- `ExamBooklet` may already be assigned one `AnswerFile`;
-- `SourceQuestion` already represents multipart identity such as Question 21
-  behind parts `21a`, `21b`, `21c`;
-- `SharedQuestionContext` already represents reusable source material;
-- Corpus Audit already reports Question-level source, Answer, response-type and
-  Shared Context problems;
-- Search remains a retrieval/edit surface and is not expanded in this sprint.
-- legacy Question metadata import already reads the previous ExamBuilder workbook
-  format, identifies required Exam booklets, imports Question metadata and may
-  create missing booklet/Answer assets after user selection;
-- legacy workbook data may therefore supply much of the initial Exam catalogue
-  for a Subject, but it does not prove the authoritative expected number of
-  Questions in a booklet;
-- Subject creation currently exists indirectly through curriculum creation but
-  is not yet a first-class application-level workflow.
-  
-Current code and GitHub state remain authoritative during implementation.
+### Capture workflow and hardening
 
-## 3. Sprint-wide design principles
+- #51 — explicit new-Question capture transition;
+- #52 — simplified Question-content actions;
+- #53 — imported/incomplete workflow shown only when needed;
+- #54 — multipart/Shared Context reuse;
+- #59 — image content counts as authoritative Question content;
+- #70 — QuestionCapturePane behaviour-neutral refactor;
+- #71 — Question Capture UI/workflow closeout;
+- #75 — asynchronous Working Subject refresh;
+- #79 — AnswerCapturePane behaviour-neutral refactor;
+- #84 — bounded/scrollable accepted-content preview with immediate expansion.
 
-### 3.1 Exam structure is established before new Question capture
+### MCQ explanation workflow
 
-A blank `Start New Question Capture` action must not silently assume an active
-Exam or source PDF.
-
-New capture begins by selecting or setting up an Exam and selecting a real
-Question booklet asset. Exam setup is therefore a first-class workflow rather
-than incidental metadata attached to one selected PDF.
-
-### 3.2 Expected counts are planning/audit metadata, not placeholder Questions
-
-For each Question booklet the user records the expected number of **top-level
-numbered Questions** visible in that booklet.
-
-Multipart parts do not increase the expected count.
-
-For example:
-
-``` text
-Question 21
-    a
-    b
-    c
-
-Question 22
-    a
-    b
-    c
-```
+- #56 — MCQ Answers may retain A–D plus explanation regions;
+- #57 — retrofit workflow for already-answered MCQs;
+- #65 — final operational semantics: a flagged AnswerFile makes explanation regions required for Exam completion while ordinary A–D Answer completeness remains separate.
 
-has:
+### Dashboard, Subject ownership and reconciliation
 
-``` text
-Expected questions: 2
-```
-
-The application must not create fictitious Question rows to satisfy an expected
-count.
+- #58 — Exam/booklet audit model;
+- #60 — Corpus Audit → operational Corpus Dashboard;
+- #61 — direct routing into correction workflows;
+- #62 — curriculum mapping-review status as a separate Subject dimension;
+- #65 — Dashboard as application home;
+- #66 — first-class Subject creation;
+- #67 — useful empty-Subject onboarding presentation;
+- #76 — curriculum workflows inherit Working Subject;
+- #77 — audit/Dashboard scope inherits Working Subject;
+- #81 — per-booklet `No descriptor` reporting and completion gate;
+- #68 — Dashboard-owned legacy import with Exam/Assets structural preflight;
+- #22 — superseded umbrella, fully covered by #58/#65/#68/#81.
 
-### 3.3 Multipart semantics remain the existing simple convention
+### Help/release/closeout
 
-Existing detection based on codes such as:
+- #63 — maintained Sprint 12 Help, automated and manual verification complete;
+- #64 — formal Release 0.2 gate, still pending;
+- #73 — per-response-type planning for mixed booklets closed as not planned;
+- #34 — already covered by an existing restore/migration regression and closed.
 
-``` text
-21a
-21b
-21c
-```
+## 3. Final architectural decisions
 
-is sufficient.
+### 3.1 Working Subject is application-level context
 
-No additional multipart parser is required for forms such as `21(a)`, `21.1` or
-other variants.
+The Corpus Dashboard owns the authoritative Working Subject. Search, capture, Exam/Assets and curriculum workflows inherit it rather than offering competing Subject selection.
 
-The existing `SourceQuestion` and Shared Context semantics are retained and
-refined rather than redesigned.
+A compact `+` action creates a Subject independently. Subject refresh is application-coordinated and asynchronous; stale generations cannot overwrite a newer selection.
 
-### 3.4 Completeness is declared by the user
-
-Exam completeness is not inferred automatically from expected counts, assets or
-Question audit findings.
+### 3.2 A Subject needs curriculum before Exam creation
 
-An Exam has a user-controlled lifecycle:
-
-``` text
-ACTIVE
-    ↓
-Mark Exam Complete
-    ↓
-COMPLETE
-    ↓
-Reactivate Exam
-    ↓
-ACTIVE
-```
-
-Audit findings may warn that a completed Exam has outstanding or inconsistent
-data, but the application does not silently reverse the user's completion
-decision.
-
-### 3.5 Completion locks structure, not ordinary content correction
-
-When an Exam is `COMPLETE`, structural changes require explicit reactivation.
-
-Structural changes include:
+A Subject can exist without curriculum or Exams. The Dashboard presents an explicit empty state. Curriculum may be added from the Dashboard. `Add Exam` remains unavailable until curriculum exists.
 
-- adding or removing Question booklets;
-- changing a booklet Question PDF;
-- changing expected top-level Question count;
-- changing booklet format;
-- changing booklet identity/name where structure is affected;
-- adding, removing or reassigning Answer/marking PDFs;
-- changing Exam identity such as Subject/provider/year/assessment;
-- adding or deleting Questions belonging to the Exam;
-- changing a Question code where that changes source-question structure.
+This final rule supersedes the earlier #67 acceptance note that temporarily allowed Add Exam before curriculum.
 
-The following remain available without reactivating the Exam because they
-correct or enrich captured content rather than redefining Exam structure:
+### 3.3 Exam structure is explicit planning, not invented domain data
 
-- editing Question regions/content;
-- adding, removing or reordering Question content parts;
-- editing marks;
-- editing curriculum classification;
-- correcting MCQ answer letters;
-- editing written Answer regions;
-- adding/editing MCQ explanation regions;
-- resolving or recapturing Shared Context;
-- correcting response type where necessary;
-- editing clipboard/image Question content;
-- correcting metadata about whether an existing Answer/marking PDF contains MCQ
-  explanations.
-
-### 3.6 Source-dependent data is invalidated, never silently remapped
+Exam-level planning records expected Question-booklet and Answer-file counts. Each Question booklet may record an expected number of top-level Questions.
 
-Question, Shared Context and Answer regions store coordinates that are meaningful
-only against the PDF from which they were captured.
-
-Replacing a wrong PDF must never silently reinterpret old page/rectangle
-coordinates against the replacement document.
-
-Replacement operations must identify affected source-dependent capture, warn the
-user, require confirmation where data will be lost, and invalidate the affected
-regions before assigning the replacement asset.
-
-### 3.7 Subject is application-level context
-
-Subject selection is not merely Question-capture state.
-
-By Sprint 12 closeout the selected Subject is application-level context for:
-
-- Corpus Dashboard;
-- Exam setup and asset management;
-- Question and Answer capture;
-- curriculum workflows;
-- Search and other Subject-scoped operations where appropriate.
-
-The application should present the selected Subject independently from Question
-classification.
-
-A first-class Subject-creation workflow is available from the application-level
-Subject row through a compact `+` action beside the Subject selector.
-
-Creating a Subject persists the Subject independently, refreshes the authoritative
-Subject selector and immediately activates the new Subject as the Working Subject.
-It does not require an Exam or curriculum to be created at the same time.
-Changing Subject changes the corpus and work being displayed. Existing
-safeguards that prevent Subject changes while unsaved capture work is pending
-must remain.
-
-Working Subject transitions are application-coordinated and asynchronous. Once
-the existing capture-state guard accepts a Subject change, the new Subject
-becomes authoritative immediately and stale Subject-dependent presentation is
-cleared before replacement persistence data is loaded.
-
-One application-level refresh generation coordinates the transition. Curriculum
-syllabus/root-Unit data is loaded away from the JavaFX application thread, and
-one immutable Question-corpus snapshot is shared by Question Capture and Answer
-Capture. When Exam/Assets is visible, its persisted Exam/asset snapshot is loaded
-in parallel under the same refresh generation.
-
-All resulting JavaFX control updates are published on the JavaFX application
-thread. Results belonging to an older Subject generation are discarded, so a
-slower earlier refresh cannot overwrite a later Subject selection. Clearing
-Working Subject requires no replacement persistence load. A current-generation
-persistence failure leaves the accepted Subject authoritative while dependent
-state remains cleared and the failure is surfaced to the user.
-
-An accepted Working Subject change also clears the PDF workspace immediately so
-an Exam, Answer or standalone viewer document from the previous Subject cannot
-remain visible as current context. If a booklet-activation workflow has already
-opened the replacement Exam PDF for the newly accepted Subject, that new
-document is retained rather than cleared.
+Multipart parts share top-level source identity for counting. `21a`, `21b`, `21c` count as one expected source Question.
 
-Curriculum Subject snapshots include syllabus versions and the root Units for
-each available version. Switching between current and historical syllabus
-versions after the Subject snapshot has loaded therefore does not return to
-SQLite for root-Unit lookup on the JavaFX thread.
+Expected values never create placeholder booklets, Questions or Answers.
 
-### 3.8 Legacy Question metadata intake starts from the Dashboard
-
-Legacy Question import is an intake source, not a second Exam-management model.
+### 3.4 Exam lifecycle is explicit but `Mark Complete` is readiness-gated
 
-The implemented Sprint 12 workflow begins from the Corpus Dashboard. It inherits
-the authoritative Working Subject and does not present another Subject selector.
-
-The intake dialog asks only for:
-
-- the historical syllabus version represented by the workbook;
-- the legacy Excel workbook.
+Lifecycle is persisted as `ACTIVE` or `COMPLETE`. It changes only through an explicit user action and is never silently recalculated.
 
-Workbook preflight validates classification data and determines every required
-provider/year/Question-booklet identity before Question metadata is imported.
-
-Existing uniquely matching Exams and Question booklets are reused. The workbook
-does not recreate them and does not overwrite authoritative Exam/Assets planning
-metadata.
-
-If required structure is missing, Exam/Assets displays the unresolved
-provider/year/booklet requirements. The user then creates or corrects the
-necessary Exam and Question-booklet structure through the ordinary Exam/Assets
-controls.
-
-The workbook does not invent:
-
-- Assessment name;
-- Question booklet PDF;
-- Answer/marking PDF;
-- booklet format;
-- Expected Questions;
-- AnswerFile assignment;
-- Exam completion state.
-
-`Recheck and Import` reruns authoritative preflight after the user has completed
-the required Exam/Assets work. Question metadata is imported only when every
-required booklet resolves uniquely. Ambiguous matches are rejected rather than
-guessed.
-
-The existing atomic `LegacyQuestionMetadataImporter` remains responsible for
-Question metadata semantics, including:
-
-- Question codes and marks;
-- historical classification;
-- response-type evidence;
-- multipart `SourceQuestion` identity;
-- legacy Shared Context/preamble evidence;
-- supplied MCQ Answer letters;
-- conflict detection and idempotent re-import.
-
-Question and Answer source assets are managed only through Exam/Assets. The
-former legacy booklet-import and Answer-PDF dialogs are retired.
-
-After a successful atomic metadata import, one Question corpus snapshot is
-loaded off the JavaFX application thread and published to both Question and
-Answer capture. Imported/incomplete work therefore becomes available without
-performing duplicate corpus reads or changing the Working Subject.
-
-A pending legacy preflight belongs to exactly one Working Subject. An accepted
-Working Subject change cancels that pending intake so stale requirements cannot
-survive into another Subject.
-
-The former standalone Exam-menu legacy-import action is removed. The Corpus
-Dashboard is the single application entry point for legacy Question metadata
-intake; Exam/Assets remains the authoritative place to create or correct any
-missing structural assets found by preflight.
-
-Regression coverage verifies:
-
-- Exam/Assets-created assets are reused without changing Expected Questions,
-  booklet format or ACTIVE Exam state;
-- missing requirements remain visible in Exam/Assets until resolved, rechecked
-  or cancelled;
-- Working Subject changes clear pending requirements;
-- the import dialog has no duplicate Subject selector;
-- the post-import Question corpus is loaded once off JavaFX and shared by
-  Question and Answer capture.
-
-## 4. Slice 1 --- Exam setup, assets, hashes and safe correction
-
-### 4.1 Purpose
-
-Establish the complete Exam-level source context required before Question
-capture, including expected Question structure, managed source assets and safe
-correction of incorrectly selected assets.
-
-### 4.2 Main-window Exam/Assets workspace
-
-Exam management is performed in the main application window rather than through
-the former modal Exam Setup / Add Exam workflow.
-
-Exam identity correction may relocate managed Question and Answer PDFs when
-Provider or Year changes the authoritative storage path.
-
-After a successful relocation and persistence commit, obsolete empty source
-directories are pruned upwards within the configured managed PDF root. Pruning
-stops at the first non-empty directory and never removes the managed root.
-Symbolic-link components are not traversed during cleanup.
-
-Directory pruning is filesystem housekeeping rather than authoritative Exam
-state. Failure to remove an obsolete empty directory therefore does not convert
-an otherwise successfully committed Exam correction into a failed correction.
-
-`Change Exam` in Capture mode and `Exam -> Exam / Assets...` both switch the
-left-hand workspace to Exam/Assets while retaining the authoritative Working
-Subject above it and reusing the existing PDF workspace on the right.
-
-The workspace supports:
-
-- selecting an existing Exam for the Working Subject;
-- creating a new Exam without another Subject selector;
-- correcting Provider, Year and Assessment;
-- reviewing Question booklets;
-- reviewing Answer/marking PDFs;
-- adding Question and Answer assets;
-- inspecting Question and Answer PDFs in the shared read-only viewer;
-- recording Question-booklet format and Expected Questions;
-- assigning zero or one AnswerFile to each Question booklet;
-- allowing one AnswerFile to serve several Question booklets;
-- selecting a Question booklet independently of the current capture booklet;
-- preflighting and importing legacy Question metadata for the Working Subject,
-  with unresolved Exam/booklet requirements completed through the ordinary
-  Exam/Assets controls;
-- explicitly activating the selected booklet through `Use Selected Booklet for Capture`.
-
-New Exam creation persists Provider, Year and Assessment first. Question and
-Answer assets are then added to that authoritative persisted Exam.
-
-A new Question booklet imports its source PDF into managed storage, records the
-managed source-document hash, and opens the selected source immediately in
-read-only viewer mode. This allows Expected Questions to be entered while the
-booklet is being inspected.
-
-Saving the booklet replaces the temporary source preview with inspection of the
-authoritative managed PDF. Inspection itself does not change the active capture
-booklet.
-
-`Use Selected Booklet for Capture` is the explicit transition from Exam
-management to Question Capture. It activates the persisted booklet, opens its
-managed Question PDF, refreshes capture state and restores the Question Capture
-workspace.
-
-The former modal `ExamSetupDialog` / `ExamImportDialog` path is no longer part
-of normal application workflow.
-
-### 4.3 Question booklet setup
-For each Question booklet the application records:
-- booklet name;
-- booklet format:
-  - MULTIPLE_CHOICE;
-  - WRITTEN_RESPONSE;
-  - MIXED;
-- expected number of top-level Questions;
-- Question booklet PDF;
-- managed source-document hash.
-The expected count is the number of numbered top-level Questions, not the
-number of captured Question parts.
-For example:
-21a
-21b
-21c
-
-represents one top-level Question, Question 21.
-Expected Question count remains nullable until the source booklet has been
-reviewed. Legacy Question data is not used to infer the authoritative expected
-count.
-Existing and legacy-imported booklets can therefore be inspected
-retrospectively and have their expected counts recorded later.
-Changing the expected Question count is structural Exam planning. A COMPLETE
-Exam must be reactivated before that value can be changed.
-
-### 4.4 Preview-only booklet inspection
-
-Question-booklet inspection uses the existing shared PDF workspace in `VIEWER`
-mode.
-
-Inspection provides:
-
-- normal page navigation;
-- review of the complete Question booklet;
-- no Question-region selection;
-- no Question-content creation;
-- no change to the active capture booklet merely because another booklet is
-  being inspected.
-
-For an existing persisted booklet, Exam/Assets opens the authoritative managed
-PDF belonging to that `ExamBooklet`.
-
-When adding a new Question booklet, the user-selected source PDF is previewed
-immediately before persistence so the booklet can be visually reviewed while
-Question format and Expected Questions are entered.
-
-After Save, the managed persisted copy becomes authoritative and remains
-available for inspection through the same shared viewer.
-
-Expected Questions is maintained directly as Question-booklet metadata in
-Exam/Assets. It records the number of numbered top-level Questions, so multipart
-parts such as `21a`, `21b` and `21c` represent one top-level Question.
-
-Expected Questions may remain unknown until the source booklet has been
-reviewed. Legacy Question rows must not be used to infer that authoritative
-count.
-
-Inspection remains separate from capture activation. Only `Use Selected Booklet
-for Capture` changes the application's active capture booklet.
-
-### 4.5 Expected-but-not-yet-available assets
-
-Planning/expectation data must not require fictitious authoritative domain
-objects.
-
-If the user knows that an Exam should contain a Question booklet but does not
-yet have its PDF, the application may retain planning/expectation information
-without creating an authoritative `ExamBooklet` whose required source document
-does not exist.
+However the final Sprint 12 design does not permit `Mark Complete` merely because the user requests it. Readiness requires all authoritative structural/content prerequisites to be satisfied.
 
-The implementation design must preserve existing domain invariants unless there
-is a strong reason to change them.
-
-Implementation status as at 28 September 2026:
-
-Schema version 18 adds Exam-level planning expectations for source assets that
-may not yet be available:
-
-- `exams.expected_question_booklet_count`;
-- `exams.expected_answer_file_count`.
-
-These values are deliberately separate from authoritative asset rows.
-
-The application does not create placeholder `ExamBooklet`, `AnswerFile` or
-`SourceDocument` records merely to represent an expected future asset.
-
-Expected counts are nullable because an Exam may not yet have been reviewed
-sufficiently to establish them. When supplied:
-
-- expected Question booklet count must be positive;
-- expected Answer/marking file count may be zero.
-
-Available asset counts are derived independently from actual persisted
-`ExamBooklet` and `AnswerFile` rows.
-
-This allows later Exam/Assets and Corpus Dashboard workflows to distinguish, for
-example:
+A COMPLETE Exam must be reactivated before structural management. Existing permitted correction/enrichment work may still be completed through the Dashboard/capture routes.
 
-```text
-Question booklets: 1 available / 2 expected
-Answer files:      0 available / 1 expected
-```
-
-without treating unavailable source material as though it already exists.
-Changing these expectations is structural Exam planning and therefore requires
-an ACTIVE Exam.
+### 3.5 Final completion-readiness rule
 
-### 4.6 Managed source-document hashes
+`ExamCorpusStatus.isReadyForCompletion()` requires:
 
-Managed Question and Answer/marking PDFs gain a persisted cryptographic content
-hash, using SHA-256 unless implementation evidence requires another choice.
-
-Hashes support:
-
-- duplicate detection independent of filename/path;
-- safer Exam intake;
-- correction/reconciliation;
-- later distributed work-package import.
-
-A matching hash is detection evidence, not automatic permission to overwrite or
-merge records.
-
-Implementation status as at 28 September 2026:
-
-- schema version 16 added nullable `source_documents.content_sha256`;
-- managed document identity uses lower-case SHA-256;
-- existing migrated source documents may legitimately retain `NULL` until their
-  bytes are inspected;
-- the hash is deliberately not unique because duplicate content must be
-  representable and surfaced to the application for review;
-- fresh Question and Answer PDF intake records the hash of the final managed
-  copy;
-- legacy Question and Answer PDF intake uses the same hashing path;
-- existing source-document rows with an unknown hash may be safely back-filled;
-- a conflicting hash for the same persisted source-document identity is rejected;
-- known Question documents may be recognised by content independently of
-  filename or external path;
-- ambiguous duplicate matches are reported rather than resolved arbitrarily.
-
-Hashing is also used by the Question-PDF and Answer-PDF replacement workflows
-described below.
-
-### 4.7 Answer/marking assets
-
-The Exam/Assets workflow must show the Exam's Answer/marking PDFs and their
-booklet assignments.
-
-One `AnswerFile` may continue to serve multiple Question booklets where that is
-the real Exam structure.
-
-An Answer/marking asset may also be marked:
-
-``` text
-Contains MCQ explanations
-```
-
-This describes the contents of the AnswerFile and enables Slice 3 explanation
-capture. It does not itself make explanations mandatory.
-
-### 4.8 Safe replacement of a wrong Question booklet PDF
-
-Replacing an incorrectly selected Question booklet PDF must inspect the
-booklet's dependent PDF-derived capture.
-
-If no dependent PDF-derived content exists, replacement may proceed directly.
-
-If dependent capture exists:
-
-1. report the affected data;
-2. warn that stored coordinates belong to the old PDF;
-3. require explicit confirmation;
-4. invalidate/delete the affected PDF-backed Question content;
-5. invalidate/delete affected Shared Context region material;
-6. register/assign the replacement managed document and hash;
-7. return affected Questions to the appropriate capture workflow.
+- expected Question-booklet count recorded and equal to available Question booklets;
+- expected Answer-file count recorded and equal to available Answer files;
+- every booklet Question PDF available;
+- every booklet expected top-level Question count recorded and equal to encountered top-level source Questions;
+- zero ordinary incomplete Questions (Question content, Answer, response type, Shared Context);
+- zero Questions below Descriptor classification level;
+- zero missing required MCQ explanations in every explanation-capable booklet.
 
-Preserve data that does not depend on the replaced PDF where semantically safe,
-including:
-
-- Question identity/code;
-- marks;
-- response type;
-- curriculum classification;
-- independent MCQ answer letters;
-- clipboard/image Question content.
+### 3.6 MCQ explanations are a separate completion dimension
 
-Shared Context persistence must be handled deliberately because a persisted
-`SharedQuestionContext` currently requires region content. A replacement
-transaction must not leave structurally invalid empty context objects.
-
-Implementation status as at 28 September 2026:
-
-The Question-booklet replacement workflow is implemented through a dedicated
-replacement service and the current Exam workflow.
-
-Before replacement, the application reports the affected:
-
-- Questions;
-- Question PDF regions;
-- Shared Contexts;
-- independent stored image parts that will be preserved.
-
-Replacement requires explicit confirmation when source-dependent capture exists.
-
-The replacement transaction:
-
-1. verifies that the Exam is still `ACTIVE`;
-2. verifies the currently managed bytes against their persisted SHA-256 identity;
-3. rejects replacement content already owned by another managed source document;
-4. preserves the existing `ExamBooklet` and `SourceDocument` identities;
-5. replaces the managed PDF bytes and updates their SHA-256 hash;
-6. removes Question PDF regions whose coordinates belong to the old PDF;
-7. removes obsolete Shared Context region/context data;
-8. preserves Question identity, code, marks, classification, response type,
-   Answers and clipboard/image content;
-9. marks affected Questions as requiring source recapture;
-10. restores the previous managed bytes if persistence fails after filesystem
-    replacement.
-
-Schema version 17 introduced `questions.source_capture_required` so a mixed
-Question whose PDF regions were invalidated remains visible in the capture work
-queue even when independent image content survives.
-
-A normal image-only Question does not acquire this flag and therefore is not
-incorrectly classified as incomplete.
-
-For an affected Question, source recapture:
-
-- starts with its preserved image content still present;
-- requires at least one newly captured PDF region;
-- clears `source_capture_required` only after the recaptured Question is
-  successfully persisted;
-- preserves any associated Answer.
+A/B/C/D remains the authoritative MCQ Answer. Explanation regions do not change ordinary Answer completeness.
 
-Selecting a byte-identical replacement is non-destructive and may back-fill an
-older missing source-document hash without invalidating existing capture.
+When an assigned AnswerFile is marked `Contains answer explanations`, the flag declares that explanation regions are expected for each eligible answered MCQ. Missing regions therefore block Exam completion and appear as separate Dashboard work.
 
-The current user-facing action is `Replace Active Question PDF...` on the Exam
-menu. The replacement service is UI-independent so the same operation can be
-moved into the Exam/Assets workspace without changing
-its persistence semantics.
+This final requirement supersedes early issue/design wording that described explanation regions as globally optional.
 
-### 4.9 Safe replacement of a wrong Answer/marking PDF
+### 3.7 Source coordinates are source-document-specific
 
-The correction belongs at booklet/AnswerFile level rather than inside ordinary
-`Edit Answer`.
+PDF replacement never silently remaps old regions. Question/Shared Context source capture tied to an old Question booklet PDF is invalidated and explicitly returned to capture. Answer regions tied to an old Answer PDF are removed according to the safe replacement/reassignment workflow while independent A–D choices remain.
 
-If no persisted Answer regions depend on the old AnswerFile, replacement may
-proceed directly.
+### 3.8 Managed-document hashes are evidence, not identity constraints
 
-If Answer regions depend on the old file:
+SHA-256 is stored on managed source documents and used to recognise known/duplicate/conflicting source material. Existing rows may be backfilled when bytes are inspected. The hash is not UNIQUE because the application owns reconciliation policy.
 
-1. identify the affected Questions;
-2. warn that their stored regions belong to the old PDF;
-3. require explicit confirmation;
-4. remove/invalidate those Answer regions;
-5. assign the correct AnswerFile;
-6. preserve independent MCQ A/B/C/D answers;
-7. return affected written-response Questions to Answer capture when their
-   required Answer content has been removed.
+### 3.9 Asset deletion is deliberate and destructive
 
-The existing repository invariant preventing assignment of a conflicting
-AnswerFile while old regions still refer to another file must remain. The
-correction workflow must work above that invariant rather than bypass it.
+Question-booklet and AnswerFile deletion requires an ACTIVE Exam and explicit confirmation. Persistence cleanup is transactional. Managed PDFs are removed only when the source document is no longer referenced. Planning expectations are retained so deletion produces a visible structural shortfall rather than rewriting what the Exam was expected to contain.
 
-Implementation status as at 29 September 2026:
+### 3.10 Legacy import does not own a second Exam model
 
-Answer-PDF correction is implemented as booklet-level AnswerFile reassignment.
+The Dashboard is the sole Legacy Import launcher. Working Subject is inherited. Historical syllabus/workbook selection remains explicit. Preflight reuses existing Exam/booklet assets. Missing structure is resolved through Exam/Assets, then the existing atomic metadata importer runs.
 
-An existing AnswerFile is never overwritten in place because the same file may
-legitimately serve multiple booklets. Correcting one booklet therefore leaves
-other booklet assignments unchanged.
+## 4. Persistence changes
 
-Before reassignment the workflow reports:
+Sprint 12 moves the schema from v14 to v19.
 
-- affected Questions;
-- Answer regions whose coordinates belong to the old PDF;
-- Answers with independent textual content that will be preserved;
-- region-only Answers that will become unanswered.
+| Schema | Durable change |
+|---|---|
+| v15 | `Exam.capture_state`; `ExamBooklet.expected_question_count` |
+| v16 | `SourceDocument.content_sha256` |
+| v17 | `Question.source_capture_required` |
+| v18 | Exam expected Question-booklet and Answer-file counts |
+| v19 | `AnswerFile.contains_answer_explanations` |
 
-Confirmed reassignment:
+Migration deliberately leaves historical unknown values as NULL/false where source data cannot be inferred safely.
 
-1. requires the Exam to be `ACTIVE`;
-2. verifies that persisted Answer regions agree with the booklet's current
-   AnswerFile assignment;
-3. removes only Answer regions belonging to the old AnswerFile and corrected
-   booklet;
-4. preserves independent Answer text, including authoritative MCQ A/B/C/D
-   letters;
-5. removes Answer rows that contained only invalidated regions, causing those
-   written-response Questions to return naturally to the Answer-capture queue;
-6. reassigns the booklet to the replacement AnswerFile atomically;
-7. retires the old AnswerFile when no booklet or Answer region still refers to
-   it;
-8. retires the old SourceDocument when no Question booklet or remaining
-   AnswerFile refers to it.
+## 5. Exam/Assets final workflow
 
-When the old SourceDocument is retired, its obsolete managed PDF is also removed
-from the managed Exam hierarchy.
+Exam/Assets is the authoritative structural workspace. It reuses the main PDF pane and the Dashboard Working Subject.
 
-A shared old AnswerFile is retained together with its SourceDocument and managed
-PDF while another booklet still uses it.
+It supports:
 
-Newly selected replacement PDFs are copied into the managed Exam hierarchy and
-hashed before registration. If the normal managed filename already contains a
-different file, the replacement is first stored under a hash-qualified filename
-rather than overwriting bytes that may still be referenced.
+- selecting persisted Exams for the Working Subject;
+- creating a new Exam;
+- Provider/Year/Assessment correction through the authoritative correction service;
+- expected Question-booklet and Answer-file planning counts;
+- Question booklet source PDF, name, type, expected top-level Questions and assigned AnswerFile;
+- AnswerFile source PDF/name and `Contains answer explanations` metadata;
+- PDF inspection/viewing;
+- safe Question/Answer source replacement;
+- destructive Question/Answer asset deletion;
+- capture activation for a selected Question booklet;
+- Dashboard return after the structural transaction is clean.
 
-When the selected bytes already identify one AnswerFile belonging to the same
-Exam, that existing managed AnswerFile is reused. Ambiguous or conflicting
-content matches are rejected.
+Structural edits are unavailable for COMPLETE Exams until reactivation from the Dashboard.
 
-Selecting byte-identical content is non-destructive. Existing Answer regions
-remain valid and an older missing SourceDocument hash may be back-filled.
+## 6. Question and Answer capture final workflow
 
-The Answer-capture work queue is rebuilt from persistence after correction so a
-written-response Question whose region-only Answer was removed becomes
-immediately available for recapture.
+Question capture no longer starts implicitly when a booklet is opened. New capture begins through an explicit action and remains active sequentially after a successful new Question save.
 
-Repository regression tests verify both cleanup cases:
+Accepted Question content is an ordered list of PDF regions and clipboard images. Question content creation uses `Add Region` and `Add From Clipboard`; accepted parts can be reordered/removed individually. Clipboard image availability is advisory and robust to Windows clipboard decode failures.
 
-- an orphaned old AnswerFile, SourceDocument and managed PDF are removed;
-- a shared old AnswerFile, SourceDocument and managed PDF remain intact.
+Shared Context is shown before Question-specific content in the accepted-content preview without duplicating persisted content. Multipart source decisions are reused from persistence.
 
-### 4.10 Exam completion control
+The accepted-content preview is bounded and locally scrollable; it expands immediately after content is accepted rather than waiting for a later layout pulse.
 
-An active Exam can be marked complete by the user.
+Answer capture remains booklet-aware. Written Answers use regions. MCQs retain A–D as authoritative Answer data. Explanation capture reuses the same Answer edit/persistence path.
 
-Before confirmation the application may show advisory information such as:
+During an MCQ explanation session:
 
-- expected versus encountered top-level Questions;
-- missing assets;
-- Question/Answer audit findings.
+- the exact Dashboard-selected Question can open directly;
+- saving removes that candidate and advances to the next missing explanation;
+- the current marking-PDF page is preserved while advancing within the same source;
+- clean `Return to Corpus Dashboard` does not falsely warn about unfinished work;
+- saving the final required explanation ends the session automatically.
 
-Warnings do not prevent completion unless a genuine persistence/data-integrity
-constraint would be violated.
+## 7. Corpus Dashboard final workflow
 
-A completed Exam is structurally locked until `Reactivate Exam` is selected.
+The Dashboard is the application home after startup/Subject selection. It is both a status surface and a routing surface; it does not duplicate persistence rules already owned by audit/capture/Exam services.
 
-Implementation status as at 28 September 2026:
+### Subject level
 
-Exam lifecycle is persisted as `ACTIVE` or `COMPLETE`.
+The Dashboard contains:
 
-The Exam menu provides:
+- authoritative Working Subject + Subject creation;
+- Curriculum section with Add Curriculum and mapping-review status/action;
+- Provider/year/Exam-state scope filters;
+- Subject-level summary actions for Questions, ordinary needs-attention dimensions and missing MCQ explanations;
+- legacy import entry.
 
-- `Mark Active Exam Complete...`;
-- `Reactivate Active Exam`.
+### Exam level
 
-Marking an Exam complete requires explicit confirmation. The active in-memory
-Exam is refreshed immediately after the persisted state changes.
+The Exam table reports Year, Provider, Assessment, declared State, Question Booklets present/expected, Answer Booklets present/expected and Work.
 
-Repository-level structural locking uses persisted Exam state rather than
-trusting potentially stale domain objects.
+Selecting an Exam exposes `Manage Exam / Assets` and the lifecycle action (`Mark Complete` or `Mark Active` as appropriate).
 
-A `COMPLETE` Exam rejects structural operations including:
+### Booklet level
 
-- adding another Question booklet;
-- changing booklet format or expected Question counts;
-- changing Exam-level expected asset counts;
-- correcting Exam identity metadata;
-- replacing Question or Answer PDFs;
-- adding new Questions;
-- changing Question code/structural identity;
-- registering a new AnswerFile;
-- establishing or changing a booklet-to-AnswerFile assignment.
+The booklet table reports:
 
-Existing non-structural capture and correction remain available while complete,
-including:
-
-- Question marks, regions and classification;
-- existing Question content correction;
-- Answer text and Answer regions using the already assigned AnswerFile;
-- Shared Context correction and recapture.
-
-Reusing an already registered AnswerFile or reasserting an existing booklet
-assignment does not itself alter Exam structure and remains permitted.
-
-Explicit reactivation restores structural editing.
-
-Repository and TestFX regression tests cover completion persistence, structural
-rejection, permitted non-structural correction and reactivation.
-
-## 5. Slice 2 --- Streamlined Question capture
-
-### 5.1 Purpose
-
-Make sustained Question capture clearer and more efficient after Slice 1 has
-established the active Exam and Question booklet.
-
-### 5.2 Workspace structure
-
-Subject is application-level context established before entering Question
-capture.
-
-The capture workflow inherits the selected Subject and clearly identifies the
-active Exam and Question booklet.
-
-The implemented layout is conceptually:
-
-```text
-WORKING SUBJECT
-    Subject: Chemistry
-
-ACTIVE EXAM / BOOKLET
-    QCAA 2024 External Assessment — Paper 1 MCQ [ACTIVE]
-    [Change Exam]
-
-    +--------------------------------------+
-    | Classification                       |
-    |     [classification controls]         |
-    |                                      |
-    | Question                             |
-    |     [Question capture controls]       |
-    |                                      |
-    | Answer                               |
-    |     [Answer capture controls]         |
-    +--------------------------------------+
-```
-
-`WORKING SUBJECT` is application-level context and is visually separate from
-Question classification.
-
-`ACTIVE EXAM / BOOKLET` is also separate from the Question-capture panes. It
-shows the currently active persisted Exam and booklet, including the Exam
-lifecycle state.
-
-`Change Exam` switches the left side of the main window directly to the
-Exam/Assets workspace. It does not open the retired modal Exam Setup workflow.
-
-`Classification`, `Question` and `Answer` remain separate bordered panes. They
-are visually grouped inside a larger, unobtrusive bordered container without
-adding another visible heading.
-
-The Classification controls continue to use the existing
-`CurriculumSelectorPane` and `CurriculumSelectionModel`; restructuring the
-visible layout does not create another curriculum-selection state.
-
-Changing Working Subject continues to change application context and therefore
-the available Exam and capture work. If the previous active Exam belongs to a
-different Subject, its visible active-Exam context is invalidated.
-
-The active Exam/booklet display is refreshed when:
-
-- a persisted booklet becomes active;
-- Working Subject changes;
-- Exam identity metadata changes;
-- the Exam is marked `COMPLETE`;
-- the Exam is reactivated.
-
-The main application window now opens at 900 px high rather than 840 px to
-accommodate the additional Working Subject and active Exam/booklet context
-without forcing unnecessary initial vertical scrolling.
-
-The workspace restructuring changes presentation and navigation only. It does
-not introduce parallel Exam, booklet, curriculum or capture state.
-
-### 5.3 Explicit capture entry
-
-Question capture does not begin merely because an Exam booklet has been opened.
-
-After a booklet becomes active:
-
-- Working Subject remains available as application-level context;
-- Classification is inactive;
-- ordinary Question controls are inactive;
-- no new-Question capture mode is selected;
-- dragging on the Exam PDF cannot create a Question-region selection.
-
-`Start New Question Capture` explicitly enters ordinary new-Question capture. It enables Classification and Question work and allows the Exam PDF to create Question selections.
-
-Imported-Question capture, Question editing, legacy split capture and Shared Context correction are separate explicit workflows. Entering one of those workflows activates only the controls required for that work.
-
-Completing or cancelling an edit or correction returns the Question workspace to its idle state. It does not silently start a new Question.
-
-A successful ordinary new-Question save is deliberately different. The saved Question is cleared from the transient controls, but new-Question capture remains active so the teacher can continue directly with the next Question.
-
-Changing the active booklet clears transient Question state and returns capture to idle, requiring `Start New Question Capture` again for the newly selected booklet.
-
-### 5.4 Question content controls
-
-Question content creation uses only:
-
-``` text
-Add Region
-Add From Clipboard
-```
-
-There is no separate `Discard Selection` button.
-
-Clicking elsewhere in the PDF already abandons an unaccepted selection and must
-continue to clear the corresponding logical selection.
-
-There is no global `Clear All Content` button.
-
-Accepted Question content parts remain individually removable and reorderable.
-If real use later demonstrates a need for bulk clearing it can be reconsidered.
-
-### 5.5 Multipart and Shared Context behaviour
-
-Multipart detection remains based on Question codes such as `21a`, `21b` and
-`21c`.
-
-Entering a multipart code derives the common persisted source identity. For
-example:
-
-``` text
-Question code: 22a
-SourceQuestion: 22
-```
-
-The existing `SourceQuestion` / `SharedQuestionContext` model remains
-authoritative.
-
-The first captured part establishes the persisted Shared Context decision for
-the source Question:
-
-- `PRESENT` when Shared Context is captured;
-- `NONE` when the Question is explicitly saved without Shared Context.
-
-Later parts deriving the same `SourceQuestion` reuse that persisted decision.
-
-For `PRESENT`:
-
-- the existing Shared Context is reused automatically;
-- the Shared Context question is not presented again;
-- no duplicate `SharedQuestionContext` is created.
-
-For `NONE`:
-
-- the absence of Shared Context is reused automatically;
-- the Shared Context question is not presented again.
-
-Sequential capture therefore depends on persisted source-Question state rather
-than temporary UI state from the preceding capture.
-
-The same behaviour also applies when multipart Questions are revisited later;
-the relationship is not dependent on capturing all parts in one session.
-
-Implementation status as at 29 September 2026:
-
-- sequential multipart capture reuses persisted `PRESENT` decisions;
-- sequential multipart capture reuses persisted `NONE` decisions;
-- regression coverage verifies that later parts are not asked the same Shared
-  Context question again;
-- regression coverage verifies reuse of the same persisted source and Shared
-  Context identities;
-- existing `SourceQuestion` semantics were retained without introducing a second
-  multipart workflow model.
-
-### 5.6 Imported/incomplete Question capture
-
-Imported/incomplete Question capture is an operational work queue rather than a
-permanently visible capture mode.
-
-The existing Question-state rules determine whether a Question belongs in this
-queue. A Question is included when it has any of the following outstanding work:
-
-- no Question body content;
-- Question PDF replacement has marked source capture as required;
-- Shared Context remains unresolved.
-
-The queue is filtered by the current Working Subject. Filtering changes only
-workspace visibility; it does not alter or delete Questions belonging to another
-Subject.
-
-When at least one relevant Question exists, the Question pane exposes:
-
-``` text
-Complete Imported Question
-```
-
-The Question selector itself remains hidden until that action is chosen.
-
-When no relevant imported/incomplete work exists, both the action and its
-selector are absent from the normal workspace.
-
-If the final Question in the imported/incomplete queue is completed, the
-workflow closes automatically and returns the Question workspace to its explicit
-idle state. It does not silently begin ordinary new-Question capture.
-
-Changing Working Subject immediately recalculates this availability from the
-same persisted Question state. The action therefore appears or disappears as
-the filtered operational queue changes.
-
-This conditional presentation does not introduce a second definition of
-Question completeness. It reuses the existing imported/incomplete queue rules.
-
-## 6. Slice 3 --- MCQ explanation regions
-
-### 6.1 Purpose
-
-Capture optional explanatory/working material from marking PDFs for
-multiple-choice Questions, including retrofitting existing corpus Answers.
-
-### 6.2 Answer semantics
-
-The stored A/B/C/D choice remains the authoritative MCQ Answer.
-
-One or more Answer PDF regions may additionally be stored as supplementary
-explanation material.
-
-An MCQ remains complete when it has a valid A/B/C/D answer even if it has no
-explanation regions.
-
-Explanation absence must not block ordinary capture, audit completeness or
-output.
-
-### 6.3 AnswerFile capability flag
-
-An existing or newly registered Answer/marking PDF may be marked:
-
-``` text
-Contains MCQ explanations
-```
-
-The flag belongs to the AnswerFile because it describes that particular source
-document.
-
-Changing this descriptive flag on an existing asset is permitted even when the
-Exam is complete because it does not change Exam structure.
-
-### 6.4 New Answer capture
-
-When the selected Question is MCQ and its assigned AnswerFile is marked as
-containing explanations:
-
-- the ordinary A/B/C/D controls remain;
-- explanation-region capture controls become available;
-- one or more explanation regions may be added;
-- Save persists the letter plus optional regions in the same `Answer`.
-
-When the AnswerFile is not marked as containing explanations, MCQ capture stays
-focused on the A/B/C/D choice.
-
-### 6.5 Retrofit existing MCQ Answers
-
-Existing MCQ Answers already stored as A/B/C/D must be eligible for later
-explanation capture.
-
-Provide an explicit workflow such as:
-
-``` text
-Capture MCQ Explanations
-```
-
-The workflow may present MCQs associated with an AnswerFile marked as containing
-explanations, including already-answered Questions.
-
-Adding explanation regions updates the existing Answer and must not alter its
-stored A/B/C/D choice.
-
-### 6.6 No inferred explanation completeness
-
-The AnswerFile-level flag means the document contains explanation material
-somewhere; it does not prove that every MCQ has an explanation.
-
-Sprint 12 does not require explanation regions for every MCQ and does not infer
-missing explanations as ordinary Question incompleteness.
-
-A later audit view may report captured explanation coverage separately.
-
-### 6.7 Implementation status
-
-Slice 3 is implemented.
-
-The existing `Answer` representation is reused rather than introducing a
-separate explanation entity. An MCQ Answer may contain:
-
-```text
-answerText = A/B/C/D
-regions    = zero or more optional explanation regions
-```
-
-`AnswerFile.contains_answer_explanations` is persisted asset metadata and is
-editable through Exam/Assets. Changing that descriptive flag remains permitted
-for a COMPLETE Exam because it does not alter Exam structure.
-
-During ordinary MCQ Answer capture, explanation-region controls are available
-only when the Question booklet's assigned `AnswerFile` is marked as containing
-explanations. The A-D choice remains sufficient to save a complete MCQ Answer;
-explanation regions remain optional.
-
-The explicit `Capture MCQ Explanations` workflow provides retrofit capture for
-already-answered MCQs. The user first activates a Question booklet through
-Exam/Assets with `Use Selected Booklet for Capture`. Retrofit candidate discovery
-is then restricted to answered MCQs belonging to that active booklet whose
-assigned `AnswerFile` is marked as containing explanations.
-
-Candidate discovery and AnswerFile lookup run away from the JavaFX application
-thread. Subject and active-booklet context are checked again before asynchronous
-results are published so stale work cannot enter a later capture context.
-
-Retrofit capture reuses the ordinary persisted Answer-edit path. Saving
-explanation regions preserves both the existing A-D choice and persisted Answer
-identity.
-
-Within one retrofit session, a successfully updated MCQ is removed from the
-candidate list and the next remaining candidate is opened automatically.
-Cancelling an edit does not remove its candidate. This queue behaviour is
-session workflow state only; it does not create persisted per-MCQ explanation
-completeness.
-
-Existing explanation regions do not otherwise imply that a Question is complete
-or incomplete for explanation purposes. The AnswerFile flag describes
-source-document capability and does not prove that every MCQ has an explanation.
-
-Ordinary corpus completeness remains unchanged:
-
-```text
-valid A/B/C/D
-    -> MCQ Answer complete
-
-valid A/B/C/D + no explanation regions
-    -> MCQ Answer complete
-
-explanation regions + no valid A/B/C/D
-    -> MCQ Answer incomplete
-```
-
-No new missing-explanation audit problem is introduced.
-
-## 7. Slice 4 --- Corpus Dashboard / Audit refinement
-
-### 7.1 Purpose
-
-Evolve the existing Corpus Audit into an operational Dashboard that answers:
-
-``` text
-What work remains?
-Why does it need attention?
-Take me to the workflow that can resolve it.
-```
-
-The Dashboard must reuse existing domain/repository truth rather than create
-parallel completeness rules.
-
-### 7.2 Distinguish declared Exam state from calculated audit findings
-
-The Dashboard must treat these as separate dimensions:
-
-``` text
-Exam state:
-    ACTIVE
-    COMPLETE
-
-Audit status:
-    clear
-    findings requiring attention
-```
-
-A completed Exam may still have audit findings. That is not a contradiction.
-
-Structural correction of a completed Exam requires explicit reactivation.
-Non-structural content correction remains available directly.
-
-### 7.3 Exam-level view
-
-The Dashboard should report Exam-level information including:
-
-- declared Exam state;
-- expected/present Question assets;
-- expected/present Answer/marking assets;
-- booklet states;
-- structural warnings;
-- aggregate Question/Answer work.
-
-### 7.4 Booklet-level view
-
-Booklet reporting should include useful information such as:
-
-- booklet format;
+- Booklet;
+- Format;
 - Question PDF availability;
-- assigned AnswerFile;
-- expected top-level Question count;
-- encountered top-level/source Question count;
-- captured Question-part count;
-- Question content problems;
-- Answer problems;
-- unresolved response types;
-- unresolved Shared Context.
+- Answer file;
+- Expected top-level Questions;
+- Found top-level Questions;
+- Question Parts;
+- No descriptor;
+- MCQ explanations;
+- Problems.
 
-Expected count is compared with top-level/source Questions, not with the number
-of stored multipart Question records.
+Explanation coverage is `captured / eligible` for a flagged AnswerFile and `—` for a booklet without explanation capability.
 
-A mismatch is an advisory finding requiring investigation. The application must
-not infer which side is wrong and must not automatically reverse a user's
-`COMPLETE` declaration.
+### Question Work
 
-### 7.5 Question-level audit
+Question Work identifies Provider, Year, Exam, Booklet, Question, Type, Content, Answer, Shared Context and Problem. The Dashboard routes directly to the relevant existing workflow rather than opening a generic ambiguous “resolve” action.
 
-Retain the useful existing Question-level concepts:
+## 8. Curriculum and Subject scoping
 
-- missing Question content;
-- missing Answer;
-- unresolved Shared Context;
-- unknown response type.
+Curriculum Mapping and Add Curriculum inherit the Dashboard Working Subject. Add Curriculum provides one entry point for PDF authoring or Excel import. Returning refreshes the Dashboard.
 
-The current audit's PDF-only test for Question source content must be corrected.
-An image-only Question created through clipboard capture is valid authoritative
-Question content.
+Mapping-review coverage remains independent from Exam structural completeness and ordinary Question completeness.
 
-The problem terminology should therefore move from "missing Question source
-region" toward "missing Question content" where appropriate.
+## 9. Consolidated screen designs
 
-Implementation now treats the authoritative ordered Question content-parts list
-as the body-content test rather than using the legacy PDF-region projection.
-An image-only Question therefore counts as having Question content. A Question
-whose PDF source was explicitly invalidated still reports missing Question
-content until the required source recapture is completed, even when independent
-clipboard-image content remains.
+The following diagrams consolidate and supersede the temporary Sprint 12 `.txt` screen sketches. They are documentation diagrams, not pixel-perfect UI specifications.
 
-### 7.6 Operational UI
-
-The former concatenated work-item `ListView` evolved into a useful table.
-
-The Dashboard supports:
-
-- Subject/provider/year/booklet scoping where useful;
-- Exam/booklet selection;
-- clear summary counts;
-- clickable summary counts that filter the relevant work set;
-- deterministic sorting;
-- direct routing to correction/capture workflows;
-- refresh after corrective work;
-- retention of bulk response-type correction.
-
-The Dashboard is an operational work queue, not a graph-heavy analytics screen.
-
-Implementation status (Sprint 12.4):
-
-The former concatenated Corpus Audit ListView has been replaced by the
-operational Corpus Dashboard. The Dashboard is scoped to the authoritative
-Working Subject and presents:
-
-- Provider, year and declared Exam-state filters;
-- Subject-scope Question completeness summaries;
-- clickable Question-work summary filters;
-- an Exam table with declared state, booklet/file counts and Question work;
-- a selected-Exam summary;
-- booklet Question-PDF, Answer-file, expected/found and Question-work status;
-- advisory structural warnings without changing declared Exam state;
-- an Exam/booklet-scoped Question work table;
-- separate MCQ explanation coverage; and
-- retained bulk UNKNOWN response-type correction.
-
-The live Questions menu action now opens the Dashboard. Direct correction
-routing from Dashboard rows and structural findings remains the responsibility
-of the following correction-routing slice.
-
-### 7.7 Correction routing
-
-Use existing or Sprint 12 workflows rather than creating parallel editors.
-
-Examples:
-
-``` text
-Missing/wrong Exam asset
-    -> Exam/Assets
-
-Missing Question content
-    -> Question Capture
-
-Missing Answer
-    -> Answer Capture
-
-Unknown response type
-    -> metadata correction / existing bulk correction
-
-Unresolved Shared Context
-    -> Question / Shared Context workflow
-```
-
-Implementation status (Sprint 12.4):
-
-Manual live-data validation identified that the original generic
-`Resolve Selected` action obscured the distinction between booklet-level and
-Question-level work. It has therefore been replaced by explicit operational
-actions:
-
-- `Capture Questions` starts new Question capture for the selected ACTIVE
-  booklet when its Question PDF is available;
-- `Capture Answers` starts at the first ready missing Answer in the selected
-  booklet;
-- `Complete Selected Question` handles missing Question content or unresolved
-  Shared Context for one explicitly selected existing Question;
-- response-type correction remains explicit through the existing Multiple
-  choice / Written controls; and
-- `Manage Exam / Assets` remains the structural correction route.
-
-Dashboard-launched Question and Answer capture expose one common
-`Return to Corpus Dashboard` action in the main Capture workspace. Returning is
-blocked while unsaved Question, Shared Context or Answer capture work is staged.
-Managed capture PDF sessions are closed before returning, and Dashboard
-reconstruction is performed asynchronously from authoritative persistence.
-
-Potentially noticeable Dashboard transitions expose a busy indicator rather than
-blocking the JavaFX application thread. Dashboard-launched Question capture opens
-and renders the selected Exam PDF asynchronously. Answer capture reopens the
-assigned Answer PDF when a previous Dashboard return has closed its managed
-session. Classification controls are disabled while Dashboard Answer capture owns
-the workspace and are restored when that workflow ends.
-
-`Manage Exam / Assets` is a general management route for every selected Exam, not
-only a response to an audit finding. If the user has selected a booklet, that
-booklet scope is preserved when Exam/Assets opens. Structural findings remain
-useful evidence, but they do not control access to Exam/Assets.
-
-A Working Subject change invalidates Dashboard-return ownership belonging to the
-previous Subject. This prevents an old Dashboard session from being reopened
-against newly authoritative Subject context. Issue #65 removes this transitional
-case by moving Subject selection into the Dashboard when it becomes the
-application home screen.
-
-Issue #61 direct-routing acceptance has been manually verified against live data:
-ordinary Exams can open Manage Exam / Assets, Exam/Assets remains within the
-normal workspace width, Dashboard capture/return transitions remain responsive,
-and changing Working Subject during Dashboard-launched Exam/Assets no longer
-leaves an indefinite busy state. The corresponding feature-branch CI is green.
-
-### 7.8 Curriculum mapping reporting
-
-Curriculum mapping review coverage is now reported directly on the Corpus
-Dashboard through the existing `CurriculumMappingCoverageService`.
-
-For each historical-to-current syllabus pair, the Dashboard reports:
-
-- deliberately resolved Descriptor/Subtopic reviews;
-- remaining unreviewed nodes;
-- inconsistent review/mapping state;
-- completed review state; and
-- `not applicable` when no historical-to-current mapping pair requires review.
-
-Mapping review remains a separate Subject-level reporting dimension. It does not
-make an otherwise complete Question incomplete, does not affect Exam structural
-findings and does not contribute to the Dashboard `Need attention` count.
-
-Dashboard summary buttons now act as Subject-level drill-down controls. Selecting
-`Need attention`, `Missing content`, `Missing answers`, `Unknown type` or
-`Shared Context` narrows the visible Exam -> booklet -> Question hierarchy to
-records contributing to that summary. `Questions` restores unrestricted Question
-scope, while `Clear` removes all Dashboard-local Provider, Year, Exam-state and
-summary restrictions and restores the complete Working Subject hierarchy.
-
-Manual live-data acceptance confirmed that mapping status is visually distinct
-from corpus completeness, completed and not-applicable states display correctly,
-and summary drill-down/clear behaviour is consistent. Automated persistence
-coverage confirms that Dashboard Refresh rereads mapping-review decisions without
-altering ordinary Question-completeness totals.
-
-Returning from Dashboard-owned workflows automatically refreshes the Dashboard
-from authoritative persistence.
-
-### 7.9 MCQ explanation reporting
-
-Explanation coverage may be reported separately from ordinary Answer
-completeness.
-
-An MCQ with a valid A/B/C/D answer remains complete even if no explanation
-region has been captured.
-
-### 7.10 Dashboard as the Subject home screen
-
-Issue #65 promoted the Corpus Dashboard to the application home screen after
-completion and live-data validation of the operational Dashboard and its
-correction-routing workflows.
-
-The implemented application flow is:
+### 9.1 Corpus Dashboard — final concept
 
 ```text
-Application start
-    ↓
-Corpus Dashboard
-    ↓
-Subject [ Chemistry ▼ ] [+]
-    ↓
-Subject-scoped operational work
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ CORPUS DASHBOARD                                                                             │
+│ Working Subject [ Chemistry ▼ ] [ + ]                                                        │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ CURRICULUM                                      [ + ] [ Map Curriculum ]                     │
+│ Mapping review: 2019 → 2025 ...                                                           │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ Provider [ All ▼ ]   Year [ All ▼ ]   Exam state [ All ▼ ]   [ Clear ] [ Import Legacy ]   │
+│ [ Questions ] [ Need attention ] [ Missing content ] [ Missing answers ] [ Unknown type ]    │
+│ [ Shared Context ] [ Missing MCQ explanations ]                                               │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ EXAMS                                                                                        │
+│ Year Provider Assessment State Question Booklets Answer Booklets Work                         │
+│ ...                                                                                          │
+│ Selected Exam ... [ Manage Exam / Assets ] [ Mark Complete | Mark Active ]                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ QUESTION BOOKLETS                                                                            │
+│ Booklet | Format | Question PDF | Answer file | Expected | Found | Parts | No descriptor     │
+│         | MCQ explanations | Problems                                                        │
+│ ...                                                                                          │
+│ [ Capture Questions ] [ Capture Answers ] [ Capture MCQ Explanations ]                       │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ QUESTION WORK                                                                                │
+│ Show [ Needs attention ▼ ]                                                                   │
+│ Provider | Year | Exam | Booklet | Question | Type | Content | Answer | Shared Context       │
+│          | Problem                                                                           │
+│ ...                                                                                          │
+│ [ Complete Selected Question / Capture Explanation ] [ Complete Selected Answer ]             │
+│ [ Select all unknown ] [ Set selected: Multiple choice ] [ Set selected: Written ]            │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The Dashboard owns the authoritative Subject selector. On the home surface the
-single editable Subject control is displayed inside the bordered
-`CORPUS DASHBOARD` region rather than in a full-width application strip.
-Specialised Capture and Exam / Assets work display the same authoritative
-Subject as read-only context. Subject selection and Subject creation are
-available only from the Dashboard.
+Empty Subject state is explicit. Without curriculum the Dashboard says to add curriculum before adding an Exam; Add Exam remains disabled until curriculum exists.
 
-The Dashboard refreshes automatically after Subject changes and after returning
-from Dashboard-owned Question capture, Answer capture, Exam / Assets,
-curriculum authoring and curriculum-mapping review. The prominent manual
-`Refresh` action is therefore removed from the home surface.
-
-The Dashboard is visually divided into bordered responsibility areas for Exams,
-Question Booklets, Question Work and Curriculum. The Curriculum region reports
-mapping-review status independently from corpus completeness and provides
-`Add Curriculum` and `Map Curriculum` routes into the existing curriculum
-workflows.
-
-The Dashboard must preserve direct access to the application's specialised
-workflows, including:
-
-- Exam setup and asset management;
-- Question capture;
-- Answer capture;
-- Search;
-- curriculum management; and
-- output workflows.
-
-A Subject with little or no corpus data must provide useful onboarding actions
-rather than displaying only an empty work queue. At minimum:
+### 9.2 Exam / Assets mode — final concept
 
 ```text
-No Exams have been added.
-    [ Add Exam ]
-
-No curriculum has been added.
-    [+] Add curriculum
-
-Subject [ Chemistry ▼ ] [+]
+┌──────────────────────────────────────────────┬───────────────────────────────────────────────┐
+│ Working Subject: Chemistry                   │                                               │
+│ [ Return to Corpus Dashboard ]               │                                               │
+│                                              │                                               │
+│ ┌─ EXAM ───────────────────────────────────┐ │                                               │
+│ │ [ 2025 QCAA External Assessment ▼ ]      │ │                                               │
+│ │ State: ACTIVE                            │ │                                               │
+│ │ Provider [QCAA▼]  Year [2025▼]           │ │                                               │
+│ │ Assessment [External Assessment▼]        │ │                 PDF PANE                      │
+│ │ Expected Question booklets [2]           │ │                                               │
+│ │ Expected Answer booklets   [1]           │ │ Shows inspected Question/Answer source       │
+│ │ [Use Selected Booklet for Capture]       │ │                                               │
+│ │                         [Edit][Cancel][Save]│                                               │
+│ └──────────────────────────────────────────┘ │                                               │
+│                                              │                                               │
+│ ┌─ QUESTION BOOKLETS ─ [Add Question Booklet]──────────────────────────────────────────────┐ │
+│ │ (●) Paper 1                                  [View] [Delete]                              │ │
+│ │ source: paper1.pdf                                                                        │ │
+│ │ Name [Paper 1▼]  Type (●)MCQ ( )Written ( )Both                                          │ │
+│ │ Expected Questions [20]   Answer [Marking Guide▼]                                         │ │
+│ │                                      [Edit][Cancel][Save]                                  │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────────┘ │
+│                                              │                                               │
+│ ┌─ ANSWER BOOKLETS ─ [Add Answer Booklet]──────────────────────────────────────────────────┐ │
+│ │ Marking Guide                                  [View] [Delete]                           │ │
+│ │ source: marking-guide.pdf                                                                   │ │
+│ │ ☑ Contains answer explanations                                                           │ │
+│ └────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────┴───────────────────────────────────────────────┘
 ```
 
-The empty-corpus onboarding actions are implemented. `Add Exam` routes directly
-into the normal Exam / Assets New Exam transaction for the selected Subject
-rather than introducing a second Exam-creation implementation. While that
-structural transaction is active, Dashboard return is disabled until the
-transaction is saved or cancelled.
+Lifecycle change itself belongs to the Dashboard. COMPLETE Exams must be marked ACTIVE before structural Exam/Assets work.
 
-The Curriculum region distinguishes a Subject with no curriculum from one that
-has curriculum but no historical-to-current mapping pair. Its compact `+`
-action routes to the existing PDF-authoring or Excel-import workflow.
-
-Creating a Subject does not immediately create either an Exam or curriculum.
-The Dashboard enables Add Exam only after curriculum exists for the Working
-Subject, ensuring Question capture can obtain a valid persisted classification.
-
-The Corpus Dashboard is the only application surface from which the
-authoritative Subject may be changed or created. Specialised workspaces retain
-the same Subject context but display it read-only; they do not expose a Subject
-selector or Add Subject action.
-
-Dashboard-launched capture is task-specific:
-
-- `Capture Questions` displays Classification and Question capture controls and
-  hides Answer capture;
-- `Capture Answers` displays Answer capture controls and hides Classification
-  and Question capture; and
-- Dashboard Answer capture is restricted to unanswered, ready Questions in the
-  selected Exam, beginning with the first applicable Question in the selected
-  booklet.
-
-The Curriculum section uses a compact `+` action. It offers either PDF-assisted
-curriculum authoring or Excel curriculum import. Both inherit the Dashboard
-Subject. Curriculum Mapping likewise inherits that Subject and does not expose
-an independent Subject selector. These rules implement the authoritative
-Subject scope tracked by Issue #76.
-
-Issue #65 uses the Corpus Dashboard as the application startup surface and the
-Dashboard-owned Subject selector as the authoritative application context.
-Task-specific Question-versus-Answer capture presentation and empty-corpus
-onboarding are implemented for Subjects with little or no data.
-
-## 8. Explicitly outside Sprint 12
-
-The following are not Sprint 12 work:
-
-- richer Question Search filtering;
-- portable `.eqwork` distributed collection;
-- stable cross-database UUID identity for distributed collection;
-- Exam Builder;
-- printable/vector-preserving assessment and solution output;
-- OCR;
-- multi-page Shared Context capture;
-- speculative curriculum-authoring extensions;
-- unrelated performance redesign without measured evidence.
-
-Richer Question Search filtering is returned to `docs/design/backlog.md`.
-
-Multi-page Shared Context capture remains a rejected direction, not backlog
-work.
-
-## 9. Implementation and verification approach
-
-Implementation proceeds one agreed slice at a time.
-
-For each slice:
-
-1. inspect current live `main` / current feature branch before exact edits;
-2. make the smallest coherent persistence/domain change first where needed;
-3. add focused repository/service regressions;
-4. add focused TestFX workflow coverage for actual UI behaviour;
-5. run only the targeted tests needed for the current sub-slice;
-6. broaden validation at slice checkpoints;
-7. update this sprint document when implementation decisions differ from design;
-8. keep public API Javadoc and algorithmic comments current.
-
-Cross-slice schema changes must preserve sequential migration from existing
-schema-v14 databases and backup/restore migration compatibility.
-
-Current implemented Sprint 12 schema progression is:
+### 9.3 New Exam transaction
 
 ```text
-v14
-  -> v15 Exam lifecycle and expected Question count
-  -> v16 managed SourceDocument SHA-256
-  -> v17 explicit Question source-recapture state
-  -> v18 Exam-level expected Question/Answer asset counts
+┌──────────────────────────────────────────────┬───────────────────────────────────────────────┐
+│ Working Subject: Chemistry                   │                                               │
+│                                              │                                               │
+│ ┌─ EXAM ───────────────────────────────────┐ │                                               │
+│ │ NEW EXAM                                │ │                                               │
+│ │ Provider   [                 ▼]          │ │                 PDF PANE                      │
+│ │ Year       [                 ▼]          │ │                                               │
+│ │ Assessment [                 ▼]          │ │                                               │
+│ │ Expected Question booklets [ ]           │ │                                               │
+│ │ Expected Answer booklets   [ ]           │ │                                               │
+│ │ [Clear]                 [Cancel][Save Exam]│                                               │
+│ └──────────────────────────────────────────┘ │                                               │
+│                                              │                                               │
+│ Question/Answer booklet creation waits for a persisted Exam identity.                         │
+└──────────────────────────────────────────────┴───────────────────────────────────────────────┘
 ```
 
-Migration, schema-verification and backup/restore compatibility regressions cover
-the new boundaries.
+### 9.4 Question and Answer booklet rows
 
-Release 0.2 is not considered complete until the normal release gate succeeds,
-including formatting, non-UI tests, headless UI tests, strict Javadoc and
-Windows packaging/installation verification.
+```text
+QUESTION BOOKLET
+┌──────────────────────────────────────────────────────────────┐
+│ (●) Paper 1                                   [View][Delete] │
+│ paper1.pdf                                                   │
+│ Name       [ Paper 1                       ▼]                │
+│ Type       (●) MCQ  ( ) Written Response  ( ) Both           │
+│ Expected Questions [ 20 ]                                   │
+│ Answer     [ Marking Guide                ▼]                 │
+│                                      [Edit][Cancel][Save]    │
+└──────────────────────────────────────────────────────────────┘
 
-## 10. Durable decisions established by design
+Answer choices include an explicit No Answer Booklet plus the Exam's persisted AnswerFiles.
 
-1. New Question capture starts from a deliberately selected/configured Exam and
-   Question booklet.
-2. Question booklet PDFs are inspectable in setup mode before expected Question
-   counts are recorded.
-3. Expected Question count means top-level numbered Questions, not multipart
-   parts.
-4. Existing `21a`, `21b`, etc. multipart detection remains sufficient.
-5. Managed source documents gain persisted content hashes.
-6. Wrong source PDFs are corrected by invalidating dependent coordinates, never
-   by silently remapping them.
-7. Exam completeness is user-declared.
-8. Completing an Exam locks structure but does not block ordinary content
-   correction/enrichment.
-9. MCQ explanation regions are supplementary to the authoritative A/B/C/D
-   answer.
-10. Corpus Dashboard distinguishes declared Exam state from calculated audit
-    findings.
-11. Richer Question Search filtering is deferred to the backlog.
-12. Sprint 12 targets Release 0.2 because the user-facing workflow changes are
-    substantial.
-13. Subject is application-level context rather than Question-classification
-    state.
-14. The Corpus Dashboard is the main Subject working surface, including useful
-    empty-state actions.
-15. New and legacy-imported Exams converge on the same Exam Setup / Asset
-    Management model; legacy Question counts are evidence, not authoritative
-    expected counts.
+ANSWER BOOKLET
+┌──────────────────────────────────────────────────────────────┐
+│ Marking Guide                                  [View][Delete]│
+│ marking-guide.pdf                                            │
+│ ☑ Contains answer explanations                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 9.5 Capture mode
+
+```text
+┌──────────────────────────────────────────────┬───────────────────────────────────────────────┐
+│ Working Subject: Chemistry                   │                                               │
+│ Active Exam / Booklet context                │                                               │
+│ [ Change Exam ]                              │                                               │
+│                                              │                                               │
+│ ┌─ CLASSIFICATION ─────────────────────────┐ │                                               │
+│ │ Question code / syllabus hierarchy      │ │                                               │
+│ └──────────────────────────────────────────┘ │                 PDF PANE                      │
+│                                              │                                               │
+│ ┌─ QUESTION ───────────────────────────────┐ │                                               │
+│ │ explicit Start New Question Capture     │ │                                               │
+│ │ Add Region / Add From Clipboard         │ │                                               │
+│ │ bounded Accepted Question content       │ │                                               │
+│ └──────────────────────────────────────────┘ │                                               │
+│                                              │                                               │
+│ ┌─ ANSWER ─────────────────────────────────┐ │                                               │
+│ │ ordinary Answer / MCQ explanation work │ │                                               │
+│ └──────────────────────────────────────────┘ │                                               │
+│ [ Return to Corpus Dashboard ] when Dashboard-owned workflow is active                        │
+└──────────────────────────────────────────────┴───────────────────────────────────────────────┘
+```
+
+### 9.6 Main mode transitions
+
+```text
+CORPUS DASHBOARD
+    │
+    ├─ Manage Exam / Assets ───────────────► EXAM / ASSETS
+    │                                          │
+    │                                          └─ Return to Corpus Dashboard
+    │
+    ├─ Capture Questions ───────────────────► CAPTURE WORKSPACE
+    │
+    ├─ Capture Answers ─────────────────────► CAPTURE WORKSPACE
+    │
+    ├─ Capture MCQ Explanations ────────────► CAPTURE WORKSPACE
+    │
+    └─ selected Question action ────────────► exact correction/capture target
+
+EXAM / ASSETS
+    └─ Use Selected Booklet for Capture ────► generic CAPTURE WORKSPACE
+```
+
+## 10. Legacy import final design
+
+The accepted flow is:
+
+```text
+Corpus Dashboard / Import Legacy
+        ↓
+choose historical syllabus + workbook
+        ↓
+preflight against Working Subject persisted Exams/booklets
+        ↓
+all structure resolved? ── yes ──► atomic legacy metadata import
+        │
+        no
+        ↓
+Exam / Assets structural requirements
+        ↓
+Recheck and Import
+        ↓
+Dashboard refresh
+```
+
+Ordinary Exam/Assets no longer exposes a duplicate Import Legacy launcher. Pending preflight controls remain there only when Dashboard-started intake needs missing structure to be resolved.
+
+## 11. Verification and acceptance
+
+Sprint 12 was implemented through small targeted regressions plus repeated full-suite/CI checkpoints. Issue comments record the accepted manual checks for the high-risk UI workflows.
+
+Verified behaviours include:
+
+- Exam/Assets creation/edit/inspection and booklet/Answer assignment;
+- SHA-256 source matching and safe PDF replacement;
+- ACTIVE/COMPLETE structural locking;
+- asynchronous Working Subject refresh and stale-result suppression;
+- explicit/sequential Question capture and imported/incomplete queues;
+- Shared Context preview/reuse and bounded accepted-content layout;
+- ordinary Answer capture and retrofit MCQ explanation editing;
+- Dashboard filters, hierarchy, routing and refresh;
+- curriculum mapping status and Working Subject scoping;
+- descriptor reporting/completion gating;
+- destructive asset deletion;
+- Dashboard-owned legacy import/preflight;
+- packaged Help resources and visual navigation.
+
+The final MCQ explanation live-data acceptance confirmed:
+
+- exact selected MCQ opens;
+- save/advance preserves the marking-PDF page;
+- clean Dashboard return produces no false unfinished-work warning;
+- refreshed Dashboard counts update;
+- saving the final candidate automatically ends the explanation session and removes stale A–D controls.
+
+The maintained Help update (#63) passed `HelpResourcesTest` and manual WebView/navigation inspection.
+
+Strict Javadoc is a release gate; public `CorpusDashboardPane` API Javadocs were completed after the final warning report.
+
+### 11.1 Final pre-PR review and verification
+
+The final branch review found and corrected several merge-readiness issues without changing the accepted Sprint 12 workflow semantics:
+
+- duplicate MCQ-explanation Dashboard handler registration was removed;
+- ordinary TestFX control activation was normalised to semantic firing where pointer behaviour was not under test;
+- asynchronous Dashboard scene-graph lookup was serialised on the JavaFX thread to remove a combined-suite race;
+- Answer-capture workflow waits now observe persisted/UI completion rather than relying only on an initially-false `isSaveInProgress()` flag; and
+- destructive Exam asset deletion gained focused SQLite regression coverage for dependent cleanup, shared-source preservation and COMPLETE-Exam rejection.
+
+Final verification passed:
+
+- **1,031 non-UI tests** — 0 failures, 0 errors, 3 expected skips;
+- **342 headless UI tests** — 0 failures, 0 errors;
+- **1,373 combined AllTests** — 0 failures, 0 errors, 3 expected skips;
+- Maven `clean verify`;
+- strict Javadoc with doclint/`failOnWarnings`;
+- Spotless; and
+- `git diff --check`.
+
+This is pre-PR implementation verification, not the formal Release 0.2 packaging/installation gate. Issue #64 still owns version advancement, installer creation and installed-application smoke testing.
+
+## 12. Deliberately superseded or rejected Sprint 12 ideas
+
+- Subject-level total `MCQ explanations x / y` headline was removed; the actionable missing-explanations summary plus booklet coverage is sufficient.
+- Generic `Resolve Selected` wording was replaced by task-specific capture/correction actions.
+- Exam lifecycle actions do not depend on an active capture booklet; they belong to selected Dashboard Exam state.
+- Legacy import is not launched independently from Exam/Assets; Dashboard owns intake.
+- Per-response-type expected counts for mixed booklets (#73) are not planned.
+- Broad #22 import-audit/reconciliation is superseded by concrete Dashboard/audit/import issues.
+- Multi-page Shared Context remains rejected.
+
+## 13. Deferred beyond Sprint 12
+
+Not Sprint 12 blockers:
+
+- #78 — scope Revision exports to Working Subject;
+- #82 — Question Search spacing/action layout polish;
+- #83 — managed syllabus documents;
+- #85 — do not open Mapping Review with only one syllabus;
+- #86 — Dashboard column alignment;
+- #87 — lifecycle progress feedback;
+- richer retrieval-oriented Question Search filters;
+- distributed collection packages;
+- Exam Builder and printable/vector-preserving output.
+
+See `docs/design/backlog.md`.
+
+## 14. Release 0.2 closeout — issue #64
+
+The Sprint 12 feature branch is a PR/release candidate, not yet a released 0.2 build.
+
+Closeout still requires:
+
+1. final Sprint 12 PR review and green CI;
+2. formal `scripts/build-release.ps1` execution from a clean release candidate;
+3. Maven/application/MSI version advanced to 0.2;
+4. installed MSI launch/smoke verification outside Eclipse;
+5. uninstall/configuration survival verification;
+6. protected-main merge;
+7. final documentation update with actual PR number, merge commit, CI run and release evidence.
+
+Until those steps exist, preserve the wording “target Release 0.2” or “Release 0.2 candidate”, not “Release 0.2 released”.
