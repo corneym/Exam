@@ -137,7 +137,7 @@ When producing code, add Javadoc where required for public API and add algorithm
 
 Do not give me a large batch of unrelated implementation changes unless I explicitly ask for one.
 
-After each code slice, tell me exactly which test command to run.
+After each code slice, tell me exactly which test command to run. If it is a UI test, use the headless command.
 
 Do not test beyond what the slice requires. Avoid unnecessarily running very large test classes that take minutes.
 

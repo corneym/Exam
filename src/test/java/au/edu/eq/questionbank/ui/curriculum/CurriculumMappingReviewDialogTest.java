@@ -17,6 +17,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.CurriculumMapping;
 import au.edu.eq.questionbank.model.CurriculumMappingReviewOutcome;
 import au.edu.eq.questionbank.model.CurriculumMappingSuggestion;
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -39,8 +40,10 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageServic
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import javafx.scene.Scene;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
@@ -51,11 +54,13 @@ class CurriculumMappingReviewDialogTest {
 
 	private CurriculumMappingReviewDialog dialog;
 	private CurriculumMappingReviewRepository reviewRepository;
+	private SqliteCurriculumMappingReviewWriter reviewWriter;
 	private Descriptor secondSourceDescriptor;
-	private Descriptor thirdSourceDescriptor;
-	private Subject subject;
 	private SyllabusVersion sourceVersion;
+	private Subject subject;
+	private Descriptor targetDescriptor;
 	private SyllabusVersion targetVersion;
+	private Descriptor thirdSourceDescriptor;
 
 	@Test
 	@SuppressWarnings("unchecked")
@@ -111,6 +116,55 @@ class CurriculumMappingReviewDialogTest {
 		assertTrue(coverageLabel.getText().contains("Overall: INCOMPLETE"));
 	}
 
+	@Test
+	@SuppressWarnings("unchecked")
+	void mappingCellsPreserveReviewMarkersAndSelectionState(FxRobot robot) throws Exception {
+		ComboBox<SyllabusVersion> sourceVersionBox = field("sourceVersionBox", ComboBox.class);
+		ComboBox<CurriculumNode> sourceDescriptorBox = field("sourceDescriptorBox", ComboBox.class);
+		CheckBox showReviewedCheckBox = field("showReviewedCheckBox", CheckBox.class);
+		ListView<CurriculumMapping> reviewedMappingsList = field("reviewedMappingsList", ListView.class);
+		ListView<CurriculumMappingSuggestion> suggestionsList = field("suggestionsList", ListView.class);
+		Label statusLabel = field("statusLabel", Label.class);
+		reviewWriter.confirmMappings(secondSourceDescriptor, targetVersion, List.of(targetDescriptor));
+		robot.interact(() -> {
+			sourceVersionBox.setValue(sourceVersion);
+
+			// Switch the source list to the persisted reviewed nodes and explicitly select
+			// the review created for this test.
+			showReviewedCheckBox.fire();
+			sourceDescriptorBox.setValue(secondSourceDescriptor);
+		});
+		ListCell<CurriculumNode> buttonCell = sourceDescriptorBox.getButtonCell();
+		renderCell(buttonCell, CurriculumNode.class, secondSourceDescriptor);
+		assertEquals("1.1.2", buttonCell.getText());
+		ListCell<CurriculumNode> sourceCell = sourceDescriptorBox.getCellFactory().call(new ListView<>());
+		renderCell(sourceCell, CurriculumNode.class, secondSourceDescriptor);
+		assertEquals("1.1.2    Second source descriptor    [reviewed]", sourceCell.getText());
+		CurriculumMapping reviewedMapping = reviewedMappingsList.getItems().getFirst();
+		ListCell<CurriculumMapping> reviewedCell = reviewedMappingsList.getCellFactory().call(reviewedMappingsList);
+		renderCell(reviewedCell, CurriculumMapping.class, reviewedMapping);
+		assertEquals("2.1.1    Target descriptor", reviewedCell.getText());
+		robot.interact(() -> {
+			try {
+				invoke("beginEditReview", new Class<?>[0]);
+			} catch (ReflectiveOperationException exception) {
+				throw new IllegalStateException(exception);
+			}
+		});
+		CurriculumMappingSuggestion suggestion = suggestionsList.getItems().getFirst();
+		ListCell<CurriculumMappingSuggestion> suggestionCell = suggestionsList.getCellFactory().call(suggestionsList);
+		renderCell(suggestionCell, CurriculumMappingSuggestion.class, suggestion);
+		CheckBox targetCheckBox = (CheckBox) suggestionCell.getGraphic();
+		assertEquals("1.000    2.1.1    Target descriptor    [current]", targetCheckBox.getText());
+		assertTrue(targetCheckBox.isSelected());
+
+		// The extracted cell still owns the same user action: changing the checkbox
+		// updates the dialog's target selection and review status.
+		robot.interact(targetCheckBox::fire);
+		assertFalse(targetCheckBox.isSelected());
+		assertEquals("Editing review: no target descriptor selected", statusLabel.getText());
+	}
+
 	@Start
 	void start(Stage stage) throws Exception {
 		stage.setScene(new Scene(new StackPane()));
@@ -134,8 +188,8 @@ class CurriculumMappingReviewDialogTest {
 		targetVersion = curriculumWriter.insertSyllabusVersion(subject, "2025", true);
 		Unit targetUnit = curriculumWriter.insertUnit(targetVersion, "2", "Target unit", 0);
 		Topic targetTopic = curriculumWriter.insertTopic(targetUnit, "2.1", "Target topic", 0);
-		Descriptor targetDescriptor = curriculumWriter.insertDescriptor(targetTopic, "2.1.1", "Target descriptor", 0);
-		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
+		targetDescriptor = curriculumWriter.insertDescriptor(targetTopic, "2.1.1", "Target descriptor", 0);
+		reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
 		reviewWriter.confirmMappings(firstEvidenceDescriptor, targetVersion, List.of(targetDescriptor));
 		reviewWriter.confirmNoMatch(secondEvidenceDescriptor, targetVersion);
 		CurriculumRepository repository = new SqliteCurriculumRepository(database);
@@ -185,5 +239,11 @@ class CurriculumMappingReviewDialogTest {
 		Method method = CurriculumMappingReviewDialog.class.getDeclaredMethod(methodName, parameterTypes);
 		method.setAccessible(true);
 		return method.invoke(dialog, arguments);
+	}
+
+	private void renderCell(ListCell<?> cell, Class<?> itemType, Object item) throws ReflectiveOperationException {
+		Method updateItem = cell.getClass().getDeclaredMethod("updateItem", itemType, boolean.class);
+		updateItem.setAccessible(true);
+		updateItem.invoke(cell, item, false);
 	}
 }

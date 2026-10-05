@@ -2411,7 +2411,35 @@ public class QuestionBankApplication extends Application {
 				name.strip(), relativePath, questionFormat, expectedQuestionCount, storedHash);
 	}
 
-	// TODO Refactor to smaller methods?
+	private void initialiseCapturePanes(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			SourceQuestionRepository sourceQuestionRepository, SqliteQuestionCaptureService questionCaptureService,
+			LegacyQuestionSplitService legacyQuestionSplitService, SqliteAnswerWriter answerWriter) {
+
+		// The selector receives application-level Subject creation through the same
+		// database used by the rest of the capture workflow.
+		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
+		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter, config.pdfDataRoot(),
+				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
+				this::allowAnswerCaptureTransition, examMetadataPane::getBooklet,
+				() -> clearCaptureSelection(CaptureSelectionOwner.ANSWER), questionExtractor,
+				pdfWorkspace::getAnswerPdfSession,
+				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.ANSWER, pageNumber),
+				(selected, completed) -> pdfWorkspace.openAnswerPdfAsync(selected.path(), completed));
+		answerCapturePane.refreshQuestions();
+		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
+				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
+				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
+				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
+				questionCaptureService, legacyQuestionSplitService, sharedContextCapturePane, questionExtractor,
+				curriculumSelectionModel, curriculumSelectorPane, examMetadataPane::getBooklet,
+				pdfWorkspace::getExamPdfSession, question -> activateImportedQuestion(question, config),
+				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
+				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
+				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
+		questionCapturePane.refreshImportedQuestions();
+	}
+
 	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database) {
 		questionRepository = new SqliteQuestionRepository(database);
 
@@ -2422,6 +2450,9 @@ public class QuestionBankApplication extends Application {
 		// Working Subject transitions load the corpus once at application level and
 		// then publish that same immutable snapshot to Question and Answer capture.
 		workingSubjectQuestionSnapshotLoader = questionRepository::findAll;
+
+		// Construct the capture-specific persistence services in the same order as the
+		// original composition root before handing them to the focused pane wiring.
 		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
 		SqliteQuestionCaptureService questionCaptureService = new SqliteQuestionCaptureService(database);
 		LegacyQuestionSplitService legacyQuestionSplitService = new LegacyQuestionSplitService(database);
@@ -2439,6 +2470,13 @@ public class QuestionBankApplication extends Application {
 		// and Exam / Assets rather than constructing a parallel corpus model.
 		corpusDashboardAuditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
 				new PdfStore(config.pdfDataRoot()));
+		initialiseExamAssetsWorkflow(primaryStage, config, database, answerWriter);
+		initialiseCapturePanes(primaryStage, config, database, sourceQuestionRepository, questionCaptureService,
+				legacyQuestionSplitService, answerWriter);
+	}
+
+	private void initialiseExamAssetsWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			SqliteAnswerWriter answerWriter) {
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 
 		// Exam correction owns both filesystem relocation and the atomic Exam /
@@ -2508,30 +2546,6 @@ public class QuestionBankApplication extends Application {
 				throw new IllegalStateException("Exam assets could not be loaded.", exception);
 			}
 		};
-
-		// The selector receives application-level Subject creation through the same
-		// database used by the rest of the capture workflow.
-		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
-		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter, config.pdfDataRoot(),
-				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
-				this::allowAnswerCaptureTransition, examMetadataPane::getBooklet,
-				() -> clearCaptureSelection(CaptureSelectionOwner.ANSWER), questionExtractor,
-				pdfWorkspace::getAnswerPdfSession,
-				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.ANSWER, pageNumber),
-				(selected, completed) -> pdfWorkspace.openAnswerPdfAsync(selected.path(), completed));
-		answerCapturePane.refreshQuestions();
-		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
-				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
-				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
-				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
-		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
-				questionCaptureService, legacyQuestionSplitService, sharedContextCapturePane, questionExtractor,
-				curriculumSelectionModel, curriculumSelectorPane, examMetadataPane::getBooklet,
-				pdfWorkspace::getExamPdfSession, question -> activateImportedQuestion(question, config),
-				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
-				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
-				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
-		questionCapturePane.refreshImportedQuestions();
 	}
 
 	private boolean isCurrentCorpusDashboardRefresh(Subject subject, long subjectGeneration, long dashboardGeneration) {
@@ -2562,22 +2576,17 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && questionCapturePane.canCaptureRegions();
 	}
 
-	// TODO Refactor to remove inner class
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
 
 		// Several Dashboard refreshes may legitimately be requested within one Working
 		// Subject generation. Only the newest request may publish its snapshot.
 		long dashboardGeneration = ++corpusDashboardRefreshGeneration;
-		Task<CorpusDashboardSnapshot> task = new Task<>() {
+		Task<CorpusDashboardSnapshot> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected CorpusDashboardSnapshot call() throws Exception {
-
-				// Structural audit, Question status and curriculum mapping coverage remain
-				// one authoritative persistence generation.
-				return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject);
-			}
-		};
+			// Structural audit, Question status and curriculum mapping coverage remain
+			// one authoritative persistence generation.
+			return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject);
+		});
 		task.setOnSucceeded(_ -> {
 			if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
 
@@ -4458,19 +4467,14 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	// TODO remove/extract inner class
 	private void startDashboardQuestionCaptureRefresh(ExamBooklet booklet, Path storedPath, Runnable returnHandler) {
-		Task<List<Question>> task = new Task<>() {
+		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected List<Question> call() {
-
-				// Both Question and Answer panes need the same post-routing corpus snapshot.
-				// Load it once off the JavaFX thread instead of making each pane perform a
-				// synchronous SQLite query.
-				return List.copyOf(questionRepository.findAll());
-			}
-		};
+			// Both Question and Answer panes need the same post-routing corpus snapshot.
+			// Load it once off the JavaFX thread instead of making each pane perform a
+			// synchronous SQLite query.
+			return List.copyOf(questionRepository.findAll());
+		});
 		task.setOnSucceeded(_ -> {
 			if (corpusDashboardCaptureReturnHandler != returnHandler) {
 
@@ -4505,16 +4509,12 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startExamAssetsQuestionCaptureRefresh(ExamBooklet booklet, Path storedPath) {
-		Task<List<Question>> task = new Task<>() {
+		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected List<Question> call() {
-
-				// Rebuild both capture panes from one persistence snapshot rather than
-				// blocking JavaFX with two synchronous repository refreshes.
-				return List.copyOf(questionRepository.findAll());
-			}
-		};
+			// Rebuild both capture panes from one persistence snapshot rather than
+			// blocking JavaFX with two synchronous repository refreshes.
+			return List.copyOf(questionRepository.findAll());
+		});
 		task.setOnSucceeded(_ -> {
 			try {
 				Subject subject = booklet.getExam().getSubject();
@@ -4543,7 +4543,6 @@ public class QuestionBankApplication extends Application {
 		Thread.ofVirtual().name("exam-assets-question-capture-refresh").start(task);
 	}
 
-	// TODO remove/extract inner class
 	private void startLegacyQuestionCaptureRefresh(Subject subject, LegacyQuestionImportResult importResult) {
 		if (subject == null) {
 			throw new NullPointerException("subject");
@@ -4551,16 +4550,12 @@ public class QuestionBankApplication extends Application {
 		if (importResult == null) {
 			throw new NullPointerException("importResult");
 		}
-		Task<List<Question>> task = new Task<>() {
+		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected List<Question> call() {
-
-				// Legacy import has already committed. Load one immutable corpus snapshot
-				// away from JavaFX and publish that same snapshot to both capture panes.
-				return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
-			}
-		};
+			// Legacy import has already committed. Load one immutable corpus snapshot
+			// away from JavaFX and publish that same snapshot to both capture panes.
+			return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+		});
 		task.setOnSucceeded(_ -> {
 			if (!Objects.equals(workingSubject, subject)) {
 
@@ -4683,7 +4678,6 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
-	// TODO remove/extract inner class
 	private void startWorkingSubjectCaptureRefresh(Subject subject, long generation) {
 
 		// Remove curriculum state belonging to the previous Subject immediately while
@@ -4704,21 +4698,17 @@ public class QuestionBankApplication extends Application {
 			// Clearing Working Subject requires no replacement persistence snapshot.
 			return;
 		}
-		Task<WorkingSubjectCaptureSnapshot> task = new Task<>() {
+		Task<WorkingSubjectCaptureSnapshot> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected WorkingSubjectCaptureSnapshot call() {
+			// Load curriculum first so successful publication can establish
+			// classification choices before either capture pane exposes Questions.
+			CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot = workingSubjectCurriculumSnapshotLoader
+					.apply(subject);
 
-				// Load curriculum first so successful publication can establish
-				// classification choices before either capture pane exposes Questions.
-				CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot = workingSubjectCurriculumSnapshotLoader
-						.apply(subject);
-
-				// One corpus read supplies both capture panes for this Subject transition.
-				List<Question> questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
-				return new WorkingSubjectCaptureSnapshot(curriculumSnapshot, questions);
-			}
-		};
+			// One corpus read supplies both capture panes for this Subject transition.
+			List<Question> questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+			return new WorkingSubjectCaptureSnapshot(curriculumSnapshot, questions);
+		});
 		task.setOnSucceeded(_ -> completeWorkingSubjectCaptureRefresh(subject, generation, task.getValue()));
 		task.setOnFailed(_ -> failWorkingSubjectCaptureRefresh(subject, generation, task.getException()));
 		Thread thread = new Thread(task, "working-subject-capture-refresh-" + generation);
@@ -4741,7 +4731,6 @@ public class QuestionBankApplication extends Application {
 		loadCorpusDashboardHome(subject, generation, -1L);
 	}
 
-	// TODO remove/extract inner class
 	private void startWorkingSubjectExamAssetsRefresh(Subject subject, long generation) {
 		if (examAssetsPane == null || workspaceModeHost == null
 				|| !workspaceModeHost.getChildren().contains(examAssetsPane)) {
@@ -4759,16 +4748,12 @@ public class QuestionBankApplication extends Application {
 			// Clearing Subject is complete once stale presentation has been removed.
 			return;
 		}
-		Task<ExamAssetsPane.SubjectSnapshot> task = new Task<>() {
+		Task<ExamAssetsPane.SubjectSnapshot> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected ExamAssetsPane.SubjectSnapshot call() {
-
-				// All Exam, booklet, AnswerFile and assignment reads occur away from
-				// the JavaFX application thread.
-				return workingSubjectExamAssetsSnapshotLoader.apply(subject);
-			}
-		};
+			// All Exam, booklet, AnswerFile and assignment reads occur away from
+			// the JavaFX application thread.
+			return workingSubjectExamAssetsSnapshotLoader.apply(subject);
+		});
 		task.setOnSucceeded(_ -> {
 			if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
 
