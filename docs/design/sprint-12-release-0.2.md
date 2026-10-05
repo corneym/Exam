@@ -1,6 +1,6 @@
 # Sprint 12 — Exam Intake, Capture Workflow and Corpus Dashboard
 
-> **Status:** PRE-MERGE RELEASE VERIFIED\
+> **Status:** COMPLETED / VERIFIED / MERGED\
 > **Branch:** `feature/sprint-12`  
 > **Closeout reference:** 5 October 2026  
 > **Target release:** 0.2  
@@ -23,7 +23,7 @@ Sprint 12 turns the post-0.1 application into an operational real-corpus collect
 7. legacy-import intake reconciled through the same authoritative Exam/Assets model;
 8. packaged Help updated to the final workflows.
 
-Sprint 12 implementation is complete on `feature/sprint-12` in PR #88. Initial and subsequent PR CI checkpoints have been green. The automated Release 0.2 gate and manual installed-MSI verification have passed. Protected-main merge and final post-merge release evidence remain pending; issue #64 stays open until final merge closeout. Release 0.2 is not yet finally published.
+Sprint 12 is complete and merged to protected `main` through PR #88. The automated Release 0.2 gate and manual installed-MSI verification passed before merge. PR #88 merged on 5 October 2026 as `8ba714e2ef7ff07eebb2375021e1e751d4876e47`; post-merge CI run #164 and CodeQL run #15 both passed on that exact `main` commit. Issue #64 was then closed as completed. Release 0.2 is the current published release.
 
 ## 2. Evidence model and issue record
 
@@ -81,7 +81,7 @@ GitHub Issues are a durable part of Sprint 12 evidence. Final acceptance comment
 ### Help/release/closeout
 
 - #63 — maintained Sprint 12 Help, automated and manual verification complete;
-- #64 — Release 0.2 gate and manual MSI verification passed; open pending final merge closeout;
+- #64 — Release 0.2 gate, manual MSI verification, protected-main merge and post-merge CI completed; closed;
 - #73 — per-response-type planning for mixed booklets closed as not planned;
 - #34 — already covered by an existing restore/migration regression and closed.
 
@@ -525,13 +525,17 @@ See `docs/design/backlog.md`.
 
 ## 14. Release 0.2 closeout — issue #64
 
-Pre-merge evidence is complete for the Release 0.2 candidate:
+Release 0.2 closeout is complete:
 
-- PR [#88](https://github.com/corneym/Exam/pull/88) contains Sprint 12; initial and subsequent PR CI checkpoints have been green.
+- PR [#88](https://github.com/corneym/Exam/pull/88) passed its final pre-merge CI checkpoint and merged to protected `main` on 5 October 2026.
+- Merge commit: `8ba714e2ef7ff07eebb2375021e1e751d4876e47`.
+- Post-merge CI run **#164** completed successfully on that exact `main` commit.
+- Post-merge CodeQL run **#15** also completed successfully on the merge commit.
 - `scripts/build-release.ps1` completed successfully, including formatting, non-UI tests, headless UI tests, strict Javadoc and installer packaging.
 - The authoritative Maven/application/MSI version is **0.2**.
 - `target\installer\Exam Question Bank-0.2.msi` was produced successfully.
-- Manual installed-MSI verification outside Eclipse passed: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2 and normal shutdown.
-- Uninstall succeeded, and configuration and data survived uninstall.
+- Manual installed-MSI verification outside Eclipse passed: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2, normal shutdown, successful uninstall, and preservation of configuration/data.
+- During the formal gate, hard-coded Release 0.1 expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest` were corrected so release validation is version-independent.
+- Issue #64 was closed as completed after the merge and post-merge CI evidence were recorded.
 
-Protected-main merge has not happened. Final review/CI at merge, the actual merge commit and post-merge CI/release evidence must still be recorded when available. Issue #64 remains open pending final merge closeout. Do not describe Sprint 12 as merged or Release 0.2 as finally published yet.
+Sprint 12 is merged and Release 0.2 is the current published release.
