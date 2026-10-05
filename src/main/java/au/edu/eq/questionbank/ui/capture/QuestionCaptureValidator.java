@@ -42,14 +42,28 @@ final class QuestionCaptureValidator {
 		if (state.marks().isBlank()) {
 			return "Enter marks.";
 		}
-		try {
-			if (Integer.parseInt(state.marks()) < 1) {
-				return "Marks must be a positive whole number.";
-			}
-		} catch (NumberFormatException e) {
+
+		// Use the same guarded conversion that persistence later uses so validation
+		// and save-time interpretation of the entered marks cannot diverge.
+		if (parsePositiveMarks(state.marks()) == null) {
 			return "Marks must be a positive whole number.";
 		}
 		return null;
+	}
+
+	static Integer parsePositiveMarks(String marks) {
+		if (marks == null || marks.isBlank()) {
+			return null;
+		}
+		try {
+
+			// Convert user-entered marks at one guarded boundary. Callers receive null
+			// rather than allowing malformed numeric input to escape as an exception.
+			int parsedMarks = Integer.parseInt(marks.strip());
+			return parsedMarks > 0 ? parsedMarks : null;
+		} catch (NumberFormatException exception) {
+			return null;
+		}
 	}
 
 	/**

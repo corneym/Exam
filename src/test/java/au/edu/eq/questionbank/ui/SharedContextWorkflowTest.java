@@ -822,7 +822,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// An existing correct sibling establishes the SourceQuestion and shared
 		// context that the split workflow must reuse.
 		SourceQuestion sourceQuestion = sourceQuestionRepository.save(booklet, "68");
-		sourceQuestion = sourceQuestionRepository.updatesharedContextStatus(sourceQuestion,
+		sourceQuestion = sourceQuestionRepository.updateSharedContextStatus(sourceQuestion,
 				SharedContextStatus.PRESENT);
 		SharedQuestionContext existingContext = contextRepository.save(booklet, "Question 68 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));

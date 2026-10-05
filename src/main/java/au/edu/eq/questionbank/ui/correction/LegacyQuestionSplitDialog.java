@@ -84,6 +84,21 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
 	}
 
+	static Integer parsePositiveMarks(String text) {
+		if (text == null || text.isBlank()) {
+			return null;
+		}
+		try {
+
+			// Legacy split parts require positive whole-number marks. Invalid user
+			// input is represented as no parsed value rather than an exception.
+			int marks = Integer.parseInt(text.strip());
+			return marks > 0 ? marks : null;
+		} catch (NumberFormatException exception) {
+			return null;
+		}
+	}
+
 	private void addPart() {
 
 		// Every resulting legacy split part is a written-response Question.
@@ -217,7 +232,12 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 	}
 
 	private PartEditor createPartEditor(String questionCode, String marks, CurriculumNode classification) {
-		PartEditor editor = new PartEditor(questionCode, marks, classification);
+
+		// Resolve curriculum choices at the dialog boundary so PartEditor remains a
+		// self-contained presentation helper without an implicit enclosing instance.
+		List<CurriculumNode> classificationChoices = findClassificationChoices(
+				originalQuestion.getClassification().getSyllabusVersion());
+		PartEditor editor = new PartEditor(questionCode, marks, classification, classificationChoices);
 		editor.questionCodeField().textProperty().addListener((_, _, _) -> {
 			refreshAnswerPartChoices();
 			refreshContinueState();
@@ -428,18 +448,21 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		}
 	}
 
-	private final class PartEditor {
+	private static final class PartEditor {
 
-		private final TextField questionCodeField = new TextField();
-		private final TextField marksField = new TextField();
 		private final ComboBox<CurriculumNode> classificationBox = new ComboBox<>();
+		private final TextField marksField = new TextField();
 		private final GridPane node = new GridPane();
+		private final TextField questionCodeField = new TextField();
 
-		private PartEditor(String questionCode, String marks, CurriculumNode classification) {
+		private PartEditor(String questionCode, String marks, CurriculumNode classification,
+				List<CurriculumNode> classificationChoices) {
 			questionCodeField.setText(questionCode);
 			marksField.setText(marks);
-			classificationBox.getItems()
-					.setAll(findClassificationChoices(originalQuestion.getClassification().getSyllabusVersion()));
+
+			// Curriculum choices are supplied by the owning dialog so this helper has no
+			// implicit dependency on a LegacyQuestionSplitDialog instance.
+			classificationBox.getItems().setAll(classificationChoices);
 			classificationBox.setValue(classification);
 			classificationBox.setMaxWidth(Double.MAX_VALUE);
 
@@ -467,13 +490,10 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 			if (classificationBox.getValue() == null) {
 				return false;
 			}
-			try {
 
-				// Split marks remain explicit positive written-response marks.
-				return Integer.parseInt(marksField.getText().trim()) > 0;
-			} catch (NumberFormatException exception) {
-				return false;
-			}
+			// Validation uses the same guarded marks conversion as result creation so
+			// those two stages cannot disagree about a valid split part.
+			return parsePositiveMarks(marksField.getText()) != null;
 		}
 
 		private TextField marksField() {
@@ -495,11 +515,18 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 		}
 
 		private PartDefinition toDefinition() {
+			Integer marks = parsePositiveMarks(marksField.getText());
+			if (marks == null) {
+
+				// Continue is normally disabled for invalid marks, but result creation
+				// retains its own defensive boundary rather than reparsing unchecked text.
+				throw new IllegalStateException("Legacy split part marks are invalid");
+			}
 
 			// The response type is fixed by the split workflow rather than entered by
 			// the user.
-			return new PartDefinition(questionCodeField.getText().trim(), Integer.parseInt(marksField.getText().trim()),
-					classificationBox.getValue(), QuestionResponseType.WRITTEN_RESPONSE);
+			return new PartDefinition(questionCodeField.getText().trim(), marks, classificationBox.getValue(),
+					QuestionResponseType.WRITTEN_RESPONSE);
 		}
 	}
 }

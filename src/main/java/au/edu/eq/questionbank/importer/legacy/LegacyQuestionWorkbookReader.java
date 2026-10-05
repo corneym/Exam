@@ -109,18 +109,21 @@ public class LegacyQuestionWorkbookReader {
 		return value.isBlank() ? null : value;
 	}
 
-	private int positiveInteger(Sheet sheet, Row row, int columnIndex, String columnName, FormulaEvaluator evaluator) {
+	private int positiveInteger(Row row, int columnIndex, String columnName, FormulaEvaluator evaluator) {
 		String value = text(row, columnIndex, evaluator);
 		if (value.isBlank()) {
 			throw new IllegalArgumentException(columnName + " is blank");
 		}
 		try {
+
+			// Numeric legacy metadata must be represented as a positive whole number;
+			// row and worksheet context are added by the caller if validation fails.
 			int number = Integer.parseInt(value);
 			if (number < 1) {
 				throw new IllegalArgumentException(columnName + " must be positive");
 			}
 			return number;
-		} catch (NumberFormatException e) {
+		} catch (NumberFormatException exception) {
 			throw new IllegalArgumentException(columnName + " must be a whole number: " + value);
 		}
 	}
@@ -129,20 +132,23 @@ public class LegacyQuestionWorkbookReader {
 			FormulaEvaluator evaluator) {
 		int excelRow = row.getRowNum() + 1;
 		try {
-			int year = positiveInteger(sheet, row, columns.get(YEAR), YEAR, evaluator);
-			String paperCode = requiredText(sheet, row, columns.get(PAPER), PAPER, evaluator);
-			String questionCode = requiredText(sheet, row, columns.get(QUESTION), QUESTION, evaluator);
-			int marks = positiveInteger(sheet, row, columns.get(MARKS), MARKS, evaluator);
-			String classificationCode = requiredText(sheet, row, columns.get(TOPIC), TOPIC, evaluator);
+
+			// Field parsers validate cell content only. This orchestration layer adds
+			// worksheet and one-based row context to any validation failure.
+			int year = positiveInteger(row, columns.get(YEAR), YEAR, evaluator);
+			String paperCode = requiredText(row, columns.get(PAPER), PAPER, evaluator);
+			String questionCode = requiredText(row, columns.get(QUESTION), QUESTION, evaluator);
+			int marks = positiveInteger(row, columns.get(MARKS), MARKS, evaluator);
+			String classificationCode = requiredText(row, columns.get(TOPIC), TOPIC, evaluator);
 			String answer = optionalText(row, columns.get(ANSWER), evaluator);
 			boolean sharedContextCaptureRequired = sharedContext(sheet, row, columns.get(PREAMBLE), evaluator);
 			return new LegacyQuestionRow(year, paperCode, questionCode, marks, classificationCode, answer,
 					sharedContextCaptureRequired);
-		} catch (IllegalArgumentException e) {
+		} catch (IllegalArgumentException exception) {
 
 			// Report the worksheet and one-based Excel row for both parsing and
 			// record-validation failures.
-			throw error(sheet, excelRow, e.getMessage());
+			throw error(sheet, excelRow, exception.getMessage());
 		}
 	}
 
@@ -169,8 +175,11 @@ public class LegacyQuestionWorkbookReader {
 		}
 	}
 
-	private String requiredText(Sheet sheet, Row row, int columnIndex, String columnName, FormulaEvaluator evaluator) {
+	private String requiredText(Row row, int columnIndex, String columnName, FormulaEvaluator evaluator) {
 		String value = text(row, columnIndex, evaluator);
+
+		// Required text validation concerns the cell value only. Worksheet and row
+		// context are added by readQuestion when this validation fails.
 		if (value.isBlank()) {
 			throw new IllegalArgumentException(columnName + " is blank");
 		}

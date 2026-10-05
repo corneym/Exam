@@ -20,6 +20,36 @@ $installerScript =
 
 Set-Location $repositoryRoot
 
+function Assert-ReleaseArchiveAvailable {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string] $ReleaseVersion
+    )
+
+    $archiveDirectory =
+        Join-Path `
+            (Join-Path $repositoryRoot "release-artifacts") `
+            $ReleaseVersion
+
+    if (-not (Test-Path $archiveDirectory)) {
+        return
+    }
+
+    $archivedInstallers =
+        @(Get-ChildItem `
+            -Path $archiveDirectory `
+            -Filter "*.msi" `
+            -File)
+
+    if ($archivedInstallers.Count -eq 0) {
+        return
+    }
+
+    # A versioned archive represents an already-produced release artefact.
+    # Do not spend time testing and packaging a release that cannot be archived.
+    throw "Release archive already contains an MSI for version $ReleaseVersion`: $($archivedInstallers[0].FullName). Use a new release version."
+}
+
 function Invoke-ReleaseCommand {
     param (
         [Parameter(Mandatory = $true)]
@@ -151,6 +181,48 @@ function Get-ProjectVersion {
     return $currentVersion
 }
 
+function Archive-ReleaseInstaller {
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo] $Installer,
+
+        [Parameter(Mandatory = $true)]
+        [string] $ReleaseVersion
+    )
+
+    $archiveRoot =
+        Join-Path $repositoryRoot "release-artifacts"
+
+    $archiveDirectory =
+        Join-Path $archiveRoot $ReleaseVersion
+
+    # Release archives live outside Maven's disposable target tree. Create both
+    # the archive root and version directory automatically when required.
+    New-Item `
+        -ItemType Directory `
+        -Path $archiveDirectory `
+        -Force `
+        | Out-Null
+
+    $archivePath =
+        Join-Path $archiveDirectory $Installer.Name
+
+    if (Test-Path $archivePath) {
+
+        # Never replace the historical installer for an already archived release.
+        # MSI output is not byte-for-byte reproducible between equivalent builds.
+        throw "Archived installer already exists: $archivePath"
+    }
+
+    # Preserve the successfully built installer outside target so Maven clean
+    # operations cannot remove the historical release artefact.
+    Copy-Item `
+        -Path $Installer.FullName `
+        -Destination $archivePath
+
+    return $archivePath
+}
+
 $currentVersion =
     Get-ProjectVersion
 
@@ -183,6 +255,11 @@ else {
     $releaseVersion =
         $Version
 }
+
+# Reject an already archived version before changing pom.xml or running any of
+# the comparatively expensive release validation and packaging stages.
+Assert-ReleaseArchiveAvailable `
+    -ReleaseVersion $releaseVersion
 
 $originalPom =
     [System.IO.File]::ReadAllText(
@@ -219,26 +296,27 @@ try {
         }
 
     Invoke-ReleaseCommand `
-    -Description "2/5 Running non-UI test suite" `
-    -Command {
+        -Description "2/5 Running non-UI test suite" `
+        -Command {
 
-        # A release candidate is already invalid after the first test failure, so
-        # stop the suite rather than spending time collecting additional failures.
-        & $mavenWrapper `
-            "-Dsurefire.skipAfterFailureCount=1" `
-            test
-    }
+            # A release candidate is already invalid after the first test failure, so
+            # stop the suite rather than spending time collecting additional failures.
+            & $mavenWrapper `
+                "-Dsurefire.skipAfterFailureCount=1" `
+                test
+        }
+
     Invoke-ReleaseCommand `
-    -Description "3/5 Running headless UI test suite" `
-    -Command {
+        -Description "3/5 Running headless UI test suite" `
+        -Command {
 
-        # Release validation stops at the first UI regression because no later
-        # release gate can make a failing test suite acceptable.
-        & $mavenWrapper `
-            -Pheadless-ui-tests `
-            "-Dsurefire.skipAfterFailureCount=1" `
-            test
-    }
+            # Release validation stops at the first UI regression because no later
+            # release gate can make a failing test suite acceptable.
+            & $mavenWrapper `
+                -Pheadless-ui-tests `
+                "-Dsurefire.skipAfterFailureCount=1" `
+                test
+        }
 
     Invoke-ReleaseCommand `
         -Description "4/5 Generating strict Javadoc" `
@@ -274,13 +352,22 @@ try {
         throw "Installer filename does not contain release version $releaseVersion`: $($installers[0].Name)"
     }
 
+    # Copy the verified installer out of target only after every release gate and
+    # installer-version check has succeeded.
+    $archivedInstallerPath =
+        Archive-ReleaseInstaller `
+            -Installer $installers[0] `
+            -ReleaseVersion $releaseVersion
+
     Write-Host ""
     Write-Host "============================================================"
     Write-Host "RELEASE BUILD PASSED"
     Write-Host "============================================================"
     Write-Host "Version: $releaseVersion"
-    Write-Host "Installer:"
+    Write-Host "Build installer:"
     Write-Host $installers[0].FullName
+    Write-Host "Archived installer:"
+    Write-Host $archivedInstallerPath
 
     if ($versionChanged) {
         Write-Host ""

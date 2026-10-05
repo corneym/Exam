@@ -107,7 +107,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 	 *                               update fails
 	 */
 	@Override
-	public SourceQuestion updatesharedContextStatus(SourceQuestion sourceQuestion,
+	public SourceQuestion updateSharedContextStatus(SourceQuestion sourceQuestion,
 			SharedContextStatus sharedContextStatus) {
 		try (Connection connection = database.openConnection()) {
 			return updateSharedContextStatus(connection, sourceQuestion, sharedContextStatus);

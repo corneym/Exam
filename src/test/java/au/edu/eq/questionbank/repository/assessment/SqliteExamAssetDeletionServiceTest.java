@@ -139,7 +139,7 @@ class SqliteExamAssetDeletionServiceTest {
 		// context, content and Answer dependencies together.
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion sourceQuestion = sourceRepository.save(booklet, "Q1");
-		sourceQuestion = sourceRepository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
+		sourceQuestion = sourceRepository.updateSharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
 		SharedQuestionContext sharedContext = new SqliteSharedQuestionContextRepository(database).save(booklet,
 				"Questions 1-2 context", List.of(new SharedQuestionContextRegion(1, 0.05, 0.05, 0.90, 0.10)));
 		QuestionRegion questionRegion = new QuestionRegion(booklet, 1, 0.10, 0.20, 0.70, 0.20);

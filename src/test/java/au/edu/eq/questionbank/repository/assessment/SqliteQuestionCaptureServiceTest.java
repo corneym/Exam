@@ -89,7 +89,7 @@ class SqliteQuestionCaptureServiceTest {
 		Fixture fixture = createFixture("edit-last-part-to-non-multipart.db");
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
 		SourceQuestion sourceQuestion = sourceRepository.save(fixture.booklet(), "24");
-		sourceQuestion = sourceRepository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
+		sourceQuestion = sourceRepository.updateSharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
 		SqliteSharedQuestionContextRepository sharedContextRepository = new SqliteSharedQuestionContextRepository(
 				fixture.database());
 		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 shared context",
@@ -121,7 +121,7 @@ class SqliteQuestionCaptureServiceTest {
 		Fixture fixture = createFixture("edit-one-multipart-part.db");
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(fixture.database());
 		SourceQuestion sourceQuestion = sourceRepository.save(fixture.booklet(), "24");
-		sourceQuestion = sourceRepository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
+		sourceQuestion = sourceRepository.updateSharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
 		SqliteSharedQuestionContextRepository sharedContextRepository = new SqliteSharedQuestionContextRepository(
 				fixture.database());
 		var sharedContext = sharedContextRepository.save(fixture.booklet(), "Question 24 shared context",

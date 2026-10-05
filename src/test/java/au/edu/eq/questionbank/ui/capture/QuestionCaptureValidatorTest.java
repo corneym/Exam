@@ -14,6 +14,19 @@ class QuestionCaptureValidatorTest {
 	}
 
 	@Test
+	void parsesOnlyPositiveWholeNumberMarks() {
+
+		// The shared conversion boundary must accept valid positive marks while
+		// representing every invalid user entry as an absent parsed value.
+		assertEquals(3, QuestionCaptureValidator.parsePositiveMarks("3"));
+		assertEquals(12, QuestionCaptureValidator.parsePositiveMarks(" 12 "));
+		assertNull(QuestionCaptureValidator.parsePositiveMarks(""));
+		assertNull(QuestionCaptureValidator.parsePositiveMarks("0"));
+		assertNull(QuestionCaptureValidator.parsePositiveMarks("-1"));
+		assertNull(QuestionCaptureValidator.parsePositiveMarks("abc"));
+	}
+
+	@Test
 	void reportsMissingQuestionInputsInWorkflowOrder() {
 		assertEquals("Set the exam details first.",
 				QuestionCaptureValidator.findError(state(false, "", false, false, false, false, false, 0)));
