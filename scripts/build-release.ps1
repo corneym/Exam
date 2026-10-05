@@ -20,6 +20,36 @@ $installerScript =
 
 Set-Location $repositoryRoot
 
+function Assert-ReleaseArchiveAvailable {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string] $ReleaseVersion
+    )
+
+    $archiveDirectory =
+        Join-Path `
+            (Join-Path $repositoryRoot "release-artifacts") `
+            $ReleaseVersion
+
+    if (-not (Test-Path $archiveDirectory)) {
+        return
+    }
+
+    $archivedInstallers =
+        @(Get-ChildItem `
+            -Path $archiveDirectory `
+            -Filter "*.msi" `
+            -File)
+
+    if ($archivedInstallers.Count -eq 0) {
+        return
+    }
+
+    # A versioned archive represents an already-produced release artefact.
+    # Do not spend time testing and packaging a release that cannot be archived.
+    throw "Release archive already contains an MSI for version $ReleaseVersion`: $($archivedInstallers[0].FullName). Use a new release version."
+}
+
 function Invoke-ReleaseCommand {
     param (
         [Parameter(Mandatory = $true)]
@@ -179,24 +209,9 @@ function Archive-ReleaseInstaller {
 
     if (Test-Path $archivePath) {
 
-        # A released version must never silently change its installer contents.
-        # Re-running an identical build is harmless, but different bytes under
-        # the same version indicate that a new version number is required.
-        $installerHash =
-            (Get-FileHash `
-                -Path $Installer.FullName `
-                -Algorithm SHA256).Hash
-
-        $archiveHash =
-            (Get-FileHash `
-                -Path $archivePath `
-                -Algorithm SHA256).Hash
-
-        if ($installerHash -ne $archiveHash) {
-            throw "Archived installer already exists with different contents: $archivePath"
-        }
-
-        return $archivePath
+        # Never replace the historical installer for an already archived release.
+        # MSI output is not byte-for-byte reproducible between equivalent builds.
+        throw "Archived installer already exists: $archivePath"
     }
 
     # Preserve the successfully built installer outside target so Maven clean
@@ -240,6 +255,11 @@ else {
     $releaseVersion =
         $Version
 }
+
+# Reject an already archived version before changing pom.xml or running any of
+# the comparatively expensive release validation and packaging stages.
+Assert-ReleaseArchiveAvailable `
+    -ReleaseVersion $releaseVersion
 
 $originalPom =
     [System.IO.File]::ReadAllText(
