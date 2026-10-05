@@ -1,10 +1,11 @@
 # Sprint 12 — Exam Intake, Capture Workflow and Corpus Dashboard
 
-> **Status:** READY FOR PR  
+> **Status:** PRE-MERGE RELEASE VERIFIED\
 > **Branch:** `feature/sprint-12`  
 > **Closeout reference:** 5 October 2026  
 > **Target release:** 0.2  
-> **Current Maven version:** 0.1 until formal release issue #64 advances it  
+> **Pull request:** [#88](https://github.com/corneym/Exam/pull/88)\
+> **Maven/application/MSI version:** 0.2\
 > **Latest schema:** 19
 >
 > This document is the consolidated Sprint 12 design, implementation and verification record. It supersedes the temporary Sprint 12 screen-design `.txt` files whose useful layouts are incorporated below. Repository code/tests and final GitHub issue acceptance comments remain authoritative where earlier design wording differs.
@@ -22,7 +23,7 @@ Sprint 12 turns the post-0.1 application into an operational real-corpus collect
 7. legacy-import intake reconciled through the same authoritative Exam/Assets model;
 8. packaged Help updated to the final workflows.
 
-Sprint 12 implementation is complete and the feature branch is ready for its Sprint pull request. Pull-request merge and the formal Release 0.2 process (#64) remain to be completed. Do not describe 0.2 as released yet.
+Sprint 12 implementation is complete on `feature/sprint-12` in PR #88. Initial and subsequent PR CI checkpoints have been green. The automated Release 0.2 gate and manual installed-MSI verification have passed. Protected-main merge and final post-merge release evidence remain pending; issue #64 stays open until final merge closeout. Release 0.2 is not yet finally published.
 
 ## 2. Evidence model and issue record
 
@@ -80,7 +81,7 @@ GitHub Issues are a durable part of Sprint 12 evidence. Final acceptance comment
 ### Help/release/closeout
 
 - #63 — maintained Sprint 12 Help, automated and manual verification complete;
-- #64 — formal Release 0.2 gate, still pending;
+- #64 — Release 0.2 gate and manual MSI verification passed; open pending final merge closeout;
 - #73 — per-response-type planning for mixed booklets closed as not planned;
 - #34 — already covered by an existing restore/migration regression and closed.
 
@@ -494,7 +495,7 @@ Final verification passed:
 - Spotless; and
 - `git diff --check`.
 
-This is pre-PR implementation verification, not the formal Release 0.2 packaging/installation gate. Issue #64 still owns version advancement, installer creation and installed-application smoke testing.
+These counts record the pre-PR implementation checkpoint. The subsequent formal Release 0.2 gate and installed-MSI verification also passed, as recorded in section 14. During the formal gate, two release-independent test defects were corrected: `ApplicationVersionTest` and the About-dialog test in `ApplicationLifecycleWorkflowTest` had hard-coded Release 0.1 expectations.
 
 ## 12. Deliberately superseded or rejected Sprint 12 ideas
 
@@ -524,16 +525,13 @@ See `docs/design/backlog.md`.
 
 ## 14. Release 0.2 closeout — issue #64
 
-The Sprint 12 feature branch is a PR/release candidate, not yet a released 0.2 build.
+Pre-merge evidence is complete for the Release 0.2 candidate:
 
-Closeout still requires:
+- PR [#88](https://github.com/corneym/Exam/pull/88) contains Sprint 12; initial and subsequent PR CI checkpoints have been green.
+- `scripts/build-release.ps1` completed successfully, including formatting, non-UI tests, headless UI tests, strict Javadoc and installer packaging.
+- The authoritative Maven/application/MSI version is **0.2**.
+- `target\installer\Exam Question Bank-0.2.msi` was produced successfully.
+- Manual installed-MSI verification outside Eclipse passed: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2 and normal shutdown.
+- Uninstall succeeded, and configuration and data survived uninstall.
 
-1. final Sprint 12 PR review and green CI;
-2. formal `scripts/build-release.ps1` execution from a clean release candidate;
-3. Maven/application/MSI version advanced to 0.2;
-4. installed MSI launch/smoke verification outside Eclipse;
-5. uninstall/configuration survival verification;
-6. protected-main merge;
-7. final documentation update with actual PR number, merge commit, CI run and release evidence.
-
-Until those steps exist, preserve the wording “target Release 0.2” or “Release 0.2 candidate”, not “Release 0.2 released”.
+Protected-main merge has not happened. Final review/CI at merge, the actual merge commit and post-merge CI/release evidence must still be recorded when available. Issue #64 remains open pending final merge closeout. Do not describe Sprint 12 as merged or Release 0.2 as finally published yet.

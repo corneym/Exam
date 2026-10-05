@@ -1,7 +1,7 @@
 # Windows Release Build
 
 > **Current published release:** 0.1  
-> **Next release candidate:** 0.2 (Sprint 12; issue #64 pending)  
+> **Verified release candidate:** 0.2 (Sprint 12; PR #88; merge pending)\
 > **Release entry point:** `scripts/build-release.ps1`  
 > **Packaging platform:** Windows  
 > **Updated:** 5 October 2026
@@ -50,13 +50,13 @@ The package scripts reject a non-Java-25 `jpackage`.
 
 The top-level Maven version in `pom.xml` is authoritative. Maven filters the same value into the packaged application properties; About, Version Information, backup metadata, application-image metadata and MSI metadata therefore share one source.
 
-At the Sprint 12 PR-preparation checkpoint `pom.xml` deliberately remains:
+After the successful Release 0.2 gate, `pom.xml` records:
 
 ```xml
-<version>0.1</version>
+<version>0.2</version>
 ```
 
-Issue #64 owns Release 0.2 closeout. The normal release command advances the minor version from 0.1 to 0.2. Documentation must not describe 0.2 as released before that gate succeeds.
+Maven, the application and the successfully produced MSI now use **0.2**. Issue #64 remains open for protected-main merge and final post-merge closeout; successful packaging and installation verification do not by themselves mean the release is finally published.
 
 Release versions use `major.minor`, for example `0.1`, `0.10`, `1.0`.
 
@@ -147,13 +147,13 @@ Output pattern:
 target\installer\Exam Question Bank-<version>.msi
 ```
 
-For the pending Sprint 12 release candidate, successful issue #64 execution is expected to produce:
+The successful Sprint 12 Release 0.2 gate produced:
 
 ```text
 target\installer\Exam Question Bank-0.2.msi
 ```
 
-Only describe that artifact as produced after the release gate has actually completed.
+The artifact passed the manual installed-MSI checks below. Protected-main merge and final publication remain pending.
 
 ## 8. Writable configuration and application data
 
@@ -190,21 +190,24 @@ Verify at minimum:
 
 Then uninstall and verify the user configuration and configured data root survive unchanged.
 
-Release 0.1 passed this install/launch/uninstall/configuration-survival check. Release 0.2 must repeat the check under issue #64 before it is considered released.
+Release 0.1 passed this install/launch/uninstall/configuration-survival check. Release 0.2 has now also passed manual installed-MSI verification outside Eclipse: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2, normal shutdown, successful uninstall, and configuration/data survival.
 
 ## 10. Release 0.2 closeout checklist — #64
 
-Release 0.2 is ready for protected-main merge/release closeout only when:
+Completed pre-merge evidence:
 
-- Sprint 12 implementation is in the pull request candidate;
-- release script completes successfully;
-- Maven/application/MSI version is 0.2;
-- generated MSI is present at the expected versioned path;
-- install/launch smoke test passes outside Eclipse;
-- Dashboard, Help and existing data are usable from the installed package;
-- uninstall preserves user configuration/data;
-- final feature-branch CI is green;
-- pull-request review comments are resolved;
-- the Sprint 12 document records the final PR/merge/CI/release identifiers after they exist.
+- Sprint 12 is in PR [#88](https://github.com/corneym/Exam/pull/88); initial and subsequent PR CI checkpoints have been green.
+- `scripts/build-release.ps1` completed all automated gates and produced the Release 0.2 MSI.
+- Maven/application/MSI version is 0.2.
+- The installed-MSI checks in section 9 passed, including uninstall and configuration/data survival.
+- The formal gate exposed hard-coded Release 0.1 expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest`; both release-independent test defects were fixed before the successful gate.
+
+Still pending:
+
+- final PR review resolution and green CI at merge;
+- protected-main merge of PR #88;
+- recording actual merge and post-merge CI/release evidence and final publication.
+
+Issue #64 must remain open until final merge closeout. Sprint 12 is not yet merged and Release 0.2 is not yet finally published.
 
 After merge, preserve `docs/design/sprint-12-release-0.2.md` as the detailed historical record and update the roadmap/README with actual merge/release evidence rather than predictions.

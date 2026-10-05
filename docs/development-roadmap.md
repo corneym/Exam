@@ -33,12 +33,13 @@ Completed Sprint 10 capture/output hardening
         ↓
 Completed Sprint 11 — Release 0.1
         ↓
-Sprint 12 implementation complete / READY FOR PR
+Sprint 12 implementation complete / PR #88
 on feature/sprint-12
+Release 0.2 automated gate + manual MSI verification passed
 Exam intake + asset management + streamlined capture
 + operational Corpus Dashboard
         ↓
-Sprint 12 PR / Release 0.2 closeout (#64)
+Protected-main merge / final Release 0.2 closeout pending (#64)
         ↓
 Real-corpus use and evidence-driven refinement
         ↓
@@ -49,7 +50,7 @@ Sprint 10 merged through pull request #2 (`a3dfda7e`); post-merge GitHub Actions
 
 Sprint 11 merged to protected `main` through pull request #39 on 27 September 2026. Merge commit: `1ccbb350a693568231bd14582ffbecc7684fb79a`. Final feature-branch CI run 81 succeeded.
 
-Sprint 12 implementation is recorded in `docs/design/sprint-12-release-0.2.md`. The implementation branch is `feature/sprint-12`. The formal Release 0.2 closeout remains issue #64; `pom.xml` is still 0.1 until that release workflow deliberately advances it.
+Sprint 12 implementation is recorded in `docs/design/sprint-12-release-0.2.md`. The implementation branch is `feature/sprint-12`. PR #88 has green initial and subsequent CI checkpoints. The automated Release 0.2 gate and manual installed-MSI verification passed; Maven/application/MSI version is 0.2. Issue #64 remains open pending protected-main merge and final post-merge release evidence.
 
 Git/GitHub remains authoritative for branch heads, pull-request state, issue state and CI state.
 
@@ -221,7 +222,7 @@ Richer retrieval-oriented Search filtering remains deferred. Do not copy Dashboa
 
 Maven `project.version` remains the authoritative application/release version and feeds packaged application metadata, About/Version Information, backup metadata and Windows package metadata.
 
-Release 0.1 established the self-contained Java 25/jpackage per-user MSI architecture. Sprint 12 targets Release 0.2, but the Maven version remains 0.1 until issue #64 deliberately runs the release workflow. See `docs/release-build.md`.
+Release 0.1 established the self-contained Java 25/jpackage per-user MSI architecture. Sprint 12 has passed the Release 0.2 automated gate and manual installed-MSI verification with Maven/application/MSI version 0.2. Protected-main merge and final publication remain pending under open issue #64. See `docs/release-build.md`.
 
 ## 4. Development history
 
@@ -279,7 +280,7 @@ Sprint 11 added composed integration regressions, clipboard-image Question conte
 
 ### Sprint 12 — Exam Intake, Capture Workflow and Corpus Dashboard
 
-Sprint 12 implementation is complete and **READY FOR PR** on `feature/sprint-12`; pull-request merge and Release 0.2 closeout remain.
+Sprint 12 implementation is complete on `feature/sprint-12` in PR [#88](https://github.com/corneym/Exam/pull/88). Initial and subsequent PR CI checkpoints have been green. The automated Release 0.2 gate and manual MSI verification have passed; protected-main merge and final post-merge closeout remain pending.
 
 The implementation spans the following issue groups:
 
@@ -292,13 +293,15 @@ The implementation spans the following issue groups:
 
 Final pre-PR review hardened the branch without changing accepted product semantics: duplicate Dashboard MCQ-explanation handler wiring was removed, ordinary TestFX activation/scene-graph lookup/save waits were made deterministic, and destructive Exam asset deletion gained direct SQLite regression coverage. Verification passed 1,031 non-UI tests (3 expected skips), 342 UI tests, a combined 1,373-test AllTests run (3 expected skips), Maven `clean verify`, strict Javadoc, Spotless and `git diff --check`, all with zero failures/errors.
 
-Issue #73 was closed as not planned. Issue #64 remains the formal Release 0.2 closeout. Current unresolved UI/product items are maintained in `docs/design/backlog.md` rather than being silently folded into Sprint 12.
+The formal `scripts/build-release.ps1` gate subsequently passed and produced the Release 0.2 MSI; Maven/application/MSI version is 0.2. Manual verification outside Eclipse passed Dashboard startup, existing persisted-data access, Help, About reporting 0.2, normal shutdown and uninstall with configuration/data preserved. Hard-coded Release 0.1 expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest` were corrected during the gate.
+
+Issue #73 was closed as not planned. Issue #64 remains open pending final merge closeout. Sprint 12 is not yet merged and Release 0.2 is not yet finally published. Current unresolved UI/product items are maintained in `docs/design/backlog.md` rather than being silently folded into Sprint 12.
 
 Detailed implementation decisions, acceptance changes, verification and consolidated screen designs are in `docs/design/sprint-12-release-0.2.md`.
 
 ## 5. Forward direction after Sprint 12
 
-Immediate next work is not another broad redesign. First complete the Sprint 12 PR and Release 0.2 gate (#64), then use the real corpus to prioritise evidence-driven refinements.
+Immediate next work is not another broad redesign. First complete protected-main merge of PR #88 and record final post-merge Release 0.2 evidence under issue #64, then use the real corpus to prioritise evidence-driven refinements.
 
 Explicitly deferred issues include revision-export Working Subject scoping (#78), Search layout polish (#82), managed syllabus documents (#83), mapping-review empty-state behaviour (#85), Dashboard column alignment (#86) and lifecycle progress feedback (#87). Richer Search filtering also remains a high-priority retrieval backlog item.
 
