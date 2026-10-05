@@ -358,6 +358,51 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	@SuppressWarnings("unused")
+	private boolean activateBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+		if (!allowExamImportConfirmation()) {
+			return false;
+		}
+		Path storedPath = resolveQuestionBookletCapturePath(booklet, config);
+		if (storedPath == null) {
+			return false;
+		}
+
+		// A read-only Exam/Assets preview may own the PDF pane. Remove only that
+		// temporary viewer before activating the authoritative capture document.
+		if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
+			pdfWorkspace.closeViewerPdf();
+		}
+		try {
+			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, config.pdfDataRoot());
+
+			// QuestionBankApplicationUiTestBase invokes this capture boundary reflectively
+			// so UI fixtures exercise the same persisted-booklet activation behaviour.
+			// Keep this method and its signature stable unless the test harness is
+			// migrated.
+			openExamPdf(selectedPdf);
+			examMetadataPane.activateExistingBooklet(booklet, storedPath);
+			questionCapturePane.refreshImportedQuestions();
+			answerCapturePane.refreshQuestions();
+
+			// Selecting a persisted booklet is already the explicit request to start
+			// ordinary new-Question capture; no second Start button is required.
+			showCaptureWorkspaceMode();
+			questionCapturePane.startNewQuestionCapture();
+			return true;
+		} catch (RuntimeException exception) {
+			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture",
+					"The selected Question booklet could not be opened.", failureMessage(exception));
+			return false;
+		}
+	}
+
 	private void activateExamBookletSubject(Subject subject) {
 
 		// Activate the booklet's Subject before deriving any Question-capture
