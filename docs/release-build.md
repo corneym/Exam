@@ -1,7 +1,7 @@
 # Windows Release Build
 
-> **Current published release:** 0.1  
-> **Verified release candidate:** 0.2 (Sprint 12; PR #88; merge pending)\
+> **Current published release:** 0.2  
+> **Release source:** Sprint 12 / PR #88\
 > **Release entry point:** `scripts/build-release.ps1`  
 > **Packaging platform:** Windows  
 > **Updated:** 5 October 2026
@@ -56,7 +56,7 @@ After the successful Release 0.2 gate, `pom.xml` records:
 <version>0.2</version>
 ```
 
-Maven, the application and the successfully produced MSI now use **0.2**. Issue #64 remains open for protected-main merge and final post-merge closeout; successful packaging and installation verification do not by themselves mean the release is finally published.
+Maven, the application and the successfully produced MSI use **0.2**. PR #88 merged to protected `main` as `8ba714e2ef7ff07eebb2375021e1e751d4876e47`; post-merge CI run #164 and CodeQL run #15 passed on that commit, and issue #64 is closed. Release 0.2 is the current published release.
 
 Release versions use `major.minor`, for example `0.1`, `0.10`, `1.0`.
 
@@ -153,7 +153,7 @@ The successful Sprint 12 Release 0.2 gate produced:
 target\installer\Exam Question Bank-0.2.msi
 ```
 
-The artifact passed the manual installed-MSI checks below. Protected-main merge and final publication remain pending.
+The artifact passed the manual installed-MSI checks below and was subsequently merged to protected `main` through PR #88.
 
 ## 8. Writable configuration and application data
 
@@ -194,20 +194,17 @@ Release 0.1 passed this install/launch/uninstall/configuration-survival check. R
 
 ## 10. Release 0.2 closeout checklist — #64
 
-Completed pre-merge evidence:
+Release 0.2 closeout is complete:
 
-- Sprint 12 is in PR [#88](https://github.com/corneym/Exam/pull/88); initial and subsequent PR CI checkpoints have been green.
+- Sprint 12 merged through PR [#88](https://github.com/corneym/Exam/pull/88).
+- Merge commit: `8ba714e2ef7ff07eebb2375021e1e751d4876e47`.
+- Final PR-head CI was green before merge.
+- Post-merge CI run **#164** passed on the merge commit.
+- Post-merge CodeQL run **#15** passed on the merge commit.
 - `scripts/build-release.ps1` completed all automated gates and produced the Release 0.2 MSI.
-- Maven/application/MSI version is 0.2.
+- Maven/application/MSI version is **0.2**.
 - The installed-MSI checks in section 9 passed, including uninstall and configuration/data survival.
 - The formal gate exposed hard-coded Release 0.1 expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest`; both release-independent test defects were fixed before the successful gate.
+- Issue #64 was closed as completed after merge and post-merge CI evidence were recorded.
 
-Still pending:
-
-- final PR review resolution and green CI at merge;
-- protected-main merge of PR #88;
-- recording actual merge and post-merge CI/release evidence and final publication.
-
-Issue #64 must remain open until final merge closeout. Sprint 12 is not yet merged and Release 0.2 is not yet finally published.
-
-After merge, preserve `docs/design/sprint-12-release-0.2.md` as the detailed historical record and update the roadmap/README with actual merge/release evidence rather than predictions.
+Preserve `docs/design/sprint-12-release-0.2.md` as the detailed historical record.
