@@ -1,7 +1,7 @@
 package au.edu.eq.questionbank;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -13,8 +13,8 @@ class ApplicationVersionTest {
 		assertFalse(version.isBlank());
 		assertFalse(version.contains("${"));
 
-		// Sprint 11 establishes Maven version 0.1 as the authoritative release
-		// version consumed by application runtime metadata.
-		assertEquals("0.1", version);
+		// Release versions use the same major.minor format enforced by the
+		// release-build process. Do not hard-code a particular release number.
+		assertTrue(version.matches("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)"));
 	}
 }
