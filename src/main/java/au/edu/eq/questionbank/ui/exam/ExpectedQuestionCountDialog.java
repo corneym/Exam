@@ -82,9 +82,25 @@ public final class ExpectedQuestionCountDialog extends Dialog<Integer> {
 				return null;
 			}
 
-			// Validation has already guaranteed that this conversion succeeds.
-			return Integer.valueOf(countField.getText().strip());
+			// Reuse the guarded numeric conversion used by validation so malformed UI
+			// text can never escape from the result converter as NumberFormatException.
+			return parsePositiveCount(countField.getText());
 		});
+	}
+
+	static Integer parsePositiveCount(String text) {
+		if (text == null || text.isBlank()) {
+			return null;
+		}
+		try {
+
+			// Expected Question planning accepts positive whole numbers only. Invalid
+			// user input is represented as no parsed value rather than an exception.
+			int count = Integer.parseInt(text.strip());
+			return count > 0 ? count : null;
+		} catch (NumberFormatException exception) {
+			return null;
+		}
 	}
 
 	private boolean validateCount() {
@@ -94,15 +110,20 @@ public final class ExpectedQuestionCountDialog extends Dialog<Integer> {
 			validationLabel.setVisible(true);
 			return false;
 		}
-		try {
-			int count = Integer.parseInt(text);
-			if (count < 1) {
-				validationLabel.setText("Expected Question count must be positive.");
-				validationLabel.setVisible(true);
-				return false;
+
+		// Validation and result creation deliberately share one guarded conversion so
+		// they cannot disagree about what constitutes a valid Question count.
+		Integer count = parsePositiveCount(text);
+		if (count == null) {
+			boolean numeric;
+			try {
+				Integer.parseInt(text);
+				numeric = true;
+			} catch (NumberFormatException exception) {
+				numeric = false;
 			}
-		} catch (NumberFormatException exception) {
-			validationLabel.setText("Expected Question count must be a whole number.");
+			validationLabel.setText(numeric ? "Expected Question count must be positive."
+					: "Expected Question count must be a whole number.");
 			validationLabel.setVisible(true);
 			return false;
 		}

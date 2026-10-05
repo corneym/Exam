@@ -36,11 +36,11 @@ class SqliteSourceQuestionRepositoryTest {
 				() -> assertThrows(NullPointerException.class, () -> repository.save(null, "21")),
 				() -> assertThrows(IllegalArgumentException.class, () -> repository.save(fixture.firstBooklet(), " ")),
 				() -> assertThrows(NullPointerException.class,
-						() -> repository.updatesharedContextStatus(null, SharedContextStatus.NONE)),
+						() -> repository.updateSharedContextStatus(null, SharedContextStatus.NONE)),
 				() -> assertThrows(NullPointerException.class,
-						() -> repository.updatesharedContextStatus(missing, null)),
+						() -> repository.updateSharedContextStatus(missing, null)),
 				() -> assertThrows(IllegalStateException.class,
-						() -> repository.updatesharedContextStatus(missing, SharedContextStatus.PRESENT)));
+						() -> repository.updateSharedContextStatus(missing, SharedContextStatus.PRESENT)));
 	}
 
 	@Test
@@ -59,10 +59,10 @@ class SqliteSourceQuestionRepositoryTest {
 		RepositoryFixture fixture = createFixture("shared-context-states.db");
 		SqliteSourceQuestionRepository repository = fixture.repository();
 		SourceQuestion sourceQuestion = repository.save(fixture.firstBooklet(), "21");
-		sourceQuestion = repository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.NONE);
+		sourceQuestion = repository.updateSharedContextStatus(sourceQuestion, SharedContextStatus.NONE);
 		assertEquals(SharedContextStatus.NONE,
 				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getSharedContextStatus());
-		repository.updatesharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
+		repository.updateSharedContextStatus(sourceQuestion, SharedContextStatus.PRESENT);
 		assertEquals(SharedContextStatus.PRESENT,
 				repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow().getSharedContextStatus());
 	}
@@ -83,7 +83,7 @@ class SqliteSourceQuestionRepositoryTest {
 		assertEquals(second.getId(),
 				repository.findByBookletAndCode(fixture.secondBooklet(), "21").orElseThrow().getId());
 		assertThrows(IllegalArgumentException.class, () -> repository.save(fixture.firstBooklet(), "21"));
-		SourceQuestion updated = repository.updatesharedContextStatus(first, SharedContextStatus.PRESENT);
+		SourceQuestion updated = repository.updateSharedContextStatus(first, SharedContextStatus.PRESENT);
 		assertEquals(SharedContextStatus.PRESENT, updated.getSharedContextStatus());
 		SourceQuestion reloaded = repository.findByBookletAndCode(fixture.firstBooklet(), "21").orElseThrow();
 		assertEquals(SharedContextStatus.PRESENT, reloaded.getSharedContextStatus());

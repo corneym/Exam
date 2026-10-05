@@ -380,7 +380,7 @@ class LegacyQuestionSplitServiceTest {
 	void splitRejectsNoSharedContextSourceGroupWhoseMembersUseSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
-		existingSourceQuestion = sourceRepository.updatesharedContextStatus(existingSourceQuestion,
+		existingSourceQuestion = sourceRepository.updateSharedContextStatus(existingSourceQuestion,
 				SharedContextStatus.NONE);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
 		SharedQuestionContext sharedContext = contextRepository.save(booklet, "Existing shared material",
@@ -424,7 +424,7 @@ class LegacyQuestionSplitServiceTest {
 	void splitReusesCompatibleExistingSourceQuestion() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSourceQuestion = sourceRepository.save(booklet, "3");
-		existingSourceQuestion = sourceRepository.updatesharedContextStatus(existingSourceQuestion,
+		existingSourceQuestion = sourceRepository.updateSharedContextStatus(existingSourceQuestion,
 				SharedContextStatus.NONE);
 
 		// An existing sibling establishes that SourceQuestion 3 is already a real
@@ -468,7 +468,7 @@ class LegacyQuestionSplitServiceTest {
 	void splitReusesExistingSourceQuestionAndSharedSharedContext() {
 		SqliteSourceQuestionRepository sourceRepository = new SqliteSourceQuestionRepository(database);
 		SourceQuestion existingSource = sourceRepository.save(booklet, "3");
-		existingSource = sourceRepository.updatesharedContextStatus(existingSource, SharedContextStatus.PRESENT);
+		existingSource = sourceRepository.updateSharedContextStatus(existingSource, SharedContextStatus.PRESENT);
 		SqliteSharedQuestionContextRepository contextRepository = new SqliteSharedQuestionContextRepository(database);
 		SharedQuestionContext existingContext = contextRepository.save(booklet, "Question 3 shared context",
 				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15)));

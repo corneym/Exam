@@ -140,7 +140,9 @@ public final class SqliteQuestionCaptureService {
 				// Update restart-safe MCQ continuation in the same transaction. The
 				// persisted Question id is supplied so successor detection can ignore the
 				// Question that has just been inserted.
-				updatePendingMcqSharedContext(connection, request, sourceQuestion, sharedContext, question);
+				// MCQ continuation depends on the persisted Question and shared context, not
+				// on multipart SourceQuestion identity.
+				updatePendingMcqSharedContext(connection, request, sharedContext, question);
 				deletePreviousSourceQuestionIfUnreferenced(connection, request, sourceQuestion);
 				connection.commit();
 				return question;
@@ -502,7 +504,7 @@ public final class SqliteQuestionCaptureService {
 		}
 	}
 
-	private void updatePendingMcqSharedContext(Connection connection, Request request, SourceQuestion sourceQuestion,
+	private void updatePendingMcqSharedContext(Connection connection, Request request,
 			SharedQuestionContext sharedContext, Question persistedQuestion) throws SQLException {
 
 		// Imported capture and correction must never alter continuation intended for

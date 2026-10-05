@@ -358,48 +358,6 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private boolean activateBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (config == null) {
-			throw new NullPointerException("config");
-		}
-		if (!allowExamImportConfirmation()) {
-			return false;
-		}
-		Path storedPath = resolveQuestionBookletCapturePath(booklet, config);
-		if (storedPath == null) {
-			return false;
-		}
-
-		// A read-only Exam/Assets preview may own the PDF pane. Remove only that
-		// temporary viewer before activating the authoritative capture document.
-		if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
-			pdfWorkspace.closeViewerPdf();
-		}
-		try {
-			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, config.pdfDataRoot());
-
-			// This synchronous route remains useful for test setup and established direct
-			// callers. The visible Exam/Assets button uses the asynchronous path below.
-			openExamPdf(selectedPdf);
-			examMetadataPane.activateExistingBooklet(booklet, storedPath);
-			questionCapturePane.refreshImportedQuestions();
-			answerCapturePane.refreshQuestions();
-
-			// Selecting a persisted booklet is already the explicit request to start
-			// ordinary new-Question capture; no second Start button is required.
-			showCaptureWorkspaceMode();
-			questionCapturePane.startNewQuestionCapture();
-			return true;
-		} catch (RuntimeException exception) {
-			showAlert(Alert.AlertType.ERROR, "Open Exam for Capture",
-					"The selected Question booklet could not be opened.", failureMessage(exception));
-			return false;
-		}
-	}
-
 	private void activateExamBookletSubject(Subject subject) {
 
 		// Activate the booklet's Subject before deriving any Question-capture
@@ -539,23 +497,6 @@ public class QuestionBankApplication extends Application {
 		showAlert(Alert.AlertType.WARNING, "Replace Answer PDF", "Capture work is in progress",
 				"Save, clear or cancel the current Question, Shared Context or Answer work before replacing the Answer PDF.");
 		return false;
-	}
-
-	private boolean allowCorpusDashboardHomeTransition() {
-		if (!allowCorpusDashboardReturn()) {
-			return false;
-		}
-		if (examAssetsPane != null && workspaceModeHost != null
-				&& workspaceModeHost.getChildren().contains(examAssetsPane)
-				&& examAssetsPane.hasPendingStructuralWork()) {
-
-			// Main-window navigation must obey the same structural transaction boundary
-			// as the explicit Exam / Assets Return to Dashboard action.
-			showAlert(Alert.AlertType.WARNING, "Corpus Dashboard", "Exam / Assets work is in progress",
-					"Save or cancel the current Exam, Question booklet or Answer booklet changes before returning to the Corpus Dashboard.");
-			return false;
-		}
-		return true;
 	}
 
 	private boolean allowCorpusDashboardReturn() {
@@ -751,12 +692,15 @@ public class QuestionBankApplication extends Application {
 		examAssetsPane.setCorpusDashboardReturnHandler(this::returnToCorpusDashboardFromExamAssets);
 	}
 
-	private boolean blockWhileCaptureSaveInProgress(Stage primaryStage, String actionDescription) {
+	private boolean blockWhileCaptureSaveInProgress(String actionDescription) {
 		boolean questionSaveInProgress = questionCapturePane != null && questionCapturePane.isSaveInProgress();
 		boolean answerSaveInProgress = answerCapturePane != null && answerCapturePane.isSaveInProgress();
 		if (!questionSaveInProgress && !answerSaveInProgress) {
 			return false;
 		}
+
+		// Save protection is application-wide and does not depend on a particular
+		// Stage; the action description supplies the user-facing context.
 		showAlert(Alert.AlertType.WARNING, "Save in progress", "Save in progress",
 				"Wait for the current Question or Answer save to finish before " + actionDescription + ".");
 		return true;
@@ -788,7 +732,7 @@ public class QuestionBankApplication extends Application {
 		// structural changes. Reactivation is immediately reversible and needs no
 		// second
 		// confirmation.
-		if (targetState == ExamCaptureState.COMPLETE && !confirmCorpusDashboardExamCompletion(exam)) {
+		if (targetState == ExamCaptureState.COMPLETE && !confirmCorpusDashboardExamCompletion()) {
 			return;
 		}
 		try {
@@ -940,12 +884,15 @@ public class QuestionBankApplication extends Application {
 		pdfWorkspace.closeViewerPdf();
 	}
 
-	private void closeRestorePreparation(Stage primaryStage, RestorePreparation preparation) {
+	private void closeRestorePreparation(RestorePreparation preparation) {
 		try {
+
+			// Restore preparation owns its temporary resources; cleanup does not depend
+			// on the application Stage.
 			preparation.close();
-		} catch (IOException e) {
+		} catch (IOException exception) {
 			showAlert(Alert.AlertType.WARNING, "Restore Backup",
-					"Temporary restore files could not be completely removed.", e.getMessage());
+					"Temporary restore files could not be completely removed.", exception.getMessage());
 		}
 	}
 
@@ -958,13 +905,16 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
-	private void completeExitWithoutBackup(Stage primaryStage) {
+	private void completeExitWithoutBackup() {
 		ShutdownResult result = shutdownCoordinator.exitWithoutBackup();
 		if (result.exitAllowed()) {
 			applicationExitAction.run();
 			return;
 		}
-		showResourceCloseFailure(primaryStage, result.failure());
+
+		// Resource-close reporting is application-level and does not require a Stage
+		// parameter.
+		showResourceCloseFailure(result.failure());
 	}
 
 	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
@@ -1093,7 +1043,7 @@ public class QuestionBankApplication extends Application {
 		return alert.showAndWait().orElse(cancelButton) == replaceButton;
 	}
 
-	private boolean confirmCorpusDashboardExamCompletion(Exam exam) {
+	private boolean confirmCorpusDashboardExamCompletion() {
 		ButtonType completeButton = new ButtonType("Mark Complete", ButtonBar.ButtonData.OK_DONE);
 		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
 		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
@@ -1580,7 +1530,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private CurriculumAuthoringSession createNewCurriculum(Stage primaryStage, Subject subject,
-			SqliteCurriculumRepository curriculumRepository, CurriculumAuthoringCreationService creationService) {
+			CurriculumAuthoringCreationService creationService) {
 		NewCurriculumDialog dialog = new NewCurriculumDialog(primaryStage, subject);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
@@ -1825,40 +1775,6 @@ public class QuestionBankApplication extends Application {
 		refreshExamAssetsAfterAssetDeletion(booklet.getExam(), preferredBookletId);
 		deleteManagedAssetPdf(result, config, "Question booklet");
 		refreshActiveExamContext();
-	}
-
-	private void editCorpusQuestionMetadata(Stage primaryStage, ApplicationConfig config, Question question,
-			Runnable completedHandler) {
-		if (completedHandler == null) {
-			throw new NullPointerException("completedHandler");
-		}
-		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
-		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question);
-		Optional<LegacyQuestionMetadataDialog.Result> result = metadataDialog.showAndWait();
-		if (result.isEmpty()) {
-			completedHandler.run();
-			return;
-		}
-		LegacyQuestionMetadataDialog.Result replacement = result.get();
-		try {
-			LegacyQuestionMetadataUpdateResult updateResult = metadataService.updateMetadataWithResult(question,
-					replacement.questionCode(), replacement.marks(), question.getClassification(),
-					replacement.sharedContextCaptureRequired(), replacement.responseType());
-			Question updated = updateResult.question();
-			questionCapturePane.refreshImportedQuestions();
-			answerCapturePane.refreshQuestions();
-			if (updateResult
-					.sharedContextOutcome() == LegacyQuestionMetadataUpdateResult.SharedContextOutcome.CONVERTED_SHARED_CONTEXT_TO_QUESTION_REGIONS) {
-				offerQuestionRecaptureAfterSharedContextConversion(primaryStage, updated, completedHandler);
-				return;
-			}
-			completedHandler.run();
-		} catch (IllegalArgumentException | IllegalStateException exception) {
-			showAlert(Alert.AlertType.ERROR, "Edit Question Metadata", "The question metadata could not be saved.",
-					exception.getMessage());
-			completedHandler.run();
-		}
 	}
 
 	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
@@ -3138,7 +3054,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void requestApplicationExit(Stage primaryStage) {
-		if (blockWhileCaptureSaveInProgress(primaryStage, "closing the application")) {
+		if (blockWhileCaptureSaveInProgress("closing the application")) {
 			return;
 		}
 
@@ -3163,7 +3079,7 @@ public class QuestionBankApplication extends Application {
 				return;
 			}
 			if (result.status() == ShutdownStatus.RESOURCE_CLOSE_FAILED) {
-				showResourceCloseFailure(primaryStage, result.failure());
+				showResourceCloseFailure(result.failure());
 				return;
 			}
 			BackupFailureDecision decision = showAutomaticBackupFailure(primaryStage, result.failure());
@@ -3171,7 +3087,7 @@ public class QuestionBankApplication extends Application {
 				return;
 			}
 			if (decision == BackupFailureDecision.EXIT_WITHOUT_BACKUP) {
-				completeExitWithoutBackup(primaryStage);
+				completeExitWithoutBackup();
 				return;
 			}
 
@@ -3244,7 +3160,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void restoreBackup(Stage primaryStage, ApplicationConfig config) {
-		if (blockWhileCaptureSaveInProgress(primaryStage, "restoring a backup")) {
+		if (blockWhileCaptureSaveInProgress("restoring a backup")) {
 			return;
 		}
 		FileChooser chooser = new FileChooser();
@@ -3264,7 +3180,7 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		if (!confirmRestore(primaryStage, preparation)) {
-			closeRestorePreparation(primaryStage, preparation);
+			closeRestorePreparation(preparation);
 			return;
 		}
 		RestoreResult restoreResult;
@@ -3273,7 +3189,7 @@ public class QuestionBankApplication extends Application {
 			restoreResult = executor.applyRestore(preparation, pdfWorkspace);
 			resourcesClosedForRestore = true;
 		} catch (RestoreException e) {
-			closeRestorePreparation(primaryStage, preparation);
+			closeRestorePreparation(preparation);
 			showAlert(Alert.AlertType.ERROR, "Restore Backup", "The backup could not be restored.", failureMessage(e));
 			if (e.applicationMustExit()) {
 				showAlert(Alert.AlertType.WARNING, "Restart Required", "The application must now close.",
@@ -3282,7 +3198,7 @@ public class QuestionBankApplication extends Application {
 			}
 			return;
 		}
-		closeRestorePreparation(primaryStage, preparation);
+		closeRestorePreparation(preparation);
 		showAlert(Alert.AlertType.INFORMATION, "Restore Backup", "Restore completed successfully.", """
 				The restored data has been installed.
 
@@ -3710,7 +3626,7 @@ public class QuestionBankApplication extends Application {
 		}
 		CurriculumAuthoringSession session;
 		if (action == newCurriculumButton) {
-			session = createNewCurriculum(primaryStage, subject, curriculumRepository, creationService);
+			session = createNewCurriculum(primaryStage, subject, creationService);
 		} else {
 			session = chooseExistingCurriculum(primaryStage, versions, openService);
 		}
@@ -4062,7 +3978,6 @@ public class QuestionBankApplication extends Application {
 
 	private void showNewCurriculumAuthoring(Stage primaryStage, ApplicationConfig config, Subject subject) {
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		CurriculumDraftLoader draftLoader = new CurriculumDraftLoader(
 				new SqliteCurriculumAuthoringRepository(database));
@@ -4071,8 +3986,7 @@ public class QuestionBankApplication extends Application {
 
 		// Dashboard + means add a new curriculum to the already-selected Subject. It
 		// therefore skips the separate Open Existing/New Curriculum chooser.
-		CurriculumAuthoringSession session = createNewCurriculum(primaryStage, subject, curriculumRepository,
-				creationService);
+		CurriculumAuthoringSession session = createNewCurriculum(primaryStage, subject, creationService);
 		if (session == null) {
 			return;
 		}
@@ -4207,7 +4121,10 @@ public class QuestionBankApplication extends Application {
 		showSearchAnswerCaptureWorkspace(question);
 	}
 
-	private void showResourceCloseFailure(Stage primaryStage, Throwable failure) {
+	private void showResourceCloseFailure(Throwable failure) {
+
+		// This alert uses the application-level alert helper, so no separate owner
+		// Stage needs to be threaded through the shutdown path.
 		showAlert(Alert.AlertType.ERROR, "Exit", "The application could not close its active resources.",
 				failureMessage(failure));
 	}

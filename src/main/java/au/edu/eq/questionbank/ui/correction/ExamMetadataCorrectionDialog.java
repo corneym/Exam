@@ -57,10 +57,31 @@ public final class ExamMetadataCorrectionDialog
 			if (buttonType != saveButtonType) {
 				return null;
 			}
-			return new Result(providerField.getText().trim(), Integer.parseInt(yearField.getText().trim()),
-					assessmentField.getText().trim());
+
+			// Reuse the guarded year conversion used by validation so malformed UI text
+			// cannot escape from result creation as NumberFormatException.
+			Integer year = parsePositiveYear(yearField.getText());
+			if (year == null) {
+				return null;
+			}
+			return new Result(providerField.getText().trim(), year, assessmentField.getText().trim());
 		});
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
+	}
+
+	static Integer parsePositiveYear(String text) {
+		if (text == null || text.isBlank()) {
+			return null;
+		}
+		try {
+
+			// Exam metadata accepts only positive whole-number years. Invalid user input
+			// is represented as no parsed value rather than escaping as an exception.
+			int year = Integer.parseInt(text.strip());
+			return year > 0 ? year : null;
+		} catch (NumberFormatException exception) {
+			return null;
+		}
 	}
 
 	private void configureControls() {
@@ -125,14 +146,10 @@ public final class ExamMetadataCorrectionDialog
 		if (assessmentField.getText() == null || assessmentField.getText().isBlank()) {
 			return false;
 		}
-		if (yearField.getText() == null || yearField.getText().isBlank()) {
-			return false;
-		}
-		try {
-			return Integer.parseInt(yearField.getText().trim()) > 0;
-		} catch (NumberFormatException exception) {
-			return false;
-		}
+
+		// Validation and result creation share the same guarded conversion so they
+		// cannot disagree about whether the entered Exam year is valid.
+		return parsePositiveYear(yearField.getText()) != null;
 	}
 
 	/**

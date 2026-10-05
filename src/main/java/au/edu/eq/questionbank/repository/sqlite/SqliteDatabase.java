@@ -485,26 +485,43 @@ public final class SqliteDatabase {
 
 	private boolean hasExactUniqueIndex(Connection connection, String tableName, List<String> expectedColumns)
 			throws SQLException {
-		try (Statement statement = connection.createStatement();
-				ResultSet indexes = statement.executeQuery("PRAGMA index_list(" + tableName + ")")) {
-			while (indexes.next()) {
-				if (indexes.getInt("unique") == 0) {
-					continue;
-				}
 
-				// Escape the stored index name before using it as a PRAGMA string argument.
-				String indexName = indexes.getString("name").replace("'", "''");
-				List<String> actualColumns = new ArrayList<>();
-				try (Statement indexStatement = connection.createStatement();
-						ResultSet columns = indexStatement.executeQuery("PRAGMA index_info('" + indexName + "')")) {
-					while (columns.next()) {
-						actualColumns.add(columns.getString("name"));
+		// Query SQLite's table-valued PRAGMA functions so schema object names remain
+		// bound values rather than being concatenated into SQL text.
+		try (PreparedStatement indexListStatement = connection.prepareStatement("""
+				SELECT name, "unique" AS is_unique
+				FROM pragma_index_list(?)
+				ORDER BY seq
+				""")) {
+			indexListStatement.setString(1, tableName);
+			try (ResultSet indexes = indexListStatement.executeQuery()) {
+				while (indexes.next()) {
+					if (indexes.getInt("is_unique") == 0) {
+						continue;
 					}
-				}
 
-				// Match the complete ordered column list, not a prefix of a larger unique key.
-				if (actualColumns.equals(expectedColumns)) {
-					return true;
+					// Inspect the complete ordered column list for each unique index without
+					// treating the SQLite-supplied index name as executable SQL.
+					String indexName = indexes.getString("name");
+					List<String> actualColumns = new ArrayList<>();
+					try (PreparedStatement indexInfoStatement = connection.prepareStatement("""
+							SELECT name
+							FROM pragma_index_info(?)
+							ORDER BY seqno
+							""")) {
+						indexInfoStatement.setString(1, indexName);
+						try (ResultSet columns = indexInfoStatement.executeQuery()) {
+							while (columns.next()) {
+								actualColumns.add(columns.getString("name"));
+							}
+						}
+					}
+
+					// Match the complete ordered column list, not a prefix of a larger unique
+					// key.
+					if (actualColumns.equals(expectedColumns)) {
+						return true;
+					}
 				}
 			}
 		}

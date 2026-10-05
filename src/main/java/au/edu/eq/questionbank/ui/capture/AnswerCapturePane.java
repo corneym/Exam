@@ -850,7 +850,7 @@ public final class AnswerCapturePane extends VBox {
 			// another booklet's AnswerFile into this target.
 			loadAssignedAnswerFile(question);
 		}
-		refreshAnswerPresentation(question, usesAnswerDocument);
+		refreshAnswerPresentation(question);
 	}
 
 	private void beginAnswerSave() {
@@ -1820,7 +1820,7 @@ public final class AnswerCapturePane extends VBox {
 		return true;
 	}
 
-	private void refreshAnswerPresentation(Question question, boolean usesAnswerDocument) {
+	private void refreshAnswerPresentation(Question question) {
 		refreshAnswerRegionList();
 		if (question.hasAnswer()) {
 			showAcceptedRegionStatus();
@@ -1828,7 +1828,8 @@ public final class AnswerCapturePane extends VBox {
 		updateMultipleChoiceAnswerVisibility(question);
 		updateAnswerRegionControlsVisibility(question);
 
-		// Both supported response types may own an Answer document.
+		// Both supported response types may own an Answer document, so presentation
+		// derives PDF-control visibility directly from the selected Question.
 		updateAnswerPdfControlsVisibility(question);
 		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
 			selectedAnswerQuestionLabel.setText(answerStatusPrefix(question) + " — response type unresolved; "

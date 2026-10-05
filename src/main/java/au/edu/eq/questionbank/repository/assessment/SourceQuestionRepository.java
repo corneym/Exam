@@ -49,5 +49,5 @@ public interface SourceQuestionRepository {
 	 * @return the source question with the persisted replacement state
 	 * @throws IllegalStateException if the identified row cannot be updated
 	 */
-	SourceQuestion updatesharedContextStatus(SourceQuestion sourceQuestion, SharedContextStatus sharedContextStatus);
+	SourceQuestion updateSharedContextStatus(SourceQuestion sourceQuestion, SharedContextStatus sharedContextStatus);
 }

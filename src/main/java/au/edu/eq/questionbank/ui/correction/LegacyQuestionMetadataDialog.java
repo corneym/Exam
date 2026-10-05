@@ -39,13 +39,6 @@ public final class LegacyQuestionMetadataDialog
 	/**
 	 * Creates the legacy metadata editor.
 	 *
-	 * @param owner                dialog owner
-	 * @param question             question being corrected
-	 * @param curriculumRepository curriculum hierarchy lookup
-	 */
-	/**
-	 * Creates the legacy metadata editor.
-	 *
 	 * @param owner    dialog owner
 	 * @param question question being corrected
 	 * @throws NullPointerException if either argument is {@code null}
@@ -74,10 +67,32 @@ public final class LegacyQuestionMetadataDialog
 
 			// Classification is deliberately excluded from metadata correction.
 			// Full curriculum reclassification is handled by Edit Question.
-			return new Result(questionCodeField.getText().trim(), Integer.parseInt(marksField.getText().trim()),
-					sharedContextRequiredCheckBox.isSelected(), responseTypeBox.getValue());
+			Integer marks = parsePositiveMarks(marksField.getText());
+			if (marks == null) {
+
+				// Save is normally disabled for invalid marks, but result creation retains its
+				// own defensive boundary rather than allowing NumberFormatException to escape.
+				return null;
+			}
+			return new Result(questionCodeField.getText().trim(), marks, sharedContextRequiredCheckBox.isSelected(),
+					responseTypeBox.getValue());
 		});
 		getDialogPane().setPrefWidth(DIALOG_WIDTH);
+	}
+
+	static Integer parsePositiveMarks(String text) {
+		if (text == null || text.isBlank()) {
+			return null;
+		}
+		try {
+
+			// Legacy metadata accepts positive whole-number marks only. Invalid user
+			// input is represented as no parsed value rather than an exception.
+			int marks = Integer.parseInt(text.strip());
+			return marks > 0 ? marks : null;
+		} catch (NumberFormatException exception) {
+			return null;
+		}
 	}
 
 	private void configureControls() {
@@ -180,13 +195,10 @@ public final class LegacyQuestionMetadataDialog
 		if (responseTypeBox.getValue() == null) {
 			return false;
 		}
-		try {
 
-			// Marks are the only numeric editable metadata and must remain positive.
-			return Integer.parseInt(marksField.getText().trim()) > 0;
-		} catch (NumberFormatException exception) {
-			return false;
-		}
+		// Validation and result creation share one guarded conversion so they cannot
+		// disagree about whether the entered marks are valid.
+		return parsePositiveMarks(marksField.getText()) != null;
 	}
 
 	private String responseTypeLabel(QuestionResponseType responseType) {

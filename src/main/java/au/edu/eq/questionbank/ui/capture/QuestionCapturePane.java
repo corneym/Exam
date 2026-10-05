@@ -2720,6 +2720,14 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void saveQuestion() {
+		Integer marks = QuestionCaptureValidator.parsePositiveMarks(marksField.getText());
+		if (marks == null) {
+
+			// Save normally follows successful form validation, but retain a defensive
+			// boundary so malformed marks can never escape as NumberFormatException.
+			showAlert(Alert.AlertType.WARNING, "Question is incomplete.", "Marks must be a positive whole number.");
+			return;
+		}
 		int previousImportedIndex = -1;
 		boolean hadStoredContent = false;
 		Question existingQuestion = null;
@@ -2732,10 +2740,12 @@ public final class QuestionCapturePane extends VBox {
 			previousImportedIndex = selectedImportedQuestionIndex();
 			hadStoredContent = !importedQuestion.getContentParts().isEmpty();
 		}
+
+		// Persist the already-validated numeric marks rather than reparsing raw UI
+		// text at the persistence boundary.
 		SqliteQuestionCaptureService.Request request = SqliteQuestionCaptureService.Request.withContent(
-				captureOperation(), bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(),
-				Integer.parseInt(marksField.getText().trim()), List.copyOf(pendingContentParts),
-				curriculumSelectionModel.getClassification(), selectedResponseType(),
+				captureOperation(), bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(), marks,
+				List.copyOf(pendingContentParts), curriculumSelectionModel.getClassification(), selectedResponseType(),
 				sharedContextCapturePane.getSelectedContext(), pendingSharedContextForSave(),
 				continueSharedContextToNextMcq());
 		int savedPreviousImportedIndex = previousImportedIndex;
