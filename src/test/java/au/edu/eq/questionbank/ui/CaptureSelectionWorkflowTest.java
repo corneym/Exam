@@ -58,7 +58,7 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void answerSelectionSupersedesPendingQuestionSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 
-		// First create a persisted unanswered Question so that Answer capture has a
+		// First create a persisted unanswered Question so Answer capture has a
 		// legitimate target.
 		Question question = captureQuestion(robot, "Q1");
 
@@ -66,29 +66,25 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// owns the application's single pending selection.
 		dragRegionOnDisplayedPage(robot);
 		Button addQuestionRegion = lookup(robot, "#add-question-region", Button.class);
-		Button clearQuestionSelection = lookup(robot, "#clear-question-selection", Button.class);
 		assertFalse(addQuestionRegion.isDisabled());
-		assertFalse(clearQuestionSelection.isDisabled());
 
-		// Activate Answer capture for the stored Question and display its answer PDF.
-		// The old Question pane still has local state until another completed rectangle
+		// Activate Answer capture for the stored Question and display its Answer PDF.
+		// The stale Question selection remains local until the new completed rectangle
 		// explicitly takes ownership.
 		ComboBox<Question> unansweredQuestions = unansweredQuestions(robot);
 		robot.interact(() -> unansweredQuestions.getSelectionModel().select(question));
 		openAnswerPdfForTest(question);
 
 		// Completing an Answer rectangle transfers global ownership to Answer capture
-		// and must discard the stale pending Question rectangle.
+		// and discards the stale pending Question rectangle.
 		dragRegionOnDisplayedPage(robot);
 		Button addAnswerRegion = lookup(robot, "#add-answer-region", Button.class);
 		Button clearAnswerSelection = lookup(robot, "#clear-answer-selection", Button.class);
 		assertTrue(addQuestionRegion.isDisabled());
-		assertTrue(clearQuestionSelection.isDisabled());
 		assertFalse(addAnswerRegion.isDisabled());
 		assertFalse(clearAnswerSelection.isDisabled());
 
-		// The central ownership state must agree with the controls presented to the
-		// user.
+		// Central ownership must agree with the workflow currently shown.
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.ANSWER));
 	}
@@ -199,32 +195,29 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		QuestionRegion pendingRegion = field(questionCapturePane(), "currentSelection", QuestionRegion.class);
 		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
 		Button addRegion = lookup(robot, "#add-question-region", Button.class);
-		Button clearSelection = lookup(robot, "#clear-question-selection", Button.class);
 		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
 		assertNotNull(pendingRegion);
 		assertTrue(selectionRectangle.isVisible());
 		assertFalse(addRegion.isDisabled());
-		assertFalse(clearSelection.isDisabled());
 
-		// A normal click creates no valid replacement rectangle. This is the production
-		// sequence that previously hid the rectangle while retaining logical ownership.
+		// A plain click creates no replacement rectangle. This is the intended
+		// cancellation path for an unaccepted Question selection.
 		robot.clickOn("#pdf-page-view");
 		WaitForAsyncUtils.waitForFxEvents();
 
-		// Visual state, central ownership and pane-local state must now describe the
+		// Visual state, central ownership and pane-local state must all describe the
 		// same absence of a pending selection.
 		assertFalse(selectionRectangle.isVisible());
 		assertFalse(selectionState.hasPendingSelection());
 		assertNull(field(questionCapturePane(), "currentSelection", QuestionRegion.class));
 		assertTrue(addRegion.isDisabled());
-		assertTrue(clearSelection.isDisabled());
 	}
 
 	@Test
 	void clickingPdfAfterPendingSharedContextSelectionClearsVisualAndLogicalSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 
-		// A recognised multipart code exposes automatic shared-context capture.
+		// A recognised multipart code exposes automatic Shared Context capture.
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		robot.clickOn(questionCode).write("24a");
@@ -233,22 +226,20 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, sharedContext);
 		assertTrue(questionCapturePane().isCapturingSharedContext());
 
-		// Create one valid unaccepted shared context region.
+		// Create one valid unaccepted Shared Context region.
 		dragRegionOnDisplayedPage(robot);
 		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
 		SharedContextCapturePane sharedContextPane = field(questionCapturePane(), "sharedContextCapturePane",
 				SharedContextCapturePane.class);
 		Rectangle selectionRectangle = field(pdfWorkspace(), "selectionRectangle", Rectangle.class);
 		Button addRegion = lookup(robot, "#add-question-region", Button.class);
-		Button clearSelection = lookup(robot, "#clear-question-selection", Button.class);
 		assertTrue(selectionState.isOwnedBy(CaptureSelectionOwner.SHARED_CONTEXT));
 		assertTrue((boolean) invoke(sharedContextPane, "hasCurrentSelection", new Class<?>[0]));
 		assertTrue(selectionRectangle.isVisible());
 		assertFalse(addRegion.isDisabled());
-		assertFalse(clearSelection.isDisabled());
 
-		// Cancelling the rectangle must clear ownership and pane-local state without
-		// ending the shared-context capture mode itself.
+		// Clicking away clears the pending rectangle without ending Shared Context
+		// capture itself.
 		robot.clickOn("#pdf-page-view");
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(selectionRectangle.isVisible());
@@ -256,7 +247,6 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse((boolean) invoke(sharedContextPane, "hasCurrentSelection", new Class<?>[0]));
 		assertTrue(questionCapturePane().isCapturingSharedContext());
 		assertTrue(addRegion.isDisabled());
-		assertTrue(clearSelection.isDisabled());
 	}
 
 	@Test
@@ -292,24 +282,24 @@ class CaptureSelectionWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void questionRegionControlsRequirePendingSelection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Button addRegion = lookup(robot, "#add-question-region", Button.class);
-		Button clearSelection = lookup(robot, "#clear-question-selection", Button.class);
 
-		// With no pending PDF rectangle, neither action has anything compatible to
-		// operate on and both controls must remain disabled.
+		// The redundant explicit clear/discard actions have been removed.
+		assertTrue(robot.lookup("#clear-question-selection").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#clear-question-content").tryQuery().isEmpty());
+
+		// With no pending PDF rectangle, Add Region has nothing to accept.
 		assertTrue(addRegion.isDisabled());
-		assertTrue(clearSelection.isDisabled());
-
-		// Completing a Question selection creates the one pending rectangle owned by
-		// Question capture, so both actions become available.
 		dragRegionOnDisplayedPage(robot);
-		assertFalse(addRegion.isDisabled());
-		assertFalse(clearSelection.isDisabled());
 
-		// Clearing that pending rectangle removes the actionable selection and must
-		// immediately disable both controls again.
-		robot.clickOn(clearSelection);
+		// A completed Question selection makes Add Region available.
+		assertFalse(addRegion.isDisabled());
+
+		// Clicking away is the ordinary cancellation path.
+		robot.clickOn("#pdf-page-view");
+		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(addRegion.isDisabled());
-		assertTrue(clearSelection.isDisabled());
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+		assertFalse(selectionState.hasPendingSelection());
 	}
 
 	@Override

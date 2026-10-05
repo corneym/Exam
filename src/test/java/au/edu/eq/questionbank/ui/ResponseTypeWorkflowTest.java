@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -20,7 +19,6 @@ import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
-import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
@@ -124,7 +122,6 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> questions.getSelectionModel().select(question));
 		Node multipleChoiceControls = lookup(robot, "#multiple-choice-answer-controls", Node.class);
 		Node pdfControls = lookup(robot, "#answer-pdf-controls", Node.class);
-		Button choosePdf = lookup(robot, "#choose-answer-pdf", Button.class);
 		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
 		Button save = lookup(robot, "#save-answer", Button.class);
 
@@ -134,10 +131,13 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(multipleChoiceControls.isManaged());
 		assertTrue(pdfControls.isVisible());
 		assertTrue(pdfControls.isManaged());
-		assertFalse(choosePdf.isDisabled());
 
-		// MCQs never capture rectangular Answer regions even though they can display
-		// and register an Answer PDF.
+		// The assigned marking document remains relevant, but selection/replacement is
+		// owned exclusively by Exam / Assets.
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
+
+		// The default AnswerFile has not been marked as containing explanations, so
+		// this MCQ remains a simple A-D Answer workflow with no region controls.
 		assertFalse(addRegion.isVisible());
 		assertFalse(addRegion.isManaged());
 		assertTrue(save.isDisabled());
@@ -211,20 +211,25 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 
 		// Simulate historical persisted data that predates the booklet-format rule.
-		// Reopening the booklet must not rewrite an existing Question's stored type.
+		// Reactivating the booklet must not rewrite the existing Question's stored
+		// type.
 		Question existing = repository.save(originalBooklet, "WR1", "", 1,
 				List.of(new QuestionRegion(originalBooklet, 1, 0.10, 0.10, 0.70, 0.20)), classification, false, null,
 				null, QuestionResponseType.WRITTEN_RESPONSE);
-		Path storedPdf = new PdfStore(pdfDataRoot).resolve(originalBooklet.getSourceDocument().getRelativePath());
 
-		// Reopen the already-persisted booklet through the normal Open Exam workflow.
-		WaitForAsyncUtils.asyncFx(() -> {
-			examMetadataPane().beginImport();
-			examImportDialog().show();
-		}).get();
-		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(storedPdf)).get();
-		fireControl(robot, "#confirm-exam-details");
+		// Re-enter the already-persisted booklet through the current Exam/Assets
+		// workflow rather than through the retired Open Exam modal.
+		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
+		RadioButton bookletSelection = lookup(robot, "#exam-assets-question-select-" + originalBooklet.getId(),
+				RadioButton.class);
+		assertTrue(bookletSelection.isSelected());
+		fireControl(robot, "#exam-assets-use-selected-booklet");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Selecting the persisted booklet for Capture is itself the explicit request to
+		// begin ordinary new-Question capture; the retired second Start action must not
+		// be required.
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 
 		// The persisted MCQ-only booklet fixes the next genuinely new Question.
@@ -235,8 +240,8 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("1", marks.getText());
 		assertTrue(marks.isDisabled());
 
-		// A newly opened Exam does not inherit the preceding Question's curriculum
-		// classification, so select it again before capturing the new Question.
+		// Capture activation clears classification context, so deliberately select the
+		// classification for the new Question again.
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
@@ -244,8 +249,8 @@ class ResponseTypeWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(QuestionResponseType.MULTIPLE_CHOICE, newlyCaptured.getResponseType());
 		Question reloadedExisting = repository.findById(existing.getId()).orElseThrow();
 
-		// Booklet format constrains new capture only; historical persisted Question
-		// data
+		// Booklet format constrains new capture only. Historical persisted response
+		// type
 		// remains authoritative until explicitly corrected.
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedExisting.getResponseType());
 	}

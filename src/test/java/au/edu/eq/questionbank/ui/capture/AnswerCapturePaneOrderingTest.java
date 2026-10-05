@@ -33,6 +33,22 @@ class AnswerCapturePaneOrderingTest {
 			new SourceDocument(9, "Chemistry/2024/paper1.pdf"));
 
 	@Test
+	void dashboardExamScopeExcludesQuestionsFromAnotherExamInSameSubject() {
+		Question selectedExamQuestion = question(10, "4");
+		Exam otherExam = new Exam(40, chemistry, provider, 2023, "Trial Examination");
+		ExamBooklet otherBooklet = new ExamBooklet(41, otherExam, "Paper 1",
+				new SourceDocument(42, "Chemistry/2023/paper1.pdf"));
+		Question otherExamQuestion = new Question(43, otherBooklet, "1", "", 1, List.of(), descriptor, false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Subject scope alone would admit both Questions. Dashboard Answer capture adds
+		// the selected Exam as a transient second boundary.
+		List<Question> result = AnswerCapturePane.unansweredQuestionsInSourceOrder(
+				List.of(otherExamQuestion, selectedExamQuestion), Set.of(), chemistry, exam);
+		assertEquals(List.of(selectedExamQuestion), result);
+	}
+
+	@Test
 	void unansweredQueueUsesNaturalQuestionOrder() {
 		Question question10 = question(10, "10");
 		Question question3b = question(11, "3b");

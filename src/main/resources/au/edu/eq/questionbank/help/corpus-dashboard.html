@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Corpus Dashboard</title>
+	<link rel="stylesheet" href="help.css">
+</head>
+<body>
+	<main class="help-page">
+		<nav class="breadcrumbs">
+			<a href="index.html">Help</a>
+			<span>›</span>
+			<span aria-current="page">Corpus Dashboard</span>
+		</nav>
+
+		<h1>Corpus Dashboard</h1>
+
+		<section>
+			<h2>Application home</h2>
+			<p>
+				The Corpus Dashboard is the main operational home for Exam Question Bank.
+				It reports the state of the current Working Subject and provides the
+				entry points for Exam setup, capture and corpus correction.
+			</p>
+			<p>
+				Changing the Working Subject refreshes the Dashboard to show only Exams,
+				booklets and Questions belonging to that Subject.
+			</p>
+		</section>
+
+		<section>
+			<h2>Curriculum</h2>
+			<p>
+				The Curriculum section reports mapping-review status for the Working
+				Subject. Use <strong>+</strong> to add curriculum or
+				<strong>Map Curriculum</strong> to review mappings.
+			</p>
+			<p>
+				An Exam cannot be added for a Subject until that Subject has curriculum
+				available.
+			</p>
+		</section>
+
+		<section>
+			<h2>Exam and booklet hierarchy</h2>
+			<p>
+				The Exams table can be filtered by Provider, Year and declared Exam
+				state. Selecting an Exam shows its Question booklets beside it.
+			</p>
+			<p>
+				The Question Booklets table reports source availability, expected
+				Question counts, captured Question counts, classification gaps and
+				MCQ explanation coverage where applicable.
+			</p>
+			<p>
+				Use <strong>Manage Exam / Assets</strong> for structural Exam work.
+				Use the booklet-level capture actions when work belongs to a particular
+				Question booklet.
+			</p>
+		</section>
+
+		<section>
+			<h2>Outstanding Question work</h2>
+			<p>
+				The summary buttons show the main outstanding work dimensions for the
+				current Dashboard scope, including missing Question content, missing
+				Answers, unknown response type, unresolved Shared Context and missing
+				MCQ explanations.
+			</p>
+			<p>
+				Selecting a summary button narrows the Exam, booklet and Question views
+				to the relevant work.
+			</p>
+			<p>
+				The Question Work table identifies the source Exam and booklet as well
+				as the specific problem. Select a Question and use the action beneath
+				the table to complete that work.
+			</p>
+			<p>
+				For missing MCQ explanations, the selected-Question action becomes
+				<strong>Capture Explanation</strong>.
+			</p>
+		</section>
+
+		<section>
+			<h2>Capture from the Dashboard</h2>
+			<p>
+				Use <strong>Capture Questions</strong> for Question-side work in the
+				selected booklet and <strong>Capture Answers</strong> for Answer work.
+			</p>
+			<p>
+				When a booklet has required MCQ explanation work,
+				<strong>Capture MCQ Explanations</strong> opens that booklet's
+				outstanding explanation queue.
+			</p>
+			<p>
+				Dashboard-launched capture provides
+				<strong>Return to Corpus Dashboard</strong>. Returning refreshes the
+				Dashboard from persistence so completed work and counts are immediately
+				updated.
+			</p>
+		</section>
+
+		<section>
+			<h2>Mark Complete and Mark Active</h2>
+			<p>
+				Exam <strong>ACTIVE</strong> or <strong>COMPLETE</strong> is an explicit
+				lifecycle state. It is shown separately from calculated corpus findings.
+			</p>
+			<p>
+				<strong>Mark Complete</strong> becomes available only when the Exam is
+				ready for completion. Readiness requires:
+			</p>
+			<ul>
+				<li>expected Question-booklet and Answer-booklet counts are recorded and match the available assets;</li>
+				<li>every Question booklet has its Question PDF;</li>
+				<li>every Question booklet has an Expected Questions value matching its encountered top-level Question count;</li>
+				<li>every Question is classified to Descriptor level;</li>
+				<li>there is no outstanding Question content, Answer, response-type or Shared Context work; and</li>
+				<li>every required MCQ explanation has been captured for Answer booklets declared as containing explanations.</li>
+			</ul>
+			<p>
+				A COMPLETE Exam remains available for review and completion of existing
+				persisted work, but structural Exam and asset changes are locked.
+				Choose <strong>Mark Active</strong> before changing Exam structure.
+			</p>
+		</section>
+
+		<section>
+			<h2>Legacy Question import</h2>
+			<p>
+				Use <strong>Import Legacy</strong> on the Dashboard to import legacy
+				Question metadata for the Working Subject.
+			</p>
+			<p>
+				If required Exam or Question-booklet structure is missing, the workflow
+				uses Exam / Assets to resolve that structure before importing. It does
+				not maintain a separate legacy Exam-creation workflow.
+			</p>
+		</section>
+
+		<p><a href="index.html">Back to Help contents</a></p>
+	</main>
+</body>
+</html>

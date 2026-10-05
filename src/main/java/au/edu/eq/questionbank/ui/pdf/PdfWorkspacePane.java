@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -15,7 +16,6 @@ import au.edu.eq.questionbank.pdf.PdfSession;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.control.Button;
@@ -52,7 +52,6 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private static final float DISPLAY_DPI = 120;
 	private static final double MIN_SELECTION_SIZE = 5.0;
 	private static final double PAGE_CONTROL_SPACING = 10.0;
-	private static final Insets PAGE_CONTROLS_PADDING = new Insets(6, 6, 16, 6);
 	private static final double ANCHOR_MARKER_RADIUS = 5.0;
 	private static final Color STORED_REGION_FILL = Color.rgb(160, 160, 160, 0.18);
 	private static final Color STORED_REGION_STROKE = Color.rgb(110, 110, 110, 0.75);
@@ -99,6 +98,9 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private DocumentMode anchoredSelectionDocument;
 	private boolean anchoredSelectionFullWidth;
 	private boolean storedRegionScrollPending;
+	private final Button viewerCompletionButton = new Button("Finish Inspection");
+	private Runnable viewerCompletionHandler = () -> {
+	};
 
 	// Report user-driven cancellation separately from programmatic clearSelection()
 	// so the application can clear the logical owner without creating a callback
@@ -121,6 +123,59 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		pagePane.heightProperty().addListener((_, _, _) -> completePendingStoredRegionScroll());
 		pageScrollPane.viewportBoundsProperty().addListener((_, _, _) -> completePendingStoredRegionScroll());
 		getChildren().addAll(pageScrollPane, createPageControls());
+	}
+
+	/**
+	 * Clears all Exam, Answer and standalone viewer documents while leaving this
+	 * workspace available for later reuse.
+	 * <p>
+	 * Any outstanding asynchronous document load is invalidated before the existing
+	 * sessions are closed.
+	 */
+	public void clearDocuments() {
+		documentRequest++;
+		Exception failure = null;
+		try {
+			failure = closeSession(examPdfSession, failure);
+		} finally {
+			examPdfSession = null;
+		}
+		try {
+			failure = closeSession(answerPdfSession, failure);
+		} finally {
+			answerPdfSession = null;
+			answerPdfPath = null;
+		}
+		try {
+			failure = closeSession(viewerPdfSession, failure);
+		} finally {
+			viewerPdfSession = null;
+		}
+
+		// No persisted or live rectangle may survive after its source document has
+		// ceased to belong to the current application context.
+		clearStoredRegionHighlights();
+		clearSelection();
+
+		// Viewer-only actions and return state also belong to the document being
+		// discarded rather than to the reusable workspace.
+		hideViewerCompletionAction();
+		displayedDocument = DocumentMode.EXAM;
+		viewerReturnDocument = DocumentMode.EXAM;
+		currentPageNumber = 1;
+		viewerReturnPageNumber = 1;
+		examPageNumber = 1;
+		answerPageNumber = 1;
+
+		// Restore the ordinary empty-workspace presentation ready for a later Exam or
+		// Answer document.
+		pagePane.setCursor(Cursor.DEFAULT);
+		fullWidthSelectionCheckBox.setVisible(true);
+		fullWidthSelectionCheckBox.setManaged(true);
+		clearDisplayedPage();
+		if (failure != null) {
+			throw new IllegalStateException("Unable to clear the PDF workspace", failure);
+		}
 	}
 
 	/**
@@ -252,6 +307,10 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 */
 	public void closeViewerPdf() {
 		documentRequest++;
+
+		// Workflow-specific viewer actions belong only to the viewer session being
+		// closed.
+		hideViewerCompletionAction();
 		closeExistingViewerPdfSession();
 		displayedDocument = viewerReturnDocument;
 		currentPageNumber = viewerReturnPageNumber;
@@ -364,6 +423,19 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 */
 	public boolean hasExamPdf() {
 		return examPdfSession != null;
+	}
+
+	/**
+	 * Removes any workflow-specific completion action from the PDF viewer.
+	 */
+	public void hideViewerCompletionAction() {
+
+		// Reset both presentation and callback so a later ordinary viewer session
+		// cannot accidentally retain an earlier inspection workflow.
+		viewerCompletionButton.setVisible(false);
+		viewerCompletionButton.setManaged(false);
+		viewerCompletionHandler = () -> {
+		};
 	}
 
 	/**
@@ -503,6 +575,94 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	/**
+	 * Loads and renders the first Exam page away from the JavaFX application
+	 * thread.
+	 *
+	 * @param path      Exam PDF to load
+	 * @param completed callback receiving {@code null} on success or the failure
+	 */
+	public void openExamPdfAsync(Path path, Consumer<Throwable> completed) {
+		if (path == null) {
+			throw new NullPointerException("path");
+		}
+		if (completed == null) {
+			throw new NullPointerException("completed");
+		}
+		if (closed) {
+			completed.accept(new CancellationException("PDF workspace has closed"));
+			return;
+		}
+		Path normalizedPath = path.toAbsolutePath().normalize();
+		long request = ++documentRequest;
+		Task<LoadedExamPage> task = new Task<>() {
+
+			@Override
+			protected LoadedExamPage call() throws Exception {
+				PdfSession session = PdfSession.open(normalizedPath);
+				try {
+
+					// Opening and rendering are the expensive operations. Keep both off the
+					// JavaFX thread before handing the completed first page to the workspace.
+					BufferedImage rendered = session.renderPage(1, DISPLAY_DPI);
+					return new LoadedExamPage(session, SwingFXUtils.toFXImage(rendered, null));
+				} catch (Exception | Error failure) {
+					try {
+						session.close();
+					} catch (Exception closeFailure) {
+						failure.addSuppressed(closeFailure);
+					}
+					throw failure;
+				}
+			}
+		};
+		task.setOnSucceeded(_ -> {
+			LoadedExamPage loaded = task.getValue();
+			if (request != documentRequest) {
+
+				// A later document operation owns the workspace. Close this stale worker
+				// result instead of allowing it to replace the current document.
+				CancellationException stale = new CancellationException("PDF view changed during loading");
+				Exception closeFailure = closeSession(loaded.session(), null);
+				if (closeFailure != null) {
+					stale.addSuppressed(closeFailure);
+				}
+				completed.accept(stale);
+				return;
+			}
+			Exception closeFailure = closeSession(examPdfSession, null);
+			examPdfSession = null;
+			if (closeFailure != null) {
+
+				// The newly loaded session must not leak when replacement of the old Exam
+				// session cannot be completed cleanly.
+				Exception loadedCloseFailure = closeSession(loaded.session(), null);
+				if (loadedCloseFailure != null) {
+					closeFailure.addSuppressed(loadedCloseFailure);
+				}
+				completed.accept(closeFailure);
+				return;
+			}
+			rememberCurrentPageNumber();
+			clearSelection();
+			clearStoredRegionHighlights();
+			examPdfSession = loaded.session();
+			displayedDocument = DocumentMode.EXAM;
+			examPageNumber = 1;
+			currentPageNumber = examPageNumber;
+			pagePane.setCursor(Cursor.DEFAULT);
+			fullWidthSelectionCheckBox.setVisible(true);
+			fullWidthSelectionCheckBox.setManaged(true);
+			applyPageImage(loaded.image(), examPdfSession);
+			completed.accept(null);
+		});
+		task.setOnFailed(_ -> completed.accept(request == documentRequest ? task.getException()
+				: new CancellationException("PDF view changed during loading")));
+
+		// A virtual thread keeps PDFBox open/render work completely outside JavaFX.
+		Thread.ofVirtual().name("exam-pdf-load").start(task);
+	}
+
+	/**
 	 * Opens a standalone PDF for viewing without making it an exam or answer
 	 * source.
 	 *
@@ -513,6 +673,10 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		if (path == null) {
 			throw new NullPointerException("path");
 		}
+
+		// A viewer begins as an ordinary read-only viewer. A specialised workflow may
+		// explicitly add its own completion action after the PDF has opened.
+		hideViewerCompletionAction();
 		closeExistingViewerPdfSession();
 		try {
 			viewerPdfSession = PdfSession.open(path);
@@ -677,6 +841,31 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		}
 		currentPageNumber = pageNumber;
 		showCurrentPage();
+	}
+
+	/**
+	 * Shows an explicit completion action for the current read-only viewer
+	 * workflow.
+	 *
+	 * @param buttonText visible action text
+	 * @param handler    action invoked when the user completes the viewer workflow
+	 * @throws NullPointerException     if either argument is {@code null}
+	 * @throws IllegalArgumentException if {@code buttonText} is blank
+	 */
+	public void showViewerCompletionAction(String buttonText, Runnable handler) {
+		if (buttonText == null) {
+			throw new NullPointerException("buttonText");
+		}
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+		if (buttonText.isBlank()) {
+			throw new IllegalArgumentException("buttonText must not be blank");
+		}
+		viewerCompletionHandler = handler;
+		viewerCompletionButton.setText(buttonText);
+		viewerCompletionButton.setManaged(true);
+		viewerCompletionButton.setVisible(true);
 	}
 
 	private void applyPageImage(Image image, PdfSession session) {
@@ -867,6 +1056,17 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		previousButton.setDisable(true);
 		nextButton.setDisable(true);
 		nextButton.setId("next-pdf-page");
+		viewerCompletionButton.setId("finish-pdf-inspection");
+		viewerCompletionButton.setVisible(false);
+		viewerCompletionButton.setManaged(false);
+		viewerCompletionButton.setOnAction(_ -> {
+
+			// Finish the current JavaFX button event before the application closes VIEWER
+			// mode and opens the next modal workflow. Opening the count dialog directly
+			// inside this event can leave nested dialog processing in an invalid state.
+			Runnable completionHandler = viewerCompletionHandler;
+			Platform.runLater(completionHandler);
+		});
 		pageNumberField.setId("pdf-page-number");
 		pageNumberField.setPrefColumnCount(PAGE_FIELD_COLUMNS);
 		pageNumberField.setMaxWidth(PAGE_FIELD_MAX_WIDTH);
@@ -929,10 +1129,14 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	}
 
 	private HBox createPageControls() {
+
+		// Stable ids let workflow tests verify the empty PDF presentation without
+		// depending on visible-text lookup or scene-graph ordering.
+		pageLabel.setId("pdf-page-label");
+		pageNumberField.setId("pdf-page-number");
 		HBox pageControls = new HBox(PAGE_CONTROL_SPACING, previousButton, pageLabel, new Label("Go to:"),
-				pageNumberField, nextButton, fullWidthSelectionCheckBox);
+				pageNumberField, nextButton, fullWidthSelectionCheckBox, viewerCompletionButton);
 		pageControls.setAlignment(Pos.CENTER);
-		pageControls.setPadding(PAGE_CONTROLS_PADDING);
 		return pageControls;
 	}
 
@@ -1212,6 +1416,17 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	 */
 	public record RegionSelection(DocumentMode documentMode, int pageNumber, double x, double y, double width,
 			double height) {
+	}
+
+	private record LoadedExamPage(PdfSession session, Image image) {
+
+		private LoadedExamPage {
+
+			// A completed worker result must contain both ownership of its PDF session and
+			// the rendered first page that will be published to JavaFX.
+			Objects.requireNonNull(session, "session");
+			Objects.requireNonNull(image, "image");
+		}
 	}
 
 	private record StoredRegionHighlight(RegionSelection region, Rectangle rectangle) {

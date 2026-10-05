@@ -1,93 +1,79 @@
 # Exam Question Bank Documentation
 
-This directory contains the canonical project documentation for the Exam
-Question Bank application. GitHub repository state, implemented code and tests
-remain the source of truth when documentation and remembered chat context
-disagree.
+This directory contains the canonical project documentation for the Exam Question Bank application. Repository code, tests, GitHub Issues and pull-request/CI state remain authoritative when documentation and remembered chat context disagree.
 
 ## Canonical documents
 
-- [`development-roadmap.md`](development-roadmap.md) --- durable project
-  history, architectural evolution and forward roadmap.
-- [`design/backlog.md`](design/backlog.md) --- deliberately deferred/unresolved
-  work that is not active sprint scope or committed next-sprint scope.
-- [`design/sprint-*.md`](design/) --- detailed sprint design and evidence. The
-  active sprint document also carries current status during that sprint.
-- [`release-build.md`](release-build.md) --- repeatable Windows release,
-  versioning, packaging and installation-verification procedure.
-- [`Working-Instructions.md`](Working-Instructions.md) --- working rules for
-  repository-guided development.
+- [`development-roadmap.md`](development-roadmap.md) — durable project history, architectural evolution and forward roadmap.
+- [`design/backlog.md`](design/backlog.md) — deliberately deferred or unresolved work that is not active closeout scope.
+- [`design/sprint-*.md`](design/) — detailed sprint design, implementation decisions and verification evidence.
+- [`release-build.md`](release-build.md) — repeatable Windows release, versioning, packaging and installation-verification procedure.
+- [`Working-Instructions.md`](Working-Instructions.md) — repository-guided development rules. This operational file is maintained separately and is not rewritten as part of sprint-history consolidation.
 
-The former `project-history.md`, `current-status.md` and
-`design/architecture-evolution.md` are retired after consolidation into the
-roadmap and active-sprint model.
+The former `project-history.md`, `current-status.md` and `design/architecture-evolution.md` remain retired after consolidation into the roadmap/sprint-document model.
 
 ## Current development position
 
-Sprints 01--11 are complete and merged.
+Sprints 01–11 are complete and merged.
 
-Sprint 11 --- Release 0.1 --- merged to protected `main` through pull request
-#39 on 27 September 2026.
+Sprint 11 — Release 0.1 — merged to protected `main` through pull request #39 on 27 September 2026. Merge commit: `1ccbb350a693568231bd14582ffbecc7684fb79a`.
 
-Merge commit: `1ccbb350a693568231bd14582ffbecc7684fb79a`.
+Sprint 12 implementation is complete on `feature/sprint-12` in PR [#88](https://github.com/corneym/Exam/pull/88), with **pre-merge release verification passed**. Initial and subsequent PR CI checkpoints have been green. Its detailed final implementation record is:
 
-Final feature-branch GitHub Actions CI run 81 completed successfully.
+`design/sprint-12-release-0.2.md`
 
-Its detailed final-state record is:
+Sprint 12 delivered the application-level Working Subject and Corpus Dashboard home, Exam/Assets management, Exam lifecycle and completion gating, managed-document hashing and safe source correction, streamlined Question/Answer capture, required MCQ explanation completion where declared by the AnswerFile, legacy-import reconciliation, maintained Help and extensive regression hardening.
 
-`design/sprint-11-release-0.1.md`
+Final pre-PR verification passed **1,031 non-UI tests** (3 expected skips), **342 UI tests**, and the combined **1,373-test AllTests** run (3 expected skips), all with zero failures/errors. Maven `clean verify`, strict Javadoc, Spotless and `git diff --check` also passed. The final review additionally removed duplicate Dashboard MCQ-explanation handler wiring, hardened TestFX scene-graph lookups/observable save waits, and added direct SQLite regression coverage for destructive Exam asset deletion.
 
-Sprint 11 delivered:
+The formal `scripts/build-release.ps1` gate passed and produced the Release 0.2 MSI. Maven/application/MSI version is **0.2**. Manual installed-MSI verification outside Eclipse passed: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2, normal shutdown, successful uninstall, and configuration/data survival. Two release-independent hard-coded 0.1 test expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest` were corrected during the gate. Protected-main merge and final post-merge release evidence remain pending; issue #64 remains open until final merge closeout. Sprint 12 is not yet merged and Release 0.2 is not yet finally published.
 
-1. composed integration regressions;
-2. clipboard/Snipping Tool Question capture with ordered mixed image/PDF
-   content;
-3. Question Search Dialog redesign;
-4. application tooltips;
-5. documented Help system;
-6. Help -> About and authoritative version infrastructure;
-7. self-contained Windows app-image/MSI packaging;
-8. a gated Release 0.1 build and install/uninstall verification.
+The latest supported SQLite schema on `feature/sprint-12` is **19**.
 
-Sprint 11 closeout is complete. Release 0.1 implementation, local release
-verification, feature-branch CI and protected-main merge are all complete.
+## Sprint 12 issue evidence
 
-Sprint 12 is reserved for Corpus Audit -> Corpus Dashboard redesign and richer
-Question filtering.
+GitHub Issues are part of the durable evidence for Sprint 12. The consolidated sprint document records the final accepted behaviour, including places where later acceptance comments superseded earlier issue wording.
 
-The latest supported SQLite schema is version **14**.
+Important examples include:
+
+- #43–#50 — Exam/Assets, planning metadata, hashing, replacement and lifecycle foundations;
+- #51–#54, #59, #70, #71, #79 and #84 — capture workflow and UI closeout;
+- #55–#57 and #72 — AnswerFile explanation capability and capture/retrofit foundations;
+- #58, #60–#62, #65–#67, #76, #77 and #81 — Corpus Dashboard, Subject ownership, audit/reporting and completion rules;
+- #68 — Dashboard-owned legacy import with authoritative Exam/Assets preflight;
+- #69 and #74 — Exam metadata correction and reusable suggestion maintenance;
+- #75 — asynchronous Working Subject refresh;
+- #80 — destructive Exam asset deletion;
+- #63 — maintained Help;
+- #22 — superseded by the implemented reporting/reconciliation issues above;
+- #73 — closed as not planned; mixed booklets retain one total expected top-level Question count;
+- #34 — already covered by the existing pre-v13 restore/migration regression and closed;
+- #64 — automated Release 0.2 gate and manual MSI verification passed; open pending final merge closeout.
 
 ## Status vocabulary
 
-- **IMPLEMENTED** --- coded and supported by repository/test evidence.
-- **VERIFIED** --- implemented and exercised by relevant automated or explicit
-  manual verification.
-- **DECIDED** --- adopted design or architectural rule.
-- **PLANNED** --- agreed work not yet implemented.
-- **PROPOSED** --- discussed future work not yet adopted as active scope.
-- **SUPERSEDED** --- earlier implementation/design replaced.
-- **REJECTED** --- deliberately not to be implemented as a forward direction.
-- **CURRENT** --- newest known implementation or design position.
+- **IMPLEMENTED** — coded and supported by repository/test evidence.
+- **VERIFIED** — implemented and exercised by relevant automated or explicit manual verification.
+- **DECIDED** — adopted design or architectural rule.
+- **PLANNED** — agreed work not yet implemented.
+- **PROPOSED** — discussed future work not yet adopted as active scope.
+- **SUPERSEDED** — earlier implementation/design replaced.
+- **REJECTED** — deliberately not to be implemented as a forward direction.
+- **CURRENT** — newest known implementation or design position.
 
 ## Evidence rule
 
-Do not promote a chat prototype, standalone workbook, planned feature or desired
-behaviour into current application functionality without repository,
-persistence or test evidence.
+Do not promote a chat prototype, standalone workbook, planned feature or desired behaviour into current application functionality without repository, persistence, test or accepted manual-verification evidence.
 
-The standalone Chemistry 2019 -> 2025 mapping workbook remains reference
-material, not authoritative application state. Mapping decisions come from the
-application's human-reviewed SQLite workflow.
+The standalone Chemistry 2019 → 2025 mapping workbook remains reference material rather than authoritative application state. Mapping decisions come from the application’s human-reviewed SQLite workflow.
 
-Short-lived working defects are tracked as Eclipse task markers. A requirement
-or defect belongs in `design/backlog.md` only when deliberately deferred beyond
-active/committed sprint work.
+Short-lived working defects are tracked locally or through active GitHub work. A requirement belongs in `design/backlog.md` only when deliberately deferred beyond current closeout work.
 
 ## Automated tests and release builds
 
 Useful local development commands are:
 
-``` text
+```text
 .\mvnw.cmd test
 .\mvnw.cmd -Pheadless-ui-tests test
 .\mvnw.cmd -Pui-tests test
@@ -95,43 +81,23 @@ Useful local development commands are:
 .\mvnw.cmd spotless:check
 ```
 
-Use the platform-appropriate `./mvnw` form on Unix-like systems where
-applicable.
+Use the platform-appropriate `./mvnw` form on Unix-like systems where applicable.
 
 The Windows release gate is:
 
-``` powershell
+```powershell
 .\scripts\build-release.ps1
 ```
 
-A real release requires a clean working tree. The script validates and advances
-the `major.minor` release version, then runs formatting, non-UI tests, headless
-UI tests, strict Javadoc and MSI packaging. Use an explicit `-Version` when a
-specific release number is required. `-AllowDirty` is for release-script
-development/validation rather than a formal release.
-
-See [`release-build.md`](release-build.md) for prerequisites, versioning rules,
-artifact locations and the post-build install/uninstall smoke test.
-
-GitHub Actions runs separate non-UI, remaining-UI and workflow-UI jobs. The
-current feature-branch checks must be green before protected-main merge.
+A formal release requires a clean working tree. The release script owns version advancement, formatting verification, non-UI tests, headless UI tests, strict Javadoc and MSI packaging. See [`release-build.md`](release-build.md).
 
 ## Documentation lifecycle
 
-1. Keep the active sprint document current as work is designed, implemented and
-   verified.
-2. At sprint closeout, preserve that sprint document as the detailed immutable
-   record.
-3. Fold durable history, architecture changes and forward sequencing into
-   `development-roadmap.md`.
-4. Make the next sprint document the current-status record.
-5. Keep deliberately deferred work in `design/backlog.md`.
-6. Do not duplicate active or committed next-sprint scope in the backlog.
-7. Preserve explicit rejected/superseded decisions where they prevent stale
-   ideas returning as future work.
-8. Keep standalone data artefacts distinct from application integration.
-9. Use Eclipse task markers for short-lived working issues.
-10. Keep `release-build.md` aligned with the actual release scripts and package
-    prerequisites.
-11. Re-run the release gate as appropriate after final code changes before
-    protected-main merge.
+1. Keep the active sprint document current while implementation is changing.
+2. At closeout, preserve the sprint document as the detailed implementation/evidence record.
+3. Fold durable architecture/history into `development-roadmap.md`.
+4. Keep deliberately deferred work in `design/backlog.md`.
+5. Keep release mechanics in `release-build.md`.
+6. Do not duplicate active closeout work in the backlog.
+7. Preserve explicit rejected/superseded decisions where they prevent stale ideas returning.
+8. Remove temporary design sketches after their useful content has been consolidated into the sprint document.

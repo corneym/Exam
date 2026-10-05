@@ -32,6 +32,7 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 	private final TextField newSubjectField = new TextField();
 	private final TextField versionField = new TextField();
 	private final CheckBox currentCheckBox = new CheckBox();
+	private final Subject fixedSubject;
 
 	/**
 	 * Creates a dialog that can add a syllabus to an existing or new Subject.
@@ -40,11 +41,29 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 	 * @param subjects existing Subjects available for selection
 	 */
 	public NewCurriculumDialog(Window owner, List<Subject> subjects) {
+		this(owner, subjects, null);
+	}
+
+	/**
+	 * Creates a new-curriculum dialog fixed to one authoritative application
+	 * Subject.
+	 *
+	 * @param owner   owner window
+	 * @param subject Subject that will own the new syllabus
+	 * @throws NullPointerException if {@code subject} is {@code null}
+	 */
+	public NewCurriculumDialog(Window owner, Subject subject) {
+		this(owner, List.of(subject), subject);
+	}
+
+	private NewCurriculumDialog(Window owner, List<Subject> subjects, Subject fixedSubject) {
 		if (subjects == null) {
 			throw new NullPointerException("subjects");
 		}
+		this.fixedSubject = fixedSubject;
 		setTitle("New Curriculum");
-		setHeaderText("Create a syllabus for curriculum authoring");
+		setHeaderText(fixedSubject == null ? "Create a syllabus for curriculum authoring"
+				: "Create a syllabus for " + fixedSubject.getName());
 		initOwner(owner);
 		ButtonType createButtonType = new ButtonType("Create", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(createButtonType, ButtonType.CANCEL);
@@ -61,28 +80,42 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 		subjectBox.setMaxWidth(Double.MAX_VALUE);
 		newSubjectField.setPromptText("e.g. Engineering");
 		versionField.setPromptText("e.g. 2025");
-		if (subjects.isEmpty()) {
-			existingSubjectButton.setDisable(true);
-			newSubjectButton.setSelected(true);
-		} else {
-			existingSubjectButton.setSelected(true);
-			subjectBox.getSelectionModel().selectFirst();
-		}
 		existingSubjectButton.selectedProperty().addListener((_, _, _) -> refreshSubjectMode());
 		newSubjectButton.selectedProperty().addListener((_, _, _) -> refreshSubjectMode());
 		GridPane grid = new GridPane();
 		grid.setHgap(FORM_COLUMN_GAP);
 		grid.setVgap(FORM_ROW_GAP);
 		grid.setPadding(new Insets(FORM_PADDING));
-		grid.add(new Label("Subject:"), 0, 0);
-		grid.add(existingSubjectButton, 1, 0);
-		grid.add(subjectBox, 1, 1);
-		grid.add(newSubjectButton, 1, 2);
-		grid.add(newSubjectField, 1, 3);
-		grid.add(new Label("Syllabus version:"), 0, 4);
-		grid.add(versionField, 1, 4);
-		grid.add(new Label("Current syllabus:"), 0, 5);
-		grid.add(currentCheckBox, 1, 5);
+		if (fixedSubject == null) {
+			if (subjects.isEmpty()) {
+				existingSubjectButton.setDisable(true);
+				newSubjectButton.setSelected(true);
+			} else {
+				existingSubjectButton.setSelected(true);
+				subjectBox.getSelectionModel().selectFirst();
+			}
+			grid.add(new Label("Subject:"), 0, 0);
+			grid.add(existingSubjectButton, 1, 0);
+			grid.add(subjectBox, 1, 1);
+			grid.add(newSubjectButton, 1, 2);
+			grid.add(newSubjectField, 1, 3);
+			grid.add(new Label("Syllabus version:"), 0, 4);
+			grid.add(versionField, 1, 4);
+			grid.add(new Label("Current syllabus:"), 0, 5);
+			grid.add(currentCheckBox, 1, 5);
+		} else {
+			Label fixedSubjectLabel = new Label(fixedSubject.getName());
+			fixedSubjectLabel.setId("new-curriculum-fixed-subject");
+			fixedSubjectLabel.setStyle("-fx-font-weight: bold;");
+			subjectBox.setValue(fixedSubject);
+			existingSubjectButton.setSelected(true);
+			grid.add(new Label("Subject:"), 0, 0);
+			grid.add(fixedSubjectLabel, 1, 0);
+			grid.add(new Label("Syllabus version:"), 0, 1);
+			grid.add(versionField, 1, 1);
+			grid.add(new Label("Current syllabus:"), 0, 2);
+			grid.add(currentCheckBox, 1, 2);
+		}
 		getDialogPane().setContent(grid);
 		Button createButton = (Button) getDialogPane().lookupButton(createButtonType);
 		createButton.setId("create-curriculum");
@@ -96,6 +129,12 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 	 * @return trimmed Subject name
 	 */
 	public String getSubjectName() {
+		if (fixedSubject != null) {
+
+			// Dashboard-launched curriculum creation cannot redirect itself to another
+			// Subject.
+			return fixedSubject.getName();
+		}
 		if (newSubjectButton.isSelected()) {
 			return newSubjectField.getText().strip();
 		}
@@ -122,14 +161,16 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 	}
 
 	private boolean isValid() {
-		if (newSubjectButton.isSelected()) {
-			if (getSubjectName().isBlank()) {
-				newSubjectField.requestFocus();
+		if (fixedSubject == null) {
+			if (newSubjectButton.isSelected()) {
+				if (getSubjectName().isBlank()) {
+					newSubjectField.requestFocus();
+					return false;
+				}
+			} else if (subjectBox.getValue() == null) {
+				subjectBox.requestFocus();
 				return false;
 			}
-		} else if (subjectBox.getValue() == null) {
-			subjectBox.requestFocus();
-			return false;
 		}
 		if (getVersionName().isBlank()) {
 			versionField.requestFocus();
@@ -139,6 +180,11 @@ public final class NewCurriculumDialog extends Dialog<ButtonType> {
 	}
 
 	private void refreshSubjectMode() {
+		if (fixedSubject != null) {
+
+			// Fixed-Subject mode has no Subject controls to enable or disable.
+			return;
+		}
 		boolean creatingSubject = newSubjectButton.isSelected();
 		subjectBox.setDisable(creatingSubject);
 		newSubjectField.setDisable(!creatingSubject);

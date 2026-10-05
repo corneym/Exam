@@ -33,6 +33,7 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+/.junit-tmp/
 
 # Local application-data archive
 /data.zip

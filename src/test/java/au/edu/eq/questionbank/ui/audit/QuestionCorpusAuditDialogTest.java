@@ -56,17 +56,31 @@ class QuestionCorpusAuditDialogTest {
 	}
 
 	@Test
-	void missingQuestionSourceRoutesToQuestionCaptureBeforeAnswer() {
-		QuestionCorpusWorkItem item = item(QuestionCorpusProblem.MISSING_QUESTION_SOURCE,
+	void missingQuestionContentRoutesToQuestionCaptureBeforeAnswer() {
+		QuestionCorpusWorkItem item = item(QuestionCorpusProblem.MISSING_QUESTION_CONTENT,
 				QuestionCorpusProblem.MISSING_ANSWER);
 		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.QUESTION,
 				QuestionCorpusAuditDialog.resolutionTarget(item));
 	}
 
 	@Test
+	void newQuestionRequestCarriesExactBooklet() {
+		ExamBooklet booklet = question.getBooklet();
+		QuestionCorpusAuditDialog.ResolutionRequest request = QuestionCorpusAuditDialog.ResolutionRequest
+				.forNewQuestionCapture(booklet);
+
+		// Booklet-level new Question capture deliberately contains no arbitrary
+		// existing Question.
+		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.NEW_QUESTION_CAPTURE, request.target());
+		assertNull(request.question());
+		assertEquals(booklet.getExam().getId(), request.exam().getId());
+		assertEquals(booklet.getId(), request.booklet().getId());
+	}
+
+	@Test
 	void unknownResponseTypeRoutesToMetadataFirst() {
 		QuestionCorpusWorkItem item = item(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE,
-				QuestionCorpusProblem.MISSING_QUESTION_SOURCE, QuestionCorpusProblem.MISSING_ANSWER);
+				QuestionCorpusProblem.MISSING_QUESTION_CONTENT, QuestionCorpusProblem.MISSING_ANSWER);
 		assertEquals(QuestionCorpusAuditDialog.ResolutionTarget.METADATA,
 				QuestionCorpusAuditDialog.resolutionTarget(item));
 	}
@@ -82,7 +96,7 @@ class QuestionCorpusAuditDialogTest {
 		EnumSet<QuestionCorpusProblem> set = EnumSet.noneOf(QuestionCorpusProblem.class);
 		set.addAll(List.of(problems));
 		QuestionCorpusStatus status = new QuestionCorpusStatus(
-				!set.contains(QuestionCorpusProblem.MISSING_QUESTION_SOURCE),
+				!set.contains(QuestionCorpusProblem.MISSING_QUESTION_CONTENT),
 				!set.contains(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE),
 				!set.contains(QuestionCorpusProblem.MISSING_ANSWER)
 						&& !set.contains(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE),

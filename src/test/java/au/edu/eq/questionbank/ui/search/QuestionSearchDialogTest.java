@@ -15,6 +15,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
@@ -45,6 +46,29 @@ class QuestionSearchDialogTest {
 		// the test Stage must have a real Scene before the Dialog is constructed.
 		stage.setScene(new Scene(new StackPane(), 300, 200));
 		stage.show();
+	}
+
+	@Test
+	void examEditingIsNotOfferedFromQuestionSearch(FxRobot robot) {
+		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(retrievalRepository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(tempDirectory),
+				new QuestionExtractor());
+		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
+		robot.interact(() -> extracted(curriculumRepository, retrievalService, previewService, dialogHolder));
+		QuestionSearchDialog dialog = dialogHolder[0];
+		robot.interact(dialog::show);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Exam identity correction has moved to Exam/Assets and must no longer appear
+		// as
+		// an alternative Question Search action.
+		assertTrue(robot.lookup("#question-search-edit-exam").tryQuery().isEmpty());
+		assertTrue(dialog.getDialogPane().getButtonTypes().stream()
+				.noneMatch(buttonType -> "Edit Exam".equals(buttonType.getText())));
+		robot.interact(dialog::close);
 	}
 
 	@Test
@@ -132,7 +156,11 @@ class QuestionSearchDialogTest {
 	private QuestionSearchDialog extracted(InMemoryCurriculumRepository curriculumRepository,
 			QuestionRetrievalService retrievalService, QuestionPreviewService previewService,
 			QuestionSearchDialog[] dialogHolder) {
-		return dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
+		Subject workingSubject = new Subject(1, "Chemistry");
+
+		// Geometry behaviour is independent of curriculum contents, but the production
+		// Dialog now always receives an authoritative workspace Working Subject.
+		return dialogHolder[0] = new QuestionSearchDialog(stage, workingSubject, curriculumRepository, retrievalService,
 				() -> List.of(), previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 
 					// Geometry tests must never attempt Question persistence.
@@ -143,8 +171,12 @@ class QuestionSearchDialogTest {
 	private void extracted(InMemoryCurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService,
 			QuestionPreviewService previewService, QuestionSearchDialog[] dialogHolder, Rectangle2D[] screenBounds) {
 		screenBounds[0] = Screen.getPrimary().getVisualBounds();
-		dialogHolder[0] = new QuestionSearchDialog(stage, curriculumRepository, retrievalService, () -> List.of(),
-				previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
+		Subject workingSubject = new Subject(1, "Chemistry");
+
+		// Geometry behaviour is independent of curriculum contents, but production
+		// Search always receives its workspace Working Subject.
+		dialogHolder[0] = new QuestionSearchDialog(stage, workingSubject, curriculumRepository, retrievalService,
+				() -> List.of(), previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 
 					// Geometry tests must never attempt Question persistence.
 					throw new AssertionError("Classification update was not expected");

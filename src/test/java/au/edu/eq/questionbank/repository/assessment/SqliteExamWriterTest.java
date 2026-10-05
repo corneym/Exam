@@ -19,8 +19,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
@@ -31,6 +33,30 @@ class SqliteExamWriterTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void backfillsMissingSourceHashAndRejectsConflictingIdentity() throws Exception {
+		Path databasePath = tempDirectory.resolve("source-hash-backfill.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SourceDocument source = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		String hash = "0123456789abcdef".repeat(4);
+		try (Connection connection = database.openConnection()) {
+			SourceDocument hashed = writer.recordSourceDocumentHash(connection, source, hash);
+
+			// A migrated NULL hash can be populated when the managed bytes are later
+			// inspected.
+			assertEquals(hash, hashed.getContentSha256());
+
+			// Re-recording the same identity is idempotent.
+			assertEquals(hash, writer.recordSourceDocumentHash(connection, hashed, hash).getContentSha256());
+
+			// The same persisted source path cannot silently become different bytes.
+			assertThrows(IllegalArgumentException.class,
+					() -> writer.recordSourceDocumentHash(connection, hashed, "b".repeat(64)));
+		}
+	}
 
 	@Test
 	void correctsExamMetadataAndBookletAndAnswerSourcePathsAtomically() throws Exception {
@@ -129,6 +155,35 @@ class SqliteExamWriterTest {
 	}
 
 	@Test
+	void createsStandaloneExamAndReusesExistingProvider() throws Exception {
+		Path databasePath = tempDirectory.resolve("new-exam-creation.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Exam externalAssessment = writer.createExam(chemistry, "QCAA", 2025, "External Assessment");
+
+		// New Exam creation establishes metadata only. Its structural source assets are
+		// supplied later through the ordinary Exam/Assets workflows.
+		assertEquals(ExamCaptureState.ACTIVE, externalAssessment.getCaptureState());
+		assertTrue(writer.findExamBooklets(externalAssessment).isEmpty());
+		assertTrue(new SqliteAnswerWriter(database, writer).findAnswerFiles(externalAssessment).isEmpty());
+		Exam mockExam = writer.createExam(chemistry, "QCAA", 2024, "Mock Exam");
+
+		// Provider identity is shared rather than creating another QCAA row for every
+		// Exam entered through New Exam mode.
+		assertEquals(externalAssessment.getProvider().getId(), mockExam.getProvider().getId());
+		assertEquals(2, writer.findExamsForSubject(chemistry).size());
+
+		// Save Exam must not silently treat an existing Exam as a successful new one.
+		assertThrows(IllegalArgumentException.class,
+				() -> writer.createExam(chemistry, "QCAA", 2025, "External Assessment"));
+
+		// The rejected duplicate must leave the authoritative Exam catalogue unchanged.
+		assertEquals(2, writer.findExamsForSubject(chemistry).size());
+	}
+
+	@Test
 	void findsAllExamBookletsWithSourceRelationships() throws Exception {
 		Path databasePath = tempDirectory.resolve("all-exam-booklets.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -160,6 +215,44 @@ class SqliteExamWriterTest {
 		// Each reconstructed booklet must carry its own persisted Question format.
 		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, found.get(0).getQuestionFormat());
 		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, found.get(1).getQuestionFormat());
+	}
+
+	@Test
+	void findsEveryExamForSubjectIncludingExamsWithoutAssets() throws Exception {
+		Path databasePath = tempDirectory.resolve("subject-exams.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		Subject physics = curriculumWriter.insertSubject("Physics");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider qcaa = writer.insertExamProvider("QCAA");
+		ExamProvider school = writer.insertExamProvider("School");
+		Exam chemistry2025 = writer.insertExam(chemistry, qcaa, 2025, "External Assessment");
+		Exam chemistry2024 = writer.insertExam(chemistry, school, 2024, "Practice Exam");
+		writer.insertExam(physics, qcaa, 2026, "External Assessment");
+
+		// Give only one Chemistry Exam a real booklet. The Subject query must not
+		// depend on source assets being present.
+		SourceDocument source = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		writer.insertExamBooklet(chemistry2025, source, "Paper 1", ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+
+		// Persist a different lifecycle state so the query also proves that Exam
+		// Setup receives authoritative ACTIVE/COMPLETE state.
+		writer.setExamCaptureState(chemistry2024, ExamCaptureState.COMPLETE);
+		List<Exam> exams = writer.findExamsForSubject(chemistry);
+		assertEquals(2, exams.size());
+
+		// Most recent Exams are presented first for setup selection.
+		assertEquals(chemistry2025.getId(), exams.get(0).getId());
+		assertEquals(ExamCaptureState.ACTIVE, exams.get(0).getCaptureState());
+
+		// An Exam with no booklet or Answer asset must still be selectable in Setup.
+		assertEquals(chemistry2024.getId(), exams.get(1).getId());
+		assertEquals(ExamCaptureState.COMPLETE, exams.get(1).getCaptureState());
+
+		// The Subject boundary is authoritative; the Physics Exam is excluded.
+		assertTrue(exams.stream().allMatch(exam -> exam.getSubject().getId() == chemistry.getId()));
 	}
 
 	@Test
@@ -214,6 +307,45 @@ class SqliteExamWriterTest {
 		assertNotNull(foundByLegacyIdentity);
 		assertEquals(exam.getId(), foundByLegacyIdentity.getId());
 		assertEquals("External Assessment", foundByLegacyIdentity.getName());
+	}
+
+	@Test
+	void findsOnlyBookletsBelongingToSelectedExam() throws Exception {
+		Path databasePath = tempDirectory.resolve("exam-booklets.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam external = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		Exam mock = writer.insertExam(chemistry, provider, 2025, "Mock Examination");
+		SourceDocument paper1Source = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		SourceDocument paper2Source = writer.insertSourceDocument("Chemistry/QCAA/2025/paper2.pdf");
+		SourceDocument mockSource = writer.insertSourceDocument("Chemistry/QCAA/2025/mock.pdf");
+		ExamBooklet paper1 = writer.insertExamBooklet(external, paper1Source, "Paper 1",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE, 25);
+		ExamBooklet paper2 = writer.insertExamBooklet(external, paper2Source, "Paper 2",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 9);
+		writer.insertExamBooklet(mock, mockSource, "Mock Paper", ExamBookletQuestionFormat.MIXED, 20);
+		List<ExamBooklet> booklets = writer.findExamBooklets(external);
+
+		// Exam Setup must see only the assets owned by the selected Exam.
+		assertEquals(2, booklets.size());
+		assertEquals(paper1.getId(), booklets.get(0).getId());
+		assertEquals(paper2.getId(), booklets.get(1).getId());
+
+		// Structural planning values must survive the repository round trip because
+		// the setup workflow edits and audits these values.
+		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, booklets.get(0).getQuestionFormat());
+		assertEquals(Integer.valueOf(25), booklets.get(0).getExpectedQuestionCount());
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, booklets.get(1).getQuestionFormat());
+		assertEquals(Integer.valueOf(9), booklets.get(1).getExpectedQuestionCount());
+		assertTrue(booklets.stream().allMatch(booklet -> booklet.getExam().getId() == external.getId()));
+
+		// Exams without booklets remain valid setup targets rather than producing an
+		// invented placeholder asset.
+		Exam empty = writer.insertExam(chemistry, provider, 2024, "No Assets Yet");
+		assertTrue(writer.findExamBooklets(empty).isEmpty());
 	}
 
 	@Test
@@ -278,6 +410,52 @@ class SqliteExamWriterTest {
 	}
 
 	@Test
+	void persistsAndFindsDuplicateSourceDocumentHashes() throws Exception {
+		Path databasePath = tempDirectory.resolve("source-document-hashes.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		String hash = "0123456789abcdef".repeat(4);
+		SourceDocument first = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf", hash);
+		SourceDocument second = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1-copy.pdf", hash);
+		SourceDocument unhashed = writer.insertSourceDocument("Chemistry/QCAA/2025/legacy.pdf");
+		assertEquals(hash, first.getContentSha256());
+		assertEquals(hash, second.getContentSha256());
+		assertNull(unhashed.getContentSha256());
+
+		// Duplicate byte content is deliberately discoverable rather than rejected by
+		// a uniqueness constraint.
+		List<SourceDocument> duplicates = writer.findSourceDocumentsByHash(hash);
+		assertEquals(2, duplicates.size());
+		assertEquals(List.of(first.getId(), second.getId()), duplicates.stream().map(SourceDocument::getId).toList());
+		assertEquals(hash, duplicates.getFirst().getContentSha256());
+
+		// A valid hash with no persisted match produces an empty result rather than an
+		// exceptional condition.
+		assertTrue(writer.findSourceDocumentsByHash("b".repeat(64)).isEmpty());
+		assertThrows(IllegalArgumentException.class, () -> writer.findSourceDocumentsByHash("not-a-sha-256"));
+		try (Connection connection = database.openConnection()) {
+			SourceDocument reloaded = writer.findSourceDocumentByPath(connection, "Chemistry/QCAA/2025/paper1.pdf");
+
+			// Reloading by the existing natural path must retain the persisted hash.
+			assertNotNull(reloaded);
+			assertEquals(hash, reloaded.getContentSha256());
+		}
+
+		// Normal Exam-booklet reconstruction must not discard source hash metadata.
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		writer.insertExamBooklet(exam, first, "Paper 1");
+		ExamBooklet reloadedBooklet = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
+		assertNotNull(reloadedBooklet);
+		assertEquals(hash, reloadedBooklet.getSourceDocument().getContentSha256());
+		List<ExamBooklet> allBooklets = writer.findAllExamBooklets();
+		assertEquals(1, allBooklets.size());
+		assertEquals(hash, allBooklets.getFirst().getSourceDocument().getContentSha256());
+	}
+
+	@Test
 	void persistsAndReloadsExplicitBookletQuestionFormat() throws Exception {
 		Path databasePath = tempDirectory.resolve("booklet-question-format.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -299,6 +477,119 @@ class SqliteExamWriterTest {
 		ExamBooklet restored = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
 		assertNotNull(restored);
 		assertEquals(ExamBookletQuestionFormat.MULTIPLE_CHOICE, restored.getQuestionFormat());
+	}
+
+	@Test
+	void persistsBookletPlanningAndBlocksStructuralChangesWhenExamIsComplete() throws Exception {
+		Path databasePath = tempDirectory.resolve("booklet-planning-lock.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		SourceDocument sourceDocument = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		ExamBooklet booklet = writer.insertExamBooklet(exam, sourceDocument, "Paper 1",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20);
+		assertEquals(20, booklet.getExpectedQuestionCount());
+		ExamBooklet changed = writer.updateExamBookletPlanning(booklet, ExamBookletQuestionFormat.MIXED, 18);
+		assertEquals(ExamBookletQuestionFormat.MIXED, changed.getQuestionFormat());
+		assertEquals(18, changed.getExpectedQuestionCount());
+
+		// Reopen through the normal lookup so neither value can be satisfied by the
+		// returned update object alone.
+		ExamBooklet reloaded = writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
+		assertNotNull(reloaded);
+		assertEquals(ExamBookletQuestionFormat.MIXED, reloaded.getQuestionFormat());
+		assertEquals(18, reloaded.getExpectedQuestionCount());
+		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+		assertTrue(completed.isComplete());
+
+		// Both changing existing booklet planning and adding a new booklet alter Exam
+		// structure and therefore require explicit reactivation.
+		assertThrows(IllegalStateException.class,
+				() -> writer.updateExamBookletPlanning(reloaded, ExamBookletQuestionFormat.WRITTEN_RESPONSE, 17));
+		SourceDocument secondSource = writer.insertSourceDocument("Chemistry/QCAA/2025/paper2.pdf");
+		assertThrows(IllegalStateException.class, () -> writer.insertExamBooklet(completed, secondSource, "Paper 2",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12));
+		Exam reactivated = writer.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
+		ExamBooklet paperTwo = writer.insertExamBooklet(reactivated, secondSource, "Paper 2",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12);
+		assertEquals(12, paperTwo.getExpectedQuestionCount());
+	}
+
+	@Test
+	void persistsExamAssetExpectationsWithoutCreatingPlaceholderAssets() throws Exception {
+		Path databasePath = tempDirectory.resolve("exam-asset-expectations.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+		ExamAssetExpectations initial = writer.findExamAssetExpectations(exam);
+		assertNull(initial.expectedQuestionBookletCount());
+		assertEquals(0, initial.availableQuestionBookletCount());
+		assertNull(initial.expectedAnswerFileCount());
+		assertEquals(0, initial.availableAnswerFileCount());
+		ExamAssetExpectations planned = writer.updateExamAssetExpectations(exam, 2, 1);
+		assertEquals(2, planned.expectedQuestionBookletCount());
+		assertEquals(0, planned.availableQuestionBookletCount());
+		assertEquals(1, planned.expectedAnswerFileCount());
+		assertEquals(0, planned.availableAnswerFileCount());
+
+		// Planning alone must not manufacture authoritative source assets.
+		assertTrue(writer.findAllExamBooklets().isEmpty());
+		assertTrue(new SqliteAnswerWriter(database, writer).findAnswerFiles(exam).isEmpty());
+		SourceDocument questionSource = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		writer.insertExamBooklet(exam, questionSource, "Paper 1", ExamBookletQuestionFormat.WRITTEN_RESPONSE, 10);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
+		answerWriter.findOrCreateAnswerFile(exam, "Marking guide", "Chemistry/QCAA/2025/answers.pdf");
+		ExamAssetExpectations partiallyAvailable = writer.findExamAssetExpectations(exam);
+
+		// Expected values remain user-declared while availability follows real rows.
+		assertEquals(2, partiallyAvailable.expectedQuestionBookletCount());
+		assertEquals(1, partiallyAvailable.availableQuestionBookletCount());
+		assertEquals(1, partiallyAvailable.expectedAnswerFileCount());
+		assertEquals(1, partiallyAvailable.availableAnswerFileCount());
+		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+
+		// Changing expectations changes Exam structure and therefore requires explicit
+		// reactivation.
+		assertThrows(IllegalStateException.class, () -> writer.updateExamAssetExpectations(completed, 3, 2));
+		Exam reactivated = writer.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
+		ExamAssetExpectations changed = writer.updateExamAssetExpectations(reactivated, 3, 2);
+		assertEquals(3, changed.expectedQuestionBookletCount());
+		assertEquals(2, changed.expectedAnswerFileCount());
+	}
+
+	@Test
+	void persistsExamCaptureStateAndExplicitReactivation() throws Exception {
+		Path databasePath = tempDirectory.resolve("exam-capture-state.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		ExamProvider provider = writer.insertExamProvider("QCAA");
+		Exam exam = writer.insertExam(chemistry, provider, 2025, "External Assessment");
+
+		// New Exams remain structurally editable until the user explicitly completes
+		// them.
+		assertEquals(ExamCaptureState.ACTIVE, exam.getCaptureState());
+		assertFalse(exam.isComplete());
+		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+		assertTrue(completed.isComplete());
+
+		// Reload through SQLite to prove completion is persisted rather than merely a
+		// replacement Java object.
+		Exam reloadedCompleted = writer.findExamByProviderAndYear(chemistry, "QCAA", 2025);
+		assertNotNull(reloadedCompleted);
+		assertEquals(ExamCaptureState.COMPLETE, reloadedCompleted.getCaptureState());
+		Exam reactivated = writer.setExamCaptureState(reloadedCompleted, ExamCaptureState.ACTIVE);
+		assertEquals(ExamCaptureState.ACTIVE, reactivated.getCaptureState());
+		Exam reloadedActive = writer.findExamByProviderAndYear(chemistry, "QCAA", 2025);
+		assertNotNull(reloadedActive);
+		assertEquals(ExamCaptureState.ACTIVE, reloadedActive.getCaptureState());
 	}
 
 	@Test

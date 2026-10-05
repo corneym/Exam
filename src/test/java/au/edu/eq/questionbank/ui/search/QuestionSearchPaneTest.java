@@ -93,20 +93,41 @@ public class QuestionSearchPaneTest {
 	private Stage stage;
 
 	@Test
-	public void explainsSearchScopeAndOutputApplicabilityWithoutChangingClassification(FxRobot robot) {
+	public void allQuestionsScopeShowsWorkingSubjectWithoutCurriculumApplicability(FxRobot robot)
+			throws TimeoutException {
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
-		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
-		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
-		assertNotNull(scopeBox.getTooltip());
-		assertTrue(scopeBox.getTooltip().getText().contains("complete stored Question bank"));
-		assertNotNull(includeButton.getTooltip());
-		assertTrue(includeButton.getTooltip().getText().contains("does not alter Question classification"));
-		assertNotNull(excludeButton.getTooltip());
-		assertTrue(excludeButton.getTooltip().getText().contains("does not alter Question classification"));
+		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+
+		// All Questions stays within the workspace Working Subject but does not use
+		// current-syllabus hierarchy controls to filter those stored Questions.
+		assertTrue(robot.lookup("#question-search-subject").tryQuery().isEmpty());
+		assertTrue(unitBox.isDisable());
+		QuestionSearchResult result = resultsList.getItems().getFirst();
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, result.scope());
+		assertEquals(historicalQuestion.getId(), result.question().getId());
+		assertTrue(result.currentApplicability().isEmpty());
+		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
+
+		// Empty applicability on the Search result means curriculum applicability was
+		// not evaluated as part of All Questions itself.
+		assertTrue(detailsArea.getText().contains("Not evaluated in All Questions scope."));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
+		QuestionOutputApplicabilityRow outputRow = outputList.getItems().getFirst();
+
+		// Selecting the Question still performs the independent applicability lookup
+		// required for Revision Output controls.
+		assertEquals(currentDescriptor, outputRow.currentNode());
+		assertFalse(outputRow.excluded());
 	}
 
 	@Test
-	public void allQuestionsCanBeFilteredBySubject(FxRobot robot) throws TimeoutException {
+	public void allQuestionsUsesWorkingSubjectFilter(FxRobot robot) throws TimeoutException {
 		Subject physics = new Subject(40, "Physics");
 		SyllabusVersion physicsVersion = new SyllabusVersion(41, physics, "2025", false);
 		Unit physicsUnit = new Unit(42, physicsVersion, "1", "Physics Unit", 1);
@@ -120,120 +141,49 @@ public class QuestionSearchPaneTest {
 		Question physicsQuestion = new Question(49, booklet, "1", "", 2, List.of(), physicsDescriptor, false);
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry, physics),
 				List.of(physicsVersion), List.of(physicsUnit, physicsTopic, physicsDescriptor));
+
+		// Supply Questions from two Subjects so the test proves that All Questions is
+		// constrained by the authoritative workspace Working Subject rather than merely
+		// reflecting the contents returned by the complete-bank supplier.
 		replaceSearchPane(robot, repository, retrievalService, () -> List.of(historicalQuestion, physicsQuestion));
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+
+		// Search no longer exposes a competing Subject selector.
+		assertTrue(robot.lookup("#question-search-subject").tryQuery().isEmpty());
+
+		// Changing Search scope is a semantic ComboBox action, so select the value
+		// directly rather than relying on pointer interaction.
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry)
-				&& subjectBox.getItems().contains(physics) && resultsList.getItems().size() == 2);
-		assertFalse(subjectBox.isDisable());
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// The pane was constructed with Chemistry as its Working Subject. The Physics
+		// Question must therefore remain outside Search even in All Questions scope.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().question().getId() == historicalQuestion.getId());
-		robot.interact(() -> subjectBox.setValue(physics));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
-				&& resultsList.getItems().getFirst().question().getId() == physicsQuestion.getId());
-	}
-
-	@Test
-	public void allQuestionsRestartsCancelledInitialSubjectLoad(FxRobot robot) throws TimeoutException {
-		SyllabusVersion historicalVersion = historicalDescriptor.getSyllabusVersion();
-		SyllabusVersion currentVersion = currentUnit.getSyllabusVersion();
-		DelayedCurriculumRepository delayedRepository = new DelayedCurriculumRepository(List.of(chemistry),
-				List.of(historicalVersion, currentVersion),
-				List.of(currentUnit, currentTopic, currentSubtopic, currentDescriptor));
-
-		// Delay the constructor's initial Subject lookup so switching scope cancels
-		// that request before any Subject reaches the UI.
-		delayedRepository.delaySubjects();
-		QuestionSearchPane pane = replaceSearchPane(robot, delayedRepository, retrievalService);
-		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, delayedRepository::hasSubjectDelayStarted);
-		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-
-		// All Questions now needs the Subject list as an optional filter, so it starts
-		// a fresh Subject load after cancelling the constructor's stale request.
-		delayedRepository.releaseDelayedSubjects();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
-		assertFalse(subjectBox.isDisable());
-		assertTrue(unitBox.isDisable());
-		assertFalse(pane.isDisabled());
-	}
-
-	@Test
-	public void allQuestionsScopeShowsCompleteBankWithoutCurriculumApplicability(FxRobot robot)
-			throws TimeoutException {
-		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
-		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
-				.queryListView();
-		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
-
-		// All Questions is independent of curriculum navigation and therefore disables
-		// controls that would otherwise imply those values are filtering the result.
-		assertFalse(subjectBox.isDisable());
-		assertTrue(unitBox.isDisable());
-		QuestionSearchResult result = resultsList.getItems().getFirst();
-		assertEquals(QuestionSearchScope.ALL_QUESTIONS, result.scope());
-		assertEquals(historicalQuestion.getId(), result.question().getId());
-		assertTrue(result.currentApplicability().isEmpty());
-		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
-
-		// Empty applicability here means it was not evaluated, not that the Question
-		// failed current-curriculum mapping.
-		assertTrue(detailsArea.getText().contains("Not evaluated in All Questions scope."));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
-		QuestionOutputApplicabilityRow outputRow = outputList.getItems().getFirst();
-
-		// All Questions itself still carries no inferred applicability, but selecting
-		// a Question performs a separate current-curriculum lookup for revision-output
-		// information.
-		assertEquals(currentDescriptor, outputRow.currentNode());
-		assertFalse(outputRow.excluded());
-	}
-
-	@Test
-	public void broadeningFromDescriptorToSubjectRestoresSubjectScope(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
-		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
-		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
-		robot.interact(() -> unitBox.setValue(currentUnit));
-		robot.interact(() -> topicBox.setValue(noMatchTopic));
-		robot.interact(() -> classificationBox.setValue(noMatchDescriptor));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No questions found.".equals(statusLabel.getText()));
-		assertTrue(resultsList.getItems().isEmpty());
-		robot.clickOn("#question-search-subject");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getValue() == null
-				&& "Select unit".equals(unitBox.getButtonCell().getText()) && resultsList.getItems().size() == 1);
-		assertEquals(null, unitBox.getValue());
-		assertEquals("Select unit", unitBox.getButtonCell().getText());
-		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).question().getId());
+		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
 	}
 
 	@Test
 	public void clickingSelectedSubtopicRestoresSubtopicSearchScope(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Working Subject navigation is established automatically before the test
+		// narrows Search through the current curriculum hierarchy.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(currentSubtopic));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> descriptorBox.getItems().contains(currentDescriptor));
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
 		assertEquals(currentDescriptor, descriptorBox.getValue());
+
+		// Pointer activation is intentional here: this regression specifically verifies
+		// the UI behaviour of clicking the already-selected hierarchy control.
 		robot.clickOn("#question-search-classification");
 		assertEquals(currentSubtopic, classificationBox.getValue());
 		assertEquals(null, descriptorBox.getValue());
@@ -241,28 +191,33 @@ public class QuestionSearchPaneTest {
 
 	@Test
 	public void descriptorSearchDisplaysResultAndProvenance(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Working Subject navigation supplies the current hierarchy without a separate
+		// Subject-selection action inside Search.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(currentSubtopic));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> descriptorBox.getItems().contains(currentDescriptor));
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		assertEquals(1, resultsList.getItems().size());
-		QuestionSearchResult result = resultsList.getItems().get(0);
+		QuestionSearchResult result = resultsList.getItems().getFirst();
 		assertEquals(historicalQuestion.getId(), result.question().getId());
 
 		// The Search wrapper preserves the Question's original stored classification
-		// and the retrieval service's current-applicability explanation separately.
+		// and its derived current applicability as separate information.
 		assertEquals(historicalDescriptor, result.question().getClassification());
 		assertEquals(List.of(currentDescriptor), result.currentApplicability());
-		robot.interact(() -> resultsList.getSelectionModel().select(0));
+		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		assertTrue(detailsArea.getText().contains("2019 1.1.1 Historical descriptor"));
 		assertTrue(detailsArea.getText().contains("2025 1.1.1.1 Current descriptor"));
 		assertTrue(detailsArea.getText().contains("Calculate the requested quantity."));
@@ -329,17 +284,21 @@ public class QuestionSearchPaneTest {
 	@Test
 	public void disposalWhileHierarchyLoadIsInFlightIgnoresLateCompletion(FxRobot robot) throws TimeoutException {
 		QuestionSearchPane pane = (QuestionSearchPane) stage.getScene().getRoot();
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Working Subject navigation is loaded automatically before a lower hierarchy
+		// request is deliberately held in flight.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		curriculumRepository.delayChildrenFor(currentUnit);
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, curriculumRepository::hasDelayStarted);
 		robot.interact(() -> {
+
+			// Disposal is intentionally repeated to retain the idempotency coverage of
+			// the original regression.
 			pane.dispose();
 			pane.dispose();
 		});
@@ -364,6 +323,9 @@ public class QuestionSearchPaneTest {
 			if (!currentNodes.contains(currentDescriptor)) {
 				return List.of();
 			}
+
+			// This fixture supplies one Question only when the current Descriptor is
+			// applicable to the requested Search nodes.
 			return List.of(new QuestionApplicabilityMatch(question, currentDescriptor));
 		};
 		QuestionRetrievalService service = new QuestionRetrievalService(repository,
@@ -371,17 +333,18 @@ public class QuestionSearchPaneTest {
 		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(question.getRegions().getFirst());
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
 		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// The replacement Pane begins its Working Subject search automatically.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayStarted);
 		robot.interact(() -> {
+
+			// Repeated disposal must remain harmless while preview work is in flight.
 			pane.dispose();
 			pane.dispose();
 		});
@@ -397,14 +360,15 @@ public class QuestionSearchPaneTest {
 	@Test
 	public void disposalWhileSearchIsInFlightIgnoresLateCompletion(FxRobot robot) throws TimeoutException {
 		QuestionSearchPane pane = (QuestionSearchPane) stage.getScene().getRoot();
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Working Subject navigation is established automatically before narrowing to
+		// the Descriptor whose Search request will be deliberately delayed.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
@@ -424,27 +388,28 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
-	public void disposingDialogPreventsFurtherHierarchyWork(FxRobot robot) {
-		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
-		QuestionSearchPane[] paneHolder = new QuestionSearchPane[1];
-		robot.interact(() -> extracted(dialogHolder, paneHolder));
-		ComboBox<Subject> subjectBox = robot.from(paneHolder[0]).lookup("#question-search-subject").queryComboBox();
-		ComboBox<CurriculumNode> unitBox = robot.from(paneHolder[0]).lookup("#question-search-unit").queryComboBox();
-		robot.interact(() -> subjectBox.setValue(chemistry));
-		WaitForAsyncUtils.waitForFxEvents();
-		assertTrue(unitBox.getItems().isEmpty());
-		assertTrue(unitBox.isDisable());
+	public void explainsSearchScopeAndOutputApplicabilityWithoutChangingClassification(FxRobot robot) {
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
+		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
+		assertNotNull(scopeBox.getTooltip());
+		assertTrue(scopeBox.getTooltip().getText().contains("Working Subject"));
+		assertNotNull(includeButton.getTooltip());
+		assertTrue(includeButton.getTooltip().getText().contains("does not alter Question classification"));
+		assertNotNull(excludeButton.getTooltip());
+		assertTrue(excludeButton.getTooltip().getText().contains("does not alter Question classification"));
 	}
 
 	@Test
 	public void hierarchyFailureClearsExistingSearchState(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Initial Working Subject navigation and Search should both complete before
+		// the lower hierarchy failure is introduced.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> resultsList.getItems().size() == 1 && unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
@@ -454,6 +419,9 @@ public class QuestionSearchPaneTest {
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> statusLabel.getText().startsWith("Curriculum navigation failed:"));
+
+		// A failed hierarchy transition must not leave results or preview information
+		// from the previous broader Search visible.
 		assertTrue(resultsList.getItems().isEmpty());
 		assertTrue(detailsArea.getText().isBlank());
 		assertTrue(previewStatus.getText().isBlank());
@@ -476,6 +444,9 @@ public class QuestionSearchPaneTest {
 			if (!currentNodes.contains(currentDescriptor)) {
 				return List.of();
 			}
+
+			// Both Questions are curriculum-applicable; only their source-PDF state
+			// differs for the preview failure assertions below.
 			return List.of(new QuestionApplicabilityMatch(missingQuestion, currentDescriptor),
 					new QuestionApplicabilityMatch(corruptQuestion, currentDescriptor));
 		};
@@ -484,12 +455,12 @@ public class QuestionSearchPaneTest {
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot),
 				new QuestionExtractor());
 		replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Working Subject Search begins automatically and supplies both applicable
+		// Questions without requiring a Search-local Subject selection.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
 		QuestionSearchResult missingResult = resultsList.getItems().stream()
 				.filter(result -> result.question().getId() == missingQuestion.getId()).findFirst().orElseThrow();
@@ -515,15 +486,15 @@ public class QuestionSearchPaneTest {
 		QuestionRetrievalRepository emptyRetrieval = _ -> List.of();
 		QuestionRetrievalService service = new QuestionRetrievalService(emptyRetrieval,
 				new CurriculumSearchNodeExpansionService(repository));
-		replaceSearchPane(robot, repository, service);
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+
+		// Physics is the application-level Working Subject for this fixture, allowing
+		// navigation validation to occur without a Search-local Subject selector.
+		replaceSearchPane(robot, physics, repository, service);
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(physics));
-		robot.interact(() -> subjectBox.setValue(physics));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> statusLabel.getText()
-				.equals("Curriculum navigation failed: " + "Subject has multiple current syllabus versions"));
+				.equals("Curriculum navigation failed: Subject has multiple current syllabus versions"));
 		assertTrue(unitBox.getItems().isEmpty());
 		assertTrue(unitBox.isDisable());
 		assertTrue(resultsList.getItems().isEmpty());
@@ -533,9 +504,9 @@ public class QuestionSearchPaneTest {
 	public void narrowedSearchStillShowsCompleteRevisionOutputApplicability(FxRobot robot) throws TimeoutException {
 		QuestionRetrievalRepository multipleApplicabilityRepository = currentNodes -> {
 
-			// Return only applicability inside the requested Search scope.
-			// A Descriptor search therefore carries one matching placement,
-			// while a Subject-wide lookup carries both.
+			// Return only applicability inside the requested Search scope. A Descriptor
+			// search therefore carries one matching placement, while a Working
+			// Subject-wide lookup carries both.
 			if (currentNodes.contains(currentDescriptor) && currentNodes.contains(noMatchDescriptor)) {
 				return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
 						new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
@@ -551,7 +522,6 @@ public class QuestionSearchPaneTest {
 		QuestionRetrievalService multipleApplicabilityService = new QuestionRetrievalService(
 				multipleApplicabilityRepository, new CurriculumSearchNodeExpansionService(curriculumRepository));
 		replaceSearchPane(robot, curriculumRepository, multipleApplicabilityService);
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
@@ -559,7 +529,9 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
 				.queryListView();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Working Subject navigation is established automatically before Search is
+		// narrowed to one current Descriptor.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
@@ -576,8 +548,8 @@ public class QuestionSearchPaneTest {
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
 
-		// Revision output is independent of the Search filter and therefore exposes
-		// both Subject-wide current placements for the selected Question.
+		// Revision Output applicability is independent of the Search filter and
+		// therefore exposes both Working Subject-wide current placements.
 		assertTrue(outputList.getItems().stream().anyMatch(row -> row.currentNode().equals(currentDescriptor)));
 		assertTrue(outputList.getItems().stream().anyMatch(row -> row.currentNode().equals(noMatchDescriptor)));
 	}
@@ -589,8 +561,9 @@ public class QuestionSearchPaneTest {
 		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
 		QuestionSearchPane[] paneHolder = new QuestionSearchPane[1];
 		robot.interact(() -> {
-			QuestionSearchDialog dialog = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
-					() -> List.of(subtopicQuestion), previewService, outputApplicabilityRepository, (_, _) -> {
+			QuestionSearchDialog dialog = new QuestionSearchDialog(stage, chemistry, curriculumRepository,
+					retrievalService, () -> List.of(subtopicQuestion), previewService, outputApplicabilityRepository,
+					(_, _) -> {
 
 						// This regression exercises Cancel and Discard.
 						// Neither path may attempt classification persistence.
@@ -683,18 +656,23 @@ public class QuestionSearchPaneTest {
 	@Test
 	public void returningFromAllQuestionsRestoresCurrentSyllabusSearch(FxRobot robot) throws TimeoutException {
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		robot.interact(() -> subjectBox.setValue(chemistry));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+
+		// Initial Search runs automatically against the Working Subject's current
+		// syllabus.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
-		assertEquals(chemistry, subjectBox.getValue());
-		assertFalse(subjectBox.isDisable());
+
+		// Scope transitions must not recreate or require an independent Subject
+		// selector.
+		assertTrue(robot.lookup("#question-search-subject").tryQuery().isEmpty());
+		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
 	}
 
 	@Test
@@ -704,23 +682,23 @@ public class QuestionSearchPaneTest {
 				return List.of();
 			}
 
-			// One historical Question is applicable at two distinct current
-			// Descriptors so the test can prove that only the selected placement
-			// is changed.
+			// One historical Question is applicable at two distinct current Descriptors
+			// so the test can prove that only the selected placement is changed.
 			return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
 					new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
 		};
 		QuestionRetrievalService multipleApplicabilityService = new QuestionRetrievalService(
 				multipleApplicabilityRepository, new CurriculumSearchNodeExpansionService(curriculumRepository));
 		replaceSearchPane(robot, curriculumRepository, multipleApplicabilityService);
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
 				.queryListView();
 		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
 		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
 		Label outputStatus = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Initial Working Subject Search returns the Question without requiring a
+		// Search-local Subject-selection action.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
@@ -728,11 +706,13 @@ public class QuestionSearchPaneTest {
 				.filter(row -> row.currentNode().equals(currentDescriptor)).findFirst().orElseThrow();
 		robot.interact(() -> outputList.getSelectionModel().select(firstPlacement));
 
-		// An included placement can be excluded, but Include is meaningless until
-		// that exclusion has actually been persisted.
+		// An included placement can be excluded, but Include is meaningless until that
+		// exclusion has actually been persisted.
 		assertTrue(includeButton.isDisable());
 		assertFalse(excludeButton.isDisable());
-		robot.clickOn("#question-search-output-exclude");
+
+		// This is a semantic button action; pointer hit testing is not under test.
+		robot.interact(excludeButton::fire);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> outputList.getItems().stream().filter(row -> row.currentNode().equals(currentDescriptor))
 						.anyMatch(QuestionOutputApplicabilityRow::excluded));
@@ -745,7 +725,9 @@ public class QuestionSearchPaneTest {
 		assertEquals("2 current placements: 1 included, 1 excluded.", outputStatus.getText());
 		assertFalse(includeButton.isDisable());
 		assertTrue(excludeButton.isDisable());
-		robot.clickOn("#question-search-output-include");
+
+		// Restore the selected placement through the same semantic control path.
+		robot.interact(includeButton::fire);
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> outputList.getItems().stream().filter(row -> row.currentNode().equals(currentDescriptor))
 						.noneMatch(QuestionOutputApplicabilityRow::excluded));
@@ -795,13 +777,13 @@ public class QuestionSearchPaneTest {
 
 	@Test
 	public void selectedDescriptorQuestionShowsStoredClassificationPath(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ComboBox<CurriculumNode> selectedUnitBox = robot.lookup("#question-search-selected-unit").queryComboBox();
 		ComboBox<CurriculumNode> selectedTopicBox = robot.lookup("#question-search-selected-topic").queryComboBox();
 		ComboBox<CurriculumNode> selectedDescriptorBox = robot.lookup("#question-search-selected-descriptor")
 				.queryComboBox();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Initial Working Subject Search supplies the stored Question automatically.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		assertEquals(historicalUnit, selectedUnitBox.getValue());
@@ -815,12 +797,13 @@ public class QuestionSearchPaneTest {
 	@Test
 	public void selectedQuestionShowsRevisionOutputExclusion(FxRobot robot) throws TimeoutException {
 		outputApplicabilityRepository.setExcluded(historicalQuestion, currentDescriptor, true);
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
 				.queryListView();
 		Label outputStatus = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Initial Working Subject Search supplies the Question whose output
+		// applicability contains the persisted exclusion.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
@@ -828,8 +811,8 @@ public class QuestionSearchPaneTest {
 		assertEquals(currentDescriptor, row.currentNode());
 		assertTrue(row.excluded());
 
-		// The selected Question remains curriculum-applicable, but its one current
-		// placement is explicitly suppressed from revision output.
+		// The Question remains curriculum-applicable while this one current placement
+		// is explicitly excluded from Revision Output.
 		assertEquals("1 current placement: 0 included, 1 excluded.", outputStatus.getText());
 	}
 
@@ -884,16 +867,15 @@ public class QuestionSearchPaneTest {
 		DelayedAllQuestionsSupplier allQuestions = new DelayedAllQuestionsSupplier(List.of(historicalQuestion));
 		replaceSearchPane(robot, curriculumRepository, retrievalService, allQuestions);
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+
+		// Start an All Questions request that deliberately remains in flight.
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, allQuestions::hasDelayStarted);
 
-		// Supersede the still-running all-bank request with a normal current-syllabus
-		// Subject search.
+		// Returning to Current Syllabus supersedes the outstanding All Questions
+		// request and restores Search directly from the fixed Working Subject.
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
-		robot.interact(() -> subjectBox.setValue(chemistry));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
 
@@ -909,23 +891,34 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
-	public void staleHierarchyLoadCannotRestoreLowerScope(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
+	public void staleHierarchyLoadCannotRestoreCurrentSyllabusControlsAfterScopeChange(FxRobot robot)
+			throws TimeoutException {
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Begin a delayed hierarchy request beneath the automatically loaded Working
+		// Subject.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		curriculumRepository.delayChildrenFor(currentUnit);
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> curriculumRepository.hasDelayStarted());
-		robot.clickOn("#question-search-subject");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> unitBox.getValue() == null && topicBox.getItems().isEmpty());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, curriculumRepository::hasDelayStarted);
+
+		// Changing Search scope invalidates the in-flight current-syllabus hierarchy
+		// request and disables its navigation controls.
+		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		assertTrue(unitBox.isDisable());
+		assertTrue(topicBox.isDisable());
+		assertTrue(topicBox.getItems().isEmpty());
+
+		// Complete the obsolete hierarchy request after the scope transition. Its late
+		// result must not restore Topic navigation into All Questions.
 		curriculumRepository.releaseDelayedChildren();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> curriculumRepository.hasDelayFinished());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, curriculumRepository::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals(null, unitBox.getValue());
-		assertEquals("Select unit", unitBox.getButtonCell().getText());
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scopeBox.getValue());
+		assertTrue(unitBox.isDisable());
+		assertTrue(topicBox.isDisable());
 		assertTrue(topicBox.getItems().isEmpty());
 		assertEquals("Select topic", topicBox.getButtonCell().getText());
 	}
@@ -945,6 +938,9 @@ public class QuestionSearchPaneTest {
 			if (!currentNodes.contains(currentDescriptor)) {
 				return List.of();
 			}
+
+			// Both Questions are applicable so selection can move while the first preview
+			// extraction is deliberately held in flight.
 			return List.of(new QuestionApplicabilityMatch(first, currentDescriptor),
 					new QuestionApplicabilityMatch(second, currentDescriptor));
 		};
@@ -953,11 +949,10 @@ public class QuestionSearchPaneTest {
 		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(first.getRegions().getFirst());
 		QuestionPreviewService replacementPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
 		replaceSearchPane(robot, curriculumRepository, service, replacementPreviewService);
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(chemistry));
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Working Subject Search supplies both Questions automatically.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
 		QuestionSearchResult firstResult = resultsList.getItems().stream()
 				.filter(result -> result.question().getId() == first.getId()).findFirst().orElseThrow();
@@ -965,6 +960,9 @@ public class QuestionSearchPaneTest {
 				.filter(result -> result.question().getId() == second.getId()).findFirst().orElseThrow();
 		robot.interact(() -> resultsList.getSelectionModel().select(firstResult));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayStarted);
+
+		// Selecting the second Question supersedes the delayed preview belonging to the
+		// first Question.
 		robot.interact(() -> resultsList.getSelectionModel().select(secondResult));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> preview.getImage() != null && preview.getImage().getWidth() == 22.0);
@@ -976,14 +974,16 @@ public class QuestionSearchPaneTest {
 
 	@Test
 	public void staleQuestionSearchCompletionCannotOverwriteNewerScope(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Navigate from the automatically loaded Working Subject to the Descriptor
+		// whose
+		// Search request will be deliberately delayed.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
@@ -994,11 +994,17 @@ public class QuestionSearchPaneTest {
 		retrievalRepository.delayNextRequestFor(currentDescriptor);
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, retrievalRepository::hasDelayStarted);
+
+		// Move to a different Topic and classification while the previous Descriptor
+		// Search is still outstanding.
 		robot.interact(() -> topicBox.setValue(noMatchTopic));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(noMatchDescriptor));
 		robot.interact(() -> classificationBox.setValue(noMatchDescriptor));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No questions found.".equals(statusLabel.getText()));
 		assertTrue(resultsList.getItems().isEmpty());
+
+		// The obsolete Descriptor Search may finish, but it must not replace the newer
+		// no-match state.
 		retrievalRepository.releaseDelayedRequest();
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, retrievalRepository::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
@@ -1038,64 +1044,24 @@ public class QuestionSearchPaneTest {
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
 		previewService = new QuestionPreviewService(new PdfStore(Path.of(".")), new QuestionExtractor());
 		outputApplicabilityRepository = new InMemoryQuestionOutputApplicabilityRepository();
-		QuestionSearchPane pane = new QuestionSearchPane(curriculumRepository, retrievalService,
+
+		// Search receives the same Subject that the application workspace would
+		// provide.
+		QuestionSearchPane pane = new QuestionSearchPane(chemistry, curriculumRepository, retrievalService,
 				() -> List.of(historicalQuestion), previewService, outputApplicabilityRepository);
 		stage.setScene(new Scene(pane, 700, 600));
 		stage.show();
 	}
 
 	@Test
-	public void subjectSelectionTriggersSearchAutomatically(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		robot.interact(() -> subjectBox.setValue(chemistry));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
-		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).question().getId());
-	}
-
-	@Test
-	public void subjectSelectionUsesOnlyCurrentSyllabus(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		robot.interact(() -> subjectBox.setValue(chemistry));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().size() == 1);
-		assertEquals(currentUnit, unitBox.getItems().get(0));
-		assertFalse(unitBox.getItems().contains(historicalUnit));
-		assertFalse(unitBox.isDisable());
-	}
-
-	@Test
-	public void subjectWithoutCurrentSyllabusLeavesNavigationDisabled(FxRobot robot) throws TimeoutException {
-		Subject historyOnly = new Subject(30, "History Only");
-		SyllabusVersion historical = new SyllabusVersion(31, historyOnly, "2020", false);
-		Unit historicalUnitOnly = new Unit(32, historical, "1", "Historical Unit", 1);
-		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(historyOnly),
-				List.of(historical), List.of(historicalUnitOnly));
-		QuestionRetrievalRepository emptyRetrieval = _ -> List.of();
-		QuestionRetrievalService service = new QuestionRetrievalService(emptyRetrieval,
-				new CurriculumSearchNodeExpansionService(repository));
-		replaceSearchPane(robot, repository, service);
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
-		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
-		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> subjectBox.getItems().contains(historyOnly));
-		robot.interact(() -> subjectBox.setValue(historyOnly));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> "No current syllabus available.".equals(statusLabel.getText()));
-		assertTrue(unitBox.getItems().isEmpty());
-		assertTrue(unitBox.isDisable());
-		assertTrue(resultsList.getItems().isEmpty());
-	}
-
-	@Test
 	public void subtopicSelectionExposesDescriptorChildren(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Working Subject navigation is loaded automatically before lower hierarchy
+		// selections are made.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
@@ -1110,22 +1076,72 @@ public class QuestionSearchPaneTest {
 
 	@Test
 	public void unitSelectionTriggersSearchAutomatically(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// Wait for Working Subject navigation before narrowing Search to the Unit.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
-		assertEquals(historicalQuestion.getId(), resultsList.getItems().get(0).question().getId());
+		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
+	}
+
+	@Test
+	public void workingSubjectTriggersSearchAutomatically(FxRobot robot) throws TimeoutException {
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+
+		// Search must begin from the workspace Working Subject without exposing or
+		// requiring a second Subject selector.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		assertTrue(robot.lookup("#question-search-subject").tryQuery().isEmpty());
+		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
+	}
+
+	@Test
+	public void workingSubjectUsesOnlyCurrentSyllabus(FxRobot robot) throws TimeoutException {
+		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
+
+		// Search loads the current-syllabus hierarchy directly from the authoritative
+		// workspace Working Subject.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().size() == 1);
+		assertEquals(currentUnit, unitBox.getItems().getFirst());
+		assertFalse(unitBox.getItems().contains(historicalUnit));
+		assertFalse(unitBox.isDisable());
+	}
+
+	@Test
+	public void workingSubjectWithoutCurrentSyllabusLeavesNavigationDisabled(FxRobot robot) throws TimeoutException {
+		Subject historyOnly = new Subject(30, "History Only");
+		SyllabusVersion historical = new SyllabusVersion(31, historyOnly, "2020", false);
+		Unit historicalUnitOnly = new Unit(32, historical, "1", "Historical Unit", 1);
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(historyOnly),
+				List.of(historical), List.of(historicalUnitOnly));
+		QuestionRetrievalRepository emptyRetrieval = _ -> List.of();
+		QuestionRetrievalService service = new QuestionRetrievalService(emptyRetrieval,
+				new CurriculumSearchNodeExpansionService(repository));
+
+		// Search must derive its curriculum navigation from this explicit Working
+		// Subject rather than from a Search-local Subject selector.
+		replaceSearchPane(robot, historyOnly, repository, service);
+		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> "No current syllabus available.".equals(statusLabel.getText()));
+		assertTrue(robot.lookup("#question-search-subject").tryQuery().isEmpty());
+		assertTrue(unitBox.getItems().isEmpty());
+		assertTrue(unitBox.isDisable());
+		assertTrue(resultsList.getItems().isEmpty());
 	}
 
 	@Test
 	public void zeroRegionLegacyQuestionReportsNoStoredImage(FxRobot robot) throws TimeoutException {
-		ComboBox<Subject> subjectBox = robot.lookup("#question-search-subject").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
-		robot.interact(() -> subjectBox.setValue(chemistry));
+
+		// The initial Working Subject search supplies the Question without requiring a
+		// separate Subject-selection action.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
@@ -1139,22 +1155,6 @@ public class QuestionSearchPaneTest {
 			document.save(path.toFile());
 		}
 		return path;
-	}
-
-	private void extracted(QuestionSearchDialog[] dialogHolder, QuestionSearchPane[] paneHolder) {
-		QuestionSearchDialog dialog = new QuestionSearchDialog(stage, curriculumRepository, retrievalService,
-				() -> List.of(historicalQuestion), previewService, outputApplicabilityRepository, (_, _) -> {
-
-					// This test exercises Dialog disposal only. A classification
-					// persistence request would indicate unrelated behaviour.
-					throw new AssertionError("Classification update was not expected");
-				});
-		QuestionSearchPane pane = (QuestionSearchPane) dialog.getDialogPane().getContent();
-		dialogHolder[0] = dialog;
-		paneHolder[0] = pane;
-		dialog.show();
-		dialog.hide();
-		dialog.dispose();
 	}
 
 	private void fireShowingDialogButton(FxRobot robot, String dialogTitle, String buttonText) throws TimeoutException {
@@ -1213,18 +1213,9 @@ public class QuestionSearchPaneTest {
 
 	private QuestionSearchPane replaceSearchPane(FxRobot robot, InMemoryCurriculumRepository repository,
 			QuestionRetrievalService service) {
-		QuestionSearchPane[] pane = new QuestionSearchPane[1];
-		robot.interact(() -> {
-			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
-			existing.dispose();
 
-			// Replacement panes retain the same revision-output repository so
-			// individual tests may preconfigure inclusion state.
-			pane[0] = new QuestionSearchPane(repository, service, () -> List.of(historicalQuestion), previewService,
-					outputApplicabilityRepository);
-			stage.setScene(new Scene(pane[0], 700, 600));
-		});
-		return pane[0];
+		// Most Search tests use Chemistry as the application-level Working Subject.
+		return replaceSearchPane(robot, chemistry, repository, service);
 	}
 
 	private QuestionSearchPane replaceSearchPane(FxRobot robot, InMemoryCurriculumRepository repository,
@@ -1234,9 +1225,9 @@ public class QuestionSearchPaneTest {
 			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
 			existing.dispose();
 
-			// Keep complete-bank retrieval and output-applicability persistence
+			// Keep Working Subject, complete-bank retrieval and output-applicability state
 			// stable while this overload varies only the preview service.
-			pane[0] = new QuestionSearchPane(repository, service, () -> List.of(historicalQuestion),
+			pane[0] = new QuestionSearchPane(chemistry, repository, service, () -> List.of(historicalQuestion),
 					replacementPreviewService, outputApplicabilityRepository);
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
@@ -1250,10 +1241,26 @@ public class QuestionSearchPaneTest {
 			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
 			existing.dispose();
 
-			// This overload varies the complete-bank source while retaining the
-			// same revision-output state for selected Questions.
-			pane[0] = new QuestionSearchPane(repository, service, allQuestionsSupplier, previewService,
+			// This overload varies the complete-bank source while retaining the workspace
+			// Working Subject and the same revision-output state.
+			pane[0] = new QuestionSearchPane(chemistry, repository, service, allQuestionsSupplier, previewService,
 					outputApplicabilityRepository);
+			stage.setScene(new Scene(pane[0], 700, 600));
+		});
+		return pane[0];
+	}
+
+	private QuestionSearchPane replaceSearchPane(FxRobot robot, Subject workingSubject,
+			InMemoryCurriculumRepository repository, QuestionRetrievalService service) {
+		QuestionSearchPane[] pane = new QuestionSearchPane[1];
+		robot.interact(() -> {
+			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
+			existing.dispose();
+
+			// Construct Search with the supplied application-level Working Subject so
+			// tests can exercise Subjects other than the normal Chemistry fixture.
+			pane[0] = new QuestionSearchPane(workingSubject, repository, service, () -> List.of(historicalQuestion),
+					previewService, outputApplicabilityRepository);
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];
@@ -1378,12 +1385,6 @@ public class QuestionSearchPaneTest {
 			delayedParent = parent;
 		}
 
-		private void delaySubjects() {
-			delaySubjectLoading = true;
-			subjectDelayStarted = new CountDownLatch(1);
-			subjectDelayRelease = new CountDownLatch(1);
-		}
-
 		private void failChildrenFor(CurriculumNode parent) {
 			failingParent = parent;
 		}
@@ -1396,21 +1397,9 @@ public class QuestionSearchPaneTest {
 			return delayStarted.getCount() == 0;
 		}
 
-		private boolean hasSubjectDelayStarted() {
-			return subjectDelayStarted.getCount() == 0;
-		}
-
 		private void releaseDelayedChildren() {
 			delayedParent = null;
 			delayRelease.countDown();
-		}
-
-		private void releaseDelayedSubjects() {
-
-			// Future Subject loads should complete normally; only the already-running load
-			// remains blocked on this latch.
-			delaySubjectLoading = false;
-			subjectDelayRelease.countDown();
 		}
 	}
 

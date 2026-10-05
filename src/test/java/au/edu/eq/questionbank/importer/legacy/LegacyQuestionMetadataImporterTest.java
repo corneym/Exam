@@ -21,19 +21,143 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusCompletionFilter;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusFilter;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusQueue;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 
 class LegacyQuestionMetadataImporterTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void ambiguousMixedLegacyQuestionRemainsUnknownDashboardWork() throws Exception {
+		Fixture fixture = createFixture("legacy-mixed-dashboard-work.db", false, false, ExamBookletQuestionFormat.MIXED,
+				null);
+		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
+				"2019");
+
+		// Reload persisted Questions so the test covers the complete importer-to-audit
+		// boundary used by Dashboard refresh.
+		List<Question> questions = new SqliteQuestionRepository(fixture.database()).findAll();
+		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(questions);
+
+		// A blank Answer in a mixed booklet is not evidence of written response. Keep
+		// the genuinely ambiguous Question in Unknown type and do not double-count it
+		// as Missing answer before its response type has been resolved.
+		assertEquals(2, summary.missingQuestionContent());
+		assertEquals(0, summary.missingAnswer());
+		assertEquals(1, summary.unresolvedSharedContext());
+		assertEquals(1, summary.unknownResponseType());
+		List<QuestionCorpusWorkItem> unknownTypes = QuestionCorpusQueue.build(questions,
+				new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.INCOMPLETE,
+						QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
+		assertEquals(1, unknownTypes.size());
+		assertEquals("21a", unknownTypes.get(0).question().getQuestionCode());
+		List<QuestionCorpusWorkItem> missingAnswers = QuestionCorpusQueue.build(questions,
+				new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.INCOMPLETE,
+						QuestionCorpusProblem.MISSING_ANSWER));
+
+		// Missing Answer becomes actionable only after the Question's response type is
+		// known, avoiding two competing Dashboard tasks for the same unresolved fact.
+		assertTrue(missingAnswers.isEmpty());
+	}
+
+	@Test
+	void authoritativeMultipleChoiceBookletResolvesNumberedLegacyQuestion() throws Exception {
+		Fixture fixture = createFixture("legacy-mcq-format.db", false, false, ExamBookletQuestionFormat.MULTIPLE_CHOICE,
+				null);
+		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
+				"2019");
+
+		// A numbered legacy paper need not remain UNKNOWN when its authoritative
+		// booklet has already been classified as multiple choice.
+		assertResponseType(fixture, "21a", QuestionResponseType.MULTIPLE_CHOICE);
+	}
+
+	@Test
+	void authoritativeWrittenResponseBookletResolvesNumberedLegacyQuestion() throws Exception {
+		Fixture fixture = createFixture("legacy-written-format.db", false, false,
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, null);
+		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
+				"2019");
+
+		// Authoritative booklet structure supplies the information absent from the
+		// historical numbered-paper code.
+		assertResponseType(fixture, "21a", QuestionResponseType.WRITTEN_RESPONSE);
+	}
+
+	@Test
+	void classificationConflictReportsExistingAndWorkbookCodes() throws Exception {
+		Fixture fixture = createFixture("classification-conflict-detail.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// Simulate a manually captured Question using a different valid historical
+			// classification from the one recorded in the legacy workbook.
+			statement.executeUpdate("""
+					UPDATE questions
+					SET classification_node_id = (
+					    SELECT id
+					    FROM curriculum_nodes
+					    WHERE curriculum_code = '2.3.1'
+					)
+					WHERE question_code = '1'
+					""");
+		}
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
+
+		// The user needs both values to correct the existing Question without guessing.
+		assertTrue(exception.getMessage().contains("Existing classification 2.3.1"));
+		assertTrue(exception.getMessage().contains("workbook classification 1.1.1"));
+		assertTrue(exception.getMessage().contains("question 1"));
+	}
+
+	@Test
+	void completeExamRejectsLegacyQuestionStructureImport() throws Exception {
+		Fixture fixture = createFixture("complete-exam-import.db", false);
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// Legacy Question import creates Question and SourceQuestion structure, so a
+			// completed Exam must be deliberately reactivated first.
+			statement.executeUpdate("""
+					UPDATE exams
+					SET capture_state = 'COMPLETE'
+					""");
+		}
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		IllegalStateException exception = assertThrows(IllegalStateException.class,
+				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
+		assertTrue(exception.getMessage().contains("reactivated"));
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// Rejection occurs transactionally before legacy import can leave any Question,
+			// Answer or multipart source identity behind.
+			assertEquals(0, countRows(statement, "questions"));
+			assertEquals(0, countRows(statement, "answers"));
+			assertEquals(0, countRows(statement, "source_questions"));
+		}
+	}
 
 	@Test
 	void conflictingExistingAnswerIsPreservedOnReimport() throws Exception {
@@ -136,6 +260,41 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void importedWrittenResponseBecomesMissingAnswerDashboardWork() throws Exception {
+		Fixture fixture = createFixture("legacy-written-dashboard-work.db", false, false,
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, null);
+		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
+				"2019");
+
+		// Read the committed corpus exactly as the Dashboard does after legacy import.
+		List<Question> questions = new SqliteQuestionRepository(fixture.database()).findAll();
+		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(questions);
+
+		// Both imported Questions still require source-region capture. The MCQ already
+		// has its A-D Answer, while the written-response Question requires Answer
+		// capture.
+		assertEquals(2, summary.totalQuestions());
+		assertEquals(0, summary.completeQuestions());
+		assertEquals(2, summary.incompleteQuestions());
+		assertEquals(2, summary.missingQuestionContent());
+		assertEquals(1, summary.missingAnswer());
+		assertEquals(1, summary.unresolvedSharedContext());
+		assertEquals(0, summary.unknownResponseType());
+		List<QuestionCorpusWorkItem> missingAnswers = QuestionCorpusQueue.build(questions,
+				new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.INCOMPLETE,
+						QuestionCorpusProblem.MISSING_ANSWER));
+
+		// Authoritative booklet format means the numbered legacy Question appears
+		// directly as Answer work rather than first requiring response-type resolution.
+		assertEquals(1, missingAnswers.size());
+		assertEquals("21a", missingAnswers.get(0).question().getQuestionCode());
+		List<QuestionCorpusWorkItem> unknownTypes = QuestionCorpusQueue.build(questions,
+				new QuestionCorpusFilter(null, null, null, null, QuestionCorpusCompletionFilter.INCOMPLETE,
+						QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
+		assertTrue(unknownTypes.isEmpty());
+	}
+
+	@Test
 	void importsLegacyMetadataWithoutCreatingQuestionRegions() throws Exception {
 		Fixture fixture = createFixture("import.db", false);
 		LegacyQuestionImportResult result = new LegacyQuestionMetadataImporter(fixture.database())
@@ -207,6 +366,61 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void legacyQuestionEvidenceDoesNotBecomeAuthoritativeExamPlanning() throws Exception {
+		Fixture fixture = createFixture("legacy-planning-evidence.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		LegacyQuestionImportResult result = importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019");
+
+		// The workbook contains encountered Question records and may therefore provide
+		// evidence about Exam content, but those rows are not authoritative planning.
+		assertEquals(2, result.insertedQuestions());
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet exams = statement.executeQuery("""
+						SELECT
+						    capture_state,
+						    expected_question_booklet_count,
+						    expected_answer_file_count
+						FROM exams
+						ORDER BY id
+						""")) {
+			int examCount = 0;
+			while (exams.next()) {
+				examCount++;
+
+				// Legacy intake does not declare an Exam complete. Review and completion
+				// remain explicit user decisions in the ordinary Exam workflow.
+				assertEquals("ACTIVE", exams.getString("capture_state"));
+
+				// The workbook cannot establish how many assets ought to exist merely from
+				// the assets and Questions encountered in the legacy data.
+				assertNull(exams.getObject("expected_question_booklet_count"));
+				assertNull(exams.getObject("expected_answer_file_count"));
+			}
+			assertEquals(1, examCount);
+		}
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet booklets = statement.executeQuery("""
+						SELECT
+						    booklet_name,
+						    expected_question_count
+						FROM exam_booklets
+						ORDER BY booklet_name
+						""")) {
+			int bookletCount = 0;
+			while (booklets.next()) {
+				bookletCount++;
+
+				// Encountering Q1 in one booklet and Q21a in another must not be converted
+				// into an expected top-level Question count of one for either booklet.
+				assertNull(booklets.getObject("expected_question_count"));
+			}
+			assertEquals(2, bookletCount);
+		}
+	}
+
+	@Test
 	void mcqQuestionMayRequireSharedContextWithoutInventingMultipartIdentity() throws Exception {
 		Fixture fixture = createFixture("mcq-shared-context.db", false, true);
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
@@ -231,6 +445,28 @@ class LegacyQuestionMetadataImporterTest {
 			assertNull(question.getObject("source_question_id"));
 			assertNull(question.getObject("shared_context_id"));
 		}
+	}
+
+	@Test
+	void mixedBookletUsesLegacyAnswerAsMultipleChoiceEvidence() throws Exception {
+		Fixture fixture = createFixture("legacy-mixed-answer.db", false, false, ExamBookletQuestionFormat.MIXED, "C");
+		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
+				"2019");
+
+		// A mixed booklet cannot classify the row by itself, but a valid historical A-D
+		// answer is explicit MCQ evidence.
+		assertResponseType(fixture, "21a", QuestionResponseType.MULTIPLE_CHOICE);
+	}
+
+	@Test
+	void mixedBookletWithoutLegacyMcqEvidenceRemainsUnknown() throws Exception {
+		Fixture fixture = createFixture("legacy-mixed-unknown.db", false, false, ExamBookletQuestionFormat.MIXED, null);
+		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
+				"2019");
+
+		// Do not manufacture written-response metadata merely because an ambiguous
+		// mixed-booklet row lacks an MCQ answer.
+		assertResponseType(fixture, "21a", QuestionResponseType.UNKNOWN);
 	}
 
 	@Test
@@ -341,6 +577,42 @@ class LegacyQuestionMetadataImporterTest {
 		assertTrue(required.contains(new LegacyBookletRequirement("QCAA", 2020, "Paper 1")));
 	}
 
+	@Test
+	void writtenResponseBookletRejectsLegacyMcqEvidence() throws Exception {
+		Fixture fixture = createFixture("legacy-response-conflict.db", false, false,
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, "C");
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(),
+						"Chemistry", "2019"));
+		assertTrue(exception.getMessage().contains("Legacy MCQ evidence conflicts"));
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// Response-type conflict is detected inside the import transaction, so no
+			// earlier workbook row or derived multipart identity may leak through.
+			assertEquals(0, countRows(statement, "questions"));
+			assertEquals(0, countRows(statement, "answers"));
+			assertEquals(0, countRows(statement, "source_questions"));
+		}
+	}
+
+	private void assertResponseType(Fixture fixture, String questionCode, QuestionResponseType expected)
+			throws Exception {
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet question = statement.executeQuery("""
+						SELECT response_type
+						FROM questions
+						WHERE question_code = '%s'
+						""".formatted(questionCode))) {
+			assertTrue(question.next());
+
+			// Tests compare the persisted enum value because that is the evidence later
+			// consumed by corpus audit and Dashboard work queues.
+			assertEquals(expected.name(), question.getString("response_type"));
+		}
+	}
+
 	private int countRows(Statement statement, String tableName) throws Exception {
 		try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + tableName)) {
 			result.next();
@@ -354,6 +626,15 @@ class LegacyQuestionMetadataImporterTest {
 
 	private Fixture createFixture(String databaseName, boolean invalidSecondClassification,
 			boolean mcqSharedContextRequired) throws Exception {
+
+		// Existing tests retain their legacy UNSPECIFIED Paper 1 structure unless they
+		// explicitly opt into authoritative booklet-format evidence.
+		return createFixture(databaseName, invalidSecondClassification, mcqSharedContextRequired, null, null);
+	}
+
+	private Fixture createFixture(String databaseName, boolean invalidSecondClassification,
+			boolean mcqSharedContextRequired, ExamBookletQuestionFormat paper1Format, String paper1Answer)
+			throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
 		database.initialiseSchema();
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
@@ -367,15 +648,30 @@ class LegacyQuestionMetadataImporterTest {
 		curriculumWriter.insertSubtopic(topic2, "2.3.1", "Subtopic 2.3.1", 1);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+
+		// Preserve the original MCQ fixture. Its explicit MCQ workbook paper code is
+		// independently sufficient evidence for response-type import.
 		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "MCQ booklet",
 				"Chemistry/2020/mcq.pdf");
-		examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1", "Chemistry/2020/paper1.pdf");
-		Path workbookPath = createWorkbook(invalidSecondClassification, mcqSharedContextRequired);
+		if (paper1Format == null) {
+
+			// Legacy fixtures deliberately retain UNSPECIFIED format so existing tests
+			// continue to exercise genuinely unresolved historical structure.
+			examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1",
+					"Chemistry/2020/paper1.pdf");
+		} else {
+
+			// New response-type tests supply the authoritative structural evidence now
+			// available through Exam/Assets.
+			examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1",
+					"Chemistry/2020/paper1.pdf", paper1Format);
+		}
+		Path workbookPath = createWorkbook(invalidSecondClassification, mcqSharedContextRequired, paper1Answer);
 		return new Fixture(database, workbookPath);
 	}
 
-	private Path createWorkbook(boolean invalidSecondClassification, boolean mcqSharedContextRequired)
-			throws Exception {
+	private Path createWorkbook(boolean invalidSecondClassification, boolean mcqSharedContextRequired,
+			String paper1Answer) throws Exception {
 		Path path = tempDirectory.resolve("legacy-" + System.nanoTime() + ".xlsx");
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("QCAA");
@@ -403,6 +699,12 @@ class LegacyQuestionMetadataImporterTest {
 			second.createCell(2).setCellValue("21a");
 			second.createCell(3).setCellValue(3);
 			second.createCell(4).setCellValue(invalidSecondClassification ? "9.9.9" : "2.3.1");
+			if (paper1Answer != null && !paper1Answer.isBlank()) {
+
+				// Some historical numbered-paper rows contain an authoritative MCQ letter.
+				// Preserve that evidence exactly as the production workbook reader sees it.
+				second.createCell(5).setCellValue(paper1Answer);
+			}
 			second.createCell(6).setCellValue(1);
 			try (OutputStream output = Files.newOutputStream(path)) {
 				workbook.write(output);

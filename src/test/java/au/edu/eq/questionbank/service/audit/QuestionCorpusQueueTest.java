@@ -58,7 +58,7 @@ class QuestionCorpusQueueTest {
 		assertEquals(4, summary.totalQuestions());
 		assertEquals(1, summary.completeQuestions());
 		assertEquals(3, summary.incompleteQuestions());
-		assertEquals(1, summary.missingQuestionSource());
+		assertEquals(1, summary.missingQuestionContent());
 		assertEquals(1, summary.missingAnswer());
 		assertEquals(1, summary.unresolvedSharedContext());
 		assertEquals(1, summary.unknownResponseType());

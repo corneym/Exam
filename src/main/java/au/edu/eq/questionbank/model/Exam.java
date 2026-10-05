@@ -14,21 +14,42 @@ public class Exam {
 	private final ExamProvider provider;
 	private final int year;
 	private final String name;
+	private final ExamCaptureState captureState;
 
 	/**
-	 * Creates an exam and associates it with its subject and issuing provider.
+	 * Creates an active exam.
+	 * <p>
+	 * This constructor preserves compatibility with callers created before the
+	 * explicit Exam capture lifecycle was introduced.
 	 *
 	 * @param id       the persistent exam identifier
 	 * @param subject  the science subject being assessed
 	 * @param provider the organisation that issued the assessment
 	 * @param year     the calendar year of the assessment
 	 * @param name     the human-readable assessment name
-	 * @throws NullPointerException     if {@code subject} or {@code provider} is
-	 *                                  {@code null}
+	 */
+	public Exam(long id, Subject subject, ExamProvider provider, int year, String name) {
+
+		// Existing callers cannot supply lifecycle data that did not previously
+		// exist, so new transient objects retain the historical active behaviour.
+		this(id, subject, provider, year, name, ExamCaptureState.ACTIVE);
+	}
+
+	/**
+	 * Creates an exam with its persisted structural capture state.
+	 *
+	 * @param id           the persistent exam identifier
+	 * @param subject      the science subject being assessed
+	 * @param provider     the organisation that issued the assessment
+	 * @param year         the calendar year of the assessment
+	 * @param name         the human-readable assessment name
+	 * @param captureState the user-declared structural capture state
+	 * @throws NullPointerException     if {@code subject}, {@code provider}, or
+	 *                                  {@code captureState} is {@code null}
 	 * @throws IllegalArgumentException if {@code id} or {@code year} is not
 	 *                                  positive, or {@code name} is null or blank
 	 */
-	public Exam(long id, Subject subject, ExamProvider provider, int year, String name) {
+	public Exam(long id, Subject subject, ExamProvider provider, int year, String name, ExamCaptureState captureState) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -44,11 +65,24 @@ public class Exam {
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
 		}
+		if (captureState == null) {
+			throw new NullPointerException("captureState");
+		}
 		this.id = id;
 		this.subject = subject;
 		this.provider = provider;
 		this.year = year;
 		this.name = name;
+		this.captureState = captureState;
+	}
+
+	/**
+	 * Returns the user-declared structural capture state.
+	 *
+	 * @return persisted Exam capture state
+	 */
+	public ExamCaptureState getCaptureState() {
+		return captureState;
 	}
 
 	/**
@@ -94,5 +128,14 @@ public class Exam {
 	 */
 	public int getYear() {
 		return year;
+	}
+
+	/**
+	 * Returns whether the user has declared the Exam structure complete.
+	 *
+	 * @return whether structural capture is complete
+	 */
+	public boolean isComplete() {
+		return captureState == ExamCaptureState.COMPLETE;
 	}
 }

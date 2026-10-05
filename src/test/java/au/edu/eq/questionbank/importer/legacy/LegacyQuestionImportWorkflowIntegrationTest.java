@@ -20,7 +20,10 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.Subject;
@@ -39,6 +42,58 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void importsLegacyMetadataIntoExamAssetsCreatedBookletWithoutChangingPlanning() throws Exception {
+		Path databasePath = tempDirectory.resolve("exam-assets-legacy-compatibility.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Subject chemistry = createCurriculum(database);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+
+		// This is the same persistence boundary used by the new Exam/Assets
+		// Add New Exam workflow.
+		Exam createdExam = examWriter.createExam(chemistry, "QCAA", 2020, "External Assessment");
+		assertEquals(ExamCaptureState.ACTIVE, createdExam.getCaptureState());
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		String contentHash = "a".repeat(64);
+
+		// This is the same complete booklet metadata shape used by Add Question
+		// Booklet.
+		// Expected Questions is deliberately populated so the legacy import can prove
+		// it
+		// does not derive or overwrite authoritative planning from workbook contents.
+		ExamBooklet createdBooklet = examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1",
+				"Chemistry/QCAA/2020/paper-1.pdf", ExamBookletQuestionFormat.WRITTEN_RESPONSE, Integer.valueOf(12),
+				contentHash);
+		assertEquals(createdExam.getId(), createdBooklet.getExam().getId());
+		assertEquals(Integer.valueOf(12), createdBooklet.getExpectedQuestionCount());
+		Path workbook = createExamAssetsCompatibilityWorkbook();
+		LegacyQuestionMetadataImporter metadataImporter = new LegacyQuestionMetadataImporter(database);
+
+		// Because the authoritative Exam/Assets-created booklet already exists, legacy
+		// preflight must recognise it rather than requesting another booklet.
+		assertTrue(metadataImporter.findMissingBooklets(workbook, "Chemistry", "2019").isEmpty());
+		LegacyQuestionImportResult result = metadataImporter.importWorkbook(workbook, "Chemistry", "2019");
+		assertEquals(new LegacyQuestionImportResult(1, 0, 0), result);
+		List<Question> questions = new SqliteQuestionRepository(database).findAll();
+		assertEquals(1, questions.size());
+		Question imported = questions.getFirst();
+
+		// Legacy Question metadata attaches to the already-authoritative Exam and
+		// booklet identities rather than manufacturing a parallel hierarchy.
+		assertEquals(createdExam.getId(), imported.getExam().getId());
+		assertEquals(createdBooklet.getId(), imported.getBooklet().getId());
+		assertEquals("21a", imported.getQuestionCode());
+		assertEquals(3, imported.getMarks());
+		ExamBooklet reloadedBooklet = examWriter.findExamBooklets(createdExam).getFirst();
+
+		// Workbook row count is evidence about encountered legacy Questions only.
+		// It must not replace the user-reviewed expected top-level Question count.
+		assertEquals(Integer.valueOf(12), reloadedBooklet.getExpectedQuestionCount());
+		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, reloadedBooklet.getQuestionFormat());
+		assertEquals(ExamCaptureState.ACTIVE, reloadedBooklet.getExam().getCaptureState());
+	}
 
 	@Test
 	void importsMissingBookletsQuestionsAndCaptureStateEndToEnd() throws Exception {
@@ -126,6 +181,22 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 		Topic topic = writer.insertTopic(unit, "1.1", "Topic 1", 1);
 		writer.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
 		return chemistry;
+	}
+
+	private Path createExamAssetsCompatibilityWorkbook() throws Exception {
+		Path path = tempDirectory.resolve("exam-assets-compatibility.xlsx");
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet qcaa = workbook.createSheet("QCAA");
+			writeHeader(qcaa);
+
+			// Legacy paper code "1" resolves to the persisted "Paper 1" booklet. The one
+			// workbook row must not imply that the booklet contains only one Question.
+			writeQuestion(qcaa, 1, 2020, "1", "21a", 3, "1.1.1", null, false);
+			try (OutputStream output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		return path;
 	}
 
 	private Path createWorkbook() throws Exception {

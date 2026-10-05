@@ -10,9 +10,10 @@ public class AnswerFile {
 	private final Exam exam;
 	private final String name;
 	private final SourceDocument sourceDocument;
+	private final boolean containsAnswerExplanations;
 
 	/**
-	 * Creates an answer file belonging to an exam.
+	 * Creates an answer file without recorded answer-explanation metadata.
 	 *
 	 * @param id             the positive persistent answer-file identifier
 	 * @param exam           the exam to which the answers belong
@@ -24,6 +25,29 @@ public class AnswerFile {
 	 *                                  {@code null}
 	 */
 	public AnswerFile(long id, Exam exam, String name, SourceDocument sourceDocument) {
+
+		// Existing construction paths predate explanation metadata. Preserve their
+		// meaning by treating the flag as false until explicitly recorded.
+		this(id, exam, name, sourceDocument, false);
+	}
+
+	/**
+	 * Creates an answer file with persisted answer-explanation metadata.
+	 *
+	 * @param id                         the positive persistent answer-file
+	 *                                   identifier
+	 * @param exam                       the exam to which the answers belong
+	 * @param name                       the non-blank answer-file name
+	 * @param sourceDocument             the source file containing the answers
+	 * @param containsAnswerExplanations whether this asset contains explanatory
+	 *                                   answer material
+	 * @throws IllegalArgumentException if {@code id} is not positive or
+	 *                                  {@code name} is blank
+	 * @throws NullPointerException     if {@code exam} or {@code sourceDocument} is
+	 *                                  {@code null}
+	 */
+	public AnswerFile(long id, Exam exam, String name, SourceDocument sourceDocument,
+			boolean containsAnswerExplanations) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
@@ -40,6 +64,7 @@ public class AnswerFile {
 		this.exam = exam;
 		this.name = name;
 		this.sourceDocument = sourceDocument;
+		this.containsAnswerExplanations = containsAnswerExplanations;
 	}
 
 	/**
@@ -76,5 +101,15 @@ public class AnswerFile {
 	 */
 	public SourceDocument getSourceDocument() {
 		return sourceDocument;
+	}
+
+	/**
+	 * Indicates whether this AnswerFile contains explanatory material in addition
+	 * to the answers themselves.
+	 *
+	 * @return {@code true} when answer explanations are present
+	 */
+	public boolean hasAnswerExplanations() {
+		return containsAnswerExplanations;
 	}
 }

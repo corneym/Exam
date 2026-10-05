@@ -32,10 +32,10 @@ import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextR
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
-import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
+import javafx.geometry.Bounds;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -44,12 +44,60 @@ import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.stage.Stage;
 
 @Tag("ui")
 @Tag("workflow-ui")
 class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	@Test
+	void acceptedQuestionContentShowsSharedContextBeforeQuestionParts(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+
+		// Begin with a source rectangle and then classify that rectangle as the
+		// multipart Question's Shared Context.
+		dragRegionOnDisplayedPage(robot);
+		robot.interact(() -> {
+			questionCode.setText("24a");
+			marks.setText("2");
+		});
+		fireControl(robot, sharedContext);
+		fireControl(robot, "#add-question-region");
+		WaitForAsyncUtils.waitForFxEvents();
+		javafx.scene.layout.VBox previewBox = field(questionCapturePane(), "regionPreviewBox",
+				javafx.scene.layout.VBox.class);
+
+		// Shared Context is visible immediately but deliberately does not increment the
+		// Question-specific content-part count.
+		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals(1, previewBox.getChildren().size());
+		assertEquals("question-shared-context-preview", previewBox.getChildren().getFirst().getId());
+
+		// Add the actual Question body. Shared Context must remain first while the
+		// Question region remains Part 1 of the editable content sequence.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
+		assertEquals(2, previewBox.getChildren().size());
+		assertEquals("question-shared-context-preview", previewBox.getChildren().get(0).getId());
+		assertEquals("question-content-part-0", previewBox.getChildren().get(1).getId());
+		WaitForAsyncUtils.waitForFxEvents();
+		ScrollPane acceptedContent = field(questionCapturePane(), "regionsScrollPane", ScrollPane.class);
+		Bounds questionBounds = questionCapturePane().localToScene(questionCapturePane().getBoundsInLocal());
+		Bounds acceptedBounds = acceptedContent.localToScene(acceptedContent.getBoundsInLocal());
+
+		// The original defect was accepted Question content escaping its owning pane.
+		// Dashboard capture now hides unrelated Answer controls, so containment within
+		// the Question pane is the stable layout invariant.
+		assertTrue(acceptedBounds.getMaxY() <= questionBounds.getMaxY() + 0.5,
+				"Accepted Question content must remain inside the Question pane");
+	}
 
 	@Test
 	void activeSharedContextCaptureBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
@@ -117,14 +165,17 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
+
+		// Search inherits the authoritative application Working Subject and starts its
+		// current-syllabus search automatically.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
+
+		// The captured Question must become available without a Search-local Subject
+		// selection before the split workflow is started.
+		ListView<Object> searchResults = listView(robot, "#question-search-results");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> searchResults.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == original.getId()));
 
 		// Select the Search UI result by its wrapped persistent Question identity.
 		selectSearchResult(robot, original.getId());
@@ -210,52 +261,79 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		Button save = lookup(robot, "#save-question", Button.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Label sharedContextStatus = lookup(robot, "#shared-context-status", Label.class);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 
-		// Deliberately draw first. The eventual multipart intent must be allowed to
-		// reinterpret this pending rectangle as the shared context.
+		// Deliberately draw first. Entering multipart intent must be able to transfer
+		// this already-drawn rectangle to Shared Context capture.
 		dragRegionOnDisplayedPage(robot);
 		assertTrue(save.isDisabled());
 		robot.clickOn(questionCode).write("24a");
 		robot.clickOn(marks).write("2");
-		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
 		assertTrue(sharedContext.isVisible());
 		assertFalse(sharedContext.isSelected());
-		robot.clickOn(sharedContext);
+		fireControl(robot, sharedContext);
 		assertTrue(sharedContext.isSelected());
 		assertTrue(save.isDisabled());
 
-		// The already-drawn rectangle is now accepted as the shared context rather than
-		// as an ordinary question region.
-		robot.clickOn("#add-question-region");
+		// The already-drawn rectangle becomes Shared Context rather than ordinary
+		// Question content.
+		fireControl(robot, "#add-question-region");
 		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(save.isDisabled());
 
-		// Now capture the actual 24a question region.
+		// Capture the actual 24a body.
 		dragRegionOnDisplayedPage(robot);
-		assertTrue(save.isDisabled());
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 		assertFalse(save.isDisabled());
-		robot.clickOn(save);
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "24a".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitForFxEvents();
-		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
-				.filter(question -> "24a".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		Question restored = repository.findAll().stream().filter(question -> "24a".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
 		assertTrue(restored.hasSourceQuestion());
 		assertEquals("24", restored.getSourceQuestion().getSourceQuestionCode());
 		assertEquals(SharedContextStatus.PRESENT, restored.getSourceQuestion().getSharedContextStatus());
 		assertTrue(restored.hasSharedContext());
 		assertEquals(1, restored.getSharedContext().getRegions().size());
 		assertEquals(1, restored.getRegions().size());
+
+		// New-Question capture remains active, but Classification is cleared between
+		// Questions.
 		selectFirst(robot, "#curriculum-unit");
 		selectFirst(robot, "#curriculum-topic");
 		selectFirstFinalClassification(robot);
-		Question secondPart = captureQuestion(robot, "24b");
-		Question restoredSecondPart = new SqliteQuestionRepository(new SqliteDatabase(databasePath))
-				.findById(secondPart.getId()).orElseThrow();
+		robot.interact(() -> {
+			questionCode.setText("24b");
+			marks.setText("2");
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// 24b resolves to the already-persisted SourceQuestion 24. The PRESENT
+		// decision must therefore be reused rather than asking the same question again.
+		assertFalse(sharedContext.isVisible());
+		assertFalse(sharedContext.isManaged());
+		assertTrue(sharedContextStatus.isVisible());
+		assertTrue(sharedContextStatus.getText().contains("Question 24"));
+		assertFalse(questionCapturePane().isCapturingSharedContext());
+
+		// Only the part-specific body remains to be captured.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "24b".equals(question.getQuestionCode())));
+		Question restoredSecondPart = repository.findAll().stream()
+				.filter(question -> "24b".equals(question.getQuestionCode())).findFirst().orElseThrow();
 		assertTrue(restoredSecondPart.hasSourceQuestion());
 		assertTrue(restoredSecondPart.hasSharedContext());
 		assertEquals(restored.getSourceQuestion().getId(), restoredSecondPart.getSourceQuestion().getId());
 		assertEquals(restored.getSharedContext().getId(), restoredSecondPart.getSharedContext().getId());
+
+		// Reuse of the persisted decision must not create duplicate context rows.
 		assertEquals(1, new SqliteSharedQuestionContextRepository(new SqliteDatabase(databasePath))
 				.findByBooklet(restored.getBooklet()).size());
 	}
@@ -388,27 +466,23 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		waitForDialogShowing(robot, "Search Questions");
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Select the persisted Question in the currently showing Search dialog.
 		selectSearchResult(robot, question.getId());
 
-		// Edit Metadata opens another modal dialog, so schedule the action.
-		fireControlLater(robot, "#question-search-edit-metadata");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#legacy-metadata-shared-context-required").tryQuery().isPresent());
-		CheckBox sharedContext = lookup(robot, "#legacy-metadata-shared-context-required", CheckBox.class);
+		// Edit Metadata must be fired from the currently showing Search dialog. Earlier
+		// hidden Search dialogs retain their controls during the complete test class.
+		fireControlLaterInShowingDialog(robot, "Search Questions", "#question-search-edit-metadata");
+		waitForDialogShowing(robot, "Edit Question Metadata");
+		CheckBox sharedContext = lookupInShowingDialog(robot, "Edit Question Metadata",
+				"#legacy-metadata-shared-context-required", CheckBox.class);
 		assertTrue(sharedContext.isSelected());
 		robot.interact(() -> sharedContext.setSelected(false));
 
 		// Saving metadata commits the conversion and then opens the follow-up
-		// Question Shared Context Converted dialog synchronously.
-		fireControlLater(robot, "#legacy-metadata-save");
+		// Question Shared Context Converted dialog synchronously. Fire the Save control
+		// belonging to the currently showing metadata dialog.
+		fireControlLaterInShowingDialog(robot, "Edit Question Metadata", "#legacy-metadata-save");
 
 		// Do not inspect SQLite until the scheduled save has actually reached the
 		// conversion-decision dialog.
@@ -424,9 +498,12 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Retain the safely converted ordinary Question regions.
 		fireDialogButton(robot, "Keep converted regions");
 
-		// The completion callback must return to the real Search dialog.
+		// Keeping the converted regions returns directly to Dashboard-backed Search.
+		// Capture is detached completely, so its Cancel control is absent rather than
+		// merely invisible.
 		waitForDialogShowing(robot, "Search Questions");
-		assertFalse(lookup(robot, "#cancel-question-edit", Button.class).isVisible());
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(robot.lookup("#cancel-question-edit").tryQuery().isEmpty());
 		Question retained = questionRepository.findById(question.getId()).orElseThrow();
 		assertEquals(2, retained.getRegions().size());
 		assertFalse(retained.hasSharedContext());
@@ -460,24 +537,19 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Select the Search UI result by its wrapped persistent Question identity.
 		selectSearchResult(robot, question.getId());
-		fireControlLater(robot, "#question-search-edit-metadata");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#legacy-metadata-shared-context-required").tryQuery().isPresent());
-		CheckBox sharedContext = lookup(robot, "#legacy-metadata-shared-context-required", CheckBox.class);
+
+		// Both actions belong to nested reusable dialogs. Scope each lookup to the
+		// dialog that is actually showing so retained controls cannot receive it.
+		fireControlLaterInShowingDialog(robot, "Search Questions", "#question-search-edit-metadata");
+		waitForDialogShowing(robot, "Edit Question Metadata");
+		CheckBox sharedContext = lookupInShowingDialog(robot, "Edit Question Metadata",
+				"#legacy-metadata-shared-context-required", CheckBox.class);
 		assertTrue(sharedContext.isSelected());
 		robot.interact(() -> sharedContext.setSelected(false));
-		fireControlLater(robot, "#legacy-metadata-save");
+		fireControlLaterInShowingDialog(robot, "Edit Question Metadata", "#legacy-metadata-save");
 
 		// Wait for the actual modal conversion decision rather than locating a
 		// particular button node in the scene graph.
@@ -535,20 +607,49 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		robot.clickOn(questionCode).write("25a");
 		robot.clickOn(marks).write("1");
-		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
 		assertTrue(sharedContext.isVisible());
 		assertFalse(sharedContext.isSelected());
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
-		robot.clickOn("#save-question");
-		WaitForAsyncUtils.waitForFxEvents();
-		Question restored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().stream()
-				.filter(question -> "25a".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "25a".equals(question.getQuestionCode())));
+		Question restored = repository.findAll().stream().filter(question -> "25a".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
 		assertTrue(restored.hasSourceQuestion());
 		assertEquals(SharedContextStatus.NONE, restored.getSourceQuestion().getSharedContextStatus());
 		assertFalse(restored.hasSharedContext());
+
+		// Prepare the next sequential part.
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+		robot.interact(() -> {
+			questionCode.setText("25b");
+			marks.setText("1");
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// SourceQuestion 25 has already recorded NONE. Do not ask the teacher the
+		// Shared Context question again for 25b.
+		assertFalse(sharedContext.isVisible());
+		assertFalse(sharedContext.isManaged());
+		assertFalse(questionCapturePane().isCapturingSharedContext());
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#save-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "25b".equals(question.getQuestionCode())));
+		Question secondPart = repository.findAll().stream().filter(question -> "25b".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
+		assertTrue(secondPart.hasSourceQuestion());
+		assertEquals(restored.getSourceQuestion().getId(), secondPart.getSourceQuestion().getId());
+		assertEquals(SharedContextStatus.NONE, secondPart.getSourceQuestion().getSharedContextStatus());
+		assertFalse(secondPart.hasSharedContext());
 	}
 
 	@Test
@@ -606,12 +707,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Search is a reusable Dialog, so retained controls from a hidden instance do
 		// not prove that the modal Search window is actually showing.
 		waitForDialogShowing(robot, "Search Questions");
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Select the Search UI result by its wrapped persistent Question identity.
 		selectSearchResult(robot, original.getId());
@@ -643,7 +738,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// create a Question region.
 		dragRegionOnDisplayedPage(robot);
 		assertEquals("Add Context", lookup(robot, "#add-question-region", Button.class).getText());
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertEquals("Content parts: 0", lookup(robot, "#question-region-count", Label.class).getText());
 		assertTrue(save.isDisabled());
 
@@ -704,6 +799,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		closeDialog(robot, "Search Questions");
 	}
 
+	@SuppressWarnings("unchecked")
 	@Test
 	void searchSplitQuestionReusesExistingSharedSharedContext(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
@@ -742,37 +838,35 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		waitForDialogShowing(robot, "Search Questions");
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
-		// Selection is scoped to the currently showing Search dialog.
+		// Selection and its action must both belong to the currently showing Search
+		// dialog. Hidden Search dialogs from earlier workflows retain identical IDs.
 		selectSearchResult(robot, original.getId());
-		Button splitButton = lookup(robot, "#question-search-split-question", Button.class);
+		Button splitButton = lookupInShowingDialog(robot, "Search Questions", "#question-search-split-question",
+				Button.class);
 		assertFalse(splitButton.isDisabled());
 
-		// Split opens the definition dialog synchronously.
+		// Split opens another modal dialog synchronously, so leave the test thread
+		// available to operate that new DialogPane.
 		fireControlLater(splitButton);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#legacy-split-shared-context-choice").tryQuery().isPresent());
-		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> sharedContextChoice = comboBox(robot,
-				"#legacy-split-shared-context-choice");
+		waitForDialogShowing(robot, "Split Question");
+		ComboBox<LegacyQuestionSplitDialog.SharedContextChoice> sharedContextChoice = lookupInShowingDialog(robot,
+				"Split Question", "#legacy-split-shared-context-choice", ComboBox.class);
 
 		// Reuse is available because an established SourceQuestion already uses the
 		// persisted shared context.
 		assertTrue(sharedContextChoice.getItems()
 				.contains(LegacyQuestionSplitDialog.SharedContextChoice.REUSE_EXISTING_SHARED_CONTEXT));
-		TextField partAMarks = lookup(robot, "#legacy-split-part-0-marks", TextField.class);
-		TextField partBMarks = lookup(robot, "#legacy-split-part-1-marks", TextField.class);
+		TextField partAMarks = lookupInShowingDialog(robot, "Split Question", "#legacy-split-part-0-marks",
+				TextField.class);
+		TextField partBMarks = lookupInShowingDialog(robot, "Split Question", "#legacy-split-part-1-marks",
+				TextField.class);
 		robot.interact(() -> {
 			partAMarks.setText("2");
 			partBMarks.setText("3");
 			sharedContextChoice.setValue(LegacyQuestionSplitDialog.SharedContextChoice.REUSE_EXISTING_SHARED_CONTEXT);
 		});
-		Button continueButton = lookup(robot, "#legacy-split-continue", Button.class);
+		Button continueButton = lookupInShowingDialog(robot, "Split Question", "#legacy-split-continue", Button.class);
 		assertFalse(continueButton.isDisabled());
 		fireControl(robot, continueButton);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
@@ -856,12 +950,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		waitForDialogShowing(robot, "Search Questions");
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
 
 		// Select the required Question in the showing Search dialog.
 		selectSearchResult(robot, question.getId());
@@ -888,8 +976,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
-		CurriculumSelectorPane classificationPane = field(application, "curriculumSelectorPane",
-				CurriculumSelectorPane.class);
+		Node classificationContext = lookup(robot, "#classification-context", Node.class);
 
 		// The linked Question remains visible as read-only context.
 		assertEquals("64a", questionCode.getText());
@@ -899,7 +986,10 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(marks.isDisabled());
 		assertTrue(writtenResponse.isDisabled());
 		assertClassificationControlShows(robot, classification);
-		assertTrue(classificationPane.isDisabled());
+
+		// Shared Context correction makes Question classification read-only without
+		// disabling the application-level Working Subject container itself.
+		assertTrue(classificationContext.isDisabled());
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText()
 				.contains("Recapturing shared context used by Question 64a"));
 

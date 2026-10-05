@@ -90,6 +90,11 @@ public final class ExamMetadataCorrectionService {
 			}
 			Exam corrected = examWriter.correctExamMetadataAndSourceDocumentPaths(exam, providerName, year,
 					assessmentName, replacementPaths);
+
+			// The relocation is authoritative only after SQLite has committed the new
+			// Exam metadata and SourceDocument paths. Old empty directories can now be
+			// removed without interfering with rollback of an unsuccessful correction.
+			pruneEmptySourceDirectories(completedMoves);
 			return new Result(corrected, replacementPaths);
 		} catch (SQLException | IOException | RuntimeException failure) {
 
@@ -112,6 +117,21 @@ public final class ExamMetadataCorrectionService {
 			documents.putIfAbsent(answerFile.getSourceDocument().getId(), answerFile.getSourceDocument());
 		}
 		return List.copyOf(documents.values());
+	}
+
+	private boolean containsManagedPathSymbolicLink(Path directory) {
+		Path relativeDirectory = pdfDataRoot.relativize(directory);
+		Path current = pdfDataRoot;
+		for (Path segment : relativeDirectory) {
+			current = current.resolve(segment);
+			if (Files.isSymbolicLink(current)) {
+
+				// Refuse to prune through a link because its real target is not proven to
+				// remain within the configured managed tree.
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private List<Relocation> createRelocationPlan(Exam exam, String providerName, int year)
@@ -140,6 +160,64 @@ public final class ExamMetadataCorrectionService {
 			relocations.add(new Relocation(sourceDocument.getId(), source, destination, relativeDestination));
 		}
 		return List.copyOf(relocations);
+	}
+
+	private void pruneEmptyManagedDirectoryTree(Path startDirectory) {
+		Path current = startDirectory.toAbsolutePath().normalize();
+		while (current != null && current.startsWith(pdfDataRoot) && !current.equals(pdfDataRoot)) {
+
+			// Never traverse a symbolic-link component inside the configured managed
+			// root. Lexical containment alone is insufficient when a link could point
+			// somewhere outside that root.
+			if (containsManagedPathSymbolicLink(current)) {
+				return;
+			}
+			if (!Files.exists(current)) {
+
+				// Another relocation may already have removed the same empty directory.
+				// Continue upwards without treating that harmless condition as failure.
+				current = current.getParent();
+				continue;
+			}
+			if (!Files.isDirectory(current)) {
+				return;
+			}
+			try (var entries = Files.list(current)) {
+				if (entries.findAny().isPresent()) {
+
+					// The first non-empty ancestor is the pruning boundary. Everything
+					// above it must remain untouched.
+					return;
+				}
+			} catch (IOException cleanupFailure) {
+
+				// Directory cleanup is non-authoritative housekeeping. The Exam and its
+				// SourceDocument paths have already committed successfully, so inability
+				// to inspect an old directory must not report the correction as failed.
+				return;
+			}
+			try {
+				Files.delete(current);
+			} catch (IOException cleanupFailure) {
+
+				// A concurrent file creation, permissions problem or other cleanup race
+				// leaves only an obsolete directory. Preserve the successful correction.
+				return;
+			}
+			current = current.getParent();
+		}
+	}
+
+	private void pruneEmptySourceDirectories(List<Relocation> completedMoves) {
+
+		// Only relocations that actually moved bytes can have left an obsolete source
+		// directory behind. No-move corrections must leave the existing tree alone.
+		for (Relocation relocation : completedMoves) {
+			Path sourceDirectory = relocation.source().getParent();
+			if (sourceDirectory != null) {
+				pruneEmptyManagedDirectoryTree(sourceDirectory);
+			}
+		}
 	}
 
 	private void rollbackMoves(List<Relocation> completedMoves, Throwable originalFailure) {

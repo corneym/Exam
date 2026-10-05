@@ -72,7 +72,6 @@ public class QuestionSearchPane extends BorderPane {
 	private static final double LEFT_CONTENT_DIVIDER_POSITION = 0.52;
 	private final CurriculumRepository curriculumRepository;
 	private final QuestionRetrievalService retrievalService;
-	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final Label syllabusValue = new Label();
 	private final ComboBox<CurriculumNode> unitBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> topicBox = new ComboBox<>();
@@ -114,7 +113,6 @@ public class QuestionSearchPane extends BorderPane {
 
 	// Distinguish "no subjects exist" from "the initial subject load was cancelled
 	// before completion". This lets Current syllabus restart an interrupted load.
-	private boolean subjectsLoaded;
 	private final BooleanProperty classificationDirty = new SimpleBooleanProperty(false);
 
 	// Population of the selected-Question classification controls must not be
@@ -151,9 +149,14 @@ public class QuestionSearchPane extends BorderPane {
 		throw new IllegalStateException("Classification save handler is not configured");
 	};
 
+	// Search inherits the workspace-level Working Subject. It does not own a
+	// separate application-level Subject selection.
+	private final Subject workingSubject;
+
 	/**
 	 * Creates the question-search pane.
 	 *
+	 * @param workingSubject                authoritative workspace Working Subject
 	 * @param curriculumRepository          current curriculum hierarchy lookup
 	 * @param retrievalService              curriculum-aware Question retrieval
 	 * @param allQuestionsSupplier          complete stored Question retrieval
@@ -162,9 +165,13 @@ public class QuestionSearchPane extends BorderPane {
 	 *                                      exclusions
 	 * @throws NullPointerException if any dependency is {@code null}
 	 */
-	public QuestionSearchPane(CurriculumRepository curriculumRepository, QuestionRetrievalService retrievalService,
-			Supplier<List<Question>> allQuestionsSupplier, QuestionPreviewService previewService,
+	public QuestionSearchPane(Subject workingSubject, CurriculumRepository curriculumRepository,
+			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionPreviewService previewService,
 			QuestionOutputApplicabilityRepository outputApplicabilityRepository) {
+		if (workingSubject == null) {
+			throw new NullPointerException("workingSubject");
+		}
 		if (curriculumRepository == null) {
 			throw new NullPointerException("curriculumRepository");
 		}
@@ -180,6 +187,7 @@ public class QuestionSearchPane extends BorderPane {
 		if (outputApplicabilityRepository == null) {
 			throw new NullPointerException("outputApplicabilityRepository");
 		}
+		this.workingSubject = workingSubject;
 		this.curriculumRepository = curriculumRepository;
 		this.retrievalService = retrievalService;
 		this.allQuestionsSupplier = allQuestionsSupplier;
@@ -189,10 +197,13 @@ public class QuestionSearchPane extends BorderPane {
 		configureControls();
 		configureHandlers();
 
-		// Search is now composed as two task columns rather than one tall sequence.
-		// Existing controls retain their identities, event handlers and state.
+		// Search is composed as two task columns. Subject loading establishes the
+		// authoritative Working Subject before current-syllabus navigation begins.
 		setCenter(createWorkspacePane());
-		startSubjectLoading();
+
+		// Search derives its initial curriculum hierarchy directly from the
+		// authoritative workspace Working Subject.
+		startWorkingSubjectNavigation();
 	}
 
 	ReadOnlyBooleanProperty classificationDirtyProperty() {
@@ -299,9 +310,6 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		startMostSpecificCurrentSyllabusSearch();
-		if (subjectBox.getValue() == null) {
-			questionIdToReselect = -1;
-		}
 	}
 
 	/**
@@ -338,14 +346,8 @@ public class QuestionSearchPane extends BorderPane {
 	private void activateAllQuestionsScope() {
 
 		// Lower hierarchy controls represent current-syllabus applicability and are
-		// therefore unavailable while the complete stored Question bank is shown.
+		// unavailable while all stored Questions for the Working Subject are shown.
 		setCurriculumControlsDisabled(true);
-
-		// Subject remains meaningful as a persisted Exam-subject filter. Restart an
-		// initial Subject load if the scope transition cancelled it before completion.
-		if (!subjectsLoaded) {
-			startSubjectLoading();
-		}
 		startAllQuestionsSearch();
 	}
 
@@ -395,22 +397,6 @@ public class QuestionSearchPane extends BorderPane {
 
 			// Changing Subtopic or Descriptor classification invalidates only the
 			// optional Descriptor refinement control beneath it.
-			resetDescriptorBox();
-		} finally {
-			updatingControls = false;
-		}
-	}
-
-	private void clearBelowSubject() {
-		cancelActiveHierarchyLoad();
-		invalidateCurrentSearch();
-		updatingControls = true;
-		try {
-			currentSyllabus = null;
-			syllabusValue.setText("No current syllabus");
-			resetUnitBox();
-			resetTopicBox();
-			resetClassificationBox();
 			resetDescriptorBox();
 		} finally {
 			updatingControls = false;
@@ -478,6 +464,25 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		selectedClassificationPane.setVisible(false);
 		selectedClassificationPane.setManaged(false);
+	}
+
+	private void clearWorkingSubjectNavigation() {
+		cancelActiveHierarchyLoad();
+		invalidateCurrentSearch();
+		updatingControls = true;
+		try {
+
+			// Reloading the Working Subject invalidates every current-syllabus selector
+			// beneath it while leaving the workspace Subject itself unchanged.
+			currentSyllabus = null;
+			syllabusValue.setText("No current syllabus");
+			resetUnitBox();
+			resetTopicBox();
+			resetClassificationBox();
+			resetDescriptorBox();
+		} finally {
+			updatingControls = false;
+		}
 	}
 
 	private <T> void completeHierarchyLoad(Task<T> task, long generation, Consumer<T> onSucceeded) {
@@ -578,12 +583,10 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void configureHandlers() {
 		searchScopeBox.setOnAction(_ -> handleSearchScopeSelection());
-		subjectBox.setOnAction(_ -> handleSubjectSelection());
 		unitBox.setOnAction(_ -> handleUnitSelection());
 		topicBox.setOnAction(_ -> handleTopicSelection());
 		classificationBox.setOnAction(_ -> handleClassificationSelection());
 		descriptorBox.setOnAction(_ -> handleDescriptorSelection());
-		subjectBox.setOnMousePressed(_ -> handleSubjectBoxMousePress());
 		unitBox.setOnMousePressed(_ -> handleUnitBoxMousePress());
 		topicBox.setOnMousePressed(_ -> handleTopicBoxMousePress());
 		classificationBox.setOnMousePressed(_ -> handleClassificationBoxMousePress());
@@ -663,13 +666,11 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void configureSearchHierarchyControls() {
-		subjectBox.setId("question-search-subject");
 		unitBox.setId("question-search-unit");
 		topicBox.setId("question-search-topic");
 		classificationBox.setId("question-search-classification");
 		descriptorBox.setId("question-search-descriptor");
 		statusLabel.setId("question-search-status");
-		subjectBox.setPromptText("Select subject");
 		unitBox.setPromptText("Select unit");
 		topicBox.setPromptText("Select topic");
 		classificationBox.setPromptText("Select subtopic or descriptor");
@@ -679,20 +680,18 @@ public class QuestionSearchPane extends BorderPane {
 		topicBox.setTooltip(new Tooltip(hierarchyTooltip));
 		classificationBox.setTooltip(new Tooltip(hierarchyTooltip));
 		descriptorBox.setTooltip(new Tooltip(hierarchyTooltip));
-		configurePromptDisplay(subjectBox);
 		configurePromptDisplay(unitBox);
 		configurePromptDisplay(topicBox);
 		configurePromptDisplay(classificationBox);
 		configurePromptDisplay(descriptorBox);
-		subjectBox.setMaxWidth(Double.MAX_VALUE);
 		unitBox.setMaxWidth(Double.MAX_VALUE);
 		topicBox.setMaxWidth(Double.MAX_VALUE);
 		classificationBox.setMaxWidth(Double.MAX_VALUE);
 		descriptorBox.setMaxWidth(Double.MAX_VALUE);
 		syllabusValue.setText("No current syllabus");
 
-		// Only Subject is initially selectable. Deeper controls become available as
-		// the teacher establishes a valid current-curriculum path.
+		// Curriculum navigation begins from the workspace Working Subject. Deeper
+		// controls become available as that Subject's current hierarchy is loaded.
 		unitBox.setDisable(true);
 		topicBox.setDisable(true);
 		classificationBox.setDisable(true);
@@ -705,7 +704,7 @@ public class QuestionSearchPane extends BorderPane {
 		searchScopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS);
 		searchScopeBox.setMaxWidth(Double.MAX_VALUE);
 		searchScopeBox.setTooltip(new Tooltip(
-				"Current Syllabus searches by current curriculum; All Questions searches the complete stored Question bank."));
+				"Current Syllabus searches by current curriculum; All Questions searches all stored Questions for the Working Subject."));
 
 		// Search scope owns its user-facing wording rather than exposing enum names.
 		searchScopeBox.setButtonCell(new DisplayListCell<>(QuestionSearchScope::displayText));
@@ -894,21 +893,21 @@ public class QuestionSearchPane extends BorderPane {
 		pane.setPadding(new Insets(0, 0, PANE_PADDING, 0));
 		pane.add(createSelectorLabel("Search scope"), 0, 0);
 		pane.add(searchScopeBox, 1, 0);
-		pane.add(createSelectorLabel("Subject"), 0, 1);
-		pane.add(subjectBox, 1, 1);
-		pane.add(createSelectorLabel("Current syllabus"), 0, 2);
-		pane.add(syllabusValue, 1, 2);
-		pane.add(createSelectorLabel("Unit"), 0, 3);
-		pane.add(unitBox, 1, 3);
-		pane.add(createSelectorLabel("Topic"), 0, 4);
-		pane.add(topicBox, 1, 4);
-		pane.add(createSelectorLabel("Subtopic / Descriptor"), 0, 5);
-		pane.add(classificationBox, 1, 5);
-		pane.add(createSelectorLabel("Descriptor"), 0, 6);
-		pane.add(descriptorBox, 1, 6);
-		pane.add(statusLabel, 1, 7);
+		pane.add(createSelectorLabel("Current syllabus"), 0, 1);
+		pane.add(syllabusValue, 1, 1);
+		pane.add(createSelectorLabel("Unit"), 0, 2);
+		pane.add(unitBox, 1, 2);
+		pane.add(createSelectorLabel("Topic"), 0, 3);
+		pane.add(topicBox, 1, 3);
+		pane.add(createSelectorLabel("Subtopic / Descriptor"), 0, 4);
+		pane.add(classificationBox, 1, 4);
+		pane.add(createSelectorLabel("Descriptor"), 0, 5);
+		pane.add(descriptorBox, 1, 5);
+		pane.add(statusLabel, 1, 6);
+
+		// The Subject is supplied by the workspace, so every visible selector now
+		// represents only Search-local scope beneath that Subject.
 		GridPane.setHgrow(searchScopeBox, Priority.ALWAYS);
-		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
 		GridPane.setHgrow(unitBox, Priority.ALWAYS);
 		GridPane.setHgrow(topicBox, Priority.ALWAYS);
 		GridPane.setHgrow(classificationBox, Priority.ALWAYS);
@@ -1189,32 +1188,6 @@ public class QuestionSearchPane extends BorderPane {
 			throw new IllegalStateException("Selected Descriptor is not valid for this Question");
 		}
 		classificationDirty.set(true);
-	}
-
-	private void handleSubjectBoxMousePress() {
-		if (!updatingControls && subjectBox.getValue() != null) {
-			Platform.runLater(this::handleSubjectSelection);
-		}
-	}
-
-	private void handleSubjectSelection() {
-		if (updatingControls || disposed) {
-			return;
-		}
-		clearBelowSubject();
-		Subject subject = subjectBox.getValue();
-		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
-
-			// All Questions filters directly by the persisted Exam Subject. It does not
-			// load or evaluate current-syllabus navigation.
-			startAllQuestionsSearch();
-			return;
-		}
-		if (subject == null) {
-			return;
-		}
-		startHierarchyLoad(() -> loadSubjectNavigation(subject),
-				navigation -> showSubjectNavigation(subject, navigation));
 	}
 
 	private void handleTopicBoxMousePress() {
@@ -1573,10 +1546,8 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void setCurriculumControlsDisabled(boolean disabled) {
 
-		// Subject remains meaningful in All Questions because it filters by the
-		// Question's persisted Exam Subject. Lower controls represent current-syllabus
-		// applicability and therefore remain unavailable in that scope.
-		subjectBox.setDisable(false);
+		// Every visible hierarchy control is below the fixed workspace Working
+		// Subject. All Questions disables the complete current-syllabus hierarchy.
 		unitBox.setDisable(disabled || currentSyllabus == null || unitBox.getItems().isEmpty());
 		topicBox.setDisable(disabled || unitBox.getValue() == null || topicBox.getItems().isEmpty());
 		classificationBox.setDisable(disabled || topicBox.getValue() == null || classificationBox.getItems().isEmpty());
@@ -1674,16 +1645,13 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startAllQuestionsSearch() {
-		Subject selectedSubject = subjectBox.getValue();
 
-		// Capture the FX control value before starting the background task. The task
-		// itself must not read JavaFX controls.
+		// All Questions means all persisted Questions belonging to the authoritative
+		// workspace Working Subject. Cross-Subject searching is not a Search-local
+		// concern.
 		startAutomaticSearch(() -> {
-			List<Question> questions = allQuestionsSupplier.get();
-			if (selectedSubject != null) {
-				questions = questions.stream()
-						.filter(question -> selectedSubject.equals(question.getExam().getSubject())).toList();
-			}
+			List<Question> questions = allQuestionsSupplier.get().stream()
+					.filter(question -> workingSubject.equals(question.getExam().getSubject())).toList();
 			return QuestionSearchResult.allQuestionResults(questions);
 		});
 	}
@@ -1739,26 +1707,17 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startCurrentSyllabusSubjectSearch() {
-		Subject subject = subjectBox.getValue();
-		if (subject == null) {
 
-			// Switching to All Questions may have cancelled the constructor's initial
-			// Subject load. Returning to Current syllabus must restore that navigation.
-			if (!subjectsLoaded) {
-				startSubjectLoading();
-			} else {
-				statusLabel.setText("");
-			}
-			return;
-		}
-
-		// The Subject may have been selected before its hierarchy load was cancelled
-		// by a Search-scope change. Restore that hierarchy before searching it.
+		// A scope transition may have cancelled the Working Subject hierarchy load.
+		// Restore that hierarchy before attempting a broad current-syllabus search.
 		if (currentSyllabus == null) {
-			handleSubjectSelection();
+			startWorkingSubjectNavigation();
 			return;
 		}
-		startAutomaticSearch(subject);
+
+		// Subject-level Search means applicability anywhere in the Working Subject's
+		// current syllabus.
+		startAutomaticSearch(workingSubject);
 	}
 
 	private <T> void startHierarchyLoad(Supplier<T> loader, Consumer<T> onSucceeded) {
@@ -1830,25 +1789,16 @@ public class QuestionSearchPane extends BorderPane {
 		startBackgroundTask("question-preview", task);
 	}
 
-	private void startSubjectLoading() {
-		startHierarchyLoad(curriculumRepository::findAllSubjects, subjects -> {
+	private void startWorkingSubjectNavigation() {
+		if (disposed) {
+			return;
+		}
 
-			// Mark completion even when the repository legitimately contains no Subjects.
-			// A false value therefore means loading never completed successfully.
-			subjectsLoaded = true;
-			subjectBox.getItems().setAll(subjects);
-
-			// In All Questions, Subject loading is auxiliary to the Question search.
-			// Restore whichever Search status is currently authoritative.
-			if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
-				subjectBox.setDisable(false);
-				if (activeSearchTask != null) {
-					statusLabel.setText("Searching...");
-				} else {
-					updateSearchStatus();
-				}
-			}
-		});
+		// Working Subject belongs to the application workspace. Search reloads only
+		// the curriculum hierarchy beneath that fixed Subject.
+		clearWorkingSubjectNavigation();
+		startHierarchyLoad(() -> loadSubjectNavigation(workingSubject),
+				navigation -> showSubjectNavigation(workingSubject, navigation));
 	}
 
 	private void updateClassificationEditLock() {
@@ -1859,10 +1809,8 @@ public class QuestionSearchPane extends BorderPane {
 		resultsList.setDisable(false);
 		if (dirty) {
 
-			// Search-filter changes are still held for the next slice. This keeps the
-			// pending Question stable while result-to-result navigation is hardened.
+			// Hold Search-local navigation while the pending Descriptor edit is resolved.
 			searchScopeBox.setDisable(true);
-			subjectBox.setDisable(true);
 			unitBox.setDisable(true);
 			topicBox.setDisable(true);
 			classificationBox.setDisable(true);
@@ -1872,9 +1820,8 @@ public class QuestionSearchPane extends BorderPane {
 		searchScopeBox.setDisable(false);
 		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 
-			// All Questions restores only its persisted-Subject filter because the
-			// remaining selectors represent current-syllabus applicability.
-			subjectBox.setDisable(false);
+			// All Questions has no current-syllabus navigation beneath the fixed
+			// workspace Working Subject.
 			unitBox.setDisable(true);
 			topicBox.setDisable(true);
 			classificationBox.setDisable(true);

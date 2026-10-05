@@ -97,6 +97,8 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private final ComboBox<SyllabusVersion> targetVersionBox = new ComboBox<>();
 	private final CurriculumMappingCoverageService coverageService;
 	private final Label coverageLabel = new Label();
+	private final Subject fixedSubject;
+	private final Label fixedSubjectLabel = new Label();
 
 	/**
 	 * Creates the mapping-review workflow. Suggestions remain unselected until the
@@ -117,6 +119,30 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	 *                              {@code null}
 	 */
 	public CurriculumMappingReviewDialog(Window owner, CurriculumRepository repository,
+			CurriculumMappingSuggester descriptorSuggester, CurriculumMappingSuggester subtopicSuggester,
+			SubtopicMappingEvidenceService subtopicEvidenceService, CurriculumMappingReviewRepository reviewRepository,
+			CurriculumMappingRepository mappingRepository, CurriculumMappingCoverageService coverageService,
+			SqliteCurriculumMappingReviewWriter reviewWriter) {
+		this(owner, null, repository, descriptorSuggester, subtopicSuggester, subtopicEvidenceService, reviewRepository,
+				mappingRepository, coverageService, reviewWriter);
+	}
+
+	/**
+	 * Creates mapping review fixed to the authoritative application Subject.
+	 *
+	 * @param owner                   owner window
+	 * @param fixedSubject            Subject whose mappings will be reviewed
+	 * @param repository              curriculum hierarchy lookup
+	 * @param descriptorSuggester     ranked descriptor suggestion service
+	 * @param subtopicSuggester       ranked subtopic suggestion service
+	 * @param subtopicEvidenceService descriptor-review evidence for subtopic
+	 *                                reviews
+	 * @param reviewRepository        completed-review lookup
+	 * @param mappingRepository       directional mapping lookup
+	 * @param coverageService         mapping-review coverage reporting service
+	 * @param reviewWriter            atomic review persistence boundary
+	 */
+	public CurriculumMappingReviewDialog(Window owner, Subject fixedSubject, CurriculumRepository repository,
 			CurriculumMappingSuggester descriptorSuggester, CurriculumMappingSuggester subtopicSuggester,
 			SubtopicMappingEvidenceService subtopicEvidenceService, CurriculumMappingReviewRepository reviewRepository,
 			CurriculumMappingRepository mappingRepository, CurriculumMappingCoverageService coverageService,
@@ -145,6 +171,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		if (coverageService == null) {
 			throw new NullPointerException("coverageService");
 		}
+		this.fixedSubject = fixedSubject;
 		this.repository = repository;
 		this.descriptorSuggester = descriptorSuggester;
 		this.subtopicSuggester = subtopicSuggester;
@@ -220,7 +247,16 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		grid.setVgap(FORM_ROW_GAP);
 		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
-		grid.add(subjectBox, 1, 0);
+		if (fixedSubject == null) {
+
+			// Standalone callers retain the historical Subject selector.
+			grid.add(subjectBox, 1, 0);
+		} else {
+
+			// Application workflows inherit Subject from the Dashboard and expose it only
+			// as read-only context.
+			grid.add(fixedSubjectLabel, 1, 0);
+		}
 		grid.add(new Label("Source syllabus:"), 0, 1);
 		grid.add(sourceVersionBox, 1, 1);
 		grid.add(new Label("Current target syllabus:"), 0, 2);
@@ -294,6 +330,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		coverageLabel.setMaxWidth(CONTENT_WIDTH);
 	}
 
+	// TODO Refactor to remove inner classes
 	private void configureReviewedMappingsList() {
 		reviewedMappingsList.setPrefWidth(CONTENT_WIDTH);
 		reviewedMappingsList.setPrefHeight(TARGET_LIST_HEIGHT);
@@ -314,6 +351,9 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	}
 
 	private void configureSelectors() {
+		subjectBox.setId("curriculum-mapping-subject");
+		fixedSubjectLabel.setId("curriculum-mapping-fixed-subject");
+		fixedSubjectLabel.setStyle("-fx-font-weight: bold;");
 		setSelectorWidth(subjectBox);
 		setSelectorWidth(sourceVersionBox);
 		setSelectorWidth(targetVersionBox);
@@ -327,6 +367,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		setSelectorWidth(sourceDescriptorBox);
 	}
 
+	// TODO Refactor to remove inner classes
 	private void configureSourceNodeControls() {
 		sourceDescriptorBox.setButtonCell(new ListCell<>() {
 
@@ -366,6 +407,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 				.setStyle("-fx-border-color: #b0b0b0; -fx-border-width: 1; -fx-background-color: white;");
 	}
 
+	// TODO Refactor to remove inner classes
 	private void configureSuggestionList() {
 		suggestionsList.setPrefWidth(CONTENT_WIDTH);
 		suggestionsList.setPrefHeight(TARGET_LIST_HEIGHT);
@@ -556,7 +598,17 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	}
 
 	private void initialiseData() {
-		subjectBox.getItems().setAll(repository.findAllSubjects());
+		if (fixedSubject == null) {
+			subjectBox.getItems().setAll(repository.findAllSubjects());
+			return;
+		}
+
+		// Retain the internal ComboBox as the existing loadVersions event source, but
+		// do
+		// not place it in the fixed-Subject dialog scene graph.
+		fixedSubjectLabel.setText(fixedSubject.getName());
+		subjectBox.getItems().setAll(fixedSubject);
+		subjectBox.setValue(fixedSubject);
 	}
 
 	private void loadReviewedDescriptor(CurriculumNode source, SyllabusVersion targetVersion,

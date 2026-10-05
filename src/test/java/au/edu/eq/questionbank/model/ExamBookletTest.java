@@ -2,8 +2,10 @@ package au.edu.eq.questionbank.model;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,6 +14,15 @@ class ExamBookletTest {
 
 	private Exam exam;
 	private SourceDocument sourceDocument;
+
+	@Test
+	void legacyBookletHasNoExpectedQuestionCount() {
+		ExamBooklet booklet = new ExamBooklet(1, exam, "Paper 1", sourceDocument);
+
+		// Existing booklet rows must not acquire invented top-level Question counts.
+		assertFalse(booklet.hasExpectedQuestionCount());
+		assertEquals(null, booklet.getExpectedQuestionCount());
+	}
 
 	@Test
 	void legacyConstructorLeavesQuestionFormatUnspecified() {
@@ -38,6 +49,16 @@ class ExamBookletTest {
 				() -> assertThrows(IllegalArgumentException.class, () -> new ExamBooklet(1, exam, "", sourceDocument)),
 				() -> assertThrows(IllegalArgumentException.class,
 						() -> new ExamBooklet(1, exam, " \t", sourceDocument)));
+	}
+
+	@Test
+	void rejectsNonPositiveExpectedQuestionCount() {
+		assertAll(
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new ExamBooklet(1, exam, "Paper 1", sourceDocument,
+								ExamBookletQuestionFormat.MULTIPLE_CHOICE, 0)),
+				() -> assertThrows(IllegalArgumentException.class, () -> new ExamBooklet(1, exam, "Paper 1",
+						sourceDocument, ExamBookletQuestionFormat.MULTIPLE_CHOICE, -1)));
 	}
 
 	@Test
@@ -70,6 +91,16 @@ class ExamBookletTest {
 		Subject subject = new Subject(2, "Chemistry");
 		exam = new Exam(8, subject, new ExamProvider(3, "QCAA"), 2025, "External assessment");
 		sourceDocument = new SourceDocument(5, "chemistry/QCAA/2025/question-booklet.pdf");
+	}
+
+	@Test
+	void storesExpectedTopLevelQuestionCount() {
+		ExamBooklet booklet = new ExamBooklet(1, exam, "Paper 2", sourceDocument,
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 12);
+
+		// The value counts source Questions, not the number of stored multipart parts.
+		assertTrue(booklet.hasExpectedQuestionCount());
+		assertEquals(12, booklet.getExpectedQuestionCount());
 	}
 
 	@Test

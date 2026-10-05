@@ -19,15 +19,19 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
@@ -40,6 +44,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -52,8 +57,10 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -107,12 +114,38 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void acceptedAnswerRegionPreviewUsesStableViewportWidth(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "STABLE-ANSWER");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-answer-region");
+		AnswerCapturePane pane = answerCapturePane();
+		ScrollPane regions = field(pane, "answerRegionsScrollPane", ScrollPane.class);
+		VBox list = field(pane, "answerRegionListBox", VBox.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> !list.getChildren().isEmpty() && regions.getViewportBounds().getWidth() > 0.0);
+
+		// Reserving scrollbar width removes the appear/disappear threshold that could
+		// feed repeated width changes back into preview height.
+		assertEquals(ScrollPane.ScrollBarPolicy.ALWAYS, regions.getVbarPolicy());
+		VBox row = (VBox) list.getChildren().getFirst();
+		assertTrue(row.getChildren().getFirst() instanceof ImageView);
+		ImageView preview = (ImageView) row.getChildren().getFirst();
+		assertTrue(preview.getFitWidth() > 0.0);
+		assertTrue(preview.getFitWidth() < regions.getViewportBounds().getWidth());
+	}
+
+	@Test
 	void answerEditCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "58");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
 				new Class<?>[] { Question.class, String.class }, question, "A")).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, question::hasAnswer));
 		AtomicBoolean callbackRan = new AtomicBoolean();
 		AtomicBoolean saveInProgressAtCompletion = new AtomicBoolean();
 		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, () -> {
@@ -125,47 +158,8 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(saveInProgressAtCompletion.get(),
 				"Answer edit completion must run after the save-in-progress state is cleared");
 		assertFalse(answerCapturePane().isSaveInProgress());
-		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
-				.orElseThrow();
+		Question stored = repository.findById(question.getId()).orElseThrow();
 		assertEquals("B", stored.getAnswer().getAnswerText());
-	}
-
-	@Test
-	void answerEditOpensFirstStoredRegionPage(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		Question question = captureQuestion(robot, "ANSWER-PAGE2");
-		ComboBox<Question> questions = unansweredQuestions(robot);
-		robot.interact(() -> questions.getSelectionModel().select(question));
-		openAnswerPdfForTest(question);
-
-		// Capture the persisted Answer region on page 2.
-		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2));
-		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
-		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
-		robot.clickOn("#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
-		WaitForAsyncUtils.waitForFxEvents();
-		assertTrue(question.hasAnswer());
-		assertEquals(1, question.getAnswer().getRegions().size());
-		assertEquals(2, question.getAnswer().getRegions().getFirst().pageNumber());
-
-		// Move away from the stored source page before starting the edit so the test
-		// proves that editAnswer performs the page navigation itself.
-		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 1));
-		assertEquals(1, pdfWorkspace().getCurrentPageNumber());
-		AtomicInteger completed = new AtomicInteger();
-		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, completed::incrementAndGet)));
-		WaitForAsyncUtils.waitForFxEvents();
-
-		// Editing should restore the registered Answer PDF and position it at the
-		// first persisted Answer region.
-		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
-		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
-		assertEquals(0, completed.get());
-		robot.clickOn("#cancel-answer-edit");
-		WaitForAsyncUtils.waitForFxEvents();
-		assertEquals(1, completed.get());
 	}
 
 	@Test
@@ -198,7 +192,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// An unresolved booklet must not inherit Paper 2's file merely because both
 		// Questions belong to the same Exam.
 		assertNull(field(answerCapturePane(), "answerFile", AnswerFile.class));
-		assertEquals("Choose an answer PDF", selectedPdf.getText());
+		assertEquals("No Answer PDF assigned - use Exam / Assets", selectedPdf.getText());
 		assertTrue(pdfControls.isVisible());
 		assertTrue(pdfControls.isManaged());
 	}
@@ -263,7 +257,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#add-answer-region");
 		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-answer-region");
+		fireControl(robot, "#add-answer-region");
 		assertEquals("Regions: 2", lookup(robot, "#answer-region-count", Label.class).getText());
 		Button firstRemoveButton = robot.lookup("Remove").queryButton();
 		fireControl(robot, firstRemoveButton);
@@ -274,7 +268,29 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void captureAnswerReopensAssignedPdfAfterManagedSessionWasClosed(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "REOPEN-ANSWER");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+		assertNotNull(pdfWorkspace().getAnswerPdfSession());
+		robot.interact(pdfWorkspace()::closeAnswerPdf);
+		assertNull(pdfWorkspace().getAnswerPdfSession());
+		Boolean started = WaitForAsyncUtils.asyncFx(() -> answerCapturePane().captureAnswer(question)).get();
+		assertTrue(started.booleanValue());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> pdfWorkspace().getAnswerPdfSession() != null);
+
+		// Retaining the same AnswerFile identity after Dashboard cleanup must reopen
+		// its
+		// PDF rather than trying to redisplay a nonexistent session.
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
+		assertNotNull(pdfWorkspace().getAnswerPdfSession());
+	}
+
+	@Test
 	void capturesQuestionThenSavesRegionAnswer(FxRobot robot) throws Exception {
+		showCaptureWorkspaceForTest();
 		assertInitialAnswerControlsDisabled(robot);
 		prepareExamAndClassification(robot);
 		Question savedQuestion = captureQuestion(robot, "Q1");
@@ -302,7 +318,8 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		fireControl(robot, "#save-answer");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> savedQuestion.hasAnswer() && savedQuestion.getAnswer().getRegions().size() == 1));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(savedQuestion.hasAnswer());
 		assertNull(savedQuestion.getAnswer().getAnswerText());
@@ -313,12 +330,72 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardMcqExplanationCaptureOpensExactMissingQuestionAndRequiresARegion(FxRobot robot) throws Exception {
+		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		// Explanation material is authoritative for this booklet and the MCQ has a
+		// complete A-D Answer but no explanation region.
+		answerWriter.setContainsAnswerExplanations(fixture.answersA(), true);
+		answerWriter.insertAnswer(fixture.mcqQuestion(), "B", List.of());
+		AnswerCapturePane answers = answerCapturePane();
+		robot.interact(() -> answers.setExamScope(fixture.mcqQuestion().getExam()));
+		Boolean started = WaitForAsyncUtils.asyncFx(() -> answers.captureMcqExplanations(fixture.mcqQuestion())).get();
+		assertTrue(started.booleanValue());
+		@SuppressWarnings("unchecked")
+		ComboBox<Question> explanationQuestions = lookup(robot, "#mcq-explanation-question", ComboBox.class);
+
+		// Dashboard entry selects its exact requested work item rather than leaving the
+		// teacher to rediscover it in the retrofit selector.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> answers.isEditingAnswer() && explanationQuestions.getValue() != null
+						&& explanationQuestions.getValue().getId() == fixture.mcqQuestion().getId());
+		assertEquals(fixture.mcqQuestion().getId(), explanationQuestions.getValue().getId());
+		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled(),
+				"A missing-explanation candidate must not be consumable without a region");
+
+		// Cancel changes no persistence and leaves the outstanding candidate available.
+		Button cancel = lookup(robot, "#cancel-answer-edit", Button.class);
+		robot.interact(cancel::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(explanationQuestions.getItems().stream()
+				.anyMatch(question -> question.getId() == fixture.mcqQuestion().getId()));
+		Button done = lookup(robot, "#finish-mcq-explanations", Button.class);
+		robot.interact(done::fire);
+	}
+
+	@Test
+	void directAnswerCaptureCompletionRunsAfterSaveTransitionFinishes(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "DASH-A");
+		AtomicBoolean callbackRan = new AtomicBoolean();
+		AtomicBoolean saveInProgressAtCompletion = new AtomicBoolean();
+		robot.interact(() -> assertTrue(answerCapturePane().captureAnswer(question, () -> {
+			saveInProgressAtCompletion.set(answerCapturePane().isSaveInProgress());
+			callbackRan.set(true);
+		})));
+		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
+				new Class<?>[] { Question.class, String.class }, question, "A")).get();
+
+		// Dashboard return must occur after the complete Answer save transition rather
+		// than merely after the SQLite write succeeds.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, callbackRan::get);
+		assertFalse(saveInProgressAtCompletion.get());
+		assertFalse(answerCapturePane().isSaveInProgress());
+		assertTrue(new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow().hasAnswer());
+	}
+
+	@Test
 	void editingAnswerCompletesWithoutReloadingTheQuestionBank(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "54");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
 				new Class<?>[] { Question.class, String.class }, question, "A")).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, question::hasAnswer));
 		long answerId = question.getAnswer().getId();
 		AtomicInteger completed = new AtomicInteger();
 		robot.interact(() -> assertTrue(answerCapturePane().editAnswer(question, completed::incrementAndGet)));
@@ -331,13 +408,144 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		});
 		WaitForAsyncUtils.asyncFx(() -> invoke(answerCapturePane(), "saveAnswer",
 				new Class<?>[] { Question.class, String.class }, question, "B")).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answerCapturePane().isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> completed.get() == 1);
 		assertEquals(1, completed.get());
-		Question stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
-				.orElseThrow();
+		Question stored = repository.findById(question.getId()).orElseThrow();
 		assertEquals(answerId, stored.getAnswer().getId());
 		assertEquals("B", stored.getAnswer().getAnswerText());
 		assertTrue(unansweredQuestions(robot).getItems().isEmpty());
+	}
+
+	@Test
+	void existingMcqAnswerCanReceiveExplanationRegionWithoutChangingStoredChoice(FxRobot robot) throws Exception {
+		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+
+		// Retrofit eligibility comes from persisted AnswerFile metadata and existing
+		// authoritative A-D Answers.
+		AnswerFile explanationFile = answerWriter.setContainsAnswerExplanations(fixture.answersA(), true);
+		long originalAnswerId = answerWriter.insertAnswer(fixture.mcqQuestion(), "B", List.of()).getId();
+		Question secondMcq = repository.save(fixture.mcqQuestion().getBooklet(), "2", "", 1,
+				List.of(new QuestionRegion(fixture.mcqQuestion().getBooklet(), 1, 0.10, 0.35, 0.50, 0.20)),
+				fixture.mcqQuestion().getClassification(), false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		answerWriter.insertAnswer(secondMcq, "C", List.of());
+
+		// Create another eligible MCQ in the same Subject and Exam but a different
+		// booklet. It proves that retrofit is scoped to the active Question booklet,
+		// not merely to Working Subject or Exam.
+		Exam exam = fixture.mcqQuestion().getExam();
+		ExamBooklet otherMcqBooklet = new SqliteExamImporter(database, examWriter).importExam(exam.getSubject(),
+				exam.getProvider().getName(), exam.getYear(), exam.getName(), "Other MCQ booklet",
+				"Chemistry/2024/other-mcq.pdf", ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		Question otherBookletMcq = repository.save(otherMcqBooklet, "99", "", 1,
+				List.of(new QuestionRegion(otherMcqBooklet, 1, 0.10, 0.10, 0.50, 0.20)),
+				fixture.mcqQuestion().getClassification(), false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		answerWriter.assignAnswerFile(otherMcqBooklet, explanationFile);
+		answerWriter.insertAnswer(otherBookletMcq, "D", List.of());
+
+		// Make the MCQ booklet authoritative exactly as the Exam/Assets transition
+		// does before entering Capture.
+		robot.interact(() -> examMetadataPane().activateExistingBooklet(fixture.mcqQuestion().getBooklet(), examPdf));
+		robot.interact(() -> refreshAnswerQuestionsForTest(repository.findAll()));
+		WaitForAsyncUtils.waitForFxEvents();
+		Button beginRetrofit = lookup(robot, "#capture-mcq-explanations", Button.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !beginRetrofit.isDisabled());
+		robot.interact(beginRetrofit::fire);
+		@SuppressWarnings("unchecked")
+		ComboBox<Question> retrofitQuestions = lookup(robot, "#mcq-explanation-question", ComboBox.class);
+		Node retrofitControls = retrofitQuestions.getParent();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> retrofitControls.isVisible() && retrofitQuestions.getItems().size() == 2);
+
+		// Only answered MCQs from the active MCQ booklet are candidates.
+		assertTrue(retrofitQuestions.getItems().stream()
+				.anyMatch(question -> question.getId() == fixture.mcqQuestion().getId()));
+		assertTrue(retrofitQuestions.getItems().stream().anyMatch(question -> question.getId() == secondMcq.getId()));
+		assertTrue(retrofitQuestions.getItems().stream()
+				.noneMatch(question -> question.getId() == otherBookletMcq.getId()));
+		Question firstCandidate = retrofitQuestions.getItems().stream()
+				.filter(question -> question.getId() == fixture.mcqQuestion().getId()).findFirst().orElseThrow();
+		robot.interact(() -> retrofitQuestions.getSelectionModel().select(firstCandidate));
+		WaitForAsyncUtils.waitForFxEvents();
+		RadioButton answerB = lookup(robot, "#answer-choice-b", RadioButton.class);
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		assertTrue(answerB.isSelected());
+		assertTrue(addRegion.isVisible());
+		assertTrue(answerCapturePane().isEditingAnswer());
+
+		// Move away from page 1 before saving. Consecutive explanations are commonly
+		// adjacent in the same marking guide, so automatic advancement must preserve
+		// this
+		// working position.
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2));
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
+
+		// PDF dragging remains intentional because region geometry is the behaviour
+		// under test.
+		dragRegionOnDisplayedPage(robot);
+		robot.interact(addRegion::fire);
+		robot.interact(() -> lookup(robot, "#save-answer", Button.class).fire());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findById(firstCandidate.getId()).filter(Question::hasAnswer)
+						.map(question -> "B".equals(question.getAnswer().getAnswerText())
+								&& question.getAnswer().getId() == originalAnswerId
+								&& question.getAnswer().getRegions().size() == 1)
+						.orElse(false));
+
+		// A successful save consumes the first session candidate and immediately opens
+		// the next one.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> retrofitQuestions.getItems().size() == 1 && retrofitQuestions.getValue() != null
+						&& retrofitQuestions.getValue().getId() == secondMcq.getId()
+						&& answerCapturePane().isEditingAnswer());
+		assertTrue(retrofitQuestions.getItems().stream()
+				.noneMatch(question -> question.getId() == firstCandidate.getId()));
+		assertEquals(secondMcq.getId(), retrofitQuestions.getValue().getId());
+
+		// Advancing to another candidate in the same AnswerFile must reuse the existing
+		// PDF session rather than reopen it at page 1.
+		assertEquals(2, pdfWorkspace().getCurrentPageNumber());
+		RadioButton answerC = lookup(robot, "#answer-choice-c", RadioButton.class);
+		assertTrue(answerC.isSelected(), "Automatic advancement must restore the next candidate's stored letter");
+
+		// Merely opening the automatically advanced candidate restores persisted A-D
+		// state and is safe to abandon without forcing an unnecessary Cancel first.
+		assertTrue(answerCapturePane().canAbandonMcqExplanationCapture());
+
+		// Cancelling does not consume the candidate because no successful update was
+		// persisted for it.
+		Button cancel = lookup(robot, "#cancel-answer-edit", Button.class);
+		robot.interact(cancel::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(retrofitQuestions.getItems().stream().anyMatch(question -> question.getId() == secondMcq.getId()));
+
+		// Reopen the remaining repository-loaded candidate. The original secondMcq
+		// instance predates insertAnswer(...) and therefore does not contain its
+		// persisted Answer.
+		Question remainingCandidate = retrofitQuestions.getItems().stream()
+				.filter(question -> question.getId() == secondMcq.getId()).findFirst().orElseThrow();
+		robot.interact(() -> retrofitQuestions.getSelectionModel().select(remainingCandidate));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> answerCapturePane().isEditingAnswer() && retrofitQuestions.getValue() != null
+						&& retrofitQuestions.getValue().getId() == remainingCandidate.getId());
+		dragRegionOnDisplayedPage(robot);
+		robot.interact(addRegion::fire);
+		robot.interact(() -> lookup(robot, "#save-answer", Button.class).fire());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findById(secondMcq.getId()).filter(Question::hasAnswer)
+						.map(question -> "C".equals(question.getAnswer().getAnswerText())
+								&& question.getAnswer().getRegions().size() == 1)
+						.orElse(false));
+
+		// Saving the final outstanding explanation completes the retrofit session
+		// automatically. No stale MCQ controls or separate Done action should remain.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> !retrofitControls.isVisible() && !answerCapturePane().isEditingAnswer());
+		assertFalse(retrofitControls.isVisible());
+		assertTrue(beginRetrofit.isVisible());
 	}
 
 	@Test
@@ -369,28 +577,80 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void hidesAnswerPdfControlsWhenAnswerPdfIsKnown(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		Question question = captureQuestion(robot, "56");
-		ComboBox<Question> questions = unansweredQuestions(robot);
-		robot.interact(() -> questions.getSelectionModel().select(question));
-		Node pdfControls = field(answerCapturePane(), "answerPdfControls", Node.class);
-		assertTrue(pdfControls.isVisible());
-		assertTrue(pdfControls.isManaged());
-		openAnswerPdfForTest(question);
+	void mcqExplanationEntryRequiresFlaggedActiveBookletAnswerFile(FxRobot robot) throws Exception {
+		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+
+		// Activate the real MCQ booklet while its assigned AnswerFile still has the
+		// default "no explanations" metadata.
+		robot.interact(() -> examMetadataPane().activateExistingBooklet(fixture.mcqQuestion().getBooklet(), examPdf));
+		robot.interact(() -> refreshAnswerQuestionsForTest(repository.findAll()));
 		WaitForAsyncUtils.waitForFxEvents();
+		Button captureExplanations = lookup(robot, "#capture-mcq-explanations", Button.class);
 
-		// Selecting an Answer PDF is now also the explicit booklet-to-AnswerFile
-		// assignment operation.
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(new SqliteDatabase(databasePath),
-				new SqliteExamWriter(new SqliteDatabase(databasePath)));
-		AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
-		assertNotNull(assignedAnswerFile);
-		assertEquals("exam.pdf", assignedAnswerFile.getName());
+		// Merely having an MCQ booklet and an AnswerFile must not offer explanation
+		// capture when that source has not been marked as containing explanations.
+		assertTrue(captureExplanations.isDisabled());
+		AnswerFile explanationFile = answerWriter.setContainsAnswerExplanations(fixture.answersA(), true);
+		assertTrue(explanationFile.hasAnswerExplanations());
 
-		// Visibility and layout participation are controlled by the containing HBox.
-		assertFalse(pdfControls.isVisible());
-		assertFalse(pdfControls.isManaged());
+		// Republish the current Answer state exactly as an application refresh does so
+		// availability is recalculated from the authoritative persisted metadata.
+		robot.interact(() -> refreshAnswerQuestionsForTest(repository.findAll()));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !captureExplanations.isDisabled());
+		assertFalse(captureExplanations.isDisabled());
+	}
+
+	@Test
+	void multipleChoiceCanSaveChoiceWithOptionalExplanationRegion(FxRobot robot) throws Exception {
+		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		// Explanation capture is enabled by authoritative AnswerFile metadata rather
+		// than by the Question, filename or temporary UI state.
+		AnswerFile explanationFile = answerWriter.setContainsAnswerExplanations(fixture.answersA(), true);
+		assertTrue(explanationFile.hasAnswerExplanations());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		List<Question> refreshedQuestions = repository.findAll();
+		robot.interact(() -> refreshAnswerQuestionsForTest(refreshedQuestions));
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		Question mcq = questions.getItems().stream()
+				.filter(candidate -> candidate.getId() == fixture.mcqQuestion().getId()).findFirst().orElseThrow();
+		robot.interact(() -> questions.getSelectionModel().select(mcq));
+		WaitForAsyncUtils.waitForFxEvents();
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		RadioButton answerB = lookup(robot, "#answer-choice-b", RadioButton.class);
+		Button save = lookup(robot, "#save-answer", Button.class);
+
+		// A flagged MCQ keeps the normal A-D controls while also exposing optional
+		// marking-PDF region capture.
+		assertTrue(addRegion.isVisible());
+		assertTrue(addRegion.isManaged());
+		robot.interact(answerB::fire);
+		assertTrue(answerB.isSelected());
+
+		// PDF dragging is intentionally pointer-driven because region geometry itself
+		// is the behaviour under test.
+		dragRegionOnDisplayedPage(robot);
+		robot.interact(addRegion::fire);
+		assertEquals("Regions: 1", lookup(robot, "#answer-region-count", Label.class).getText());
+		robot.interact(save::fire);
+
+		// Persistence of both the A-D choice and region is the completion condition.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findById(mcq.getId()).filter(Question::hasAnswer)
+						.map(candidate -> "B".equals(candidate.getAnswer().getAnswerText())
+								&& candidate.getAnswer().getRegions().size() == 1)
+						.orElse(false));
+		Question stored = repository.findById(mcq.getId()).orElseThrow();
+		assertEquals("B", stored.getAnswer().getAnswerText());
+		assertEquals(1, stored.getAnswer().getRegions().size());
+		assertEquals(explanationFile.getId(), stored.getAnswer().getRegions().getFirst().answerFile().getId());
 	}
 
 	@Test
@@ -455,10 +715,82 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new IllegalStateException(e);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !answers.isSaveInProgress());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, question::hasAnswer));
 		WaitForAsyncUtils.waitForFxEvents();
 		robot.interact(() -> refreshAnswerQuestionsForTest(oldSnapshot));
 		assertTrue(unansweredQuestions(robot).getItems().isEmpty());
+	}
+
+	@Test
+	void replacingActiveAnswerPdfReturnsRegionOnlyQuestionToAnswerQueue(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "ANSWER-REPLACE");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		openAnswerPdfForTest(question);
+
+		// Persist a region-only written Answer against the currently assigned
+		// AnswerFile.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-answer-region");
+		fireControl(robot, "#save-answer");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> question.hasAnswer() && question.getAnswer().getRegions().size() == 1));
+		WaitForAsyncUtils.waitForFxEvents();
+		Question beforeReplacement = repository.findById(question.getId()).orElseThrow();
+		assertTrue(beforeReplacement.hasAnswer());
+		assertEquals(1, beforeReplacement.getAnswer().getRegions().size());
+		Path replacementPdf = createReplacementAnswerPdf(databasePath.getParent().resolve("replacement-answer.pdf"));
+		String replacementHash = new SourceDocumentHashService().sha256(replacementPdf);
+
+		// Invoke the real application workflow with an explicit path so the test does
+		// not automate a native FileChooser.
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "replaceActiveAnswerPdf",
+						new Class<?>[] { Stage.class, ApplicationConfig.class, Path.class }, primaryStage,
+						applicationConfig, replacementPdf);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		waitForDialogShowing(robot, "Replace Answer PDF");
+		DialogPane confirmation = showingDialogPane(robot, "Replace Answer PDF");
+		assertNotNull(confirmation);
+		assertEquals("Existing Answer regions will be invalidated.", confirmation.getHeaderText());
+		ButtonType replaceButton = confirmation.getButtonTypes().stream()
+				.filter(buttonType -> "Replace Answer PDF".equals(buttonType.getText())).findFirst().orElseThrow();
+		Node replaceNode = confirmation.lookupButton(replaceButton);
+		assertTrue(replaceNode instanceof Button);
+
+		// Fire the DialogPane-owned semantic action rather than relying on text lookup
+		// or pointer hit-testing.
+		robot.interact(((Button) replaceNode)::fire);
+		waitForDialogShowing(robot, "Answer PDF Replaced");
+		DialogPane success = showingDialogPane(robot, "Answer PDF Replaced");
+		assertNotNull(success);
+		Node okNode = success.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Answer PDF Replaced");
+		WaitForAsyncUtils.waitForFxEvents();
+		Question reloaded = new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findById(question.getId())
+				.orElseThrow();
+		assertFalse(reloaded.hasAnswer());
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile assigned = answerWriter.findAnswerFile(question.getBooklet());
+		assertNotNull(assigned);
+		assertEquals(replacementHash, assigned.getSourceDocument().getContentSha256());
+
+		// refreshAfterAnswerFileCorrection clears the stale locally-answered
+		// suppression
+		// state, so the invalidated written-response Question is immediately
+		// actionable.
+		assertTrue(unansweredQuestions(robot).getItems().stream()
+				.anyMatch(candidate -> candidate.getId() == question.getId()));
 	}
 
 	@Test
@@ -569,6 +901,41 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(fixture.answersA().getId(), storedPaper1.getAnswer().getRegions().getFirst().answerFile().getId());
 	}
 
+	@Test
+	void showsAssignedAnswerPdfWithoutSourceSelectionControl(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "56");
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		robot.interact(() -> questions.getSelectionModel().select(question));
+		Node pdfControls = field(answerCapturePane(), "answerPdfControls", Node.class);
+		Label selectedPdf = lookup(robot, "#selected-answer-pdf", Label.class);
+		assertTrue(pdfControls.isVisible());
+		assertTrue(pdfControls.isManaged());
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
+		openAnswerPdfForTest(question);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The registered AnswerFile remains authoritative even though Answer capture no
+		// longer provides a second source-selection workflow.
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(new SqliteDatabase(databasePath),
+				new SqliteExamWriter(new SqliteDatabase(databasePath)));
+		AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
+		assertNotNull(assignedAnswerFile);
+		assertEquals("exam.pdf", assignedAnswerFile.getName());
+
+		// The managed Answer PDF must retain its persisted byte identity.
+		Path managedAnswerPath = pdfDataRoot.resolve(assignedAnswerFile.getSourceDocument().getRelativePath());
+		String expectedHash = new SourceDocumentHashService().sha256(managedAnswerPath);
+		assertEquals(expectedHash, assignedAnswerFile.getSourceDocument().getContentSha256());
+
+		// Once assigned, the row stays visible as source information rather than
+		// disappearing as the old Choose-PDF workflow did.
+		assertTrue(pdfControls.isVisible());
+		assertTrue(pdfControls.isManaged());
+		assertEquals("exam.pdf", selectedPdf.getText());
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
+	}
+
 	@Override
 	@Start
 	void start(Stage stage) throws Exception {
@@ -577,12 +944,14 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	private void assertAnswerEntryControlsEnabled(FxRobot robot) {
 		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
-		assertFalse(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
+
+		// Answer capture no longer offers an independent PDF-selection workflow.
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
 	}
 
 	private void assertInitialAnswerControlsDisabled(FxRobot robot) {
 		assertTrue(lookup(robot, "#save-answer", Button.class).isDisabled());
-		assertTrue(lookup(robot, "#choose-answer-pdf", Button.class).isDisabled());
+		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
 		assertTrue(lookup(robot, "#add-answer-region", Button.class).isDisabled());
 		assertTrue(lookup(robot, "#clear-answer-selection", Button.class).isDisabled());
 	}
@@ -646,6 +1015,19 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 		return new BookletAnswerFixture(mcqQuestion, paper1Question, paper2Question, unmappedQuestion, answersA,
 				answersB);
+	}
+
+	private Path createReplacementAnswerPdf(Path path) throws Exception {
+		try (PDDocument document = new PDDocument()) {
+
+			// Three pages ensure a valid PDF whose bytes differ from the normal two-page
+			// workflow fixture.
+			document.addPage(new PDPage());
+			document.addPage(new PDPage());
+			document.addPage(new PDPage());
+			document.save(path.toFile());
+		}
+		return path;
 	}
 
 	// Bundles the three-booklet Answer-PDF arrangement exercised by the workflow

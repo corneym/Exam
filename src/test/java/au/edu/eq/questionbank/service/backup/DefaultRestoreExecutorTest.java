@@ -292,7 +292,7 @@ class DefaultRestoreExecutorTest {
 					VALUES (1, 1, 'Q1', '', 2, 1, 'WRITTEN_RESPONSE', 1)
 					""");
 
-			// Reverse migrations 12, 13 and 14 so the synthetic fixture contains only
+			// Reverse migrations 12 through 18 so the synthetic fixture contains only
 			// structures that genuinely existed in schema version 11.
 			statement.execute("DROP TABLE question_content_parts");
 			statement.execute("DROP TABLE question_images");
@@ -307,6 +307,25 @@ class DefaultRestoreExecutorTest {
 					TO preamble_status
 					""");
 			statement.execute("DROP TABLE question_output_exclusions");
+
+			// Version 19 added AnswerFile explanation metadata, which did not exist in the
+			// version-11 backup being simulated.
+			statement.execute("ALTER TABLE answer_files DROP COLUMN contains_answer_explanations");
+
+			// Version 18 added Exam-level asset expectations, which did not exist in v11.
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_answer_file_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN expected_question_booklet_count");
+
+			// Version 17 added explicit Question source-recapture state.
+			statement.execute("ALTER TABLE questions DROP COLUMN source_capture_required");
+
+			// Version 16 added source-document hashes, which did not exist in v11.
+			statement.execute("ALTER TABLE source_documents DROP COLUMN content_sha256");
+
+			// Version 15 added Exam lifecycle and expected-count metadata that did not
+			// exist in the version-11 backup being simulated.
+			statement.execute("ALTER TABLE exam_booklets DROP COLUMN expected_question_count");
+			statement.execute("ALTER TABLE exams DROP COLUMN capture_state");
 			statement.execute("UPDATE schema_version SET version = 11");
 		}
 

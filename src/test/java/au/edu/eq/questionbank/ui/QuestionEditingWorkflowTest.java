@@ -26,7 +26,6 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
-import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
@@ -39,12 +38,16 @@ import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 
@@ -240,6 +243,105 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(1, repository.findById(question.getId()).orElseThrow().getRegions().size());
 	}
 
+	@SuppressWarnings("unchecked")
+	@Test
+	void searchEditAnswerFromDashboardShowsAnswerCaptureWorkspace(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = captureQuestion(robot, "EDIT-ANSWER");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+
+		// Register and assign an authoritative Answer PDF to this booklet. The test is
+		// concerned with editing an existing Answer, not with testing initial Answer
+		// capture or its asynchronous save transition.
+		openAnswerPdfForTest(question);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
+		answerWriter.insertAnswer(question, "Stored answer", List.of());
+		Question answeredQuestion = repository.findById(question.getId()).orElseThrow();
+		assertTrue(answeredQuestion.hasAnswer());
+		WaitForAsyncUtils.asyncFx(() -> {
+
+			// Reproduce the production route from the Dashboard rather than leaving the
+			// Capture workspace mounted by the test fixture.
+			pdfWorkspace().closeAnswerPdf();
+			invoke(application, "showCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		assertNull(pdfWorkspace().getAnswerPdfSession());
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		Platform.runLater(() -> {
+			try {
+
+				// Search is modal, so leave the test thread available to drive its real
+				// controls.
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		waitForDialogShowing(robot, "Search Questions");
+
+		// Resolve both the result list and action from the same showing Search
+		// DialogPane. Global TestFX lookup can otherwise find an earlier hidden Search.
+		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == answeredQuestion.getId()));
+		Object selectedResult = results.getItems().stream()
+				.filter(result -> searchResultQuestion(result).getId() == answeredQuestion.getId()).findFirst()
+				.orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+
+		// Prove the selected Search object itself carries the persisted Answer before
+		// evaluating action availability.
+		Question selectedQuestion = searchResultQuestion(results.getSelectionModel().getSelectedItem());
+		assertEquals(answeredQuestion.getId(), selectedQuestion.getId());
+		assertTrue(selectedQuestion.hasAnswer());
+		Button editAnswer = lookupInShowingDialog(robot, "Search Questions", "#question-search-edit-answer",
+				Button.class);
+		assertFalse(editAnswer.isDisabled());
+
+		// Edit Answer closes Search and must visibly transfer control to Answer
+		// capture,
+		// not merely establish hidden edit state behind the Dashboard.
+		fireControl(robot, editAnswer);
+		waitForDialogHidden(robot, "Search Questions");
+
+		// Wait for the actual Answer-edit control to become visible, proving that the
+		// application has mounted the Answer capture workspace rather than hidden
+		// state.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#cancel-answer-edit").tryQuery().filter(node -> node.isVisible()).isPresent());
+		assertTrue(robot.lookup("#capture-workspace").tryQuery().isPresent());
+		assertNotNull(pdfWorkspace().getAnswerPdfSession());
+		Label selectedAnswerPdf = lookup(robot, "#selected-answer-pdf", Label.class);
+		assertFalse("No Answer PDF assigned".equals(selectedAnswerPdf.getText()));
+
+		// Search editing is tied to this persisted Question. Its Exam/booklet is
+		// visible
+		// as context, but changing structural capture context is deliberately
+		// unavailable.
+		Label activeExamBooklet = lookup(robot, "#active-exam-booklet", Label.class);
+		assertTrue(activeExamBooklet.getText().contains(answeredQuestion.getBooklet().getName()));
+		Button changeExam = lookup(robot, "#change-exam-assets", Button.class);
+		assertFalse(changeExam.isVisible());
+		assertFalse(changeExam.isManaged());
+
+		// Specialised workspace context uses the same bordered-section language as the
+		// Classification, Question and Answer panels below it.
+		VBox subjectHost = lookup(robot, "#workspace-subject-host", VBox.class);
+		assertTrue(subjectHost.getStyle().contains("-fx-border-color"));
+
+		// Cancelling releases edit state, restores Dashboard Home and then reopens the
+		// reusable Search dialog.
+		fireControlLater(robot, "#cancel-answer-edit");
+		waitForDialogShowing(robot, "Search Questions");
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertNull(pdfWorkspace().getAnswerPdfSession());
+		closeDialog(robot, "Search Questions");
+	}
+
 	// @SuppressWarnings("unchecked")
 	@Test
 	void searchEditMetadataCorrectsMetadataOnlyQuestion(FxRobot robot) throws Exception {
@@ -265,33 +367,41 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
-		ListView<Object> results = listView(robot, "#question-search-results");
+
+		// Search inherits the application-level Working Subject. Resolve the result
+		// list from the currently showing modal dialog rather than from retained hidden
+		// Search controls.
+		waitForDialogShowing(robot, "Search Questions");
+		@SuppressWarnings("unchecked")
+		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+
+		// The Working Subject search starts automatically and must expose the persisted
+		// metadata-only Question without further Subject interaction.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == metadataOnlyQuestion.getId()));
-
-		// The workflow cares about selecting the persisted Question, not the Search
-		// package's internal result representation.
 		Object selectedResult = results.getItems().stream()
 				.filter(result -> searchResultQuestion(result).getId() == metadataOnlyQuestion.getId()).findFirst()
 				.orElseThrow();
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
-		Button editMetadata = lookup(robot, "#question-search-edit-metadata", Button.class);
+		assertEquals(metadataOnlyQuestion.getId(),
+				searchResultQuestion(results.getSelectionModel().getSelectedItem()).getId());
+		Button editMetadata = lookupInShowingDialog(robot, "Search Questions", "#question-search-edit-metadata",
+				Button.class);
 		assertFalse(editMetadata.isDisabled());
+
+		// Metadata is itself modal, so schedule the precise showing-Search action.
 		fireControlLater(editMetadata);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#legacy-metadata-question-code").tryQuery().isPresent());
-		TextField questionCode = lookup(robot, "#legacy-metadata-question-code", TextField.class);
-		TextField marks = lookup(robot, "#legacy-metadata-marks", TextField.class);
-		CheckBox sharedContext = lookup(robot, "#legacy-metadata-shared-context-required", CheckBox.class);
-		ComboBox<QuestionResponseType> responseType = comboBox(robot, "#legacy-metadata-response-type");
+		waitForDialogShowing(robot, "Edit Question Metadata");
+		TextField questionCode = lookupInShowingDialog(robot, "Edit Question Metadata",
+				"#legacy-metadata-question-code", TextField.class);
+		TextField marks = lookupInShowingDialog(robot, "Edit Question Metadata", "#legacy-metadata-marks",
+				TextField.class);
+		CheckBox sharedContext = lookupInShowingDialog(robot, "Edit Question Metadata",
+				"#legacy-metadata-shared-context-required", CheckBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<QuestionResponseType> responseType = lookupInShowingDialog(robot, "Edit Question Metadata",
+				"#legacy-metadata-response-type", ComboBox.class);
 		assertEquals("61", questionCode.getText());
 		assertEquals("2", marks.getText());
 		assertTrue(sharedContext.isSelected());
@@ -301,7 +411,24 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 			sharedContext.setSelected(false);
 			responseType.setValue(QuestionResponseType.WRITTEN_RESPONSE);
 		});
-		fireControl(robot, "#legacy-metadata-save");
+
+		// Resolve the actual OK_DONE ButtonType from the currently showing metadata
+		// DialogPane. Search resumption is deferred by the application, so this Save
+		// can
+		// now complete synchronously and prove the persistence action really occurred.
+		DialogPane metadataDialog = showingDialogPane(robot, "Edit Question Metadata");
+		assertNotNull(metadataDialog);
+		ButtonType saveMetadataType = metadataDialog.getButtonTypes().stream()
+				.filter(buttonType -> buttonType.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst()
+				.orElseThrow(() -> new AssertionError("Metadata dialog has no Save action"));
+		Button saveMetadata = (Button) metadataDialog.lookupButton(saveMetadataType);
+		assertNotNull(saveMetadata);
+		assertFalse(saveMetadata.isDisabled());
+
+		// Fire the DialogPane-owned action directly. This completes metadata
+		// persistence
+		// before the test starts waiting for the durable SQLite result.
+		fireControl(robot, saveMetadata);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> repository.findById(metadataOnlyQuestion.getId())
 				.map(question -> "61a".equals(question.getQuestionCode())).orElse(false));
 		Question updated = repository.findById(metadataOnlyQuestion.getId()).orElseThrow();
@@ -312,36 +439,46 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, updated.getResponseType());
 		assertEquals(classification.getId(), updated.getClassification().getId());
 
-		// Saving metadata reopens Search Questions. Close it so the application
-		// workflow unwinds cleanly before the test ends.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
-		fireDialogButton(robot, "Close");
+		// Saving metadata reopens the reusable Search dialog. Verify the actual modal
+		// window rather than resolving a retained result-list node from a hidden
+		// dialog.
+		waitForDialogShowing(robot, "Search Questions");
+
+		// Close the showing Search DialogPane through its real Close control so the
+		// nested modal event loop unwinds deterministically.
+		closeDialog(robot, "Search Questions");
 	}
 
 	@Test
 	void searchEditQuestionShowsAndClearsStoredRegionHighlight(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "EDIT-HIGHLIGHT");
+		WaitForAsyncUtils.asyncFx(() -> {
 
-		// Search Questions is modal, so schedule it and leave the test thread free
-		// to interact with the nested JavaFX event loop.
+			// The regression occurs only when Search begins from the Dashboard home
+			// surface. Remove the Capture fixture's open PDF before mounting Dashboard.
+			pdfWorkspace().closeExamPdf();
+			invoke(application, "showCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		assertNull(pdfWorkspace().getExamPdfSession());
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		Platform.runLater(() -> {
 			try {
+
+				// Search is modal, so leave the test thread available to drive its real
+				// controls.
 				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
 						primaryStage, applicationConfig);
 			} catch (Exception exception) {
 				throw new RuntimeException(exception);
 			}
 		});
+
+		// Search inherits the application-level Working Subject and starts its search
+		// without requiring another Subject-selection action.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
 		ListView<Object> results = listView(robot, "#question-search-results");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId()));
@@ -349,41 +486,41 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.filter(result -> searchResultQuestion(result).getId() == question.getId()).findFirst().orElseThrow();
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
 		Button editQuestion = lookup(robot, "#question-search-edit-question", Button.class);
-
-		// Edit Question closes Search and transfers control to the non-modal capture
-		// workspace. It does not itself create another modal dialog, so fire it
-		// synchronously rather than queueing a modal-producing action.
 		assertFalse(editQuestion.isDisabled());
+
+		// Edit Question closes Search and must replace Dashboard Home with the prepared
+		// Question/PDF workspace.
 		fireControl(robot, editQuestion);
 		waitForDialogHidden(robot, "Search Questions");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#cancel-question-edit").tryQuery().filter(node -> node.isVisible()).isPresent());
+		assertTrue(robot.lookup("#capture-workspace").tryQuery().isPresent());
+		assertNotNull(pdfWorkspace().getExamPdfSession());
+
+		// Editing an existing Question exposes its authoritative source context without
+		// offering a route to replace that context part-way through the edit.
+		Label activeExamBooklet = lookup(robot, "#active-exam-booklet", Label.class);
+		assertTrue(activeExamBooklet.getText().contains(question.getBooklet().getName()));
+		Button changeExam = lookup(robot, "#change-exam-assets", Button.class);
+		assertFalse(changeExam.isVisible());
+		assertFalse(changeExam.isManaged());
+
+		// The persisted Question region must now be visible over the source PDF.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup(".pdf-stored-region-highlight").tryQuery().isPresent());
 		Rectangle highlight = robot.lookup(".pdf-stored-region-highlight").queryAs(Rectangle.class);
-
-		// Search -> Edit Question must expose the persisted source region as the
-		// dedicated grey informational overlay.
 		assertTrue(highlight.isVisible());
 
-		// Cancelling the editor invokes its completion callback, which reopens the
-		// modal Search dialog. Queue the action so TestFX does not wait for that
-		// nested showAndWait() call to return.
+		// Cancelling the editor invokes its completion callback, which restores
+		// Dashboard Home and reopens the modal Search dialog.
 		fireControlLater(robot, "#cancel-question-edit");
-
-		// Wait for the actual Dialog window to be showing. Looking up Search content
-		// alone is insufficient because the reusable Dialog retains its controls
-		// while hidden.
 		waitForDialogShowing(robot, "Search Questions");
 
-		// Cancel must release the source document as well as its visual overlay. The
-		// teacher must not be left with an apparently active Exam PDF after Search
-		// resumes.
+		// Cancel releases the temporary source document and informational overlay
+		// before Search resumes.
 		assertNull(pdfWorkspace().getExamPdfSession());
-
-		// Cancelling the edit returns to Search and removes the PDF overlay so it
-		// cannot be mistaken for an active capture selection.
 		assertTrue(robot.lookup(".pdf-stored-region-highlight").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		closeDialog(robot, "Search Questions");
 	}
 
@@ -411,15 +548,15 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
+
+		// Search inherits the application-level Working Subject and begins searching
+		// without a second Subject-selection action.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-subject").tryQuery().isPresent());
-		ComboBox<Subject> subjectBox = comboBox(robot, "#question-search-subject");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> subjectBox.getItems().stream().anyMatch(subject -> "Chemistry".equals(subject.getName())));
-		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		robot.interact(() -> subjectBox.setValue(chemistry));
+				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
 		ListView<Object> results = listView(robot, "#question-search-results");
+
+		// Wait for the fully reconstructed persisted Question, including its Answer,
+		// before entering the split workflow.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
 				.anyMatch(result -> searchResultQuestion(result).getId() == original.getId()));
 		Object selectedResult = results.getItems().stream()
@@ -553,9 +690,9 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(1, repository.findAll().size());
 		assertEquals("3", repository.findById(original.getId()).orElseThrow().getQuestionCode());
 		dragRegionOnDisplayedPage(robot);
-		robot.clickOn("#add-question-region");
+		fireControl(robot, "#add-question-region");
 		assertFalse(save.isDisabled());
-		robot.clickOn(save);
+		fireControl(robot, save);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> completed.get() == 1);
 		List<Question> stored = repository.findAll();
 		assertEquals(2, stored.size());

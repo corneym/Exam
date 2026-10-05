@@ -1,6 +1,34 @@
 ## Working instructions for this chat
 
 This chat is the working chat for the next sprint of the Exam Question Bank project.
+THESE INSTRUCTIONS ARE IMPERATIVES.  DO NOT DEVIATE.
+RE-READ THESE INSTRUCTIONS before every code change.  Follow the instructions explcitly.
+
+### Repository Working Rule
+
+Before giving me any code change for the Exam Question Bank:
+
+Read docs/Working-Instructions.md from the current working branch. Do this for every code-change response, even if you have read it earlier in the conversation.
+
+Re-read the requirements I gave for the current feature or slice. Treat my stated behaviour and layout requirements as acceptance criteria.
+
+Inspect the current implementation and relevant tests on the current branch. Do not rely only on conversation summaries, previous proposed code, or assumptions about what I have applied.
+
+Before writing code, check that the proposed change satisfies every relevant acceptance criterion. Do not silently reinterpret or weaken a requirement.
+
+Tests must verify the acceptance criteria, not merely verify the implementation you happened to choose.
+
+When I report that tests are green, do not automatically declare the slice complete. Compare the implemented behaviour against the original acceptance criteria first.  If I need to inspect the application visually, YOU MUST LET ME KNOW.
+
+If an earlier instruction from you was wrong or incomplete, explicitly correct it rather than building later work on top of it.
+
+Do not move on to the next feature while an earlier stated requirement remains unimplemented.
+
+Never give me code based solely on the conversation summary when the repository can be inspected.
+
+Follow the code-change format in docs/Working-Instructions.md exactly.
+
+When giving Markdown text to copy make sure it is delimited with 4 backticks so it is directly copyable as MD.
 
 ### Source of truth
 
@@ -8,7 +36,7 @@ The GitHub repository is:
 
 corneym/Exam
 
-The current code in GitHub is the source of truth.
+GitHub remains authoritative for established state, but during one continuous implementation sequence you can rely on the exact edits you have applied and reported green until the next checkpoint push.
 
 Before giving exact implementation instructions that depend on current classes,
 methods, schemas, tests, documentation, or branch state, inspect the current
@@ -39,7 +67,9 @@ For every Java code-change instruction, always give:
 - exact copy/paste-ready code.
 - there is no need to give the filename when it can be inferred from the class name.
 
-There is no need to give placement.  No need to give import instructions.  Eclipse sorts methods and adds imports.
+If EDIT is the instruction, give the starting instruction and the final instruction as bounds on the EDIT.
+
+There is no need to give placement.  No need to give import instructions.  Eclipse sorts methods and adds imports. DO NOT use fully qualified types with their package names.  I will pick the import.
 
 Do not use vague instructions such as "put this near..." or "add this somewhere
 below...".
@@ -61,9 +91,55 @@ All code written MUST contain inline comments explaining the algorithmic meaning
 When tests contain nested helper classes or fixtures, distinguish clearly
 between the outer test class and the nested class.
 
+### TestFX
+
+When adding or modifying a TestFX workflow test, audit the complete test method and any helpers it uses for `robot.clickOn(...)` or other pointer-based activation of ordinary controls. Existing pointer-based code must be converted to deterministic semantic control activation unless pointer position, hit-testing, focus or gesture behaviour is itself under test.
+
+A TestFX test that passes on a local desktop is not considered deterministic merely for that reason. Tests must be written to run reliably under the GitHub Actions Xvfb virtual display. A CI-only visibility or hit-testing failure should first be investigated for inappropriate pointer-based activation before being treated as an application defect.
+
+### GitHub issue and project tracking during implementation
+
+GitHub Issues and the GitHub Project are part of the normal development workflow.  Each batch of code changes must have a title - Batch nn: description.
+
+As implementation progresses, ChatGPT must explicitly tell the user when the current work changes the appropriate GitHub tracking state.
+
+This includes identifying when an issue should:
+
+- move from `Sprint` to `In Progress`;
+- move from `In Progress` to `Ready for PR`;
+- move to `Done` after merge;
+- remain open because only part of its scope has been implemented;
+- be split because implementation reveals independently trackable work;
+- be closed as superseded, duplicate or not planned;
+- have its description or acceptance criteria updated because an implementation decision changed the design.
+
+Only issues on which implementation has actually begun should normally be moved to `In Progress`. Do not move an entire slice merely because one issue in that slice has started.
+
+When a code increment completes work associated with one or more issues, identify those issue numbers explicitly.
+
+At suitable checkpoints, especially before a pull request, compare
+
+when the issue implementation, targeted regressions and required documentation/Javadoc are green, I will tell you to add the completion comment and move the issue to Ready for PR. The issue stays open. After the Sprint PR is green and merged to main, the issues covered by it can be closed. If the PR uses Closes #..., GitHub can close them automatically on merge.
+
+### Java Code Changes
+PERMANENT working instruction
+When presenting Java code changes for manual application, group all changes by class so that each class is edited only once where practical.
+
+Within each class, present changes in this order:
+
+1. Fields, alphabetically by the main field identifier.
+2. Constructor changes.
+3. Public API methods, alphabetically by method name.
+4. Package-visible methods, alphabetically by method name.
+5. Private methods, alphabetically by method name.
+6. Nested records, enums, interfaces or helper types, unless their existing location makes another ordering materially easier to apply.
+
+Keep overloaded methods adjacent. If multiple changes affect the same method, present them together rather than requiring the user to revisit that method later.
+
+
 ### Implementation workflow
 
-Work in small, testable slices.
+Work in testable slices.  Multiple changes can be propsed.  Make sure they are numbered. 
 
 When producing code, ensure it contains Javadoc if necessary, i.e. public API; algorithmic style comments using // and never /* comment */ style.
 
@@ -82,6 +158,11 @@ exercise.
 
 When fixing a reported defect, prefer a regression test that reproduces the real
 production failure mode.
+
+When the work is associated with a GitHub Issue, keep the Issue lifecycle in
+view. After a meaningful slice is completed and verified, record the result in
+the Issue when it is useful, and tell me any manual Project-field change that is
+now appropriate before continuing.
 
 ### TestFX and CI determinism
 
@@ -140,18 +221,24 @@ slices.
 
 Do not silently introduce new architectural assumptions.
 
+whenever you give Markdown that itself contains fenced code blocks using three backticks, you will wrap the entire copyable Markdown snippet in a fence of four backticks. That keeps the inner triple-backtick fences intact and ensures the whole Markdown document stays inside one copy box.  use that convention consistently for documentation snippets.
+
 ### Git
 
-Do not tell me to commit, push, merge, rebase, delete branches, or otherwise
-change Git history unless:
+Tell me when to commit, push, merge, rebase.  
 
-- I explicitly ask for Git instructions; or
-- we have reached an agreed sprint closeout/merge step.
+Do not give instructions on add, commit, push unless I explicitly ask for Git instructions
 
 When I do ask for Git instructions, give the exact commands in the order I
 should run them.
 
-Do not perform GitHub writes or commits on my behalf unless I explicitly ask.
+Do not perform Git commits, pushes, merges, branch changes, pull-request
+creation, Issue creation, Issue closure, or other repository-changing actions on
+my behalf unless I explicitly ask.
+
+Exception: when a GitHub Issue has explicitly been designated as the current
+work item, ChatGPT may add concise progress/design/test comments to that Issue as
+described under Issue tracking.
 
 ### Codex/reviews
 
@@ -171,16 +258,72 @@ and verify the current branch state before drawing conclusions.
 
 ### Issue tracking
 
-Short-lived working issues are recorded as Eclipse task markers.
+GitHub Issues are the durable record for substantial development work.
+
+Short-lived implementation notes and very small local reminders may still use
+Eclipse task markers.
 
 Do not create or reintroduce `docs/issues.txt`.
 
-When a defect is being handled as part of the current sprint/work item, resolve
-it through the normal implementation and regression-test workflow rather than
-adding it to the project backlog merely for tracking.
+When I identify a GitHub Issue as the current work item, treat that Issue as the
+authoritative record for the scope of that work unless I explicitly change it.
 
-Only deliberately deferred or unresolved work that must survive the current
-development session belongs in `docs/design/backlog.md`.
+At the start of work on an Issue:
+
+- inspect the current Issue before proposing implementation;
+- inspect the relevant current repository code before giving exact changes;
+- use the Issue title/body/comments to understand the agreed scope;
+- do not silently broaden the Issue.
+
+ChatGPT may add comments to the current GitHub Issue without asking for separate
+confirmation each time when the comment records work we have just agreed,
+implemented, tested, or deliberately deferred.
+
+Useful Issue comments include:
+
+- an agreed design decision;
+- the implementation slice just completed;
+- tests run and their result;
+- a defect discovered while implementing the Issue;
+- a deliberate decision to defer part of the work;
+- a concise summary when the Issue is ready for pull request;
+- a final implementation/verification summary after merge.
+
+Do not add routine conversational chatter to an Issue. Comments should preserve
+information that will still be useful after the chat is gone.
+
+ChatGPT may create a new GitHub Issue only when I explicitly ask for one or when
+I explicitly approve a proposed Issue.
+
+GitHub Project fields such as Status, Sprint, Priority and Slice are managed
+manually by me.
+
+When a Project-field change is appropriate, tell me explicitly and concisely,
+for example:
+
+- `Move Issue #74 to In Progress.`
+- `Set Issue #74 Sprint to Sprint 12.`
+- `Set Issue #74 Slice to 3.`
+- `Move Issue #74 to Ready for PR.`
+- `Move Issue #74 to Done.`
+- `Clear Slice on Issue #74.`
+- `Create a new Issue for this deferred item.`
+
+Do not assume that I have made a Project-field change merely because development
+has progressed. Wait for me to confirm it if the distinction matters to the next
+step.
+
+When a defect is being handled as part of the current Issue, resolve it through
+the normal implementation and regression-test workflow rather than creating a
+separate Issue merely for tracking.
+
+Create or propose a separate Issue when work is genuinely independent,
+deliberately deferred, or large enough that it should have its own lifecycle.
+
+Only deliberately deferred or unresolved architectural work that must survive
+outside the normal Issue workflow belongs in `docs/design/backlog.md`. Avoid
+duplicating the same actionable work in both the backlog document and a GitHub
+Issue unless the documentation is intentionally acting as a higher-level roadmap.
 
 ### Documentation
 

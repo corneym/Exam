@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui.curriculum;
 import java.io.File;
 import java.nio.file.Path;
 
+import au.edu.eq.questionbank.model.Subject;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
@@ -33,6 +34,7 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	private final TextField fileField = new TextField();
 	private Path selectedFile;
 	private final Path curriculumDataRoot;
+	private final Subject fixedSubject;
 
 	/**
 	 * Creates a curriculum-import dialog owned by the supplied window.
@@ -43,17 +45,51 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	 * @throws NullPointerException if {@code curriculumDataRoot} is {@code null}
 	 */
 	public CurriculumImportDialog(Window owner, Path curriculumDataRoot) {
+		this(owner, curriculumDataRoot, null, false);
+	}
+
+	/**
+	 * Creates an Excel curriculum-import dialog fixed to one authoritative
+	 * application Subject.
+	 *
+	 * @param owner              owner window
+	 * @param curriculumDataRoot configured curriculum data directory
+	 * @param subject            Subject that will own the imported syllabus
+	 * @throws NullPointerException if {@code curriculumDataRoot} or {@code subject}
+	 *                              is {@code null}
+	 */
+	public CurriculumImportDialog(Window owner, Path curriculumDataRoot, Subject subject) {
+		this(owner, curriculumDataRoot, subject, true);
+	}
+
+	private CurriculumImportDialog(Window owner, Path curriculumDataRoot, Subject fixedSubject, boolean subjectFixed) {
 		if (curriculumDataRoot == null) {
 			throw new NullPointerException("curriculumDataRoot");
 		}
+		if (subjectFixed && fixedSubject == null) {
+			throw new NullPointerException("subject");
+		}
+		this.fixedSubject = fixedSubject;
 		this.curriculumDataRoot = curriculumDataRoot.toAbsolutePath().normalize();
 		setTitle("Import Curriculum");
 		setHeaderText("Import curriculum from Excel");
 		initOwner(owner);
 		ButtonType importButtonType = new ButtonType("Import", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(importButtonType, ButtonType.CANCEL);
+		subjectField.setId("curriculum-import-subject");
+		versionField.setId("curriculum-import-version");
+		currentCheckBox.setId("curriculum-import-current");
+		fileField.setId("curriculum-import-file");
+		if (fixedSubject != null) {
+
+			// Subject is inherited from the Dashboard and displayed as read-only context.
+			subjectField.setText(fixedSubject.getName());
+			subjectField.setEditable(false);
+			subjectField.setFocusTraversable(false);
+		}
 		fileField.setEditable(false);
 		Button browseButton = new Button("Browse...");
+		browseButton.setId("curriculum-import-browse");
 		browseButton.setOnAction(_ -> chooseFile(owner));
 		HBox fileBox = new HBox(FILE_CONTROL_SPACING, fileField, browseButton);
 		GridPane grid = new GridPane();
@@ -70,6 +106,7 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		grid.add(fileBox, 1, 3);
 		getDialogPane().setContent(grid);
 		Button importButton = (Button) getDialogPane().lookupButton(importButtonType);
+		importButton.setId("import-curriculum");
 		importButton.addEventFilter(javafx.event.ActionEvent.ACTION, this::validateImportAction);
 	}
 
@@ -88,6 +125,12 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	 * @return the trimmed subject name entered by the user
 	 */
 	public String getSubjectName() {
+
+		// Fixed-Subject Dashboard import cannot be redirected by editing presentation
+		// state.
+		if (fixedSubject != null) {
+			return fixedSubject.getName();
+		}
 		return subjectField.getText().strip();
 	}
 

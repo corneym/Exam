@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
@@ -18,6 +19,7 @@ import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.ExamMetadataCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
@@ -77,6 +79,7 @@ public final class ExamMetadataPane extends VBox {
 	private ExamBooklet pendingKnownBooklet;
 	private final ExamMetadataCorrectionService examMetadataCorrectionService;
 	private final ComboBox<ExamBookletQuestionFormat> questionFormatField = new ComboBox<>();
+	private final SourceDocumentHashService sourceDocumentHashService = new SourceDocumentHashService();
 
 	/**
 	 * Creates the exam metadata workflow controls and persistence integration.
@@ -196,6 +199,22 @@ public final class ExamMetadataPane extends VBox {
 	}
 
 	/**
+	 * Clears the currently active persisted booklet after that booklet has been
+	 * deleted from authoritative storage.
+	 */
+	public void clearActiveBooklet() {
+
+		// No pending import or managed path may survive the deletion of the active
+		// booklet identity.
+		pendingPdfPath = null;
+		pendingKnownBooklet = null;
+		currentPdfPath = null;
+		clearForNewPdf();
+		selectedPdfLabel.setText("No PDF selected");
+		selectionCursorHandler.accept(false);
+	}
+
+	/**
 	 * Corrects an existing Exam, including relocation of managed booklet and answer
 	 * PDFs when provider or year changes the authoritative storage directory.
 	 *
@@ -237,12 +256,17 @@ public final class ExamMetadataPane extends VBox {
 				throw new IllegalStateException(
 						"Corrected Exam did not return the active booklet's SourceDocument path");
 			}
-			SourceDocument correctedSourceDocument = new SourceDocument(sourceDocumentId, correctedRelativePath);
+
+			// Relocating a managed file changes its path, not its byte identity.
+			SourceDocument correctedSourceDocument = new SourceDocument(sourceDocumentId, correctedRelativePath,
+					booklet.getSourceDocument().getContentSha256());
 
 			// Exam correction changes Exam metadata only. Preserve the booklet's separate
 			// persisted Question-format classification in the refreshed in-memory object.
+			// Exam correction relocates the source but does not alter the booklet's
+			// structural planning metadata.
 			booklet = new ExamBooklet(booklet.getId(), corrected, booklet.getName(), correctedSourceDocument,
-					booklet.getQuestionFormat());
+					booklet.getQuestionFormat(), booklet.getExpectedQuestionCount());
 			currentPdfPath = pdfStore.resolve(correctedRelativePath);
 			providerField.setValue(corrected.getProvider().getName());
 			yearField.setValue(corrected.getYear());
@@ -275,6 +299,31 @@ public final class ExamMetadataPane extends VBox {
 			booklet = null;
 			selectionCursorHandler.accept(false);
 		}
+	}
+
+	/**
+	 * Refreshes the planning metadata carried by the currently active booklet when
+	 * that same persisted booklet has been updated elsewhere.
+	 *
+	 * @param updatedBooklet authoritative updated booklet
+	 * @throws NullPointerException     if {@code updatedBooklet} is {@code null}
+	 * @throws IllegalArgumentException if the replacement identity contradicts the
+	 *                                  active booklet's Exam
+	 */
+	public void refreshActiveBookletPlanning(ExamBooklet updatedBooklet) {
+		if (updatedBooklet == null) {
+			throw new NullPointerException("updatedBooklet");
+		}
+		if (booklet == null || booklet.getId() != updatedBooklet.getId()) {
+			return;
+		}
+		if (booklet.getExam().getId() != updatedBooklet.getExam().getId()) {
+			throw new IllegalArgumentException("Updated booklet belongs to a different Exam");
+		}
+
+		// Persistence remains authoritative for structural planning while the
+		// currently opened PDF and booklet identity remain unchanged.
+		booklet = updatedBooklet;
 	}
 
 	/** Reloads selectable Subjects while preserving the current selection by id. */
@@ -317,6 +366,32 @@ public final class ExamMetadataPane extends VBox {
 		// the old authoritative path when correction fails and filesystem rollback
 		// runs.
 		examPdfHandler.accept(new SelectedPdf(currentPdfPath.toFile(), currentPdfPath, pdfDataRoot));
+	}
+
+	/**
+	 * Changes the lifecycle state of the Exam owning the active booklet and
+	 * refreshes the in-memory booklet around the persisted Exam state.
+	 *
+	 * @param captureState replacement Exam lifecycle state
+	 * @return the persisted Exam carrying the replacement state
+	 * @throws SQLException          if persistence fails
+	 * @throws NullPointerException  if {@code captureState} is {@code null}
+	 * @throws IllegalStateException if no Exam booklet is active
+	 */
+	public Exam setActiveExamCaptureState(ExamCaptureState captureState) throws SQLException {
+		if (captureState == null) {
+			throw new NullPointerException("captureState");
+		}
+		if (booklet == null) {
+			throw new IllegalStateException("No Exam booklet is active");
+		}
+		Exam updatedExam = examWriter.setExamCaptureState(booklet.getExam(), captureState);
+
+		// Keep the active capture object consistent with persisted lifecycle state
+		// without altering any booklet-level structure.
+		booklet = new ExamBooklet(booklet.getId(), updatedExam, booklet.getName(), booklet.getSourceDocument(),
+				booklet.getQuestionFormat(), booklet.getExpectedQuestionCount());
+		return updatedExam;
 	}
 
 	/**
@@ -619,10 +694,14 @@ public final class ExamMetadataPane extends VBox {
 		return grid;
 	}
 
-	private ExamBooklet createExamBooklet(ExamMetadataInput input, Path storedPath) throws SQLException {
+	private ExamBooklet createExamBooklet(ExamMetadataInput input, Path storedPath) throws SQLException, IOException {
 		String relativePath = pdfDataRoot.relativize(storedPath).toString();
+
+		// Hash the final managed bytes so persistence describes the authoritative copy
+		// rather than merely the external source selected by the user.
+		String contentSha256 = sourceDocumentHashService.sha256(storedPath);
 		return examImporter.importExam(input.subject(), input.providerName(), input.year(), input.assessmentName(),
-				input.bookletName(), relativePath, input.questionFormat());
+				input.bookletName(), relativePath, input.questionFormat(), contentSha256);
 	}
 
 	private Label createFieldLabel(String text) {
@@ -642,9 +721,8 @@ public final class ExamMetadataPane extends VBox {
 
 	private ExamBooklet findKnownBooklet(Path sourcePath) throws SQLException, IOException {
 
-		// A persisted managed path is authoritative. Use it before considering
-		// content identity so duplicate bytes elsewhere cannot make an exact path
-		// relationship ambiguous.
+		// Exact managed-path identity remains authoritative and avoids unnecessary
+		// content work.
 		ExamBooklet managedMatch = findKnownManagedBooklet(sourcePath);
 		if (managedMatch != null) {
 			return managedMatch;
@@ -652,28 +730,40 @@ public final class ExamMetadataPane extends VBox {
 		if (!Files.isRegularFile(sourcePath)) {
 			throw new IOException("Exam PDF source is not a regular file: " + sourcePath);
 		}
+		String selectedHash = sourceDocumentHashService.sha256(sourcePath);
+		ExamBooklet contentMatch = null;
+
+		// Hashes provide filename-independent identity for documents imported under
+		// schema v16.
+		for (SourceDocument matchingSource : examWriter.findSourceDocumentsByHash(selectedHash)) {
+			ExamBooklet candidate = examWriter.findExamBookletBySourceDocumentPath(matchingSource.getRelativePath());
+			if (candidate == null) {
+
+				// A matching SourceDocument may belong only to an AnswerFile.
+				continue;
+			}
+			if (contentMatch != null && contentMatch.getId() != candidate.getId()) {
+				throw new IllegalStateException("Selected PDF matches more than one persisted exam booklet.");
+			}
+			contentMatch = candidate;
+		}
 		long sourceSize = Files.size(sourcePath);
-		ExamBooklet byteMatch = null;
+
+		// Migrated documents intentionally have NULL hashes. Retain the old byte
+		// comparison only as a compatibility path until those rows are re-inspected.
 		for (ExamBooklet candidate : examWriter.findAllExamBooklets()) {
+			if (candidate.getSourceDocument().getContentSha256() != null) {
+				continue;
+			}
 			Path storedPath;
 			try {
 				storedPath = pdfStore.resolve(candidate.getSourceDocument().getRelativePath());
 			} catch (IllegalArgumentException exception) {
 
-				// An invalid persisted path cannot establish identity with the selected
-				// external file. Leave correction of that stored path to data repair.
+				// Invalid historical paths cannot establish source identity here.
 				continue;
 			}
-			if (!Files.isRegularFile(storedPath)) {
-
-				// A missing stored PDF cannot be compared safely, so it cannot establish
-				// content identity with this selection.
-				continue;
-			}
-			if (Files.size(storedPath) != sourceSize) {
-
-				// Different byte lengths cannot represent the same PDF. This inexpensive
-				// filter avoids unnecessary full-file comparisons.
+			if (!Files.isRegularFile(storedPath) || Files.size(storedPath) != sourceSize) {
 				continue;
 			}
 			boolean identical = Files.isSameFile(sourcePath, storedPath)
@@ -681,15 +771,15 @@ public final class ExamMetadataPane extends VBox {
 			if (!identical) {
 				continue;
 			}
-			if (byteMatch != null && byteMatch.getId() != candidate.getId()) {
+			if (contentMatch != null && contentMatch.getId() != candidate.getId()) {
 
-				// Two persisted booklets with identical source bytes make an external
-				// copy ambiguous. Do not choose one based on filename or row order.
+				// A hash match plus an identical un-hashed legacy source is still
+				// ambiguous and must not be resolved by arbitrary row order.
 				throw new IllegalStateException("Selected PDF matches more than one persisted exam booklet.");
 			}
-			byteMatch = candidate;
+			contentMatch = candidate;
 		}
-		return byteMatch;
+		return contentMatch;
 	}
 
 	private ExamBooklet findKnownManagedBooklet(Path sourcePath) throws SQLException {

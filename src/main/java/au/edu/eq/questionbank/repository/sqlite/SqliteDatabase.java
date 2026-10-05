@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	static final int LATEST_SCHEMA_VERSION = 14;
+	private static final int LATEST_SCHEMA_VERSION = 19;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -596,6 +596,41 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v13-to-v14.sql", 14);
 			return 14;
 		}
+		if (version == 14) {
+
+			// Version fifteen records the user-declared Exam capture lifecycle and
+			// the expected top-level Question count for established booklets.
+			executeMigration(connection, "/db/migration-v14-to-v15.sql", 15);
+			return 15;
+		}
+		if (version == 15) {
+
+			// Version sixteen records an optional SHA-256 content identity for each
+			// managed source document without making duplicate content illegal.
+			executeMigration(connection, "/db/migration-v15-to-v16.sql", 16);
+			return 16;
+		}
+		if (version == 16) {
+
+			// Version seventeen records whether Question PDF source capture was
+			// explicitly invalidated and must be recaptured.
+			executeMigration(connection, "/db/migration-v16-to-v17.sql", 17);
+			return 17;
+		}
+		if (version == 17) {
+
+			// Version eighteen adds Exam-level expected asset counts without creating
+			// placeholder Question booklets or Answer files.
+			executeMigration(connection, "/db/migration-v17-to-v18.sql", 18);
+			return 18;
+		}
+		if (version == 18) {
+
+			// Version nineteen records explicit AnswerFile explanation metadata. Existing
+			// assets migrate conservatively to false until reviewed by the user.
+			executeMigration(connection, "/db/migration-v18-to-v19.sql", 19);
+			return 19;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -835,6 +870,35 @@ public final class SqliteDatabase {
 						"Database schema version " + version + " is missing required table question_content_parts");
 			}
 			verifyVersion14QuestionContentSchema(connection);
+		}
+		if (version >= 15) {
+
+			// Exam capture state and expected booklet Question counts were introduced
+			// together in schema version 15.
+			verifyVersion15ExamCaptureSchema(connection);
+		}
+		if (version >= 16) {
+
+			// Source-document content hashes were introduced in schema version 16.
+			verifyVersion16SourceDocumentHashSchema(connection);
+		}
+		if (version >= 17) {
+
+			// Source-recapture state distinguishes replacement-invalidated Questions
+			// from valid image-only Questions.
+			verifyVersion17QuestionSourceRecaptureSchema(connection);
+		}
+		if (version >= 18) {
+
+			// Asset expectations record planning without manufacturing authoritative
+			// ExamBooklet or AnswerFile rows.
+			verifyVersion18ExamAssetExpectationSchema(connection);
+		}
+		if (version >= 19) {
+
+			// AnswerFile explanation metadata is an explicit persisted yes/no value rather
+			// than an inference from the asset name or captured Answers.
+			verifyVersion19AnswerFileExplanationSchema(connection);
 		}
 	}
 
@@ -1243,6 +1307,148 @@ public final class SqliteDatabase {
 		if (!hasExactCompositeForeignKey(connection, "question_content_parts", List.of("question_id", "image_id"),
 				"question_images", List.of("question_id", "id"))) {
 			throw new SQLException("question_content_parts is missing image composite foreign key");
+		}
+	}
+
+	private void verifyVersion15ExamCaptureSchema(Connection connection) throws SQLException {
+		boolean hasCaptureState = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exams)")) {
+			while (result.next()) {
+				if (!"capture_state".equals(result.getString("name"))) {
+					continue;
+				}
+				hasCaptureState = true;
+
+				// Every Exam must have an explicit persisted lifecycle state. Existing
+				// Exams are migrated to ACTIVE rather than represented by SQL NULL.
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("exams column must be NOT NULL: capture_state");
+				}
+			}
+		}
+		if (!hasCaptureState) {
+			throw new SQLException("exams is missing required column capture_state");
+		}
+		boolean hasExpectedQuestionCount = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"expected_question_count".equals(result.getString("name"))) {
+					continue;
+				}
+				hasExpectedQuestionCount = true;
+
+				// Legacy and not-yet-reviewed booklets have no authoritative expected
+				// Question count, so NULL is a meaningful persisted state.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("exam_booklets column must be nullable: expected_question_count");
+				}
+			}
+		}
+		if (!hasExpectedQuestionCount) {
+			throw new SQLException("exam_booklets is missing required column expected_question_count");
+		}
+	}
+
+	private void verifyVersion16SourceDocumentHashSchema(Connection connection) throws SQLException {
+		boolean hasContentSha256 = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(source_documents)")) {
+			while (result.next()) {
+				if (!"content_sha256".equals(result.getString("name"))) {
+					continue;
+				}
+				hasContentSha256 = true;
+
+				// Existing documents cannot be assigned hashes safely during a schema-only
+				// migration, so NULL remains a valid persisted value.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("source_documents column must be nullable: content_sha256");
+				}
+			}
+		}
+		if (!hasContentSha256) {
+			throw new SQLException("source_documents is missing required column content_sha256");
+		}
+	}
+
+	private void verifyVersion17QuestionSourceRecaptureSchema(Connection connection) throws SQLException {
+		boolean hasSourceCaptureRequired = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(questions)")) {
+			while (result.next()) {
+				if (!"source_capture_required".equals(result.getString("name"))) {
+					continue;
+				}
+				hasSourceCaptureRequired = true;
+
+				// Every Question has an explicit yes/no recapture state. Historical rows
+				// migrate to zero rather than SQL NULL.
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("questions column must be NOT NULL: source_capture_required");
+				}
+			}
+		}
+		if (!hasSourceCaptureRequired) {
+			throw new SQLException("questions is missing required column source_capture_required");
+		}
+	}
+
+	private void verifyVersion18ExamAssetExpectationSchema(Connection connection) throws SQLException {
+		boolean hasExpectedQuestionBookletCount = false;
+		boolean hasExpectedAnswerFileCount = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exams)")) {
+			while (result.next()) {
+				String columnName = result.getString("name");
+				if ("expected_question_booklet_count".equals(columnName)) {
+					hasExpectedQuestionBookletCount = true;
+
+					// NULL means that the user has not yet established an authoritative
+					// expectation.
+					if (result.getInt("notnull") != 0) {
+						throw new SQLException("exams column must be nullable: expected_question_booklet_count");
+					}
+				}
+				if ("expected_answer_file_count".equals(columnName)) {
+					hasExpectedAnswerFileCount = true;
+
+					// An unknown expected Answer-file count is distinct from explicitly
+					// expecting zero Answer files.
+					if (result.getInt("notnull") != 0) {
+						throw new SQLException("exams column must be nullable: expected_answer_file_count");
+					}
+				}
+			}
+		}
+		if (!hasExpectedQuestionBookletCount) {
+			throw new SQLException("exams is missing required column expected_question_booklet_count");
+		}
+		if (!hasExpectedAnswerFileCount) {
+			throw new SQLException("exams is missing required column expected_answer_file_count");
+		}
+	}
+
+	private void verifyVersion19AnswerFileExplanationSchema(Connection connection) throws SQLException {
+		boolean hasContainsAnswerExplanations = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(answer_files)")) {
+			while (result.next()) {
+				if (!"contains_answer_explanations".equals(result.getString("name"))) {
+					continue;
+				}
+				hasContainsAnswerExplanations = true;
+
+				// Every AnswerFile must have an explicit persisted yes/no value. Existing
+				// rows migrate to zero rather than remaining unknown.
+				if (result.getInt("notnull") == 0) {
+					throw new SQLException("answer_files column must be NOT NULL: contains_answer_explanations");
+				}
+			}
+		}
+		if (!hasContainsAnswerExplanations) {
+			throw new SQLException("answer_files is missing required column contains_answer_explanations");
 		}
 	}
 

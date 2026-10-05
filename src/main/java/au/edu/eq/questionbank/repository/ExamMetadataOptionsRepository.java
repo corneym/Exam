@@ -81,6 +81,19 @@ public class ExamMetadataOptionsRepository {
 	}
 
 	/**
+	 * Removes a previously stored assessment label.
+	 *
+	 * @param value assessment label to remove
+	 * @throws NullPointerException if {@code value} is {@code null}
+	 */
+	public void removeAssessment(String value) {
+
+		// Removing a reusable suggestion does not affect any persisted Exam that
+		// happens to use the same assessment label.
+		removeValue(ASSESSMENTS, value);
+	}
+
+	/**
 	 * Removes a previously stored provider label.
 	 *
 	 * @param value provider label to remove
@@ -137,14 +150,17 @@ public class ExamMetadataOptionsRepository {
 		}
 		List<String> retained = new ArrayList<>();
 
-		// Provider suggestions are case-insensitive, so correcting a spelling or
-		// casing variant must remove the old suggestion as the same logical label.
+		// Reusable suggestions are case-insensitive, so removing a spelling or casing
+		// variant removes that same logical suggestion.
 		for (String existing : getValues(key)) {
 			if (!existing.equalsIgnoreCase(trimmed)) {
 				retained.add(existing);
 			}
 		}
 		if (retained.isEmpty()) {
+
+			// Removing the final suggestion removes the preference key rather than
+			// retaining an empty encoded value.
 			preferences.remove(key);
 			return;
 		}

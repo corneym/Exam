@@ -350,14 +350,35 @@ public final class SqliteQuestionCaptureService {
 		}
 		Question existing = request.existingQuestion();
 		if (request.operation() == Operation.IMPORTED) {
+
+			// A booklet-PDF replacement can leave independent image parts intact while
+			// explicitly requiring new PDF source capture.
+			if (existing.isSourceCaptureRequired()) {
+				if (request.regions().isEmpty()) {
+					throw new IllegalArgumentException(
+							"Question source recapture requires at least one replacement PDF region");
+				}
+
+				// Replace the surviving image-only composition with the complete recaptured
+				// assembly in one transaction, then clear the explicit recapture marker.
+				questionWriter.updateQuestionWithContent(connection, existing.getId(), existing.getBooklet(),
+						existing.getQuestionCode(), existing.getMarks(), request.contentParts(),
+						request.classification(), sourceQuestion, sharedContext);
+				questionWriter.setSourceCaptureRequired(connection, existing.getId(), existing.getBooklet(), false);
+				questionWriter.updateResponseType(connection, existing.getId(), existing.getBooklet(),
+						request.responseType());
+				return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), request.regions(),
+						request.contentParts(), request.classification(), sourceQuestion, sharedContext,
+						request.responseType(), false);
+			}
 			boolean existingHasContent = !existing.getContentParts().isEmpty();
 			if (!existingHasContent) {
 				questionWriter.attachContent(connection, existing.getId(), existing.getBooklet(),
 						request.contentParts(), request.classification(), sourceQuestion, sharedContext);
 			} else {
 
-				// Imported Questions whose body is already captured may still resolve
-				// classification/shared-context state without replacing that body.
+				// Imported Questions whose ordinary body is already captured may still
+				// resolve classification/shared-context state without replacing that body.
 				questionWriter.updateCaptureRelationships(connection, existing.getId(), existing.getBooklet(),
 						request.classification(), sourceQuestion, sharedContext);
 			}
@@ -367,26 +388,27 @@ public final class SqliteQuestionCaptureService {
 					: request.contentParts();
 			List<QuestionRegion> resultingRegions = existingHasContent ? existing.getRegions() : request.regions();
 			return rebuildQuestion(existing, existing.getQuestionCode(), existing.getMarks(), resultingRegions,
-					resultingContent, request.classification(), sourceQuestion, sharedContext, request.responseType());
+					resultingContent, request.classification(), sourceQuestion, sharedContext, request.responseType(),
+					existing.isSourceCaptureRequired());
 		}
 		questionWriter.updateQuestionWithContent(connection, existing.getId(), existing.getBooklet(),
 				request.questionCode(), request.marks(), request.contentParts(), request.classification(),
 				sourceQuestion, sharedContext);
 		questionWriter.updateResponseType(connection, existing.getId(), existing.getBooklet(), request.responseType());
 		return rebuildQuestion(existing, request.questionCode(), request.marks(), request.regions(),
-				request.contentParts(), request.classification(), sourceQuestion, sharedContext,
-				request.responseType());
+				request.contentParts(), request.classification(), sourceQuestion, sharedContext, request.responseType(),
+				existing.isSourceCaptureRequired());
 	}
 
 	private Question rebuildQuestion(Question existing, String questionCode, int marks, List<QuestionRegion> regions,
 			List<QuestionContentPart> contentParts, CurriculumNode classification, SourceQuestion sourceQuestion,
-			SharedQuestionContext sharedContext, QuestionResponseType responseType) {
+			SharedQuestionContext sharedContext, QuestionResponseType responseType, boolean sourceCaptureRequired) {
 
 		// Rebuild editable state while retaining identity, supplementary text,
 		// historical evidence and any associated Answer.
 		Question updated = new Question(existing.getId(), existing.getBooklet(), questionCode,
 				existing.getQuestionText(), marks, regions, classification, existing.isSharedContextCaptureRequired(),
-				sourceQuestion, sharedContext, responseType, contentParts);
+				sourceQuestion, sharedContext, responseType, contentParts, sourceCaptureRequired);
 		if (existing.hasAnswer()) {
 			updated.setAnswer(existing.getAnswer());
 		}

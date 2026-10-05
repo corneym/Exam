@@ -30,6 +30,24 @@ public class PdfStore {
 	}
 
 	/**
+	 * Deletes one managed PDF using the same containment checks as ordinary source
+	 * resolution.
+	 *
+	 * @param relativePath managed data-root-relative PDF path
+	 * @return whether a file existed and was deleted
+	 * @throws IOException              if deletion fails
+	 * @throws NullPointerException     if {@code relativePath} is {@code null}
+	 * @throws IllegalArgumentException if the path is invalid or escapes the store
+	 */
+	public boolean deleteManagedPdf(String relativePath) throws IOException {
+		Path managedPath = resolve(relativePath);
+
+		// Never accept an arbitrary filesystem path for deletion. resolve() proves the
+		// persisted path remains lexically beneath the configured PDF root.
+		return Files.deleteIfExists(managedPath);
+	}
+
+	/**
 	 * Imports an examination PDF into the standard subject/provider/year hierarchy.
 	 *
 	 * @param sourcePath   the PDF selected by the user

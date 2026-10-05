@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.pdf;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -48,6 +49,37 @@ class PdfWorkspacePaneAsyncTest {
 	@TempDir
 	Path tempDir;
 	private PdfWorkspacePane pane;
+
+	@Test
+	void clearDocumentsRemovesEveryDocumentAndReturnsToEmptyWorkspace(FxRobot robot) throws Exception {
+		Path examPath = createPdf("clear-exam.pdf");
+		Path answerPath = createPdf("clear-answer.pdf");
+		Path viewerPath = createPdf("clear-viewer.pdf");
+		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.openAnswerPdf(answerPath);
+			pane.openViewerPdf(viewerPath);
+
+			// Include viewer-specific state so clearing proves that no document workflow
+			// leaks into the next application context.
+			pane.showViewerCompletionAction("Finish Inspection", () -> {
+			});
+		});
+		assertNotNull(pane.getExamPdfSession());
+		assertNotNull(pane.getAnswerPdfSession());
+		assertNotNull(pageView.getImage());
+		robot.interact(pane::clearDocuments);
+
+		// The workspace remains reusable, but every document owned by the previous
+		// application context has gone.
+		assertNull(pane.getExamPdfSession());
+		assertNull(pane.getAnswerPdfSession());
+		assertNull(pageView.getImage());
+		assertEquals("No PDF selected", ((javafx.scene.control.Label) pane.lookup("#pdf-page-label")).getText());
+		assertTrue(pane.lookup("#finish-pdf-inspection").isVisible() == false);
+		assertThrows(IllegalStateException.class, () -> pane.extractDisplayedPageText());
+	}
 
 	@AfterEach
 	void close() throws Exception {
@@ -187,6 +219,49 @@ class PdfWorkspacePaneAsyncTest {
 		assertSame(session, pane.getAnswerPdfSession());
 		assertSame(image, ((ImageView) pane.lookup("#pdf-page-view")).getImage());
 		assertTrue(pane.lookup("#next-pdf-page").isDisabled(), "Remain on page two");
+	}
+
+	@Test
+	void loadsExamPdfAsynchronously(FxRobot robot) throws Exception {
+		Path path = createPdf("exam-async.pdf");
+		CountDownLatch done = new CountDownLatch(1);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		robot.interact(() -> pane.openExamPdfAsync(path, error -> {
+			failure.set(error);
+			done.countDown();
+		}));
+
+		// Completion proves the worker opened and rendered the document before JavaFX
+		// published it into the workspace.
+		assertTrue(done.await(10, TimeUnit.SECONDS));
+		assertNull(failure.get());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pane.getDisplayedDocument());
+		assertNotNull(pane.getExamPdfSession());
+		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
+		assertNotNull(pageView.getImage());
+	}
+
+	@Test
+	void ordinaryViewerDoesNotRetainInspectionCompletionAction(FxRobot robot) throws Exception {
+		Path inspectionPath = createPdf("inspection.pdf");
+		Path ordinaryViewerPath = createPdf("ordinary-viewer.pdf");
+		Button finishInspection = robot.lookup("#finish-pdf-inspection").queryAs(Button.class);
+		robot.interact(() -> {
+			pane.openViewerPdf(inspectionPath);
+
+			// Simulate the specialised booklet-inspection workflow enabling its
+			// completion action.
+			pane.showViewerCompletionAction("Finish Inspection", () -> {
+			});
+		});
+		assertTrue(finishInspection.isVisible());
+		assertTrue(finishInspection.isManaged());
+		robot.interact(() -> pane.openViewerPdf(ordinaryViewerPath));
+
+		// Every ordinary viewer session resets workflow-specific actions. A
+		// Finish Inspection button must never leak into File > Open PDF viewing.
+		assertFalse(finishInspection.isVisible());
+		assertFalse(finishInspection.isManaged());
 	}
 
 	@Test

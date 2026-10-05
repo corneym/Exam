@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -24,17 +25,21 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
-import au.edu.eq.questionbank.ui.exam.ExamImportDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
@@ -83,6 +88,17 @@ abstract class QuestionBankApplicationUiTestBase {
 		waitForDialogHidden(robot, dialogTitle);
 	}
 
+	static boolean evaluateOnFx(FxRobot robot, BooleanSupplier condition) {
+		AtomicReference<Boolean> result = new AtomicReference<>(Boolean.FALSE);
+		robot.interact(() -> {
+
+			// Workflow completion conditions that read JavaFX-owned or UI-published state
+			// must be observed on the JavaFX thread.
+			result.set(condition.getAsBoolean());
+		});
+		return result.get().booleanValue();
+	}
+
 	static <T> T field(Object owner, String fieldName, Class<T> type) throws Exception {
 		Field field = owner.getClass().getDeclaredField(fieldName);
 		field.setAccessible(true);
@@ -123,6 +139,15 @@ abstract class QuestionBankApplicationUiTestBase {
 		// Modal actions must be scheduled rather than invoked synchronously because
 		// showAndWait() keeps the action handler active until the test closes the
 		// dialog.
+		fireControlLater(control);
+	}
+
+	static void fireControlLaterInShowingDialog(FxRobot robot, String dialogTitle, String selector) {
+		ButtonBase control = lookupInShowingDialog(robot, dialogTitle, selector, ButtonBase.class);
+
+		// Modal-producing actions must target the control owned by the currently
+		// showing
+		// dialog rather than a retained control from an earlier hidden dialog instance.
 		fireControlLater(control);
 	}
 
@@ -202,6 +227,51 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	static <T extends Node> T lookup(FxRobot robot, String selector, Class<T> type) {
 		return robot.lookup(selector).queryAs(type);
+	}
+
+	static <T extends Node> T lookupOnFx(FxRobot robot, Node root, String selector, Class<T> type) {
+		AtomicReference<T> result = new AtomicReference<>();
+		robot.interact(() -> {
+
+			// Scene-graph replacement and CSS lookup must be serialised on the JavaFX
+			// thread. TestFX's ordinary query traversal can otherwise race an asynchronous
+			// Dashboard publication.
+			Node node = root.lookup(selector);
+			if (node != null) {
+				if (!type.isInstance(node)) {
+					throw new AssertionError("Node " + selector + " is not a " + type.getSimpleName());
+				}
+				result.set(type.cast(node));
+			}
+		});
+		return result.get();
+	}
+
+	static boolean nodePresentOnFx(FxRobot robot, Node root, String selector) {
+
+		// A null result is the stable FX-thread observation used while polling an
+		// asynchronous workspace transition.
+		return lookupOnFx(robot, root, selector, Node.class) != null;
+	}
+
+	static <T extends Node> T lookupInShowingDialog(FxRobot robot, String dialogTitle, String selector, Class<T> type) {
+		DialogPane dialog = showingDialogPane(robot, dialogTitle);
+		if (dialog == null) {
+			throw new AssertionError("Dialog is not showing: " + dialogTitle);
+		}
+		Node node = dialog.lookup(selector);
+		if (node == null) {
+
+			// CSS IDs can remain present on controls belonging to hidden reusable dialogs.
+			// Restricting lookup to this DialogPane proves the requested control belongs
+			// to the modal workflow the test is currently driving.
+			throw new AssertionError("Showing dialog " + dialogTitle + " has no node matching " + selector);
+		}
+		if (!type.isInstance(node)) {
+			throw new AssertionError(
+					"Node " + selector + " in showing dialog " + dialogTitle + " is not a " + type.getSimpleName());
+		}
+		return type.cast(node);
 	}
 
 	static void setField(Object owner, String fieldName, Object value) throws Exception {
@@ -342,14 +412,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 	}
 
-	ExamImportDialog examImportDialog() {
-		try {
-			return field(application, "examImportDialog", ExamImportDialog.class);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
 	ExamMetadataPane examMetadataPane() {
 		try {
 			return field(application, "examMetadataPane", ExamMetadataPane.class);
@@ -404,31 +466,50 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	void prepareExamAndClassification(FxRobot robot, String subjectName, String providerName, int yearValue,
 			String assessmentName, String bookletName, ExamBookletQuestionFormat questionFormat) throws Exception {
-		WaitForAsyncUtils.asyncFx(() -> examImportDialog().show()).get();
-		WaitForAsyncUtils.asyncFx(() -> stageExamPdfForTest(examPdf)).get();
-		ComboBox<Subject> examSubject = comboBox(robot, "#exam-subject");
-		Subject selectedSubject = examSubject.getItems().stream()
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> workingSubjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject selectedSubject = workingSubjectBox.getItems().stream()
 				.filter(subject -> subjectName.equals(subject.getName())).findFirst().orElseThrow();
-		ComboBox<String> provider = comboBox(robot, "#exam-provider");
-		ComboBox<Integer> year = comboBox(robot, "#exam-year");
-		ComboBox<String> assessment = comboBox(robot, "#exam-assessment");
-		ComboBox<String> booklet = comboBox(robot, "#exam-booklet");
-		ComboBox<ExamBookletQuestionFormat> format = comboBox(robot, "#exam-question-format");
-		robot.interact(() -> {
-			examSubject.setValue(selectedSubject);
-			provider.getEditor().setText(providerName);
-			year.getSelectionModel().select(Integer.valueOf(yearValue));
-			assessment.getEditor().setText(assessmentName);
-			booklet.getEditor().setText(bookletName);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		PdfStore pdfStore = new PdfStore(pdfDataRoot);
 
-			// Exercise the same explicit booklet-format selection required from the user.
-			format.setValue(questionFormat);
-		});
+		// Test setup must use the same managed Subject / Provider / Year hierarchy as
+		// normal Exam/Assets intake rather than persisting the fixture's temporary
+		// path.
+		Path storedPdf = pdfStore.importExamPdf(examPdf, selectedSubject.getName(), providerName, yearValue);
+		String relativePath = pdfDataRoot.relativize(storedPdf).toString();
+		String contentSha256 = new SourceDocumentHashService().sha256(storedPdf);
 
-		// Confirm through the real JavaFX action without depending on pointer
-		// hit-testing.
-		fireControl(robot, "#confirm-exam-details");
+		// Fixtures now have the same persisted byte identity as newly added production
+		// assets, so hash-based duplicate behaviour is genuinely under test.
+		ExamBooklet booklet = examImporter.importExam(selectedSubject, providerName, yearValue, assessmentName,
+				bookletName, relativePath, questionFormat, contentSha256);
+		Boolean activated = (Boolean) WaitForAsyncUtils.asyncFx(() -> {
+			try {
+
+				// Exercise the real Exam/Assets capture boundary. Selecting a booklet for
+				// capture now enters ordinary new-Question capture directly.
+				return invoke(application, "activateBookletForCapture",
+						new Class<?>[] { ExamBooklet.class, ApplicationConfig.class }, booklet, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		}).get();
+		assertEquals(Boolean.TRUE, activated);
 		WaitForAsyncUtils.waitForFxEvents();
+		@SuppressWarnings("unchecked")
+		ComboBox<SyllabusVersion> syllabusBox = lookup(robot, "#curriculum-syllabus", ComboBox.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicReference<Boolean> curriculumLoaded = new AtomicReference<>(Boolean.FALSE);
+			robot.interact(() ->
+
+			// The production Subject transition is asynchronous. Wait for its observable
+			// syllabus publication rather than racing the worker thread.
+			curriculumLoaded.set(Boolean.valueOf(!syllabusBox.getItems().isEmpty())));
+			return curriculumLoaded.get().booleanValue();
+		});
 
 		// Classification remains independent of booklet Question format.
 		selectFirst(robot, "#curriculum-unit");
@@ -470,17 +551,22 @@ abstract class QuestionBankApplicationUiTestBase {
 		}
 	}
 
+	void showCaptureWorkspaceForTest() throws Exception {
+		WaitForAsyncUtils.asyncFx(() -> {
+
+			// Dashboard is the application home. Tests that directly inspect Capture
+			// controls must explicitly enter the specialised Capture workspace first.
+			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
+			return null;
+		}).get();
+
+		// Allow TestFX selector lookup to see the dynamically mounted Capture subtree.
+		WaitForAsyncUtils.waitForFxEvents();
+	}
+
 	void showImportedQuestionCaptureForTest(QuestionCapturePane pane) {
 		try {
 			invoke(pane, "showImportedQuestionCapture", new Class<?>[0]);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	void stageExamPdfForTest(Path sourcePath) {
-		try {
-			invoke(examMetadataPane(), "stageExamPdf", new Class<?>[] { Path.class }, sourcePath);
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		}

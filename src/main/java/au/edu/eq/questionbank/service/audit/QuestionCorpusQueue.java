@@ -62,7 +62,7 @@ public final class QuestionCorpusQueue {
 		}
 		int complete = 0;
 		int incomplete = 0;
-		int missingQuestionSource = 0;
+		int missingQuestionContent = 0;
 		int missingAnswer = 0;
 		int unresolvedSharedContext = 0;
 		int unknownResponseType = 0;
@@ -77,10 +77,10 @@ public final class QuestionCorpusQueue {
 				incomplete++;
 			}
 
-			// Count problems independently: one incomplete question can contribute to
-			// several totals.
-			if (status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_SOURCE)) {
-				missingQuestionSource++;
+			// Count independent findings separately. One Question can legitimately
+			// contribute to several Dashboard totals.
+			if (status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT)) {
+				missingQuestionContent++;
 			}
 			if (status.hasProblem(QuestionCorpusProblem.MISSING_ANSWER)) {
 				missingAnswer++;
@@ -92,7 +92,7 @@ public final class QuestionCorpusQueue {
 				unknownResponseType++;
 			}
 		}
-		return new QuestionCorpusSummary(questions.size(), complete, incomplete, missingQuestionSource, missingAnswer,
+		return new QuestionCorpusSummary(questions.size(), complete, incomplete, missingQuestionContent, missingAnswer,
 				unresolvedSharedContext, unknownResponseType);
 	}
 }

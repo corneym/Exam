@@ -17,47 +17,67 @@
 		<h1>Capturing Questions and Answers</h1>
 
 		<section>
-			<h2>Question capture modes</h2>
+			<h2>Question capture workflow</h2>
 			<p>
-				The Question pane supports capturing new Questions and completing
-				content for previously imported Questions.
+				The Corpus Dashboard is the normal entry point for Question capture.
+				Select an Exam and booklet, then use <strong>Capture Questions</strong>
+				or select a specific incomplete Question from Question Work.
 			</p>
 			<p>
-				Use <strong>Capture New Questions</strong> when creating new Question
-				records. Use <strong>Capture Imported Questions</strong> when adding
-				content to Questions whose metadata already exists.
+				New Question capture is booklet-scoped. Existing imported or incomplete
+				Questions are opened directly for their outstanding Question-side work.
+			</p>
+			<p>
+				A COMPLETE Exam cannot acquire new structural Question work, but existing
+				persisted incomplete Questions may still be completed.
+			</p>
+			<p>
+				When capture was opened from the Dashboard,
+				<strong>Return to Corpus Dashboard</strong> returns home and refreshes the
+				Question and booklet status.
 			</p>
 		</section>
 
 		<section>
 			<h2>Capture from a PDF</h2>
 			<ol>
-				<li>Open the source PDF in the workspace.</li>
-				<li>Select the required Question area in the PDF.</li>
+				<li>Select the required Question area in the active Exam PDF.</li>
 				<li>Choose <strong>Add Region</strong>.</li>
 				<li>Repeat for additional regions if the Question contains multiple content parts.</li>
-				<li>Use the content list controls to reorder or remove parts when necessary.</li>
+				<li>Use the content list controls to reorder or remove accepted parts when necessary.</li>
 				<li>Complete the required Question details and classification.</li>
 				<li>Choose <strong>Save Question</strong>.</li>
 			</ol>
 
 			<p class="note">
 				A selected PDF area is not part of the Question until it has been
-				accepted with Add Region.
+				accepted with Add Region. Clicking elsewhere in the PDF abandons an
+				unaccepted selection; there is no separate discard-selection action.
+			</p>
+
+			<p>
+				Accepted content parts are removed individually from the content list.
+				There is no global Clear Content action.
 			</p>
 		</section>
 
 		<section>
 			<h2>Capture from the clipboard</h2>
 			<p>
-				Use <strong>Paste Image</strong> to add image content copied to the
-				system clipboard. This supports image capture from tools such as
+				Use <strong>Add From Clipboard</strong> to add image content copied to
+				the system clipboard. This supports image capture from tools such as
 				Windows Snipping Tool.
+			</p>
+			<p>
+				<strong>Add From Clipboard</strong> is available only while the clipboard
+				contains image content. Clipboard text, files and other non-image content
+				are ignored. Returning to Exam Question Bank after taking a snip refreshes
+				the action automatically.
 			</p>
 			<ol>
 				<li>Copy or snip the required Question content.</li>
 				<li>Return to Exam Question Bank.</li>
-				<li>Choose <strong>Paste Image</strong>.</li>
+				<li>Choose <strong>Add From Clipboard</strong>.</li>
 				<li>Confirm the image appears in the Question content list.</li>
 				<li>Add further PDF regions or clipboard images if required.</li>
 				<li>Save the Question normally.</li>
@@ -85,27 +105,93 @@
 			<h2>Shared Context</h2>
 			<p>
 				Shared Context is source material used by more than one Question.
-				Capture it separately from the Question-specific content when the
-				source material applies to following Questions.
+				Capture it separately from Question-specific content when the same
+				source material applies to multiple Questions or Question parts.
+			</p>
+			<p>
+				Multipart Question codes such as <strong>21a</strong>,
+				<strong>21b</strong> and <strong>21c</strong> share the source
+				Question <strong>21</strong>.
+			</p>
+			<p>
+				When the first captured part establishes that Shared Context is present,
+				later parts automatically reuse the same stored Shared Context. The
+				application does not ask again for each part.
+			</p>
+			<p>
+				If the first part establishes that there is no Shared Context, that
+				decision is also reused by later parts.
 			</p>
 			<p>
 				Shared Context capture uses a single source page. It is not intended
 				for multi-page source material.
+			</p>
+			<p>
+				When a Question uses Shared Context, the Accepted Question content area shows
+				the Shared Context first, followed by the Question-specific content parts.
+				The Shared Context preview is for reference and is not counted as another
+				Question content part.
 			</p>
 		</section>
 
 		<section>
 			<h2>Capture an Answer</h2>
 			<p>
-				The Answer pane operates on a selected Question.
+				The Answer pane operates on Questions from the selected Question booklet.
+				The Answer or marking PDF assigned to that booklet in Exam / Assets is the
+				authoritative Answer source.
 			</p>
+			<p>
+				For a written-response Question, capture one or more regions from the
+				assigned Answer or marking PDF and choose <strong>Save Answer</strong>.
+			</p>
+			<p>
+				For a multiple-choice Question, the stored A, B, C or D choice remains the
+				authoritative Answer.
+			</p>
+
+			<h3>Required MCQ explanations</h3>
+			<p>
+				If the assigned Answer booklet is marked
+				<strong>Contains answer explanations</strong>, explanation regions are
+				required for every eligible answered MCQ in that Question booklet.
+			</p>
+			<p>
+				This explanation requirement is tracked separately from ordinary Answer
+				completeness. An MCQ may already have its A-D Answer while still appearing
+				in <strong>Missing MCQ explanations</strong> on the Corpus Dashboard.
+			</p>
+
 			<ol>
-				<li>Select the Question whose Answer is being captured.</li>
-				<li>If the Answer is sourced from a PDF, choose the required Answer PDF.</li>
-				<li>Select and accept the required Answer region or regions.</li>
-				<li>For response types that use a stored choice rather than an image region, select the required choice.</li>
-				<li>Choose <strong>Save Answer</strong>.</li>
+				<li>On the Corpus Dashboard, choose <strong>Missing MCQ explanations</strong>.</li>
+				<li>Select the required Question booklet or Question.</li>
+				<li>Choose <strong>Capture MCQ Explanations</strong> or <strong>Capture Explanation</strong>.</li>
+				<li>Select the required explanation area in the marking PDF and choose <strong>Add Region</strong>.</li>
+				<li>Choose <strong>Update Answer</strong>.</li>
 			</ol>
+
+			<p>
+				After a successful update, the completed Question is removed from the
+				explanation queue and the next missing explanation opens automatically.
+				When the next Question uses the same marking PDF, the current PDF page is
+				preserved so nearby explanations can be captured without returning to page 1.
+			</p>
+			<p>
+				Cancelling an explanation edit leaves that Question outstanding. A clean
+				explanation session may also be stopped with
+				<strong>Return to Corpus Dashboard</strong>.
+			</p>
+			<p>
+				When the final required explanation is saved, the explanation session ends
+				automatically.
+			</p>
+
+			<p class="warning">
+				Do not mark an Answer booklet as containing explanations merely because it
+				is a marking guide. The flag means that explanation regions are expected for
+				the eligible answered MCQs assigned to that booklet and therefore contribute
+				to Exam completion readiness.
+			</p>
 		</section>
 
 		<p><a href="index.html">Back to Help contents</a></p>

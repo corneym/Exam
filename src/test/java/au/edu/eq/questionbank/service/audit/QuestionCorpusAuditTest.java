@@ -16,6 +16,7 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -55,7 +56,7 @@ class QuestionCorpusAuditTest {
 		Question question = fixture.question(QuestionResponseType.WRITTEN_RESPONSE, true, false);
 		question.setAnswer(new Answer(100, null, List.of(fixture.answerRegion())));
 		QuestionCorpusStatus status = QuestionCorpusAudit.assess(question);
-		assertTrue(status.questionSourceCaptured());
+		assertTrue(status.questionContentCaptured());
 		assertTrue(status.responseTypeResolved());
 		assertTrue(status.answerComplete());
 		assertTrue(status.sharedContextResolved());
@@ -64,12 +65,29 @@ class QuestionCorpusAuditTest {
 	}
 
 	@Test
-	void missingQuestionRegionIsReportedIndependently() {
+	void imageOnlyQuestionCountsAsCapturedQuestionContent() {
+		Question base = fixture.question(QuestionResponseType.MULTIPLE_CHOICE, false, false);
+		Question imageOnly = new Question(base.getId(), base.getBooklet(), base.getQuestionCode(),
+				base.getQuestionText(), base.getMarks(), List.of(), base.getClassification(), false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE, List.of(new ImageQuestionContentPart(new byte[] { 1 })));
+		imageOnly.setAnswer(new Answer(106, "A", List.of()));
+		QuestionCorpusStatus status = QuestionCorpusAudit.assess(imageOnly);
+
+		// Clipboard/image content is authoritative Question content even though the
+		// compatibility PDF-region projection is empty.
+		assertTrue(imageOnly.getRegions().isEmpty());
+		assertTrue(status.questionContentCaptured());
+		assertFalse(status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
+		assertTrue(status.isComplete());
+	}
+
+	@Test
+	void missingQuestionContentIsReportedIndependently() {
 		Question question = fixture.question(QuestionResponseType.MULTIPLE_CHOICE, false, false);
 		question.setAnswer(new Answer(102, "A", List.of()));
 		QuestionCorpusStatus status = QuestionCorpusAudit.assess(question);
-		assertFalse(status.questionSourceCaptured());
-		assertTrue(status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_SOURCE));
+		assertFalse(status.questionContentCaptured());
+		assertTrue(status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
 		assertFalse(status.hasProblem(QuestionCorpusProblem.MISSING_ANSWER));
 	}
 
@@ -123,12 +141,28 @@ class QuestionCorpusAuditTest {
 
 		// The split parts have captured Question source regions and their persisted
 		// shared context is fully resolved after reconstruction.
-		assertTrue(statusA.questionSourceCaptured());
-		assertTrue(statusB.questionSourceCaptured());
+		assertTrue(statusA.questionContentCaptured());
+		assertTrue(statusB.questionContentCaptured());
 		assertTrue(statusA.sharedContextResolved());
 		assertTrue(statusB.sharedContextResolved());
 		assertFalse(statusA.hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
 		assertFalse(statusB.hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
+	}
+
+	@Test
+	void retainedImageDoesNotHideRequiredPdfSourceRecapture() {
+		Question base = fixture.question(QuestionResponseType.MULTIPLE_CHOICE, false, false);
+		Question recaptureRequired = new Question(base.getId(), base.getBooklet(), base.getQuestionCode(),
+				base.getQuestionText(), base.getMarks(), List.of(), base.getClassification(), false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE, List.of(new ImageQuestionContentPart(new byte[] { 1 })), true);
+		recaptureRequired.setAnswer(new Answer(107, "A", List.of()));
+		QuestionCorpusStatus status = QuestionCorpusAudit.assess(recaptureRequired);
+
+		// PDF replacement explicitly requires new source capture. Retained clipboard
+		// content must not accidentally clear that structural correction requirement.
+		assertFalse(status.questionContentCaptured());
+		assertTrue(status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
+		assertFalse(status.isComplete());
 	}
 
 	@Test

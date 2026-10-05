@@ -16,6 +16,7 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import javafx.application.Platform;
@@ -54,8 +55,8 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 		assertEquals("""
 				An application for importing, classifying, capturing and managing examination questions.
 
-				Version: 0.1
-				""".strip(), contentText.get());
+				Version: %s
+				""".formatted(ApplicationVersion.current()).strip(), contentText.get());
 		fireDialogButton(robot, "OK");
 	}
 

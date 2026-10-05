@@ -10,7 +10,10 @@ import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyBooleanWrapper;
 import javafx.beans.property.ReadOnlyObjectProperty;
+import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
@@ -18,7 +21,10 @@ import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 /**
@@ -31,7 +37,8 @@ import javafx.scene.layout.VBox;
  */
 public class CurriculumSelectorPane extends VBox {
 
-	// Allow the workspace-level Working Subject label to remain readable.
+	// Keep Classification labels readable without forcing the hierarchy controls
+	// wider than the available capture workspace.
 	private static final int LABEL_COLUMN_WIDTH = 105;
 	private static final double ROW_GAP = 4.0;
 	private static final double COLUMN_GAP = 8.0;
@@ -40,7 +47,7 @@ public class CurriculumSelectorPane extends VBox {
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
 	private final CurriculumSelectionModel model;
 	private final ReadOnlyBooleanWrapper classificationSelected = new ReadOnlyBooleanWrapper();
-	private final javafx.beans.property.ReadOnlyObjectWrapper<CurriculumNode> selectedClassification = new javafx.beans.property.ReadOnlyObjectWrapper<>();
+	private final ReadOnlyObjectWrapper<CurriculumNode> selectedClassification = new ReadOnlyObjectWrapper<>();
 	private final TextField codeField = new TextField();
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
@@ -52,6 +59,23 @@ public class CurriculumSelectorPane extends VBox {
 	private final Label descriptorLabel = new Label("Descriptor");
 	private boolean refreshingSubjects;
 	private boolean refreshingCode;
+	private VBox classificationContext;
+	private VBox subjectContext;
+	private final Label readOnlySubjectLabel = new Label();
+
+	// The desktop application owns asynchronous Working Subject transitions. A
+	// standalone selector keeps its existing synchronous Subject behaviour.
+	private boolean subjectRefreshManagedExternally;
+
+	// Subject creation is an application-level action. The pane owns only its
+	// compact presentation; persistence is supplied by the containing application.
+	private final Button addSubjectButton = new Button("+");
+
+	// A workflow may request restoration of a persisted Question classification
+	// immediately after activating its Working Subject. When Subject loading is
+	// application-managed, retain that request until the matching curriculum
+	// snapshot has been published.
+	private CurriculumNode deferredClassification;
 
 	/**
 	 * Creates a selector bound to the supplied selection model.
@@ -70,6 +94,76 @@ public class CurriculumSelectorPane extends VBox {
 		configureCodeEntry();
 		buildContent();
 		refreshSubjects();
+	}
+
+	/**
+	 * Publishes an asynchronously loaded curriculum snapshot into the visible
+	 * Subject/classification controls.
+	 *
+	 * @param snapshot snapshot for the currently selected Working Subject
+	 */
+	public void applySubjectSnapshot(CurriculumSelectionModel.SubjectSnapshot snapshot) {
+		if (snapshot == null) {
+			throw new NullPointerException("snapshot");
+		}
+		if (!snapshot.subject().equals(subjectBox.getValue())) {
+
+			// Stale application work must never replace choices for a later Subject.
+			return;
+		}
+		boolean previouslyRefreshing = refreshingSubjects;
+		refreshingSubjects = true;
+		try {
+			model.applySubjectSnapshot(snapshot);
+			clearSubjectDependentChoices();
+			syllabusBox.getItems().setAll(snapshot.syllabusVersions());
+			syllabusBox.setDisable(syllabusBox.getItems().isEmpty());
+			selectAvailableValue(syllabusBox, snapshot.currentSyllabusVersion());
+			unitBox.getItems().setAll(snapshot.currentUnits());
+			unitBox.setDisable(snapshot.currentSyllabusVersion() == null);
+			topicBox.setDisable(true);
+		} finally {
+			refreshingSubjects = previouslyRefreshing;
+		}
+		CurriculumNode classification = deferredClassification;
+		if (classification != null && classification.getSyllabusVersion().getSubject().equals(snapshot.subject())) {
+
+			// The workflow that requested this classification no longer needs to know
+			// whether its Subject happened to require an asynchronous transition.
+			deferredClassification = null;
+			applyClassificationPath(classification);
+			return;
+		}
+
+		// An ordinary Subject transition establishes curriculum choices but no Question
+		// classification.
+		setCodeText("");
+	}
+
+	/**
+	 * Removes curriculum presentation belonging to the previous Working Subject
+	 * before replacement persistence data is loaded.
+	 *
+	 * @param subject newly accepted Subject, or {@code null} to clear it
+	 */
+	public void beginSubjectRefresh(Subject subject) {
+		boolean previouslyRefreshing = refreshingSubjects;
+		refreshingSubjects = true;
+		try {
+
+			// Any classification waiting for an older Subject is obsolete as soon as a
+			// later Subject transition becomes authoritative.
+			deferredClassification = null;
+			model.beginSubjectRefresh(subject);
+			clearSubjectDependentChoices();
+			disableSyllabusHierarchy();
+		} finally {
+
+			// Preserve an enclosing programmatic selection operation when this method is
+			// reached re-entrantly through the Subject value-property listener.
+			refreshingSubjects = previouslyRefreshing;
+		}
+		setCodeText("");
 	}
 
 	/**
@@ -97,6 +191,43 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
+	 * Detaches the Classification section so the application can place it inside
+	 * the larger capture-workspace container while Working Subject remains
+	 * application-level context.
+	 *
+	 * @return the existing Classification section and all of its live controls
+	 * @throws IllegalStateException if the Classification section has already been
+	 *                               detached
+	 */
+	public VBox detachClassificationContext() {
+		if (classificationContext == null || !getChildren().remove(classificationContext)) {
+			throw new IllegalStateException("Classification context has already been detached");
+		}
+
+		// The controls themselves are not recreated. Their listeners and selection
+		// model therefore continue operating exactly as before after re-parenting.
+		return classificationContext;
+	}
+
+	/**
+	 * Detaches the authoritative Working Subject section so the application can
+	 * place the existing live selector inside the Corpus Dashboard home surface.
+	 *
+	 * @return the existing Working Subject section and all of its live controls
+	 * @throws IllegalStateException if the Working Subject section has already been
+	 *                               detached
+	 */
+	public VBox detachSubjectContext() {
+		if (subjectContext == null || !getChildren().remove(subjectContext)) {
+			throw new IllegalStateException("Working Subject context has already been detached");
+		}
+
+		// Re-parent the actual application Subject controls rather than creating a
+		// second selector with competing state.
+		return subjectContext;
+	}
+
+	/**
 	 * Reloads subjects, syllabuses, and hierarchy choices after a repository
 	 * change. Existing selections are retained when still available.
 	 */
@@ -114,10 +245,14 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
-	 * Selects the subject, syllabus, and complete hierarchy path for an existing
-	 * question classification.
+	 * Selects the Subject, syllabus, and complete hierarchy path for an existing
+	 * Question classification.
+	 * <p>
+	 * When Subject refresh is managed by the containing application, restoration
+	 * may be deferred until the matching asynchronous Subject snapshot has been
+	 * published.
 	 *
-	 * @param classification the subtopic or descriptor to display
+	 * @param classification the Subtopic or Descriptor to display
 	 * @throws NullPointerException     if {@code classification} is {@code null}
 	 * @throws IllegalArgumentException if it does not have a valid path
 	 */
@@ -129,22 +264,24 @@ public class CurriculumSelectorPane extends VBox {
 				&& classification.getLevel() != CurriculumLevel.DESCRIPTOR) {
 			throw new IllegalArgumentException("Final classification must be a subtopic or descriptor");
 		}
-		selectSubject(classification.getSyllabusVersion().getSubject());
-		refreshingSubjects = true;
-		try {
-			SyllabusVersion syllabusVersion = classification.getSyllabusVersion();
-			selectAvailableValue(syllabusBox, syllabusVersion);
-			if (syllabusBox.getValue() == null) {
-				throw new IllegalArgumentException("Classification syllabus is not available");
-			}
-			model.selectSyllabusVersion(syllabusBox.getValue());
-			unitBox.getItems().setAll(model.getUnits());
-			unitBox.setDisable(false);
-			applyNodePath(classification);
-		} finally {
-			refreshingSubjects = false;
+		Subject classificationSubject = classification.getSyllabusVersion().getSubject();
+		selectSubject(classificationSubject);
+		boolean syllabusAvailable = syllabusBox.getItems().stream()
+				.anyMatch(version -> version.equals(classification.getSyllabusVersion()));
+		if (!syllabusAvailable && subjectRefreshManagedExternally) {
+
+			// Imported Question activation can change Working Subject and immediately
+			// request its stored classification. Do not turn that legitimate
+			// asynchronous interval into a validation failure.
+			deferredClassification = classification;
+			return;
 		}
-		setCodeText(classification.getCode());
+
+		// Synchronous standalone use and already-loaded application Subjects can
+		// restore
+		// their complete classification immediately.
+		deferredClassification = null;
+		applyClassificationPath(classification);
 	}
 
 	/**
@@ -194,6 +331,69 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
+	 * Supplies the application-level action used to create a Subject.
+	 *
+	 * @param action Subject-creation action owned by the containing application
+	 * @throws NullPointerException if {@code action} is {@code null}
+	 */
+	public void setAddSubjectAction(Runnable action) {
+		if (action == null) {
+			throw new NullPointerException("action");
+		}
+
+		// The selector does not know how Subjects are persisted. It merely exposes the
+		// compact action once the application supplies the authoritative workflow.
+		addSubjectButton.setOnAction(_ -> action.run());
+		addSubjectButton.setDisable(false);
+	}
+
+	/**
+	 * Enables or disables only the Question-classification section. Working Subject
+	 * remains application-level context and is not affected.
+	 *
+	 * @param disabled whether Classification controls are disabled
+	 */
+	public void setClassificationControlsDisabled(boolean disabled) {
+
+		// Classification may be re-parented into the application capture workspace,
+		// so control the retained section directly rather than disabling Working
+		// Subject as well.
+		classificationContext.setDisable(disabled);
+	}
+
+	/**
+	 * Chooses whether the authoritative Subject may be changed from the currently
+	 * displayed application surface.
+	 *
+	 * @param enabled whether Subject selection and Subject creation are available
+	 */
+	public void setSubjectEditingEnabled(boolean enabled) {
+
+		// The Dashboard is the only editing surface. Specialised workspaces retain
+		// Subject context but replace the selector and + action with a read-only value.
+		subjectBox.setVisible(enabled);
+		subjectBox.setManaged(enabled);
+		addSubjectButton.setVisible(enabled);
+		addSubjectButton.setManaged(enabled);
+		readOnlySubjectLabel.setVisible(!enabled);
+		readOnlySubjectLabel.setManaged(!enabled);
+		updateReadOnlySubject(subjectBox.getValue());
+	}
+
+	/**
+	 * Chooses whether Subject-dependent persistence refresh is coordinated by the
+	 * containing application rather than by this pane's synchronous action handler.
+	 *
+	 * @param managedExternally whether the application owns Subject refresh
+	 */
+	public void setSubjectRefreshManagedExternally(boolean managedExternally) {
+
+		// Only Subject transition ownership changes; ordinary classification controls
+		// continue to be handled by this pane.
+		subjectRefreshManagedExternally = managedExternally;
+	}
+
+	/**
 	 * Locks subject and syllabus selection while allowing classification changes
 	 * within that syllabus during question editing.
 	 *
@@ -206,6 +406,34 @@ public class CurriculumSelectorPane extends VBox {
 			return;
 		}
 		syllabusBox.setDisable(subjectBox.getValue() == null || syllabusBox.getItems().isEmpty());
+	}
+
+	private void applyClassificationPath(CurriculumNode classification) {
+		boolean previouslyRefreshing = refreshingSubjects;
+		refreshingSubjects = true;
+		try {
+			SyllabusVersion syllabusVersion = classification.getSyllabusVersion();
+			selectAvailableValue(syllabusBox, syllabusVersion);
+			if (syllabusBox.getValue() == null) {
+
+				// Reaching this boundary after snapshot publication indicates an invalid
+				// persisted classification rather than an asynchronous timing condition.
+				throw new IllegalArgumentException("Classification syllabus is not available");
+			}
+			model.selectSyllabusVersion(syllabusBox.getValue());
+
+			// Root Units for application-managed Subjects now come from the immutable
+			// Subject snapshot, including historical syllabus versions.
+			unitBox.getItems().setAll(model.getUnits());
+			unitBox.setDisable(false);
+			applyNodePath(classification);
+		} finally {
+			refreshingSubjects = previouslyRefreshing;
+		}
+
+		// Publish the final restored classification only after its complete hierarchy
+		// path has been reconstructed.
+		setCodeText(classification.getCode());
 	}
 
 	private void applyFinalClassification(ClassificationPath path) {
@@ -249,9 +477,33 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void buildContent() {
-		Label classificationLabel = new Label("CLASSIFICATION");
-		classificationLabel.setStyle(HEADING_STYLE);
-		getChildren().addAll(classificationLabel, createGrid());
+
+		// Working Subject remains exactly one compact row. The bold Subject label,
+		// selector and small creation action all share that row.
+		Label subjectLabel = new Label("Subject");
+		subjectLabel.setId("working-subject-label");
+		subjectLabel.setStyle(HEADING_STYLE);
+		StackPane subjectValue = new StackPane(subjectBox, readOnlySubjectLabel);
+		subjectValue.setMaxWidth(Double.MAX_VALUE);
+		HBox.setHgrow(subjectValue, Priority.ALWAYS);
+		HBox subjectControls = new HBox(ROW_GAP, subjectValue, addSubjectButton);
+		subjectControls.setAlignment(Pos.CENTER_LEFT);
+		subjectControls.setMaxWidth(Double.MAX_VALUE);
+		GridPane subjectRow = createTwoColumnGrid();
+		subjectRow.addRow(0, subjectLabel, subjectControls);
+		GridPane.setHgrow(subjectControls, Priority.ALWAYS);
+		subjectContext = new VBox(subjectRow);
+		subjectContext.setId("working-subject-context");
+		subjectContext.setPadding(PANEL_PADDING);
+		subjectContext.setStyle(BORDER_STYLE);
+		classificationContext = new VBox(ROW_GAP, createSectionHeading("Classification"), createClassificationGrid());
+		classificationContext.setId("classification-context");
+		classificationContext.setPadding(PANEL_PADDING);
+		classificationContext.setStyle(BORDER_STYLE);
+
+		// Standalone CurriculumSelectorPane users retain both sections. The application
+		// composition root may detach Classification without moving Working Subject.
+		getChildren().addAll(subjectContext, classificationContext);
 	}
 
 	private SelectionSnapshot captureSelection() {
@@ -358,6 +610,24 @@ public class CurriculumSelectorPane extends VBox {
 		configureHierarchyBox(topicBox, "curriculum-topic", "Select topic");
 		configureHierarchyBox(subtopicBox, "curriculum-subtopic", "Select subtopic");
 		configureHierarchyBox(descriptorBox, "curriculum-descriptor", "Select descriptor");
+
+		// Keep Subject creation as a compact one-character action on the existing
+		// Working Subject row rather than adding another row or long text button.
+		addSubjectButton.setId("add-subject");
+		addSubjectButton.setTooltip(new Tooltip("Add Subject"));
+		addSubjectButton.setAccessibleText("Add Subject");
+		addSubjectButton.setPadding(new Insets(2, 7, 2, 7));
+		addSubjectButton.setMinWidth(Region.USE_PREF_SIZE);
+		addSubjectButton.setMaxWidth(Region.USE_PREF_SIZE);
+
+		// Standalone selector instances do not own Subject persistence. The containing
+		// application enables this action when it supplies the persistence callback.
+		addSubjectButton.setDisable(true);
+		readOnlySubjectLabel.setId("working-subject-value");
+		readOnlySubjectLabel.setMaxWidth(Double.MAX_VALUE);
+		readOnlySubjectLabel.setStyle(HEADING_STYLE);
+		readOnlySubjectLabel.setVisible(false);
+		readOnlySubjectLabel.setManaged(false);
 		syllabusBox.setDisable(true);
 		unitBox.setDisable(true);
 		topicBox.setDisable(true);
@@ -375,13 +645,15 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void configurePane() {
-		setSpacing(ROW_GAP);
-		setPadding(PANEL_PADDING);
-		setStyle(BORDER_STYLE);
+
+		// This pane now contains separate application-context and classification
+		// sections rather than presenting Working Subject as Question metadata.
+		setSpacing(ROW_GAP * 2);
 	}
 
 	private void configureSelectionHandlers() {
 		subjectBox.setOnAction(_ -> handleSubjectSelection());
+		subjectBox.valueProperty().addListener((_, _, subject) -> updateReadOnlySubject(subject));
 		syllabusBox.setOnAction(_ -> handleSyllabusSelection());
 		unitBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleUnitSelection());
 		topicBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleTopicSelection());
@@ -389,7 +661,33 @@ public class CurriculumSelectorPane extends VBox {
 		descriptorBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleDescriptorSelection());
 	}
 
-	private GridPane createGrid() {
+	private GridPane createClassificationGrid() {
+		GridPane grid = createTwoColumnGrid();
+
+		// Syllabus and hierarchy identify where the current Question belongs within
+		// the already-selected application-level Subject.
+		grid.addRow(0, new Label("Code"), codeField);
+		grid.addRow(1, new Label("Syllabus"), syllabusBox);
+		grid.addRow(2, new Label("Unit"), unitBox);
+		grid.addRow(3, new Label("Topic"), topicBox);
+		grid.addRow(4, subtopicLabel, subtopicBox);
+		grid.addRow(5, descriptorLabel, descriptorBox);
+		GridPane.setHgrow(codeField, Priority.ALWAYS);
+		GridPane.setHgrow(syllabusBox, Priority.ALWAYS);
+		GridPane.setHgrow(unitBox, Priority.ALWAYS);
+		GridPane.setHgrow(topicBox, Priority.ALWAYS);
+		GridPane.setHgrow(subtopicBox, Priority.ALWAYS);
+		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
+		return grid;
+	}
+
+	private Label createSectionHeading(String text) {
+		Label heading = new Label(text);
+		heading.setStyle(HEADING_STYLE);
+		return heading;
+	}
+
+	private GridPane createTwoColumnGrid() {
 		GridPane grid = new GridPane();
 		grid.setHgap(COLUMN_GAP);
 		grid.setVgap(ROW_GAP);
@@ -401,23 +699,6 @@ public class CurriculumSelectorPane extends VBox {
 		controlColumn.setHgrow(Priority.ALWAYS);
 		controlColumn.setFillWidth(true);
 		grid.getColumnConstraints().addAll(labelColumn, controlColumn);
-		grid.addRow(0, new Label("Code"), codeField);
-
-		// Subject selection applies to the whole capture workspace, including Question
-		// and Answer work queues, rather than only to curriculum classification.
-		grid.addRow(1, new Label("Working Subject"), subjectBox);
-		grid.addRow(2, new Label("Syllabus"), syllabusBox);
-		grid.addRow(3, new Label("Unit"), unitBox);
-		grid.addRow(4, new Label("Topic"), topicBox);
-		grid.addRow(5, subtopicLabel, subtopicBox);
-		grid.addRow(6, descriptorLabel, descriptorBox);
-		GridPane.setHgrow(codeField, Priority.ALWAYS);
-		GridPane.setHgrow(subjectBox, Priority.ALWAYS);
-		GridPane.setHgrow(syllabusBox, Priority.ALWAYS);
-		GridPane.setHgrow(unitBox, Priority.ALWAYS);
-		GridPane.setHgrow(topicBox, Priority.ALWAYS);
-		GridPane.setHgrow(subtopicBox, Priority.ALWAYS);
-		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
 		return grid;
 	}
 
@@ -538,6 +819,12 @@ public class CurriculumSelectorPane extends VBox {
 
 	private void handleSubjectSelection() {
 		if (refreshingSubjects || refreshingCode) {
+			return;
+		}
+		if (subjectRefreshManagedExternally) {
+
+			// The application value-property listener has already accepted or rejected
+			// this Working Subject transition and owns any required persistence work.
 			return;
 		}
 		Subject subject = subjectBox.getValue();
@@ -801,6 +1088,13 @@ public class CurriculumSelectorPane extends VBox {
 		}
 		CurriculumNode selected = deepestSelectedNode();
 		setCodeText(selected == null ? "" : selected.getCode());
+	}
+
+	private void updateReadOnlySubject(Subject subject) {
+
+		// Specialised application surfaces show context only. The actual Subject
+		// selection remains owned by the hidden authoritative ComboBox.
+		readOnlySubjectLabel.setText(subject == null ? "No Subject selected" : subject.getName());
 	}
 
 	private record ClassificationPath(CurriculumNode unit, CurriculumNode topic, CurriculumNode subtopic,

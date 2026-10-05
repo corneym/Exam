@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -23,8 +24,11 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -154,6 +158,33 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(descriptor3111, model.getDescriptor());
 		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
 		assertTrue(pane.classificationSelectedProperty().get());
+	}
+
+	@Test
+	public void detachingSubjectContextPreservesLiveSelectorAndClassification(FxRobot robot) {
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> originalSubjectBox = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		AtomicReference<javafx.scene.layout.VBox> detachedContext = new AtomicReference<>();
+
+		// Re-parenting JavaFX nodes must occur on the application thread.
+		robot.interact(() -> detachedContext.set(pane.detachSubjectContext()));
+		VBox subjectContext = detachedContext.get();
+		assertEquals("working-subject-context", subjectContext.getId());
+		assertEquals(originalSubjectBox, subjectContext.lookup("#curriculum-subject"));
+		assertFalse(pane.getChildren().contains(subjectContext));
+
+		// Classification remains owned by CurriculumSelectorPane for later placement in
+		// the Capture workspace.
+		assertTrue(pane.getChildren().stream().anyMatch(node -> "classification-context".equals(node.getId())));
+
+		// The detached Subject control remains bound to the same selection model and
+		// application-facing API after re-parenting.
+		robot.interact(() -> pane.selectSubject(null));
+		assertNull(originalSubjectBox.getValue());
+		assertNull(model.getSubject());
+		robot.interact(() -> pane.selectSubject(chemistry));
+		assertEquals(chemistry, originalSubjectBox.getValue());
+		assertEquals(chemistry, model.getSubject());
 	}
 
 	@Test
@@ -289,6 +320,31 @@ public class CurriculumSelectorPaneTest {
 		pane.selectSubject(chemistry);
 		stage.setScene(new Scene(pane, 700, 420));
 		stage.show();
+	}
+
+	@Test
+	public void subjectEditingCanBeDisabledOutsideDashboard(FxRobot robot) {
+		ComboBox<?> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		Button addSubject = robot.lookup("#add-subject").queryAs(Button.class);
+		Label readOnlySubject = robot.lookup("#working-subject-value").queryAs(Label.class);
+		robot.interact(() -> pane.setSubjectEditingEnabled(false));
+
+		// Specialised work retains clear Subject context but exposes neither a selector
+		// nor the Subject-creation action.
+		assertFalse(subjects.isVisible());
+		assertFalse(subjects.isManaged());
+		assertFalse(addSubject.isVisible());
+		assertFalse(addSubject.isManaged());
+		assertTrue(readOnlySubject.isVisible());
+		assertTrue(readOnlySubject.isManaged());
+		assertEquals("Chemistry", readOnlySubject.getText());
+		robot.interact(() -> pane.setSubjectEditingEnabled(true));
+		assertTrue(subjects.isVisible());
+		assertTrue(subjects.isManaged());
+		assertTrue(addSubject.isVisible());
+		assertTrue(addSubject.isManaged());
+		assertFalse(readOnlySubject.isVisible());
+		assertFalse(readOnlySubject.isManaged());
 	}
 
 	@Test

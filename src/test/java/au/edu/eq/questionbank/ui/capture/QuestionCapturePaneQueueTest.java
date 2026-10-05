@@ -34,6 +34,23 @@ class QuestionCapturePaneQueueTest {
 	}
 
 	@Test
+	void replacementInvalidatedQuestionRemainsInQueueDespitePreservedImageContent() {
+		ExamProvider provider = new ExamProvider(1, "QCAA");
+		Subject chemistry = new Subject(2, "Chemistry");
+		Question imported = question(10, chemistry, provider, "Chemistry/2024/paper.pdf", "1");
+		Question replacementInvalidated = new Question(imported.getId(), imported.getBooklet(),
+				imported.getQuestionCode(), imported.getQuestionText(), imported.getMarks(), List.of(),
+				imported.getClassification(), false, null, null, QuestionResponseType.WRITTEN_RESPONSE,
+				List.of(new ImageQuestionContentPart(new byte[] { 1 })), true);
+		List<Question> awaiting = QuestionCapturePane.awaitingCaptureForWorkingSubject(List.of(replacementInvalidated),
+				chemistry);
+
+		// Image content is preserved, but explicit source invalidation keeps the
+		// Question in the operational recapture queue.
+		assertEquals(List.of(replacementInvalidated), awaiting);
+	}
+
+	@Test
 	void workingSubjectExcludesImportedQuestionsFromOtherSubjects() {
 		ExamProvider provider = new ExamProvider(1, "QCAA");
 		Subject chemistry = new Subject(2, "Chemistry");

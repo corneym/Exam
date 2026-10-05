@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.Subject;
@@ -34,6 +35,37 @@ class SqliteAnswerWriterTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void answerFileCanRecordExplanationMetadataDuringRegistration() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("answer-registration-explanations.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/QCAA/2025/paper1.pdf");
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		String answerPath = "Chemistry/QCAA/2025/marking-guide.pdf";
+		String hash = "0123456789abcdef".repeat(4);
+
+		// The new creation workflow records the reviewed flag in the same transaction
+		// that creates the AnswerFile.
+		AnswerFile created = answerWriter.findOrCreateAnswerFile(booklet.getExam(), "Marking guide", answerPath, hash,
+				true);
+		assertTrue(created.hasAnswerExplanations());
+		AnswerFile reloaded = answerWriter.findAnswerFiles(booklet.getExam()).getFirst();
+		assertEquals(created.getId(), reloaded.getId());
+		assertTrue(reloaded.hasAnswerExplanations());
+		Exam completedExam = examWriter.setExamCaptureState(booklet.getExam(), ExamCaptureState.COMPLETE);
+
+		// Explanation metadata remains descriptive: reusing the existing Answer asset
+		// may correct the flag without reactivating the completed Exam.
+		AnswerFile corrected = answerWriter.findOrCreateAnswerFile(completedExam, "Marking guide", answerPath, hash,
+				false);
+		assertEquals(created.getId(), corrected.getId());
+		assertFalse(corrected.hasAnswerExplanations());
+		assertFalse(answerWriter.findAnswerFiles(completedExam).getFirst().hasAnswerExplanations());
+	}
 
 	@Test
 	void assignsSharedAndSeparateAnswerFilesToBooklets() throws Exception {
@@ -67,6 +99,72 @@ class SqliteAnswerWriterTest {
 		assertEquals(answersA.getId(), answerWriter.findAnswerFile(mcq).getId());
 		assertEquals(answersA.getId(), answerWriter.findAnswerFile(paper1).getId());
 		assertEquals(answersB.getId(), answerWriter.findAnswerFile(paper2).getId());
+	}
+
+	@Test
+	void completeExamAllowsExistingAnswerWorkButRejectsAnswerFileStructuralChanges() throws Exception {
+		Path databasePath = tempDirectory.resolve("complete-exam-answer-structure.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet paper1 = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Chemistry/2025/paper1.pdf");
+		ExamBooklet paper2 = examImporter.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 2",
+				"Chemistry/2025/paper2.pdf");
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question question = questionRepository.save(paper1, "Q1", "", 2,
+				List.of(new QuestionRegion(paper1, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		// Establish all structural Answer assets before completing the Exam.
+		AnswerFile answersA = answerWriter.findOrCreateAnswerFile(paper1.getExam(), "Answers A",
+				"Chemistry/2025/answers-a.pdf");
+		AnswerFile answersB = answerWriter.findOrCreateAnswerFile(paper1.getExam(), "Answers B",
+				"Chemistry/2025/answers-b.pdf");
+		answerWriter.assignAnswerFile(paper1, answersA);
+		answerWriter.assignAnswerFile(paper2, answersA);
+		assertEquals(2, countRows(database, "answer_files"));
+		Exam completedExam = examWriter.setExamCaptureState(paper1.getExam(), ExamCaptureState.COMPLETE);
+
+		// Reusing an already registered AnswerFile and its already-established booklet
+		// mapping is non-structural and must remain legal.
+		AnswerFile reused = answerWriter.findOrCreateAnswerFile(paper1, "Answers A", "Chemistry/2025/answers-a.pdf");
+		assertEquals(answersA.getId(), reused.getId());
+		assertEquals(answersA.getId(), answerWriter.findAnswerFile(paper1).getId());
+
+		// Answers themselves remain editable on a COMPLETE Exam when they use the
+		// booklet's existing AnswerFile relationship.
+		Answer original = answerWriter.insertAnswer(question, "B",
+				List.of(new AnswerRegion(answersA, 4, 0.10, 0.20, 0.40, 0.10)));
+		Answer updated = answerWriter.updateAnswer(question, original.getId(), "C",
+				List.of(new AnswerRegion(answersA, 5, 0.15, 0.25, 0.45, 0.12)));
+		assertEquals(original.getId(), updated.getId());
+		assertEquals("C", updated.getAnswerText());
+		assertEquals(5, updated.getRegions().getFirst().pageNumber());
+
+		// Registering another AnswerFile changes the structural asset set and must be
+		// rejected until the user explicitly reactivates the Exam.
+		assertThrows(IllegalStateException.class, () -> answerWriter.findOrCreateAnswerFile(completedExam,
+				"Late Answers", "Chemistry/2025/late-answers.pdf"));
+		assertEquals(2, countRows(database, "answer_files"));
+
+		// Paper 2 already points at Answers A. Redirecting it to Answers B is another
+		// structural change and must also be rejected.
+		assertThrows(IllegalStateException.class, () -> answerWriter.assignAnswerFile(paper2, answersB));
+		assertEquals(answersA.getId(), answerWriter.findAnswerFile(paper2).getId());
+
+		// The failed structural operations must not disturb the permitted Answer edit.
+		Question reloaded = questionRepository.findById(question.getId()).orElseThrow();
+		assertTrue(reloaded.hasAnswer());
+		assertEquals("C", reloaded.getAnswer().getAnswerText());
+		assertEquals(5, reloaded.getAnswer().getRegions().getFirst().pageNumber());
 	}
 
 	@Test
@@ -172,6 +270,59 @@ class SqliteAnswerWriterTest {
 			assertEquals(5, result.getInt("page_number"));
 			assertFalse(result.next());
 		}
+	}
+
+	@Test
+	void persistsAndReloadsAnswerExplanationMetadata() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("answer-explanations.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/QCAA/2025/paper1.pdf");
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+
+		// Newly registered and migrated-style AnswerFiles default conservatively to
+		// having no recorded explanations.
+		AnswerFile original = answerWriter.findOrCreateAnswerFile(booklet, "Marking guide",
+				"Chemistry/QCAA/2025/marking-guide.pdf");
+		assertFalse(original.hasAnswerExplanations());
+		assertFalse(answerWriter.findAnswerFile(booklet).hasAnswerExplanations());
+
+		// Reviewing the asset updates descriptive metadata without changing its
+		// persistent AnswerFile identity or its booklet assignment.
+		AnswerFile updated = answerWriter.setContainsAnswerExplanations(original, true);
+		assertEquals(original.getId(), updated.getId());
+		assertTrue(updated.hasAnswerExplanations());
+
+		// Both normal lookup paths must reconstruct the persisted flag.
+		AnswerFile assigned = answerWriter.findAnswerFile(booklet);
+		assertTrue(assigned.hasAnswerExplanations());
+		List<AnswerFile> examFiles = answerWriter.findAnswerFiles(booklet.getExam());
+		assertEquals(1, examFiles.size());
+		assertEquals(original.getId(), examFiles.getFirst().getId());
+		assertTrue(examFiles.getFirst().hasAnswerExplanations());
+	}
+
+	@Test
+	void persistsAndReloadsAnswerSourceHash() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("hashed-answer-source.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/QCAA/2025/paper1.pdf");
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		String hash = "0123456789abcdef".repeat(4);
+		AnswerFile stored = answerWriter.findOrCreateAnswerFile(booklet, "Marking guide",
+				"Chemistry/QCAA/2025/answers.pdf", hash);
+		assertEquals(hash, stored.getSourceDocument().getContentSha256());
+
+		// Reload through both answer-file lookup paths so persisted identity cannot be
+		// lost during reconstruction.
+		assertEquals(hash, answerWriter.findAnswerFile(booklet).getSourceDocument().getContentSha256());
+		assertEquals(hash,
+				answerWriter.findAnswerFiles(booklet.getExam()).getFirst().getSourceDocument().getContentSha256());
 	}
 
 	@Test

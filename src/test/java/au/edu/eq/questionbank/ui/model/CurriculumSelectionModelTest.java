@@ -5,10 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -44,6 +46,45 @@ class CurriculumSelectionModelTest {
 		assertEquals(List.of(oldPhysics), physicsModel.getSyllabusVersions());
 		physicsModel.selectSyllabusVersion(oldPhysics);
 		assertEquals(oldPhysics, physicsModel.getSyllabusVersion());
+	}
+
+	@Test
+	void appliedSubjectSnapshotCachesRootUnitsForEverySyllabusVersion() {
+		AtomicInteger rootReads = new AtomicInteger();
+		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus2019, syllabus2025), List.of(unit3, topic31, subtopic311, descriptor3111,
+						historicalUnit, historicalTopic, historicalDescriptor)) {
+
+			@Override
+			public List<CurriculumNode> findRootNodes(SyllabusVersion syllabusVersion) {
+
+				// Count persistence-boundary calls so the test can distinguish snapshot
+				// loading from later selection-model navigation.
+				rootReads.incrementAndGet();
+				return super.findRootNodes(syllabusVersion);
+			}
+		};
+		CurriculumSelectionModel snapshotModel = new CurriculumSelectionModel(repository);
+		CurriculumSelectionModel.SubjectSnapshot snapshot = snapshotModel.loadSubjectSnapshot(chemistry);
+
+		// One worker-side read per syllabus loads both current and historical roots.
+		assertEquals(2, rootReads.get());
+		assertEquals(List.of(unit3), snapshot.currentUnits());
+		assertEquals(List.of(historicalUnit), snapshot.unitsFor(syllabus2019));
+		assertEquals(List.of(unit3), snapshot.unitsFor(syllabus2025));
+		snapshotModel.beginSubjectRefresh(chemistry);
+		snapshotModel.applySubjectSnapshot(snapshot);
+
+		// Moving to the historical syllabus must reuse its already-loaded roots.
+		snapshotModel.selectSyllabusVersion(syllabus2019);
+		assertEquals(List.of(historicalUnit), snapshotModel.getUnits());
+
+		// Moving back to the current syllabus likewise remains entirely in memory.
+		snapshotModel.selectSyllabusVersion(syllabus2025);
+		assertEquals(List.of(unit3), snapshotModel.getUnits());
+
+		// No root-node reads occurred after snapshot publication.
+		assertEquals(2, rootReads.get());
 	}
 
 	@Test
@@ -130,6 +171,14 @@ class CurriculumSelectionModelTest {
 	}
 
 	@Test
+	void codeLookupReturnsNullForBlankOrUnknownCode() {
+		model.selectSubject(chemistry);
+		assertNull(model.findByCode(null));
+		assertNull(model.findByCode(" "));
+		assertNull(model.findByCode("9.9.9"));
+	}
+
+	@Test
 	void explicitlySelectsHistoricalSyllabus() {
 		selectCurrentClassification();
 		model.selectSyllabusVersion(syllabus2019);
@@ -163,25 +212,6 @@ class CurriculumSelectionModelTest {
 		assertEquals(List.of(descriptor), descriptorModel.getClassifications());
 		descriptorModel.selectClassification(descriptor);
 		assertEquals(descriptor, descriptorModel.getClassification());
-	}
-
-	@Test
-	void findsTrimmedCodeOnlyWithinSelectedSyllabus() {
-		assertNull(model.findByCode("3.1.1.1"));
-		model.selectSubject(chemistry);
-		assertEquals(descriptor3111, model.findByCode(" 3.1.1.1 "));
-		assertNull(model.findByCode("1.1.1"));
-		model.selectSyllabusVersion(syllabus2019);
-		assertEquals(historicalDescriptor, model.findByCode("1.1.1"));
-		assertNull(model.findByCode("3.1.1.1"));
-	}
-
-	@Test
-	void codeLookupReturnsNullForBlankOrUnknownCode() {
-		model.selectSubject(chemistry);
-		assertNull(model.findByCode(null));
-		assertNull(model.findByCode(" "));
-		assertNull(model.findByCode("9.9.9"));
 	}
 
 	@Test
@@ -220,6 +250,17 @@ class CurriculumSelectionModelTest {
 	void exposesUnitsForDefaultSyllabus() {
 		model.selectSubject(chemistry);
 		assertEquals(List.of(unit3), model.getUnits());
+	}
+
+	@Test
+	void findsTrimmedCodeOnlyWithinSelectedSyllabus() {
+		assertNull(model.findByCode("3.1.1.1"));
+		model.selectSubject(chemistry);
+		assertEquals(descriptor3111, model.findByCode(" 3.1.1.1 "));
+		assertNull(model.findByCode("1.1.1"));
+		model.selectSyllabusVersion(syllabus2019);
+		assertEquals(historicalDescriptor, model.findByCode("1.1.1"));
+		assertNull(model.findByCode("3.1.1.1"));
 	}
 
 	@Test
@@ -331,6 +372,35 @@ class CurriculumSelectionModelTest {
 				List.of(syllabus2019, syllabus2025), List.of(unit3, topic31, subtopic311, descriptor3111,
 						historicalUnit, historicalTopic, historicalDescriptor));
 		model = new CurriculumSelectionModel(repository);
+	}
+
+	@Test
+	void subjectSnapshotLoadsWithoutMutatingSelectionAndAppliesLater() {
+		CurriculumSelectionModel.SubjectSnapshot snapshot = model.loadSubjectSnapshot(chemistry);
+
+		// Persistence loading itself must be side-effect free so a worker thread can
+		// construct the snapshot without touching current JavaFX-owned selection state.
+		assertNull(model.getSubject());
+		assertNull(model.getSyllabusVersion());
+		assertEquals(List.of(syllabus2019, syllabus2025), snapshot.syllabusVersions());
+		assertEquals(syllabus2025, snapshot.currentSyllabusVersion());
+		assertEquals(List.of(unit3), snapshot.currentUnits());
+
+		// The accepted Subject is established immediately before asynchronous data is
+		// published.
+		model.beginSubjectRefresh(chemistry);
+		assertEquals(chemistry, model.getSubject());
+		assertNull(model.getSyllabusVersion());
+		assertEquals(List.of(syllabus2019, syllabus2025), model.getSyllabusVersions());
+		model.applySubjectSnapshot(snapshot);
+
+		// Publication restores only the new Subject's initial syllabus context.
+		assertEquals(chemistry, model.getSubject());
+		assertEquals(syllabus2025, model.getSyllabusVersion());
+		assertEquals(List.of(unit3), model.getUnits());
+		assertNull(model.getUnit());
+		assertNull(model.getTopic());
+		assertNull(model.getClassification());
 	}
 
 	private void assertCurrentClassificationRetained() {
