@@ -14,11 +14,11 @@ The former `project-history.md`, `current-status.md` and `design/architecture-ev
 
 ## Current development position
 
-Sprints 01–11 are complete and merged.
+Sprints 01–12 are complete and merged.
 
 Sprint 11 — Release 0.1 — merged to protected `main` through pull request #39 on 27 September 2026. Merge commit: `1ccbb350a693568231bd14582ffbecc7684fb79a`.
 
-Sprint 12 implementation is complete on `feature/sprint-12` in PR [#88](https://github.com/corneym/Exam/pull/88), with **pre-merge release verification passed**. Initial and subsequent PR CI checkpoints have been green. Its detailed final implementation record is:
+Sprint 12 — Release 0.2 — merged to protected `main` through PR [#88](https://github.com/corneym/Exam/pull/88) on 5 October 2026. Merge commit: `8ba714e2ef7ff07eebb2375021e1e751d4876e47`. Post-merge CI run #164 and CodeQL run #15 both passed. Its detailed final implementation record is:
 
 `design/sprint-12-release-0.2.md`
 
@@ -26,9 +26,9 @@ Sprint 12 delivered the application-level Working Subject and Corpus Dashboard h
 
 Final pre-PR verification passed **1,031 non-UI tests** (3 expected skips), **342 UI tests**, and the combined **1,373-test AllTests** run (3 expected skips), all with zero failures/errors. Maven `clean verify`, strict Javadoc, Spotless and `git diff --check` also passed. The final review additionally removed duplicate Dashboard MCQ-explanation handler wiring, hardened TestFX scene-graph lookups/observable save waits, and added direct SQLite regression coverage for destructive Exam asset deletion.
 
-The formal `scripts/build-release.ps1` gate passed and produced the Release 0.2 MSI. Maven/application/MSI version is **0.2**. Manual installed-MSI verification outside Eclipse passed: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2, normal shutdown, successful uninstall, and configuration/data survival. Two release-independent hard-coded 0.1 test expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest` were corrected during the gate. Protected-main merge and final post-merge release evidence remain pending; issue #64 remains open until final merge closeout. Sprint 12 is not yet merged and Release 0.2 is not yet finally published.
+The formal `scripts/build-release.ps1` gate passed and produced the Release 0.2 MSI. Maven/application/MSI version is **0.2**. Manual installed-MSI verification outside Eclipse passed: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2, normal shutdown, successful uninstall, and configuration/data survival. Two release-independent hard-coded 0.1 test expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest` were corrected during the gate. PR #88 then merged cleanly; post-merge CI and CodeQL passed, issue #64 was closed as completed, and Release 0.2 is now the current published release.
 
-The latest supported SQLite schema on `feature/sprint-12` is **19**.
+The latest supported SQLite schema on `main` is **19**.
 
 ## Sprint 12 issue evidence
 
@@ -45,10 +45,10 @@ Important examples include:
 - #75 — asynchronous Working Subject refresh;
 - #80 — destructive Exam asset deletion;
 - #63 — maintained Help;
-- #22 — superseded by the implemented reporting/reconciliation issues above;
+- #22 — superseded by the implemented reporting/reconciliation issues above and closed after Sprint 12 merge;
 - #73 — closed as not planned; mixed booklets retain one total expected top-level Question count;
 - #34 — already covered by the existing pre-v13 restore/migration regression and closed;
-- #64 — automated Release 0.2 gate and manual MSI verification passed; open pending final merge closeout.
+- #64 — Release 0.2 gate, manual MSI verification, protected-main merge and post-merge CI completed; closed.
 
 ## Status vocabulary
 
