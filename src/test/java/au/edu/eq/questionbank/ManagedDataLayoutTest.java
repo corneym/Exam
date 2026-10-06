@@ -16,6 +16,19 @@ class ManagedDataLayoutTest {
 	Path tempDir;
 
 	@Test
+	void buildsCanonicalExamDirectory() {
+		Path dataRoot = tempDir.resolve("data");
+		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
+
+		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA"),
+				layout.examProviderDirectory("Chemistry", "QCAA"));
+		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024"),
+				layout.examYearDirectory("Chemistry", "QCAA", 2024));
+		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment"),
+				layout.examDirectory("Chemistry", "QCAA", 2024, "External Assessment"));
+	}
+
+	@Test
 	void buildsCanonicalSubjectFirstDirectories() {
 		Path dataRoot = tempDir.resolve("data");
 		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
@@ -87,6 +100,17 @@ class ManagedDataLayoutTest {
 		assertThrows(IllegalArgumentException.class, () -> layout.subjectDirectory("Chemistry."));
 		assertThrows(IllegalArgumentException.class,
 				() -> layout.curriculumVersionDirectory("Chemistry", "2025/Revision"));
+	}
+
+	@Test
+	void rejectsInvalidExamDirectoryComponents() {
+		ManagedDataLayout layout = new ManagedDataLayout(tempDir.resolve("data"));
+
+		assertThrows(IllegalArgumentException.class, () -> layout.examProviderDirectory("Chemistry", "QCAA/External"));
+		assertThrows(IllegalArgumentException.class, () -> layout.examYearDirectory("Chemistry", "QCAA", 0));
+		assertThrows(IllegalArgumentException.class,
+				() -> layout.examDirectory("Chemistry", "QCAA", 2024, "Paper: External"));
+		assertThrows(IllegalArgumentException.class, () -> layout.examDirectory("Chemistry", "QCAA", 2024, ".."));
 	}
 
 	@Test

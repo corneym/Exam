@@ -127,6 +127,34 @@ public final class ManagedDataLayout {
 	}
 
 	/**
+	 * Returns the canonical directory for one Exam.
+	 *
+	 * @param subjectName    Subject name
+	 * @param providerName   examination provider name
+	 * @param year           examination year
+	 * @param assessmentName assessment name
+	 * @return absolute Exam directory
+	 * @throws IllegalArgumentException if a directory component is invalid or
+	 *                                  {@code year} is not positive
+	 */
+	public Path examDirectory(String subjectName, String providerName, int year, String assessmentName) {
+		String assessmentDirectory = validateComponent(assessmentName, "assessmentName");
+		return examYearDirectory(subjectName, providerName, year).resolve(assessmentDirectory);
+	}
+
+	/**
+	 * Returns the examination-provider directory for one Subject.
+	 *
+	 * @param subjectName  Subject name
+	 * @param providerName examination provider name
+	 * @return absolute examination-provider directory
+	 */
+	public Path examProviderDirectory(String subjectName, String providerName) {
+		String providerDirectory = validateComponent(providerName, "providerName");
+		return examsDirectory(subjectName).resolve(providerDirectory);
+	}
+
+	/**
 	 * Returns the root Exam directory for one Subject.
 	 *
 	 * @param subjectName Subject name
@@ -134,6 +162,22 @@ public final class ManagedDataLayout {
 	 */
 	public Path examsDirectory(String subjectName) {
 		return subjectDirectory(subjectName).resolve(EXAMS_DIRECTORY);
+	}
+
+	/**
+	 * Returns the examination-year directory for one provider and Subject.
+	 *
+	 * @param subjectName  Subject name
+	 * @param providerName examination provider name
+	 * @param year         examination year
+	 * @return absolute examination-year directory
+	 * @throws IllegalArgumentException if {@code year} is not positive
+	 */
+	public Path examYearDirectory(String subjectName, String providerName, int year) {
+		if (year < 1) {
+			throw new IllegalArgumentException("year must be positive");
+		}
+		return examProviderDirectory(subjectName, providerName).resolve(Integer.toString(year));
 	}
 
 	/**
