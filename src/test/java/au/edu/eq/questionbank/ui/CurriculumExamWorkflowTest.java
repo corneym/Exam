@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -708,6 +709,68 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(1, returned.get());
 		assertFalse(returnToDashboard.isVisible());
 		assertFalse(returnToDashboard.isManaged());
+	}
+
+	@Test
+	void dashboardLifecycleChangeRemainsResponsiveWhilePersistenceIsBlocked(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+
+		// Establish a persisted COMPLETE Exam without using the Dashboard action under
+		// test, then rebuild Dashboard from authoritative persistence.
+		writer.setExamCaptureState(originalBooklet.getExam(), ExamCaptureState.COMPLETE);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			return robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery().filter(Button.class::isInstance)
+					.map(Button.class::cast).map(button -> "Mark Active".equals(button.getText())).orElse(false);
+		});
+		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
+		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
+		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);
+		assertEquals("Declared state: COMPLETE", selectedState.getText());
+		try (Connection lockConnection = database.openConnection();
+				Statement lockStatement = lockConnection.createStatement()) {
+
+			// Hold SQLite's write lock so lifecycle persistence cannot finish immediately.
+			// If persistence still ran on JavaFX, firing the Dashboard action would block
+			// the UI here until SQLite's busy timeout expired.
+			lockStatement.execute("BEGIN EXCLUSIVE");
+			fireControl(robot, lifecycle);
+			WaitForAsyncUtils.waitFor(2, TimeUnit.SECONDS,
+					() -> evaluateOnFx(robot, () -> progressRow.isVisible() && lifecycle.isDisabled()));
+			AtomicBoolean fxResponsive = new AtomicBoolean(false);
+			robot.interact(() -> fxResponsive.set(true));
+
+			// JavaFX must remain able to process work while the lifecycle worker is blocked
+			// on persistence.
+			assertTrue(fxResponsive.get());
+			assertTrue(progressRow.isVisible());
+			assertTrue(lifecycle.isDisabled());
+			lockStatement.execute("COMMIT");
+		}
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> !progressRow.isVisible() && "Declared state: ACTIVE".equals(selectedState.getText())));
+
+		// The same Dashboard selection survives the persistence-backed refresh, while
+		// the action returns to the normal readiness rule for an ACTIVE Exam.
+		assertFalse(progressRow.isVisible());
+		assertFalse(progressRow.isManaged());
+		assertEquals("Declared state: ACTIVE", selectedState.getText());
+		assertEquals("Mark Complete", lifecycle.getText());
+		ExamBooklet reloaded = writer
+				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
+		assertNotNull(reloaded);
+		assertFalse(reloaded.getExam().isComplete());
+
+		// Capture's retained immutable booklet snapshot is synchronised only after the
+		// background persistence succeeds.
+		assertFalse(examMetadataPane().getBooklet().getExam().isComplete());
 	}
 
 	@Test
