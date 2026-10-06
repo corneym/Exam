@@ -774,6 +774,68 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardLifecycleFailureClearsBusyState(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter realWriter = new SqliteExamWriter(database);
+
+		// Establish a persisted COMPLETE Exam so the Dashboard exposes Mark Active
+		// without requiring the completion confirmation dialog.
+		realWriter.setExamCaptureState(originalBooklet.getExam(), ExamCaptureState.COMPLETE);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			return robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery().filter(Button.class::isInstance)
+					.map(Button.class::cast).map(button -> "Mark Active".equals(button.getText())).orElse(false);
+		});
+
+		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
+		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
+		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);
+
+		// An existing directory cannot be opened as a SQLite database file. Replacing
+		// only the application writer gives the lifecycle worker a deterministic
+		// persistence failure without changing the real Dashboard data source.
+		Path invalidDatabasePath = Files
+				.createDirectory(databasePath.getParent().resolve("invalid-lifecycle-database"));
+		SqliteExamWriter failingWriter = new SqliteExamWriter(new SqliteDatabase(invalidDatabasePath));
+		setField(application, "examWriter", failingWriter);
+
+		fireControl(robot, lifecycle);
+		waitForDialogShowing(robot, "Exam State");
+
+		// Failure handling clears operation state before presenting the error dialog.
+		assertFalse(evaluateOnFx(robot, progressRow::isVisible));
+		assertFalse(evaluateOnFx(robot, progressRow::isManaged));
+		assertFalse(evaluateOnFx(robot, lifecycle::isDisabled));
+		assertEquals("Declared state: COMPLETE", selectedState.getText());
+		assertFalse(field(application, "corpusDashboardLifecycleChangeRunning", Boolean.class));
+
+		DialogPane error = showingDialogPane(robot, "Exam State");
+		Node okNode = error.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Exam State");
+
+		// Failed persistence must leave authoritative lifecycle state unchanged.
+		ExamBooklet reloaded = realWriter
+				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
+		assertNotNull(reloaded);
+		assertTrue(reloaded.getExam().isComplete());
+
+		// Restore the application's normal writer so teardown and any later fixture
+		// work
+		// continue against the real test database.
+		setField(application, "examWriter", realWriter);
+	}
+
+	@Test
 	void dashboardNewQuestionCaptureReturnClosesManagedPdf(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
