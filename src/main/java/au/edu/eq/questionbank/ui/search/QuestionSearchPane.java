@@ -303,13 +303,11 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		questionIdToReselect = questionId;
 
-		// An edit must refresh the scope the teacher was actually viewing. In
-		// particular, All Questions must not silently become a curriculum search.
-		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
-			startAllQuestionsSearch();
-			return;
-		}
-		startMostSpecificCurrentSyllabusSearch();
+		// Re-query the active Search because an edit may change whether the Question
+		// still belongs in the current retrieval scope. Keep the accepted results
+		// visible until the replacement generation is ready rather than blanking the
+		// Search pane.
+		refreshAutomaticSearch();
 	}
 
 	/**
@@ -1378,6 +1376,38 @@ public class QuestionSearchPane extends BorderPane {
 				+ " marks";
 	}
 
+	private void refreshAutomaticSearch() {
+		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
+
+			// All Questions remains scoped to the authoritative Working Subject. The
+			// existing result generation stays visible while this replacement loads.
+			startAutomaticSearch(() -> {
+				List<Question> questions = allQuestionsSupplier.get().stream()
+						.filter(question -> workingSubject.equals(question.getExam().getSubject())).toList();
+				return QuestionSearchResult.allQuestionResults(questions);
+			}, false);
+			return;
+		}
+		CurriculumNode selectedNode = mostSpecificSelectedCurriculumNode();
+		if (selectedNode != null) {
+
+			// Re-evaluate current-curriculum applicability because a classification change
+			// can legitimately alter Search membership.
+			startAutomaticSearch(() -> QuestionSearchResult
+					.currentSyllabusResults(retrievalService.findQuestionsApplicableTo(selectedNode)), false);
+			return;
+		}
+		if (currentSyllabus == null) {
+
+			// This is an invalidated navigation state rather than an ordinary edit refresh.
+			// Rebuild the hierarchy through the normal Working Subject path.
+			startWorkingSubjectNavigation();
+			return;
+		}
+		startAutomaticSearch(() -> QuestionSearchResult
+				.currentSyllabusResults(retrievalService.findQuestionsApplicableTo(workingSubject)), false);
+	}
+
 	private void reloadSelectedOutputApplicability() {
 		QuestionSearchResult selectedResult = resultsList.getSelectionModel().getSelectedItem();
 		if (selectedResult != null) {
@@ -1688,8 +1718,18 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startAutomaticSearch(Supplier<List<QuestionSearchResult>> retrieval) {
+		startAutomaticSearch(retrieval, true);
+	}
+
+	private void startAutomaticSearch(Supplier<List<QuestionSearchResult>> retrieval, boolean clearVisibleResults) {
 		cancelActiveSearch();
-		clearResults();
+		if (clearVisibleResults) {
+
+			// Ordinary navigation deliberately replaces the old scope immediately. An
+			// edit refresh instead retains the accepted result generation until its
+			// replacement is ready.
+			clearResults();
+		}
 		long generation = searchGeneration;
 		statusLabel.setText("Searching...");
 		Task<List<QuestionSearchResult>> task = new BackgroundTask<>(retrieval::get);

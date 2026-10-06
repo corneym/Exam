@@ -628,26 +628,38 @@ public class QuestionSearchPaneTest {
 	public void refreshAfterEditRetainsAllQuestionsScopeAndReselectsUpdatedQuestion(FxRobot robot)
 			throws TimeoutException {
 		AtomicReference<List<Question>> allQuestions = new AtomicReference<>(List.of(historicalQuestion));
-		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService, allQuestions::get);
+		AtomicReference<Supplier<List<Question>>> activeSupplier = new AtomicReference<>(allQuestions::get);
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService,
+				() -> activeSupplier.get().get());
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
+		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		Question editedQuestion = new Question(historicalQuestion.getId(), historicalQuestion.getBooklet(), "21b",
 				historicalQuestion.getQuestionText(), historicalQuestion.getMarks(), historicalQuestion.getRegions(),
 				historicalQuestion.getClassification(), historicalQuestion.isSharedContextCaptureRequired(),
 				historicalQuestion.getSourceQuestion(), historicalQuestion.getSharedContext(),
 				historicalQuestion.getResponseType());
 
-		// Simulate the repository returning the corrected Question after an edit.
-		allQuestions.set(List.of(editedQuestion));
+		// Hold the replacement persistence generation so the test can inspect what the
+		// teacher sees while the refresh is still running.
+		DelayedAllQuestionsSupplier delayedRefresh = new DelayedAllQuestionsSupplier(List.of(editedQuestion));
+		activeSupplier.set(delayedRefresh);
 		robot.interact(() -> pane.refreshAfterEdit(editedQuestion.getId()));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, delayedRefresh::hasDelayStarted);
+
+		// Refreshing a saved edit must not blank the accepted Search generation while
+		// persistence is being queried in the background.
+		assertEquals(1, resultsList.getItems().size());
+		assertEquals(historicalQuestion.getId(), resultsList.getSelectionModel().getSelectedItem().question().getId());
+		delayedRefresh.release();
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> pane.getSelectedQuestion() != null && "21b".equals(pane.getSelectedQuestion().getQuestionCode()));
 
-		// Refresh must preserve the scope the teacher was viewing rather than silently
-		// reverting to curriculum-aware Search.
+		// The completed refresh preserves the scope the teacher was viewing and
+		// reselects the freshly loaded persisted Question.
 		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scopeBox.getValue());
 		assertEquals(QuestionSearchScope.ALL_QUESTIONS, resultsList.getSelectionModel().getSelectedItem().scope());
 		assertEquals(editedQuestion.getId(), pane.getSelectedQuestion().getId());

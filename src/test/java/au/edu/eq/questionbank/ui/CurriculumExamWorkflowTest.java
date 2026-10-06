@@ -29,6 +29,7 @@ import org.testfx.util.WaitForAsyncUtils;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -37,7 +38,9 @@ import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
@@ -45,6 +48,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRevie
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
@@ -57,10 +61,12 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.image.ImageView;
@@ -1225,6 +1231,99 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(units.isDisabled());
 		assertNull(syllabuses.getValue());
 		assertFalse(syllabuses.isDisabled());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void searchClassificationSaveRefreshesDashboardOnlyAfterPersistedChange(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		SyllabusVersion currentVersion = curriculumRepository.findVersionsForSubject(booklet.getExam().getSubject())
+				.stream().filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
+		Topic topic = (Topic) curriculumRepository.findByCode(currentVersion, "1.1").orElseThrow();
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.2", "Search refinement subtopic", 2);
+		Descriptor descriptor = curriculumWriter.insertDescriptor(subtopic, "1.1.2.1", "Search refinement descriptor",
+				1);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question question = questionRepository.save(booklet, "SEARCH-Q", "", 1, List.of(), subtopic, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-booklets").tryQuery().isPresent());
+		TableView<BookletCorpusStatus> bookletTable = lookup(robot, "#corpus-dashboard-booklets", TableView.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> bookletTable.getItems().stream().anyMatch(status -> status.booklet().getId() == booklet.getId()
+						&& status.questionsWithoutDescriptorCount() == 1)));
+
+		// Enter Search through the real application action. showAndWait() is modal, so
+		// leave the test thread available to operate the Search dialog.
+		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
+		MenuItem searchItem = questionMenu.getItems().stream().filter(item -> "_Search...".equals(item.getText()))
+				.findFirst().orElseThrow();
+		Platform.runLater(searchItem::fire);
+		waitForDialogShowing(robot, "Search Questions");
+
+		// Reproduce the reported workflow explicitly: Questions -> Search -> All
+		// Questions. The second Search scope is the all-bank scope.
+		ComboBox<Object> searchScope = lookupInShowingDialog(robot, "Search Questions", "#question-search-scope",
+				ComboBox.class);
+		robot.interact(() -> searchScope.getSelectionModel().selectLast());
+		ListView<?> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> results.getItems().size() == 1));
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		ComboBox<CurriculumNode> selectedDescriptor = lookupInShowingDialog(robot, "Search Questions",
+				"#question-search-selected-descriptor", ComboBox.class);
+
+		// Search reloads curriculum nodes from its own repository. Compare persistent
+		// identity rather than depending on the fixture's object instance.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> selectedDescriptor.getItems()
+				.stream().anyMatch(candidate -> candidate.getId() == descriptor.getId())));
+		CurriculumNode[] searchDescriptor = new CurriculumNode[1];
+		robot.interact(() -> searchDescriptor[0] = selectedDescriptor.getItems().stream()
+				.filter(candidate -> candidate.getId() == descriptor.getId()).findFirst().orElseThrow());
+		robot.interact(() -> selectedDescriptor.setValue(searchDescriptor[0]));
+		Button saveClassification = lookupInShowingDialog(robot, "Search Questions",
+				"#question-search-save-classification", Button.class);
+		assertFalse(saveClassification.isDisable());
+		fireControl(robot, saveClassification);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> questionRepository.findAll().stream().anyMatch(candidate -> candidate.getId() == question.getId()
+						&& candidate.getClassification().getId() == descriptor.getId()));
+
+		// Persistence alone must not force a hidden Dashboard reload for every inline
+		// Save. The existing snapshot remains until Search closes.
+		assertTrue(evaluateOnFx(robot,
+				() -> bookletTable.getItems().stream().anyMatch(status -> status.booklet().getId() == booklet.getId()
+						&& status.questionsWithoutDescriptorCount() == 1)));
+		closeDialog(robot, "Search Questions");
+
+		// Closing a changed Search session requests one authoritative Dashboard
+		// refresh,
+		// so descriptor coverage updates without restarting the application.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> bookletTable.getItems().stream().anyMatch(status -> status.booklet().getId() == booklet.getId()
+						&& status.questionsWithoutDescriptorCount() == 0)));
+		Long refreshGenerationBeforeUnchangedSearch = field(application, "corpusDashboardRefreshGeneration",
+				Long.class);
+
+		// A second Search session that persists nothing must not create another
+		// Dashboard refresh merely because its dialog closes.
+		Platform.runLater(searchItem::fire);
+		waitForDialogShowing(robot, "Search Questions");
+		closeDialog(robot, "Search Questions");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(refreshGenerationBeforeUnchangedSearch.longValue(),
+				field(application, "corpusDashboardRefreshGeneration", Long.class).longValue());
 	}
 
 	@Test

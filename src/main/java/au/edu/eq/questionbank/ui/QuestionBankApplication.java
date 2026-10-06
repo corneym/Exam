@@ -90,6 +90,7 @@ import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
+import au.edu.eq.questionbank.service.backup.ApplicationRestartService;
 import au.edu.eq.questionbank.service.backup.AutomaticBackupRetention;
 import au.edu.eq.questionbank.service.backup.BackupException;
 import au.edu.eq.questionbank.service.backup.BackupKind;
@@ -115,6 +116,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageServic
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfStore;
+import au.edu.eq.questionbank.service.curriculum.CurriculumWorkbookStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
@@ -288,6 +290,9 @@ public class QuestionBankApplication extends Application {
 	// The complete left workspace owns fixed context above the mode-specific
 	// scrollable content and is the node mounted into the main SplitPane.
 	private BorderPane workspacePreviewPane;
+	private Path applicationPropertiesFile = ApplicationPaths.propertiesFile();
+	private Runnable applicationRestartAction = this::restartApplicationAfterShutdown;
+	private final ApplicationRestartService applicationRestartService = new ApplicationRestartService();
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -950,10 +955,28 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
-	private void completeExitWithoutBackup() {
+	private void completeDataRootChange(Path dataRoot, Runnable completionAction) {
+		try {
+
+			// Persist the new root only after the current data session has passed its
+			// normal backup and resource-close checks. Cancelling shutdown therefore
+			// leaves both the running session and startup configuration unchanged.
+			ApplicationConfig.saveDataRoot(applicationPropertiesFile, dataRoot);
+			completionAction.run();
+		} catch (IOException exception) {
+
+			// Resources are already closed at this point, so the current application
+			// cannot safely resume even though the configuration update failed.
+			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.",
+					failureMessage(exception));
+			applicationExitAction.run();
+		}
+	}
+
+	private void completeExitWithoutBackup(Runnable readyAction) {
 		ShutdownResult result = shutdownCoordinator.exitWithoutBackup();
 		if (result.exitAllowed()) {
-			applicationExitAction.run();
+			readyAction.run();
 			return;
 		}
 
@@ -972,6 +995,28 @@ public class QuestionBankApplication extends Application {
 		finishScormExport();
 		progressAlert.close();
 		showScormExportSuccess(task.getValue());
+	}
+
+	private void completeSuccessfulRestore(Stage primaryStage, RestoreResult restoreResult) {
+		boolean restart = showRestartRequiredChoice(primaryStage, "Restore completed successfully.", """
+				The restored data has been installed.
+
+				A pre-restore safety backup was saved to:
+
+				%s
+
+				Restart Exam Question Bank to use the restored data.
+				""".formatted(restoreResult.safetyBackupPath()));
+
+		// DefaultRestoreExecutor already created the safety backup, closed resources,
+		// published the restored data and verified it. Do not run the ordinary shutdown
+		// coordinator here because that would create another backup over the newly
+		// restored state.
+		if (restart) {
+			applicationRestartAction.run();
+			return;
+		}
+		applicationExitAction.run();
 	}
 
 	private void completeWorkingSubjectCaptureRefresh(Subject subject, long generation,
@@ -2297,8 +2342,17 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		try {
+			Path selectedWorkbook = dialog.getSelectedFile();
+
+			// Validate the selected external workbook before retaining it in managed
+			// application storage.
 			CurriculumExcelImporter excelImporter = new CurriculumExcelImporter();
-			List<CurriculumImportRow> rows = excelImporter.read(dialog.getSelectedFile());
+			List<CurriculumImportRow> rows = excelImporter.read(selectedWorkbook);
+
+			// Curriculum workbooks are application data. A user may select the source from
+			// anywhere, but a successful import retains a managed copy beneath the
+			// configured curriculum root.
+			new CurriculumWorkbookStore(config.curriculumDataRoot()).manageWorkbook(selectedWorkbook);
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 			SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
@@ -2319,7 +2373,8 @@ public class QuestionBankApplication extends Application {
 								+ " is already imported. No changes were required.");
 			}
 		} catch (IOException e) {
-			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not read the Excel file.", e.getMessage());
+			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not read or copy the Excel file.",
+					e.getMessage());
 		} catch (CurriculumImportConflictException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not import curriculum.", e.getMessage());
 		} catch (SQLException e) {
@@ -3108,6 +3163,11 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void requestApplicationExit(Stage primaryStage) {
+		requestApplicationShutdown(primaryStage, applicationExitAction);
+	}
+
+	private void requestApplicationShutdown(Stage primaryStage, Runnable readyAction) {
+		Objects.requireNonNull(readyAction, "readyAction");
 		if (blockWhileCaptureSaveInProgress("closing the application")) {
 			return;
 		}
@@ -3125,11 +3185,11 @@ public class QuestionBankApplication extends Application {
 			ShutdownResult result = shutdownCoordinator.prepareForExit();
 			if (result.status() == ShutdownStatus.READY_TO_EXIT_WITH_RETENTION_WARNING) {
 				showRetentionWarning(primaryStage, result.failure());
-				applicationExitAction.run();
+				readyAction.run();
 				return;
 			}
 			if (result.exitAllowed()) {
-				applicationExitAction.run();
+				readyAction.run();
 				return;
 			}
 			if (result.status() == ShutdownStatus.RESOURCE_CLOSE_FAILED) {
@@ -3141,7 +3201,7 @@ public class QuestionBankApplication extends Application {
 				return;
 			}
 			if (decision == BackupFailureDecision.EXIT_WITHOUT_BACKUP) {
-				completeExitWithoutBackup();
+				completeExitWithoutBackup(readyAction);
 				return;
 			}
 
@@ -3213,6 +3273,23 @@ public class QuestionBankApplication extends Application {
 		return storedPath;
 	}
 
+	private void restartApplicationAfterShutdown() {
+		try {
+			applicationRestartService.restart();
+		} catch (IOException | RuntimeException exception) {
+			showAlert(Alert.AlertType.WARNING, "Restart Unavailable",
+					"Exam Question Bank could not restart automatically.", """
+							%s
+
+							The application will now close. Start Exam Question Bank manually.
+							""".formatted(failureMessage(exception)));
+		}
+
+		// Whether relaunch succeeded or failed, shutdown has already completed and the
+		// current process must not resume using closed resources.
+		applicationExitAction.run();
+	}
+
 	private void restoreBackup(Stage primaryStage, ApplicationConfig config) {
 		if (blockWhileCaptureSaveInProgress("restoring a backup")) {
 			return;
@@ -3253,16 +3330,7 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		closeRestorePreparation(preparation);
-		showAlert(Alert.AlertType.INFORMATION, "Restore Backup", "Restore completed successfully.", """
-				The restored data has been installed.
-
-				A pre-restore safety backup was saved to:
-
-				%s
-
-				The application will now close. Restart Exam Question Bank to use the restored data.
-				""".formatted(restoreResult.safetyBackupPath()));
-		applicationExitAction.run();
+		completeSuccessfulRestore(primaryStage, restoreResult);
 	}
 
 	private void restoreManagedPdfSessions(PdfWorkspacePane.DocumentMode displayedBeforeCorrection,
@@ -3300,6 +3368,12 @@ public class QuestionBankApplication extends Application {
 		// Restore and refresh Home before reopening Search so closing Search cannot
 		// expose an obsolete or hidden capture workspace.
 		refreshAndShowCorpusDashboardHome();
+
+		// The Dashboard refresh above already includes any inline classification
+		// changes made earlier in this same Search session. Consume that state so the
+		// eventual ordinary Search close does not request the same Dashboard refresh
+		// twice.
+		dialog.consumePersistedClassificationChange();
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
@@ -4050,7 +4124,7 @@ public class QuestionBankApplication extends Application {
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
 		OptionsDialog dialog = new OptionsDialog(primaryStage, config.dataRoot());
 		Optional<ButtonType> result = dialog.showAndWait();
-		if (result.isEmpty() || result.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
 		try {
@@ -4058,16 +4132,18 @@ public class QuestionBankApplication extends Application {
 			if (dataRoot.equals(config.dataRoot())) {
 				return;
 			}
+			boolean restart = showRestartRequiredChoice(primaryStage, "Data location changed.", """
+					Exam Question Bank must close the current data session before the new location can be activated.
 
-			// Options always updates the same user-writable configuration used at
-			// application startup, never a file beside the installed executable.
-			ApplicationConfig.saveDataRoot(ApplicationPaths.propertiesFile(), dataRoot);
-			showAlert(Alert.AlertType.INFORMATION, "Options", "Options saved.",
-					"The new data location will be used after the application is restarted.");
-		} catch (IllegalArgumentException e) {
-			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", e.getMessage());
-		} catch (IOException e) {
-			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.", e.getMessage());
+					Choose Restart Now to reopen using the new data location, or Exit to close the application.
+					""");
+			Runnable completionAction = restart ? applicationRestartAction : applicationExitAction;
+
+			// Backup and resource shutdown still belong to the current data root. Persist
+			// the new startup location only after those safety checks have succeeded.
+			requestApplicationShutdown(primaryStage, () -> completeDataRootChange(dataRoot, completionAction));
+		} catch (IllegalArgumentException exception) {
+			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", exception.getMessage());
 		}
 	}
 
@@ -4103,8 +4179,17 @@ public class QuestionBankApplication extends Application {
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
 		if (result.isEmpty()) {
+			boolean dashboardRefreshRequired = dialog.consumePersistedClassificationChange();
 			dialog.dispose();
 			questionCapturePane.clearSaveStatus();
+
+			// Inline Search classification changes alter Dashboard descriptor coverage.
+			// Refresh the retained Dashboard generation only when Search actually persisted
+			// a
+			// change; an unchanged Search session requires no persistence work on close.
+			if (dashboardRefreshRequired) {
+				refreshCorpusDashboardHome(-1L);
+			}
 			return;
 		}
 		QuestionSearchDialog.EditRequest request = result.get();
@@ -4181,6 +4266,29 @@ public class QuestionBankApplication extends Application {
 		// Stage needs to be threaded through the shutdown path.
 		showAlert(Alert.AlertType.ERROR, "Exit", "The application could not close its active resources.",
 				failureMessage(failure));
+	}
+
+	private boolean showRestartRequiredChoice(Stage primaryStage, String header, String content) {
+		ButtonType restartButton = new ButtonType("Restart Now", ButtonBar.ButtonData.OK_DONE);
+		ButtonType exitButton = new ButtonType("Exit", ButtonBar.ButtonData.NO);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Restart Required");
+		alert.setHeaderText(header);
+		String displayedContent = content;
+		if (!applicationRestartService.isRestartSupported()) {
+			displayedContent += """
+
+					Automatic restart is unavailable in this development run.
+					If Restart Now is chosen, the application will close and must be started manually.
+					""";
+		}
+		alert.setContentText(displayedContent);
+		alert.getButtonTypes().setAll(restartButton, exitButton);
+
+		// Closing the prompt is equivalent to Exit. Once the current data session has
+		// been deliberately invalidated, continuing in that session is not offered.
+		return alert.showAndWait().orElse(exitButton) == restartButton;
 	}
 
 	private void showRetentionWarning(Stage primaryStage, Throwable failure) {

@@ -1,10 +1,12 @@
 package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -16,16 +18,25 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.backup.BackupKind;
+import au.edu.eq.questionbank.service.backup.BackupManifest;
+import au.edu.eq.questionbank.service.backup.RestoreResult;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import javafx.application.Platform;
 import javafx.concurrent.Worker;
 import javafx.event.Event;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.web.WebView;
 import javafx.stage.Stage;
@@ -58,6 +69,48 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 				Version: %s
 				""".formatted(ApplicationVersion.current()).strip(), contentText.get());
 		fireDialogButton(robot, "OK");
+	}
+
+	@Test
+	void dataRootChangeCanExitWithoutRestart(FxRobot robot) throws Exception {
+		Path propertiesDirectory = Files.createTempDirectory("question-bank-options-");
+		Path propertiesFile = propertiesDirectory.resolve("questionbank.properties");
+		Path newDataRoot = propertiesDirectory.resolve("new-data");
+		ApplicationConfig.saveDataRoot(propertiesFile, applicationConfig.dataRoot());
+		AtomicInteger exitCount = new AtomicInteger();
+		AtomicInteger restartCount = new AtomicInteger();
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		setField(application, "applicationPropertiesFile", propertiesFile);
+		setField(application, "applicationRestartAction", (Runnable) restartCount::incrementAndGet);
+		assertEquals(0, automaticBackupCount());
+		openDataRootRestartPrompt(robot, newDataRoot);
+		fireDialogButton(robot, "Exit");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, exitCount.get());
+		assertEquals(0, restartCount.get());
+		assertEquals(1, automaticBackupCount());
+		assertEquals(newDataRoot.toAbsolutePath().normalize(), ApplicationConfig.load(propertiesFile).dataRoot());
+	}
+
+	@Test
+	void dataRootChangeCanRestartAfterNormalShutdown(FxRobot robot) throws Exception {
+		Path propertiesDirectory = Files.createTempDirectory("question-bank-options-");
+		Path propertiesFile = propertiesDirectory.resolve("questionbank.properties");
+		Path newDataRoot = propertiesDirectory.resolve("new-data");
+		ApplicationConfig.saveDataRoot(propertiesFile, applicationConfig.dataRoot());
+		AtomicInteger exitCount = new AtomicInteger();
+		AtomicInteger restartCount = new AtomicInteger();
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		setField(application, "applicationPropertiesFile", propertiesFile);
+		setField(application, "applicationRestartAction", (Runnable) restartCount::incrementAndGet);
+		assertEquals(0, automaticBackupCount());
+		openDataRootRestartPrompt(robot, newDataRoot);
+		fireDialogButton(robot, "Restart Now");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(0, exitCount.get());
+		assertEquals(1, restartCount.get());
+		assertEquals(1, automaticBackupCount());
+		assertEquals(newDataRoot.toAbsolutePath().normalize(), ApplicationConfig.load(propertiesFile).dataRoot());
 	}
 
 	@Test
@@ -150,6 +203,38 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 	}
 
 	@Test
+	void successfulRestoreCanRestartWithoutSecondAutomaticBackup(FxRobot robot) throws Exception {
+		AtomicInteger exitCount = new AtomicInteger();
+		AtomicInteger restartCount = new AtomicInteger();
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		setField(application, "applicationRestartAction", (Runnable) restartCount::incrementAndGet);
+		RestoreResult restoreResult = new RestoreResult(
+				BackupManifest.current(BackupKind.FULL, Instant.parse("2026-10-06T00:00:00Z"),
+						SqliteDatabase.latestSchemaVersion(), "Test"),
+				Files.createTempFile("question-bank-safety-", ".zip"));
+		assertEquals(0, automaticBackupCount());
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "completeSuccessfulRestore", new Class<?>[] { Stage.class, RestoreResult.class },
+						primaryStage, restoreResult);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		waitForDialogShowing(robot, "Restart Required");
+		fireDialogButton(robot, "Restart Now");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(0, exitCount.get());
+		assertEquals(1, restartCount.get());
+
+		// Restore has already performed its own pre-restore safety backup and resource
+		// closure. The post-restore restart must not create an ordinary automatic
+		// backup
+		// over the restored database.
+		assertEquals(0, automaticBackupCount());
+	}
+
+	@Test
 	void windowCloseCreatesAutomaticBackupAndRequestsApplicationExit(FxRobot robot) throws Exception {
 		AtomicInteger exitCount = new AtomicInteger();
 		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
@@ -182,6 +267,17 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 			}
 		}
 		throw new AssertionError("File -> Exit menu item not found");
+	}
+
+	private MenuItem fileOptionsMenuItem() {
+		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
+		MenuBar menuBar = (MenuBar) root.getTop();
+		for (MenuItem item : menuBar.getMenus().get(0).getItems()) {
+			if ("Op_tions...".equals(item.getText())) {
+				return item;
+			}
+		}
+		throw new AssertionError("File -> Options menu item not found");
 	}
 
 	private MenuItem fileRestoreMenuItem() {
@@ -225,5 +321,22 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 			}
 		}
 		throw new AssertionError("Help -> Help Contents menu item not found");
+	}
+
+	private void openDataRootRestartPrompt(FxRobot robot, Path newDataRoot) {
+		Platform.runLater(fileOptionsMenuItem()::fire);
+		waitForDialogShowing(robot, "Options");
+		TextField dataRootField = lookupInShowingDialog(robot, "Options", ".text-field", TextField.class);
+		robot.interact(() -> dataRootField.setText(newDataRoot.toString()));
+		DialogPane options = showingDialogPane(robot, "Options");
+		ButtonType saveButtonType = options.getButtonTypes().stream()
+				.filter(buttonType -> "Save".equals(buttonType.getText())).findFirst().orElseThrow();
+		Node saveNode = options.lookupButton(saveButtonType);
+		assertTrue(saveNode instanceof Button);
+
+		// Saving Options immediately opens the modal restart decision. Schedule the
+		// control action so the JUnit thread remains available for that second dialog.
+		fireControlLater((Button) saveNode);
+		waitForDialogShowing(robot, "Restart Required");
 	}
 }

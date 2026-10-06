@@ -48,6 +48,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Recapture Shared Context",
 			ButtonBar.ButtonData.OTHER);
 	private final ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
+	private boolean persistedClassificationChange;
 
 	/**
 	 * Creates a question-search dialog owned by the supplied window.
@@ -84,6 +85,18 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		configureActionButtons();
 		configureResultConversion();
 		configureGeometry();
+	}
+
+	/**
+	 * Reports and clears whether inline classification persistence has changed the
+	 * Question corpus since the previous consumption.
+	 *
+	 * @return {@code true} when at least one Descriptor refinement was persisted
+	 */
+	public boolean consumePersistedClassificationChange() {
+		boolean changed = persistedClassificationChange;
+		persistedClassificationChange = false;
+		return changed;
 	}
 
 	/**
@@ -485,6 +498,11 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			// Persist only classification_node_id. Capture relationships, regions and
 			// all other Question metadata remain unchanged.
 			Question updated = classificationUpdater.apply(selected.getId(), classification);
+
+			// Record the persistence change before updating presentation state so the
+			// application cannot miss an already-committed classification if later UI
+			// publication fails.
+			persistedClassificationChange = true;
 			searchPane.classificationSaved(updated.getId());
 			return updated;
 		} catch (IllegalArgumentException | IllegalStateException exception) {
