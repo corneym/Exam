@@ -766,6 +766,40 @@ public class QuestionBankApplication extends Application {
 		finishLegacyQuestionImportDashboardReturn();
 	}
 
+	private boolean canOpenRevisionExport(Subject subject, ApplicationConfig config, String title) {
+		if (subject == null) {
+			showAlert(Alert.AlertType.WARNING, title, "No Working Subject is selected.",
+					"Select a Working Subject on the Corpus Dashboard before exporting revision material.");
+			return false;
+		}
+
+		CurriculumRepository repository = new SqliteCurriculumRepository(new SqliteDatabase(config.databasePath()));
+		List<SyllabusVersion> currentVersions = repository.findVersionsForSubject(subject).stream()
+				.filter(SyllabusVersion::isCurrent).toList();
+
+		if (currentVersions.size() == 1) {
+			return true;
+		}
+
+		if (currentVersions.isEmpty()) {
+
+			// Revision output is organised against the current curriculum. A newly
+			// created Subject therefore cannot enter the export dialog until a current
+			// syllabus exists.
+			showAlert(Alert.AlertType.INFORMATION, title, "Revision export is not available.", "The Working Subject "
+					+ subject.getName()
+					+ " has no current syllabus version. Add or mark a current syllabus before exporting revision material.");
+			return false;
+		}
+
+		// Multiple current versions are invalid application state. Do not allow the
+		// export builder to choose one arbitrarily.
+		showAlert(Alert.AlertType.ERROR, title, "Revision export is not available.", "The Working Subject "
+				+ subject.getName()
+				+ " has more than one current syllabus version. Resolve the curriculum state before exporting revision material.");
+		return false;
+	}
+
 	private void changeCorpusDashboardExamState(Exam exam, ExamCaptureState targetState) {
 		if (exam == null) {
 			throw new NullPointerException("exam");
@@ -3497,6 +3531,18 @@ public class QuestionBankApplication extends Application {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			CurriculumRepository repository = new SqliteCurriculumRepository(database);
+			List<SyllabusVersion> versions = repository.findVersionsForSubject(subject);
+			if (versions.size() < 2) {
+
+				// Mapping review compares curriculum versions within the authoritative
+				// Working Subject. Do not construct a review workflow when no comparison
+				// syllabus exists.
+				showAlert(Alert.AlertType.INFORMATION, "Curriculum Mapping", "Mapping review is not available.",
+						"At least two syllabus versions are required for " + subject.getName()
+								+ " before curriculum mappings can be reviewed.");
+				return;
+			}
+
 			CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
 			CurriculumMappingSuggester descriptorSuggester = new TfIdfCurriculumMappingSuggester(repository);
 			CurriculumMappingSuggester subtopicSuggester = new ConfirmedDescriptorSubtopicMappingSuggester(repository,
@@ -4393,23 +4439,28 @@ public class QuestionBankApplication extends Application {
 		if (revisionExportRunning) {
 			return;
 		}
+
+		Subject subject = workingSubject;
+		if (!canOpenRevisionExport(subject, config, "Export Revision HTML")) {
+			return;
+		}
+
 		RevisionExportService eligibilityService = createRevisionExportService(config);
-		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
-				curriculumSelectionModel.getSubject(), eligibilityService::findExportableUnits,
-				eligibilityService::isDescriptorGroupingAvailable);
+		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, subject,
+				eligibilityService::findExportableUnits, eligibilityService::isDescriptorGroupingAvailable);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
-		Subject subject = dialog.getSelectedSubject();
+		Subject selectedSubject = dialog.getSelectedSubject();
 		Path destinationParent = dialog.getDestinationParent();
 		RevisionGroupingMode groupingMode = dialog.getGroupingMode();
 		Set<Long> selectedUnitIds = dialog.getSelectedUnitIds();
-		if (subject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
+		if (selectedSubject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
 			return;
 		}
-		Path destination = revisionExportDestination(destinationParent, subject);
-		startRevisionExport(primaryStage, config, subject, destination, groupingMode, selectedUnitIds);
+		Path destination = revisionExportDestination(destinationParent, selectedSubject);
+		startRevisionExport(primaryStage, config, selectedSubject, destination, groupingMode, selectedUnitIds);
 	}
 
 	private void showRevisionExportSuccess(RevisionExportResult result) {
@@ -4435,23 +4486,28 @@ public class QuestionBankApplication extends Application {
 		if (scormExportRunning) {
 			return;
 		}
+
+		Subject subject = workingSubject;
+		if (!canOpenRevisionExport(subject, config, "Export Revision SCORM")) {
+			return;
+		}
+
 		ScormExportService eligibilityService = createScormExportService(config);
-		ScormExportDialog dialog = new ScormExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
-				curriculumSelectionModel.getSubject(), eligibilityService::findExportableUnits,
+		ScormExportDialog dialog = new ScormExportDialog(primaryStage, subject, eligibilityService::findExportableUnits,
 				eligibilityService::isDescriptorGroupingAvailable);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
-		Subject subject = dialog.getSelectedSubject();
+		Subject selectedSubject = dialog.getSelectedSubject();
 		Path destinationParent = dialog.getDestinationParent();
 		RevisionGroupingMode groupingMode = dialog.getGroupingMode();
 		Set<Long> selectedUnitIds = dialog.getSelectedUnitIds();
-		if (subject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
+		if (selectedSubject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
 			return;
 		}
-		Path destination = scormExportDestination(destinationParent, subject);
-		startScormExport(primaryStage, config, subject, destination, groupingMode, selectedUnitIds);
+		Path destination = scormExportDestination(destinationParent, selectedSubject);
+		startScormExport(primaryStage, config, selectedSubject, destination, groupingMode, selectedUnitIds);
 	}
 
 	private void showScormExportSuccess(ScormExportResult result) {

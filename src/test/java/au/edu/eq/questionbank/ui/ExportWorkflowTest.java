@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -18,9 +19,15 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import javafx.application.Platform;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.stage.Stage;
@@ -151,6 +158,38 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void revisionHtmlExportWithoutCurrentSyllabusShowsUnavailableMessage(FxRobot robot) throws Exception {
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(new SqliteDatabase(databasePath));
+		Subject newSubject = writer.insertSubject("Geography");
+		setField(application, "workingSubject", newSubject);
+
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showRevisionExportDialog", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+
+		waitForDialogShowing(robot, "Export Revision HTML");
+		DialogPane unavailable = showingDialogPane(robot, "Export Revision HTML");
+
+		assertEquals("Revision export is not available.", unavailable.getHeaderText());
+		assertTrue(unavailable.getContentText().contains("Geography"));
+		assertTrue(unavailable.getContentText().contains("no current syllabus version"));
+
+		// The prerequisite message is reached before RevisionExportDialog is
+		// constructed, so no export-specific controls can have been created.
+		assertNull(unavailable.lookup("#revision-export-units"));
+
+		Node okNode = unavailable.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Export Revision HTML");
+	}
+
+	@Test
 	void revisionScormExportRunsFromApplicationAndRestoresMenu(FxRobot robot) throws Exception {
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
@@ -178,6 +217,36 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireDialogButton(robot, "OK");
 		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
+	}
+
+	@Test
+	void revisionScormExportWithoutCurrentSyllabusShowsUnavailableMessage(FxRobot robot) throws Exception {
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(new SqliteDatabase(databasePath));
+		Subject newSubject = writer.insertSubject("Geography");
+		setField(application, "workingSubject", newSubject);
+
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showScormExportDialog", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+
+		waitForDialogShowing(robot, "Export Revision SCORM");
+		DialogPane unavailable = showingDialogPane(robot, "Export Revision SCORM");
+
+		assertEquals("Revision export is not available.", unavailable.getHeaderText());
+		assertTrue(unavailable.getContentText().contains("Geography"));
+		assertTrue(unavailable.getContentText().contains("no current syllabus version"));
+
+		assertNull(unavailable.lookup("#scorm-export-units"));
+
+		Node okNode = unavailable.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Export Revision SCORM");
 	}
 
 	@Test
