@@ -28,6 +28,26 @@ class HelpResourcesTest {
 	}
 
 	@Test
+	void dashboardInspectionHelpMatchesSearchNarrowing() throws IOException {
+		String dashboardHtml = readResource("corpus-dashboard.html").replaceAll("\\s+", " ");
+		String searchHtml = readResource("question-search.html").replaceAll("\\s+", " ");
+
+		// Dashboard Help must describe both structural inspection scopes without
+		// presenting inspection as another capture or Exam/Assets operation.
+		assertTrue(dashboardHtml.contains("Inspect Questions"));
+		assertTrue(dashboardHtml.contains("Question Search narrowed to that Exam"));
+		assertTrue(dashboardHtml.contains("narrow Search to that booklet"));
+
+		// Search Help must explain that Dashboard narrowing survives the ordinary
+		// Current Syllabus versus All Questions choice.
+		assertTrue(searchHtml.contains("Narrowed to"));
+		assertTrue(searchHtml.contains("Current syllabus"));
+		assertTrue(searchHtml.contains("All Questions"));
+		assertTrue(searchHtml.contains("constraint remains active"));
+		assertTrue(searchHtml.contains("within that Exam or booklet"));
+	}
+
+	@Test
 	void helpIndexLinksToEveryTopicAndSharedStylesheet() throws IOException {
 		String html = readResource("index.html");
 
