@@ -44,6 +44,7 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableCell;
@@ -128,6 +129,7 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button inspectExamQuestionsButton = new Button("Inspect Questions");
 	private BiConsumer<Exam, ExamBooklet> questionInspectionHandler = (_, _) -> {
 	};
+
 	// Curriculum mapping review is a Subject-level reporting dimension independent
 	// of ordinary Question and Exam completeness.
 	private List<CurriculumMappingCoverage> mappingCoverages;
@@ -155,6 +157,10 @@ public final class CorpusDashboardPane extends VBox {
 	};
 	private boolean mcqExplanationFilterActive;
 	private final Button missingMcqExplanationButton = new Button();
+	private boolean examLifecycleChangeInProgress;
+	private final Label examLifecycleProgressLabel = new Label("Updating Exam state...");
+	private final ProgressIndicator examLifecycleProgressIndicator = new ProgressIndicator();
+	private final HBox examLifecycleProgressRow = new HBox(SPACING);
 
 	/**
 	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
@@ -374,6 +380,22 @@ public final class CorpusDashboardPane extends VBox {
 
 		// Structural correction is owned by the existing Exam/Assets workspace.
 		examAssetsHandler = handler;
+	}
+
+	/**
+	 * Shows or clears the busy state for an application-owned Exam lifecycle
+	 * operation.
+	 *
+	 * @param inProgress {@code true} while lifecycle persistence and Dashboard
+	 *                   refresh are running
+	 */
+	public void setExamLifecycleChangeInProgress(boolean inProgress) {
+		examLifecycleChangeInProgress = inProgress;
+		setVisibleAndManaged(examLifecycleProgressRow, inProgress);
+
+		// Lifecycle readiness remains authoritative when idle. While the operation is
+		// running, the same action is locked to prevent duplicate persistence requests.
+		updateExamLifecycleActionState();
 	}
 
 	/**
@@ -730,6 +752,11 @@ public final class CorpusDashboardPane extends VBox {
 		HBox questionFilterRow = new HBox(SPACING, createBoldLabel("Show"), questionViewBox, questionResultCountLabel);
 		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
 
+		// Lifecycle progress remains visible even when Question Work contains no rows,
+		// which is common immediately before marking a complete Exam ACTIVE.
+		examLifecycleProgressRow.getChildren().setAll(examLifecycleProgressIndicator, examLifecycleProgressLabel);
+		examLifecycleProgressRow.setAlignment(Pos.CENTER_LEFT);
+
 		// Selected Question work exposes direct Question and Answer completion together
 		// with the existing bulk response-type actions.
 		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton, completeSelectedAnswerButton,
@@ -738,7 +765,8 @@ public final class CorpusDashboardPane extends VBox {
 		mcqExplanationCoverageLabel.setWrapText(true);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 		questionWorkSection = createTitledSection("corpus-dashboard-question-work-section", "QUESTION WORK",
-				questionFilterRow, questionTable, questionActionsRow, mcqExplanationCoverageLabel);
+				questionFilterRow, examLifecycleProgressRow, questionTable, questionActionsRow,
+				mcqExplanationCoverageLabel);
 		return questionWorkSection;
 	}
 
@@ -1085,6 +1113,7 @@ public final class CorpusDashboardPane extends VBox {
 		configureQuestionWorkControls();
 		configureBulkResponseTypeControls();
 		configureCaptureAndLifecycleControls();
+		configureExamLifecycleProgressControls();
 	}
 
 	private void configureCurriculumControls() {
@@ -1123,6 +1152,18 @@ public final class CorpusDashboardPane extends VBox {
 		selectedBookletLabel.setId("corpus-dashboard-selected-booklet");
 		bookletWarningLabel.setId("corpus-dashboard-booklet-warning");
 		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
+	}
+
+	private void configureExamLifecycleProgressControls() {
+		examLifecycleProgressRow.setId("corpus-dashboard-exam-lifecycle-progress");
+		examLifecycleProgressIndicator.setId("corpus-dashboard-exam-lifecycle-progress-indicator");
+		examLifecycleProgressLabel.setId("corpus-dashboard-exam-lifecycle-progress-label");
+
+		// Keep the indicator compact so progress feedback does not consume meaningful
+		// Question Work space.
+		examLifecycleProgressIndicator.setPrefSize(18, 18);
+		examLifecycleProgressIndicator.setMaxSize(18, 18);
+		setVisibleAndManaged(examLifecycleProgressRow, false);
 	}
 
 	private void configureExamTable() {
@@ -2078,6 +2119,14 @@ public final class CorpusDashboardPane extends VBox {
 			examLifecycleButton.setText("Mark Complete");
 			examLifecycleButton.setDisable(true);
 			examLifecycleButton.setTooltip(new Tooltip("Select an Exam before changing its lifecycle state."));
+			return;
+		}
+		if (examLifecycleChangeInProgress) {
+
+			// Busy state temporarily overrides ordinary lifecycle availability without
+			// changing which action the selected Exam will expose once the refresh ends.
+			examLifecycleButton.setDisable(true);
+			examLifecycleButton.setTooltip(new Tooltip("Exam state change is in progress."));
 			return;
 		}
 		if (selected.declaredCaptureState() == ExamCaptureState.COMPLETE) {

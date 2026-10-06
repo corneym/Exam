@@ -17,7 +17,6 @@ import au.edu.eq.questionbank.model.Question;
 public final class QuestionSearchNarrowing {
 
 	private static final QuestionSearchNarrowing UNRESTRICTED = new QuestionSearchNarrowing("", _ -> true);
-
 	private final String description;
 	private final Predicate<Question> predicate;
 

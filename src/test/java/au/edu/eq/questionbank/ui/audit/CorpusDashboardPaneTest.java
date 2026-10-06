@@ -61,6 +61,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
@@ -587,7 +588,6 @@ class CorpusDashboardPaneTest {
 			routedExam.set(exam);
 			routedBooklet.set(booklet);
 		}));
-
 		Button inspectExam = robot.lookup("#corpus-dashboard-inspect-exam-questions").queryButton();
 		Button inspectBooklet = robot.lookup("#corpus-dashboard-inspect-booklet-questions").queryButton();
 		Button manageExamAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
@@ -644,6 +644,44 @@ class CorpusDashboardPaneTest {
 		// The workbook classification cannot be resolved without an authoritative
 		// curriculum version for this Subject.
 		assertTrue(importLegacy.isDisable());
+	}
+
+	@Test
+	void lifecycleBusyStateShowsProgressAndPreventsDuplicateAction(FxRobot robot) {
+		AtomicReference<Exam> routedExam = new AtomicReference<>();
+		robot.interact(() -> pane.setExamLifecycleHandler((exam, _) -> routedExam.set(exam)));
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		HBox progressRow = robot.lookup("#corpus-dashboard-exam-lifecycle-progress").queryAs(HBox.class);
+		ProgressIndicator progress = robot.lookup("#corpus-dashboard-exam-lifecycle-progress-indicator")
+				.queryAs(ProgressIndicator.class);
+		Label progressLabel = robot.lookup("#corpus-dashboard-exam-lifecycle-progress-label").queryAs(Label.class);
+
+		// The initially selected COMPLETE Exam is normally available for reactivation.
+		assertEquals("Mark Active", lifecycle.getText());
+		assertFalse(lifecycle.isDisable());
+		assertFalse(progressRow.isVisible());
+		assertFalse(progressRow.isManaged());
+		robot.interact(() -> pane.setExamLifecycleChangeInProgress(true));
+
+		// Busy feedback is visible inside Question Work and the lifecycle command is
+		// locked before another persistence request can be issued.
+		assertTrue(progressRow.isVisible());
+		assertTrue(progressRow.isManaged());
+		assertTrue(progress.isVisible());
+		assertEquals("Updating Exam state...", progressLabel.getText());
+		assertTrue(lifecycle.isDisable());
+		robot.interact(lifecycle::fire);
+		assertNull(routedExam.get());
+		robot.interact(() -> pane.setExamLifecycleChangeInProgress(false));
+
+		// Clearing busy state restores the normal lifecycle rule for the unchanged
+		// selected Exam.
+		assertFalse(progressRow.isVisible());
+		assertFalse(progressRow.isManaged());
+		assertFalse(lifecycle.isDisable());
+		robot.interact(lifecycle::fire);
+		assertNotNull(routedExam.get());
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
 	}
 
 	@Test

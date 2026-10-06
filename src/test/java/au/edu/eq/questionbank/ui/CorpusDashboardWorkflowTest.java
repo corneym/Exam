@@ -96,7 +96,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				ExamBookletQuestionFormat.MIXED);
 		Question question = captureQuestion(robot, "DASH-I1");
 		ExamBooklet booklet = question.getBooklet();
-
 		WaitForAsyncUtils.asyncFx(() -> {
 
 			// Rebuild Dashboard Home from persistence so the inspection actions operate on
@@ -106,7 +105,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		}).get();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-inspect-exam-questions").tryQuery().isPresent());
-
 		Button inspectExam = lookup(robot, "#corpus-dashboard-inspect-exam-questions", Button.class);
 		assertFalse(inspectExam.isDisabled());
 
@@ -119,7 +117,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		@SuppressWarnings("unchecked")
 		ListView<Object> examResults = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
 				ListView.class);
-
 		assertEquals("Exam: QCAA 2025 — External Assessment", examNarrowing.getText());
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> evaluateOnFx(robot, () -> examResults.getItems().size() == 1));
@@ -129,13 +126,11 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// navigating into a different workspace.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
-
 		@SuppressWarnings("unchecked")
 		TableView<Object> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		robot.interact(() -> booklets.getSelectionModel().selectFirst());
 		Button inspectBooklet = lookup(robot, "#corpus-dashboard-inspect-booklet-questions", Button.class);
 		assertFalse(inspectBooklet.isDisabled());
-
 		fireControlLater(inspectBooklet);
 		waitForDialogShowing(robot, "Search Questions");
 		Label bookletNarrowing = lookupInShowingDialog(robot, "Search Questions", "#question-search-narrowing",
@@ -143,7 +138,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		@SuppressWarnings("unchecked")
 		ListView<Object> bookletResults = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
 				ListView.class);
-
 		assertEquals("Booklet: QCAA 2025 — External Assessment — " + booklet.getName(), bookletNarrowing.getText());
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> evaluateOnFx(robot, () -> bookletResults.getItems().size() == 1));

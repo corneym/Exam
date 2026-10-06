@@ -441,10 +441,8 @@ public class QuestionSearchPaneTest {
 				new QuestionApplicabilityMatch(secondQuestion, currentDescriptor));
 		QuestionRetrievalService twoQuestionService = new QuestionRetrievalService(twoQuestionRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-
 		replaceSearchPane(robot, curriculumRepository, twoQuestionService,
 				() -> List.of(historicalQuestion, secondQuestion), QuestionSearchNarrowing.forBooklet(secondBooklet));
-
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
 		Label narrowing = robot.lookup("#question-search-narrowing").queryAs(Label.class);
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();

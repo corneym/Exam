@@ -152,7 +152,6 @@ public class QuestionSearchPane extends BorderPane {
 	// Search inherits the workspace-level Working Subject. It does not own a
 	// separate application-level Subject selection.
 	private final Subject workingSubject;
-
 	private final QuestionSearchNarrowing searchNarrowing;
 
 	/**
@@ -921,7 +920,6 @@ public class QuestionSearchPane extends BorderPane {
 		pane.setVgap(SELECTOR_ROW_GAP);
 		pane.setPadding(new Insets(0, 0, PANE_PADDING, 0));
 		int row = 0;
-
 		if (searchNarrowing.isRestricted()) {
 			Label narrowingValue = new Label(searchNarrowing.description());
 			narrowingValue.setId("question-search-narrowing");
@@ -929,7 +927,6 @@ public class QuestionSearchPane extends BorderPane {
 			pane.add(createSelectorLabel("Narrowed to"), 0, row);
 			pane.add(narrowingValue, 1, row++);
 		}
-
 		pane.add(createSelectorLabel("Search scope"), 0, row);
 		pane.add(searchScopeBox, 1, row++);
 		pane.add(createSelectorLabel("Current syllabus"), 0, row);
