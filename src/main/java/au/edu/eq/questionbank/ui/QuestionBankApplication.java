@@ -151,6 +151,7 @@ import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import au.edu.eq.questionbank.ui.search.QuestionSearchDialog;
+import au.edu.eq.questionbank.ui.search.QuestionSearchNarrowing;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
@@ -3712,6 +3713,7 @@ public class QuestionBankApplication extends Application {
 			}
 		});
 		dashboard.setQuestionCorrectionHandler(this::showCorpusDashboardQuestionCorrection);
+		dashboard.setQuestionInspectionHandler(this::showDashboardQuestionInspection);
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}
@@ -3926,6 +3928,28 @@ public class QuestionBankApplication extends Application {
 		setCaptureWorkspaceSectionVisibility(true, true, false);
 		setWorkspaceMode(captureWorkspaceModePane);
 		refreshActiveExamContext();
+	}
+
+	private void showDashboardQuestionInspection(Exam exam, ExamBooklet booklet) {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		QuestionSearchNarrowing narrowing;
+		if (booklet == null) {
+
+			// Exam-level inspection includes every Question belonging to the explicit
+			// Dashboard Exam selection.
+			narrowing = QuestionSearchNarrowing.forExam(exam);
+		} else {
+			if (booklet.getExam().getId() != exam.getId()) {
+				throw new IllegalArgumentException("booklet does not belong to the selected Exam");
+			}
+
+			// Booklet-level inspection narrows the same Search workflow one structural
+			// level further without creating a separate Search implementation.
+			narrowing = QuestionSearchNarrowing.forBooklet(booklet);
+		}
+		showQuestionSearch(primaryStage(), applicationConfig, narrowing);
 	}
 
 	private void showExamAssetsMode() {
@@ -4148,6 +4172,15 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showQuestionSearch(Stage primaryStage, ApplicationConfig config) {
+
+		// The ordinary Search menu entry retains its existing Working-Subject-wide
+		// behaviour.
+		showQuestionSearch(primaryStage, config, QuestionSearchNarrowing.unrestricted());
+	}
+
+	private void showQuestionSearch(Stage primaryStage, ApplicationConfig config,
+			QuestionSearchNarrowing searchNarrowing) {
+		Objects.requireNonNull(searchNarrowing, "searchNarrowing");
 		if (workingSubject == null) {
 
 			// Search is scoped to the authoritative application Working Subject.
@@ -4167,11 +4200,11 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
 				database);
 
-		// Search inherits the authoritative workspace Working Subject. It does not
-		// establish a separate application-level Subject selection.
+		// Search inherits the authoritative workspace Working Subject. Dashboard launch
+		// may additionally constrain that same Search to one Exam or booklet.
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, workingSubject, curriculumRepository,
 				retrievalService, questionRepository::findAll, previewService, outputApplicabilityRepository,
-				questionRepository::updateClassification);
+				questionRepository::updateClassification, searchNarrowing);
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
