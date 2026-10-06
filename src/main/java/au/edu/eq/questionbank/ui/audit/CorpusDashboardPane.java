@@ -46,6 +46,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.Tooltip;
@@ -835,6 +836,16 @@ public final class CorpusDashboardPane extends VBox {
 		newQuestionCaptureHandler.accept(selected.booklet());
 	}
 
+	private <S> void centreTableColumns(TableView<S> table) {
+		for (TableColumn<S, ?> column : table.getColumns()) {
+
+			// Dashboard table values are compact operational data rather than prose.
+			// Apply one consistent centred presentation without changing value factories,
+			// comparators, sorting or selection behaviour.
+			configureCentredCell(column);
+		}
+	}
+
 	private void changeSelectedExamState() {
 		ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
 		if (selected == null) {
@@ -982,6 +993,7 @@ public final class CorpusDashboardPane extends VBox {
 				.setAll(List.<TableColumn<BookletCorpusStatus, ?>>of(bookletColumn, formatColumn, pdfColumn,
 						answerFileColumn, expectedColumn, foundColumn, partsColumn, noDescriptorColumn,
 						mcqExplanationColumn, problemsColumn));
+		centreTableColumns(bookletTable);
 	}
 
 	private void configureBulkResponseTypeControls() {
@@ -1031,6 +1043,25 @@ public final class CorpusDashboardPane extends VBox {
 		examLifecycleButton.setMinWidth(Region.USE_PREF_SIZE);
 		examLifecycleButton.setTooltip(new Tooltip("Change the lifecycle state of the selected Exam."));
 		examLifecycleButton.setDisable(true);
+	}
+
+	private <S, T> void configureCentredCell(TableColumn<S, T> column) {
+		column.setCellFactory(_ -> {
+			TableCell<S, T> cell = new TableCell<S, T>() {
+
+				@Override
+				protected void updateItem(T item, boolean empty) {
+					super.updateItem(item, empty);
+					setText(empty || item == null ? null : item.toString());
+					setGraphic(null);
+				}
+			};
+
+			// Set alignment once for the reusable cell; ordinary TableView updates do
+			// not need to repeat presentation configuration.
+			cell.setAlignment(Pos.CENTER);
+			return cell;
+		});
 	}
 
 	private void configureCommandActions() {
@@ -1120,6 +1151,7 @@ public final class CorpusDashboardPane extends VBox {
 		// a generic varargs array warning.
 		examTable.getColumns().setAll(List.<TableColumn<ExamCorpusStatus, ?>>of(yearColumn, providerColumn,
 				assessmentColumn, stateColumn, questionBookletsColumn, answerBookletsColumn, workColumn));
+		centreTableColumns(examTable);
 	}
 
 	private void configureFilterActions() {
@@ -1246,6 +1278,7 @@ public final class CorpusDashboardPane extends VBox {
 				.setAll(List.<TableColumn<QuestionCorpusWorkItem, ?>>of(providerColumn, yearColumn, examColumn,
 						bookletColumn, questionColumn, typeColumn, contentColumn, answerColumn, sharedContextColumn,
 						problemColumn));
+		centreTableColumns(questionTable);
 
 		// Default presentation preserves complete source hierarchy. Users can still
 		// change table sorting explicitly afterwards.

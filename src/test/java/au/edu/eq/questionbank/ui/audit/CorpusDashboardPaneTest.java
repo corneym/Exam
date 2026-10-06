@@ -52,6 +52,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
 import javafx.application.Platform;
 import javafx.geometry.Orientation;
+import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -61,6 +62,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.HBox;
@@ -291,6 +293,20 @@ class CorpusDashboardPaneTest {
 		assertEquals(questionSection, workSplit.getItems().get(1));
 		assertEquals(1, workSplit.getDividers().size());
 		assertEquals(Priority.ALWAYS, VBox.getVgrow(workSplit));
+	}
+
+	@Test
+	void dashboardTableDataIsCentred(FxRobot robot) {
+		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<?> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
+
+		// Every Dashboard data column uses the same centred presentation. The test
+		// checks the cell factory directly so it does not depend on viewport size,
+		// scrolling or CSS timing.
+		assertCentredColumns(exams);
+		assertCentredColumns(booklets);
+		assertCentredColumns(questionWork);
 	}
 
 	@Test
@@ -906,6 +922,17 @@ class CorpusDashboardPaneTest {
 		// and from the dash used to represent no ordinary work.
 		assertTrue(selectedCounts.getText().contains("Question booklets: 2 / not recorded"));
 		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / not recorded"));
+	}
+
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	private void assertCentredColumns(TableView<?> table) {
+		for (TableColumn column : table.getColumns()) {
+			TableCell cell = (TableCell) column.getCellFactory().call(column);
+
+			// A column without the centred factory would retain JavaFX's ordinary
+			// left-aligned data-cell presentation.
+			assertEquals(Pos.CENTER, cell.getAlignment(), table.getId() + " — " + column.getText());
+		}
 	}
 
 	private static final class Fixture {
