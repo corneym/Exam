@@ -171,4 +171,31 @@ class PdfStoreTest {
 		assertEquals(existing, stored);
 		assertTrue(Files.notExists(existing.getParent().resolve("paper1 (2).pdf")));
 	}
+
+	@Test
+	void transitionalStorePersistsOnlyDataRootRelativeNewPaths() {
+		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
+		Path legacyPdfRoot = tempDir.resolve("pdf").toAbsolutePath().normalize();
+		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot), legacyPdfRoot);
+		Path managedPath = dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf");
+
+		assertEquals("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf",
+				store.relativePath(managedPath));
+
+		assertThrows(IllegalArgumentException.class,
+				() -> store.relativePath(legacyPdfRoot.resolve("Chemistry/QCAA/2024/paper1.pdf")));
+	}
+
+	@Test
+	void transitionalStoreResolvesLegacyAndSubjectFirstPaths() {
+		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
+		Path legacyPdfRoot = tempDir.resolve("pdf").toAbsolutePath().normalize();
+		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot), legacyPdfRoot);
+
+		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf"),
+				store.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf"));
+
+		assertEquals(legacyPdfRoot.resolve("Chemistry/QCAA/2024/paper1.pdf"),
+				store.resolve("Chemistry/QCAA/2024/paper1.pdf"));
+	}
 }

@@ -20,7 +20,7 @@ public class PdfStore {
 	private final Path pdfRoot;
 
 	/**
-	 * Creates a store using the Subject-first managed-data layout.
+	 * Creates a store using only the Subject-first managed-data layout.
 	 *
 	 * @param managedDataLayout canonical application managed-data layout
 	 * @throws NullPointerException if {@code managedDataLayout} is {@code null}
@@ -30,7 +30,26 @@ public class PdfStore {
 			throw new NullPointerException("managedDataLayout");
 		}
 		this.managedDataLayout = managedDataLayout;
-		pdfRoot = managedDataLayout.dataRoot();
+		pdfRoot = null;
+	}
+
+	/**
+	 * Creates a transitional store that writes Subject-first paths while retaining
+	 * read access to legacy PDF-root-relative paths.
+	 *
+	 * @param managedDataLayout canonical application managed-data layout
+	 * @param legacyPdfRoot     former dedicated PDF data root
+	 * @throws NullPointerException if either argument is {@code null}
+	 */
+	public PdfStore(ManagedDataLayout managedDataLayout, Path legacyPdfRoot) {
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
+		}
+		if (legacyPdfRoot == null) {
+			throw new NullPointerException("legacyPdfRoot");
+		}
+		this.managedDataLayout = managedDataLayout;
+		pdfRoot = legacyPdfRoot.toAbsolutePath().normalize();
 	}
 
 	/**
@@ -215,32 +234,46 @@ public class PdfStore {
 	}
 
 	/**
-	 * Lexically resolves a stored relative path beneath this store's managed data
-	 * root. This does not check existence or resolve filesystem links.
+	 * Lexically resolves a stored managed PDF path.
+	 * <p>
+	 * Subject-first paths are relative to the application data root. During the
+	 * migration transition, older paths may instead remain relative to the former
+	 * dedicated PDF root.
 	 *
-	 * @param relativePath a non-blank managed relative source path
+	 * @param relativePath persisted managed source path
 	 * @return normalized absolute managed path
 	 * @throws NullPointerException     if {@code relativePath} is {@code null}
 	 * @throws IllegalArgumentException if the path is blank, absolute, or escapes
-	 *                                  the applicable managed root
+	 *                                  its applicable managed root
 	 */
 	public Path resolve(String relativePath) {
-		if (managedDataLayout != null) {
-			return managedDataLayout.resolve(relativePath);
-		}
 		if (relativePath == null) {
 			throw new NullPointerException("relativePath");
 		}
 		if (relativePath.isBlank()) {
 			throw new IllegalArgumentException("PDF path must not be blank");
 		}
+
+		// New persisted Exam paths have an explicit subjects/ namespace, so they can
+		// be distinguished deterministically from legacy PDF-root-relative paths.
+		if (managedDataLayout != null && isSubjectFirstPath(relativePath)) {
+			return managedDataLayout.resolve(relativePath);
+		}
+
+		if (pdfRoot == null) {
+
+			// A non-transitional Subject-first store has no legacy root. Let the common
+			// managed-data boundary perform containment validation.
+			return managedDataLayout.resolve(relativePath);
+		}
+
 		Path path = Path.of(relativePath);
 		if (path.isAbsolute() || path.getRoot() != null) {
 			throw new IllegalArgumentException("PDF path must be relative: " + relativePath);
 		}
 
-		// Legacy paths remain relative to the former dedicated PDF root until the data
-		// migration slice converts them.
+		// Legacy persisted paths remain relative to the former PDF root only until
+		// the dedicated migration slice rewrites them.
 		Path resolved = pdfRoot.resolve(path).normalize();
 		if (!resolved.startsWith(pdfRoot)) {
 			throw new IllegalArgumentException("PDF path must remain within the configured data root: " + relativePath);
@@ -273,6 +306,11 @@ public class PdfStore {
 		}
 		throw new FileAlreadyExistsException(destination.toString(), source.toString(),
 				"A different PDF with the same filename already exists in the exam directory");
+	}
+
+	private boolean isSubjectFirstPath(String relativePath) {
+		String portablePath = relativePath.replace('\\', '/');
+		return portablePath.equals("subjects") || portablePath.startsWith("subjects/");
 	}
 
 	private ManagedDataLayout requireSubjectFirstLayout() {
