@@ -123,7 +123,10 @@ public final class CorpusDashboardPane extends VBox {
 	private StackPane bookletsSection;
 	private StackPane questionWorkSection;
 	private final Button completeSelectedAnswerButton = new Button("Complete Selected Answer");
-
+	private final Button inspectBookletQuestionsButton = new Button("Inspect Questions");
+	private final Button inspectExamQuestionsButton = new Button("Inspect Questions");
+	private BiConsumer<Exam, ExamBooklet> questionInspectionHandler = (_, _) -> {
+	};
 	// Curriculum mapping review is a Subject-level reporting dimension independent
 	// of ordinary Question and Exam completeness.
 	private List<CurriculumMappingCoverage> mappingCoverages;
@@ -474,6 +477,24 @@ public final class CorpusDashboardPane extends VBox {
 		questionCorrectionHandler = handler;
 	}
 
+	/**
+	 * Supplies the application-owned route into Question Search for a selected Exam
+	 * or Question booklet.
+	 *
+	 * @param handler operation receiving the selected Exam and optional booklet;
+	 *                {@code null} booklet means Exam-wide inspection
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
+	public void setQuestionInspectionHandler(BiConsumer<Exam, ExamBooklet> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Dashboard owns the structural selection; Search owns retrieval and
+		// inspection once that explicit scope has been handed off.
+		questionInspectionHandler = handler;
+	}
+
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
 
 		// Ordinary refresh retains the current mapping snapshot unless the application
@@ -670,12 +691,11 @@ public final class CorpusDashboardPane extends VBox {
 		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
-				examLifecycleButton);
+				inspectExamQuestionsButton, examLifecycleButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 
-		// Exam lifecycle belongs beside the selected Exam's structural management
-		// action
-		// because both operate on Dashboard Exam selection, not Capture state.
+		// Exam lifecycle, structural management and read-only inspection all derive
+		// from explicit Dashboard Exam selection.
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
 
 		// The ordinary Exam catalogue disappears when a Subject has no Exams. The
@@ -685,8 +705,8 @@ public final class CorpusDashboardPane extends VBox {
 		examOperationalContent.setId("corpus-dashboard-exam-operational-content");
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
-		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton,
-				captureMcqExplanationsButton);
+		HBox bookletActionsRow = new HBox(SPACING, inspectBookletQuestionsButton, captureQuestionsButton,
+				captureAnswersButton, captureMcqExplanationsButton);
 		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
 		StackPane examsSection = createTitledSection("corpus-dashboard-exams-section", "EXAMS", examEmptyStateRow,
 				examOperationalContent);
@@ -995,6 +1015,15 @@ public final class CorpusDashboardPane extends VBox {
 		completeSelectedQuestionButton.setTooltip(new Tooltip(
 				"Complete missing Question content or unresolved Shared Context for the selected Question."));
 		completeSelectedQuestionButton.setDisable(true);
+		inspectBookletQuestionsButton.setId("corpus-dashboard-inspect-booklet-questions");
+		inspectBookletQuestionsButton
+				.setTooltip(new Tooltip("Open Question Search narrowed to the selected Question booklet."));
+		inspectBookletQuestionsButton.disableProperty()
+				.bind(bookletTable.getSelectionModel().selectedItemProperty().isNull());
+		inspectExamQuestionsButton.setId("corpus-dashboard-inspect-exam-questions");
+		inspectExamQuestionsButton.setTooltip(new Tooltip("Open Question Search narrowed to the selected Exam."));
+		inspectExamQuestionsButton.disableProperty()
+				.bind(examTable.getSelectionModel().selectedItemProperty().isNull());
 		manageExamAssetsButton.setId("corpus-dashboard-manage-exam-assets");
 		manageExamAssetsButton.setTooltip(new Tooltip("Open the selected Exam or booklet in Exam / Assets."));
 		manageExamAssetsButton.setDisable(true);
@@ -1007,6 +1036,8 @@ public final class CorpusDashboardPane extends VBox {
 	private void configureCommandActions() {
 		addExamButton.setOnAction(_ -> addExamHandler.run());
 		importLegacyQuestionsButton.setOnAction(_ -> legacyQuestionImportHandler.run());
+		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
+		inspectExamQuestionsButton.setOnAction(_ -> inspectSelectedExamQuestions());
 		manageExamAssetsButton.setOnAction(_ -> manageSelectedExamAssets());
 		examLifecycleButton.setOnAction(_ -> changeSelectedExamState());
 		addCurriculumButton.setOnAction(_ -> addCurriculumHandler.run());
@@ -1454,6 +1485,28 @@ public final class CorpusDashboardPane extends VBox {
 		}
 		return pair + ": " + reviewed + "/" + total + " resolved; " + remaining + " remaining (" + unreviewed
 				+ " unreviewed, " + inconsistent + " inconsistent)";
+	}
+
+	private void inspectSelectedBookletQuestions() {
+		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		BookletCorpusStatus selectedBooklet = bookletTable.getSelectionModel().getSelectedItem();
+		if (selectedExam == null || selectedBooklet == null) {
+			return;
+		}
+
+		// Booklet inspection retains the owning Exam as context while narrowing Search
+		// to the explicitly selected Question booklet.
+		questionInspectionHandler.accept(selectedExam.exam(), selectedBooklet.booklet());
+	}
+
+	private void inspectSelectedExamQuestions() {
+		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		if (selectedExam == null) {
+			return;
+		}
+
+		// A null booklet deliberately means all Questions belonging to this Exam.
+		questionInspectionHandler.accept(selectedExam.exam(), null);
 	}
 
 	private boolean isMissingMcqExplanation(Question question) {

@@ -563,6 +563,47 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void inspectQuestionsRoutesSelectedExamAndBookletScope(FxRobot robot) {
+		AtomicReference<Exam> routedExam = new AtomicReference<>();
+		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
+		robot.interact(() -> pane.setQuestionInspectionHandler((exam, booklet) -> {
+			routedExam.set(exam);
+			routedBooklet.set(booklet);
+		}));
+
+		Button inspectExam = robot.lookup("#corpus-dashboard-inspect-exam-questions").queryButton();
+		Button inspectBooklet = robot.lookup("#corpus-dashboard-inspect-booklet-questions").queryButton();
+		Button manageExamAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+
+		// The Dashboard automatically selects the first visible Exam. Inspection is
+		// read-only, so COMPLETE lifecycle does not disable the Exam-level route.
+		assertFalse(inspectExam.isDisable());
+		assertTrue(inspectBooklet.isDisable());
+		assertEquals(manageExamAssets.getParent(), inspectExam.getParent());
+		robot.interact(inspectExam::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertNull(routedBooklet.get());
+
+		// Selecting a booklet exposes a separate booklet-level inspection route in
+		// the same action row as booklet capture.
+		routedExam.set(null);
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
+		assertFalse(inspectBooklet.isDisable());
+		assertEquals(captureQuestions.getParent(), inspectBooklet.getParent());
+		robot.interact(inspectBooklet::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertEquals(fixture.paper2.getId(), routedBooklet.get().getId());
+
+		// Clearing Exam structure leaves neither inspection action with a valid target.
+		robot.interact(() -> pane.replaceData(List.of(), List.of()));
+		assertTrue(inspectExam.isDisable());
+		assertTrue(inspectBooklet.isDisable());
+	}
+
+	@Test
 	void legacyQuestionImportIsSubjectLevelAndRequiresCurriculum(FxRobot robot) {
 		AtomicReference<Boolean> importCalled = new AtomicReference<>(Boolean.FALSE);
 		robot.interact(() -> pane.setLegacyQuestionImportHandler(() -> importCalled.set(Boolean.TRUE)));
