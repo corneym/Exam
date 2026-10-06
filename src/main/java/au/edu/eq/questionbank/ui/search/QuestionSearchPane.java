@@ -62,7 +62,7 @@ import javafx.scene.layout.VBox;
  */
 public class QuestionSearchPane extends BorderPane {
 
-	private static final int PANE_PADDING = 10;
+	private static final int PANE_PADDING = 12;
 	private static final int DETAIL_ROWS = 6;
 	private static final int SECTION_SPACING = 4;
 	private static final int SECTION_TOP_PADDING = 6;
@@ -763,6 +763,7 @@ public class QuestionSearchPane extends BorderPane {
 		contentPane.setDividerPositions(LEFT_CONTENT_DIVIDER_POSITION);
 		VBox leftColumn = new VBox(SECTION_SPACING, searchPane, contentPane);
 		leftColumn.setId("question-search-left-column");
+		leftColumn.setPadding(new Insets(PANE_PADDING));
 		VBox.setVgrow(contentPane, Priority.ALWAYS);
 		return leftColumn;
 	}
@@ -772,6 +773,7 @@ public class QuestionSearchPane extends BorderPane {
 		resultsLabel.setStyle("-fx-font-weight: bold;");
 		VBox pane = new VBox(SECTION_SPACING, resultsLabel, resultsList);
 		pane.setId("question-search-results-section");
+		pane.setPadding(new Insets(PANE_PADDING));
 
 		// Matching Questions own the available height in the upper left result
 		// section, preserving the existing scrolling ListView behaviour.
@@ -803,7 +805,7 @@ public class QuestionSearchPane extends BorderPane {
 		detailsLabel.setStyle("-fx-font-weight: bold;");
 		VBox pane = new VBox(SECTION_SPACING, detailsLabel, detailsArea);
 		pane.setId("question-search-details-section");
-		pane.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));
+		pane.setPadding(new Insets(PANE_PADDING));
 
 		// Question details consume the space made available by the lower half of
 		// the left column.
@@ -844,6 +846,7 @@ public class QuestionSearchPane extends BorderPane {
 		// that benefits from additional vertical space.
 		VBox rightColumn = new VBox(SECTION_SPACING, classificationPane, outputApplicabilityPane, previewPane);
 		rightColumn.setId("question-search-right-column");
+		rightColumn.setPadding(new Insets(PANE_PADDING));
 		VBox.setVgrow(previewPane, Priority.ALWAYS);
 		return rightColumn;
 	}

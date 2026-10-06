@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.search;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -24,9 +25,14 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import javafx.geometry.Insets;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 
@@ -46,6 +52,49 @@ class QuestionSearchDialogTest {
 		// the test Stage must have a real Scene before the Dialog is constructed.
 		stage.setScene(new Scene(new StackPane(), 300, 200));
 		stage.show();
+	}
+
+	@Test
+	void actionButtonsShareDialogRowAndUseEqualWidth(FxRobot robot) {
+		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(retrievalRepository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(tempDirectory),
+				new QuestionExtractor());
+		QuestionSearchDialog[] dialogHolder = new QuestionSearchDialog[1];
+		robot.interact(() -> extracted(curriculumRepository, retrievalService, previewService, dialogHolder));
+		QuestionSearchDialog dialog = dialogHolder[0];
+		robot.interact(dialog::show);
+		WaitForAsyncUtils.waitForFxEvents();
+		Button editQuestion = robot.lookup("#question-search-edit-question").queryButton();
+		Button splitQuestion = robot.lookup("#question-search-split-question").queryButton();
+		Button editMetadata = robot.lookup("#question-search-edit-metadata").queryButton();
+		Button sharedContext = robot.lookup("#question-search-recapture-shared-context").queryButton();
+		Button editAnswer = robot.lookup("#question-search-edit-answer").queryButton();
+		Button close = (Button) dialog.getDialogPane().lookupButton(ButtonType.CLOSE);
+
+		// The five Question-edit actions participate in one ButtonBar uniform-size
+		// group, so their actual width follows the widest action label.
+		assertTrue(ButtonBar.isButtonUniformSize(editQuestion));
+		assertTrue(ButtonBar.isButtonUniformSize(splitQuestion));
+		assertTrue(ButtonBar.isButtonUniformSize(editMetadata));
+		assertTrue(ButtonBar.isButtonUniformSize(sharedContext));
+		assertTrue(ButtonBar.isButtonUniformSize(editAnswer));
+		assertEquals(editQuestion.getWidth(), splitQuestion.getWidth(), 1.0);
+		assertEquals(editQuestion.getWidth(), editMetadata.getWidth(), 1.0);
+		assertEquals(editQuestion.getWidth(), sharedContext.getWidth(), 1.0);
+		assertEquals(editQuestion.getWidth(), editAnswer.getWidth(), 1.0);
+
+		// Close shares the same row but is not widened to match the edit actions.
+		assertFalse(ButtonBar.isButtonUniformSize(close));
+		assertTrue(editQuestion.getParent() == close.getParent());
+		assertTrue(robot.lookup("#question-search-action-row").tryQuery().isEmpty());
+		VBox leftColumn = robot.lookup("#question-search-left-column").queryAs(VBox.class);
+		VBox rightColumn = robot.lookup("#question-search-right-column").queryAs(VBox.class);
+		assertEquals(new Insets(12), leftColumn.getPadding());
+		assertEquals(new Insets(12), rightColumn.getPadding());
+		robot.interact(dialog::close);
 	}
 
 	@Test

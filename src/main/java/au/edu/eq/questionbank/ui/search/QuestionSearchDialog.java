@@ -42,12 +42,12 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private double rememberedHeight = Double.NaN;
 	private double rememberedX = Double.NaN;
 	private double rememberedY = Double.NaN;
-	private final ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
-	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
+	private final ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
 	private final ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
+	private final ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OTHER);
 	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Recapture Shared Context",
 			ButtonBar.ButtonData.OTHER);
-	private final ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
+	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
 	private boolean persistedClassificationChange;
 
 	/**
@@ -169,7 +169,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void configureActionButtons() {
-		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
+		getDialogPane().getButtonTypes().setAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
 				recaptureSharedContextButtonType, editAnswerButtonType, ButtonType.CLOSE);
 		Button editQuestionButton = buttonFor(editQuestionButtonType);
 		Button splitQuestionButton = buttonFor(splitQuestionButtonType);
@@ -178,8 +178,13 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		Button editAnswerButton = buttonFor(editAnswerButtonType);
 		Button closeButton = buttonFor(ButtonType.CLOSE);
 
-		// Exam identity correction no longer belongs to Question Search. Exam/Assets is
-		// now the authoritative workspace for Provider, Year and Assessment editing.
+		// The five Question-edit actions form one uniformly sized group. Close remains
+		// on the same ButtonBar row but keeps its natural compact width.
+		for (Button button : List.of(editQuestionButton, splitQuestionButton, editMetadataButton,
+				recaptureSharedContextButton, editAnswerButton)) {
+			ButtonBar.setButtonUniformSize(button, true);
+		}
+		ButtonBar.setButtonUniformSize(closeButton, false);
 		configureActionButtonIds(editQuestionButton, splitQuestionButton, editMetadataButton,
 				recaptureSharedContextButton, editAnswerButton);
 		configureActionButtonBindings(editQuestionButton, splitQuestionButton, editMetadataButton,
@@ -286,7 +291,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 				return new EditRequest(selected, EditTarget.ANSWER);
 			}
 
-			// Close and non-edit actions do not publish an edit request.
+			// Close publishes no edit request.
 			return null;
 		});
 	}

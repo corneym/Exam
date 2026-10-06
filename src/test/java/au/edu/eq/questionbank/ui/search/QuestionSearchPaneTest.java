@@ -51,6 +51,7 @@ import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionSer
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.application.Platform;
+import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -770,6 +771,8 @@ public class QuestionSearchPaneTest {
 		SplitPane workspace = robot.lookup("#question-search-workspace").queryAs(SplitPane.class);
 		Node leftColumn = robot.lookup("#question-search-left-column").query();
 		Node rightColumn = robot.lookup("#question-search-right-column").query();
+		VBox resultsSection = robot.lookup("#question-search-results-section").queryAs(VBox.class);
+		VBox detailsSection = robot.lookup("#question-search-details-section").queryAs(VBox.class);
 		assertEquals(Orientation.HORIZONTAL, workspace.getOrientation());
 
 		// Search uses a narrower navigation/results column and gives the larger share
@@ -785,6 +788,11 @@ public class QuestionSearchPaneTest {
 		assertTrue(isDescendantOf(robot.lookup("#question-search-selected-classification").query(), rightColumn));
 		assertTrue(isDescendantOf(robot.lookup("#question-search-output-section").query(), rightColumn));
 		assertTrue(isDescendantOf(robot.lookup("#question-search-preview-section").query(), rightColumn));
+
+		// The two vertically split Question sections use the same inset as the
+		// surrounding Search workspace rather than pressing against their pane edges.
+		assertEquals(new Insets(12), resultsSection.getPadding());
+		assertEquals(new Insets(12), detailsSection.getPadding());
 	}
 
 	@Test
