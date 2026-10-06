@@ -153,8 +153,10 @@ public class QuestionSearchPane extends BorderPane {
 	// separate application-level Subject selection.
 	private final Subject workingSubject;
 
+	private final QuestionSearchNarrowing searchNarrowing;
+
 	/**
-	 * Creates the question-search pane.
+	 * Creates an unrestricted question-search pane.
 	 *
 	 * @param workingSubject                authoritative workspace Working Subject
 	 * @param curriculumRepository          current curriculum hierarchy lookup
@@ -169,6 +171,28 @@ public class QuestionSearchPane extends BorderPane {
 			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
 			QuestionPreviewService previewService,
 			QuestionOutputApplicabilityRepository outputApplicabilityRepository) {
+		this(workingSubject, curriculumRepository, retrievalService, allQuestionsSupplier, previewService,
+				outputApplicabilityRepository, QuestionSearchNarrowing.unrestricted());
+	}
+
+	/**
+	 * Creates a question-search pane with an immutable result narrowing.
+	 *
+	 * @param workingSubject                authoritative workspace Working Subject
+	 * @param curriculumRepository          current curriculum hierarchy lookup
+	 * @param retrievalService              curriculum-aware Question retrieval
+	 * @param allQuestionsSupplier          complete stored Question retrieval
+	 * @param previewService                stored Question image preview service
+	 * @param outputApplicabilityRepository persisted per-Question revision-output
+	 *                                      exclusions
+	 * @param searchNarrowing               additional result constraint retained
+	 *                                      across every Search scope and refresh
+	 * @throws NullPointerException if any dependency is {@code null}
+	 */
+	public QuestionSearchPane(Subject workingSubject, CurriculumRepository curriculumRepository,
+			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
+			QuestionSearchNarrowing searchNarrowing) {
 		if (workingSubject == null) {
 			throw new NullPointerException("workingSubject");
 		}
@@ -187,12 +211,16 @@ public class QuestionSearchPane extends BorderPane {
 		if (outputApplicabilityRepository == null) {
 			throw new NullPointerException("outputApplicabilityRepository");
 		}
+		if (searchNarrowing == null) {
+			throw new NullPointerException("searchNarrowing");
+		}
 		this.workingSubject = workingSubject;
 		this.curriculumRepository = curriculumRepository;
 		this.retrievalService = retrievalService;
 		this.allQuestionsSupplier = allQuestionsSupplier;
 		this.previewService = previewService;
 		this.outputApplicabilityRepository = outputApplicabilityRepository;
+		this.searchNarrowing = searchNarrowing;
 		setPadding(new Insets(PANE_PADDING));
 		configureControls();
 		configureHandlers();
@@ -892,19 +920,29 @@ public class QuestionSearchPane extends BorderPane {
 		pane.setHgap(SELECTOR_COLUMN_GAP);
 		pane.setVgap(SELECTOR_ROW_GAP);
 		pane.setPadding(new Insets(0, 0, PANE_PADDING, 0));
-		pane.add(createSelectorLabel("Search scope"), 0, 0);
-		pane.add(searchScopeBox, 1, 0);
-		pane.add(createSelectorLabel("Current syllabus"), 0, 1);
-		pane.add(syllabusValue, 1, 1);
-		pane.add(createSelectorLabel("Unit"), 0, 2);
-		pane.add(unitBox, 1, 2);
-		pane.add(createSelectorLabel("Topic"), 0, 3);
-		pane.add(topicBox, 1, 3);
-		pane.add(createSelectorLabel("Subtopic / Descriptor"), 0, 4);
-		pane.add(classificationBox, 1, 4);
-		pane.add(createSelectorLabel("Descriptor"), 0, 5);
-		pane.add(descriptorBox, 1, 5);
-		pane.add(statusLabel, 1, 6);
+		int row = 0;
+
+		if (searchNarrowing.isRestricted()) {
+			Label narrowingValue = new Label(searchNarrowing.description());
+			narrowingValue.setId("question-search-narrowing");
+			narrowingValue.setWrapText(true);
+			pane.add(createSelectorLabel("Narrowed to"), 0, row);
+			pane.add(narrowingValue, 1, row++);
+		}
+
+		pane.add(createSelectorLabel("Search scope"), 0, row);
+		pane.add(searchScopeBox, 1, row++);
+		pane.add(createSelectorLabel("Current syllabus"), 0, row);
+		pane.add(syllabusValue, 1, row++);
+		pane.add(createSelectorLabel("Unit"), 0, row);
+		pane.add(unitBox, 1, row++);
+		pane.add(createSelectorLabel("Topic"), 0, row);
+		pane.add(topicBox, 1, row++);
+		pane.add(createSelectorLabel("Subtopic / Descriptor"), 0, row);
+		pane.add(classificationBox, 1, row++);
+		pane.add(createSelectorLabel("Descriptor"), 0, row);
+		pane.add(descriptorBox, 1, row++);
+		pane.add(statusLabel, 1, row);
 
 		// The Subject is supplied by the workspace, so every visible selector now
 		// represents only Search-local scope beneath that Subject.
@@ -1735,7 +1773,11 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		long generation = searchGeneration;
 		statusLabel.setText("Searching...");
-		Task<List<QuestionSearchResult>> task = new BackgroundTask<>(retrieval::get);
+
+		// Apply the immutable launch narrowing after retrieval conversion so the same
+		// constraint governs Current Syllabus, All Questions and edit-refresh paths.
+		Task<List<QuestionSearchResult>> task = new BackgroundTask<>(
+				() -> retrieval.get().stream().filter(result -> searchNarrowing.includes(result.question())).toList());
 		activeSearchTask = task;
 		task.setOnSucceeded(_ -> completeSearch(task, generation));
 		task.setOnFailed(_ -> failSearch(task, generation));

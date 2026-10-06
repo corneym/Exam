@@ -429,6 +429,41 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void launchNarrowingAppliesToCurrentAndAllQuestionScopes(FxRobot robot) throws TimeoutException {
+		ExamProvider provider = historicalQuestion.getExam().getProvider();
+		Exam secondExam = new Exam(60, chemistry, provider, 2021, "Mock Exam");
+		SourceDocument secondDocument = new SourceDocument(61, "Chemistry/2021/paper2.pdf");
+		ExamBooklet secondBooklet = new ExamBooklet(62, secondExam, "Paper 2", secondDocument);
+		Question secondQuestion = new Question(63, secondBooklet, "5", "Second Question", 2, List.of(),
+				historicalDescriptor, false);
+		QuestionRetrievalRepository twoQuestionRepository = _ -> List.of(
+				new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+				new QuestionApplicabilityMatch(secondQuestion, currentDescriptor));
+		QuestionRetrievalService twoQuestionService = new QuestionRetrievalService(twoQuestionRepository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+
+		replaceSearchPane(robot, curriculumRepository, twoQuestionService,
+				() -> List.of(historicalQuestion, secondQuestion), QuestionSearchNarrowing.forBooklet(secondBooklet));
+
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		Label narrowing = robot.lookup("#question-search-narrowing").queryAs(Label.class);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+
+		// Dashboard launch narrowing is visible and applies to the initial
+		// current-syllabus retrieval.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		assertTrue(narrowing.getText().contains("Paper 2"));
+		assertEquals(secondQuestion.getId(), results.getItems().getFirst().question().getId());
+
+		// Changing the ordinary Search scope must not escape the immutable launch
+		// narrowing.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
+		assertEquals(secondQuestion.getId(), results.getItems().getFirst().question().getId());
+	}
+
+	@Test
 	public void missingAndCorruptSourcePdfsReportPreviewUnavailable(FxRobot robot) throws Exception {
 		Path pdfRoot = Files.createTempDirectory("question-search-broken-pdf-");
 		Files.writeString(pdfRoot.resolve("corrupt.pdf"), "This is not a PDF.");
@@ -1256,15 +1291,22 @@ public class QuestionSearchPaneTest {
 
 	private QuestionSearchPane replaceSearchPane(FxRobot robot, InMemoryCurriculumRepository repository,
 			QuestionRetrievalService service, Supplier<List<Question>> allQuestionsSupplier) {
+		return replaceSearchPane(robot, repository, service, allQuestionsSupplier,
+				QuestionSearchNarrowing.unrestricted());
+	}
+
+	private QuestionSearchPane replaceSearchPane(FxRobot robot, InMemoryCurriculumRepository repository,
+			QuestionRetrievalService service, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionSearchNarrowing searchNarrowing) {
 		QuestionSearchPane[] pane = new QuestionSearchPane[1];
 		robot.interact(() -> {
 			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
 			existing.dispose();
 
-			// This overload varies the complete-bank source while retaining the workspace
-			// Working Subject and the same revision-output state.
+			// Launch narrowing is independent of the ordinary Search scope and therefore
+			// belongs to construction rather than to one particular retrieval action.
 			pane[0] = new QuestionSearchPane(chemistry, repository, service, allQuestionsSupplier, previewService,
-					outputApplicabilityRepository);
+					outputApplicabilityRepository, searchNarrowing);
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];
