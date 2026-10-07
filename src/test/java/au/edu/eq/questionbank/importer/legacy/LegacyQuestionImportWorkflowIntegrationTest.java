@@ -20,6 +20,7 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
@@ -37,11 +38,49 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
 
 class LegacyQuestionImportWorkflowIntegrationTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void importsFromManagedWorkbookAfterExternalSourceIsRemoved() throws Exception {
+		Path dataRoot = Files.createDirectories(tempDirectory.resolve("managed-legacy-data"));
+		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
+		SqliteDatabase database = new SqliteDatabase(dataRoot.resolve("questionbank.db"));
+		database.initialiseSchema();
+		Subject chemistry = createCurriculum(database);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		Exam exam = examWriter.createExam(chemistry, "QCAA", 2020, "External Assessment");
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
+		ExamBooklet booklet = examImporter.importExam(chemistry, "QCAA", 2020, "External Assessment", "Paper 1",
+				"subjects/Chemistry/exams/QCAA/2020/External Assessment/paper-1.pdf",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, Integer.valueOf(12), "a".repeat(64));
+		assertEquals(exam.getId(), booklet.getExam().getId());
+		Path externalWorkbook = createExamAssetsCompatibilityWorkbook();
+		LegacyQuestionWorkbookStore store = new LegacyQuestionWorkbookStore(layout);
+		Path managedWorkbook = store.manageWorkbook("Chemistry", "2019", externalWorkbook);
+		assertEquals(layout.legacyImportDirectory("Chemistry", "2019").resolve(externalWorkbook.getFileName()),
+				managedWorkbook);
+		assertTrue(Files.isRegularFile(managedWorkbook));
+
+		// The intake workflow must no longer depend on the location originally chosen
+		// by the user once retention has succeeded.
+		Files.delete(externalWorkbook);
+		assertFalse(Files.exists(externalWorkbook));
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
+		assertTrue(importer.findMissingBooklets(managedWorkbook, "Chemistry", "2019").isEmpty());
+		LegacyQuestionImportResult first = importer.importWorkbook(managedWorkbook, "Chemistry", "2019");
+		LegacyQuestionImportResult second = importer.importWorkbook(managedWorkbook, "Chemistry", "2019");
+		assertEquals(new LegacyQuestionImportResult(1, 0, 0), first);
+		assertEquals(new LegacyQuestionImportResult(0, 1, 0), second);
+		List<Question> questions = new SqliteQuestionRepository(database).findAll();
+		assertEquals(1, questions.size());
+		assertEquals(booklet.getId(), questions.getFirst().getBooklet().getId());
+		assertEquals("2019", questions.getFirst().getClassification().getSyllabusVersion().getName());
+	}
 
 	@Test
 	void importsLegacyMetadataIntoExamAssetsCreatedBookletWithoutChangingPlanning() throws Exception {

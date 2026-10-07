@@ -17,6 +17,7 @@ import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
@@ -78,7 +79,9 @@ public final class AnswerCapturePane extends VBox {
 	private final QuestionExtractor questionExtractor;
 	private final Supplier<PdfSession> answerPdfSessionSupplier;
 	private final Consumer<SelectedPdf> answerPdfHandler;
+	private final ManagedDataLayout managedDataLayout;
 	private final Path pdfDataRoot;
+	private final PdfStore pdfStore;
 	private final BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader;
 	private final Runnable selectionClearHandler;
 	private final Runnable answerDocumentHandler;
@@ -163,7 +166,9 @@ public final class AnswerCapturePane extends VBox {
 	 *
 	 * @param questionRepository          source of persisted Questions
 	 * @param answerWriter                writer for Answer persistence
-	 * @param pdfDataRoot                 managed PDF storage root
+	 * @param managedDataLayout           canonical application managed-data layout
+	 * @param pdfDataRoot                 legacy managed PDF storage root retained
+	 *                                    during migration
 	 * @param answerPdfHandler            callback that opens an assigned Answer PDF
 	 * @param answerDocumentHandler       callback that displays the Answer document
 	 * @param answerTransitionAllowed     guard for changing Answer targets
@@ -176,17 +181,20 @@ public final class AnswerCapturePane extends VBox {
 	 * @param answerPageNavigationHandler callback that navigates Answer pages
 	 * @param answerPdfLoader             asynchronous Answer PDF loader
 	 */
-	public AnswerCapturePane(QuestionRepository questionRepository, SqliteAnswerWriter answerWriter, Path pdfDataRoot,
-			Consumer<SelectedPdf> answerPdfHandler, Runnable answerDocumentHandler,
-			BooleanSupplier answerTransitionAllowed, Supplier<ExamBooklet> activeBookletSupplier,
-			Runnable selectionClearHandler, QuestionExtractor questionExtractor,
-			Supplier<PdfSession> answerPdfSessionSupplier, IntConsumer answerPageNavigationHandler,
-			BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader) {
+	public AnswerCapturePane(QuestionRepository questionRepository, SqliteAnswerWriter answerWriter,
+			ManagedDataLayout managedDataLayout, Path pdfDataRoot, Consumer<SelectedPdf> answerPdfHandler,
+			Runnable answerDocumentHandler, BooleanSupplier answerTransitionAllowed,
+			Supplier<ExamBooklet> activeBookletSupplier, Runnable selectionClearHandler,
+			QuestionExtractor questionExtractor, Supplier<PdfSession> answerPdfSessionSupplier,
+			IntConsumer answerPageNavigationHandler, BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader) {
 		if (questionRepository == null) {
 			throw new NullPointerException("questionRepository");
 		}
 		if (answerWriter == null) {
 			throw new NullPointerException("answerWriter");
+		}
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
 		}
 		if (pdfDataRoot == null) {
 			throw new NullPointerException("pdfDataRoot");
@@ -220,7 +228,9 @@ public final class AnswerCapturePane extends VBox {
 		// Exam / Assets. It no longer owns native PDF selection.
 		this.questionRepository = questionRepository;
 		this.answerWriter = answerWriter;
+		this.managedDataLayout = managedDataLayout;
 		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
+		this.pdfStore = new PdfStore(this.managedDataLayout, this.pdfDataRoot);
 		this.answerPdfHandler = answerPdfHandler;
 		this.answerPdfLoader = Objects.requireNonNull(answerPdfLoader, "answerPdfLoader");
 		this.answerDocumentHandler = answerDocumentHandler;
@@ -1744,10 +1754,9 @@ public final class AnswerCapturePane extends VBox {
 
 	private void openNextAnswerDocument(AnswerFile file) {
 		try {
-
-			// Resolve the persisted managed relative path against the Answer PDF store.
-			Path path = new PdfStore(pdfDataRoot).resolve(file.getSourceDocument().getRelativePath());
-			SelectedPdf selected = new SelectedPdf(path.toFile(), path, pdfDataRoot);
+			String relativePath = file.getSourceDocument().getRelativePath();
+			Path path = pdfStore.resolve(relativePath);
+			SelectedPdf selected = new SelectedPdf(path.toFile(), path, selectedPdfRoot(relativePath));
 
 			// Save transition remains active until the asynchronous PDF loader reports
 			// completion.
@@ -1765,7 +1774,8 @@ public final class AnswerCapturePane extends VBox {
 			showAnswerFileError("The registered answer PDF is unavailable.", pdfPath.toString());
 			return false;
 		}
-		SelectedPdf selectedPdf = new SelectedPdf(pdfPath.toFile(), pdfPath, pdfDataRoot);
+		String relativePath = registeredAnswerFile.getSourceDocument().getRelativePath();
+		SelectedPdf selectedPdf = new SelectedPdf(pdfPath.toFile(), pdfPath, selectedPdfRoot(relativePath));
 		try {
 			answerPdfHandler.accept(selectedPdf);
 		} catch (RuntimeException e) {
@@ -1971,7 +1981,6 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private Path resolveRegisteredAnswerFile(AnswerFile registeredAnswerFile) {
-		PdfStore pdfStore = new PdfStore(pdfDataRoot);
 		try {
 			return pdfStore.resolve(registeredAnswerFile.getSourceDocument().getRelativePath());
 		} catch (IllegalArgumentException e) {
@@ -2058,6 +2067,17 @@ public final class AnswerCapturePane extends VBox {
 		saveTask.setOnSucceeded(_ -> completeAnswerSave(question, saveTask.getValue(), editing, previousIndex));
 		saveTask.setOnFailed(_ -> failAnswerSave(saveTask.getException()));
 		startDaemonTask("answer-save", saveTask);
+	}
+
+	private Path selectedPdfRoot(String relativePath) {
+		String portablePath = relativePath.replace('\\', '/');
+
+		// New Subject-first SourceDocuments are rooted at dataRoot. Legacy rows remain
+		// relative to the former dedicated PDF root until the migration slice.
+		if (portablePath.startsWith("subjects/")) {
+			return managedDataLayout.dataRoot();
+		}
+		return pdfDataRoot;
 	}
 
 	private void selectMultipleChoiceAnswer(String answerText) {

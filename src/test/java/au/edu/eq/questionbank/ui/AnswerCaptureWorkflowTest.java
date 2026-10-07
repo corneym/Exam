@@ -28,6 +28,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -905,34 +906,48 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void showsAssignedAnswerPdfWithoutSourceSelectionControl(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "56");
-		ComboBox<Question> questions = unansweredQuestions(robot);
-		robot.interact(() -> questions.getSelectionModel().select(question));
 		Node pdfControls = field(answerCapturePane(), "answerPdfControls", Node.class);
 		Label selectedPdf = lookup(robot, "#selected-answer-pdf", Label.class);
 		assertTrue(pdfControls.isVisible());
 		assertTrue(pdfControls.isManaged());
 		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
-		openAnswerPdfForTest(question);
+
+		// Create the Answer asset through the production Exam/Assets persistence
+		// boundary so its SourceDocument uses the new Subject-first path contract.
+		Path answerSource = createReplacementAnswerPdf(databasePath.getParent().resolve("subject-first-answer.pdf"));
+		AnswerFile assignedAnswerFile = (AnswerFile) invoke(application, "importAnswerBookletFromExamAssets",
+				new Class<?>[] { Exam.class, Path.class, String.class, boolean.class, ApplicationConfig.class },
+				question.getExam(), answerSource, "Assigned Answers", false, applicationConfig);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		answerWriter.assignAnswerFile(question.getBooklet(), assignedAnswerFile);
+		AtomicBoolean started = new AtomicBoolean();
+		robot.interact(() -> started.set(answerCapturePane().captureAnswer(question, () -> {
+		})));
+		assertTrue(started.get());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> "Assigned Answers".equals(selectedPdf.getText()));
 		WaitForAsyncUtils.waitForFxEvents();
+		ManagedDataLayout managedDataLayout = new ManagedDataLayout(applicationConfig.dataRoot());
+		Path expectedPath = managedDataLayout.examDirectory(question.getExam().getSubject().getName(),
+				question.getExam().getProvider().getName(), question.getExam().getYear(), question.getExam().getName())
+				.resolve(answerSource.getFileName());
+		assertTrue(Files.isRegularFile(expectedPath));
+		assertEquals(managedDataLayout.relativePath(expectedPath),
+				assignedAnswerFile.getSourceDocument().getRelativePath());
 
-		// The registered AnswerFile remains authoritative even though Answer capture no
-		// longer provides a second source-selection workflow.
-		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(new SqliteDatabase(databasePath),
-				new SqliteExamWriter(new SqliteDatabase(databasePath)));
-		AnswerFile assignedAnswerFile = answerWriter.findAnswerFile(question.getBooklet());
-		assertNotNull(assignedAnswerFile);
-		assertEquals("exam.pdf", assignedAnswerFile.getName());
+		// AnswerCapturePane must resolve the data-root-relative SourceDocument rather
+		// than looking beneath the former dedicated PDF root.
+		AnswerFile activeAnswerFile = field(answerCapturePane(), "answerFile", AnswerFile.class);
+		assertNotNull(activeAnswerFile);
+		assertEquals(assignedAnswerFile.getId(), activeAnswerFile.getId());
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());
 
-		// The managed Answer PDF must retain its persisted byte identity.
-		Path managedAnswerPath = pdfDataRoot.resolve(assignedAnswerFile.getSourceDocument().getRelativePath());
-		String expectedHash = new SourceDocumentHashService().sha256(managedAnswerPath);
-		assertEquals(expectedHash, assignedAnswerFile.getSourceDocument().getContentSha256());
-
-		// Once assigned, the row stays visible as source information rather than
-		// disappearing as the old Choose-PDF workflow did.
+		// The row remains source information rather than exposing the retired
+		// capture-side Choose PDF workflow.
 		assertTrue(pdfControls.isVisible());
 		assertTrue(pdfControls.isManaged());
-		assertEquals("exam.pdf", selectedPdf.getText());
+		assertEquals("Assigned Answers", selectedPdf.getText());
 		assertTrue(robot.lookup("#choose-answer-pdf").tryQuery().isEmpty());
 	}
 

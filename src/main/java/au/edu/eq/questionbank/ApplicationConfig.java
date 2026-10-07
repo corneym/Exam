@@ -11,12 +11,18 @@ import java.util.Properties;
 /**
  * Filesystem locations for application data.
  * <p>
- * A configured data root contains the PDF library, curriculum data, and
- * question-bank database.
+ * The SQLite database parent is the authoritative application data root.
+ * Subject-first managed assets are stored beneath that root.
+ * <p>
+ * {@code pdfDataRoot} and {@code curriculumDataRoot} identify the former
+ * pre-Sprint-14 managed roots. They remain derivable so layout migration and
+ * supported legacy-backup compatibility can inspect old data, but ordinary
+ * Subject-first runtime storage does not write new managed assets there.
  *
- * @param pdfDataRoot        root beneath which source examination PDFs are
- *                           stored
- * @param curriculumDataRoot root beneath which curriculum workbooks are stored
+ * @param pdfDataRoot        legacy PDF root retained for migration and
+ *                           compatibility
+ * @param curriculumDataRoot legacy curriculum root retained for migration and
+ *                           compatibility
  * @param databasePath       path to the SQLite question-bank database
  */
 public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path databasePath) {
@@ -50,9 +56,13 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 	}
 
 	/**
-	 * Returns the application data root.
+	 * Returns the authoritative application data root.
+	 * <p>
+	 * New managed assets, the SQLite database, backups and migration-recovery
+	 * material are all rooted here. The separate PDF and curriculum paths identify
+	 * only former managed locations needed for migration and compatibility.
 	 *
-	 * @return the directory containing the database and application data folders
+	 * @return directory containing the database and managed application data
 	 */
 	public Path dataRoot() {
 		return databasePath.getParent();
@@ -104,10 +114,10 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 		}
 		ApplicationConfig config = fromDataRoot(normalisedDefaultDataRoot);
 
-		// A fresh installation needs the data directories to exist before SQLite or
-		// managed PDF/curriculum storage attempts to use them.
-		Files.createDirectories(config.pdfDataRoot());
-		Files.createDirectories(config.curriculumDataRoot());
+		// A fresh Subject-first installation needs only the application data root.
+		// Creating empty legacy pdf/ and curriculum/ directories would falsely suggest
+		// that those locations remain part of the active storage contract.
+		Files.createDirectories(config.dataRoot());
 		saveDataRoot(normalisedPropertiesFile, normalisedDefaultDataRoot);
 		return config;
 	}

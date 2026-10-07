@@ -5,27 +5,79 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
+
 /**
- * Resolves stored source-document paths beneath a configured PDF data root.
+ * Owns managed Exam-PDF destination construction, persisted-path conversion and
+ * safe path resolution.
  * <p>
- * Stored paths are treated as untrusted: they must be relative and their
- * normalized resolved paths must remain inside the configured root. Containment
- * is lexical: these checks do not resolve symbolic links or junctions.
+ * The canonical Sprint 14 layout stores new Question and Answer PDFs beneath
+ * the application data root using:
+ *
+ * <pre>
+ * subjects/&lt;Subject&gt;/exams/&lt;Provider&gt;/&lt;Year&gt;/&lt;Assessment&gt;/...
+ * </pre>
+ *
+ * Transitional instances may also resolve older paths relative to the former
+ * dedicated PDF root. That compatibility is read-only with respect to path
+ * persistence: newly persisted paths must use the canonical Subject-first
+ * hierarchy.
+ * <p>
+ * Persisted paths are treated as untrusted. Resolution is normalized and
+ * lexically contained by the applicable managed root.
  */
 public class PdfStore {
 
+	private final ManagedDataLayout managedDataLayout;
 	private final Path pdfRoot;
 
 	/**
-	 * Creates a store rooted at an absolute, normalized form of {@code pdfRoot}.
+	 * Creates a store using only the Subject-first managed-data layout.
 	 *
-	 * @param pdfRoot the directory containing source examination PDFs
+	 * @param managedDataLayout canonical application managed-data layout
+	 * @throws NullPointerException if {@code managedDataLayout} is {@code null}
+	 */
+	public PdfStore(ManagedDataLayout managedDataLayout) {
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
+		}
+		this.managedDataLayout = managedDataLayout;
+		pdfRoot = null;
+	}
+
+	/**
+	 * Creates a transitional store that writes Subject-first paths while retaining
+	 * read access to legacy PDF-root-relative paths.
+	 *
+	 * @param managedDataLayout canonical application managed-data layout
+	 * @param legacyPdfRoot     former dedicated PDF data root
+	 * @throws NullPointerException if either argument is {@code null}
+	 */
+	public PdfStore(ManagedDataLayout managedDataLayout, Path legacyPdfRoot) {
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
+		}
+		if (legacyPdfRoot == null) {
+			throw new NullPointerException("legacyPdfRoot");
+		}
+		this.managedDataLayout = managedDataLayout;
+		pdfRoot = legacyPdfRoot.toAbsolutePath().normalize();
+	}
+
+	/**
+	 * Creates a store using the legacy PDF-root-relative storage contract.
+	 * <p>
+	 * This constructor remains temporarily available while existing installations
+	 * and callers are migrated to the Subject-first managed-data layout.
+	 *
+	 * @param pdfRoot legacy directory containing source examination PDFs
 	 * @throws NullPointerException if {@code pdfRoot} is {@code null}
 	 */
 	public PdfStore(Path pdfRoot) {
 		if (pdfRoot == null) {
 			throw new NullPointerException("pdfRoot");
 		}
+		managedDataLayout = null;
 		this.pdfRoot = pdfRoot.toAbsolutePath().normalize();
 	}
 
@@ -33,7 +85,7 @@ public class PdfStore {
 	 * Deletes one managed PDF using the same containment checks as ordinary source
 	 * resolution.
 	 *
-	 * @param relativePath managed data-root-relative PDF path
+	 * @param relativePath persisted managed PDF path
 	 * @return whether a file existed and was deleted
 	 * @throws IOException              if deletion fails
 	 * @throws NullPointerException     if {@code relativePath} is {@code null}
@@ -48,7 +100,10 @@ public class PdfStore {
 	}
 
 	/**
-	 * Imports an examination PDF into the standard subject/provider/year hierarchy.
+	 * Imports an examination PDF using the legacy Subject/Provider/Year hierarchy.
+	 * <p>
+	 * This overload exists only while legacy callers are migrated. A Subject-first
+	 * store requires the assessment-name overload.
 	 *
 	 * @param sourcePath   the PDF selected by the user
 	 * @param subjectName  the subject name
@@ -60,58 +115,58 @@ public class PdfStore {
 	 *                                  file cannot be copied, or different bytes
 	 *                                  already occupy the required destination
 	 * @throws NullPointerException     if {@code sourcePath} is {@code null}
-	 * @throws IllegalArgumentException if a directory component is blank, contains
-	 *                                  a path separator, or {@code year} is not
-	 *                                  positive
+	 * @throws IllegalArgumentException if a directory component or year is invalid
+	 * @throws IllegalStateException    if this store uses the Subject-first layout
 	 */
 	public Path importExamPdf(Path sourcePath, String subjectName, String providerName, int year) throws IOException {
-		if (sourcePath == null) {
-			throw new NullPointerException("sourcePath");
+		if (managedDataLayout != null) {
+			throw new IllegalStateException("Subject-first Exam storage requires an assessment name");
 		}
-		Path source = sourcePath.toAbsolutePath().normalize();
-		if (!Files.isRegularFile(source)) {
-			throw new IOException("Exam PDF source is not a regular file: " + source);
-		}
-		Path destination = managedDestination(source, subjectName, providerName, year);
-		Path destinationDirectory = destination.getParent();
-
-		// A file already at its managed destination needs no copy.
-		if (source.equals(destination)) {
-			return destination;
-		}
-		Files.createDirectories(destinationDirectory);
-		if (!Files.exists(destination)) {
-
-			// Do not replace an existing authoritative source, including one created since
-			// the existence check.
-			return Files.copy(source, destination);
-		}
-
-		// Reuse either the same physical file or a byte-identical copy, without
-		// creating duplicate filenames.
-		if (Files.isSameFile(source, destination)) {
-			return destination;
-		}
-		if (Files.mismatch(source, destination) == -1) {
-			return destination;
-		}
-		throw new FileAlreadyExistsException(destination.toString(), source.toString(),
-				"A different PDF with the same filename already exists in the exam directory");
+		Path destination = managedDestination(sourcePath, subjectName, providerName, year);
+		return copyToManagedDestination(sourcePath, destination);
 	}
 
 	/**
-	 * Calculates the standard managed destination for a source PDF without copying
-	 * or moving the file.
+	 * Imports an examination PDF into the canonical Subject-first hierarchy.
+	 *
+	 * @param sourcePath     the PDF selected by the user
+	 * @param subjectName    owning Subject name
+	 * @param providerName   examination provider
+	 * @param year           examination year
+	 * @param assessmentName assessment name
+	 * @return absolute stored PDF path; an existing byte-identical file is reused
+	 * @throws IOException              if the source is not a regular file, the
+	 *                                  file cannot be copied, or different bytes
+	 *                                  already occupy the required destination
+	 * @throws NullPointerException     if {@code sourcePath} is {@code null}
+	 * @throws IllegalArgumentException if a managed directory component or year is
+	 *                                  invalid
+	 * @throws IllegalStateException    if this store was created with a legacy PDF
+	 *                                  root
+	 */
+	public Path importExamPdf(Path sourcePath, String subjectName, String providerName, int year, String assessmentName)
+			throws IOException {
+		Path destination = managedDestination(sourcePath, subjectName, providerName, year, assessmentName);
+		return copyToManagedDestination(sourcePath, destination);
+	}
+
+	/**
+	 * Calculates the legacy managed destination for a source PDF without copying or
+	 * moving the file.
 	 *
 	 * @param sourcePath   source whose filename will be retained
 	 * @param subjectName  owning subject
 	 * @param providerName examination provider
 	 * @param year         examination year
-	 * @return normalized absolute destination beneath this store
+	 * @return normalized absolute legacy destination
 	 * @throws NullPointerException     if {@code sourcePath} is {@code null}
 	 * @throws IllegalArgumentException if a directory component or year is invalid
+	 * @throws IllegalStateException    if this store uses the Subject-first layout
 	 */
 	public Path managedDestination(Path sourcePath, String subjectName, String providerName, int year) {
+		if (managedDataLayout != null) {
+			throw new IllegalStateException("Subject-first Exam storage requires an assessment name");
+		}
 		if (sourcePath == null) {
 			throw new NullPointerException("sourcePath");
 		}
@@ -133,14 +188,96 @@ public class PdfStore {
 	}
 
 	/**
-	 * Lexically resolves a stored relative path beneath this store's data root.
-	 * This does not check existence or resolve filesystem links.
+	 * Calculates the canonical Subject-first destination for a source PDF without
+	 * copying or moving the file.
 	 *
-	 * @param relativePath a non-blank, data-root-relative source path
-	 * @return the normalized absolute path beneath the configured root
+	 * @param sourcePath     source whose filename will be retained
+	 * @param subjectName    owning Subject name
+	 * @param providerName   examination provider
+	 * @param year           examination year
+	 * @param assessmentName assessment name
+	 * @return normalized absolute destination beneath the application data root
+	 * @throws NullPointerException     if {@code sourcePath} is {@code null}
+	 * @throws IllegalArgumentException if a managed directory component or year is
+	 *                                  invalid
+	 * @throws IllegalStateException    if this store was created with a legacy PDF
+	 *                                  root
+	 */
+	public Path managedDestination(Path sourcePath, String subjectName, String providerName, int year,
+			String assessmentName) {
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		ManagedDataLayout layout = requireSubjectFirstLayout();
+		Path filename = sourcePath.toAbsolutePath().normalize().getFileName();
+		if (filename == null) {
+			throw new IllegalArgumentException("sourcePath must identify a file");
+		}
+
+		// ManagedDataLayout owns every directory component. PdfStore contributes only
+		// the source filename to the already-contained Exam directory.
+		return layout.examDirectory(subjectName, providerName, year, assessmentName).resolve(filename).normalize();
+	}
+
+	/**
+	 * Converts a managed PDF path to its portable persisted representation.
+	 * <p>
+	 * Subject-first stores accept only canonical Exam paths beneath the application
+	 * data root. Transitional read access to the old PDF hierarchy does not permit
+	 * creating new legacy-style persisted paths.
+	 *
+	 * @param managedPath absolute managed PDF path
+	 * @return portable data-root-relative Subject-first path, or a legacy
+	 *         PDF-root-relative path when using the legacy-only store
+	 * @throws NullPointerException     if {@code managedPath} is {@code null}
+	 * @throws IllegalArgumentException if the path is outside the applicable root
+	 *                                  or violates the store's persistence contract
+	 */
+	public String relativePath(Path managedPath) {
+		if (managedPath == null) {
+			throw new NullPointerException("managedPath");
+		}
+		if (!managedPath.isAbsolute()) {
+			throw new IllegalArgumentException("Managed PDF path must be absolute: " + managedPath);
+		}
+		Path normalizedPath = managedPath.normalize();
+		if (managedDataLayout != null) {
+
+			// Transitional stores may still read old files beneath dataRoot/pdf, but no
+			// newly persisted path may be derived from that legacy hierarchy.
+			if (pdfRoot != null && (normalizedPath.equals(pdfRoot) || normalizedPath.startsWith(pdfRoot))) {
+				throw new IllegalArgumentException("Legacy PDF-root paths cannot be newly persisted: " + managedPath);
+			}
+			String relativePath = managedDataLayout.relativePath(normalizedPath);
+			if (!isSubjectFirstPath(relativePath)) {
+				throw new IllegalArgumentException(
+						"Managed Exam PDF path must use the Subject-first Exam hierarchy: " + managedPath);
+			}
+			return relativePath;
+		}
+		Path legacyPdfRoot = pdfRoot;
+		if (legacyPdfRoot == null) {
+			throw new IllegalStateException("Legacy PDF root is not configured.");
+		}
+		if (normalizedPath.equals(legacyPdfRoot) || !normalizedPath.startsWith(legacyPdfRoot)) {
+			throw new IllegalArgumentException(
+					"Managed PDF path must be beneath the configured PDF root: " + managedPath);
+		}
+		return legacyPdfRoot.relativize(normalizedPath).toString().replace('\\', '/');
+	}
+
+	/**
+	 * Lexically resolves a stored managed PDF path.
+	 * <p>
+	 * Subject-first paths are relative to the application data root. During the
+	 * migration transition, older paths may instead remain relative to the former
+	 * dedicated PDF root.
+	 *
+	 * @param relativePath persisted managed source path
+	 * @return normalized absolute managed path
 	 * @throws NullPointerException     if {@code relativePath} is {@code null}
 	 * @throws IllegalArgumentException if the path is blank, absolute, or escapes
-	 *                                  the configured root after normalization
+	 *                                  its applicable managed root
 	 */
 	public Path resolve(String relativePath) {
 		if (relativePath == null) {
@@ -149,18 +286,84 @@ public class PdfStore {
 		if (relativePath.isBlank()) {
 			throw new IllegalArgumentException("PDF path must not be blank");
 		}
+		if (managedDataLayout != null) {
+
+			// Resolve once through the common data-root boundary. This supplies portable
+			// separator handling plus absolute/traversal validation for both path
+			// generations before deciding which root owns the persisted path.
+			Path dataRootPath = managedDataLayout.resolve(relativePath);
+			String normalizedRelativePath = managedDataLayout.relativePath(dataRootPath);
+			if (isSubjectFirstPath(normalizedRelativePath)) {
+				return dataRootPath;
+			}
+			if (pdfRoot == null) {
+				throw new IllegalArgumentException(
+						"Managed Exam PDF path must use the Subject-first Exam hierarchy: " + relativePath);
+			}
+
+			// A path which is valid but does not have the canonical Subject-first shape is
+			// an old PDF-root-relative path during the migration transition.
+			Path legacyPath = pdfRoot.resolve(Path.of(normalizedRelativePath)).normalize();
+			if (!legacyPath.startsWith(pdfRoot)) {
+				throw new IllegalArgumentException(
+						"PDF path must remain within the configured data root: " + relativePath);
+			}
+			return legacyPath;
+		}
 		Path path = Path.of(relativePath);
 		if (path.isAbsolute() || path.getRoot() != null) {
 			throw new IllegalArgumentException("PDF path must be relative: " + relativePath);
 		}
-
-		// Collapse dot segments before checking lexical containment beneath the
-		// configured root.
 		Path resolved = pdfRoot.resolve(path).normalize();
 		if (!resolved.startsWith(pdfRoot)) {
 			throw new IllegalArgumentException("PDF path must remain within the configured data root: " + relativePath);
 		}
 		return resolved;
+	}
+
+	private Path copyToManagedDestination(Path sourcePath, Path destination) throws IOException {
+		if (sourcePath == null) {
+			throw new NullPointerException("sourcePath");
+		}
+		Path source = sourcePath.toAbsolutePath().normalize();
+		if (!Files.isRegularFile(source)) {
+			throw new IOException("Exam PDF source is not a regular file: " + source);
+		}
+		Path destinationDirectory = destination.getParent();
+
+		// A source already at its authoritative managed destination needs no copy.
+		if (source.equals(destination)) {
+			return destination;
+		}
+		Files.createDirectories(destinationDirectory);
+		if (!Files.exists(destination)) {
+
+			// Never replace a managed source as a side effect of ordinary import.
+			return Files.copy(source, destination);
+		}
+		if (Files.isSameFile(source, destination) || Files.mismatch(source, destination) == -1) {
+			return destination;
+		}
+		throw new FileAlreadyExistsException(destination.toString(), source.toString(),
+				"A different PDF with the same filename already exists in the exam directory");
+	}
+
+	private boolean isSubjectFirstPath(String relativePath) {
+		String portablePath = relativePath.replace('\\', '/');
+		String[] components = portablePath.split("/");
+
+		// Canonical Exam PDFs have:
+		// subjects/<Subject>/exams/<Provider>/<Year>/<Assessment>/<filename>
+		// Checking the structural marker as well as "subjects" prevents a legacy
+		// Subject literally named "subjects" from being mistaken for the new layout.
+		return components.length >= 7 && "subjects".equals(components[0]) && "exams".equals(components[2]);
+	}
+
+	private ManagedDataLayout requireSubjectFirstLayout() {
+		if (managedDataLayout == null) {
+			throw new IllegalStateException("PdfStore was created with a legacy PDF root");
+		}
+		return managedDataLayout;
 	}
 
 	private String validateDirectoryName(String value, String fieldName) {

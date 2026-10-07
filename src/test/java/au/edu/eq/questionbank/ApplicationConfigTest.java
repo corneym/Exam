@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,18 +18,19 @@ class ApplicationConfigTest {
 	Path tempDir;
 
 	@Test
-	void loadOrCreateCreatesFirstRunConfigurationAndDataDirectories() throws IOException {
+	void loadOrCreateCreatesFirstRunConfigurationAndSubjectFirstDataRoot() throws IOException {
 		Path userFile = tempDir.resolve("user-config/questionbank.properties");
 		Path missingLegacyFile = tempDir.resolve("legacy/questionbank.properties");
 		Path defaultDataRoot = tempDir.resolve("application-data");
 		ApplicationConfig config = ApplicationConfig.loadOrCreate(userFile, missingLegacyFile, defaultDataRoot);
 
-		// A fresh packaged installation must be able to start without a manually
-		// prepared properties file or writable installation directory.
+		// A new installation creates only the authoritative application root. Legacy
+		// pdf/ and curriculum/ roots are migration inputs, not fresh-runtime storage.
 		assertEquals(defaultDataRoot.toAbsolutePath().normalize(), config.dataRoot());
 		assertTrue(Files.isRegularFile(userFile));
-		assertTrue(Files.isDirectory(config.pdfDataRoot()));
-		assertTrue(Files.isDirectory(config.curriculumDataRoot()));
+		assertTrue(Files.isDirectory(config.dataRoot()));
+		assertFalse(Files.exists(config.pdfDataRoot()));
+		assertFalse(Files.exists(config.curriculumDataRoot()));
 		ApplicationConfig reloaded = ApplicationConfig.load(userFile);
 		assertEquals(config, reloaded);
 	}

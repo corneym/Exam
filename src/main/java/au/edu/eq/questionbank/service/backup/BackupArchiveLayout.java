@@ -6,10 +6,6 @@ package au.edu.eq.questionbank.service.backup;
 public final class BackupArchiveLayout {
 
 	/**
-	 * Archive directory containing managed curriculum source files.
-	 */
-	public static final String CURRICULUM_DIRECTORY_ENTRY = "curriculum/";
-	/**
 	 * Archive entry containing the SQLite database snapshot.
 	 */
 	public static final String DATABASE_ENTRY = "questionbank.db";
@@ -18,9 +14,9 @@ public final class BackupArchiveLayout {
 	 */
 	public static final String MANIFEST_ENTRY = "backup-manifest.properties";
 	/**
-	 * Archive directory containing managed examination and answer PDFs.
+	 * Archive directory containing all Subject-scoped managed source assets.
 	 */
-	public static final String PDF_DIRECTORY_ENTRY = "pdf/";
+	public static final String SUBJECTS_DIRECTORY_ENTRY = "subjects/";
 
 	private BackupArchiveLayout() {
 	}

@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.repository.assessment;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,6 +18,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
@@ -33,6 +35,7 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
@@ -286,5 +289,46 @@ class QuestionBookletPdfReplacementServiceTest {
 		assertTrue(finalReload.hasSharedContext());
 		ExamBooklet persistedBooklet = examWriter.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper1.pdf");
 		assertEquals(replacementHash, persistedBooklet.getSourceDocument().getContentSha256());
+	}
+
+	@Test
+	void replacesSubjectFirstQuestionPdfWithoutChangingPersistedPath() throws Exception {
+		Path dataRoot = tempDirectory.resolve("subject-first-data");
+		Path legacyPdfRoot = dataRoot.resolve("pdf");
+		ManagedDataLayout managedDataLayout = new ManagedDataLayout(dataRoot);
+		PdfStore pdfStore = new PdfStore(managedDataLayout, legacyPdfRoot);
+		Path sourcePdf = tempDirectory.resolve("subject-first-question.pdf");
+		Files.writeString(sourcePdf, "original subject-first booklet");
+		Path managedPdf = pdfStore.importExamPdf(sourcePdf, "Chemistry", "QCAA", 2025, "External Assessment");
+		SqliteDatabase database = new SqliteDatabase(dataRoot.resolve("questionbank.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, examWriter);
+		SourceDocumentHashService hashService = new SourceDocumentHashService();
+		String relativePath = pdfStore.relativePath(managedPdf);
+		String originalHash = hashService.sha256(managedPdf);
+		ExamBooklet booklet = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
+				relativePath, ExamBookletQuestionFormat.WRITTEN_RESPONSE, originalHash);
+		Path replacementPdf = tempDirectory.resolve("correct-subject-first-question.pdf");
+		Files.writeString(replacementPdf, "correct subject-first booklet");
+		QuestionBookletPdfReplacementService service = new QuestionBookletPdfReplacementService(database,
+				managedDataLayout, legacyPdfRoot);
+		QuestionBookletPdfReplacementService.Result result = service.replace(booklet, replacementPdf);
+		assertTrue(result.contentChanged());
+		assertEquals("correct subject-first booklet", Files.readString(managedPdf));
+		String replacementHash = hashService.sha256(replacementPdf);
+		assertEquals(replacementHash, result.booklet().getSourceDocument().getContentSha256());
+
+		// In-place replacement changes only bytes and hash identity. The Subject-first
+		// SourceDocument path and database identity remain stable.
+		assertEquals(relativePath, result.booklet().getSourceDocument().getRelativePath());
+		assertEquals(booklet.getSourceDocument().getId(), result.booklet().getSourceDocument().getId());
+		ExamBooklet reloaded = examWriter.findExamBookletBySourceDocumentPath(relativePath);
+		assertNotNull(reloaded);
+		assertEquals(relativePath, reloaded.getSourceDocument().getRelativePath());
+		assertEquals(replacementHash, reloaded.getSourceDocument().getContentSha256());
+		assertTrue(managedPdf
+				.startsWith(managedDataLayout.examDirectory("Chemistry", "QCAA", 2025, "External Assessment")));
 	}
 }

@@ -8,39 +8,32 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedDataLayout;
 
 final class BackupFilesystemSafety {
 
 	void validateApplicationLayout(ApplicationConfig config) throws IOException {
-
-		// Compare physical locations so path aliases cannot conceal overlapping managed
-		// roots.
-		Path pdfRoot = resolvePhysicalPath(config.pdfDataRoot());
-		Path curriculumRoot = resolvePhysicalPath(config.curriculumDataRoot());
+		ManagedDataLayout layout = new ManagedDataLayout(config.dataRoot());
+		Path subjectsRoot = resolvePhysicalPath(layout.subjectsRoot());
 		Path databasePath = resolvePhysicalPath(config.databasePath());
 		Path dataRoot = resolvePhysicalPath(config.dataRoot());
 		Path backupRoot = resolvePhysicalPath(config.dataRoot().resolve("backups"));
-		rejectOverlap(pdfRoot, curriculumRoot, "PDF and curriculum roots must not overlap");
-		rejectContainingPath(pdfRoot, databasePath, "Database must not be inside the managed PDF hierarchy");
-		rejectContainingPath(curriculumRoot, databasePath,
-				"Database must not be inside the managed curriculum hierarchy");
-		rejectContainingPath(pdfRoot, dataRoot, "Managed PDF hierarchy must not contain the application data root");
-		rejectContainingPath(curriculumRoot, dataRoot,
-				"Managed curriculum hierarchy must not contain the application data root");
-		rejectOverlap(pdfRoot, backupRoot, "Managed PDF hierarchy must not overlap the backup hierarchy");
-		rejectOverlap(curriculumRoot, backupRoot, "Managed curriculum hierarchy must not overlap the backup hierarchy");
+
+		// The database and backup hierarchy are application-level data and must
+		// remain outside the portable Subject package.
+		rejectContainingPath(subjectsRoot, databasePath, "Database must not be inside the managed Subject hierarchy");
+		rejectContainingPath(subjectsRoot, dataRoot,
+				"Managed Subject hierarchy must not contain the application data root");
+		rejectOverlap(subjectsRoot, backupRoot, "Managed Subject hierarchy must not overlap the backup hierarchy");
 	}
 
 	void validateBackupDestination(ApplicationConfig config, Path destination) throws IOException {
 		validateApplicationLayout(config);
+		ManagedDataLayout layout = new ManagedDataLayout(config.dataRoot());
 		Path resolvedDestination = resolvePhysicalPath(destination);
-		Path pdfRoot = resolvePhysicalPath(config.pdfDataRoot());
-		Path curriculumRoot = resolvePhysicalPath(config.curriculumDataRoot());
-		if (isWithin(resolvedDestination, pdfRoot)) {
-			throw new IOException("Backup destination must not be inside the managed PDF hierarchy");
-		}
-		if (isWithin(resolvedDestination, curriculumRoot)) {
-			throw new IOException("Backup destination must not be inside the managed curriculum hierarchy");
+		Path subjectsRoot = resolvePhysicalPath(layout.subjectsRoot());
+		if (isWithin(resolvedDestination, subjectsRoot)) {
+			throw new IOException("Backup destination must not be inside the managed Subject hierarchy");
 		}
 	}
 
@@ -75,8 +68,8 @@ final class BackupFilesystemSafety {
 			return normalised;
 		}
 
-		// Resolve the nearest existing ancestor, then reattach components that have not
-		// been created yet.
+		// Resolve the nearest existing ancestor, then reattach components that have
+		// not yet been created. This prevents symlink aliases from hiding overlap.
 		Path resolved = existing.toRealPath();
 		for (Path missingPart : missingParts) {
 			resolved = resolved.resolve(missingPart);

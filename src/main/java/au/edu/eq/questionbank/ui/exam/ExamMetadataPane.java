@@ -8,6 +8,7 @@ import java.time.Year;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
@@ -80,12 +81,15 @@ public final class ExamMetadataPane extends VBox {
 	private final ExamMetadataCorrectionService examMetadataCorrectionService;
 	private final ComboBox<ExamBookletQuestionFormat> questionFormatField = new ComboBox<>();
 	private final SourceDocumentHashService sourceDocumentHashService = new SourceDocumentHashService();
+	private final ManagedDataLayout managedDataLayout;
 
 	/**
 	 * Creates the exam metadata workflow controls and persistence integration.
 	 *
 	 * @param stage                         owner used by PDF selection
-	 * @param pdfDataRoot                   root containing managed Exam PDFs
+	 * @param managedDataLayout             canonical application managed-data
+	 *                                      layout
+	 * @param pdfDataRoot                   legacy root containing managed Exam PDFs
 	 * @param curriculumSelectionModel      shared Subject and classification state
 	 * @param optionsRepository             stored provider and assessment options
 	 * @param examImporter                  service for importing an Exam PDF
@@ -100,11 +104,15 @@ public final class ExamMetadataPane extends VBox {
 	 * @param examSubjectHandler            callback receiving the active Exam
 	 *                                      Subject
 	 */
-	public ExamMetadataPane(Stage stage, Path pdfDataRoot, CurriculumSelectionModel curriculumSelectionModel,
-			ExamMetadataOptionsRepository optionsRepository, SqliteExamImporter examImporter,
-			SqliteExamWriter examWriter, ExamMetadataCorrectionService examMetadataCorrectionService,
-			BooleanSupplier examChangeAllowed, Consumer<SelectedPdf> examPdfHandler,
-			Consumer<Boolean> selectionCursorHandler, Consumer<Subject> examSubjectHandler) {
+	public ExamMetadataPane(Stage stage, ManagedDataLayout managedDataLayout, Path pdfDataRoot,
+			CurriculumSelectionModel curriculumSelectionModel, ExamMetadataOptionsRepository optionsRepository,
+			SqliteExamImporter examImporter, SqliteExamWriter examWriter,
+			ExamMetadataCorrectionService examMetadataCorrectionService, BooleanSupplier examChangeAllowed,
+			Consumer<SelectedPdf> examPdfHandler, Consumer<Boolean> selectionCursorHandler,
+			Consumer<Subject> examSubjectHandler) {
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
+		}
 		if (pdfDataRoot == null) {
 			throw new NullPointerException("pdfDataRoot");
 		}
@@ -135,6 +143,7 @@ public final class ExamMetadataPane extends VBox {
 		if (examSubjectHandler == null) {
 			throw new NullPointerException("examSubjectHandler");
 		}
+		this.managedDataLayout = managedDataLayout;
 		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
 		this.curriculumSelectionModel = curriculumSelectionModel;
 		this.optionsRepository = optionsRepository;
@@ -146,7 +155,10 @@ public final class ExamMetadataPane extends VBox {
 		this.selectionCursorHandler = selectionCursorHandler;
 		this.examSubjectHandler = examSubjectHandler;
 		pdfFilePicker = new PdfFilePicker(this.pdfDataRoot);
-		pdfStore = new PdfStore(this.pdfDataRoot);
+
+		// New imports use the Subject-first layout while persisted Sprint 13 paths
+		// remain readable through the legacy PDF root until migration.
+		pdfStore = new PdfStore(this.managedDataLayout, this.pdfDataRoot);
 		configureFields();
 		configureActions(stage);
 		loadOptions();
@@ -433,7 +445,7 @@ public final class ExamMetadataPane extends VBox {
 		}
 		try {
 			Path storedPath = pdfStore.importExamPdf(pendingPdfPath, input.subject().getName(), input.providerName(),
-					input.year());
+					input.year(), input.assessmentName());
 			ExamBooklet importedBooklet = createExamBooklet(input, storedPath);
 			booklet = importedBooklet;
 			currentPdfPath = storedPath;
@@ -442,7 +454,10 @@ public final class ExamMetadataPane extends VBox {
 			applyInputToControls(input);
 			selectedPdfLabel.setText(currentPdfPath.getFileName().toString());
 			examSubjectHandler.accept(input.subject());
-			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfDataRoot);
+
+			// Newly imported files are rooted at the application data root rather than
+			// the former dedicated PDF root.
+			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, managedDataLayout.dataRoot());
 			examPdfHandler.accept(selectedPdf);
 			selectionCursorHandler.accept(true);
 			return true;
@@ -628,8 +643,8 @@ public final class ExamMetadataPane extends VBox {
 		Path storedPath;
 		try {
 
-			// Always reopen the authoritative managed PDF, even when recognition began
-			// from an external byte-identical copy.
+			// The transitional store resolves both Subject-first and legacy persisted
+			// paths without changing their database representation.
 			storedPath = pdfStore.resolve(existingBooklet.getSourceDocument().getRelativePath());
 		} catch (IllegalArgumentException exception) {
 			showFileError(exception.getMessage());
@@ -651,7 +666,8 @@ public final class ExamMetadataPane extends VBox {
 		// retry does not attempt to classify the same persisted booklet twice.
 		pendingKnownBooklet = resolvedBooklet;
 		try {
-			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, pdfDataRoot);
+			Path selectedPdfRoot = selectedPdfRoot(resolvedBooklet.getSourceDocument().getRelativePath());
+			SelectedPdf selectedPdf = new SelectedPdf(storedPath.toFile(), storedPath, selectedPdfRoot);
 
 			// Format resolution is complete before the capture workspace is reset and the
 			// booklet becomes authoritative.
@@ -695,7 +711,7 @@ public final class ExamMetadataPane extends VBox {
 	}
 
 	private ExamBooklet createExamBooklet(ExamMetadataInput input, Path storedPath) throws SQLException, IOException {
-		String relativePath = pdfDataRoot.relativize(storedPath).toString();
+		String relativePath = pdfStore.relativePath(storedPath);
 
 		// Hash the final managed bytes so persistence describes the authoritative copy
 		// rather than merely the external source selected by the user.
@@ -783,13 +799,20 @@ public final class ExamMetadataPane extends VBox {
 	}
 
 	private ExamBooklet findKnownManagedBooklet(Path sourcePath) throws SQLException {
+		Path normalizedSource = sourcePath.toAbsolutePath().normalize();
 
-		// A direct persisted-path match is authoritative only for files beneath the
-		// configured PDF data root. External copies are handled separately later.
-		if (!sourcePath.startsWith(pdfDataRoot)) {
+		// New files persist paths relative to the application data root beneath the
+		// explicit subjects/ namespace.
+		if (normalizedSource.startsWith(managedDataLayout.subjectsRoot())) {
+			String relativePath = managedDataLayout.relativePath(normalizedSource);
+			return examWriter.findExamBookletBySourceDocumentPath(relativePath);
+		}
+
+		// Until migration, existing files retain their PDF-root-relative database path.
+		if (!normalizedSource.startsWith(pdfDataRoot)) {
 			return null;
 		}
-		String relativePath = pdfDataRoot.relativize(sourcePath).toString();
+		String relativePath = pdfDataRoot.relativize(normalizedSource).toString();
 		return examWriter.findExamBookletBySourceDocumentPath(relativePath);
 	}
 
@@ -871,6 +894,17 @@ public final class ExamMetadataPane extends VBox {
 			showDatabaseError(exception.getMessage());
 			return null;
 		}
+	}
+
+	private Path selectedPdfRoot(String relativePath) {
+		String portablePath = relativePath.replace('\\', '/');
+
+		// SelectedPdf must derive any relative path from the same root that owns the
+		// persisted SourceDocument representation.
+		if (portablePath.startsWith("subjects/")) {
+			return managedDataLayout.dataRoot();
+		}
+		return pdfDataRoot;
 	}
 
 	private void setKnownPdfMetadataMode(boolean knownPdf) {

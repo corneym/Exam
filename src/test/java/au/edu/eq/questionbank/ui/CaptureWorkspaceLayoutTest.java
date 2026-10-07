@@ -28,6 +28,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.model.AnswerFile;
@@ -738,7 +739,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		answerWriter.assignAnswerFile(booklet, answerFile);
 		answerWriter.insertAnswer(question, "Stored answer",
 				List.of(new AnswerRegion(answerFile, 1, 0.10, 0.10, 0.70, 0.20)));
-		Path managedPdf = new PdfStore(pdfDataRoot).resolve(answerFile.getSourceDocument().getRelativePath());
+		PdfStore pdfStore = new PdfStore(new ManagedDataLayout(applicationConfig.dataRoot()), pdfDataRoot);
+		Path managedPdf = pdfStore.resolve(answerFile.getSourceDocument().getRelativePath());
 		assertTrue(Files.isRegularFile(managedPdf));
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
@@ -817,7 +819,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 
 		// The successful Add path needs genuinely new content. Copying examPdf would
-		// correctly trigger #46 duplicate-content rejection instead.
+		// correctly trigger duplicate-content rejection instead.
 		Path answerSource = createPdf(pdfDataRoot.resolve("marking-guide.pdf"), 3);
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
@@ -848,6 +850,12 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		AnswerFile stored = answerFiles.getFirst();
 		assertEquals("Marking Guide", stored.getName());
 		assertTrue(stored.hasAnswerExplanations());
+		ManagedDataLayout managedDataLayout = new ManagedDataLayout(applicationConfig.dataRoot());
+		Path expectedPath = managedDataLayout.examDirectory(booklet.getExam().getSubject().getName(),
+				booklet.getExam().getProvider().getName(), booklet.getExam().getYear(), booklet.getExam().getName())
+				.resolve(answerSource.getFileName());
+		assertTrue(Files.isRegularFile(expectedPath));
+		assertEquals(managedDataLayout.relativePath(expectedPath), stored.getSourceDocument().getRelativePath());
 
 		// The normal persisted Answer row replaces the temporary editor after Save.
 		CheckBox persistedExplanations = lookup(robot, "#exam-assets-answer-explanations-" + stored.getId(),
@@ -868,7 +876,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
 
 		// Paper 2 must represent genuinely new source content. A byte-for-byte copy of
-		// the active booklet is now deliberately rejected by #46.
+		// the active booklet is deliberately rejected by duplicate-content protection.
 		Path questionSource = createPdf(pdfDataRoot.resolve("paper2.pdf"), 4);
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
@@ -918,6 +926,12 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, created.getQuestionFormat());
 		assertEquals(Integer.valueOf(12), created.getExpectedQuestionCount());
 		assertNotNull(created.getSourceDocument().getContentSha256());
+		ManagedDataLayout managedDataLayout = new ManagedDataLayout(applicationConfig.dataRoot());
+		Path expectedPath = managedDataLayout.examDirectory(created.getExam().getSubject().getName(),
+				created.getExam().getProvider().getName(), created.getExam().getYear(), created.getExam().getName())
+				.resolve(questionSource.getFileName());
+		assertTrue(Files.isRegularFile(expectedPath));
+		assertEquals(managedDataLayout.relativePath(expectedPath), created.getSourceDocument().getRelativePath());
 		RadioButton selected = lookup(robot, "#exam-assets-question-select-" + created.getId(), RadioButton.class);
 		assertTrue(selected.isSelected());
 
@@ -928,6 +942,18 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 		// Newly persisted Question booklets enter read-only inspection immediately.
 		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, displayedDocument);
+		Button useSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+		assertFalse(useSelected.isDisabled());
+		fireControl(robot, useSelected);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> examMetadataPane().getBooklet() != null
+				&& examMetadataPane().getBooklet().getId() == created.getId());
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Capture activation must resolve the newly persisted data-root-relative
+		// source,
+		// not reinterpret it beneath the former PDF root.
+		assertEquals(created.getId(), examMetadataPane().getBooklet().getId());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
 	}
 
 	@Test

@@ -20,6 +20,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -63,15 +64,15 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> unanswered.getSelectionModel().select(question));
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
-		PdfStore pdfStore = new PdfStore(pdfDataRoot);
-		Path originalExamPdf = pdfStore.resolve(originalBooklet.getSourceDocument().getRelativePath());
+		PdfStore legacyPdfStore = new PdfStore(pdfDataRoot);
+		Path originalExamPdf = legacyPdfStore.resolve(originalBooklet.getSourceDocument().getRelativePath());
 		assertTrue(Files.isRegularFile(originalExamPdf));
 
-		// Give the same Exam a distinct managed Answer PDF so both PDFBox sessions hold
-		// files that must be relocated.
+		// Give the same Exam a distinct legacy-managed Answer PDF so correction proves
+		// that both path generations are handled by the upgraded application.
 		Path answerSource = pdfDataRoot.resolve("answer-source.pdf");
 		Files.copy(examPdf, answerSource);
-		Path originalAnswerPdf = pdfStore.importExamPdf(answerSource, "Chemistry", "2022 QCAA", 2022);
+		Path originalAnswerPdf = legacyPdfStore.importExamPdf(answerSource, "Chemistry", "2022 QCAA", 2022);
 		SelectedPdf selectedAnswerPdf = new SelectedPdf(originalAnswerPdf.toFile(), originalAnswerPdf, pdfDataRoot);
 		WaitForAsyncUtils.asyncFx(() -> {
 			try {
@@ -93,7 +94,8 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		}).get();
-		Path correctedDirectory = pdfDataRoot.resolve("Chemistry").resolve("QCAA").resolve("2022");
+		ManagedDataLayout layout = new ManagedDataLayout(applicationConfig.dataRoot());
+		Path correctedDirectory = layout.examDirectory("Chemistry", "QCAA", 2022, "External Assessment");
 		Path correctedExamPdf = correctedDirectory.resolve(originalExamPdf.getFileName());
 		Path correctedAnswerPdf = correctedDirectory.resolve(originalAnswerPdf.getFileName());
 		assertFalse(Files.exists(originalExamPdf));
@@ -102,27 +104,27 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(Files.isRegularFile(correctedAnswerPdf));
 		assertEquals("QCAA", corrected.getProvider().getName());
 		assertEquals("External Assessment", corrected.getName());
+		String correctedExamRelativePath = layout.relativePath(correctedExamPdf);
+		String correctedAnswerRelativePath = layout.relativePath(correctedAnswerPdf);
 
-		// The active capture booklet must carry the same persistent identities but the
-		// newly authoritative SourceDocument path.
+		// The active capture booklet keeps its persistent identity while adopting the
+		// canonical data-root-relative Subject-first source path.
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
 		assertEquals(originalBooklet.getId(), activeBooklet.getId());
 		assertEquals(originalBooklet.getSourceDocument().getId(), activeBooklet.getSourceDocument().getId());
-		assertEquals(pdfDataRoot.relativize(correctedExamPdf).toString(),
-				activeBooklet.getSourceDocument().getRelativePath());
+		assertEquals(correctedExamRelativePath, activeBooklet.getSourceDocument().getRelativePath());
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteExamWriter examWriter = new SqliteExamWriter(database);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		ExamBooklet persistedBooklet = examWriter.findAllExamBooklets().stream()
 				.filter(candidate -> candidate.getId() == originalBooklet.getId()).findFirst().orElseThrow();
-		assertEquals(pdfDataRoot.relativize(correctedExamPdf).toString(),
-				persistedBooklet.getSourceDocument().getRelativePath());
-		assertEquals(pdfDataRoot.relativize(correctedAnswerPdf).toString(),
+		assertEquals(correctedExamRelativePath, persistedBooklet.getSourceDocument().getRelativePath());
+		assertEquals(correctedAnswerRelativePath,
 				answerWriter.findAnswerFiles(corrected).getFirst().getSourceDocument().getRelativePath());
 
 		// Both documents were closed before relocation and successfully reopened from
-		// their corrected locations. The document visible before correction is
-		// restored.
+		// their corrected Subject-first locations. The document visible before
+		// correction is restored.
 		assertNotNull(pdfWorkspace().getExamPdfSession());
 		assertNotNull(pdfWorkspace().getAnswerPdfSession());
 		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pdfWorkspace().getDisplayedDocument());

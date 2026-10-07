@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationPaths;
 import au.edu.eq.questionbank.ConfigurationException;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
@@ -120,6 +121,9 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumWorkbookStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
+import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
+import au.edu.eq.questionbank.service.migration.DataLayoutMigrationRequiredException;
+import au.edu.eq.questionbank.service.migration.DataLayoutMigrationStartupGuard;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
@@ -330,7 +334,39 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		try {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			// Database schema upgrades may occur before layout inspection, but no ordinary
+			// repository/UI workflow is allowed to use managed path semantics until the
+			// Subject-first guard is satisfied.
+			database.initialiseSchema();
+			new DataLayoutMigrationStartupGuard(config, database).requireCurrentLayout();
 			startApplication(stage, config);
+		} catch (DataLayoutMigrationRequiredException e) {
+			showStartupError("Data Migration Required", """
+					This data directory still uses managed files from the pre-Sprint-14 layout.
+
+					The application will not open it with mixed old and new path semantics.
+
+					Configuration:
+					%s
+
+					Data root:
+					%s
+
+					Run a migration dry-run using the application configuration:
+
+					  --config "%s" --dry-run
+
+					Resolve every reported blocker. If an old curriculum workbook is reported,
+					assign it explicitly with:
+
+					  --assign-workbook "<legacy-relative.xlsx>" "<Subject>" "<Version>"
+
+					Then run the same command using --apply.
+
+					%s
+					""".formatted(propertiesFile, config.dataRoot(), propertiesFile, e.getMessage()));
 		} catch (IncompatibleDatabaseException e) {
 			showStartupError("Database Upgrade Required", """
 					The existing question-bank database contains old development question data
@@ -343,6 +379,15 @@ public class QuestionBankApplication extends Application {
 
 					You will need to re-import the curriculum and exam data afterwards.
 					""".formatted(config.databasePath()));
+		} catch (IOException e) {
+			showStartupError("Data Migration Check Failed", """
+					The application could not verify the managed-data layout safely.
+
+					Data root:
+					%s
+
+					%s
+					""".formatted(config.dataRoot(), e.getMessage()));
 		} catch (SQLException e) {
 			showStartupError("Database Error", """
 					The question-bank database could not be opened or upgraded.
@@ -443,7 +488,7 @@ public class QuestionBankApplication extends Application {
 			}
 			return true;
 		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path pdfPath;
 		try {
 			pdfPath = pdfStore.resolve(question.getBooklet().getSourceDocument().getRelativePath());
@@ -1379,7 +1424,11 @@ public class QuestionBankApplication extends Application {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
-			List<LegacyBookletRequirement> missing = importer.findMissingBooklets(pending.workbookPath(),
+
+			// Pending intake always carries the retained managed workbook. Recheck must
+			// never fall back to the original external selection.
+			Path managedWorkbook = pending.managedWorkbookPath();
+			List<LegacyBookletRequirement> missing = importer.findMissingBooklets(managedWorkbook,
 					pending.subject().getName(), pending.syllabusVersion().getName());
 			if (!missing.isEmpty()) {
 				pendingLegacyQuestionImport = pending;
@@ -1387,7 +1436,7 @@ public class QuestionBankApplication extends Application {
 				// Workbook evidence identifies the exact provider/year/booklet identity
 				// required for import. Existing differently named booklets must be edited,
 				// not duplicated.
-				examAssetsPane.showLegacyImportRequirements(pending.syllabusVersion().getName(), pending.workbookPath(),
+				examAssetsPane.showLegacyImportRequirements(pending.syllabusVersion().getName(), managedWorkbook,
 						missing, () -> recheckPendingLegacyQuestionImport(primaryStage, config),
 						this::cancelPendingLegacyQuestionImport);
 				if (recheck) {
@@ -1400,8 +1449,9 @@ public class QuestionBankApplication extends Application {
 			}
 
 			// Once every authoritative booklet identity resolves, Recheck and Import
-			// immediately performs the existing atomic metadata import.
-			LegacyQuestionImportResult importResult = importer.importWorkbook(pending.workbookPath(),
+			// immediately performs the existing atomic metadata import from the retained
+			// managed source.
+			LegacyQuestionImportResult importResult = importer.importWorkbook(managedWorkbook,
 					pending.subject().getName(), pending.syllabusVersion().getName());
 
 			// The structural preflight is complete. Remove its presentation while retaining
@@ -1413,7 +1463,7 @@ public class QuestionBankApplication extends Application {
 			// large post-import repository read cannot block JavaFX.
 			startLegacyQuestionCaptureRefresh(pending.subject(), importResult);
 		} catch (IOException exception) {
-			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the retained Excel workbook.",
 					exception.getMessage());
 		} catch (SQLException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not save the Question metadata.",
@@ -1602,6 +1652,16 @@ public class QuestionBankApplication extends Application {
 		return examMenu;
 	}
 
+	private PdfStore createExamPdfStore(ApplicationConfig config) {
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+
+		// Sprint 14 writes new paths relative to dataRoot while retaining read access
+		// to pre-migration paths relative to the former dedicated PDF root.
+		return new PdfStore(new ManagedDataLayout(config.dataRoot()), config.pdfDataRoot());
+	}
+
 	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu exportMenu = createMenu("E_xport");
 		revisionExportMenuItem = createMenuItem("_Revision HTML...",
@@ -1762,7 +1822,7 @@ public class QuestionBankApplication extends Application {
 		// exceptions while constructing the revision corpus.
 		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
 				outputApplicabilityRepository);
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		QuestionExtractor extractor = new QuestionExtractor();
 		return new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
 				new RevisionQuestionAssetRenderer(pdfStore, extractor),
@@ -1857,7 +1917,7 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		try {
-			new PdfStore(config.pdfDataRoot()).deleteManagedPdf(result.relativePath());
+			createExamPdfStore(config).deleteManagedPdf(result.relativePath());
 		} catch (IOException | IllegalArgumentException exception) {
 
 			// Database deletion is already committed. Report the orphaned physical file
@@ -2374,9 +2434,9 @@ public class QuestionBankApplication extends Application {
 		// Cross-type duplication is also unsafe: an Answer add must not silently reuse
 		// bytes already managed as a Question booklet or another Answer asset.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Answer booklet");
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
-				exam.getYear());
+				exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
 		if (!sourceHash.equals(storedHash)) {
 
@@ -2384,8 +2444,7 @@ public class QuestionBankApplication extends Application {
 			// source that passed duplicate detection.
 			throw new IOException("Answer booklet PDF changed while it was being copied");
 		}
-		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
-		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
+		String relativePath = pdfStore.relativePath(storedPath);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
 
 		// Creation and explanation metadata are persisted only after duplicate and byte
@@ -2414,10 +2473,10 @@ public class QuestionBankApplication extends Application {
 			CurriculumExcelImporter excelImporter = new CurriculumExcelImporter();
 			List<CurriculumImportRow> rows = excelImporter.read(selectedWorkbook);
 
-			// Curriculum workbooks are application data. A user may select the source from
-			// anywhere, but a successful import retains a managed copy beneath the
-			// configured curriculum root.
-			new CurriculumWorkbookStore(config.curriculumDataRoot()).manageWorkbook(selectedWorkbook);
+			// A curriculum source may be selected from anywhere, but its retained copy
+			// belongs to the authoritative Subject and syllabus-version directory.
+			new CurriculumWorkbookStore(new ManagedDataLayout(config.dataRoot())).manageWorkbook(subject.getName(),
+					dialog.getVersionName(), selectedWorkbook);
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 			SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
@@ -2466,23 +2525,35 @@ public class QuestionBankApplication extends Application {
 			Optional<ButtonType> result = dialog.showAndWait();
 			if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 
-				// Dashboard owns legacy intake, so cancelling the initial dialog abandons the
-				// intake transaction and restores the operational home.
+				// Dashboard owns legacy intake, so cancelling the initial dialog abandons
+				// the intake transaction and restores the operational home.
 				cancelPendingLegacyQuestionImport();
 				return;
 			}
+			SyllabusVersion syllabusVersion = dialog.getSelectedSyllabusVersion();
 
-			// Freeze the complete intake context before preflight. Subsequent Exam/Assets
-			// editing must not alter which Subject, syllabus or workbook is being imported.
-			PendingLegacyQuestionImport pending = new PendingLegacyQuestionImport(subject,
-					dialog.getSelectedSyllabusVersion(), dialog.getSelectedFile());
+			// Retain provenance before any preflight or database import begins. From this
+			// point onward the workflow deliberately forgets the external source path.
+			LegacyQuestionWorkbookStore workbookStore = new LegacyQuestionWorkbookStore(
+					new ManagedDataLayout(config.dataRoot()));
+			Path managedWorkbook = workbookStore.manageWorkbook(subject.getName(), syllabusVersion.getName(),
+					dialog.getSelectedFile());
+
+			// Freeze the complete intake context using the managed workbook. Recheck and
+			// eventual import therefore survive removal of the original external file.
+			PendingLegacyQuestionImport pending = new PendingLegacyQuestionImport(subject, syllabusVersion,
+					managedWorkbook);
 			continueLegacyQuestionImport(primaryStage, config, pending);
+		} catch (IOException exception) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not retain the legacy Question workbook.",
+					exception.getMessage());
+
+			// Copy failure occurs before preflight/import and therefore abandons the
+			// Dashboard-owned intake without touching Question metadata.
+			cancelPendingLegacyQuestionImport();
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import could not start.",
 					exception.getMessage());
-
-			// Failed Dashboard-owned intake should not strand the user in the structural
-			// workspace after the modal workflow has ended.
 			cancelPendingLegacyQuestionImport();
 		}
 	}
@@ -2509,12 +2580,11 @@ public class QuestionBankApplication extends Application {
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 
 		// Detect byte-identical managed material before PdfStore creates another
-		// managed
-		// file with a different filename.
+		// managed file with a different filename.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Question booklet");
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
-				exam.getYear());
+				exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
 		if (!sourceHash.equals(storedHash)) {
 
@@ -2522,8 +2592,7 @@ public class QuestionBankApplication extends Application {
 			// Do not publish a SourceDocument identity based on inconsistent evidence.
 			throw new IOException("Question booklet PDF changed while it was being copied");
 		}
-		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
-		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
+		String relativePath = pdfStore.relativePath(storedPath);
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
 
 		// Persistence receives the verified final managed-byte identity.
@@ -2538,8 +2607,9 @@ public class QuestionBankApplication extends Application {
 		// The selector receives application-level Subject creation through the same
 		// database used by the rest of the capture workflow.
 		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
-		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter, config.pdfDataRoot(),
-				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
+		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter,
+				new ManagedDataLayout(config.dataRoot()), config.pdfDataRoot(), this::openAnswerPdf,
+				() -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
 				this::allowAnswerCaptureTransition, examMetadataPane::getBooklet,
 				() -> clearCaptureSelection(CaptureSelectionOwner.ANSWER), questionExtractor,
 				pdfWorkspace::getAnswerPdfSession,
@@ -2589,7 +2659,7 @@ public class QuestionBankApplication extends Application {
 		// The embedded Dashboard reuses the same authoritative repositories as capture
 		// and Exam / Assets rather than constructing a parallel corpus model.
 		corpusDashboardAuditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
-				new PdfStore(config.pdfDataRoot()));
+				createExamPdfStore(config));
 		initialiseExamAssetsWorkflow(primaryStage, config, database, answerWriter);
 		initialiseCapturePanes(primaryStage, config, database, sourceQuestionRepository, questionCaptureService,
 				legacyQuestionSplitService, answerWriter);
@@ -2605,11 +2675,11 @@ public class QuestionBankApplication extends Application {
 		// use one set of reusable metadata suggestions.
 		ExamMetadataOptionsRepository examMetadataOptionsRepository = new ExamMetadataOptionsRepository();
 		ExamMetadataCorrectionService examMetadataCorrectionService = new ExamMetadataCorrectionService(
-				config.pdfDataRoot(), examWriter, answerWriter);
-		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
-				examMetadataOptionsRepository, examImporter, examWriter, examMetadataCorrectionService,
-				this::allowExamImportConfirmation, this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled,
-				this::activateExamBookletSubject);
+				new ManagedDataLayout(config.dataRoot()), config.pdfDataRoot(), examWriter, answerWriter);
+		examMetadataPane = new ExamMetadataPane(primaryStage, new ManagedDataLayout(config.dataRoot()),
+				config.pdfDataRoot(), curriculumSelectionModel, examMetadataOptionsRepository, examImporter, examWriter,
+				examMetadataCorrectionService, this::allowExamImportConfirmation, this::openExamPdf,
+				pdfWorkspace::setSelectionCursorEnabled, this::activateExamBookletSubject);
 
 		// The new main-window Exam/Assets workspace reads the same authoritative
 		// repositories as the transitional modal Exam Setup workflow.
@@ -2915,7 +2985,7 @@ public class QuestionBankApplication extends Application {
 		}
 		SqliteCurriculumAuthoringWriter authoringWriter = new SqliteCurriculumAuthoringWriter(database);
 		CurriculumSourcePdfService sourcePdfService = new CurriculumSourcePdfService(
-				new CurriculumSourcePdfStore(config.curriculumDataRoot()),
+				new CurriculumSourcePdfStore(new ManagedDataLayout(config.dataRoot()), config.curriculumDataRoot()),
 				new SqliteCurriculumSourcePdfRepository(database));
 		CurriculumLifecycleService lifecycleService = new CurriculumLifecycleService(authoringWriter,
 				new SqliteCurriculumLifecycleRepository(database), Clock.systemUTC());
@@ -3115,7 +3185,8 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		AnswerPdfReplacementService replacementService = new AnswerPdfReplacementService(
-				new SqliteDatabase(config.databasePath()), config.pdfDataRoot());
+				new SqliteDatabase(config.databasePath()), new ManagedDataLayout(config.dataRoot()),
+				config.pdfDataRoot());
 		try {
 			AnswerFileReassignmentService.Impact impact = replacementService.assess(activeBooklet);
 			if (!confirmAnswerPdfReplacement(primaryStage, activeBooklet, impact)) {
@@ -3190,7 +3261,8 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		QuestionBookletPdfReplacementService replacementService = new QuestionBookletPdfReplacementService(
-				new SqliteDatabase(config.databasePath()), config.pdfDataRoot());
+				new SqliteDatabase(config.databasePath()), new ManagedDataLayout(config.dataRoot()),
+				config.pdfDataRoot());
 		try {
 			QuestionBookletPdfReplacementService.Impact impact = replacementService.assess(activeBooklet);
 			if (!confirmQuestionPdfReplacement(primaryStage, activeBooklet, impact)) {
@@ -3214,7 +3286,7 @@ public class QuestionBankApplication extends Application {
 				}
 				throw exception;
 			}
-			Path managedPath = new PdfStore(config.pdfDataRoot())
+			Path managedPath = createExamPdfStore(config)
 					.resolve(result.booklet().getSourceDocument().getRelativePath());
 
 			// Refresh the in-memory booklet before reopening the managed source so the
@@ -3341,7 +3413,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Path resolveQuestionBookletCapturePath(ExamBooklet booklet, ApplicationConfig config) {
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath;
 		try {
 
@@ -3966,7 +4038,7 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamImportConfirmation()) {
 			return false;
 		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath;
 		try {
 
@@ -4292,7 +4364,7 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(questionRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(config.pdfDataRoot()),
+		QuestionPreviewService previewService = new QuestionPreviewService(createExamPdfStore(config),
 				questionExtractor);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
 		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
@@ -5127,12 +5199,12 @@ public class QuestionBankApplication extends Application {
 		if (config == null) {
 			throw new NullPointerException("config");
 		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+
+		// Inspection must read both new data-root-relative paths and legacy
+		// PDF-root-relative paths during the Sprint 14 migration transition.
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath;
 		try {
-
-			// Resolve only through the managed PDF root so Exam/Assets never opens an
-			// arbitrary external path recorded outside application storage.
 			storedPath = pdfStore.resolve(relativePath);
 		} catch (IllegalArgumentException exception) {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets",
@@ -5146,8 +5218,8 @@ public class QuestionBankApplication extends Application {
 		}
 		try {
 
-			// VIEWER mode disables region capture but, unlike the old modal inspection
-			// workflow, the Exam/Assets pane remains visible beside the shared PDF pane.
+			// VIEWER mode disables region capture but leaves Exam/Assets visible beside
+			// the shared PDF pane.
 			pdfWorkspace.openViewerPdf(storedPath);
 		} catch (RuntimeException exception) {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The " + assetDescription + " could not be opened.",
@@ -5229,7 +5301,8 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion, Path workbookPath) {
+	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion,
+			Path managedWorkbookPath) {
 
 		private PendingLegacyQuestionImport {
 			if (subject == null) {
@@ -5238,8 +5311,8 @@ public class QuestionBankApplication extends Application {
 			if (syllabusVersion == null) {
 				throw new NullPointerException("syllabusVersion");
 			}
-			if (workbookPath == null) {
-				throw new NullPointerException("workbookPath");
+			if (managedWorkbookPath == null) {
+				throw new NullPointerException("managedWorkbookPath");
 			}
 
 			// The historical syllabus must belong to the same authoritative Subject as

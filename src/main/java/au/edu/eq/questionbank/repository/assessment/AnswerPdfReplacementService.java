@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -31,18 +32,47 @@ import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
  */
 public final class AnswerPdfReplacementService {
 
-	private final Path pdfRoot;
-	private final PdfStore pdfStore;
-	private final SourceDocumentHashService hashService;
-	private final SqliteExamWriter examWriter;
 	private final SqliteAnswerWriter answerWriter;
+	private final SqliteExamWriter examWriter;
+	private final SourceDocumentHashService hashService;
+	private final ManagedDataLayout managedDataLayout;
+	private final PdfStore pdfStore;
 	private final AnswerFileReassignmentService reassignmentService;
 
 	/**
-	 * Creates an Answer-PDF replacement service.
+	 * Creates an Answer-PDF replacement service supporting Subject-first and legacy
+	 * persisted paths during migration.
+	 *
+	 * @param database          question-bank database
+	 * @param managedDataLayout canonical application managed-data layout
+	 * @param legacyPdfRoot     former dedicated Exam PDF root
+	 * @throws NullPointerException if any argument is {@code null}
+	 */
+	public AnswerPdfReplacementService(SqliteDatabase database, ManagedDataLayout managedDataLayout,
+			Path legacyPdfRoot) {
+		if (database == null) {
+			throw new NullPointerException("database");
+		}
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
+		}
+		if (legacyPdfRoot == null) {
+			throw new NullPointerException("legacyPdfRoot");
+		}
+		examWriter = new SqliteExamWriter(database);
+		answerWriter = new SqliteAnswerWriter(database, examWriter);
+		hashService = new SourceDocumentHashService();
+		this.managedDataLayout = managedDataLayout;
+		pdfStore = new PdfStore(managedDataLayout, legacyPdfRoot);
+		reassignmentService = new AnswerFileReassignmentService(database);
+	}
+
+	/**
+	 * Creates an Answer-PDF replacement service using the legacy PDF-root-relative
+	 * storage contract.
 	 *
 	 * @param database question-bank database
-	 * @param pdfRoot  managed Exam PDF root
+	 * @param pdfRoot  legacy managed Exam PDF root
 	 * @throws NullPointerException if either argument is {@code null}
 	 */
 	public AnswerPdfReplacementService(SqliteDatabase database, Path pdfRoot) {
@@ -52,12 +82,12 @@ public final class AnswerPdfReplacementService {
 		if (pdfRoot == null) {
 			throw new NullPointerException("pdfRoot");
 		}
-		this.pdfRoot = pdfRoot.toAbsolutePath().normalize();
-		this.pdfStore = new PdfStore(this.pdfRoot);
-		this.hashService = new SourceDocumentHashService();
-		this.examWriter = new SqliteExamWriter(database);
-		this.answerWriter = new SqliteAnswerWriter(database, examWriter);
-		this.reassignmentService = new AnswerFileReassignmentService(database);
+		examWriter = new SqliteExamWriter(database);
+		answerWriter = new SqliteAnswerWriter(database, examWriter);
+		hashService = new SourceDocumentHashService();
+		managedDataLayout = null;
+		pdfStore = new PdfStore(pdfRoot);
+		reassignmentService = new AnswerFileReassignmentService(database);
 	}
 
 	/**
@@ -154,7 +184,7 @@ public final class AnswerPdfReplacementService {
 			cleanupUnregisteredCopy(managedCopy, failure);
 			throw failure;
 		}
-		String relativePath = pdfRoot.relativize(managedCopy.path()).toString();
+		String relativePath = pdfStore.relativePath(managedCopy.path());
 		AnswerFile replacementFile;
 		try {
 
@@ -208,8 +238,20 @@ public final class AnswerPdfReplacementService {
 	}
 
 	private ManagedCopy copyIntoManagedStore(Exam exam, Path source, String contentSha256) throws IOException {
-		Path standardDestination = pdfStore.managedDestination(source, exam.getSubject().getName(),
-				exam.getProvider().getName(), exam.getYear());
+		Path standardDestination;
+		if (managedDataLayout == null) {
+
+			// Legacy callers retain their established PDF-root-relative destination until
+			// the existing-install migration rewrites their persisted paths.
+			standardDestination = pdfStore.managedDestination(source, exam.getSubject().getName(),
+					exam.getProvider().getName(), exam.getYear());
+		} else {
+
+			// Every replacement asset newly created by the upgraded application belongs
+			// to the complete Subject/Exam identity, including Assessment.
+			standardDestination = pdfStore.managedDestination(source, exam.getSubject().getName(),
+					exam.getProvider().getName(), exam.getYear(), exam.getName());
+		}
 		Files.createDirectories(standardDestination.getParent());
 		if (source.equals(standardDestination)) {
 			return new ManagedCopy(standardDestination, false);

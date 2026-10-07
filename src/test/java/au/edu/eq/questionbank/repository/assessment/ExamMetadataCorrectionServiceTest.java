@@ -12,11 +12,13 @@ import java.sql.SQLException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
@@ -142,6 +144,55 @@ class ExamMetadataCorrectionServiceTest {
 		assertTrue(Files.isDirectory(oldDirectory));
 		assertTrue(Files.isDirectory(oldDirectory.getParent()));
 		assertTrue(Files.isDirectory(fixture.pdfRoot()));
+	}
+
+	@Test
+	void subjectFirstCorrectionRelocatesAllSourcesUsingCorrectedExamIdentity() throws Exception {
+		Path dataRoot = Files.createDirectories(tempDirectory.resolve("subject-first-correction"));
+		Path legacyPdfRoot = dataRoot.resolve("pdf");
+		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
+		PdfStore pdfStore = new PdfStore(layout, legacyPdfRoot);
+		SqliteDatabase database = new SqliteDatabase(dataRoot.resolve("questionbank.db"));
+		database.initialiseSchema();
+		Subject subject = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		ExamProvider provider = examWriter.insertExamProvider("2022 QCAA");
+		Exam exam = examWriter.insertExam(subject, provider, 2022, "Old Assessment");
+		Path questionSource = tempDirectory.resolve("correction-question.pdf");
+		Path answerSource = tempDirectory.resolve("correction-answer.pdf");
+		Files.writeString(questionSource, "question bytes");
+		Files.writeString(answerSource, "answer bytes");
+		Path questionPdf = pdfStore.importExamPdf(questionSource, "Chemistry", "2022 QCAA", 2022, "Old Assessment");
+		Path answerPdf = pdfStore.importExamPdf(answerSource, "Chemistry", "2022 QCAA", 2022, "Old Assessment");
+		SourceDocument questionDocument = examWriter.insertSourceDocument(pdfStore.relativePath(questionPdf));
+		ExamBooklet booklet = examWriter.insertExamBooklet(exam, questionDocument, "Paper 1");
+		var answerFile = answerWriter.findOrCreateAnswerFile(exam, "Answers", pdfStore.relativePath(answerPdf));
+		ExamMetadataCorrectionService service = new ExamMetadataCorrectionService(layout, legacyPdfRoot, examWriter,
+				answerWriter);
+		ExamMetadataCorrectionService.Result result = service.correct(exam, "QCAA", 2025, "External Assessment");
+		Path correctedDirectory = layout.examDirectory("Chemistry", "QCAA", 2025, "External Assessment");
+		Path correctedQuestionPdf = correctedDirectory.resolve(questionSource.getFileName());
+		Path correctedAnswerPdf = correctedDirectory.resolve(answerSource.getFileName());
+		assertFalse(Files.exists(questionPdf));
+		assertFalse(Files.exists(answerPdf));
+		assertEquals("question bytes", Files.readString(correctedQuestionPdf));
+		assertEquals("answer bytes", Files.readString(correctedAnswerPdf));
+		assertEquals("QCAA", result.exam().getProvider().getName());
+		assertEquals(2025, result.exam().getYear());
+		assertEquals("External Assessment", result.exam().getName());
+		ExamBooklet correctedBooklet = examWriter.findAllExamBooklets().stream()
+				.filter(candidate -> candidate.getId() == booklet.getId()).findFirst().orElseThrow();
+		assertEquals(questionDocument.getId(), correctedBooklet.getSourceDocument().getId());
+		assertEquals(layout.relativePath(correctedQuestionPdf), correctedBooklet.getSourceDocument().getRelativePath());
+		var correctedAnswerFile = answerWriter.findAnswerFiles(result.exam()).getFirst();
+		assertEquals(answerFile.getSourceDocument().getId(), correctedAnswerFile.getSourceDocument().getId());
+		assertEquals(layout.relativePath(correctedAnswerPdf),
+				correctedAnswerFile.getSourceDocument().getRelativePath());
+
+		// The old Assessment hierarchy must be removed once all of its managed sources
+		// have moved successfully.
+		assertFalse(Files.exists(layout.examDirectory("Chemistry", "2022 QCAA", 2022, "Old Assessment")));
 	}
 
 	private Fixture createFixture(String databaseName) throws Exception {

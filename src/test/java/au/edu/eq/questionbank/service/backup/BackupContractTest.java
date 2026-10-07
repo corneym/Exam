@@ -35,10 +35,10 @@ class BackupContractTest {
 	}
 
 	@Test
-	void currentManifestUsesBackupFormatVersionOne() {
+	void currentManifestUsesBackupFormatVersionTwo() {
 		Instant createdAt = Instant.parse("2026-09-04T08:00:00Z");
 		BackupManifest manifest = BackupManifest.current(BackupKind.AUTOMATIC_DATABASE, createdAt, 4, "0.0.1-SNAPSHOT");
-		assertEquals(1, manifest.formatVersion());
+		assertEquals(2, manifest.formatVersion());
 		assertEquals(BackupKind.AUTOMATIC_DATABASE, manifest.kind());
 		assertEquals(createdAt, manifest.createdAt());
 		assertEquals(4, manifest.databaseSchemaVersion());
@@ -47,8 +47,8 @@ class BackupContractTest {
 	}
 
 	@Test
-	void fullBackupKindDefinesCompleteManagedPackageContract() {
-		assertEquals(List.of("backup-manifest.properties", "questionbank.db", "pdf/", "curriculum/"),
+	void fullBackupKindDefinesSubjectFirstManagedPackageContract() {
+		assertEquals(List.of("backup-manifest.properties", "questionbank.db", "subjects/"),
 				BackupKind.FULL.requiredArchiveEntries());
 	}
 

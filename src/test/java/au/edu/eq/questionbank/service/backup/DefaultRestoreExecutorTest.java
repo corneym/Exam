@@ -28,7 +28,7 @@ class DefaultRestoreExecutorTest {
 	Path tempDir;
 
 	@Test
-	void databaseOnlyRestorePreservesManagedData() throws Exception {
+	void databaseOnlyRestorePreservesManagedSubjectData() throws Exception {
 		ApplicationConfig sourceConfig = createDataSet("source", "Restored Chemistry", "unused-pdf",
 				"unused-curriculum");
 		BackupResult databaseBackup = new DefaultBackupService(sourceConfig, "Test")
@@ -39,12 +39,14 @@ class DefaultRestoreExecutorTest {
 			new DefaultRestoreExecutor(targetConfig, "Test").applyRestore(preparation, new CountingCloseable());
 		}
 		assertEquals("Restored Chemistry", readOnlySubjectName(targetConfig.databasePath()));
-		assertEquals("keep-pdf", Files.readString(targetConfig.pdfDataRoot().resolve("exam.pdf")));
-		assertEquals("keep-curriculum", Files.readString(targetConfig.curriculumDataRoot().resolve("curriculum.txt")));
+		assertEquals("keep-pdf", Files.readString(
+				targetConfig.dataRoot().resolve("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
+		assertEquals("keep-curriculum", Files.readString(
+				targetConfig.dataRoot().resolve("subjects/Chemistry/curriculum/2025/sources/curriculum.txt")));
 	}
 
 	@Test
-	void failedReplacementRollsBackOriginalData() throws Exception {
+	void failedReplacementRollsBackOriginalDatabaseAndSubjectTree() throws Exception {
 		ApplicationConfig sourceConfig = createDataSet("source", "New Chemistry", "new-pdf", "new-curriculum");
 		BackupResult sourceBackup = new DefaultBackupService(sourceConfig, "Test")
 				.createBackup(BackupRequest.full(tempDir.resolve("source-backups")));
@@ -52,8 +54,8 @@ class DefaultRestoreExecutorTest {
 		DefaultRestoreService restoreService = new DefaultRestoreService(targetConfig);
 		try (RestorePreparation preparation = restoreService.prepareRestore(sourceBackup.backupPath())) {
 
-			// Simulate failure after successful preparation. Managed roots will already
-			// have been published before database validation detects this corruption.
+			// Managed data is published before the database. Corrupting the staged
+			// database therefore exercises rollback after the Subject tree changed.
 			Files.writeString(preparation.databasePath(), "deliberately corrupt");
 			RestoreException exception = assertThrows(RestoreException.class,
 					() -> new DefaultRestoreExecutor(targetConfig, "Test").applyRestore(preparation,
@@ -61,67 +63,87 @@ class DefaultRestoreExecutorTest {
 			assertTrue(exception.applicationMustExit());
 		}
 		assertEquals("Old Chemistry", readOnlySubjectName(targetConfig.databasePath()));
-		assertEquals("old-pdf", Files.readString(targetConfig.pdfDataRoot().resolve("exam.pdf")));
-		assertEquals("old-curriculum", Files.readString(targetConfig.curriculumDataRoot().resolve("curriculum.txt")));
+		assertEquals("old-pdf", Files.readString(
+				targetConfig.dataRoot().resolve("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
+		assertEquals("old-curriculum", Files.readString(
+				targetConfig.dataRoot().resolve("subjects/Chemistry/curriculum/2025/sources/curriculum.txt")));
+		assertEquals("legacy-Old Chemistry",
+				Files.readString(targetConfig.dataRoot().resolve("subjects/Chemistry/legacy/2019/questions.xlsx")));
 	}
 
 	@Test
-	void fullRestoreReplacesDatabaseAndManagedDataAndCreatesSafetyBackup() throws Exception {
+	void fullRestoreReplacesDatabaseAndCompleteSubjectTreeAndCreatesSafetyBackup() throws Exception {
 		ApplicationConfig sourceConfig = createDataSet("source", "Restored Chemistry", "new-pdf", "new-curriculum");
 		BackupResult sourceBackup = new DefaultBackupService(sourceConfig, "Test")
 				.createBackup(BackupRequest.full(tempDir.resolve("source-backups")));
 		ApplicationConfig targetConfig = createDataSet("target", "Original Chemistry", "old-pdf", "old-curriculum");
-		DefaultRestoreService restoreService = new DefaultRestoreService(targetConfig);
+
+		// This file does not exist in the source backup. Replacing the complete
+		// Subject tree must remove it.
+		Path stale = targetConfig.dataRoot().resolve("subjects/Chemistry/exams/stale.txt");
+		Files.createDirectories(stale.getParent());
+		Files.writeString(stale, "stale");
 		CountingCloseable resources = new CountingCloseable();
-		try (RestorePreparation preparation = restoreService.prepareRestore(sourceBackup.backupPath())) {
+		try (RestorePreparation preparation = new DefaultRestoreService(targetConfig)
+				.prepareRestore(sourceBackup.backupPath())) {
 			RestoreResult result = new DefaultRestoreExecutor(targetConfig, "Test").applyRestore(preparation,
 					resources);
 			assertEquals(1, resources.closeCount);
 			assertEquals(BackupKind.FULL, result.restoredManifest().kind());
+			assertEquals(2, result.restoredManifest().formatVersion());
 			assertTrue(Files.isRegularFile(result.safetyBackupPath()));
-			assertEquals("new-pdf", Files.readString(targetConfig.pdfDataRoot().resolve("exam.pdf")));
-			assertEquals("new-curriculum",
-					Files.readString(targetConfig.curriculumDataRoot().resolve("curriculum.txt")));
-			assertEquals("Restored Chemistry", readOnlySubjectName(targetConfig.databasePath()));
 		}
+		assertEquals("new-pdf", Files.readString(
+				targetConfig.dataRoot().resolve("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
+		assertEquals("new-curriculum", Files.readString(
+				targetConfig.dataRoot().resolve("subjects/Chemistry/curriculum/2025/sources/curriculum.txt")));
+		assertEquals("legacy-Restored Chemistry",
+				Files.readString(targetConfig.dataRoot().resolve("subjects/Chemistry/legacy/2019/questions.xlsx")));
+		assertFalse(Files.exists(stale));
+		assertEquals("Restored Chemistry", readOnlySubjectName(targetConfig.databasePath()));
 	}
 
 	@Test
-	void preRestoreSafetyBackupContainsOriginalData() throws Exception {
+	void preRestoreSafetyBackupContainsOriginalSubjectData() throws Exception {
 		ApplicationConfig sourceConfig = createDataSet("source", "New Chemistry", "new-pdf", "new-curriculum");
 		BackupResult sourceBackup = new DefaultBackupService(sourceConfig, "Test")
 				.createBackup(BackupRequest.full(tempDir.resolve("source-backups")));
 		ApplicationConfig targetConfig = createDataSet("target", "Old Chemistry", "old-pdf", "old-curriculum");
-		DefaultRestoreService restoreService = new DefaultRestoreService(targetConfig);
 		Path safetyBackupPath;
-		try (RestorePreparation preparation = restoreService.prepareRestore(sourceBackup.backupPath())) {
+		try (RestorePreparation preparation = new DefaultRestoreService(targetConfig)
+				.prepareRestore(sourceBackup.backupPath())) {
 			RestoreResult result = new DefaultRestoreExecutor(targetConfig, "Test").applyRestore(preparation,
 					new CountingCloseable());
 			safetyBackupPath = result.safetyBackupPath();
 		}
-		try (RestorePreparation safetyPreparation = restoreService.prepareRestore(safetyBackupPath)) {
+		try (RestorePreparation safetyPreparation = new DefaultRestoreService(targetConfig)
+				.prepareRestore(safetyBackupPath)) {
 			assertEquals(BackupKind.FULL, safetyPreparation.manifest().kind());
-			assertEquals("old-pdf", Files.readString(safetyPreparation.pdfRoot().resolve("exam.pdf")));
+			assertEquals("old-pdf", Files.readString(safetyPreparation.subjectsRoot()
+					.resolve("Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
+			assertEquals("legacy-Old Chemistry",
+					Files.readString(safetyPreparation.subjectsRoot().resolve("Chemistry/legacy/2019/questions.xlsx")));
 			assertEquals("Old Chemistry", readOnlySubjectName(safetyPreparation.databasePath()));
 		}
 	}
 
 	@Test
-	void resourceCloseFailureLeavesCurrentDataUntouched() throws Exception {
+	void resourceCloseFailureLeavesCurrentSubjectDataUntouched() throws Exception {
 		ApplicationConfig sourceConfig = createDataSet("source", "New Chemistry", "new-pdf", "new-curriculum");
 		BackupResult sourceBackup = new DefaultBackupService(sourceConfig, "Test")
 				.createBackup(BackupRequest.full(tempDir.resolve("source-backups")));
 		ApplicationConfig targetConfig = createDataSet("target", "Old Chemistry", "old-pdf", "old-curriculum");
 		CountingCloseable resources = new CountingCloseable();
 		resources.failOnClose = true;
-		DefaultRestoreService restoreService = new DefaultRestoreService(targetConfig);
-		try (RestorePreparation preparation = restoreService.prepareRestore(sourceBackup.backupPath())) {
+		try (RestorePreparation preparation = new DefaultRestoreService(targetConfig)
+				.prepareRestore(sourceBackup.backupPath())) {
 			RestoreException exception = assertThrows(RestoreException.class,
 					() -> new DefaultRestoreExecutor(targetConfig, "Test").applyRestore(preparation, resources));
 			assertTrue(exception.applicationMustExit());
 		}
 		assertEquals("Old Chemistry", readOnlySubjectName(targetConfig.databasePath()));
-		assertEquals("old-pdf", Files.readString(targetConfig.pdfDataRoot().resolve("exam.pdf")));
+		assertEquals("old-pdf", Files.readString(
+				targetConfig.dataRoot().resolve("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
 		Path safetyDirectory = targetConfig.dataRoot().resolve("backups").resolve("pre-restore");
 		try (Stream<Path> stream = Files.list(safetyDirectory)) {
 			assertEquals(1, stream.filter(Files::isRegularFile).count());
@@ -191,10 +213,16 @@ class DefaultRestoreExecutorTest {
 	private ApplicationConfig createDataSet(String directoryName, String subjectName, String pdfContents,
 			String curriculumContents) throws Exception {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve(directoryName));
-		Files.createDirectories(config.pdfDataRoot());
-		Files.createDirectories(config.curriculumDataRoot());
-		Files.writeString(config.pdfDataRoot().resolve("exam.pdf"), pdfContents);
-		Files.writeString(config.curriculumDataRoot().resolve("curriculum.txt"), curriculumContents);
+		Path subjectsRoot = config.dataRoot().resolve("subjects");
+		Path exam = subjectsRoot.resolve("Chemistry/exams/QCAA/2025/External Assessment/exam.pdf");
+		Path curriculum = subjectsRoot.resolve("Chemistry/curriculum/2025/sources/curriculum.txt");
+		Path legacy = subjectsRoot.resolve("Chemistry/legacy/2019/questions.xlsx");
+		Files.createDirectories(exam.getParent());
+		Files.createDirectories(curriculum.getParent());
+		Files.createDirectories(legacy.getParent());
+		Files.writeString(exam, pdfContents);
+		Files.writeString(curriculum, curriculumContents);
+		Files.writeString(legacy, "legacy-" + subjectName);
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {

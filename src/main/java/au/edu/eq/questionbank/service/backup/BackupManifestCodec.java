@@ -16,16 +16,11 @@ import java.util.Properties;
  * Reads and writes the versioned properties manifest stored in a backup
  * archive.
  * <p>
- * Version 1 uses a deterministic UTF-8 properties representation without the
- * timestamp comment normally added by {@link Properties#store}.
+ * Format 2 uses a deterministic UTF-8 properties representation without the
+ * timestamp comment normally added by {@link Properties#store}. Earlier backup
+ * formats are deliberately unsupported.
  */
 public final class BackupManifestCodec {
-
-	/**
-	 * Creates a codec for the backup manifest properties format.
-	 */
-	public BackupManifestCodec() {
-	}
 
 	private static final String APPLICATION_VERSION_PROPERTY = "application.version";
 	private static final String ARCHIVE_ENTRIES_PROPERTY = "archive.entries";
@@ -33,6 +28,12 @@ public final class BackupManifestCodec {
 	private static final String CREATED_AT_PROPERTY = "created.at";
 	private static final String DATABASE_SCHEMA_VERSION_PROPERTY = "database.schema.version";
 	private static final String FORMAT_VERSION_PROPERTY = "backup.format.version";
+
+	/**
+	 * Creates a codec for the backup manifest properties format.
+	 */
+	public BackupManifestCodec() {
+	}
 
 	/**
 	 * Reads and validates a backup manifest.

@@ -88,19 +88,15 @@ public final class DefaultRestoreService implements RestoreService {
 	}
 
 	private void validateStagedManagedRoots(Path stagingRoot, BackupManifest manifest) throws BackupFormatException {
-		Path pdfRoot = stagingRoot.resolve("pdf");
-		Path curriculumRoot = stagingRoot.resolve("curriculum");
+		Path subjectsRoot = stagingRoot.resolve("subjects");
 		if (manifest.kind() == BackupKind.FULL) {
-			if (!Files.isDirectory(pdfRoot)) {
-				throw new BackupFormatException("Full backup is missing staged PDF hierarchy");
-			}
-			if (!Files.isDirectory(curriculumRoot)) {
-				throw new BackupFormatException("Full backup is missing staged curriculum hierarchy");
+			if (!Files.isDirectory(subjectsRoot)) {
+				throw new BackupFormatException("Full backup is missing staged Subject hierarchy");
 			}
 			return;
 		}
-		if (Files.exists(pdfRoot) || Files.exists(curriculumRoot)) {
-			throw new BackupFormatException("Database-only backup contains managed data");
+		if (Files.exists(subjectsRoot)) {
+			throw new BackupFormatException("Database-only backup contains managed Subject data");
 		}
 	}
 }

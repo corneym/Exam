@@ -31,8 +31,8 @@ final class BackupArchiveWriter {
 			writeManifest(output, manifest);
 			writeFile(output, BackupArchiveLayout.DATABASE_ENTRY, databaseSnapshot);
 			if (manifest.kind() == BackupKind.FULL) {
-				writeManagedTree(output, BackupArchiveLayout.PDF_DIRECTORY_ENTRY, config.pdfDataRoot());
-				writeManagedTree(output, BackupArchiveLayout.CURRICULUM_DIRECTORY_ENTRY, config.curriculumDataRoot());
+				Path subjectsRoot = config.dataRoot().resolve("subjects").toAbsolutePath().normalize();
+				writeManagedTree(output, BackupArchiveLayout.SUBJECTS_DIRECTORY_ENTRY, subjectsRoot);
 			}
 		}
 	}

@@ -28,6 +28,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -53,6 +54,7 @@ import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
+import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
@@ -936,16 +938,44 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void importedExamPdfUsesSubjectProviderYearHierarchy(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot);
-		Path expectedPath = pdfDataRoot.resolve("Chemistry").resolve("QCAA").resolve("2024")
-				.resolve(examPdf.getFileName());
-		assertTrue(Files.isRegularFile(expectedPath));
-		ExamBooklet booklet = examMetadataPane().getBooklet();
-		assertNotNull(booklet);
-		assertEquals(pdfDataRoot.relativize(expectedPath).toString(), booklet.getSourceDocument().getRelativePath());
+	@SuppressWarnings("unchecked")
+	void importedExamPdfUsesSubjectFirstAssessmentHierarchy(FxRobot robot) throws Exception {
+		ExamMetadataPane pane = examMetadataPane();
+		ComboBox<Subject> subjectField = field(pane, "subjectField", ComboBox.class);
+		ComboBox<String> providerField = field(pane, "providerField", ComboBox.class);
+		ComboBox<Integer> yearField = field(pane, "yearField", ComboBox.class);
+		ComboBox<String> assessmentField = field(pane, "assessmentField", ComboBox.class);
+		ComboBox<String> bookletField = field(pane, "bookletField", ComboBox.class);
+		ComboBox<ExamBookletQuestionFormat> questionFormatField = field(pane, "questionFormatField", ComboBox.class);
+		Subject chemistry = subjectField.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		WaitForAsyncUtils.asyncFx(() -> {
 
-		// Fresh Exam import records the SHA-256 identity of the final managed PDF.
+			// Exercise the actual ExamMetadataPane intake boundary rather than creating a
+			// persisted fixture directly through PdfStore.
+			invoke(pane, "stageExamPdf", new Class<?>[] { Path.class }, examPdf);
+			subjectField.setValue(chemistry);
+			providerField.getEditor().setText("QCAA");
+			yearField.setValue(2024);
+			assessmentField.getEditor().setText("External Assessment");
+			bookletField.getEditor().setText("Paper 1 MCQ");
+			questionFormatField.setValue(ExamBookletQuestionFormat.MIXED);
+			return null;
+		}).get();
+		Boolean confirmed = (Boolean) WaitForAsyncUtils.asyncFx(() -> invoke(pane, "confirmDetails", new Class<?>[0]))
+				.get();
+		assertTrue(confirmed.booleanValue());
+		WaitForAsyncUtils.waitForFxEvents();
+		Path expectedPath = applicationConfig.dataRoot()
+				.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment").resolve(examPdf.getFileName());
+		assertTrue(Files.isRegularFile(expectedPath));
+		ExamBooklet booklet = pane.getBooklet();
+		assertNotNull(booklet);
+		ManagedDataLayout layout = new ManagedDataLayout(applicationConfig.dataRoot());
+		assertEquals(layout.relativePath(expectedPath), booklet.getSourceDocument().getRelativePath());
+
+		// Fresh Exam import records the SHA-256 identity of the final Subject-first
+		// managed PDF.
 		String expectedHash = new SourceDocumentHashService().sha256(expectedPath);
 		assertEquals(expectedHash, booklet.getSourceDocument().getContentSha256());
 	}

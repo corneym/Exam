@@ -6,18 +6,39 @@ import java.nio.file.Path;
 import java.util.Locale;
 import java.util.UUID;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
+
 /**
- * Copies curriculum Excel workbooks into the configured managed curriculum
- * directory.
+ * Manages retained curriculum workbooks.
+ * <p>
+ * New workbooks use the canonical Subject-first layout beneath
+ * {@code subjects/<Subject>/curriculum/<Version>/workbooks}. The legacy
+ * curriculum-root constructor remains temporarily available for compatibility
+ * until existing installations are migrated.
  */
 public final class CurriculumWorkbookStore {
 
 	private final Path curriculumDataRoot;
+	private final ManagedDataLayout managedDataLayout;
 
 	/**
-	 * Creates a workbook store beneath the configured curriculum data root.
+	 * Creates a workbook store using the Subject-first managed-data layout.
 	 *
-	 * @param curriculumDataRoot managed curriculum directory
+	 * @param managedDataLayout canonical application managed-data layout
+	 * @throws NullPointerException if {@code managedDataLayout} is {@code null}
+	 */
+	public CurriculumWorkbookStore(ManagedDataLayout managedDataLayout) {
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
+		}
+		curriculumDataRoot = null;
+		this.managedDataLayout = managedDataLayout;
+	}
+
+	/**
+	 * Creates a workbook store using the legacy curriculum-root layout.
+	 *
+	 * @param curriculumDataRoot legacy managed curriculum directory
 	 * @throws NullPointerException if {@code curriculumDataRoot} is {@code null}
 	 */
 	public CurriculumWorkbookStore(Path curriculumDataRoot) {
@@ -25,10 +46,13 @@ public final class CurriculumWorkbookStore {
 			throw new NullPointerException("curriculumDataRoot");
 		}
 		this.curriculumDataRoot = curriculumDataRoot.toAbsolutePath().normalize();
+		managedDataLayout = null;
 	}
 
 	/**
-	 * Copies a selected curriculum workbook into managed curriculum storage.
+	 * Copies a selected curriculum workbook into the legacy managed curriculum
+	 * directory.
+	 * <p>
 	 * Existing managed files are reused when they contain identical bytes.
 	 *
 	 * @param sourceWorkbook workbook selected by the user
@@ -36,8 +60,36 @@ public final class CurriculumWorkbookStore {
 	 * @throws IOException              if the source cannot be read or copied
 	 * @throws NullPointerException     if {@code sourceWorkbook} is {@code null}
 	 * @throws IllegalArgumentException if the source is not an Excel workbook
+	 * @throws IllegalStateException    if this store uses the Subject-first layout
 	 */
 	public Path manageWorkbook(Path sourceWorkbook) throws IOException {
+		if (managedDataLayout != null) {
+			throw new IllegalStateException("Subject-first curriculum storage requires Subject and syllabus version");
+		}
+		return manageWorkbook(sourceWorkbook, curriculumDataRoot);
+	}
+
+	/**
+	 * Copies a selected curriculum workbook into the owning Subject and syllabus
+	 * version directory.
+	 *
+	 * @param subjectName     owning Subject name
+	 * @param syllabusVersion owning syllabus-version name
+	 * @param sourceWorkbook  workbook selected by the user
+	 * @return absolute managed workbook path
+	 * @throws IOException              if the source cannot be read or copied
+	 * @throws NullPointerException     if {@code sourceWorkbook} is {@code null}
+	 * @throws IllegalArgumentException if the source or managed directory identity
+	 *                                  is invalid
+	 * @throws IllegalStateException    if this store uses the legacy layout
+	 */
+	public Path manageWorkbook(String subjectName, String syllabusVersion, Path sourceWorkbook) throws IOException {
+		ManagedDataLayout layout = requireSubjectFirstLayout();
+		Path destinationDirectory = layout.curriculumWorkbookDirectory(subjectName, syllabusVersion);
+		return manageWorkbook(sourceWorkbook, destinationDirectory);
+	}
+
+	private Path manageWorkbook(Path sourceWorkbook, Path destinationDirectory) throws IOException {
 		if (sourceWorkbook == null) {
 			throw new NullPointerException("sourceWorkbook");
 		}
@@ -49,33 +101,40 @@ public final class CurriculumWorkbookStore {
 		if (fileName == null || !fileName.toString().toLowerCase(Locale.ROOT).endsWith(".xlsx")) {
 			throw new IllegalArgumentException("Curriculum workbook must be an .xlsx file: " + source);
 		}
-		Files.createDirectories(curriculumDataRoot);
+		Path managedDirectory = destinationDirectory.toAbsolutePath().normalize();
+		Files.createDirectories(managedDirectory);
 
-		// Workbooks already beneath the managed curriculum root retain their current
-		// location for compatibility with existing installations.
-		if (source.startsWith(curriculumDataRoot)) {
+		// A workbook already inside its authoritative Subject/version directory is
+		// already managed and requires no copy.
+		if (source.startsWith(managedDirectory)) {
 			return source;
 		}
-		Path destination = curriculumDataRoot.resolve(fileName).normalize();
-		if (!destination.startsWith(curriculumDataRoot)) {
+		Path destination = managedDirectory.resolve(fileName).normalize();
+		if (!destination.startsWith(managedDirectory)) {
 			throw new IllegalArgumentException("Curriculum workbook destination escapes the managed directory");
 		}
 		if (!Files.exists(destination)) {
 			return Files.copy(source, destination);
 		}
 
-		// Reuse the existing managed workbook when it contains exactly the selected
-		// bytes.
+		// Byte-identical selection reuses the existing authoritative workbook.
 		if (Files.isSameFile(source, destination) || Files.mismatch(source, destination) == -1) {
 			return destination;
 		}
 
-		// Never overwrite a different workbook merely because it has the same source
-		// filename.
+		// Preserve the existing collision policy: never overwrite different bytes
+		// merely because the external files share a filename.
 		Path uniqueDestination;
 		do {
-			uniqueDestination = curriculumDataRoot.resolve(UUID.randomUUID() + "--" + fileName).normalize();
+			uniqueDestination = managedDirectory.resolve(UUID.randomUUID() + "--" + fileName).normalize();
 		} while (Files.exists(uniqueDestination));
 		return Files.copy(source, uniqueDestination);
+	}
+
+	private ManagedDataLayout requireSubjectFirstLayout() {
+		if (managedDataLayout == null) {
+			throw new IllegalStateException("CurriculumWorkbookStore was created with the legacy curriculum root");
+		}
+		return managedDataLayout;
 	}
 }

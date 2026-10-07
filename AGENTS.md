@@ -149,24 +149,113 @@ under `target/`.
 
 ## PDF Storage
 
-The application has a configurable data root containing the existing exam PDF
-directory hierarchy.
+The application has one authoritative data root.
 
-Source documents store paths relative to that data root.
+New managed Exam assets use the Subject-first hierarchy:
 
-Do not store machine-specific absolute paths in question or source-document
-data.
+`subjects/<Subject>/exams/<Provider>/<Year>/<Assessment>/...`
 
-Do not infer a PDF path solely from subject, year, or examination type; preserve
-the actual relative path within the existing data hierarchy.
+Question-booklet PDFs and Answer PDFs belonging to an Exam share that Exam
+directory.
 
-Treat stored relative paths as untrusted input:
+New `SourceDocument.relativePath` values are portable paths relative to the
+application data root. Do not store machine-specific absolute paths.
 
-- require relative paths
-- normalize them
-- ensure resolved paths remain within the configured data root
+The historical dedicated `pdf/` root remains temporarily supported only for
+existing-data compatibility and migration. Code that participates in the
+transition must resolve both path generations through `PdfStore`; it must not
+construct persisted PDF paths directly.
+
+New writes must not create new legacy `pdf/...` persisted paths.
+
+`ManagedDataLayout` owns canonical managed directory construction. Do not
+reconstruct Subject, curriculum, legacy-import or Exam directory fragments in
+callers.
+
+Treat every persisted path as untrusted input:
+
+- require a relative persisted representation;
+- normalise before use;
+- reject traversal or paths outside their applicable managed root;
+- never use persisted path text directly for unrestricted filesystem access.
+
+Exam metadata correction must relocate all managed Question and Answer sources
+when Provider, Year or Assessment changes, and persist the replacement paths in
+the same SQLite transaction as the metadata correction.
 
 Never commit examination source PDFs or other restricted source material.
+
+## Curriculum Storage
+
+New curriculum assets use the Subject-first hierarchy:
+
+`subjects/<Subject>/curriculum/<Version>/`
+
+with:
+
+- `workbooks/` for retained curriculum-import workbooks;
+- `sources/` for authoritative syllabus source PDFs.
+
+External files may be selected from anywhere. Successful imports or
+attachments retain an application-managed copy in the owning Subject/version
+directory.
+
+New persisted curriculum source-PDF paths are relative to the application data
+root.
+
+The historical dedicated `curriculum/` root remains temporarily readable for
+existing data until the migration slice rewrites those files and references.
+
+`ManagedDataLayout` owns Subject/version directory construction. Do not
+sanitise Subject or version names independently in new storage code; invalid
+managed directory components must be rejected consistently by the shared
+layout boundary.
+
+A failed source-PDF metadata update must delete only the unpublished new copy
+and preserve the previously authoritative file and database reference.
+
+## Legacy Import Storage
+
+Legacy Question Excel workbooks may be selected from any accessible location,
+but successful intake first retains an application-managed copy beneath:
+
+`subjects/<Subject>/legacy/<SyllabusVersion>/`
+
+Preflight, structural Recheck and final metadata import all use that retained
+managed copy. The external source path is no longer part of the pending import
+transaction after retention succeeds.
+
+Byte-identical same-name workbooks may reuse the existing managed file.
+Different workbooks with the same filename must not overwrite each other.
+
+The retained workbook is source/provenance material only. SQLite remains
+authoritative for imported Questions, Exams, classifications, Answers, capture
+state and other corpus relationships.
+
+`ManagedDataLayout` owns the Subject and syllabus-version directory identity.
+Distributed worker/coordinator packages are a separate future feature.
+
+## Data-Layout Migration
+
+Normal application runtime must not mix pre-Sprint-14 and Subject-first managed-path semantics.
+
+`DataLayoutMigrationPlanner` performs non-mutating inspection. It must calculate all managed moves and blockers before mutation.
+
+`DataLayoutMigrationExecutor` copies or reuses byte-identical destinations and verifies bytes before publishing any database path changes.
+
+Exam `source_documents.relative_path` and curriculum `source_pdf_path` rewrites are published in one guarded SQLite transaction. A stale or late failure rolls that transaction back.
+
+Old flat curriculum workbooks have no persisted Subject/version provenance and must be assigned explicitly. Migration must never guess their owner.
+
+`DataLayoutMigrationFinalizer` may archive/remove the old active `pdf/` and `curriculum/` roots only after every persisted managed reference is Subject-first and resolves successfully.
+
+The recovery archive is:
+
+`migration-archive/pre-subject-first/`
+
+Fresh installations create the application data root but do not create active legacy `pdf/` or `curriculum/` directories.
+
+`DataLayoutMigrationStartupGuard` runs before ordinary application repositories/UI use managed path semantics. If migration remains, normal startup must stop rather than create a mixed dataset.
 
 ## Coding Style & Naming Conventions
 

@@ -45,7 +45,7 @@ public class SyllabusVersion {
 	 * @param curriculumStatus      authoring lifecycle state
 	 * @param curriculumFinalisedAt finalisation instant, or {@code null} while in
 	 *                              progress
-	 * @param sourcePdfPath         managed relative source-PDF path, or
+	 * @param sourcePdfPath         portable persisted managed source-PDF path, or
 	 *                              {@code null}
 	 */
 	public SyllabusVersion(long id, Subject subject, String name, boolean current, CurriculumStatus curriculumStatus,
@@ -134,9 +134,10 @@ public class SyllabusVersion {
 	}
 
 	/**
-	 * Returns the managed source-PDF reference retained as syllabus provenance.
+	 * Returns the persisted managed source-PDF reference retained as syllabus
+	 * provenance.
 	 *
-	 * @return path relative to the curriculum data root, or null if unattached
+	 * @return portable persisted managed path, or null if unattached
 	 */
 	public String getSourcePdfPath() {
 		return sourcePdfPath;
