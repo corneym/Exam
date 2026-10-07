@@ -5,23 +5,32 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import javafx.application.Platform;
 import javafx.scene.Node;
@@ -396,9 +405,102 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		waitForDialogHidden(robot, "Legacy Question Import");
 	}
 
+	@Test
+	void pendingLegacyImportRechecksManagedWorkbookAfterExternalSourceRemoval(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MIXED);
+		Subject subject = field(application, "workingSubject", Subject.class);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SyllabusVersion historicalSyllabus = new SqliteCurriculumRepository(database).findVersionsForSubject(subject)
+				.stream().filter(version -> "2019".equals(version.getName())).findFirst().orElseThrow();
+		Path externalWorkbook = createPendingLegacyWorkbook(
+				databasePath.getParent().resolve("incoming").resolve("legacy-resume.xlsx"));
+		ManagedDataLayout layout = new ManagedDataLayout(applicationConfig.dataRoot());
+		LegacyQuestionWorkbookStore workbookStore = new LegacyQuestionWorkbookStore(layout);
+		Path managedWorkbook = workbookStore.manageWorkbook(subject.getName(), historicalSyllabus.getName(),
+				externalWorkbook);
+		assertEquals(layout.legacyImportDirectory("Chemistry", "2019").resolve("legacy-resume.xlsx"), managedWorkbook);
+
+		// The selected external file is deliberately removed before preflight. Any
+		// accidental dependency on the original selection will now fail this workflow.
+		Files.delete(externalWorkbook);
+		assertFalse(Files.exists(externalWorkbook));
+		assertTrue(Files.isRegularFile(managedWorkbook));
+
+		// Mount the real structural workspace used by Dashboard-owned legacy preflight.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
+		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		robot.interact(() -> exams.getSelectionModel().selectFirst());
+		fireControl(robot, "#corpus-dashboard-manage-exam-assets");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+		Class<?> pendingType = Class
+				.forName("au.edu.eq.questionbank.ui.QuestionBankApplication$PendingLegacyQuestionImport");
+		var constructor = pendingType.getDeclaredConstructor(Subject.class, SyllabusVersion.class, Path.class);
+		constructor.setAccessible(true);
+		Object pending = constructor.newInstance(subject, historicalSyllabus, managedWorkbook);
+
+		// This synthetic continuation represents a Dashboard-launched intake.
+		// Production
+		// establishes this ownership before the initial workbook dialog is shown.
+		setField(application, "legacyQuestionImportDashboardOwned", Boolean.TRUE);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "continueLegacyQuestionImport",
+					new Class<?>[] { Stage.class, applicationConfig.getClass(), pendingType }, primaryStage,
+					applicationConfig, pending);
+			return null;
+		}).get();
+
+		// QCAA 2020 Paper 1 is not present in this fixture, so the managed workbook
+		// must survive into the pending Exam/Assets preflight transaction.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#exam-assets-legacy-import-requirement-0").tryQuery().isPresent());
+		Object retainedPending = field(application, "pendingLegacyQuestionImport", Object.class);
+		assertNotNull(retainedPending);
+		var managedWorkbookAccessor = pendingType.getDeclaredMethod("managedWorkbookPath");
+		managedWorkbookAccessor.setAccessible(true);
+		assertEquals(managedWorkbook, managedWorkbookAccessor.invoke(retainedPending));
+		assertTrue(robot.lookup("#exam-assets-legacy-import-requirement-0").tryQuery().isPresent());
+
+		// Clean up through the real pending-import cancellation path.
+		fireControl(robot, "#exam-assets-legacy-import-cancel");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+	}
+
 	@Override
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	private Path createPendingLegacyWorkbook(Path path) throws Exception {
+		Files.createDirectories(path.getParent());
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet sheet = workbook.createSheet("QCAA");
+			Row header = sheet.createRow(0);
+			header.createCell(0).setCellValue("Year");
+			header.createCell(1).setCellValue("Paper");
+			header.createCell(2).setCellValue("Question");
+			header.createCell(3).setCellValue("Marks");
+			header.createCell(4).setCellValue("Topic");
+			header.createCell(5).setCellValue("Answer");
+			header.createCell(6).setCellValue("Preamble");
+			Row question = sheet.createRow(1);
+			question.createCell(0).setCellValue(2020);
+			question.createCell(1).setCellValue("1");
+			question.createCell(2).setCellValue("21a");
+			question.createCell(3).setCellValue(3);
+			question.createCell(4).setCellValue("3.1.1");
+			try (var output = Files.newOutputStream(path)) {
+				workbook.write(output);
+			}
+		}
+		return path;
 	}
 }

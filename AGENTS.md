@@ -214,6 +214,27 @@ layout boundary.
 A failed source-PDF metadata update must delete only the unpublished new copy
 and preserve the previously authoritative file and database reference.
 
+## Legacy Import Storage
+
+Legacy Question Excel workbooks may be selected from any accessible location,
+but successful intake first retains an application-managed copy beneath:
+
+`subjects/<Subject>/legacy/<SyllabusVersion>/`
+
+Preflight, structural Recheck and final metadata import all use that retained
+managed copy. The external source path is no longer part of the pending import
+transaction after retention succeeds.
+
+Byte-identical same-name workbooks may reuse the existing managed file.
+Different workbooks with the same filename must not overwrite each other.
+
+The retained workbook is source/provenance material only. SQLite remains
+authoritative for imported Questions, Exams, classifications, Answers, capture
+state and other corpus relationships.
+
+`ManagedDataLayout` owns the Subject and syllabus-version directory identity.
+Distributed worker/coordinator packages are a separate future feature.
+
 ## Coding Style & Naming Conventions
 
 Follow the existing Java style:

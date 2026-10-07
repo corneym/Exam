@@ -121,6 +121,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumWorkbookStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
+import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
@@ -1325,7 +1326,11 @@ public class QuestionBankApplication extends Application {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
-			List<LegacyBookletRequirement> missing = importer.findMissingBooklets(pending.workbookPath(),
+
+			// Pending intake always carries the retained managed workbook. Recheck must
+			// never fall back to the original external selection.
+			Path managedWorkbook = pending.managedWorkbookPath();
+			List<LegacyBookletRequirement> missing = importer.findMissingBooklets(managedWorkbook,
 					pending.subject().getName(), pending.syllabusVersion().getName());
 			if (!missing.isEmpty()) {
 				pendingLegacyQuestionImport = pending;
@@ -1333,7 +1338,7 @@ public class QuestionBankApplication extends Application {
 				// Workbook evidence identifies the exact provider/year/booklet identity
 				// required for import. Existing differently named booklets must be edited,
 				// not duplicated.
-				examAssetsPane.showLegacyImportRequirements(pending.syllabusVersion().getName(), pending.workbookPath(),
+				examAssetsPane.showLegacyImportRequirements(pending.syllabusVersion().getName(), managedWorkbook,
 						missing, () -> recheckPendingLegacyQuestionImport(primaryStage, config),
 						this::cancelPendingLegacyQuestionImport);
 				if (recheck) {
@@ -1346,8 +1351,9 @@ public class QuestionBankApplication extends Application {
 			}
 
 			// Once every authoritative booklet identity resolves, Recheck and Import
-			// immediately performs the existing atomic metadata import.
-			LegacyQuestionImportResult importResult = importer.importWorkbook(pending.workbookPath(),
+			// immediately performs the existing atomic metadata import from the retained
+			// managed source.
+			LegacyQuestionImportResult importResult = importer.importWorkbook(managedWorkbook,
 					pending.subject().getName(), pending.syllabusVersion().getName());
 
 			// The structural preflight is complete. Remove its presentation while retaining
@@ -1359,7 +1365,7 @@ public class QuestionBankApplication extends Application {
 			// large post-import repository read cannot block JavaFX.
 			startLegacyQuestionCaptureRefresh(pending.subject(), importResult);
 		} catch (IOException exception) {
-			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the Excel workbook.",
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the retained Excel workbook.",
 					exception.getMessage());
 		} catch (SQLException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not save the Question metadata.",
@@ -2411,23 +2417,35 @@ public class QuestionBankApplication extends Application {
 			Optional<ButtonType> result = dialog.showAndWait();
 			if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 
-				// Dashboard owns legacy intake, so cancelling the initial dialog abandons the
-				// intake transaction and restores the operational home.
+				// Dashboard owns legacy intake, so cancelling the initial dialog abandons
+				// the intake transaction and restores the operational home.
 				cancelPendingLegacyQuestionImport();
 				return;
 			}
+			SyllabusVersion syllabusVersion = dialog.getSelectedSyllabusVersion();
 
-			// Freeze the complete intake context before preflight. Subsequent Exam/Assets
-			// editing must not alter which Subject, syllabus or workbook is being imported.
-			PendingLegacyQuestionImport pending = new PendingLegacyQuestionImport(subject,
-					dialog.getSelectedSyllabusVersion(), dialog.getSelectedFile());
+			// Retain provenance before any preflight or database import begins. From this
+			// point onward the workflow deliberately forgets the external source path.
+			LegacyQuestionWorkbookStore workbookStore = new LegacyQuestionWorkbookStore(
+					new ManagedDataLayout(config.dataRoot()));
+			Path managedWorkbook = workbookStore.manageWorkbook(subject.getName(), syllabusVersion.getName(),
+					dialog.getSelectedFile());
+
+			// Freeze the complete intake context using the managed workbook. Recheck and
+			// eventual import therefore survive removal of the original external file.
+			PendingLegacyQuestionImport pending = new PendingLegacyQuestionImport(subject, syllabusVersion,
+					managedWorkbook);
 			continueLegacyQuestionImport(primaryStage, config, pending);
+		} catch (IOException exception) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not retain the legacy Question workbook.",
+					exception.getMessage());
+
+			// Copy failure occurs before preflight/import and therefore abandons the
+			// Dashboard-owned intake without touching Question metadata.
+			cancelPendingLegacyQuestionImport();
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import could not start.",
 					exception.getMessage());
-
-			// Failed Dashboard-owned intake should not strand the user in the structural
-			// workspace after the modal workflow has ended.
 			cancelPendingLegacyQuestionImport();
 		}
 	}
@@ -5085,7 +5103,8 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion, Path workbookPath) {
+	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion,
+			Path managedWorkbookPath) {
 
 		private PendingLegacyQuestionImport {
 			if (subject == null) {
@@ -5094,8 +5113,8 @@ public class QuestionBankApplication extends Application {
 			if (syllabusVersion == null) {
 				throw new NullPointerException("syllabusVersion");
 			}
-			if (workbookPath == null) {
-				throw new NullPointerException("workbookPath");
+			if (managedWorkbookPath == null) {
+				throw new NullPointerException("managedWorkbookPath");
 			}
 
 			// The historical syllabus must belong to the same authoritative Subject as

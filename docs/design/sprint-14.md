@@ -165,9 +165,11 @@ Target legacy layout:
 subjects/<Subject>/legacy/<SyllabusVersion>/...
 ```
 
-The selected workbook is copied or safely reused in managed storage before import/preflight proceeds.
+`LegacyQuestionWorkbookStore` now copies or safely reuses the selected workbook in managed storage before preflight proceeds. Byte-identical same-name workbooks reuse the retained file; same-name/different-content workbooks receive distinct UUID-qualified filenames rather than overwriting existing provenance.
 
-This does not make the workbook authoritative after import. It preserves source/provenance material and prepares the Subject directory for later distributed collection.
+Once retention succeeds, the pending legacy-import transaction carries only the managed workbook path. Initial preflight, Exam/Assets Recheck and final metadata import therefore continue from the retained copy even if the original external file is removed.
+
+The workbook remains source/provenance material rather than an alternative database. SQLite remains authoritative for imported Questions, Exams, classifications, Answers and capture state. Distributed work-package design remains outside Sprint 14.
 
 ### 3.7 Do not run mixed old/new path semantics
 
