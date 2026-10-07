@@ -25,9 +25,7 @@ class PdfStoreTest {
 		Files.writeString(source, "PDF contents");
 		Path dataRoot = tempDir.resolve("data");
 		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot));
-
 		Path stored = store.importExamPdf(source, "Chemistry", "QCAA", 2024, "External Assessment");
-
 		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf"), stored);
 		assertEquals("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf", store.relativePath(stored));
 		assertTrue(Files.isRegularFile(stored));
@@ -101,10 +99,8 @@ class PdfStoreTest {
 		Files.createDirectories(existing.getParent());
 		Files.writeString(existing, "different contents");
 		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot));
-
 		assertThrows(FileAlreadyExistsException.class,
 				() -> store.importExamPdf(source, "Chemistry", "QCAA", 2024, "External Assessment"));
-
 		assertEquals("different contents", Files.readString(existing));
 	}
 
@@ -126,7 +122,6 @@ class PdfStoreTest {
 	void rejectsLegacyImportSignatureForSubjectFirstStore() {
 		PdfStore store = new PdfStore(new ManagedDataLayout(tempDir.resolve("data")));
 		Path source = tempDir.resolve("paper.pdf");
-
 		assertThrows(IllegalStateException.class, () -> store.importExamPdf(source, "Chemistry", "QCAA", 2024));
 	}
 
@@ -151,9 +146,7 @@ class PdfStoreTest {
 	void resolvesSubjectFirstPersistedPathAgainstDataRoot() {
 		Path dataRoot = tempDir.resolve("data");
 		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot));
-
 		Path resolved = store.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf");
-
 		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf"), resolved);
 	}
 
@@ -178,10 +171,8 @@ class PdfStoreTest {
 		Path legacyPdfRoot = tempDir.resolve("pdf").toAbsolutePath().normalize();
 		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot), legacyPdfRoot);
 		Path managedPath = dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf");
-
 		assertEquals("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf",
 				store.relativePath(managedPath));
-
 		assertThrows(IllegalArgumentException.class,
 				() -> store.relativePath(legacyPdfRoot.resolve("Chemistry/QCAA/2024/paper1.pdf")));
 	}
@@ -191,10 +182,8 @@ class PdfStoreTest {
 		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
 		Path legacyPdfRoot = tempDir.resolve("pdf").toAbsolutePath().normalize();
 		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot), legacyPdfRoot);
-
 		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf"),
 				store.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf"));
-
 		assertEquals(legacyPdfRoot.resolve("Chemistry/QCAA/2024/paper1.pdf"),
 				store.resolve("Chemistry/QCAA/2024/paper1.pdf"));
 	}

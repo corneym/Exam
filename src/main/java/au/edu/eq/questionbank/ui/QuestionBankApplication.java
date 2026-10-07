@@ -2310,9 +2310,10 @@ public class QuestionBankApplication extends Application {
 		// Cross-type duplication is also unsafe: an Answer add must not silently reuse
 		// bytes already managed as a Question booklet or another Answer asset.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Answer booklet");
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		ManagedDataLayout managedDataLayout = new ManagedDataLayout(config.dataRoot());
+		PdfStore pdfStore = new PdfStore(managedDataLayout, config.pdfDataRoot());
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
-				exam.getYear());
+				exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
 		if (!sourceHash.equals(storedHash)) {
 
@@ -2320,8 +2321,7 @@ public class QuestionBankApplication extends Application {
 			// source that passed duplicate detection.
 			throw new IOException("Answer booklet PDF changed while it was being copied");
 		}
-		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
-		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
+		String relativePath = pdfStore.relativePath(storedPath);
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, writer);
 
 		// Creation and explanation metadata are persisted only after duplicate and byte
@@ -2445,12 +2445,12 @@ public class QuestionBankApplication extends Application {
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 
 		// Detect byte-identical managed material before PdfStore creates another
-		// managed
-		// file with a different filename.
+		// managed file with a different filename.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Question booklet");
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		ManagedDataLayout managedDataLayout = new ManagedDataLayout(config.dataRoot());
+		PdfStore pdfStore = new PdfStore(managedDataLayout, config.pdfDataRoot());
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
-				exam.getYear());
+				exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
 		if (!sourceHash.equals(storedHash)) {
 
@@ -2458,8 +2458,7 @@ public class QuestionBankApplication extends Application {
 			// Do not publish a SourceDocument identity based on inconsistent evidence.
 			throw new IOException("Question booklet PDF changed while it was being copied");
 		}
-		Path pdfRoot = config.pdfDataRoot().toAbsolutePath().normalize();
-		String relativePath = pdfRoot.relativize(storedPath.toAbsolutePath().normalize()).toString();
+		String relativePath = pdfStore.relativePath(storedPath);
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
 
 		// Persistence receives the verified final managed-byte identity.
@@ -4973,12 +4972,12 @@ public class QuestionBankApplication extends Application {
 		if (config == null) {
 			throw new NullPointerException("config");
 		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+
+		// Inspection must read both new data-root-relative paths and legacy
+		// PDF-root-relative paths during the Sprint 14 migration transition.
+		PdfStore pdfStore = new PdfStore(new ManagedDataLayout(config.dataRoot()), config.pdfDataRoot());
 		Path storedPath;
 		try {
-
-			// Resolve only through the managed PDF root so Exam/Assets never opens an
-			// arbitrary external path recorded outside application storage.
 			storedPath = pdfStore.resolve(relativePath);
 		} catch (IllegalArgumentException exception) {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets",
@@ -4992,8 +4991,8 @@ public class QuestionBankApplication extends Application {
 		}
 		try {
 
-			// VIEWER mode disables region capture but, unlike the old modal inspection
-			// workflow, the Exam/Assets pane remains visible beside the shared PDF pane.
+			// VIEWER mode disables region capture but leaves Exam/Assets visible beside
+			// the shared PDF pane.
 			pdfWorkspace.openViewerPdf(storedPath);
 		} catch (RuntimeException exception) {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The " + assetDescription + " could not be opened.",

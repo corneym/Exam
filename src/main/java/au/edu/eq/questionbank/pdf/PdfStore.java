@@ -259,14 +259,12 @@ public class PdfStore {
 		if (managedDataLayout != null && isSubjectFirstPath(relativePath)) {
 			return managedDataLayout.resolve(relativePath);
 		}
-
 		if (pdfRoot == null) {
 
 			// A non-transitional Subject-first store has no legacy root. Let the common
 			// managed-data boundary perform containment validation.
 			return managedDataLayout.resolve(relativePath);
 		}
-
 		Path path = Path.of(relativePath);
 		if (path.isAbsolute() || path.getRoot() != null) {
 			throw new IllegalArgumentException("PDF path must be relative: " + relativePath);

@@ -19,7 +19,6 @@ class ManagedDataLayoutTest {
 	void buildsCanonicalExamDirectory() {
 		Path dataRoot = tempDir.resolve("data");
 		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
-
 		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA"),
 				layout.examProviderDirectory("Chemistry", "QCAA"));
 		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024"),
@@ -32,7 +31,6 @@ class ManagedDataLayoutTest {
 	void buildsCanonicalSubjectFirstDirectories() {
 		Path dataRoot = tempDir.resolve("data");
 		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
-
 		assertEquals(dataRoot.resolve("subjects"), layout.subjectsRoot());
 		assertEquals(dataRoot.resolve("subjects/Chemistry"), layout.subjectDirectory("Chemistry"));
 		assertEquals(dataRoot.resolve("subjects/Chemistry/curriculum"), layout.curriculumDirectory("Chemistry"));
@@ -51,12 +49,10 @@ class ManagedDataLayoutTest {
 	void doesNotCreateManagedDirectories() {
 		Path dataRoot = tempDir.resolve("data");
 		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
-
 		layout.curriculumWorkbookDirectory("Chemistry", "2025");
 		layout.curriculumSourceDirectory("Chemistry", "2025");
 		layout.legacyImportDirectory("Chemistry", "2019");
 		layout.examsDirectory("Chemistry");
-
 		assertFalse(Files.exists(dataRoot));
 	}
 
@@ -64,7 +60,6 @@ class ManagedDataLayoutTest {
 	void normalisesTheConfiguredDataRootAndDirectoryComponents() {
 		Path dataRoot = tempDir.resolve("old/../data");
 		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
-
 		assertEquals(tempDir.resolve("data").toAbsolutePath().normalize(), layout.dataRoot());
 		assertEquals(tempDir.resolve("data/subjects/Chemistry").toAbsolutePath().normalize(),
 				layout.subjectDirectory("  Chemistry  "));
@@ -75,7 +70,6 @@ class ManagedDataLayoutTest {
 	@Test
 	void rejectsAbsoluteAndEscapingPersistedPaths() {
 		ManagedDataLayout layout = new ManagedDataLayout(tempDir.resolve("data"));
-
 		assertThrows(IllegalArgumentException.class, () -> layout.resolve("../outside.pdf"));
 		assertThrows(IllegalArgumentException.class,
 				() -> layout.resolve("subjects/Chemistry/../../../../outside.pdf"));
@@ -89,7 +83,6 @@ class ManagedDataLayoutTest {
 	@Test
 	void rejectsInvalidDirectoryComponentsDeterministically() {
 		ManagedDataLayout layout = new ManagedDataLayout(tempDir.resolve("data"));
-
 		assertThrows(IllegalArgumentException.class, () -> layout.subjectDirectory(" "));
 		assertThrows(IllegalArgumentException.class, () -> layout.subjectDirectory("."));
 		assertThrows(IllegalArgumentException.class, () -> layout.subjectDirectory(".."));
@@ -105,7 +98,6 @@ class ManagedDataLayoutTest {
 	@Test
 	void rejectsInvalidExamDirectoryComponents() {
 		ManagedDataLayout layout = new ManagedDataLayout(tempDir.resolve("data"));
-
 		assertThrows(IllegalArgumentException.class, () -> layout.examProviderDirectory("Chemistry", "QCAA/External"));
 		assertThrows(IllegalArgumentException.class, () -> layout.examYearDirectory("Chemistry", "QCAA", 0));
 		assertThrows(IllegalArgumentException.class,
@@ -117,7 +109,6 @@ class ManagedDataLayoutTest {
 	void rejectsRelativePathConversionOutsideTheManagedDataRoot() {
 		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
 		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
-
 		assertThrows(IllegalArgumentException.class, () -> layout.relativePath(Path.of("subjects/Chemistry")));
 		assertThrows(IllegalArgumentException.class, () -> layout.relativePath(dataRoot));
 		assertThrows(IllegalArgumentException.class,
@@ -128,7 +119,6 @@ class ManagedDataLayoutTest {
 	void resolvesDataRootRelativeManagedPaths() {
 		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
 		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
-
 		assertEquals(dataRoot.resolve("subjects/Chemistry/curriculum/2025/sources/syllabus.pdf"),
 				layout.resolve("subjects/Chemistry/curriculum/2025/sources/syllabus.pdf"));
 	}
@@ -137,9 +127,7 @@ class ManagedDataLayoutTest {
 	void roundTripsManagedPathsUsingPortableSeparators() {
 		ManagedDataLayout layout = new ManagedDataLayout(tempDir.resolve("data"));
 		Path managedPath = layout.curriculumSourceDirectory("Chemistry", "2025").resolve("syllabus.pdf");
-
 		String relativePath = layout.relativePath(managedPath);
-
 		assertEquals("subjects/Chemistry/curriculum/2025/sources/syllabus.pdf", relativePath);
 		assertEquals(managedPath, layout.resolve(relativePath));
 	}

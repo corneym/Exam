@@ -829,7 +829,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ComboBox<ExamBookletQuestionFormat> questionFormatField = field(pane, "questionFormatField", ComboBox.class);
 		Subject chemistry = subjectField.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
-
 		WaitForAsyncUtils.asyncFx(() -> {
 
 			// Exercise the actual ExamMetadataPane intake boundary rather than creating a
@@ -843,16 +842,13 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			questionFormatField.setValue(ExamBookletQuestionFormat.MIXED);
 			return null;
 		}).get();
-
 		Boolean confirmed = (Boolean) WaitForAsyncUtils.asyncFx(() -> invoke(pane, "confirmDetails", new Class<?>[0]))
 				.get();
 		assertTrue(confirmed.booleanValue());
 		WaitForAsyncUtils.waitForFxEvents();
-
 		Path expectedPath = applicationConfig.dataRoot()
 				.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment").resolve(examPdf.getFileName());
 		assertTrue(Files.isRegularFile(expectedPath));
-
 		ExamBooklet booklet = pane.getBooklet();
 		assertNotNull(booklet);
 		ManagedDataLayout layout = new ManagedDataLayout(applicationConfig.dataRoot());

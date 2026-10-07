@@ -159,7 +159,6 @@ public final class ExamMetadataPane extends VBox {
 		// New imports use the Subject-first layout while persisted Sprint 13 paths
 		// remain readable through the legacy PDF root until migration.
 		pdfStore = new PdfStore(this.managedDataLayout, this.pdfDataRoot);
-
 		configureFields();
 		configureActions(stage);
 		loadOptions();

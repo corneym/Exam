@@ -22,7 +22,6 @@ public final class ManagedDataLayout {
 			"COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7",
 			"LPT8", "LPT9");
 	private static final String WORKBOOKS_DIRECTORY = "workbooks";
-
 	private final Path dataRoot;
 
 	/**
@@ -50,7 +49,6 @@ public final class ManagedDataLayout {
 		if (".".equals(trimmed) || "..".equals(trimmed)) {
 			throw new IllegalArgumentException(fieldName + " is not a valid directory name: " + value);
 		}
-
 		for (int index = 0; index < trimmed.length(); index++) {
 			char character = trimmed.charAt(index);
 			if (character < 32 || "<>:\"/\\|?*".indexOf(character) >= 0) {
