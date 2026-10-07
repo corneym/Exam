@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -38,6 +39,27 @@ class DataLayoutMigrationFinalizerTest {
 		Path archiveRoot = fixture.config().dataRoot().resolve("migration-archive").resolve("pre-subject-first");
 		assertTrue(Files.isRegularFile(archiveRoot.resolve("pdf").resolve(oldPdf.getFileName())));
 		assertTrue(Files.isRegularFile(archiveRoot.resolve("curriculum").resolve(oldWorkbook.getFileName())));
+	}
+
+	@Test
+	void archiveVerificationFailureLeavesLegacyDataRecoverableAndMigrationRequired() throws Exception {
+		Fixture fixture = createCurrentFixture("archive-verification-failure");
+		Path legacyFile = Files.writeString(fixture.config().pdfDataRoot().resolve("old.pdf"), "legacy bytes");
+		Path archiveFile = fixture.config().dataRoot().resolve("migration-archive").resolve("pre-subject-first")
+				.resolve("pdf").resolve("old.pdf");
+		Files.createDirectories(archiveFile.getParent());
+		Files.writeString(archiveFile, "different archive bytes");
+		assertThrows(IOException.class,
+				() -> new DataLayoutMigrationFinalizer(fixture.config(), fixture.database()).finalizeMigration());
+
+		// Failed archive verification must leave the former active data intact.
+		assertTrue(Files.isRegularFile(legacyFile));
+		assertTrue("legacy bytes".equals(Files.readString(legacyFile)));
+		assertTrue(Files.isDirectory(fixture.config().pdfDataRoot()));
+
+		// The failed finalisation must not be mistaken for a completed migration.
+		assertThrows(DataLayoutMigrationRequiredException.class,
+				() -> new DataLayoutMigrationStartupGuard(fixture.config(), fixture.database()).requireCurrentLayout());
 	}
 
 	@Test
