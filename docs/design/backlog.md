@@ -1,66 +1,30 @@
 # Exam Question Bank Backlog
 
-> **Authoritative deferred/unresolved-work list:** 5 October 2026.  
-> Sprint 12 / Release 0.2 is complete, merged and verified. Sprint 13 active planning is recorded in `docs/design/sprint-13-ui-refinement.md`.
+> **Authoritative deferred/unresolved-work list:** 7 October 2026.  
+> Sprint 13 is complete and merged. Sprint 14 Subject-first managed-data work is active. Sprint 15 has selected #99, #94 and #27, with performance decomposition recorded in #109–#111 and `docs/design/sprint-15.md`.
 >
 > Priority here means priority among deliberately deferred/unresolved work. An item is not active sprint scope until it is explicitly promoted.
 
-## High priority
+## Active / selected sprint work — not backlog
 
-### Richer Question Search filtering — #94
+Do not duplicate these items as deferred backlog while their sprint work is active or selected.
 
-Extend Question Search with retrieval-oriented filters justified by real corpus use.
+### Sprint 14
 
-Candidate dimensions include:
+Subject-first managed-data work is tracked under umbrella #100 and child issues #101–#106.
 
-- Exam provider;
-- Exam year;
-- assessment/Exam;
-- booklet;
-- response type;
-- current applicability;
-- revision-output exclusion state.
+### Sprint 15
 
-Keep Search conceptually distinct from Corpus Dashboard:
+Selected product/performance work is:
 
-```text
-Dashboard
-    operational work:
-    what is incomplete/problematic and where to fix it
+- #99 — Dashboard workflow for assigning missing Question descriptors;
+- #94 — richer retrieval-oriented Question Search filters;
+- #27 — measured performance umbrella;
+- #109 — opt-in runtime performance instrumentation;
+- #110 — repeatable real-corpus performance benchmark runner;
+- #111 — evidence-led Question reconstruction and SQLite hot-path investigation.
 
-Search
-    retrieval work:
-    which Questions do I want to inspect or use
-```
-
-Do not duplicate Dashboard work-queue filters into Search unless later real use demonstrates a genuine retrieval need.
-
-Issue #92 in Sprint 13 should establish a reusable Exam/booklet Search-scope mechanism that #94 can build on later.
-
-### Benchmark broad searches — #27
-
-Run this after #94, not before it.
-
-Measure Subject/Unit/Topic-wide and new filtered searches, query plans, reconstruction cost and deterministic ordering only after the richer Search workload exists.
-
-Use the measurements to decide whether retrieval invariants/integration work (#25/#26), indexes or query redesign are justified.
-
-## Active Sprint 13 work — tracked by GitHub Issues
-
-See `docs/design/sprint-13-ui-refinement.md`.
-
-Current Sprint 13 issues are:
-
-- #93 — UI refactoring;
-- #89 — Search classification Save/refresh defects;
-- #82 — Search spacing/action layout;
-- #92 — Dashboard Inspect Questions / scoped Search entry;
-- #86 — Dashboard column alignment;
-- #87 — Dashboard lifecycle progress feedback;
-- #85 — Mapping Review single-syllabus unavailable state;
-- #78 — Revision HTML/SCORM scope to authoritative Working Subject.
-
-Do not duplicate these as backlog work while they are active sprint scope.
+Sprint 15 performance work must establish measurements before optimisation. Search benchmarking is repeated after #94 so optimisation decisions use the richer real workload rather than an incomplete Search implementation.
 
 ## Planned future capability
 
@@ -121,21 +85,23 @@ Consider whether corpus management eventually needs reviewed states such as sour
 
 Do not conflate these with persisted Exam `COMPLETE` or revision-output exclusions.
 
-## Retrieval / performance hardening
+## Retrieval / performance hardening after Sprint 15 evidence
 
 ### Strengthen retrieval-domain invariants — #25
 
 Review applicability/result rules including compatible curriculum levels, same-Subject enforcement, duplicate handling and invalid-level rejection.
 
-Use evidence from #27 before broadening this work.
+Use evidence from Sprint 15 #27/#111 before broadening this work.
 
 ### Extend SQLite retrieval integration coverage — #26
 
-Add broader realistic retrieval/reopen cases when a concrete regression risk or #27 measurement justifies them.
+Add broader realistic retrieval/reopen cases when a concrete regression risk or Sprint 15 measurement justifies them.
 
 ### Measure preview rendering overlap — #28
 
 Measure large/multi-region previews and rapid selection changes before changing threading or serialisation.
+
+Sprint 15 instrumentation may provide useful evidence for this later issue, but #28 is not part of the selected Sprint 15 scope unless measurements demonstrate that preview rendering is the dominant current slowdown and the issue is explicitly promoted.
 
 ## Curriculum mapping hardening
 
@@ -163,7 +129,7 @@ Exam Builder consumes the bank and must not become a dependency of revision/SCOR
 
 ### Printable/vector-preserving assessment and solution output — #38
 
-Scheduled for Sprint 14 rather than Sprint 13.
+This remains future product work after the Sprint 14 reprioritisation.
 
 For print-oriented generation, evaluate direct source-PDF page/viewport clipping rather than rasterising web assets.
 
@@ -188,6 +154,21 @@ Do not infer multipart/Shared Context relationships merely from patterned workbo
 Current `Question` stores one best-fit original Subtopic or Descriptor.
 
 Reconsider many-to-many original classification only if real use shows one provenance location is inadequate.
+
+## Corpus completion / review work
+
+The following open issues represent real-corpus completion or review rather than current feature development:
+
+- #5 — complete systematic curriculum mapping review;
+- #6 — resolve Questions with unknown response type;
+- #7 — complete missing Question source capture;
+- #8 — resolve outstanding Shared Context requirements;
+- #9 — complete missing Answers;
+- #10 — correct outstanding Question and Exam metadata;
+- #11 — complete outstanding legacy Question split corrections;
+- #12 — exercise Revision HTML and SCORM against the real Chemistry corpus.
+
+These may proceed as corpus work without redefining sprint feature scope unless deliberately promoted.
 
 ## Rejected / superseded directions
 
@@ -217,7 +198,7 @@ Do not build another parallel reporting model.
 
 ## Completed/scheduled elsewhere — not backlog
 
-Do not re-add completed Sprint 12 work.
+Do not re-add completed Sprint 12/13 work.
 
 ### Managed syllabus PDFs — #83 completed
 
@@ -225,15 +206,13 @@ Issue #83 was reviewed after Sprint 12 planning and found to describe functional
 
 Implemented behaviour includes:
 
-- managed syllabus-PDF storage beneath the curriculum data root;
+- managed syllabus-PDF storage;
 - persisted portable `source_pdf_path` on `SyllabusVersion`;
-- Subject/version/current-version identity already supplied by the syllabus model;
+- Subject/version/current-version identity supplied by the syllabus model;
 - automatic resolution/opening of the managed source PDF in Curriculum Authoring;
 - replacement support subject to curriculum lifecycle rules.
 
-A separate syllabus-storage menu is unnecessary because attachment is already part of Curriculum Authoring and File → Open can open a syllabus document directly when needed.
-
-Record #83 as completed under Sprint 11 on the Project board.
+Sprint 14 moves the managed destination into the Subject-first layout without changing that completed feature status.
 
 Issue #34 is also not backlog work: its requested old-backup regression already existed and the issue is closed.
 
