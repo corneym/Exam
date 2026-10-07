@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationPaths;
 import au.edu.eq.questionbank.ConfigurationException;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
@@ -2541,10 +2542,10 @@ public class QuestionBankApplication extends Application {
 		ExamMetadataOptionsRepository examMetadataOptionsRepository = new ExamMetadataOptionsRepository();
 		ExamMetadataCorrectionService examMetadataCorrectionService = new ExamMetadataCorrectionService(
 				config.pdfDataRoot(), examWriter, answerWriter);
-		examMetadataPane = new ExamMetadataPane(primaryStage, config.pdfDataRoot(), curriculumSelectionModel,
-				examMetadataOptionsRepository, examImporter, examWriter, examMetadataCorrectionService,
-				this::allowExamImportConfirmation, this::openExamPdf, pdfWorkspace::setSelectionCursorEnabled,
-				this::activateExamBookletSubject);
+		examMetadataPane = new ExamMetadataPane(primaryStage, new ManagedDataLayout(config.dataRoot()),
+				config.pdfDataRoot(), curriculumSelectionModel, examMetadataOptionsRepository, examImporter, examWriter,
+				examMetadataCorrectionService, this::allowExamImportConfirmation, this::openExamPdf,
+				pdfWorkspace::setSelectionCursorEnabled, this::activateExamBookletSubject);
 
 		// The new main-window Exam/Assets workspace reads the same authoritative
 		// repositories as the transitional modal Exam Setup workflow.

@@ -1,172 +1,217 @@
 # Sprint 13 — UI Refactoring, Search and Dashboard Refinement
 
-> **Status:** PLANNED / READY TO START  
+> **Status:** COMPLETE / MERGED  
 > **Planning reference:** 5 October 2026  
-> **Predecessor:** Sprint 12 / Release 0.2, merged and verified  
+> **Merged:** 7 October 2026  
+> **Pull request:** #107  
+> **Merge commit:** `f497f1844c1eebf47f25ebe9e49454b965459f61`  
+> **Predecessor:** Sprint 12 / Release 0.2  
 > **Primary intent:** bounded, evidence-driven refinement after real-corpus use
 
-## 1. Sprint objective
+## 1. Sprint objective and final result
 
-Sprint 13 is deliberately smaller than Sprint 12. It focuses on behaviour-preserving UI refactoring plus targeted Search and Dashboard refinements discovered through real-corpus use.
+Sprint 13 was deliberately smaller than Sprint 12. It focused on behaviour-preserving UI refactoring plus targeted Search, Dashboard and Working Subject refinements discovered through real-corpus use.
 
-The sprint must not expand into another broad redesign. Each slice must remain independently testable, reviewable and suitable for a clean stopping point.
+The original seven slices were completed. Two additional user-visible workflow issues (#97 and #98) were also implemented and verified before closeout.
 
-## 2. Final Sprint 13 scope
+Sprint 13 did not change the SQLite schema. The current published application/release version remained 0.2.
+
+## 2. Final implemented scope
 
 ### Slice 1 — #93 Refactor UI classes where marked
 
-Treat #93 as mandatory behaviour-preserving refactoring before further work in the affected UI classes.
-
-The production UI audit found 12 real `// TODO` markers across three classes.
+Completed as behaviour-preserving refactoring.
 
 #### `QuestionBankApplication`
 
-- split `initialiseCaptureWorkflow(...)` into smaller responsibility-focused composition/wiring methods;
-- remove anonymous `Task` implementations from `loadCorpusDashboardHome(...)`, `startDashboardQuestionCaptureRefresh(...)`, `startLegacyQuestionCaptureRefresh(...)`, `startWorkingSubjectCaptureRefresh(...)`, and `startWorkingSubjectExamAssetsRefresh(...)`;
-- also refactor the structurally identical anonymous `Task` in `startExamAssetsQuestionCaptureRefresh(...)` so no inconsistent anonymous Task implementation remains.
-
-Recommended internal batches:
-
-1. extract one focused callable-backed application background-task helper and replace all six anonymous Task bodies;
-2. split `initialiseCaptureWorkflow(...)` into focused construction/wiring methods.
-
-Preserve all stale-generation, lifecycle, failure and JavaFX-thread semantics.
+- replaced the targeted anonymous background `Task` implementations with one focused callable-backed application task helper;
+- included the structurally identical unmarked task site so no inconsistent anonymous implementation remained;
+- preserved thread naming, callbacks, stale-generation protection, lifecycle/disposal checks and error handling;
+- split `initialiseCaptureWorkflow(...)` into smaller responsibility-focused construction/wiring methods.
 
 #### `CorpusDashboardPane`
 
-Refactor the marked methods without changing Dashboard semantics:
+Decomposed the marked large methods:
 
-- `buildContent()` — separate major layout construction concerns;
-- `configureActions()` — separate filter, selection, Question-work and command action wiring;
-- `configureControls()` — separate curriculum, Exam/booklet and action-control presentation setup.
+- `buildContent()`;
+- `configureActions()`;
+- `configureControls()`.
+
+The refactor preserved Dashboard layout semantics, audit values, filters, selection, lifecycle actions and routing.
 
 #### `CurriculumMappingReviewDialog`
 
-Remove anonymous/inline cell implementations from:
+Replaced inline/anonymous cell implementations with named focused cell types while preserving:
 
-- `configureReviewedMappingsList()`;
-- `configureSourceNodeControls()`;
-- `configureSuggestionList()`.
+- reviewed/current markers;
+- suggestion text;
+- checkbox state;
+- target selection behaviour.
 
-Use named focused cell types or factories while preserving current text, reviewed/current markers, checkbox state and selection behaviour.
+The final PR review identified two extracted cell classes that did not use their enclosing dialog. `ReviewedMappingCell` and `SourceDescriptorButtonCell` were made static before merge.
 
 ### Slice 2 — #89 Question Search save/refresh defects
 
-Real-corpus use exposed two related problems when editing classification in Questions → Search.
+The real-corpus defect was reproduced and fixed.
 
-Current behaviour:
+Final behaviour:
 
-- Save persists the changed Descriptor correctly;
-- Search unnecessarily blanks/rebuilds the visible result pane;
-- when Search closes, the Corpus Dashboard can retain its old snapshot;
-- consequently a booklet `No descriptor` count may remain non-zero until application restart even though the descriptors were saved.
+- inline Descriptor Save persists correctly;
+- Search no longer blanks the visible results while the post-save background refresh runs;
+- the edited Question remains/re-becomes selected;
+- the persisted Descriptor is shown immediately;
+- Search records whether a real classification persistence change occurred;
+- closing Search after a persisted change refreshes the Corpus Dashboard;
+- Dashboard `No descriptor` counts update without application restart;
+- closing an unchanged Search session does not trigger unnecessary Dashboard refresh work.
 
-Required outcome:
-
-- persist classification changes correctly;
-- avoid unnecessarily clearing/rebuilding the whole visible Search result pane;
-- retain/reselect the edited Question;
-- refresh or invalidate the Dashboard snapshot after a persisted Search classification change;
-- ensure Dashboard `No descriptor` counts reflect saved classifications without restart;
-- avoid unnecessary Dashboard refresh when Search closes with no persisted change;
-- add a regression reproducing Search Save → close Search → updated Dashboard count.
+Manual real-corpus verification confirmed the booklet `No descriptors` count reduced immediately after returning from Search.
 
 ### Slice 3 — #82 Question Search spacing/action layout
 
-Improve Search presentation without redesigning retrieval:
+Question Search presentation was regularised without changing retrieval semantics.
 
-- improve internal margins;
-- regularise Edit / Split / Metadata / Shared Context / Answer action spacing;
-- preserve current Search semantics and control behaviour.
+Final layout:
+
+- the five Question-edit actions use the DialogPane button row;
+- action buttons are uniformly sized and grouped consistently;
+- Close remains the Dialog close action;
+- left/right Search columns have consistent internal padding;
+- Matching Questions and Question Details no longer sit hard against their SplitPane edges;
+- existing IDs, tooltips, enablement, dirty-classification guard and action targets were preserved.
+
+Manual visual verification was accepted.
 
 ### Slice 4 — #92 Inspect Questions from Dashboard
 
-Add a Dashboard action that opens Question Search narrowed to the selected Exam or booklet.
+Dashboard now provides `Inspect Questions` at both selected Exam and selected Question-booklet scope.
 
-Design this as a reusable Search scope/narrowing mechanism rather than a one-off Dashboard hack.
+The implementation introduced reusable Search narrowing rather than a Dashboard-only filter hack.
 
-This slice should establish architecture that richer Search filtering can later reuse, but it must not implement the broader #94 filter set.
+Final behaviour:
+
+- Exam-level inspection supplies the selected Exam scope;
+- booklet-level inspection supplies the selected booklet scope;
+- Search displays the narrowing as immutable visible context;
+- the scope persists across Current Syllabus / All Questions and post-edit refresh;
+- COMPLETE Exams remain inspectable;
+- returning from Search preserves the Dashboard workflow;
+- Search remains retrieval UI rather than a duplicate Dashboard work queue.
+
+This mechanism is the intended foundation for later richer Search filtering under #94.
+
+Maintained Help was updated and its regression was green before closeout.
 
 ### Slice 5 — #86 Dashboard column alignment
 
-Regularise Dashboard table alignment where appropriate.
+Presentation-only change completed.
 
-This is presentation-only work. Do not alter audit values, filtering, selection or action semantics.
+Displayed data cells are centred consistently across:
+
+- Exams;
+- Question Booklets;
+- Question Work.
+
+Audit values, ordering, sorting, filtering, selection and action semantics were not changed.
+
+Manual visual verification passed.
 
 ### Slice 6 — #87 Dashboard lifecycle progress/responsiveness
 
-Improve `Mark Active` / `Mark Complete` workflow feedback.
+Exam lifecycle persistence plus the authoritative Dashboard reload now run off the JavaFX application thread.
 
-Required outcome:
+Final behaviour:
 
-- persistence/refresh work must not block the JavaFX application thread;
-- show visible busy/progress feedback;
-- prevent duplicate lifecycle actions while the operation is active;
-- clear progress on success or failure;
-- preserve current readiness and lifecycle semantics;
-- preserve valid Dashboard selection/context across refresh where possible.
+- visible compact busy/progress state during Mark Active / Mark Complete;
+- duplicate lifecycle actions disabled while busy;
+- busy state remains active across persistence and Dashboard reload;
+- busy state clears on success and failure;
+- JavaFX remains responsive under contention;
+- lifecycle persistence semantics and completion-readiness rules are unchanged;
+- Dashboard selection/context and retained active-booklet lifecycle state remain synchronised.
+
+Focused responsiveness and failure-path regressions were green. Manual verification confirmed the progress indicator is visible.
 
 ### Slice 7 — #85 + #78 Working Subject consistency
 
-Implement the two small remaining Working Subject consistency gaps together while keeping the GitHub issues separate.
-
 #### #85 Mapping Review single-syllabus state
 
-Before opening Curriculum Mapping Review:
+Curriculum → Review Mappings now:
 
-- use the authoritative Working Subject;
-- determine whether a second syllabus version exists for comparison;
-- if not, do not construct/open a meaningless review dialog;
-- present a clear unavailable/not-applicable message.
+- uses the authoritative Working Subject;
+- checks persisted syllabus-version count before constructing the review dialog;
+- does not open Mapping Review when fewer than two syllabus versions exist;
+- shows a clear unavailable/not-applicable message instead.
+
+Focused workflow coverage and manual verification passed.
 
 #### #78 Revision export Working Subject scope
 
-Revision HTML and SCORM export must inherit the authoritative Working Subject rather than provide a competing Subject selection.
+Revision HTML and SCORM export now inherit the authoritative Working Subject.
 
-Preserve export eligibility, grouping, destination and unit-selection semantics.
+Final behaviour:
 
-## 3. Explicitly outside Sprint 13
+- no competing Subject selector in either export dialog;
+- the Working Subject is displayed as read-only context;
+- Unit selection, grouping and destination semantics are preserved;
+- the application rejects export cleanly before dialog construction when the Working Subject has no single current syllabus;
+- no-current-syllabus handling no longer falls through to an uncaught revision-corpus construction failure.
 
-### #83 — completed, retrospectively Sprint 11
+Dialog, application-level and end-to-end export regressions were green. Manual visual verification passed.
 
-Managed syllabus-PDF support already exists.
+## 3. Additional Sprint 13 work
 
-Current implementation:
+### #97 Curriculum workbook onboarding
 
-- attaches a syllabus PDF from Curriculum Authoring;
-- copies it beneath managed curriculum storage;
-- stores a portable relative `source_pdf_path`;
-- associates the path with `SyllabusVersion`, which already owns Subject/version/current state;
-- resolves and reopens the managed PDF on later authoring sessions;
-- supports replacement subject to curriculum lifecycle rules.
+Blank-slate onboarding exposed a managed-file usability problem: a curriculum Excel workbook previously needed to be placed under application data manually.
 
-Ordinary File → Open already provides direct opening when a separate authoring workflow is unnecessary.
+Sprint 13 changed this so that:
 
-Issue #83 is complete and should not consume Sprint 13 work. Record it under Sprint 11 on the Project board.
+- the user may select a curriculum workbook from anywhere;
+- the application retains a managed copy beneath the configured curriculum data area;
+- import uses the managed copy;
+- the user does not need to pre-position the file manually.
 
-### #27 — move with #94
+This was intentionally a narrow transitional change. The broader Subject-first managed-data redesign was deferred to Sprint 14.
 
-Do not benchmark broad Search behaviour before richer retrieval filters exist.
+Automated tests and manual blank-slate onboarding verification passed.
 
-Pair #27 with #94 in a later Search-focused sprint:
+### #98 Automatic restart after data-root change or restore
 
-1. implement #94 richer retrieval-oriented Search filters;
-2. benchmark the resulting real Search workload under #27;
-3. use measurements to decide whether #25, #26, indexing or query redesign are justified.
+A shared restart capability was added for operations that deliberately invalidate the running application's in-memory data context.
 
-### #38 — Sprint 14
+The implementation reuses the existing shutdown/resource-close coordination rather than creating a second shutdown path.
 
-Printable/vector-preserving assessment and solution output is too large for Sprint 13 and should remain separate.
+#### Options
 
-When resumed, favour direct source-PDF composition/clipping and avoid unnecessary rasterisation.
+After a different data root is validated and saved:
 
-### #95 — deferred evidence tracker
+- the user is offered `Restart Now` or `Exit`;
+- Restart Now performs the normal shutdown path and relaunches the packaged application;
+- Exit performs the normal shutdown path without relaunch;
+- no restart prompt is shown when the data root is unchanged.
 
-Capture-workflow productivity assistance remains deferred until sustained real-corpus use demonstrates repeated cost.
+#### Restore
 
-## 4. Search and Dashboard architectural boundary
+After a successful restore:
 
-Keep the established distinction:
+- restored database/managed data is published and validated first;
+- the same restart capability may relaunch the packaged application;
+- restore failure/rollback paths do not blindly restart;
+- shutdown safety remains authoritative.
+
+Development/Eclipse execution fails safely when there is no supported packaged launcher rather than guessing an IDE command line.
+
+Focused automated tests passed. Manual verification passed in both:
+
+- a generated jpackage application image;
+- an installed MSI build at version 0.2.
+
+Both data-root change and database restore successfully restarted the packaged application.
+
+## 4. Final architecture rules confirmed by Sprint 13
+
+### Dashboard vs Search
 
 ```text
 Dashboard
@@ -178,44 +223,151 @@ Search
     which Questions do I want to inspect or use
 ```
 
-Dashboard-to-Search inspection may supply an initial retrieval scope, but Search must not become a duplicate Dashboard work queue.
+Dashboard may supply immutable initial Search narrowing, but Search remains the retrieval surface.
 
-## 5. Working Subject rule
+### Working Subject
 
 The Corpus Dashboard owns the authoritative Working Subject.
 
-Search, Exam/Assets, capture, curriculum workflows and Revision exports inherit it.
+Exam/Assets, capture, Search, curriculum workflows and Revision export inherit it. Secondary dialogs must not establish a competing application-level Subject context.
 
-Secondary dialogs must not establish a competing application-level Subject context.
+### JavaFX responsiveness
 
-## 6. Testing expectations
+Persistence, refresh and slow PDF work stay off the JavaFX application thread.
 
-For every slice:
+Asynchronous results retain stale-generation/lifecycle protection, and UI busy state covers the whole user-visible operation rather than only one internal phase.
 
-- inspect the current branch and relevant tests before coding;
-- add focused regressions for real production defects;
-- preserve asynchronous stale-generation protection;
-- keep persistence and slow PDF work off the JavaFX application thread;
-- use deterministic semantic TestFX activation for ordinary controls;
-- run only the tests needed for the current slice before broader checkpoints;
-- require visual inspection when layout/presentation acceptance cannot be proven by tests alone.
+### Managed files
 
-#93 refactoring must be behaviour-preserving. Existing tests should remain green before and after each internal batch.
+SQLite remains authoritative.
 
-## 7. Project tracking
+Managed curriculum workbooks, syllabus PDFs and Exam sources are source assets referenced by the authoritative database. Sprint 13 #97 improved workbook intake without attempting the broader filesystem redesign.
 
-Recommended current Sprint 13 Project slice assignment:
+### Restart semantics
 
-| Slice | Issues | Purpose |
-|---|---|---|
-| 1 | #93 | UI refactoring |
-| 2 | #89 | Search save/refresh defects |
-| 3 | #82 | Search layout |
-| 4 | #92 | Dashboard → scoped Search inspection |
-| 5 | #86 | Dashboard alignment |
-| 6 | #87 | Dashboard lifecycle progress |
-| 7 | #85, #78 | Working Subject consistency |
+Data-root change and successful restore use the same packaged-application restart boundary and the normal shutdown/resource-close path.
 
-Project fields remain manually managed.
+## 5. Headless UI regression restructuring
 
-Record #83 as completed under Sprint 11. Move #27 to the future sprint containing #94. Keep #38 in Sprint 14.
+Sprint 13 closeout exposed a test-infrastructure problem on a memory-constrained local machine.
+
+A monolithic `UITests` headless run accumulated enough JavaFX/TestFX/PDF state to exhaust the heap even after increasing the maximum heap. Running every test class in its own fresh JVM eliminated accumulation but introduced excessive startup cost.
+
+The retained solution mirrors the existing CI logical partitions and runs the headless regression through four bounded suite wrappers:
+
+```text
+FastUITests
+WorkflowApplicationTests
+WorkflowCaptureTests
+WorkflowStateEditingTests
+```
+
+The headless profile:
+
+- uses `-Xmx4g`;
+- selects the four suite wrappers by default;
+- uses one fork at a time;
+- does not reuse a fork between top-level suite wrappers.
+
+This gives each suite group a fresh JVM without paying a JVM startup cost for every TestFX class.
+
+Two workflow classes that had been tagged `workflow-ui` but were not included in the three workflow wrapper patterns were also brought into explicit groups:
+
+- `CorpusDashboardWorkflowTest` → application group;
+- `LegacyClipboardCaptureWorkflowIntegrationTest` → capture group.
+
+The normal full local command remains:
+
+```text
+.\mvnw.cmd -Pheadless-ui-tests test
+```
+
+## 6. Closeout verification
+
+Final local split headless UI regression:
+
+```text
+Tests run: 360
+Failures: 0
+Errors: 0
+Skipped: 0
+Total time: 07:00
+```
+
+The suite groups completed successfully as independent JVM boundaries:
+
+- `FastUITests`;
+- `WorkflowApplicationTests`;
+- `WorkflowCaptureTests`;
+- `WorkflowStateEditingTests`.
+
+This eliminated the out-of-memory failure mode observed with the monolithic local UI run.
+
+Strict Javadoc was green after the final `QuestionSearchNarrowing` public-API documentation correction.
+
+The non-UI suite was green.
+
+GitHub Actions CI for the Sprint 13 branch/PR was green before merge.
+
+PR #107 review then raised two CodeQL `Inner class could be static` findings in `CurriculumMappingReviewDialog`. Both suggestions were valid and were applied before merge.
+
+No additional visual inspection remained outstanding at closeout.
+
+## 7. Final issue disposition
+
+PR #107 deliberately closed:
+
+| Issue | Final disposition |
+|---|---|
+| #93 | UI refactoring complete |
+| #89 | Search Save/refresh defect fixed |
+| #82 | Search layout complete |
+| #92 | Dashboard Inspect Questions complete |
+| #86 | Dashboard alignment complete |
+| #87 | lifecycle progress/responsiveness complete |
+| #85 | single-syllabus Mapping Review gating complete |
+| #78 | Revision export Working Subject scope complete |
+| #97 | curriculum workbook onboarding complete |
+| #98 | packaged restart workflow complete |
+
+All ten issues closed automatically when PR #107 merged.
+
+Issue #99 remains open as future Dashboard missing-Descriptor workflow work and was not part of Sprint 13.
+
+## 8. Deferred / superseded planning
+
+### #83 — already complete under Sprint 11
+
+Managed syllabus-PDF support already existed. It was not Sprint 13 work.
+
+### #94 + #27 — later Search/performance work
+
+Implement richer retrieval filters first, then benchmark the resulting real workload.
+
+Do not optimise against an incomplete Search workload.
+
+### #99 — future missing-Descriptor Dashboard workflow
+
+This is deliberately separate from Sprint 13 and should reuse the classification/Search infrastructure rather than create a parallel editor.
+
+### #38 — no longer Sprint 14
+
+The earlier Sprint 13 planning assumption that printable/vector-preserving output would be Sprint 14 is superseded.
+
+Sprint 14 is now the Subject-first managed-data restructure under #100–#106.
+
+Printable/vector-preserving output remains future product work.
+
+### #95 — evidence-driven
+
+Capture productivity assistance remains deferred until real-corpus use demonstrates repeated cost.
+
+## 9. Historical closeout
+
+Sprint 13 merged through PR #107 on 7 October 2026.
+
+Merge commit:
+
+`f497f1844c1eebf47f25ebe9e49454b965459f61`
+
+Preserve this document as the detailed Sprint 13 implementation and verification record.

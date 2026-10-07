@@ -5,7 +5,7 @@ This directory contains the canonical project documentation for the Exam Questio
 ## Canonical documents
 
 - [`development-roadmap.md`](development-roadmap.md) — durable project history, architectural evolution and forward roadmap.
-- [`design/backlog.md`](design/backlog.md) — deliberately deferred or unresolved work that is not active closeout scope.
+- [`design/backlog.md`](design/backlog.md) — deliberately deferred or unresolved work that is not active sprint scope.
 - [`design/sprint-*.md`](design/) — detailed sprint design, implementation decisions and verification evidence.
 - [`release-build.md`](release-build.md) — repeatable Windows release, versioning, packaging and installation-verification procedure.
 - [`Working-Instructions.md`](Working-Instructions.md) — repository-guided development rules. This operational file is maintained separately and is not rewritten as part of sprint-history consolidation.
@@ -14,27 +14,66 @@ The former `project-history.md`, `current-status.md` and `design/architecture-ev
 
 ## Current development position
 
-Sprints 01–12 are complete and merged.
+Sprints 01–13 are complete and merged.
 
 Sprint 11 — Release 0.1 — merged to protected `main` through pull request #39 on 27 September 2026. Merge commit: `1ccbb350a693568231bd14582ffbecc7684fb79a`.
 
-Sprint 12 — Release 0.2 — merged to protected `main` through PR [#88](https://github.com/corneym/Exam/pull/88) on 5 October 2026. Merge commit: `8ba714e2ef7ff07eebb2375021e1e751d4876e47`. Post-merge CI run #164 and CodeQL run #15 both passed. Its detailed final implementation record is:
+Sprint 12 — Release 0.2 — merged to protected `main` through PR #88 on 5 October 2026. Merge commit: `8ba714e2ef7ff07eebb2375021e1e751d4876e47`. Release 0.2 remains the current published release and application version.
 
-`design/sprint-12-release-0.2.md`
+Sprint 13 — UI Refactoring, Search and Dashboard Refinement — merged to protected `main` through PR #107 on 7 October 2026. Merge commit: `f497f1844c1eebf47f25ebe9e49454b965459f61`.
 
-Sprint 12 delivered the application-level Working Subject and Corpus Dashboard home, Exam/Assets management, Exam lifecycle and completion gating, managed-document hashing and safe source correction, streamlined Question/Answer capture, required MCQ explanation completion where declared by the AnswerFile, legacy-import reconciliation, maintained Help and extensive regression hardening.
+Its detailed final implementation record is:
 
-Final pre-PR verification passed **1,031 non-UI tests** (3 expected skips), **342 UI tests**, and the combined **1,373-test AllTests** run (3 expected skips), all with zero failures/errors. Maven `clean verify`, strict Javadoc, Spotless and `git diff --check` also passed. The final review additionally removed duplicate Dashboard MCQ-explanation handler wiring, hardened TestFX scene-graph lookups/observable save waits, and added direct SQLite regression coverage for destructive Exam asset deletion.
+`design/sprint-13-ui-refinement.md`
 
-The formal `scripts/build-release.ps1` gate passed and produced the Release 0.2 MSI. Maven/application/MSI version is **0.2**. Manual installed-MSI verification outside Eclipse passed: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2, normal shutdown, successful uninstall, and configuration/data survival. Two release-independent hard-coded 0.1 test expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest` were corrected during the gate. PR #88 then merged cleanly; post-merge CI and CodeQL passed, issue #64 was closed as completed, and Release 0.2 is now the current published release.
+Sprint 13 delivered:
 
-The latest supported SQLite schema on `main` is **19**.
+- behaviour-preserving UI refactoring in `QuestionBankApplication`, `CorpusDashboardPane` and `CurriculumMappingReviewDialog`;
+- Search classification-save refresh behaviour that keeps the visible Search state stable and refreshes the Dashboard only after persisted changes;
+- improved Question Search spacing and action layout;
+- Dashboard `Inspect Questions` entry points at Exam and booklet scope using reusable immutable Search narrowing;
+- centred Dashboard table data;
+- asynchronous Exam lifecycle persistence/refresh with visible busy feedback and duplicate-action suppression;
+- Curriculum Mapping Review single-syllabus gating;
+- Revision HTML and SCORM export scoped to the authoritative Working Subject;
+- curriculum workbook onboarding from any source location with a retained managed copy;
+- automatic packaged-application restart after data-root change and successful restore;
+- headless UI regression partitioning into four bounded JVM suites to prevent heap exhaustion while retaining complete UI coverage.
 
-## Sprint 12 issue evidence
+Sprint 13 closeout verification included a complete split headless UI run of **360 tests**, with zero failures and zero errors, strict Javadoc success, and green GitHub Actions CI. The final PR review raised two CodeQL static-inner-class findings in `CurriculumMappingReviewDialog`; both were corrected before merge.
 
-GitHub Issues are part of the durable evidence for Sprint 12. The consolidated sprint document records the final accepted behaviour, including places where later acceptance comments superseded earlier issue wording.
+The latest supported SQLite schema on `main` remains **19**.
 
-Important examples include:
+Sprint 14 is active on `feature/sprint-14` and is documented in:
+
+`design/sprint-14.md`
+
+Its current scope is the Subject-first managed-data layout under umbrella issue #100 and child issues #101–#106. This supersedes the earlier roadmap assumption that printable/vector-preserving output (#38) would necessarily be Sprint 14. Issue #38 remains future product work.
+
+## Recent issue evidence
+
+GitHub Issues remain part of the durable evidence for completed sprint work.
+
+### Sprint 13
+
+PR #107 closed:
+
+- #93 — behaviour-preserving UI refactoring;
+- #89 — Search classification Save/refresh defects;
+- #82 — Question Search spacing/action layout;
+- #92 — Dashboard `Inspect Questions` / scoped Search entry;
+- #86 — Dashboard column alignment;
+- #87 — Dashboard lifecycle progress/responsiveness;
+- #85 — Mapping Review single-syllabus unavailable state;
+- #78 — Revision HTML/SCORM scope to authoritative Working Subject;
+- #97 — curriculum workbook onboarding/managed-copy behaviour;
+- #98 — automatic restart after data-root change or restore.
+
+Issue #99 remains open as future Dashboard work for assigning missing Question descriptors and was deliberately excluded from Sprint 13.
+
+### Sprint 12
+
+Important Sprint 12 evidence includes:
 
 - #43–#50 — Exam/Assets, planning metadata, hashing, replacement and lifecycle foundations;
 - #51–#54, #59, #70, #71, #79 and #84 — capture workflow and UI closeout;
@@ -45,10 +84,7 @@ Important examples include:
 - #75 — asynchronous Working Subject refresh;
 - #80 — destructive Exam asset deletion;
 - #63 — maintained Help;
-- #22 — superseded by the implemented reporting/reconciliation issues above and closed after Sprint 12 merge;
-- #73 — closed as not planned; mixed booklets retain one total expected top-level Question count;
-- #34 — already covered by the existing pre-v13 restore/migration regression and closed;
-- #64 — Release 0.2 gate, manual MSI verification, protected-main merge and post-merge CI completed; closed.
+- #64 — Release 0.2 gate and release closeout.
 
 ## Status vocabulary
 
@@ -83,7 +119,16 @@ Useful local development commands are:
 
 Use the platform-appropriate `./mvnw` form on Unix-like systems where applicable.
 
-The Windows release gate is:
+The `headless-ui-tests` profile now runs the UI regression in four bounded suite JVMs:
+
+- `FastUITests`;
+- `WorkflowApplicationTests`;
+- `WorkflowCaptureTests`;
+- `WorkflowStateEditingTests`.
+
+This is the normal full local headless UI regression path. The split prevents the JavaFX/TestFX/PDF workload from accumulating across one monolithic JVM while preserving the complete UI suite.
+
+The Windows release gate remains:
 
 ```powershell
 .\scripts\build-release.ps1
