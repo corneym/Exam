@@ -255,11 +255,15 @@ public class PdfStore {
 			}
 			return relativePath;
 		}
-		if (normalizedPath.equals(pdfRoot) || !normalizedPath.startsWith(pdfRoot)) {
+		Path legacyPdfRoot = pdfRoot;
+		if (legacyPdfRoot == null) {
+			throw new IllegalStateException("Legacy PDF root is not configured.");
+		}
+		if (normalizedPath.equals(legacyPdfRoot) || !normalizedPath.startsWith(legacyPdfRoot)) {
 			throw new IllegalArgumentException(
 					"Managed PDF path must be beneath the configured PDF root: " + managedPath);
 		}
-		return pdfRoot.relativize(normalizedPath).toString().replace('\\', '/');
+		return legacyPdfRoot.relativize(normalizedPath).toString().replace('\\', '/');
 	}
 
 	/**
