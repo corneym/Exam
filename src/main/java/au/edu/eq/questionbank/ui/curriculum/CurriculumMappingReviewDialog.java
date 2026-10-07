@@ -904,7 +904,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		}
 	}
 
-	private final class SourceDescriptorButtonCell extends ListCell<CurriculumNode> {
+	private static final class SourceDescriptorButtonCell extends ListCell<CurriculumNode> {
 
 		@Override
 		protected void updateItem(CurriculumNode descriptor, boolean empty) {
