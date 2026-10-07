@@ -166,13 +166,31 @@ class PdfStoreTest {
 	}
 
 	@Test
+	void transitionalStoreDoesNotMisclassifyLegacySubjectNamedSubjects() {
+		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
+		Path legacyPdfRoot = dataRoot.resolve("pdf");
+		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot), legacyPdfRoot);
+
+		// The old layout may theoretically contain a Subject named "subjects".
+		// Absence of the canonical third-component "exams" marker keeps it legacy.
+		assertEquals(legacyPdfRoot.resolve("subjects/QCAA/2024/paper1.pdf"),
+				store.resolve("subjects/QCAA/2024/paper1.pdf"));
+	}
+
+	@Test
 	void transitionalStorePersistsOnlyDataRootRelativeNewPaths() {
 		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
-		Path legacyPdfRoot = tempDir.resolve("pdf").toAbsolutePath().normalize();
+
+		// Model the real ApplicationConfig relationship: the legacy PDF root is a
+		// child of dataRoot rather than an unrelated directory.
+		Path legacyPdfRoot = dataRoot.resolve("pdf");
 		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot), legacyPdfRoot);
 		Path managedPath = dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf");
 		assertEquals("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf",
 				store.relativePath(managedPath));
+
+		// Compatibility reads do not grant permission to manufacture new persisted
+		// pdf/... paths from the old hierarchy.
 		assertThrows(IllegalArgumentException.class,
 				() -> store.relativePath(legacyPdfRoot.resolve("Chemistry/QCAA/2024/paper1.pdf")));
 	}
@@ -180,7 +198,7 @@ class PdfStoreTest {
 	@Test
 	void transitionalStoreResolvesLegacyAndSubjectFirstPaths() {
 		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
-		Path legacyPdfRoot = tempDir.resolve("pdf").toAbsolutePath().normalize();
+		Path legacyPdfRoot = dataRoot.resolve("pdf");
 		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot), legacyPdfRoot);
 		assertEquals(dataRoot.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf"),
 				store.resolve("subjects/Chemistry/exams/QCAA/2024/External Assessment/paper1.pdf"));

@@ -11,12 +11,13 @@ import java.util.Properties;
 /**
  * Filesystem locations for application data.
  * <p>
- * A configured data root contains the PDF library, curriculum data, and
- * question-bank database.
+ * The SQLite database parent is the authoritative application data root.
+ * Subject-first managed assets are stored beneath that root. The dedicated PDF
+ * and curriculum roots remain available temporarily for legacy-data, migration,
+ * backup and restore compatibility.
  *
- * @param pdfDataRoot        root beneath which source examination PDFs are
- *                           stored
- * @param curriculumDataRoot root beneath which curriculum workbooks are stored
+ * @param pdfDataRoot        legacy PDF root retained for compatibility
+ * @param curriculumDataRoot legacy curriculum root retained for compatibility
  * @param databasePath       path to the SQLite question-bank database
  */
 public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path databasePath) {
@@ -50,9 +51,13 @@ public record ApplicationConfig(Path pdfDataRoot, Path curriculumDataRoot, Path 
 	}
 
 	/**
-	 * Returns the application data root.
+	 * Returns the authoritative application data root.
+	 * <p>
+	 * Newly managed Subject-first assets are resolved from this root. The separate
+	 * PDF and curriculum roots remain compatibility locations for older data until
+	 * their dedicated migration slices are complete.
 	 *
-	 * @return the directory containing the database and application data folders
+	 * @return directory containing the database and managed application data
 	 */
 	public Path dataRoot() {
 		return databasePath.getParent();

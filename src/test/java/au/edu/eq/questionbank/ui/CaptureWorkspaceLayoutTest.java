@@ -739,7 +739,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		answerWriter.assignAnswerFile(booklet, answerFile);
 		answerWriter.insertAnswer(question, "Stored answer",
 				List.of(new AnswerRegion(answerFile, 1, 0.10, 0.10, 0.70, 0.20)));
-		Path managedPdf = new PdfStore(pdfDataRoot).resolve(answerFile.getSourceDocument().getRelativePath());
+		PdfStore pdfStore = new PdfStore(new ManagedDataLayout(applicationConfig.dataRoot()), pdfDataRoot);
+		Path managedPdf = pdfStore.resolve(answerFile.getSourceDocument().getRelativePath());
 		assertTrue(Files.isRegularFile(managedPdf));
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
@@ -941,6 +942,18 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 		// Newly persisted Question booklets enter read-only inspection immediately.
 		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, displayedDocument);
+		Button useSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+		assertFalse(useSelected.isDisabled());
+		fireControl(robot, useSelected);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> examMetadataPane().getBooklet() != null
+				&& examMetadataPane().getBooklet().getId() == created.getId());
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Capture activation must resolve the newly persisted data-root-relative
+		// source,
+		// not reinterpret it beneath the former PDF root.
+		assertEquals(created.getId(), examMetadataPane().getBooklet().getId());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
 	}
 
 	@Test

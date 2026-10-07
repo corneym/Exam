@@ -442,7 +442,7 @@ public class QuestionBankApplication extends Application {
 			}
 			return true;
 		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path pdfPath;
 		try {
 			pdfPath = pdfStore.resolve(question.getBooklet().getSourceDocument().getRelativePath());
@@ -1548,6 +1548,16 @@ public class QuestionBankApplication extends Application {
 		return examMenu;
 	}
 
+	private PdfStore createExamPdfStore(ApplicationConfig config) {
+		if (config == null) {
+			throw new NullPointerException("config");
+		}
+
+		// Sprint 14 writes new paths relative to dataRoot while retaining read access
+		// to pre-migration paths relative to the former dedicated PDF root.
+		return new PdfStore(new ManagedDataLayout(config.dataRoot()), config.pdfDataRoot());
+	}
+
 	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu exportMenu = createMenu("E_xport");
 		revisionExportMenuItem = createMenuItem("_Revision HTML...",
@@ -1708,7 +1718,7 @@ public class QuestionBankApplication extends Application {
 		// exceptions while constructing the revision corpus.
 		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculumRepository, retrievalService,
 				outputApplicabilityRepository);
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		QuestionExtractor extractor = new QuestionExtractor();
 		return new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
 				new RevisionQuestionAssetRenderer(pdfStore, extractor),
@@ -1803,7 +1813,7 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		try {
-			new PdfStore(config.pdfDataRoot()).deleteManagedPdf(result.relativePath());
+			createExamPdfStore(config).deleteManagedPdf(result.relativePath());
 		} catch (IOException | IllegalArgumentException exception) {
 
 			// Database deletion is already committed. Report the orphaned physical file
@@ -2310,8 +2320,7 @@ public class QuestionBankApplication extends Application {
 		// Cross-type duplication is also unsafe: an Answer add must not silently reuse
 		// bytes already managed as a Question booklet or another Answer asset.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Answer booklet");
-		ManagedDataLayout managedDataLayout = new ManagedDataLayout(config.dataRoot());
-		PdfStore pdfStore = new PdfStore(managedDataLayout, config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
 				exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
@@ -2447,8 +2456,7 @@ public class QuestionBankApplication extends Application {
 		// Detect byte-identical managed material before PdfStore creates another
 		// managed file with a different filename.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Question booklet");
-		ManagedDataLayout managedDataLayout = new ManagedDataLayout(config.dataRoot());
-		PdfStore pdfStore = new PdfStore(managedDataLayout, config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
 				exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
@@ -2473,8 +2481,9 @@ public class QuestionBankApplication extends Application {
 		// The selector receives application-level Subject creation through the same
 		// database used by the rest of the capture workflow.
 		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
-		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter, config.pdfDataRoot(),
-				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
+		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter,
+				new ManagedDataLayout(config.dataRoot()), config.pdfDataRoot(), this::openAnswerPdf,
+				() -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
 				this::allowAnswerCaptureTransition, examMetadataPane::getBooklet,
 				() -> clearCaptureSelection(CaptureSelectionOwner.ANSWER), questionExtractor,
 				pdfWorkspace::getAnswerPdfSession,
@@ -2524,7 +2533,7 @@ public class QuestionBankApplication extends Application {
 		// The embedded Dashboard reuses the same authoritative repositories as capture
 		// and Exam / Assets rather than constructing a parallel corpus model.
 		corpusDashboardAuditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
-				new PdfStore(config.pdfDataRoot()));
+				createExamPdfStore(config));
 		initialiseExamAssetsWorkflow(primaryStage, config, database, answerWriter);
 		initialiseCapturePanes(primaryStage, config, database, sourceQuestionRepository, questionCaptureService,
 				legacyQuestionSplitService, answerWriter);
@@ -2540,7 +2549,7 @@ public class QuestionBankApplication extends Application {
 		// use one set of reusable metadata suggestions.
 		ExamMetadataOptionsRepository examMetadataOptionsRepository = new ExamMetadataOptionsRepository();
 		ExamMetadataCorrectionService examMetadataCorrectionService = new ExamMetadataCorrectionService(
-				config.pdfDataRoot(), examWriter, answerWriter);
+				new ManagedDataLayout(config.dataRoot()), config.pdfDataRoot(), examWriter, answerWriter);
 		examMetadataPane = new ExamMetadataPane(primaryStage, new ManagedDataLayout(config.dataRoot()),
 				config.pdfDataRoot(), curriculumSelectionModel, examMetadataOptionsRepository, examImporter, examWriter,
 				examMetadataCorrectionService, this::allowExamImportConfirmation, this::openExamPdf,
@@ -3027,7 +3036,8 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		AnswerPdfReplacementService replacementService = new AnswerPdfReplacementService(
-				new SqliteDatabase(config.databasePath()), config.pdfDataRoot());
+				new SqliteDatabase(config.databasePath()), new ManagedDataLayout(config.dataRoot()),
+				config.pdfDataRoot());
 		try {
 			AnswerFileReassignmentService.Impact impact = replacementService.assess(activeBooklet);
 			if (!confirmAnswerPdfReplacement(primaryStage, activeBooklet, impact)) {
@@ -3102,7 +3112,8 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		QuestionBookletPdfReplacementService replacementService = new QuestionBookletPdfReplacementService(
-				new SqliteDatabase(config.databasePath()), config.pdfDataRoot());
+				new SqliteDatabase(config.databasePath()), new ManagedDataLayout(config.dataRoot()),
+				config.pdfDataRoot());
 		try {
 			QuestionBookletPdfReplacementService.Impact impact = replacementService.assess(activeBooklet);
 			if (!confirmQuestionPdfReplacement(primaryStage, activeBooklet, impact)) {
@@ -3126,7 +3137,7 @@ public class QuestionBankApplication extends Application {
 				}
 				throw exception;
 			}
-			Path managedPath = new PdfStore(config.pdfDataRoot())
+			Path managedPath = createExamPdfStore(config)
 					.resolve(result.booklet().getSourceDocument().getRelativePath());
 
 			// Refresh the in-memory booklet before reopening the managed source so the
@@ -3253,7 +3264,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Path resolveQuestionBookletCapturePath(ExamBooklet booklet, ApplicationConfig config) {
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath;
 		try {
 
@@ -3866,7 +3877,7 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamImportConfirmation()) {
 			return false;
 		}
-		PdfStore pdfStore = new PdfStore(config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath;
 		try {
 
@@ -4161,7 +4172,7 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(questionRepository,
 				new CurriculumSearchNodeExpansionService(curriculumRepository));
-		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(config.pdfDataRoot()),
+		QuestionPreviewService previewService = new QuestionPreviewService(createExamPdfStore(config),
 				questionExtractor);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
 		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
@@ -4975,7 +4986,7 @@ public class QuestionBankApplication extends Application {
 
 		// Inspection must read both new data-root-relative paths and legacy
 		// PDF-root-relative paths during the Sprint 14 migration transition.
-		PdfStore pdfStore = new PdfStore(new ManagedDataLayout(config.dataRoot()), config.pdfDataRoot());
+		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath;
 		try {
 			storedPath = pdfStore.resolve(relativePath);

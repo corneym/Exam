@@ -9,6 +9,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -28,15 +29,40 @@ import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 public final class QuestionBookletPdfReplacementService {
 
 	private final SqliteDatabase database;
-	private final Path pdfDataRoot;
 	private final PdfStore pdfStore;
 	private final SourceDocumentHashService hashService;
 
 	/**
-	 * Creates a Question-booklet PDF replacement service.
+	 * Creates a Question-booklet PDF replacement service supporting both
+	 * Subject-first and legacy persisted paths during migration.
+	 *
+	 * @param database          question-bank database
+	 * @param managedDataLayout canonical application managed-data layout
+	 * @param legacyPdfDataRoot former dedicated Exam PDF root
+	 * @throws NullPointerException if any argument is {@code null}
+	 */
+	public QuestionBookletPdfReplacementService(SqliteDatabase database, ManagedDataLayout managedDataLayout,
+			Path legacyPdfDataRoot) {
+		if (database == null) {
+			throw new NullPointerException("database");
+		}
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
+		}
+		if (legacyPdfDataRoot == null) {
+			throw new NullPointerException("legacyPdfDataRoot");
+		}
+		this.database = database;
+		hashService = new SourceDocumentHashService();
+		pdfStore = new PdfStore(managedDataLayout, legacyPdfDataRoot);
+	}
+
+	/**
+	 * Creates a Question-booklet PDF replacement service using the legacy
+	 * PDF-root-relative storage contract.
 	 *
 	 * @param database    question-bank database
-	 * @param pdfDataRoot managed Exam PDF root
+	 * @param pdfDataRoot legacy managed Exam PDF root
 	 * @throws NullPointerException if either argument is {@code null}
 	 */
 	public QuestionBookletPdfReplacementService(SqliteDatabase database, Path pdfDataRoot) {
@@ -47,9 +73,8 @@ public final class QuestionBookletPdfReplacementService {
 			throw new NullPointerException("pdfDataRoot");
 		}
 		this.database = database;
-		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
-		this.pdfStore = new PdfStore(this.pdfDataRoot);
-		this.hashService = new SourceDocumentHashService();
+		hashService = new SourceDocumentHashService();
+		pdfStore = new PdfStore(pdfDataRoot);
 	}
 
 	/**

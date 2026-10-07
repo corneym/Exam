@@ -13,9 +13,11 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -24,6 +26,7 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
@@ -218,5 +221,59 @@ class AnswerPdfReplacementServiceTest {
 		// Removing the region-only Answer returns the written Question to normal
 		// Answer capture rather than leaving an invalid empty Answer row.
 		assertFalse(reloaded.hasAnswer());
+	}
+
+	@Test
+	void sameFilenameSubjectFirstReplacementCreatesDataRootRelativeManagedAsset() throws Exception {
+		Path dataRoot = tempDirectory.resolve("subject-first-answer-data");
+		Files.createDirectories(dataRoot);
+		Path legacyPdfRoot = dataRoot.resolve("pdf");
+		ManagedDataLayout managedDataLayout = new ManagedDataLayout(dataRoot);
+		PdfStore pdfStore = new PdfStore(managedDataLayout, legacyPdfRoot);
+		SqliteDatabase database = new SqliteDatabase(dataRoot.resolve("questionbank.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, examWriter);
+		SourceDocumentHashService hashService = new SourceDocumentHashService();
+		Path questionSource = tempDirectory.resolve("questions.pdf");
+		Files.writeString(questionSource, "question booklet");
+		Path managedQuestion = pdfStore.importExamPdf(questionSource, "Chemistry", "QCAA", 2025, "External Assessment");
+		ExamBooklet booklet = importer.importExam(chemistry, "QCAA", 2025, "External Assessment", "Paper 1",
+				pdfStore.relativePath(managedQuestion), ExamBookletQuestionFormat.WRITTEN_RESPONSE,
+				hashService.sha256(managedQuestion));
+		Path originalAnswerSource = tempDirectory.resolve("answers.pdf");
+		Files.writeString(originalAnswerSource, "wrong marking guide");
+		Path oldManaged = pdfStore.importExamPdf(originalAnswerSource, "Chemistry", "QCAA", 2025,
+				"External Assessment");
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		String oldRelativePath = pdfStore.relativePath(oldManaged);
+		String oldHash = hashService.sha256(oldManaged);
+		AnswerFile oldFile = answerWriter.findOrCreateAnswerFile(booklet, "answers.pdf", oldRelativePath, oldHash);
+		Path replacementDirectory = Files.createDirectories(tempDirectory.resolve("replacement"));
+		Path replacement = replacementDirectory.resolve("answers.pdf");
+		Files.writeString(replacement, "correct marking guide");
+		AnswerPdfReplacementService service = new AnswerPdfReplacementService(database, managedDataLayout,
+				legacyPdfRoot);
+		AnswerPdfReplacementService.Result result = service.replace(booklet, replacement);
+		assertTrue(result.changed());
+		assertNotEquals(oldFile.getId(), result.answerFile().getId());
+
+		// Same-name replacement receives a hash-qualified sibling in the owning
+		// Subject-first Assessment directory.
+		Path examDirectory = managedDataLayout.examDirectory("Chemistry", "QCAA", 2025, "External Assessment");
+		assertTrue(result.managedPath().startsWith(examDirectory));
+		assertTrue(Files.isRegularFile(result.managedPath()));
+		assertNotEquals(oldManaged, result.managedPath());
+		assertEquals("correct marking guide", Files.readString(result.managedPath()));
+		String replacementRelativePath = result.answerFile().getSourceDocument().getRelativePath();
+		assertTrue(replacementRelativePath.startsWith("subjects/Chemistry/exams/QCAA/2025/External Assessment/"));
+		assertEquals(result.managedPath(), pdfStore.resolve(replacementRelativePath));
+
+		// Once persistence proves the old AnswerFile and SourceDocument are no longer
+		// referenced, their old managed bytes are retired.
+		assertFalse(Files.exists(oldManaged));
+		assertTrue(examWriter.findSourceDocumentsByHash(oldHash).isEmpty());
+		assertEquals(hashService.sha256(replacement), result.answerFile().getSourceDocument().getContentSha256());
 	}
 }

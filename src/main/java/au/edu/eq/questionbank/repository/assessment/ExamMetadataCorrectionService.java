@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -17,24 +18,59 @@ import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.pdf.PdfStore;
 
 /**
- * Corrects Exam metadata together with the managed filesystem locations derived
- * from provider and year.
+ * Corrects Exam metadata together with every managed Question and Answer source
+ * location derived from that Exam identity.
  * <p>
- * Files are moved first, then Exam metadata and SourceDocument paths are
- * updated in one SQLite transaction. If persistence fails, completed file moves
- * are reversed.
+ * Subject-first corrections relocate managed sources beneath the corrected
+ * Subject/Provider/Year/Assessment directory. Legacy-only callers retain their
+ * historical PDF-root-relative behaviour during migration.
+ * <p>
+ * Files are moved first, then Exam metadata and all affected SourceDocument
+ * paths are updated atomically in SQLite. If persistence fails, completed file
+ * moves are reversed.
  */
 public final class ExamMetadataCorrectionService {
 
-	private final Path pdfDataRoot;
-	private final PdfStore pdfStore;
-	private final SqliteExamWriter examWriter;
 	private final SqliteAnswerWriter answerWriter;
+	private final SqliteExamWriter examWriter;
+	private final Path legacyPdfDataRoot;
+	private final ManagedDataLayout managedDataLayout;
+	private final PdfStore pdfStore;
 
 	/**
-	 * Creates the correction service.
+	 * Creates the correction service using the Subject-first managed-data layout
+	 * while retaining read access to legacy persisted paths.
 	 *
-	 * @param pdfDataRoot  managed PDF data root
+	 * @param managedDataLayout canonical application managed-data layout
+	 * @param legacyPdfDataRoot former dedicated PDF data root
+	 * @param examWriter        Exam and SourceDocument persistence
+	 * @param answerWriter      AnswerFile lookup
+	 */
+	public ExamMetadataCorrectionService(ManagedDataLayout managedDataLayout, Path legacyPdfDataRoot,
+			SqliteExamWriter examWriter, SqliteAnswerWriter answerWriter) {
+		if (managedDataLayout == null) {
+			throw new NullPointerException("managedDataLayout");
+		}
+		if (legacyPdfDataRoot == null) {
+			throw new NullPointerException("legacyPdfDataRoot");
+		}
+		if (examWriter == null) {
+			throw new NullPointerException("examWriter");
+		}
+		if (answerWriter == null) {
+			throw new NullPointerException("answerWriter");
+		}
+		this.answerWriter = answerWriter;
+		this.examWriter = examWriter;
+		this.legacyPdfDataRoot = legacyPdfDataRoot.toAbsolutePath().normalize();
+		this.managedDataLayout = managedDataLayout;
+		pdfStore = new PdfStore(managedDataLayout, this.legacyPdfDataRoot);
+	}
+
+	/**
+	 * Creates the correction service using the legacy PDF-root-relative layout.
+	 *
+	 * @param pdfDataRoot  legacy managed PDF data root
 	 * @param examWriter   Exam and SourceDocument persistence
 	 * @param answerWriter AnswerFile lookup
 	 */
@@ -49,28 +85,44 @@ public final class ExamMetadataCorrectionService {
 		if (answerWriter == null) {
 			throw new NullPointerException("answerWriter");
 		}
-		this.pdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
-		this.pdfStore = new PdfStore(this.pdfDataRoot);
-		this.examWriter = examWriter;
 		this.answerWriter = answerWriter;
+		this.examWriter = examWriter;
+		legacyPdfDataRoot = pdfDataRoot.toAbsolutePath().normalize();
+		managedDataLayout = null;
+		pdfStore = new PdfStore(legacyPdfDataRoot);
 	}
 
 	/**
-	 * Corrects one Exam and relocates all managed booklet and answer PDFs to the
-	 * authoritative subject/provider/year directory.
+	 * Corrects one Exam and relocates all managed booklet and Answer PDFs to the
+	 * authoritative corrected Exam directory.
+	 * <p>
+	 * The corrected Provider, Year and Assessment identify the destination for
+	 * every managed source owned exclusively by the Exam. Filesystem moves are
+	 * completed before Exam metadata and SourceDocument paths are committed
+	 * together in SQLite. If persistence fails, completed file moves are reversed.
 	 *
-	 * @param exam           persisted Exam
-	 * @param providerName   corrected provider
-	 * @param year           corrected year
+	 * @param exam           persisted Exam whose metadata and managed sources are
+	 *                       being corrected
+	 * @param providerName   corrected provider name
+	 * @param year           corrected examination year
 	 * @param assessmentName corrected assessment name
-	 * @return corrected metadata plus replacement SourceDocument paths
-	 * @throws SQLException if database persistence fails
-	 * @throws IOException  if a managed source cannot be relocated
+	 * @return corrected Exam metadata and the replacement SourceDocument paths,
+	 *         keyed by SourceDocument id
+	 * @throws SQLException             if persistence cannot be read or updated
+	 * @throws IOException              if a managed source cannot be validated,
+	 *                                  relocated or restored after failure
+	 * @throws NullPointerException     if {@code exam} is {@code null}
+	 * @throws IllegalArgumentException if corrected metadata is invalid or a
+	 *                                  relocation destination conflicts with an
+	 *                                  existing managed file
+	 * @throws IllegalStateException    if a SourceDocument is shared with another
+	 *                                  Exam or multiple sources would collide at
+	 *                                  the corrected destination
 	 */
 	public Result correct(Exam exam, String providerName, int year, String assessmentName)
 			throws SQLException, IOException {
 		validateCorrection(exam, providerName, year, assessmentName);
-		List<Relocation> relocations = createRelocationPlan(exam, providerName, year);
+		List<Relocation> relocations = createRelocationPlan(exam, providerName, year, assessmentName);
 		List<Relocation> completedMoves = new ArrayList<>();
 		try {
 			for (Relocation relocation : relocations) {
@@ -91,15 +143,13 @@ public final class ExamMetadataCorrectionService {
 			Exam corrected = examWriter.correctExamMetadataAndSourceDocumentPaths(exam, providerName, year,
 					assessmentName, replacementPaths);
 
-			// The relocation is authoritative only after SQLite has committed the new
-			// Exam metadata and SourceDocument paths. Old empty directories can now be
-			// removed without interfering with rollback of an unsuccessful correction.
+			// Files become authoritative only after the metadata/path transaction commits.
 			pruneEmptySourceDirectories(completedMoves);
 			return new Result(corrected, replacementPaths);
 		} catch (SQLException | IOException | RuntimeException failure) {
 
-			// Filesystem and SQLite cannot share one transaction. Reverse every
-			// completed move if the later operation fails.
+			// Filesystem and SQLite cannot share one transaction. Reverse every completed
+			// move when persistence or a later relocation fails.
 			rollbackMoves(completedMoves, failure);
 			throw failure;
 		}
@@ -119,22 +169,27 @@ public final class ExamMetadataCorrectionService {
 		return List.copyOf(documents.values());
 	}
 
-	private boolean containsManagedPathSymbolicLink(Path directory) {
-		Path relativeDirectory = pdfDataRoot.relativize(directory);
-		Path current = pdfDataRoot;
+	private boolean containsManagedPathSymbolicLink(Path directory, Path managedRoot) {
+		Path normalizedRoot = managedRoot.toAbsolutePath().normalize();
+		Path normalizedDirectory = directory.toAbsolutePath().normalize();
+		if (!normalizedDirectory.startsWith(normalizedRoot)) {
+			return true;
+		}
+		Path relativeDirectory = normalizedRoot.relativize(normalizedDirectory);
+		Path current = normalizedRoot;
 		for (Path segment : relativeDirectory) {
 			current = current.resolve(segment);
 			if (Files.isSymbolicLink(current)) {
 
 				// Refuse to prune through a link because its real target is not proven to
-				// remain within the configured managed tree.
+				// remain within the owning managed tree.
 				return true;
 			}
 		}
 		return false;
 	}
 
-	private List<Relocation> createRelocationPlan(Exam exam, String providerName, int year)
+	private List<Relocation> createRelocationPlan(Exam exam, String providerName, int year, String assessmentName)
 			throws SQLException, IOException {
 		List<Relocation> relocations = new ArrayList<>();
 		Map<Path, Long> destinationOwners = new LinkedHashMap<>();
@@ -147,7 +202,21 @@ public final class ExamMetadataCorrectionService {
 			if (!Files.isRegularFile(source)) {
 				throw new IOException("Managed PDF is missing or is not a regular file: " + source);
 			}
-			Path destination = pdfStore.managedDestination(source, exam.getSubject().getName(), providerName, year);
+			Path destination;
+			String relativeDestination;
+			if (managedDataLayout == null) {
+
+				// Preserve the old contract for legacy callers and legacy-focused tests.
+				destination = pdfStore.managedDestination(source, exam.getSubject().getName(), providerName, year);
+				relativeDestination = legacyPdfDataRoot.relativize(destination).toString();
+			} else {
+
+				// Upgraded corrections always publish the complete corrected Exam identity,
+				// including Assessment, through the Subject-first layout.
+				destination = pdfStore.managedDestination(source, exam.getSubject().getName(), providerName, year,
+						assessmentName);
+				relativeDestination = pdfStore.relativePath(destination);
+			}
 			Long existingOwner = destinationOwners.putIfAbsent(destination, sourceDocument.getId());
 			if (existingOwner != null && existingOwner.longValue() != sourceDocument.getId()) {
 				throw new IllegalStateException("More than one source document would be relocated to " + destination);
@@ -156,26 +225,25 @@ public final class ExamMetadataCorrectionService {
 				throw new FileAlreadyExistsException(destination.toString(), source.toString(),
 						"A managed PDF already exists at the corrected exam location");
 			}
-			String relativeDestination = pdfDataRoot.relativize(destination).toString();
-			relocations.add(new Relocation(sourceDocument.getId(), source, destination, relativeDestination));
+			Path sourceRoot = sourceManagedRoot(sourceDocument.getRelativePath());
+			relocations
+					.add(new Relocation(sourceDocument.getId(), source, sourceRoot, destination, relativeDestination));
 		}
 		return List.copyOf(relocations);
 	}
 
-	private void pruneEmptyManagedDirectoryTree(Path startDirectory) {
+	private void pruneEmptyManagedDirectoryTree(Path startDirectory, Path managedRoot) {
+		Path normalizedRoot = managedRoot.toAbsolutePath().normalize();
 		Path current = startDirectory.toAbsolutePath().normalize();
-		while (current != null && current.startsWith(pdfDataRoot) && !current.equals(pdfDataRoot)) {
+		while (current != null && current.startsWith(normalizedRoot) && !current.equals(normalizedRoot)) {
 
-			// Never traverse a symbolic-link component inside the configured managed
-			// root. Lexical containment alone is insufficient when a link could point
-			// somewhere outside that root.
-			if (containsManagedPathSymbolicLink(current)) {
+			// Never traverse a symbolic-link component inside the managed tree.
+			if (containsManagedPathSymbolicLink(current, normalizedRoot)) {
 				return;
 			}
 			if (!Files.exists(current)) {
 
 				// Another relocation may already have removed the same empty directory.
-				// Continue upwards without treating that harmless condition as failure.
 				current = current.getParent();
 				continue;
 			}
@@ -185,23 +253,19 @@ public final class ExamMetadataCorrectionService {
 			try (var entries = Files.list(current)) {
 				if (entries.findAny().isPresent()) {
 
-					// The first non-empty ancestor is the pruning boundary. Everything
-					// above it must remain untouched.
+					// The first non-empty ancestor is the pruning boundary.
 					return;
 				}
 			} catch (IOException cleanupFailure) {
 
-				// Directory cleanup is non-authoritative housekeeping. The Exam and its
-				// SourceDocument paths have already committed successfully, so inability
-				// to inspect an old directory must not report the correction as failed.
+				// Directory pruning is non-authoritative housekeeping after commit.
 				return;
 			}
 			try {
 				Files.delete(current);
 			} catch (IOException cleanupFailure) {
 
-				// A concurrent file creation, permissions problem or other cleanup race
-				// leaves only an obsolete directory. Preserve the successful correction.
+				// A cleanup race leaves only an obsolete directory.
 				return;
 			}
 			current = current.getParent();
@@ -210,12 +274,12 @@ public final class ExamMetadataCorrectionService {
 
 	private void pruneEmptySourceDirectories(List<Relocation> completedMoves) {
 
-		// Only relocations that actually moved bytes can have left an obsolete source
-		// directory behind. No-move corrections must leave the existing tree alone.
+		// Each source may belong either to the old PDF root or the new data-root
+		// hierarchy, so pruning must stop at that source's actual managed boundary.
 		for (Relocation relocation : completedMoves) {
 			Path sourceDirectory = relocation.source().getParent();
 			if (sourceDirectory != null) {
-				pruneEmptyManagedDirectoryTree(sourceDirectory);
+				pruneEmptyManagedDirectoryTree(sourceDirectory, relocation.sourceRoot());
 			}
 		}
 	}
@@ -233,6 +297,17 @@ public final class ExamMetadataCorrectionService {
 				originalFailure.addSuppressed(rollbackFailure);
 			}
 		}
+	}
+
+	private Path sourceManagedRoot(String relativePath) {
+		String portablePath = relativePath.replace('\\', '/');
+
+		// Subject-first persisted paths are relative to dataRoot. All older paths are
+		// still relative to the legacy PDF root until migration.
+		if (managedDataLayout != null && (portablePath.equals("subjects") || portablePath.startsWith("subjects/"))) {
+			return managedDataLayout.dataRoot();
+		}
+		return legacyPdfDataRoot;
 	}
 
 	private void validateCorrection(Exam exam, String providerName, int year, String assessmentName) {
@@ -271,7 +346,8 @@ public final class ExamMetadataCorrectionService {
 		}
 	}
 
-	private record Relocation(long sourceDocumentId, Path source, Path destination, String relativeDestination) {
+	private record Relocation(long sourceDocumentId, Path source, Path sourceRoot, Path destination,
+			String relativeDestination) {
 
 		private boolean requiresMove() {
 			return !source.equals(destination);

@@ -3,10 +3,13 @@ package au.edu.eq.questionbank.model;
 /**
  * Identifies an underlying source file from which examination content is read.
  * <p>
- * The path is stored relative to the application's configured data root so
- * question-bank data remains portable. Consumers must resolve it through a
- * containment-checking boundary such as
- * {@link au.edu.eq.questionbank.pdf.PdfStore}.
+ * Newly managed source documents store portable paths relative to the
+ * application's data root. During migration, older Exam PDF references may
+ * still contain paths relative to the former dedicated PDF root.
+ * <p>
+ * Consumers must resolve persisted paths through a containment-checking
+ * boundary such as {@link au.edu.eq.questionbank.pdf.PdfStore}; they must not
+ * concatenate persisted path text directly with filesystem roots.
  */
 public class SourceDocument {
 
@@ -18,7 +21,7 @@ public class SourceDocument {
 	 * Creates a source-document reference.
 	 *
 	 * @param id           the persistent source-document identifier
-	 * @param relativePath the source file path relative to the configured data root
+	 * @param relativePath portable persisted managed-source path
 	 * @throws IllegalArgumentException if {@code id} is not positive or
 	 *                                  {@code relativePath} is null or blank
 	 */
@@ -30,8 +33,7 @@ public class SourceDocument {
 	 * Creates a source-document reference with an optional content hash.
 	 *
 	 * @param id            the persistent source-document identifier
-	 * @param relativePath  the source file path relative to the configured data
-	 *                      root
+	 * @param relativePath  portable persisted managed-source path
 	 * @param contentSha256 canonical lower-case SHA-256 hexadecimal digest, or
 	 *                      {@code null} when the document has not yet been hashed
 	 * @throws IllegalArgumentException if {@code id} is not positive,
@@ -80,10 +82,10 @@ public class SourceDocument {
 	}
 
 	/**
-	 * Returns the stored source path for resolution through a containment-checking
-	 * PDF store.
+	 * Returns the stored managed-source path for resolution through a
+	 * containment-checking store.
 	 *
-	 * @return path relative to the configured data root, as supplied
+	 * @return persisted portable source path, as supplied
 	 */
 	public String getRelativePath() {
 		return relativePath;

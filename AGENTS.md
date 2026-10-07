@@ -149,22 +149,39 @@ under `target/`.
 
 ## PDF Storage
 
-The application has a configurable data root containing the existing exam PDF
-directory hierarchy.
+The application has one authoritative data root.
 
-Source documents store paths relative to that data root.
+New managed Exam assets use the Subject-first hierarchy:
 
-Do not store machine-specific absolute paths in question or source-document
-data.
+`subjects/<Subject>/exams/<Provider>/<Year>/<Assessment>/...`
 
-Do not infer a PDF path solely from subject, year, or examination type; preserve
-the actual relative path within the existing data hierarchy.
+Question-booklet PDFs and Answer PDFs belonging to an Exam share that Exam
+directory.
 
-Treat stored relative paths as untrusted input:
+New `SourceDocument.relativePath` values are portable paths relative to the
+application data root. Do not store machine-specific absolute paths.
 
-- require relative paths
-- normalize them
-- ensure resolved paths remain within the configured data root
+The historical dedicated `pdf/` root remains temporarily supported only for
+existing-data compatibility and migration. Code that participates in the
+transition must resolve both path generations through `PdfStore`; it must not
+construct persisted PDF paths directly.
+
+New writes must not create new legacy `pdf/...` persisted paths.
+
+`ManagedDataLayout` owns canonical managed directory construction. Do not
+reconstruct Subject, curriculum, legacy-import or Exam directory fragments in
+callers.
+
+Treat every persisted path as untrusted input:
+
+- require a relative persisted representation;
+- normalise before use;
+- reject traversal or paths outside their applicable managed root;
+- never use persisted path text directly for unrestricted filesystem access.
+
+Exam metadata correction must relocate all managed Question and Answer sources
+when Provider, Year or Assessment changes, and persist the replacement paths in
+the same SQLite transaction as the metadata correction.
 
 Never commit examination source PDFs or other restricted source material.
 
