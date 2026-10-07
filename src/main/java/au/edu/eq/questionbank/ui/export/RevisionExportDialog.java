@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
-import java.util.function.Predicate;
 
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Unit;
@@ -31,8 +30,8 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Window;
 
 /**
- * Collects Subject, Unit, grouping and destination choices for an HTML revision
- * export.
+ * Collects Unit, grouping and destination choices for a HTML export scoped to
+ * the authoritative Working Subject.
  */
 public final class RevisionExportDialog extends Dialog<ButtonType> {
 
@@ -42,65 +41,34 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	private static final int FORM_PADDING = 10;
 	private static final int UNIT_SPACING = 4;
 	private static final double UNIT_LIST_HEIGHT = 120;
-	private final ComboBox<Subject> subjectBox = new ComboBox<>();
 	private final ComboBox<RevisionGroupingMode> groupingBox = new ComboBox<>();
 	private final TextField destinationField = new TextField();
 	private final VBox unitBox = new VBox(UNIT_SPACING);
 	private final Function<Subject, List<Unit>> exportableUnits;
 	private final BiPredicate<Subject, Set<Long>> descriptorGroupingAvailable;
-	private final boolean unitSelectionEnabled;
 	private Path destinationParent;
 	private final Button exportButton;
+	private final Subject subject;
+	private final Label subjectLabel = new Label();
 
 	/**
-	 * Creates the legacy all-Units dialog with Subject-level grouping capability.
-	 *
-	 * @param owner          owner window
-	 * @param subjects       Subjects available for export
-	 * @param defaultSubject initially selected Subject, or {@code null}
-	 */
-	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject) {
-		this(owner, subjects, defaultSubject, _ -> false);
-	}
-
-	/**
-	 * Creates a dialog with Unit selection and scope-aware grouping capability.
+	 * Creates a Revision HTML export dialog scoped to the authoritative Working
+	 * Subject.
 	 *
 	 * @param owner                       owner window
-	 * @param subjects                    Subjects available for export
-	 * @param defaultSubject              initially selected Subject, or
-	 *                                    {@code null}
+	 * @param subject                     authoritative Working Subject
 	 * @param exportableUnits             lookup for Units containing renderable
 	 *                                    content
 	 * @param descriptorGroupingAvailable capability check for the selected Unit
 	 *                                    scope
+	 * @throws NullPointerException if {@code subject}, {@code exportableUnits} or
+	 *                              {@code descriptorGroupingAvailable} is
+	 *                              {@code null}
 	 */
-	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject,
-			Function<Subject, List<Unit>> exportableUnits,
+	public RevisionExportDialog(Window owner, Subject subject, Function<Subject, List<Unit>> exportableUnits,
 			BiPredicate<Subject, Set<Long>> descriptorGroupingAvailable) {
-		this(owner, subjects, defaultSubject, exportableUnits, descriptorGroupingAvailable, true);
-	}
-
-	/**
-	 * Creates the legacy all-Units dialog with a grouping capability check.
-	 *
-	 * @param owner                       owner window
-	 * @param subjects                    Subjects available for export
-	 * @param defaultSubject              initially selected Subject, or
-	 *                                    {@code null}
-	 * @param descriptorGroupingAvailable Subject-level grouping capability check
-	 */
-	public RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject,
-			Predicate<Subject> descriptorGroupingAvailable) {
-		this(owner, subjects, defaultSubject, _ -> List.of(), (subject, _) -> descriptorGroupingAvailable.test(subject),
-				false);
-	}
-
-	private RevisionExportDialog(Window owner, List<Subject> subjects, Subject defaultSubject,
-			Function<Subject, List<Unit>> exportableUnits, BiPredicate<Subject, Set<Long>> descriptorGroupingAvailable,
-			boolean unitSelectionEnabled) {
-		if (subjects == null) {
-			throw new NullPointerException("subjects");
+		if (subject == null) {
+			throw new NullPointerException("subject");
 		}
 		if (exportableUnits == null) {
 			throw new NullPointerException("exportableUnits");
@@ -108,23 +76,16 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		if (descriptorGroupingAvailable == null) {
 			throw new NullPointerException("descriptorGroupingAvailable");
 		}
-		for (Subject subject : subjects) {
-			if (subject == null) {
-				throw new NullPointerException("subjects contains null");
-			}
-		}
+		this.subject = subject;
 		this.exportableUnits = exportableUnits;
 		this.descriptorGroupingAvailable = descriptorGroupingAvailable;
-		this.unitSelectionEnabled = unitSelectionEnabled;
 		setTitle("Export Revision HTML");
 		setHeaderText("Create a student revision website");
 		initOwner(owner);
 		ButtonType exportButtonType = new ButtonType("Export", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(exportButtonType, ButtonType.CANCEL);
-		subjectBox.setId("revision-export-subject");
-		subjectBox.setPromptText("Select subject");
-		subjectBox.getItems().setAll(subjects);
-		subjectBox.setMaxWidth(Double.MAX_VALUE);
+		subjectLabel.setId("revision-export-subject");
+		subjectLabel.setText(subject.getName());
 		groupingBox.setId("revision-export-grouping");
 		groupingBox.setPromptText("Select grouping");
 		groupingBox.setMaxWidth(Double.MAX_VALUE);
@@ -137,44 +98,32 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 		browseButton.setId("revision-export-browse");
 		browseButton.setOnAction(_ -> chooseDestination(owner));
 		HBox destinationBox = new HBox(FILE_CONTROL_SPACING, destinationField, browseButton);
+		ScrollPane unitScrollPane = new ScrollPane(unitBox);
+		unitScrollPane.setId("revision-export-units");
+		unitScrollPane.setFitToWidth(true);
+		unitScrollPane.setPrefViewportHeight(UNIT_LIST_HEIGHT);
 		GridPane grid = new GridPane();
 		grid.setHgap(FORM_COLUMN_GAP);
 		grid.setVgap(FORM_ROW_GAP);
 		grid.setPadding(new Insets(FORM_PADDING));
 		grid.add(new Label("Subject:"), 0, 0);
-		grid.add(subjectBox, 1, 0);
-		int groupingRow;
-		if (unitSelectionEnabled) {
-			ScrollPane unitScrollPane = new ScrollPane(unitBox);
-			unitScrollPane.setId("revision-export-units");
-			unitScrollPane.setFitToWidth(true);
-			unitScrollPane.setPrefViewportHeight(UNIT_LIST_HEIGHT);
-			grid.add(new Label("Units to include:"), 0, 1);
-			grid.add(unitScrollPane, 1, 1);
-			groupingRow = 2;
-		} else {
-			groupingRow = 1;
-		}
-		grid.add(new Label("Group questions by:"), 0, groupingRow);
-		grid.add(groupingBox, 1, groupingRow);
-		grid.add(new Label("Destination parent:"), 0, groupingRow + 1);
-		grid.add(destinationBox, 1, groupingRow + 1);
+		grid.add(subjectLabel, 1, 0);
+		grid.add(new Label("Units to include:"), 0, 1);
+		grid.add(unitScrollPane, 1, 1);
+		grid.add(new Label("Group questions by:"), 0, 2);
+		grid.add(groupingBox, 1, 2);
+		grid.add(new Label("Destination parent:"), 0, 3);
+		grid.add(destinationBox, 1, 3);
 		getDialogPane().setContent(grid);
 		exportButton = (Button) getDialogPane().lookupButton(exportButtonType);
 		exportButton.setId("revision-export-start");
 		exportButton.setDisable(true);
-		subjectBox.valueProperty().addListener((_, _, _) -> {
-			refreshUnits();
-			refreshGroupingModes();
-			updateExportButton();
-		});
 		groupingBox.valueProperty().addListener((_, _, _) -> updateExportButton());
-		if (defaultSubject != null && subjectBox.getItems().contains(defaultSubject)) {
-			subjectBox.setValue(defaultSubject);
-		} else {
-			refreshUnits();
-			refreshGroupingModes();
-		}
+
+		// The Working Subject is fixed by the application, so initialise only its
+		// Unit and grouping choices rather than exposing another Subject selector.
+		refreshUnits();
+		refreshGroupingModes();
 		updateExportButton();
 	}
 
@@ -197,12 +146,12 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	}
 
 	/**
-	 * Returns the selected Subject.
+	 * Returns the authoritative Working Subject for this export.
 	 *
-	 * @return selected Subject, or {@code null} when none is selected
+	 * @return fixed export Subject
 	 */
 	public Subject getSelectedSubject() {
-		return subjectBox.getValue();
+		return subject;
 	}
 
 	/**
@@ -238,15 +187,9 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	}
 
 	private void refreshGroupingModes() {
-		Subject subject = subjectBox.getValue();
 		RevisionGroupingMode previous = groupingBox.getValue();
-		if (subject == null) {
-			groupingBox.getItems().clear();
-			groupingBox.setValue(null);
-			return;
-		}
 		Set<Long> selectedUnitIds = getSelectedUnitIds();
-		if (unitSelectionEnabled && selectedUnitIds.isEmpty()) {
+		if (selectedUnitIds.isEmpty()) {
 			groupingBox.getItems().clear();
 			groupingBox.setValue(null);
 			return;
@@ -268,13 +211,6 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 
 	private void refreshUnits() {
 		unitBox.getChildren().clear();
-		if (!unitSelectionEnabled) {
-			return;
-		}
-		Subject subject = subjectBox.getValue();
-		if (subject == null) {
-			return;
-		}
 		List<Unit> units = exportableUnits.apply(subject);
 		if (units == null) {
 			throw new IllegalStateException("Exportable Unit provider returned null");
@@ -317,8 +253,7 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	}
 
 	private void updateExportButton() {
-		boolean missingUnitSelection = unitSelectionEnabled && getSelectedUnitIds().isEmpty();
-		exportButton.setDisable(subjectBox.getValue() == null || groupingBox.getValue() == null
-				|| destinationParent == null || missingUnitSelection);
+		exportButton.setDisable(
+				groupingBox.getValue() == null || destinationParent == null || getSelectedUnitIds().isEmpty());
 	}
 }

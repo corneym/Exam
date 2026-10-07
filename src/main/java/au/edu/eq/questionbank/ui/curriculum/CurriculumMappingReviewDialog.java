@@ -889,7 +889,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		reviewLevelBox.valueProperty().addListener((_, _, _) -> handleReviewLevelChanged());
 	}
 
-	private final class ReviewedMappingCell extends ListCell<CurriculumMapping> {
+	private static final class ReviewedMappingCell extends ListCell<CurriculumMapping> {
 
 		@Override
 		protected void updateItem(CurriculumMapping mapping, boolean empty) {
@@ -904,7 +904,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		}
 	}
 
-	private final class SourceDescriptorButtonCell extends ListCell<CurriculumNode> {
+	private static final class SourceDescriptorButtonCell extends ListCell<CurriculumNode> {
 
 		@Override
 		protected void updateItem(CurriculumNode descriptor, boolean empty) {

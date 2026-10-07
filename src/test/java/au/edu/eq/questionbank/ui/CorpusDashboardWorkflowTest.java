@@ -39,6 +39,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TableView;
@@ -96,6 +97,64 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// The retired concatenated work-item presentation must not return.
 		assertFalse(nodePresentOnFx(robot, applicationRoot, "#corpus-work-items"));
+	}
+
+	@Test
+	void dashboardInspectQuestionsOpensSearchAtExamAndBookletScope(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MIXED);
+		Question question = captureQuestion(robot, "DASH-I1");
+		ExamBooklet booklet = question.getBooklet();
+		WaitForAsyncUtils.asyncFx(() -> {
+
+			// Rebuild Dashboard Home from persistence so the inspection actions operate on
+			// the same authoritative Exam/booklet snapshot used in production.
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-inspect-exam-questions").tryQuery().isPresent());
+		Button inspectExam = lookup(robot, "#corpus-dashboard-inspect-exam-questions", Button.class);
+		assertFalse(inspectExam.isDisabled());
+
+		// Search is modal. Schedule the Dashboard action so the test thread remains
+		// available to inspect and close the real Search DialogPane.
+		fireControlLater(inspectExam);
+		waitForDialogShowing(robot, "Search Questions");
+		Label examNarrowing = lookupInShowingDialog(robot, "Search Questions", "#question-search-narrowing",
+				Label.class);
+		@SuppressWarnings("unchecked")
+		ListView<Object> examResults = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		assertEquals("Exam: QCAA 2025 — External Assessment", examNarrowing.getText());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> examResults.getItems().size() == 1));
+		closeDialog(robot, "Search Questions");
+
+		// Closing inspection leaves the existing Dashboard Home in place rather than
+		// navigating into a different workspace.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		@SuppressWarnings("unchecked")
+		TableView<Object> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		robot.interact(() -> booklets.getSelectionModel().selectFirst());
+		Button inspectBooklet = lookup(robot, "#corpus-dashboard-inspect-booklet-questions", Button.class);
+		assertFalse(inspectBooklet.isDisabled());
+		fireControlLater(inspectBooklet);
+		waitForDialogShowing(robot, "Search Questions");
+		Label bookletNarrowing = lookupInShowingDialog(robot, "Search Questions", "#question-search-narrowing",
+				Label.class);
+		@SuppressWarnings("unchecked")
+		ListView<Object> bookletResults = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		assertEquals("Booklet: QCAA 2025 — External Assessment — " + booklet.getName(), bookletNarrowing.getText());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> bookletResults.getItems().size() == 1));
+		closeDialog(robot, "Search Questions");
+
+		// Both Dashboard inspection routes are modal views over Dashboard Home and do
+		// not consume or replace its navigation state.
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 	}
 
 	@Test

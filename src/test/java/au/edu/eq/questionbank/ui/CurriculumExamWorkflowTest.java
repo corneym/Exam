@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -713,6 +714,125 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardLifecycleChangeRemainsResponsiveWhilePersistenceIsBlocked(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+
+		// Establish a persisted COMPLETE Exam without using the Dashboard action under
+		// test, then rebuild Dashboard from authoritative persistence.
+		writer.setExamCaptureState(originalBooklet.getExam(), ExamCaptureState.COMPLETE);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			return robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery().filter(Button.class::isInstance)
+					.map(Button.class::cast).map(button -> "Mark Active".equals(button.getText())).orElse(false);
+		});
+		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
+		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
+		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);
+		assertEquals("Declared state: COMPLETE", selectedState.getText());
+		try (Connection lockConnection = database.openConnection();
+				Statement lockStatement = lockConnection.createStatement()) {
+
+			// Hold SQLite's write lock so lifecycle persistence cannot finish immediately.
+			// If persistence still ran on JavaFX, firing the Dashboard action would block
+			// the UI here until SQLite's busy timeout expired.
+			lockStatement.execute("BEGIN EXCLUSIVE");
+			fireControl(robot, lifecycle);
+			WaitForAsyncUtils.waitFor(2, TimeUnit.SECONDS,
+					() -> evaluateOnFx(robot, () -> progressRow.isVisible() && lifecycle.isDisabled()));
+			AtomicBoolean fxResponsive = new AtomicBoolean(false);
+			robot.interact(() -> fxResponsive.set(true));
+
+			// JavaFX must remain able to process work while the lifecycle worker is blocked
+			// on persistence.
+			assertTrue(fxResponsive.get());
+			assertTrue(progressRow.isVisible());
+			assertTrue(lifecycle.isDisabled());
+			lockStatement.execute("COMMIT");
+		}
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> !progressRow.isVisible() && "Declared state: ACTIVE".equals(selectedState.getText())));
+
+		// The same Dashboard selection survives the persistence-backed refresh, while
+		// the action returns to the normal readiness rule for an ACTIVE Exam.
+		assertFalse(progressRow.isVisible());
+		assertFalse(progressRow.isManaged());
+		assertEquals("Declared state: ACTIVE", selectedState.getText());
+		assertEquals("Mark Complete", lifecycle.getText());
+		ExamBooklet reloaded = writer
+				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
+		assertNotNull(reloaded);
+		assertFalse(reloaded.getExam().isComplete());
+
+		// Capture's retained immutable booklet snapshot is synchronised only after the
+		// background persistence succeeds.
+		assertFalse(examMetadataPane().getBooklet().getExam().isComplete());
+	}
+
+	@Test
+	void dashboardLifecycleFailureClearsBusyState(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		assertNotNull(originalBooklet);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter realWriter = new SqliteExamWriter(database);
+
+		// Establish a persisted COMPLETE Exam so the Dashboard exposes Mark Active
+		// without requiring the completion confirmation dialog.
+		realWriter.setExamCaptureState(originalBooklet.getExam(), ExamCaptureState.COMPLETE);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			return robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery().filter(Button.class::isInstance)
+					.map(Button.class::cast).map(button -> "Mark Active".equals(button.getText())).orElse(false);
+		});
+		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
+		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
+		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);
+
+		// An existing directory cannot be opened as a SQLite database file. Replacing
+		// only the application writer gives the lifecycle worker a deterministic
+		// persistence failure without changing the real Dashboard data source.
+		Path invalidDatabasePath = Files
+				.createDirectory(databasePath.getParent().resolve("invalid-lifecycle-database"));
+		SqliteExamWriter failingWriter = new SqliteExamWriter(new SqliteDatabase(invalidDatabasePath));
+		setField(application, "examWriter", failingWriter);
+		fireControl(robot, lifecycle);
+		waitForDialogShowing(robot, "Exam State");
+
+		// Failure handling clears operation state before presenting the error dialog.
+		assertFalse(evaluateOnFx(robot, progressRow::isVisible));
+		assertFalse(evaluateOnFx(robot, progressRow::isManaged));
+		assertFalse(evaluateOnFx(robot, lifecycle::isDisabled));
+		assertEquals("Declared state: COMPLETE", selectedState.getText());
+		assertFalse(field(application, "corpusDashboardLifecycleChangeRunning", Boolean.class));
+		DialogPane error = showingDialogPane(robot, "Exam State");
+		Node okNode = error.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Exam State");
+
+		// Failed persistence must leave authoritative lifecycle state unchanged.
+		ExamBooklet reloaded = realWriter
+				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
+		assertNotNull(reloaded);
+		assertTrue(reloaded.getExam().isComplete());
+
+		// Restore the application's normal writer so teardown and any later fixture
+		// work
+		// continue against the real test database.
+		setField(application, "examWriter", realWriter);
+	}
+
+	@Test
 	void dashboardNewQuestionCaptureReturnClosesManagedPdf(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -971,6 +1091,45 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Correcting booklet structure must never rewrite an existing Question's
 		// independently persisted response type.
 		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedExisting.getResponseType());
+	}
+
+	@Test
+	void mappingReviewDoesNotOpenForSingleSyllabusWorkingSubject(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		selectSubject(robot, "Biology");
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean loaded = new AtomicBoolean();
+			robot.interact(() -> loaded.set(subjects.getValue() != null
+					&& "Biology".equals(subjects.getValue().getName()) && syllabuses.getItems().size() == 1));
+			return loaded.get();
+		});
+		assertEquals("Biology", subjects.getValue().getName());
+		assertEquals(1, syllabuses.getItems().size());
+		assertEquals("Biology", field(application, "workingSubject", Subject.class).getName());
+		Menu curriculumMenu = (Menu) invoke(application, "createCurriculumMenu",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
+		MenuItem reviewMappings = curriculumMenu.getItems().stream()
+				.filter(item -> "_Review Mappings...".equals(item.getText())).findFirst()
+				.orElseThrow(() -> new AssertionError("Curriculum -> Review Mappings menu item not found"));
+
+		// The real application action is modal, so schedule it while keeping the test
+		// thread available to inspect the prerequisite message.
+		Platform.runLater(reviewMappings::fire);
+		waitForDialogShowing(robot, "Curriculum Mapping");
+		DialogPane unavailable = showingDialogPane(robot, "Curriculum Mapping");
+		assertEquals("Mapping review is not available.", unavailable.getHeaderText());
+		assertTrue(unavailable.getContentText().contains("At least two syllabus versions"));
+		assertTrue(unavailable.getContentText().contains("Biology"));
+
+		// Reaching this alert proves the application stopped before constructing the
+		// actual mapping-review dialog.
+		assertNull(unavailable.lookup("#curriculum-mapping-coverage"));
+		Node okNode = unavailable.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Curriculum Mapping");
 	}
 
 	@Test

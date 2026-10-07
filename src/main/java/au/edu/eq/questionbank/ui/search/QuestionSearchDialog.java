@@ -51,7 +51,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private boolean persistedClassificationChange;
 
 	/**
-	 * Creates a question-search dialog owned by the supplied window.
+	 * Creates an unrestricted question-search dialog owned by the supplied window.
 	 *
 	 * @param owner                         dialog owner
 	 * @param workingSubject                authoritative workspace Working Subject
@@ -69,6 +69,31 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
 			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
 			BiFunction<Long, CurriculumNode, Question> classificationUpdater) {
+		this(owner, workingSubject, curriculumRepository, retrievalService, allQuestionsSupplier, previewService,
+				outputApplicabilityRepository, classificationUpdater, QuestionSearchNarrowing.unrestricted());
+	}
+
+	/**
+	 * Creates a question-search dialog with an immutable result narrowing.
+	 *
+	 * @param owner                         dialog owner
+	 * @param workingSubject                authoritative workspace Working Subject
+	 * @param curriculumRepository          current curriculum hierarchy lookup
+	 * @param retrievalService              curriculum-aware Question retrieval
+	 * @param allQuestionsSupplier          complete stored Question retrieval
+	 * @param previewService                stored Question image preview service
+	 * @param outputApplicabilityRepository persisted per-Question revision-output
+	 *                                      exclusions
+	 * @param classificationUpdater         persistence operation for a
+	 *                                      classification-only Question update
+	 * @param searchNarrowing               additional result constraint retained
+	 *                                      across every Search scope and refresh
+	 * @throws NullPointerException if any argument is {@code null}
+	 */
+	public QuestionSearchDialog(Window owner, Subject workingSubject, CurriculumRepository curriculumRepository,
+			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
+			BiFunction<Long, CurriculumNode, Question> classificationUpdater, QuestionSearchNarrowing searchNarrowing) {
 		this.classificationUpdater = Objects.requireNonNull(classificationUpdater, "classificationUpdater");
 		initOwner(Objects.requireNonNull(owner, "owner"));
 
@@ -79,7 +104,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 				Objects.requireNonNull(retrievalService, "retrievalService"),
 				Objects.requireNonNull(allQuestionsSupplier, "allQuestionsSupplier"),
 				Objects.requireNonNull(previewService, "previewService"),
-				Objects.requireNonNull(outputApplicabilityRepository, "outputApplicabilityRepository"));
+				Objects.requireNonNull(outputApplicabilityRepository, "outputApplicabilityRepository"),
+				Objects.requireNonNull(searchNarrowing, "searchNarrowing"));
 		configureDialogShell();
 		configureSearchPaneCallbacks();
 		configureActionButtons();

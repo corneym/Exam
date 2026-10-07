@@ -8,6 +8,6 @@ import org.junit.platform.suite.api.Suite;
 @Suite
 @SelectPackages("au.edu.eq.questionbank.ui")
 @IncludeTags("workflow-ui")
-@IncludeClassNamePatterns(".*(QuestionCaptureWorkflowTest|AnswerCaptureWorkflowTest)")
+@IncludeClassNamePatterns(".*(AnswerCaptureWorkflowTest|LegacyClipboardCaptureWorkflowIntegrationTest|QuestionCaptureWorkflowTest)")
 public class WorkflowCaptureTests {
 }
