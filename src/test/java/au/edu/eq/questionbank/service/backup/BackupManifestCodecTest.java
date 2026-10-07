@@ -127,15 +127,16 @@ class BackupManifestCodecTest {
 	@Test
 	void rejectsRetiredFormatOneFullBackup() {
 		String manifestText = """
-				backup.format.version=2
+				backup.format.version=1
 				backup.kind=FULL
 				created.at=2026-09-04T08:00:00Z
 				database.schema.version=19
 				application.version=0.2
 				archive.entries=backup-manifest.properties,questionbank.db,pdf/,curriculum/
 				""";
-		assertThrows(BackupFormatException.class,
+		BackupFormatException exception = assertThrows(BackupFormatException.class,
 				() -> codec.read(new ByteArrayInputStream(manifestText.getBytes(StandardCharsets.UTF_8))));
+		assertEquals("Unsupported backup format version 1; supported version is 2", exception.getMessage());
 	}
 
 	@Test

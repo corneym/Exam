@@ -301,7 +301,7 @@ A successful migration must leave no persisted Exam or curriculum source referen
 
 ### Slice 6 — #106 Backup/restore compatibility
 
-The new full-backup contract becomes conceptually:
+The Subject-first full-backup contract is:
 
 ```text
 backup-manifest.properties
@@ -309,20 +309,20 @@ questionbank.db
 subjects/
 ```
 
-Automatic database-only backups remain database-only.
+Full backups use backup format version 2. The complete `subjects/` tree is the portable managed-filesystem unit, including Exam/Answer sources, curriculum assets and retained legacy workbooks.
 
-The backup format should be versioned when the archive contract changes.
+Automatic database-only backups remain database-only and use the same current manifest format.
 
-Sprint 14 must define a supported path for existing full backups that contain:
+Pre-Sprint-14 format-1 full backups containing separate:
 
 ```text
 pdf/
 curriculum/
 ```
 
-The recommended compatibility path is to stage the legacy archive safely and translate its managed data through the same migration/layout rules rather than teaching ordinary runtime stores to support both layouts indefinitely.
+roots are deliberately unsupported after the Subject-first migration boundary. They are rejected clearly rather than translated or restored. Existing format-1 full backups should therefore be treated as retired historical recovery material rather than supported restore inputs.
 
-Backup/restore must retain:
+Backup/restore retains:
 
 - SQLite-consistent snapshots;
 - archive traversal protection;
@@ -330,7 +330,8 @@ Backup/restore must retain:
 - pre-restore safety backup;
 - rollback/recovery behaviour;
 - restart after successful restore;
-- exclusion of machine-specific configuration and backup recursion.
+- exclusion of machine-specific configuration and backup recursion;
+- filesystem-safety checks preventing backup destinations from overlapping `subjects/`.
 
 ## 5. Migration and compatibility rules
 
@@ -446,7 +447,7 @@ Verify:
 - retained legacy workbook is included;
 - backup directory remains excluded;
 - format/version validation is correct;
-- supported old-format backup remains recoverable;
+- retired format-1 full backups are rejected clearly and are not translated into the Subject-first layout;
 - restore restart/shutdown behaviour remains unchanged.
 
 ## 7. Manual acceptance
@@ -469,7 +470,7 @@ Before Sprint 14 is considered complete, use a disposable realistic data root.
 7. Create a new full backup.
 8. Restore that backup into a second disposable data root.
 9. Restart and repeat representative source/capture checks.
-10. Test at least one existing pre-Sprint-14 full backup through the documented compatibility path.
+10. Confirm that a pre-Sprint-14 format-1 full backup is rejected clearly as unsupported rather than restored or translated.
 
 ## 8. Out of scope
 
@@ -498,7 +499,7 @@ Sprint 14 is complete when:
 6. legacy Question workbooks are retained as managed Subject assets before import;
 7. existing installations can be migrated conservatively with dry-run, collision detection, copy verification and controlled persisted-path updates;
 8. normal application startup cannot silently use incompatible legacy path semantics;
-9. full backup/restore uses the new Subject tree and preserves a tested compatibility path for supported older backups;
+9. full backup/restore uses the new Subject tree, format-1 full backups are rejected clearly, and automatic database-only backups remain supported;
 10. focused regression tests and the full suite are green;
 11. manual migration and backup/restore acceptance succeeds on a disposable realistic data root.
 

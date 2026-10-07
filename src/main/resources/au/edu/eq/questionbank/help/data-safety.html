@@ -19,26 +19,41 @@
 		<section>
 			<h2>Backup</h2>
 			<p>
-				Choose <strong>File → Backup Now...</strong> to create a manual backup
-				of application data.
+				Choose <strong>File → Backup Now...</strong> to create a manual full
+				backup of application data.
 			</p>
 			<p>
-				Backups protect the Question bank and related managed application
-				data. Keep important backups somewhere independent of the active
-				application data directory.
+				A full backup contains the Question Bank database and the complete
+				managed Subject data tree, including Exam and Answer sources,
+				curriculum assets and retained legacy source workbooks.
+			</p>
+			<p>
+				Automatic backups created during normal application shutdown contain
+				the database only.
+			</p>
+			<p>
+				Keep important backups somewhere independent of the active application
+				data directory.
 			</p>
 		</section>
 
 		<section>
 			<h2>Restore</h2>
 			<p>
-				Choose <strong>File → Restore Backup...</strong> to restore an
-				application backup.
+				Choose <strong>File → Restore Backup...</strong> to restore a
+				supported application backup.
+			</p>
+			<p>
+				Current full backups use the Subject-first backup format. Older
+				format-1 full backups containing separate PDF and curriculum data
+				trees are not supported by this version and are rejected rather than
+				translated or restored.
 			</p>
 			<p class="warning">
 				Restore replaces active application data with the contents of the
 				selected backup. Read the confirmation information carefully before
-				proceeding.
+				proceeding. A successful restore requires the application to restart
+				before the restored data is used.
 			</p>
 		</section>
 
