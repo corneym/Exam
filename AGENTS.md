@@ -185,6 +185,35 @@ the same SQLite transaction as the metadata correction.
 
 Never commit examination source PDFs or other restricted source material.
 
+## Curriculum Storage
+
+New curriculum assets use the Subject-first hierarchy:
+
+`subjects/<Subject>/curriculum/<Version>/`
+
+with:
+
+- `workbooks/` for retained curriculum-import workbooks;
+- `sources/` for authoritative syllabus source PDFs.
+
+External files may be selected from anywhere. Successful imports or
+attachments retain an application-managed copy in the owning Subject/version
+directory.
+
+New persisted curriculum source-PDF paths are relative to the application data
+root.
+
+The historical dedicated `curriculum/` root remains temporarily readable for
+existing data until the migration slice rewrites those files and references.
+
+`ManagedDataLayout` owns Subject/version directory construction. Do not
+sanitise Subject or version names independently in new storage code; invalid
+managed directory components must be rejected consistently by the shared
+layout boundary.
+
+A failed source-PDF metadata update must delete only the unpublished new copy
+and preserve the previously authoritative file and database reference.
+
 ## Coding Style & Naming Conventions
 
 Follow the existing Java style:

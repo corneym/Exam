@@ -2359,10 +2359,10 @@ public class QuestionBankApplication extends Application {
 			CurriculumExcelImporter excelImporter = new CurriculumExcelImporter();
 			List<CurriculumImportRow> rows = excelImporter.read(selectedWorkbook);
 
-			// Curriculum workbooks are application data. A user may select the source from
-			// anywhere, but a successful import retains a managed copy beneath the
-			// configured curriculum root.
-			new CurriculumWorkbookStore(config.curriculumDataRoot()).manageWorkbook(selectedWorkbook);
+			// A curriculum source may be selected from anywhere, but its retained copy
+			// belongs to the authoritative Subject and syllabus-version directory.
+			new CurriculumWorkbookStore(new ManagedDataLayout(config.dataRoot())).manageWorkbook(subject.getName(),
+					dialog.getVersionName(), selectedWorkbook);
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 			SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
@@ -2836,7 +2836,7 @@ public class QuestionBankApplication extends Application {
 		}
 		SqliteCurriculumAuthoringWriter authoringWriter = new SqliteCurriculumAuthoringWriter(database);
 		CurriculumSourcePdfService sourcePdfService = new CurriculumSourcePdfService(
-				new CurriculumSourcePdfStore(config.curriculumDataRoot()),
+				new CurriculumSourcePdfStore(new ManagedDataLayout(config.dataRoot()), config.curriculumDataRoot()),
 				new SqliteCurriculumSourcePdfRepository(database));
 		CurriculumLifecycleService lifecycleService = new CurriculumLifecycleService(authoringWriter,
 				new SqliteCurriculumLifecycleRepository(database), Clock.systemUTC());
