@@ -44,8 +44,10 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.Tooltip;
@@ -123,6 +125,10 @@ public final class CorpusDashboardPane extends VBox {
 	private StackPane bookletsSection;
 	private StackPane questionWorkSection;
 	private final Button completeSelectedAnswerButton = new Button("Complete Selected Answer");
+	private final Button inspectBookletQuestionsButton = new Button("Inspect Questions");
+	private final Button inspectExamQuestionsButton = new Button("Inspect Questions");
+	private BiConsumer<Exam, ExamBooklet> questionInspectionHandler = (_, _) -> {
+	};
 
 	// Curriculum mapping review is a Subject-level reporting dimension independent
 	// of ordinary Question and Exam completeness.
@@ -151,6 +157,10 @@ public final class CorpusDashboardPane extends VBox {
 	};
 	private boolean mcqExplanationFilterActive;
 	private final Button missingMcqExplanationButton = new Button();
+	private boolean examLifecycleChangeInProgress;
+	private final Label examLifecycleProgressLabel = new Label("Updating Exam state...");
+	private final ProgressIndicator examLifecycleProgressIndicator = new ProgressIndicator();
+	private final HBox examLifecycleProgressRow = new HBox(SPACING);
 
 	/**
 	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
@@ -373,6 +383,22 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
+	 * Shows or clears the busy state for an application-owned Exam lifecycle
+	 * operation.
+	 *
+	 * @param inProgress {@code true} while lifecycle persistence and Dashboard
+	 *                   refresh are running
+	 */
+	public void setExamLifecycleChangeInProgress(boolean inProgress) {
+		examLifecycleChangeInProgress = inProgress;
+		setVisibleAndManaged(examLifecycleProgressRow, inProgress);
+
+		// Lifecycle readiness remains authoritative when idle. While the operation is
+		// running, the same action is locked to prevent duplicate persistence requests.
+		updateExamLifecycleActionState();
+	}
+
+	/**
 	 * Supplies the application-owned Exam lifecycle persistence action.
 	 *
 	 * @param handler operation receiving the selected Exam and requested
@@ -472,6 +498,24 @@ public final class CorpusDashboardPane extends VBox {
 		// Existing incomplete Question correction remains distinct from adding new
 		// Questions to an incomplete booklet.
 		questionCorrectionHandler = handler;
+	}
+
+	/**
+	 * Supplies the application-owned route into Question Search for a selected Exam
+	 * or Question booklet.
+	 *
+	 * @param handler operation receiving the selected Exam and optional booklet;
+	 *                {@code null} booklet means Exam-wide inspection
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
+	public void setQuestionInspectionHandler(BiConsumer<Exam, ExamBooklet> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+
+		// Dashboard owns the structural selection; Search owns retrieval and
+		// inspection once that explicit scope has been handed off.
+		questionInspectionHandler = handler;
 	}
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
@@ -629,13 +673,35 @@ public final class CorpusDashboardPane extends VBox {
 		return text.toString();
 	}
 
-	// TODO Refacator
 	private void buildContent() {
+		StackPane curriculumSection = buildCurriculumSection();
+		HBox summaryRow = buildSummaryRow();
+		HBox hierarchyRow = buildHierarchyRow();
+		StackPane questionSection = buildQuestionWorkSection();
+		SplitPane workSplit = buildWorkSplit(hierarchyRow, questionSection);
+
+		// Curriculum belongs directly below Subject. Corpus summary follows it, while
+		// the adjustable Exam/Question workspace consumes the remaining height.
+		getChildren().addAll(curriculumSection, summaryRow, workSplit);
+		setSpacing(SPACING);
+		setPadding(PADDING);
+	}
+
+	private StackPane buildCurriculumSection() {
+		HBox mappingReviewRow = new HBox(SPACING, createBoldLabel("Mapping review"), curriculumMappingSummaryLabel);
+		mappingReviewRow.setAlignment(Pos.CENTER_LEFT);
+		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
+		HBox curriculumActionsRow = new HBox(SPACING, addCurriculumButton, mapCurriculumButton);
+		curriculumActionsRow.setAlignment(Pos.CENTER_LEFT);
+		return createTitledSection("corpus-dashboard-curriculum-section", "CURRICULUM", mappingReviewRow,
+				curriculumActionsRow);
+	}
+
+	private HBox buildHierarchyRow() {
 
 		// Keep the Exam filter row as application state because the single Legacy
-		// Import
-		// action moves between this populated-Exam row and the empty-Exam onboarding
-		// row.
+		// Import action moves between this populated-Exam row and the empty-Exam
+		// onboarding row.
 		examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
 				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
 
@@ -644,60 +710,31 @@ public final class CorpusDashboardPane extends VBox {
 		// onboarding.
 		examFilterRow.setId("corpus-dashboard-exam-filter-row");
 		examFilterRow.setAlignment(Pos.CENTER_LEFT);
-
-		// Subject-level corpus indicators remain immediately below the Subject-level
-		// Curriculum section rather than between structural work areas.
-		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
-				missingAnswerButton, unknownTypeButton, sharedContextButton, missingMcqExplanationButton);
-		summaryRow.setId("corpus-dashboard-summary-row");
-		summaryRow.setAlignment(Pos.CENTER_LEFT);
 		examEmptyStateRow = new HBox(SPACING, noExamsLabel, addExamButton);
 		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
-				examLifecycleButton);
+				inspectExamQuestionsButton, examLifecycleButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 
-		// Exam lifecycle now belongs beside the selected Exam's structural management
-		// action because both operate on Dashboard Exam selection, not Capture state.
+		// Exam lifecycle, structural management and read-only inspection all derive
+		// from explicit Dashboard Exam selection.
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
 
 		// The ordinary Exam catalogue disappears when a Subject has no Exams. The
 		// onboarding row then explains the next valid Subject-level action.
-		// Reuse the retained row so Legacy Import can be reparented without
-		// constructing
-		// a second set of Exam filters.
 		examOperationalContent = new VBox(SPACING, examFilterRow, examTable, selectedExamTitleRow,
 				selectedExamCountsLabel);
 		examOperationalContent.setId("corpus-dashboard-exam-operational-content");
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
-		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton,
-				captureMcqExplanationsButton);
+		HBox bookletActionsRow = new HBox(SPACING, inspectBookletQuestionsButton, captureQuestionsButton,
+				captureAnswersButton, captureMcqExplanationsButton);
 		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
-		HBox questionFilterRow = new HBox(SPACING, createBoldLabel("Show"), questionViewBox, questionResultCountLabel);
-		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
-
-		// Selected Question work exposes direct Question and Answer completion together
-		// with the existing bulk response-type actions.
-		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton, completeSelectedAnswerButton,
-				selectAllUnknownButton, setSelectedMultipleChoiceButton, setSelectedWrittenResponseButton);
-		questionActionsRow.setAlignment(Pos.CENTER_LEFT);
-		mcqExplanationCoverageLabel.setWrapText(true);
-		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
-		HBox mappingReviewRow = new HBox(SPACING, createBoldLabel("Mapping review"), curriculumMappingSummaryLabel);
-		mappingReviewRow.setAlignment(Pos.CENTER_LEFT);
-		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
-		HBox curriculumActionsRow = new HBox(SPACING, addCurriculumButton, mapCurriculumButton);
-		curriculumActionsRow.setAlignment(Pos.CENTER_LEFT);
-		StackPane curriculumSection = createTitledSection("corpus-dashboard-curriculum-section", "CURRICULUM",
-				mappingReviewRow, curriculumActionsRow);
 		StackPane examsSection = createTitledSection("corpus-dashboard-exams-section", "EXAMS", examEmptyStateRow,
 				examOperationalContent);
 		bookletsSection = createTitledSection("corpus-dashboard-booklets-section", "QUESTION BOOKLETS", bookletTable,
 				selectedBookletLabel, bookletWarningLabel, bookletActionsRow);
-		questionWorkSection = createTitledSection("corpus-dashboard-question-work-section", "QUESTION WORK",
-				questionFilterRow, questionTable, questionActionsRow, mcqExplanationCoverageLabel);
 
 		// Exam and booklet hierarchy shares one horizontal structural band.
 		HBox hierarchyRow = new HBox(SPACING, examsSection, bookletsSection);
@@ -708,24 +745,55 @@ public final class CorpusDashboardPane extends VBox {
 		bookletsSection.setMaxWidth(Double.MAX_VALUE);
 		HBox.setHgrow(examsSection, Priority.ALWAYS);
 		HBox.setHgrow(bookletsSection, Priority.ALWAYS);
+		return hierarchyRow;
+	}
+
+	private StackPane buildQuestionWorkSection() {
+		HBox questionFilterRow = new HBox(SPACING, createBoldLabel("Show"), questionViewBox, questionResultCountLabel);
+		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
+
+		// Lifecycle progress remains visible even when Question Work contains no rows,
+		// which is common immediately before marking a complete Exam ACTIVE.
+		examLifecycleProgressRow.getChildren().setAll(examLifecycleProgressIndicator, examLifecycleProgressLabel);
+		examLifecycleProgressRow.setAlignment(Pos.CENTER_LEFT);
+
+		// Selected Question work exposes direct Question and Answer completion together
+		// with the existing bulk response-type actions.
+		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton, completeSelectedAnswerButton,
+				selectAllUnknownButton, setSelectedMultipleChoiceButton, setSelectedWrittenResponseButton);
+		questionActionsRow.setAlignment(Pos.CENTER_LEFT);
+		mcqExplanationCoverageLabel.setWrapText(true);
+		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
+		questionWorkSection = createTitledSection("corpus-dashboard-question-work-section", "QUESTION WORK",
+				questionFilterRow, examLifecycleProgressRow, questionTable, questionActionsRow,
+				mcqExplanationCoverageLabel);
+		return questionWorkSection;
+	}
+
+	private HBox buildSummaryRow() {
+
+		// Subject-level corpus indicators remain immediately below the Subject-level
+		// Curriculum section rather than between structural work areas.
+		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
+				missingAnswerButton, unknownTypeButton, sharedContextButton, missingMcqExplanationButton);
+		summaryRow.setId("corpus-dashboard-summary-row");
+		summaryRow.setAlignment(Pos.CENTER_LEFT);
+		return summaryRow;
+	}
+
+	private SplitPane buildWorkSplit(HBox hierarchyRow, StackPane questionSection) {
 
 		// Structural hierarchy and Question work are independently sizeable. The user
 		// can drag the divider according to whether structure or cleanup currently
-		// needs
-		// more screen space.
-		SplitPane workSplit = new SplitPane(hierarchyRow, questionWorkSection);
+		// needs more screen space.
+		SplitPane workSplit = new SplitPane(hierarchyRow, questionSection);
 		workSplit.setId("corpus-dashboard-work-split");
 		workSplit.setOrientation(Orientation.VERTICAL);
 		workSplit.setDividerPositions(0.45);
 		VBox.setVgrow(bookletTable, Priority.ALWAYS);
 		VBox.setVgrow(questionTable, Priority.ALWAYS);
 		VBox.setVgrow(workSplit, Priority.ALWAYS);
-
-		// Curriculum belongs directly below Subject. Corpus summary follows it, while
-		// the adjustable Exam/Question workspace consumes the remaining height.
-		getChildren().addAll(curriculumSection, summaryRow, workSplit);
-		setSpacing(SPACING);
-		setPadding(PADDING);
+		return workSplit;
 	}
 
 	private boolean canCompleteSelectedAnswer(QuestionCorpusWorkItem item) {
@@ -794,6 +862,16 @@ public final class CorpusDashboardPane extends VBox {
 			return;
 		}
 		newQuestionCaptureHandler.accept(selected.booklet());
+	}
+
+	private <S> void centreTableColumns(TableView<S> table) {
+		for (TableColumn<S, ?> column : table.getColumns()) {
+
+			// Dashboard table values are compact operational data rather than prose.
+			// Apply one consistent centred presentation without changing value factories,
+			// comparators, sorting or selection behaviour.
+			configureCentredCell(column);
+		}
 	}
 
 	private void changeSelectedExamState() {
@@ -894,96 +972,11 @@ public final class CorpusDashboardPane extends VBox {
 		};
 	}
 
-	// TODO Refactor into single concerns
 	private void configureActions() {
-		addExamButton.setOnAction(_ -> addExamHandler.run());
-		clearFiltersButton.setOnAction(_ -> clearFilters());
-		importLegacyQuestionsButton.setOnAction(_ -> legacyQuestionImportHandler.run());
-		providerBox.valueProperty().addListener((_, _, _) -> {
-			if (!changingScopeFilters) {
-				refreshDashboard();
-			}
-		});
-		yearBox.valueProperty().addListener((_, _, _) -> {
-			if (!changingScopeFilters) {
-				refreshDashboard();
-			}
-		});
-		examStateBox.valueProperty().addListener((_, _, _) -> {
-			if (!changingScopeFilters) {
-				refreshDashboard();
-			}
-		});
-		totalQuestionsButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.ALL, null));
-		needsAttentionButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE, null));
-		missingContentButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
-				QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
-		missingAnswerButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
-				QuestionCorpusProblem.MISSING_ANSWER));
-		unknownTypeButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
-				QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
-		sharedContextButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
-				QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
-		missingMcqExplanationButton.setOnAction(_ -> applyMcqExplanationFilter());
-		questionViewBox.valueProperty().addListener((_, _, _) -> {
-			if (changingQuestionFilter) {
-				return;
-			}
-
-			// A direct Show selection returns to ordinary Question completeness filtering,
-			// ending any separate explanation-work drill-down.
-			mcqExplanationFilterActive = false;
-			selectedQuestionProblem = null;
-			summaryQuestionFilterActive = false;
-			refreshDashboard();
-		});
-		examTable.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
-			if (selected == null) {
-				clearSelectedExam();
-				refreshQuestionWork();
-				return;
-			}
-
-			// Exam selection owns booklet and Question scope.
-			showSelectedExam(selected, null);
-			refreshQuestionWork();
-		});
-		bookletTable.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
-			if (selected == null) {
-				selectedBookletLabel.setText("Selected booklet: All booklets");
-				setVisibleAndManaged(bookletWarningLabel, false);
-				setVisibleAndManaged(mcqExplanationCoverageLabel, false);
-				updateCaptureActionState();
-				updateExamAssetsActionState();
-				refreshQuestionWork();
-				return;
-			}
-
-			// Booklet selection narrows both visible Question work and the explicit
-			// capture actions.
-			showSelectedBooklet(selected);
-			refreshQuestionWork();
-		});
-		captureAnswersButton.setOnAction(_ -> captureAnswers());
-		captureMcqExplanationsButton.setOnAction(_ -> captureMcqExplanations());
-		captureQuestionsButton.setOnAction(_ -> captureQuestions());
-		completeSelectedAnswerButton.setOnAction(_ -> completeSelectedAnswer());
-		completeSelectedQuestionButton.setOnAction(_ -> completeSelectedQuestion());
-		selectAllUnknownButton.setOnAction(_ -> selectAllUnknownShown());
-		setSelectedMultipleChoiceButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.MULTIPLE_CHOICE));
-		setSelectedWrittenResponseButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.WRITTEN_RESPONSE));
-		questionTable.getSelectionModel().getSelectedItems()
-				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> {
-
-					// Bulk response-type resolution and single-Question correction derive
-					// independently from the same explicit table selection.
-					updateBulkActionState();
-					updateQuestionActionState();
-				});
-		manageExamAssetsButton.setOnAction(_ -> manageSelectedExamAssets());
-		examLifecycleButton.setOnAction(_ -> changeSelectedExamState());
-		addCurriculumButton.setOnAction(_ -> addCurriculumHandler.run());
-		mapCurriculumButton.setOnAction(_ -> mapCurriculumHandler.run());
+		configureCommandActions();
+		configureFilterActions();
+		configureQuestionWorkActions();
+		configureSelectionActions();
 	}
 
 	private void configureBookletTable() {
@@ -1028,6 +1021,7 @@ public final class CorpusDashboardPane extends VBox {
 				.setAll(List.<TableColumn<BookletCorpusStatus, ?>>of(bookletColumn, formatColumn, pdfColumn,
 						answerFileColumn, expectedColumn, foundColumn, partsColumn, noDescriptorColumn,
 						mcqExplanationColumn, problemsColumn));
+		centreTableColumns(bookletTable);
 	}
 
 	private void configureBulkResponseTypeControls() {
@@ -1044,46 +1038,7 @@ public final class CorpusDashboardPane extends VBox {
 		setSelectedWrittenResponseButton.setDisable(true);
 	}
 
-	// TODO Refactor into separate concerns
-	private void configureControls() {
-		curriculumMappingSummaryLabel.setId("corpus-dashboard-mapping-review");
-		curriculumMappingSummaryLabel.setWrapText(true);
-		addCurriculumButton.setId("corpus-dashboard-add-curriculum");
-		addCurriculumButton.setAccessibleText("Add Curriculum");
-		addCurriculumButton.setTooltip(new Tooltip("Add curriculum to the current Subject."));
-		addCurriculumButton.setPadding(new Insets(2, 7, 2, 7));
-		addCurriculumButton.setMinWidth(Region.USE_PREF_SIZE);
-		addCurriculumButton.setMaxWidth(Region.USE_PREF_SIZE);
-		mapCurriculumButton.setId("corpus-dashboard-map-curriculum");
-		mapCurriculumButton
-				.setTooltip(new Tooltip("Review mappings between historical and current curriculum versions."));
-		noExamsLabel.setId("corpus-dashboard-no-exams");
-		noExamsLabel.setWrapText(true);
-		addExamButton.setId("corpus-dashboard-add-exam");
-		addExamButton.setTooltip(new Tooltip("Add an Exam to the current Subject."));
-		addExamButton.setMinWidth(Region.USE_PREF_SIZE);
-		importLegacyQuestionsButton.setId("corpus-dashboard-import-legacy-questions");
-		importLegacyQuestionsButton
-				.setTooltip(new Tooltip("Import legacy Question metadata for the current Working Subject."));
-		importLegacyQuestionsButton.setMinWidth(Region.USE_PREF_SIZE);
-
-		// Selected-scope descriptions act as field labels as well as status text, so
-		// emphasise them consistently with the Dashboard's other metadata labels.
-		declaredExamStateLabel.setStyle("-fx-font-weight: bold;");
-		selectedExamCountsLabel.setStyle("-fx-font-weight: bold;");
-		selectedBookletLabel.setStyle("-fx-font-weight: bold;");
-		configureFilterControls();
-		configureSummaryControls();
-		configureExamTable();
-		configureBookletTable();
-		configureQuestionWorkControls();
-		configureBulkResponseTypeControls();
-		selectedExamLabel.setId("corpus-dashboard-selected-exam");
-		declaredExamStateLabel.setId("corpus-dashboard-selected-exam-state");
-		selectedExamCountsLabel.setId("corpus-dashboard-selected-exam-counts");
-		selectedBookletLabel.setId("corpus-dashboard-selected-booklet");
-		bookletWarningLabel.setId("corpus-dashboard-booklet-warning");
-		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
+	private void configureCaptureAndLifecycleControls() {
 		captureAnswersButton.setId("corpus-dashboard-capture-answers");
 		captureAnswersButton.setTooltip(new Tooltip(
 				"Start with the selected booklet, then continue through ready unanswered Questions in the selected Exam."));
@@ -1100,6 +1055,15 @@ public final class CorpusDashboardPane extends VBox {
 		completeSelectedQuestionButton.setTooltip(new Tooltip(
 				"Complete missing Question content or unresolved Shared Context for the selected Question."));
 		completeSelectedQuestionButton.setDisable(true);
+		inspectBookletQuestionsButton.setId("corpus-dashboard-inspect-booklet-questions");
+		inspectBookletQuestionsButton
+				.setTooltip(new Tooltip("Open Question Search narrowed to the selected Question booklet."));
+		inspectBookletQuestionsButton.disableProperty()
+				.bind(bookletTable.getSelectionModel().selectedItemProperty().isNull());
+		inspectExamQuestionsButton.setId("corpus-dashboard-inspect-exam-questions");
+		inspectExamQuestionsButton.setTooltip(new Tooltip("Open Question Search narrowed to the selected Exam."));
+		inspectExamQuestionsButton.disableProperty()
+				.bind(examTable.getSelectionModel().selectedItemProperty().isNull());
 		manageExamAssetsButton.setId("corpus-dashboard-manage-exam-assets");
 		manageExamAssetsButton.setTooltip(new Tooltip("Open the selected Exam or booklet in Exam / Assets."));
 		manageExamAssetsButton.setDisable(true);
@@ -1107,6 +1071,99 @@ public final class CorpusDashboardPane extends VBox {
 		examLifecycleButton.setMinWidth(Region.USE_PREF_SIZE);
 		examLifecycleButton.setTooltip(new Tooltip("Change the lifecycle state of the selected Exam."));
 		examLifecycleButton.setDisable(true);
+	}
+
+	private <S, T> void configureCentredCell(TableColumn<S, T> column) {
+		column.setCellFactory(_ -> {
+			TableCell<S, T> cell = new TableCell<S, T>() {
+
+				@Override
+				protected void updateItem(T item, boolean empty) {
+					super.updateItem(item, empty);
+					setText(empty || item == null ? null : item.toString());
+					setGraphic(null);
+				}
+			};
+
+			// Set alignment once for the reusable cell; ordinary TableView updates do
+			// not need to repeat presentation configuration.
+			cell.setAlignment(Pos.CENTER);
+			return cell;
+		});
+	}
+
+	private void configureCommandActions() {
+		addExamButton.setOnAction(_ -> addExamHandler.run());
+		importLegacyQuestionsButton.setOnAction(_ -> legacyQuestionImportHandler.run());
+		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
+		inspectExamQuestionsButton.setOnAction(_ -> inspectSelectedExamQuestions());
+		manageExamAssetsButton.setOnAction(_ -> manageSelectedExamAssets());
+		examLifecycleButton.setOnAction(_ -> changeSelectedExamState());
+		addCurriculumButton.setOnAction(_ -> addCurriculumHandler.run());
+		mapCurriculumButton.setOnAction(_ -> mapCurriculumHandler.run());
+	}
+
+	private void configureControls() {
+		configureCurriculumControls();
+		configureExamAndBookletControls();
+		configureFilterControls();
+		configureSummaryControls();
+		configureExamTable();
+		configureBookletTable();
+		configureQuestionWorkControls();
+		configureBulkResponseTypeControls();
+		configureCaptureAndLifecycleControls();
+		configureExamLifecycleProgressControls();
+	}
+
+	private void configureCurriculumControls() {
+		curriculumMappingSummaryLabel.setId("corpus-dashboard-mapping-review");
+		curriculumMappingSummaryLabel.setWrapText(true);
+		addCurriculumButton.setId("corpus-dashboard-add-curriculum");
+		addCurriculumButton.setAccessibleText("Add Curriculum");
+		addCurriculumButton.setTooltip(new Tooltip("Add curriculum to the current Subject."));
+		addCurriculumButton.setPadding(new Insets(2, 7, 2, 7));
+		addCurriculumButton.setMinWidth(Region.USE_PREF_SIZE);
+		addCurriculumButton.setMaxWidth(Region.USE_PREF_SIZE);
+		mapCurriculumButton.setId("corpus-dashboard-map-curriculum");
+		mapCurriculumButton
+				.setTooltip(new Tooltip("Review mappings between historical and current curriculum versions."));
+	}
+
+	private void configureExamAndBookletControls() {
+		noExamsLabel.setId("corpus-dashboard-no-exams");
+		noExamsLabel.setWrapText(true);
+		addExamButton.setId("corpus-dashboard-add-exam");
+		addExamButton.setTooltip(new Tooltip("Add an Exam to the current Subject."));
+		addExamButton.setMinWidth(Region.USE_PREF_SIZE);
+		importLegacyQuestionsButton.setId("corpus-dashboard-import-legacy-questions");
+		importLegacyQuestionsButton
+				.setTooltip(new Tooltip("Import legacy Question metadata for the current Working Subject."));
+		importLegacyQuestionsButton.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Selected-scope descriptions act as field labels as well as status text, so
+		// emphasise them consistently with the Dashboard's other metadata labels.
+		declaredExamStateLabel.setStyle("-fx-font-weight: bold;");
+		selectedExamCountsLabel.setStyle("-fx-font-weight: bold;");
+		selectedBookletLabel.setStyle("-fx-font-weight: bold;");
+		selectedExamLabel.setId("corpus-dashboard-selected-exam");
+		declaredExamStateLabel.setId("corpus-dashboard-selected-exam-state");
+		selectedExamCountsLabel.setId("corpus-dashboard-selected-exam-counts");
+		selectedBookletLabel.setId("corpus-dashboard-selected-booklet");
+		bookletWarningLabel.setId("corpus-dashboard-booklet-warning");
+		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
+	}
+
+	private void configureExamLifecycleProgressControls() {
+		examLifecycleProgressRow.setId("corpus-dashboard-exam-lifecycle-progress");
+		examLifecycleProgressIndicator.setId("corpus-dashboard-exam-lifecycle-progress-indicator");
+		examLifecycleProgressLabel.setId("corpus-dashboard-exam-lifecycle-progress-label");
+
+		// Keep the indicator compact so progress feedback does not consume meaningful
+		// Question Work space.
+		examLifecycleProgressIndicator.setPrefSize(18, 18);
+		examLifecycleProgressIndicator.setMaxSize(18, 18);
+		setVisibleAndManaged(examLifecycleProgressRow, false);
 	}
 
 	private void configureExamTable() {
@@ -1135,6 +1192,49 @@ public final class CorpusDashboardPane extends VBox {
 		// a generic varargs array warning.
 		examTable.getColumns().setAll(List.<TableColumn<ExamCorpusStatus, ?>>of(yearColumn, providerColumn,
 				assessmentColumn, stateColumn, questionBookletsColumn, answerBookletsColumn, workColumn));
+		centreTableColumns(examTable);
+	}
+
+	private void configureFilterActions() {
+		clearFiltersButton.setOnAction(_ -> clearFilters());
+		providerBox.valueProperty().addListener((_, _, _) -> {
+			if (!changingScopeFilters) {
+				refreshDashboard();
+			}
+		});
+		yearBox.valueProperty().addListener((_, _, _) -> {
+			if (!changingScopeFilters) {
+				refreshDashboard();
+			}
+		});
+		examStateBox.valueProperty().addListener((_, _, _) -> {
+			if (!changingScopeFilters) {
+				refreshDashboard();
+			}
+		});
+		totalQuestionsButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.ALL, null));
+		needsAttentionButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE, null));
+		missingContentButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
+				QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
+		missingAnswerButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
+				QuestionCorpusProblem.MISSING_ANSWER));
+		unknownTypeButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
+				QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
+		sharedContextButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
+				QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
+		missingMcqExplanationButton.setOnAction(_ -> applyMcqExplanationFilter());
+		questionViewBox.valueProperty().addListener((_, _, _) -> {
+			if (changingQuestionFilter) {
+				return;
+			}
+
+			// A direct Show selection returns to ordinary Question completeness filtering,
+			// ending any separate explanation-work drill-down.
+			mcqExplanationFilterActive = false;
+			selectedQuestionProblem = null;
+			summaryQuestionFilterActive = false;
+			refreshDashboard();
+		});
 	}
 
 	private void configureFilterControls() {
@@ -1147,6 +1247,17 @@ public final class CorpusDashboardPane extends VBox {
 		examStateBox.setPromptText("All");
 		examStateBox.getItems().setAll(ExamCaptureState.values());
 		providerBox.setConverter(new QuestionCorpusAuditFilterConverter<>(ExamProvider::getName));
+	}
+
+	private void configureQuestionWorkActions() {
+		captureAnswersButton.setOnAction(_ -> captureAnswers());
+		captureMcqExplanationsButton.setOnAction(_ -> captureMcqExplanations());
+		captureQuestionsButton.setOnAction(_ -> captureQuestions());
+		completeSelectedAnswerButton.setOnAction(_ -> completeSelectedAnswer());
+		completeSelectedQuestionButton.setOnAction(_ -> completeSelectedQuestion());
+		selectAllUnknownButton.setOnAction(_ -> selectAllUnknownShown());
+		setSelectedMultipleChoiceButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.MULTIPLE_CHOICE));
+		setSelectedWrittenResponseButton.setOnAction(_ -> applyBulkResponseType(QuestionResponseType.WRITTEN_RESPONSE));
 	}
 
 	private void configureQuestionWorkControls() {
@@ -1208,11 +1319,50 @@ public final class CorpusDashboardPane extends VBox {
 				.setAll(List.<TableColumn<QuestionCorpusWorkItem, ?>>of(providerColumn, yearColumn, examColumn,
 						bookletColumn, questionColumn, typeColumn, contentColumn, answerColumn, sharedContextColumn,
 						problemColumn));
+		centreTableColumns(questionTable);
 
 		// Default presentation preserves complete source hierarchy. Users can still
 		// change table sorting explicitly afterwards.
 		questionTable.getSortOrder().setAll(List.<TableColumn<QuestionCorpusWorkItem, ?>>of(providerColumn, yearColumn,
 				examColumn, bookletColumn, questionColumn));
+	}
+
+	private void configureSelectionActions() {
+		examTable.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
+			if (selected == null) {
+				clearSelectedExam();
+				refreshQuestionWork();
+				return;
+			}
+
+			// Exam selection owns booklet and Question scope.
+			showSelectedExam(selected, null);
+			refreshQuestionWork();
+		});
+		bookletTable.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
+			if (selected == null) {
+				selectedBookletLabel.setText("Selected booklet: All booklets");
+				setVisibleAndManaged(bookletWarningLabel, false);
+				setVisibleAndManaged(mcqExplanationCoverageLabel, false);
+				updateCaptureActionState();
+				updateExamAssetsActionState();
+				refreshQuestionWork();
+				return;
+			}
+
+			// Booklet selection narrows both visible Question work and the explicit
+			// capture actions.
+			showSelectedBooklet(selected);
+			refreshQuestionWork();
+		});
+		questionTable.getSelectionModel().getSelectedItems()
+				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> {
+
+					// Bulk response-type resolution and single-Question correction derive
+					// independently from the same explicit table selection.
+					updateBulkActionState();
+					updateQuestionActionState();
+				});
 	}
 
 	private void configureSummaryControls() {
@@ -1409,6 +1559,28 @@ public final class CorpusDashboardPane extends VBox {
 		}
 		return pair + ": " + reviewed + "/" + total + " resolved; " + remaining + " remaining (" + unreviewed
 				+ " unreviewed, " + inconsistent + " inconsistent)";
+	}
+
+	private void inspectSelectedBookletQuestions() {
+		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		BookletCorpusStatus selectedBooklet = bookletTable.getSelectionModel().getSelectedItem();
+		if (selectedExam == null || selectedBooklet == null) {
+			return;
+		}
+
+		// Booklet inspection retains the owning Exam as context while narrowing Search
+		// to the explicitly selected Question booklet.
+		questionInspectionHandler.accept(selectedExam.exam(), selectedBooklet.booklet());
+	}
+
+	private void inspectSelectedExamQuestions() {
+		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		if (selectedExam == null) {
+			return;
+		}
+
+		// A null booklet deliberately means all Questions belonging to this Exam.
+		questionInspectionHandler.accept(selectedExam.exam(), null);
 	}
 
 	private boolean isMissingMcqExplanation(Question question) {
@@ -1947,6 +2119,14 @@ public final class CorpusDashboardPane extends VBox {
 			examLifecycleButton.setText("Mark Complete");
 			examLifecycleButton.setDisable(true);
 			examLifecycleButton.setTooltip(new Tooltip("Select an Exam before changing its lifecycle state."));
+			return;
+		}
+		if (examLifecycleChangeInProgress) {
+
+			// Busy state temporarily overrides ordinary lifecycle availability without
+			// changing which action the selected Exam will expose once the refresh ends.
+			examLifecycleButton.setDisable(true);
+			examLifecycleButton.setTooltip(new Tooltip("Exam state change is in progress."));
 			return;
 		}
 		if (selected.declaredCaptureState() == ExamCaptureState.COMPLETE) {

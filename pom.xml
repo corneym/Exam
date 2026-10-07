@@ -6,7 +6,7 @@
 
 	<groupId>au.edu.eq</groupId>
 	<artifactId>exam-question-bank</artifactId>
-	<version>99.99</version>
+	<version>0.2</version>
 	<name>Exam Question Bank</name>
 
 	<properties>
@@ -23,6 +23,7 @@
 		<test.suite>**/NonUITests.java</test.suite>
 		<headless.test.jvm.args></headless.test.jvm.args>
 		<maven.javadoc.plugin.version>3.12.0</maven.javadoc.plugin.version>
+		<maven.clean.plugin.version>3.5.0</maven.clean.plugin.version>
 	</properties>
 
 	<dependencies>
@@ -113,6 +114,28 @@
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>${maven.compiler.plugin.version}</version>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-clean-plugin</artifactId>
+				<version>${maven.clean.plugin.version}</version>
+
+				<configuration>
+					<excludeDefaultDirectories>true</excludeDefaultDirectories>
+
+					<filesets>
+						<fileset>
+							<directory>${project.build.directory}</directory>
+							<followSymlinks>false</followSymlinks>
+							<useDefaultExcludes>true</useDefaultExcludes>
+
+							<excludes>
+								<exclude>package/**</exclude>
+							</excludes>
+						</fileset>
+					</filesets>
+				</configuration>
 			</plugin>
 
 			<plugin>
@@ -208,8 +231,10 @@
 			<id>headless-ui-tests</id>
 
 			<properties>
-				<test.suite>**/UITests.java</test.suite>
+				<test.suite>
+					**/FastUITests.java,**/WorkflowCaptureTests.java,**/WorkflowStateEditingTests.java,**/WorkflowApplicationTests.java</test.suite>
 				<headless.test.jvm.args>
+					-Xmx4g
 					--add-exports javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
 					--add-opens javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
 					--add-exports
@@ -241,7 +266,10 @@
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-surefire-plugin</artifactId>
 						<configuration>
-							<systemPropertyVariables>
+	<forkCount>1</forkCount>
+	<reuseForks>false</reuseForks>
+
+	<systemPropertyVariables>
 								<java.awt.headless>true</java.awt.headless>
 								<testfx.robot>glass</testfx.robot>
 								<testfx.headless>true</testfx.headless>

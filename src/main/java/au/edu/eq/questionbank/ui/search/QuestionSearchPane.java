@@ -62,7 +62,7 @@ import javafx.scene.layout.VBox;
  */
 public class QuestionSearchPane extends BorderPane {
 
-	private static final int PANE_PADDING = 10;
+	private static final int PANE_PADDING = 12;
 	private static final int DETAIL_ROWS = 6;
 	private static final int SECTION_SPACING = 4;
 	private static final int SECTION_TOP_PADDING = 6;
@@ -152,9 +152,10 @@ public class QuestionSearchPane extends BorderPane {
 	// Search inherits the workspace-level Working Subject. It does not own a
 	// separate application-level Subject selection.
 	private final Subject workingSubject;
+	private final QuestionSearchNarrowing searchNarrowing;
 
 	/**
-	 * Creates the question-search pane.
+	 * Creates an unrestricted question-search pane.
 	 *
 	 * @param workingSubject                authoritative workspace Working Subject
 	 * @param curriculumRepository          current curriculum hierarchy lookup
@@ -169,6 +170,28 @@ public class QuestionSearchPane extends BorderPane {
 			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
 			QuestionPreviewService previewService,
 			QuestionOutputApplicabilityRepository outputApplicabilityRepository) {
+		this(workingSubject, curriculumRepository, retrievalService, allQuestionsSupplier, previewService,
+				outputApplicabilityRepository, QuestionSearchNarrowing.unrestricted());
+	}
+
+	/**
+	 * Creates a question-search pane with an immutable result narrowing.
+	 *
+	 * @param workingSubject                authoritative workspace Working Subject
+	 * @param curriculumRepository          current curriculum hierarchy lookup
+	 * @param retrievalService              curriculum-aware Question retrieval
+	 * @param allQuestionsSupplier          complete stored Question retrieval
+	 * @param previewService                stored Question image preview service
+	 * @param outputApplicabilityRepository persisted per-Question revision-output
+	 *                                      exclusions
+	 * @param searchNarrowing               additional result constraint retained
+	 *                                      across every Search scope and refresh
+	 * @throws NullPointerException if any dependency is {@code null}
+	 */
+	public QuestionSearchPane(Subject workingSubject, CurriculumRepository curriculumRepository,
+			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
+			QuestionSearchNarrowing searchNarrowing) {
 		if (workingSubject == null) {
 			throw new NullPointerException("workingSubject");
 		}
@@ -187,12 +210,16 @@ public class QuestionSearchPane extends BorderPane {
 		if (outputApplicabilityRepository == null) {
 			throw new NullPointerException("outputApplicabilityRepository");
 		}
+		if (searchNarrowing == null) {
+			throw new NullPointerException("searchNarrowing");
+		}
 		this.workingSubject = workingSubject;
 		this.curriculumRepository = curriculumRepository;
 		this.retrievalService = retrievalService;
 		this.allQuestionsSupplier = allQuestionsSupplier;
 		this.previewService = previewService;
 		this.outputApplicabilityRepository = outputApplicabilityRepository;
+		this.searchNarrowing = searchNarrowing;
 		setPadding(new Insets(PANE_PADDING));
 		configureControls();
 		configureHandlers();
@@ -303,13 +330,11 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		questionIdToReselect = questionId;
 
-		// An edit must refresh the scope the teacher was actually viewing. In
-		// particular, All Questions must not silently become a curriculum search.
-		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
-			startAllQuestionsSearch();
-			return;
-		}
-		startMostSpecificCurrentSyllabusSearch();
+		// Re-query the active Search because an edit may change whether the Question
+		// still belongs in the current retrieval scope. Keep the accepted results
+		// visible until the replacement generation is ready rather than blanking the
+		// Search pane.
+		refreshAutomaticSearch();
 	}
 
 	/**
@@ -765,6 +790,7 @@ public class QuestionSearchPane extends BorderPane {
 		contentPane.setDividerPositions(LEFT_CONTENT_DIVIDER_POSITION);
 		VBox leftColumn = new VBox(SECTION_SPACING, searchPane, contentPane);
 		leftColumn.setId("question-search-left-column");
+		leftColumn.setPadding(new Insets(PANE_PADDING));
 		VBox.setVgrow(contentPane, Priority.ALWAYS);
 		return leftColumn;
 	}
@@ -774,6 +800,7 @@ public class QuestionSearchPane extends BorderPane {
 		resultsLabel.setStyle("-fx-font-weight: bold;");
 		VBox pane = new VBox(SECTION_SPACING, resultsLabel, resultsList);
 		pane.setId("question-search-results-section");
+		pane.setPadding(new Insets(PANE_PADDING));
 
 		// Matching Questions own the available height in the upper left result
 		// section, preserving the existing scrolling ListView behaviour.
@@ -805,7 +832,7 @@ public class QuestionSearchPane extends BorderPane {
 		detailsLabel.setStyle("-fx-font-weight: bold;");
 		VBox pane = new VBox(SECTION_SPACING, detailsLabel, detailsArea);
 		pane.setId("question-search-details-section");
-		pane.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));
+		pane.setPadding(new Insets(PANE_PADDING));
 
 		// Question details consume the space made available by the lower half of
 		// the left column.
@@ -846,6 +873,7 @@ public class QuestionSearchPane extends BorderPane {
 		// that benefits from additional vertical space.
 		VBox rightColumn = new VBox(SECTION_SPACING, classificationPane, outputApplicabilityPane, previewPane);
 		rightColumn.setId("question-search-right-column");
+		rightColumn.setPadding(new Insets(PANE_PADDING));
 		VBox.setVgrow(previewPane, Priority.ALWAYS);
 		return rightColumn;
 	}
@@ -891,19 +919,27 @@ public class QuestionSearchPane extends BorderPane {
 		pane.setHgap(SELECTOR_COLUMN_GAP);
 		pane.setVgap(SELECTOR_ROW_GAP);
 		pane.setPadding(new Insets(0, 0, PANE_PADDING, 0));
-		pane.add(createSelectorLabel("Search scope"), 0, 0);
-		pane.add(searchScopeBox, 1, 0);
-		pane.add(createSelectorLabel("Current syllabus"), 0, 1);
-		pane.add(syllabusValue, 1, 1);
-		pane.add(createSelectorLabel("Unit"), 0, 2);
-		pane.add(unitBox, 1, 2);
-		pane.add(createSelectorLabel("Topic"), 0, 3);
-		pane.add(topicBox, 1, 3);
-		pane.add(createSelectorLabel("Subtopic / Descriptor"), 0, 4);
-		pane.add(classificationBox, 1, 4);
-		pane.add(createSelectorLabel("Descriptor"), 0, 5);
-		pane.add(descriptorBox, 1, 5);
-		pane.add(statusLabel, 1, 6);
+		int row = 0;
+		if (searchNarrowing.isRestricted()) {
+			Label narrowingValue = new Label(searchNarrowing.description());
+			narrowingValue.setId("question-search-narrowing");
+			narrowingValue.setWrapText(true);
+			pane.add(createSelectorLabel("Narrowed to"), 0, row);
+			pane.add(narrowingValue, 1, row++);
+		}
+		pane.add(createSelectorLabel("Search scope"), 0, row);
+		pane.add(searchScopeBox, 1, row++);
+		pane.add(createSelectorLabel("Current syllabus"), 0, row);
+		pane.add(syllabusValue, 1, row++);
+		pane.add(createSelectorLabel("Unit"), 0, row);
+		pane.add(unitBox, 1, row++);
+		pane.add(createSelectorLabel("Topic"), 0, row);
+		pane.add(topicBox, 1, row++);
+		pane.add(createSelectorLabel("Subtopic / Descriptor"), 0, row);
+		pane.add(classificationBox, 1, row++);
+		pane.add(createSelectorLabel("Descriptor"), 0, row);
+		pane.add(descriptorBox, 1, row++);
+		pane.add(statusLabel, 1, row);
 
 		// The Subject is supplied by the workspace, so every visible selector now
 		// represents only Search-local scope beneath that Subject.
@@ -1378,6 +1414,38 @@ public class QuestionSearchPane extends BorderPane {
 				+ " marks";
 	}
 
+	private void refreshAutomaticSearch() {
+		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
+
+			// All Questions remains scoped to the authoritative Working Subject. The
+			// existing result generation stays visible while this replacement loads.
+			startAutomaticSearch(() -> {
+				List<Question> questions = allQuestionsSupplier.get().stream()
+						.filter(question -> workingSubject.equals(question.getExam().getSubject())).toList();
+				return QuestionSearchResult.allQuestionResults(questions);
+			}, false);
+			return;
+		}
+		CurriculumNode selectedNode = mostSpecificSelectedCurriculumNode();
+		if (selectedNode != null) {
+
+			// Re-evaluate current-curriculum applicability because a classification change
+			// can legitimately alter Search membership.
+			startAutomaticSearch(() -> QuestionSearchResult
+					.currentSyllabusResults(retrievalService.findQuestionsApplicableTo(selectedNode)), false);
+			return;
+		}
+		if (currentSyllabus == null) {
+
+			// This is an invalidated navigation state rather than an ordinary edit refresh.
+			// Rebuild the hierarchy through the normal Working Subject path.
+			startWorkingSubjectNavigation();
+			return;
+		}
+		startAutomaticSearch(() -> QuestionSearchResult
+				.currentSyllabusResults(retrievalService.findQuestionsApplicableTo(workingSubject)), false);
+	}
+
 	private void reloadSelectedOutputApplicability() {
 		QuestionSearchResult selectedResult = resultsList.getSelectionModel().getSelectedItem();
 		if (selectedResult != null) {
@@ -1688,11 +1756,25 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startAutomaticSearch(Supplier<List<QuestionSearchResult>> retrieval) {
+		startAutomaticSearch(retrieval, true);
+	}
+
+	private void startAutomaticSearch(Supplier<List<QuestionSearchResult>> retrieval, boolean clearVisibleResults) {
 		cancelActiveSearch();
-		clearResults();
+		if (clearVisibleResults) {
+
+			// Ordinary navigation deliberately replaces the old scope immediately. An
+			// edit refresh instead retains the accepted result generation until its
+			// replacement is ready.
+			clearResults();
+		}
 		long generation = searchGeneration;
 		statusLabel.setText("Searching...");
-		Task<List<QuestionSearchResult>> task = new BackgroundTask<>(retrieval::get);
+
+		// Apply the immutable launch narrowing after retrieval conversion so the same
+		// constraint governs Current Syllabus, All Questions and edit-refresh paths.
+		Task<List<QuestionSearchResult>> task = new BackgroundTask<>(
+				() -> retrieval.get().stream().filter(result -> searchNarrowing.includes(result.question())).toList());
 		activeSearchTask = task;
 		task.setOnSucceeded(_ -> completeSearch(task, generation));
 		task.setOnFailed(_ -> failSearch(task, generation));

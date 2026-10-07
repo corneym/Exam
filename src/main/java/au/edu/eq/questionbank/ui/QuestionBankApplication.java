@@ -90,6 +90,7 @@ import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
+import au.edu.eq.questionbank.service.backup.ApplicationRestartService;
 import au.edu.eq.questionbank.service.backup.AutomaticBackupRetention;
 import au.edu.eq.questionbank.service.backup.BackupException;
 import au.edu.eq.questionbank.service.backup.BackupKind;
@@ -115,6 +116,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverageServic
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfService;
 import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfStore;
+import au.edu.eq.questionbank.service.curriculum.CurriculumWorkbookStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
@@ -149,6 +151,7 @@ import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import au.edu.eq.questionbank.ui.search.QuestionSearchDialog;
+import au.edu.eq.questionbank.ui.search.QuestionSearchNarrowing;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
@@ -235,6 +238,7 @@ public class QuestionBankApplication extends Application {
 	private boolean legacyQuestionImportDashboardOwned;
 	private SqliteExamAssetDeletionService examAssetDeletionService;
 	private long corpusDashboardRefreshGeneration;
+	private boolean corpusDashboardLifecycleChangeRunning;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
@@ -288,6 +292,9 @@ public class QuestionBankApplication extends Application {
 	// The complete left workspace owns fixed context above the mode-specific
 	// scrollable content and is the node mounted into the main SplitPane.
 	private BorderPane workspacePreviewPane;
+	private Path applicationPropertiesFile = ApplicationPaths.propertiesFile();
+	private Runnable applicationRestartAction = this::restartApplicationAfterShutdown;
+	private final ApplicationRestartService applicationRestartService = new ApplicationRestartService();
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -759,6 +766,37 @@ public class QuestionBankApplication extends Application {
 		finishLegacyQuestionImportDashboardReturn();
 	}
 
+	private boolean canOpenRevisionExport(Subject subject, ApplicationConfig config, String title) {
+		if (subject == null) {
+			showAlert(Alert.AlertType.WARNING, title, "No Working Subject is selected.",
+					"Select a Working Subject on the Corpus Dashboard before exporting revision material.");
+			return false;
+		}
+		CurriculumRepository repository = new SqliteCurriculumRepository(new SqliteDatabase(config.databasePath()));
+		List<SyllabusVersion> currentVersions = repository.findVersionsForSubject(subject).stream()
+				.filter(SyllabusVersion::isCurrent).toList();
+		if (currentVersions.size() == 1) {
+			return true;
+		}
+		if (currentVersions.isEmpty()) {
+
+			// Revision output is organised against the current curriculum. A newly
+			// created Subject therefore cannot enter the export dialog until a current
+			// syllabus exists.
+			showAlert(Alert.AlertType.INFORMATION, title, "Revision export is not available.", "The Working Subject "
+					+ subject.getName()
+					+ " has no current syllabus version. Add or mark a current syllabus before exporting revision material.");
+			return false;
+		}
+
+		// Multiple current versions are invalid application state. Do not allow the
+		// export builder to choose one arbitrarily.
+		showAlert(Alert.AlertType.ERROR, title, "Revision export is not available.", "The Working Subject "
+				+ subject.getName()
+				+ " has more than one current syllabus version. Resolve the curriculum state before exporting revision material.");
+		return false;
+	}
+
 	private void changeCorpusDashboardExamState(Exam exam, ExamCaptureState targetState) {
 		if (exam == null) {
 			throw new NullPointerException("exam");
@@ -769,40 +807,62 @@ public class QuestionBankApplication extends Application {
 		if (exam.getCaptureState() == targetState) {
 			return;
 		}
+		if (corpusDashboardLifecycleChangeRunning) {
+
+			// The Dashboard button is also disabled while busy, but retain an
+			// application-level guard against duplicate programmatic requests.
+			return;
+		}
 		if (!allowExamLifecycleChange()) {
 			return;
 		}
 
 		// Completing an Exam remains an explicit user decision because it locks
 		// structural changes. Reactivation is immediately reversible and needs no
-		// second
-		// confirmation.
+		// second confirmation.
 		if (targetState == ExamCaptureState.COMPLETE && !confirmCorpusDashboardExamCompletion()) {
 			return;
 		}
-		try {
-			ExamBooklet activeBooklet = examMetadataPane.getBooklet();
-			if (activeBooklet != null && activeBooklet.getExam().getId() == exam.getId()) {
+		CorpusDashboardPane initiatingDashboard = corpusDashboardPane;
+		Subject dashboardSubject = workingSubject;
+		long subjectGeneration = workingSubjectRefreshGeneration;
+		corpusDashboardLifecycleChangeRunning = true;
+		if (initiatingDashboard != null) {
+			initiatingDashboard.setExamLifecycleChangeInProgress(true);
+		}
+		Task<Exam> task = new ApplicationBackgroundTask<>(() -> {
 
-				// When Capture happens to hold this same Exam, update its in-memory lifecycle
-				// as well as persistence. The active booklet is synchronization state only;
-				// it does not identify which Exam the Dashboard is changing.
-				examMetadataPane.setActiveExamCaptureState(targetState);
-				refreshActiveExamContext();
-			} else {
+			// SQLite persistence must not block the JavaFX application thread. The same
+			// authoritative writer remains responsible for lifecycle semantics.
+			return examWriter.setExamCaptureState(exam, targetState);
+		});
+		task.setOnSucceeded(_ -> {
+			Exam updatedExam = task.getValue();
 
-				// Dashboard lifecycle changes must also work when no capture booklet, or a
-				// booklet from another Exam, is active.
-				examWriter.setExamCaptureState(exam, targetState);
+			// Capture may still retain an immutable booklet snapshot for this Exam.
+			// Synchronise that lightweight application state only after persistence has
+			// succeeded.
+			synchroniseActiveExamLifecycle(updatedExam);
+			if (dashboardSubject == null) {
+				finishCorpusDashboardLifecycleChange(initiatingDashboard);
+				showCorpusDashboardNoSubject();
+				return;
 			}
 
-			// Rebuild the Dashboard from persistence so state, readiness and structural
-			// action availability all reflect the committed lifecycle change.
-			refreshAndShowCorpusDashboardHome();
-		} catch (SQLException | RuntimeException exception) {
+			// Keep progress active through the complete persistence-backed Dashboard
+			// reload. The existing generation rules prevent stale Subject data from being
+			// published if application context changes while the worker is running.
+			loadCorpusDashboardHome(dashboardSubject, subjectGeneration, -1L,
+					() -> finishCorpusDashboardLifecycleChange(initiatingDashboard));
+		});
+		task.setOnFailed(_ -> {
+			finishCorpusDashboardLifecycleChange(initiatingDashboard);
 			showAlert(Alert.AlertType.ERROR, "Exam State", "The Exam state could not be changed.",
-					failureMessage(exception));
-		}
+					failureMessage(task.getException()));
+		});
+		Thread thread = new Thread(task, "corpus-dashboard-exam-lifecycle-" + exam.getId());
+		thread.setDaemon(true);
+		thread.start();
 	}
 
 	private Path chooseAnswerBookletSource(Stage primaryStage, ApplicationConfig config) {
@@ -950,10 +1010,28 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
-	private void completeExitWithoutBackup() {
+	private void completeDataRootChange(Path dataRoot, Runnable completionAction) {
+		try {
+
+			// Persist the new root only after the current data session has passed its
+			// normal backup and resource-close checks. Cancelling shutdown therefore
+			// leaves both the running session and startup configuration unchanged.
+			ApplicationConfig.saveDataRoot(applicationPropertiesFile, dataRoot);
+			completionAction.run();
+		} catch (IOException exception) {
+
+			// Resources are already closed at this point, so the current application
+			// cannot safely resume even though the configuration update failed.
+			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.",
+					failureMessage(exception));
+			applicationExitAction.run();
+		}
+	}
+
+	private void completeExitWithoutBackup(Runnable readyAction) {
 		ShutdownResult result = shutdownCoordinator.exitWithoutBackup();
 		if (result.exitAllowed()) {
-			applicationExitAction.run();
+			readyAction.run();
 			return;
 		}
 
@@ -972,6 +1050,28 @@ public class QuestionBankApplication extends Application {
 		finishScormExport();
 		progressAlert.close();
 		showScormExportSuccess(task.getValue());
+	}
+
+	private void completeSuccessfulRestore(Stage primaryStage, RestoreResult restoreResult) {
+		boolean restart = showRestartRequiredChoice(primaryStage, "Restore completed successfully.", """
+				The restored data has been installed.
+
+				A pre-restore safety backup was saved to:
+
+				%s
+
+				Restart Exam Question Bank to use the restored data.
+				""".formatted(restoreResult.safetyBackupPath()));
+
+		// DefaultRestoreExecutor already created the safety backup, closed resources,
+		// published the restored data and verified it. Do not run the ordinary shutdown
+		// coordinator here because that would create another backup over the newly
+		// restored state.
+		if (restart) {
+			applicationRestartAction.run();
+			return;
+		}
+		applicationExitAction.run();
 	}
 
 	private void completeWorkingSubjectCaptureRefresh(Subject subject, long generation,
@@ -2053,6 +2153,16 @@ public class QuestionBankApplication extends Application {
 		return matchingContext;
 	}
 
+	private void finishCorpusDashboardLifecycleChange(CorpusDashboardPane initiatingDashboard) {
+		corpusDashboardLifecycleChangeRunning = false;
+
+		// Clear the exact pane that displayed this operation's progress. It may have
+		// been detached meanwhile by a Working Subject transition.
+		if (initiatingDashboard != null) {
+			initiatingDashboard.setExamLifecycleChangeInProgress(false);
+		}
+	}
+
 	private void finishLegacyQuestionImportDashboardReturn() {
 		boolean returnToDashboard = legacyQuestionImportDashboardOwned;
 		legacyQuestionImportDashboardOwned = false;
@@ -2297,8 +2407,17 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		try {
+			Path selectedWorkbook = dialog.getSelectedFile();
+
+			// Validate the selected external workbook before retaining it in managed
+			// application storage.
 			CurriculumExcelImporter excelImporter = new CurriculumExcelImporter();
-			List<CurriculumImportRow> rows = excelImporter.read(dialog.getSelectedFile());
+			List<CurriculumImportRow> rows = excelImporter.read(selectedWorkbook);
+
+			// Curriculum workbooks are application data. A user may select the source from
+			// anywhere, but a successful import retains a managed copy beneath the
+			// configured curriculum root.
+			new CurriculumWorkbookStore(config.curriculumDataRoot()).manageWorkbook(selectedWorkbook);
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
 			SqliteCurriculumImporter importer = new SqliteCurriculumImporter(database, writer);
@@ -2319,7 +2438,8 @@ public class QuestionBankApplication extends Application {
 								+ " is already imported. No changes were required.");
 			}
 		} catch (IOException e) {
-			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not read the Excel file.", e.getMessage());
+			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not read or copy the Excel file.",
+					e.getMessage());
 		} catch (CurriculumImportConflictException e) {
 			showAlert(Alert.AlertType.ERROR, "Curriculum Import", "Could not import curriculum.", e.getMessage());
 		} catch (SQLException e) {
@@ -2411,7 +2531,35 @@ public class QuestionBankApplication extends Application {
 				name.strip(), relativePath, questionFormat, expectedQuestionCount, storedHash);
 	}
 
-	// TODO Refactor to smaller methods?
+	private void initialiseCapturePanes(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			SourceQuestionRepository sourceQuestionRepository, SqliteQuestionCaptureService questionCaptureService,
+			LegacyQuestionSplitService legacyQuestionSplitService, SqliteAnswerWriter answerWriter) {
+
+		// The selector receives application-level Subject creation through the same
+		// database used by the rest of the capture workflow.
+		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
+		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter, config.pdfDataRoot(),
+				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
+				this::allowAnswerCaptureTransition, examMetadataPane::getBooklet,
+				() -> clearCaptureSelection(CaptureSelectionOwner.ANSWER), questionExtractor,
+				pdfWorkspace::getAnswerPdfSession,
+				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.ANSWER, pageNumber),
+				(selected, completed) -> pdfWorkspace.openAnswerPdfAsync(selected.path(), completed));
+		answerCapturePane.refreshQuestions();
+		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
+				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
+				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
+				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
+		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
+				questionCaptureService, legacyQuestionSplitService, sharedContextCapturePane, questionExtractor,
+				curriculumSelectionModel, curriculumSelectorPane, examMetadataPane::getBooklet,
+				pdfWorkspace::getExamPdfSession, question -> activateImportedQuestion(question, config),
+				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
+				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
+				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
+		questionCapturePane.refreshImportedQuestions();
+	}
+
 	private void initialiseCaptureWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database) {
 		questionRepository = new SqliteQuestionRepository(database);
 
@@ -2422,6 +2570,9 @@ public class QuestionBankApplication extends Application {
 		// Working Subject transitions load the corpus once at application level and
 		// then publish that same immutable snapshot to Question and Answer capture.
 		workingSubjectQuestionSnapshotLoader = questionRepository::findAll;
+
+		// Construct the capture-specific persistence services in the same order as the
+		// original composition root before handing them to the focused pane wiring.
 		SourceQuestionRepository sourceQuestionRepository = new SqliteSourceQuestionRepository(database);
 		SqliteQuestionCaptureService questionCaptureService = new SqliteQuestionCaptureService(database);
 		LegacyQuestionSplitService legacyQuestionSplitService = new LegacyQuestionSplitService(database);
@@ -2439,6 +2590,13 @@ public class QuestionBankApplication extends Application {
 		// and Exam / Assets rather than constructing a parallel corpus model.
 		corpusDashboardAuditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
 				new PdfStore(config.pdfDataRoot()));
+		initialiseExamAssetsWorkflow(primaryStage, config, database, answerWriter);
+		initialiseCapturePanes(primaryStage, config, database, sourceQuestionRepository, questionCaptureService,
+				legacyQuestionSplitService, answerWriter);
+	}
+
+	private void initialiseExamAssetsWorkflow(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
+			SqliteAnswerWriter answerWriter) {
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 
 		// Exam correction owns both filesystem relocation and the atomic Exam /
@@ -2508,30 +2666,6 @@ public class QuestionBankApplication extends Application {
 				throw new IllegalStateException("Exam assets could not be loaded.", exception);
 			}
 		};
-
-		// The selector receives application-level Subject creation through the same
-		// database used by the rest of the capture workflow.
-		curriculumSelectorPane = createCurriculumSelectorPane(primaryStage, database);
-		answerCapturePane = new AnswerCapturePane(questionRepository, answerWriter, config.pdfDataRoot(),
-				this::openAnswerPdf, () -> pdfWorkspace.showDocument(PdfWorkspacePane.DocumentMode.ANSWER),
-				this::allowAnswerCaptureTransition, examMetadataPane::getBooklet,
-				() -> clearCaptureSelection(CaptureSelectionOwner.ANSWER), questionExtractor,
-				pdfWorkspace::getAnswerPdfSession,
-				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.ANSWER, pageNumber),
-				(selected, completed) -> pdfWorkspace.openAnswerPdfAsync(selected.path(), completed));
-		answerCapturePane.refreshQuestions();
-		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
-				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
-				pdfWorkspace::getExamPdfSession, () -> clearCaptureSelection(CaptureSelectionOwner.SHARED_CONTEXT),
-				() -> !captureSelectionState.isOwnedBy(CaptureSelectionOwner.QUESTION));
-		questionCapturePane = new QuestionCapturePane(questionRepository, sourceQuestionRepository,
-				questionCaptureService, legacyQuestionSplitService, sharedContextCapturePane, questionExtractor,
-				curriculumSelectionModel, curriculumSelectorPane, examMetadataPane::getBooklet,
-				pdfWorkspace::getExamPdfSession, question -> activateImportedQuestion(question, config),
-				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
-				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
-				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
-		questionCapturePane.refreshImportedQuestions();
 	}
 
 	private boolean isCurrentCorpusDashboardRefresh(Subject subject, long subjectGeneration, long dashboardGeneration) {
@@ -2562,49 +2696,67 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && questionCapturePane.canCaptureRegions();
 	}
 
-	// TODO Refactor to remove inner class
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
+		loadCorpusDashboardHome(dashboardSubject, generation, preferredQuestionId, () -> {
+
+			// Ordinary Dashboard refresh has no additional operation lifecycle to finish.
+		});
+	}
+
+	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
+			Runnable completionHandler) {
+		Objects.requireNonNull(completionHandler, "completionHandler");
 
 		// Several Dashboard refreshes may legitimately be requested within one Working
 		// Subject generation. Only the newest request may publish its snapshot.
 		long dashboardGeneration = ++corpusDashboardRefreshGeneration;
-		Task<CorpusDashboardSnapshot> task = new Task<>() {
+		Task<CorpusDashboardSnapshot> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected CorpusDashboardSnapshot call() throws Exception {
-
-				// Structural audit, Question status and curriculum mapping coverage remain
-				// one authoritative persistence generation.
-				return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject);
-			}
-		};
+			// Structural audit, Question status and curriculum mapping coverage remain
+			// one authoritative persistence generation.
+			return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject);
+		});
 		task.setOnSucceeded(_ -> {
-			if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
+			try {
+				if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
 
-				// A later Subject change or later Dashboard refresh already owns the home
-				// surface. Never allow this older snapshot to overwrite newer persisted state.
-				return;
-			}
-			CorpusDashboardSnapshot snapshot = task.getValue();
-			if (corpusDashboardPane == null) {
-				showCorpusDashboardSnapshot(dashboardSubject, snapshot);
-				return;
-			}
+					// A later Subject change or later Dashboard refresh already owns the home
+					// surface. Never allow this older snapshot to overwrite newer persisted state.
+					return;
+				}
+				CorpusDashboardSnapshot snapshot = task.getValue();
+				if (corpusDashboardPane == null) {
+					showCorpusDashboardSnapshot(dashboardSubject, snapshot);
+					return;
+				}
 
-			// Ordinary refresh retains Dashboard-local filters and selection where they
-			// remain valid.
-			corpusDashboardPane.replaceData(snapshot.examStatuses(), snapshot.questions(), snapshot.mappingCoverages(),
-					snapshot.curriculumAvailable(), preferredQuestionId);
+				// Ordinary refresh retains Dashboard-local filters and selection where they
+				// remain valid.
+				corpusDashboardPane.replaceData(snapshot.examStatuses(), snapshot.questions(),
+						snapshot.mappingCoverages(), snapshot.curriculumAvailable(), preferredQuestionId);
+			} finally {
+
+				// Operation-specific callers, including lifecycle changes, keep their busy
+				// state until this authoritative refresh has either published or become stale.
+				completionHandler.run();
+			}
 		});
 		task.setOnFailed(_ -> {
-			if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
+			try {
+				if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
 
-				// Failure from superseded work is no longer relevant to the visible
-				// Dashboard and must not interrupt the newer request.
-				return;
+					// Failure from superseded work is no longer relevant to the visible
+					// Dashboard and must not interrupt the newer request.
+					return;
+				}
+				showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
+						failureMessage(task.getException()));
+			} finally {
+
+				// Failure must release any operation-specific progress state as reliably as
+				// successful publication.
+				completionHandler.run();
 			}
-			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
-					failureMessage(task.getException()));
 		});
 
 		// Include both generations in the worker name so concurrent refreshes remain
@@ -3099,6 +3251,11 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void requestApplicationExit(Stage primaryStage) {
+		requestApplicationShutdown(primaryStage, applicationExitAction);
+	}
+
+	private void requestApplicationShutdown(Stage primaryStage, Runnable readyAction) {
+		Objects.requireNonNull(readyAction, "readyAction");
 		if (blockWhileCaptureSaveInProgress("closing the application")) {
 			return;
 		}
@@ -3116,11 +3273,11 @@ public class QuestionBankApplication extends Application {
 			ShutdownResult result = shutdownCoordinator.prepareForExit();
 			if (result.status() == ShutdownStatus.READY_TO_EXIT_WITH_RETENTION_WARNING) {
 				showRetentionWarning(primaryStage, result.failure());
-				applicationExitAction.run();
+				readyAction.run();
 				return;
 			}
 			if (result.exitAllowed()) {
-				applicationExitAction.run();
+				readyAction.run();
 				return;
 			}
 			if (result.status() == ShutdownStatus.RESOURCE_CLOSE_FAILED) {
@@ -3132,7 +3289,7 @@ public class QuestionBankApplication extends Application {
 				return;
 			}
 			if (decision == BackupFailureDecision.EXIT_WITHOUT_BACKUP) {
-				completeExitWithoutBackup();
+				completeExitWithoutBackup(readyAction);
 				return;
 			}
 
@@ -3204,6 +3361,23 @@ public class QuestionBankApplication extends Application {
 		return storedPath;
 	}
 
+	private void restartApplicationAfterShutdown() {
+		try {
+			applicationRestartService.restart();
+		} catch (IOException | RuntimeException exception) {
+			showAlert(Alert.AlertType.WARNING, "Restart Unavailable",
+					"Exam Question Bank could not restart automatically.", """
+							%s
+
+							The application will now close. Start Exam Question Bank manually.
+							""".formatted(failureMessage(exception)));
+		}
+
+		// Whether relaunch succeeded or failed, shutdown has already completed and the
+		// current process must not resume using closed resources.
+		applicationExitAction.run();
+	}
+
 	private void restoreBackup(Stage primaryStage, ApplicationConfig config) {
 		if (blockWhileCaptureSaveInProgress("restoring a backup")) {
 			return;
@@ -3244,16 +3418,7 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		closeRestorePreparation(preparation);
-		showAlert(Alert.AlertType.INFORMATION, "Restore Backup", "Restore completed successfully.", """
-				The restored data has been installed.
-
-				A pre-restore safety backup was saved to:
-
-				%s
-
-				The application will now close. Restart Exam Question Bank to use the restored data.
-				""".formatted(restoreResult.safetyBackupPath()));
-		applicationExitAction.run();
+		completeSuccessfulRestore(primaryStage, restoreResult);
 	}
 
 	private void restoreManagedPdfSessions(PdfWorkspacePane.DocumentMode displayedBeforeCorrection,
@@ -3291,6 +3456,12 @@ public class QuestionBankApplication extends Application {
 		// Restore and refresh Home before reopening Search so closing Search cannot
 		// expose an obsolete or hidden capture workspace.
 		refreshAndShowCorpusDashboardHome();
+
+		// The Dashboard refresh above already includes any inline classification
+		// changes made earlier in this same Search session. Consume that state so the
+		// eventual ordinary Search close does not request the same Dashboard refresh
+		// twice.
+		dialog.consumePersistedClassificationChange();
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
@@ -3357,6 +3528,17 @@ public class QuestionBankApplication extends Application {
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			CurriculumRepository repository = new SqliteCurriculumRepository(database);
+			List<SyllabusVersion> versions = repository.findVersionsForSubject(subject);
+			if (versions.size() < 2) {
+
+				// Mapping review compares curriculum versions within the authoritative
+				// Working Subject. Do not construct a review workflow when no comparison
+				// syllabus exists.
+				showAlert(Alert.AlertType.INFORMATION, "Curriculum Mapping", "Mapping review is not available.",
+						"At least two syllabus versions are required for " + subject.getName()
+								+ " before curriculum mappings can be reviewed.");
+				return;
+			}
 			CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
 			CurriculumMappingSuggester descriptorSuggester = new TfIdfCurriculumMappingSuggester(repository);
 			CurriculumMappingSuggester subtopicSuggester = new ConfirmedDescriptorSubtopicMappingSuggester(repository,
@@ -3629,6 +3811,7 @@ public class QuestionBankApplication extends Application {
 			}
 		});
 		dashboard.setQuestionCorrectionHandler(this::showCorpusDashboardQuestionCorrection);
+		dashboard.setQuestionInspectionHandler(this::showDashboardQuestionInspection);
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}
@@ -3845,6 +4028,28 @@ public class QuestionBankApplication extends Application {
 		refreshActiveExamContext();
 	}
 
+	private void showDashboardQuestionInspection(Exam exam, ExamBooklet booklet) {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		QuestionSearchNarrowing narrowing;
+		if (booklet == null) {
+
+			// Exam-level inspection includes every Question belonging to the explicit
+			// Dashboard Exam selection.
+			narrowing = QuestionSearchNarrowing.forExam(exam);
+		} else {
+			if (booklet.getExam().getId() != exam.getId()) {
+				throw new IllegalArgumentException("booklet does not belong to the selected Exam");
+			}
+
+			// Booklet-level inspection narrows the same Search workflow one structural
+			// level further without creating a separate Search implementation.
+			narrowing = QuestionSearchNarrowing.forBooklet(booklet);
+		}
+		showQuestionSearch(primaryStage(), applicationConfig, narrowing);
+	}
+
 	private void showExamAssetsMode() {
 		if (!allowExamAssetsTransition()) {
 			return;
@@ -4041,7 +4246,7 @@ public class QuestionBankApplication extends Application {
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
 		OptionsDialog dialog = new OptionsDialog(primaryStage, config.dataRoot());
 		Optional<ButtonType> result = dialog.showAndWait();
-		if (result.isEmpty() || result.get().getButtonData() != javafx.scene.control.ButtonBar.ButtonData.OK_DONE) {
+		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
 		try {
@@ -4049,20 +4254,31 @@ public class QuestionBankApplication extends Application {
 			if (dataRoot.equals(config.dataRoot())) {
 				return;
 			}
+			boolean restart = showRestartRequiredChoice(primaryStage, "Data location changed.", """
+					Exam Question Bank must close the current data session before the new location can be activated.
 
-			// Options always updates the same user-writable configuration used at
-			// application startup, never a file beside the installed executable.
-			ApplicationConfig.saveDataRoot(ApplicationPaths.propertiesFile(), dataRoot);
-			showAlert(Alert.AlertType.INFORMATION, "Options", "Options saved.",
-					"The new data location will be used after the application is restarted.");
-		} catch (IllegalArgumentException e) {
-			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", e.getMessage());
-		} catch (IOException e) {
-			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.", e.getMessage());
+					Choose Restart Now to reopen using the new data location, or Exit to close the application.
+					""");
+			Runnable completionAction = restart ? applicationRestartAction : applicationExitAction;
+
+			// Backup and resource shutdown still belong to the current data root. Persist
+			// the new startup location only after those safety checks have succeeded.
+			requestApplicationShutdown(primaryStage, () -> completeDataRootChange(dataRoot, completionAction));
+		} catch (IllegalArgumentException exception) {
+			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", exception.getMessage());
 		}
 	}
 
 	private void showQuestionSearch(Stage primaryStage, ApplicationConfig config) {
+
+		// The ordinary Search menu entry retains its existing Working-Subject-wide
+		// behaviour.
+		showQuestionSearch(primaryStage, config, QuestionSearchNarrowing.unrestricted());
+	}
+
+	private void showQuestionSearch(Stage primaryStage, ApplicationConfig config,
+			QuestionSearchNarrowing searchNarrowing) {
+		Objects.requireNonNull(searchNarrowing, "searchNarrowing");
 		if (workingSubject == null) {
 
 			// Search is scoped to the authoritative application Working Subject.
@@ -4082,11 +4298,11 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
 				database);
 
-		// Search inherits the authoritative workspace Working Subject. It does not
-		// establish a separate application-level Subject selection.
+		// Search inherits the authoritative workspace Working Subject. Dashboard launch
+		// may additionally constrain that same Search to one Exam or booklet.
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, workingSubject, curriculumRepository,
 				retrievalService, questionRepository::findAll, previewService, outputApplicabilityRepository,
-				questionRepository::updateClassification);
+				questionRepository::updateClassification, searchNarrowing);
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
@@ -4094,8 +4310,17 @@ public class QuestionBankApplication extends Application {
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		Optional<QuestionSearchDialog.EditRequest> result = dialog.showAndWait();
 		if (result.isEmpty()) {
+			boolean dashboardRefreshRequired = dialog.consumePersistedClassificationChange();
 			dialog.dispose();
 			questionCapturePane.clearSaveStatus();
+
+			// Inline Search classification changes alter Dashboard descriptor coverage.
+			// Refresh the retained Dashboard generation only when Search actually persisted
+			// a
+			// change; an unchanged Search session requires no persistence work on close.
+			if (dashboardRefreshRequired) {
+				refreshCorpusDashboardHome(-1L);
+			}
 			return;
 		}
 		QuestionSearchDialog.EditRequest request = result.get();
@@ -4174,6 +4399,29 @@ public class QuestionBankApplication extends Application {
 				failureMessage(failure));
 	}
 
+	private boolean showRestartRequiredChoice(Stage primaryStage, String header, String content) {
+		ButtonType restartButton = new ButtonType("Restart Now", ButtonBar.ButtonData.OK_DONE);
+		ButtonType exitButton = new ButtonType("Exit", ButtonBar.ButtonData.NO);
+		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+		alert.initOwner(primaryStage);
+		alert.setTitle("Restart Required");
+		alert.setHeaderText(header);
+		String displayedContent = content;
+		if (!applicationRestartService.isRestartSupported()) {
+			displayedContent += """
+
+					Automatic restart is unavailable in this development run.
+					If Restart Now is chosen, the application will close and must be started manually.
+					""";
+		}
+		alert.setContentText(displayedContent);
+		alert.getButtonTypes().setAll(restartButton, exitButton);
+
+		// Closing the prompt is equivalent to Exit. Once the current data session has
+		// been deliberately invalidated, continuing in that session is not offered.
+		return alert.showAndWait().orElse(exitButton) == restartButton;
+	}
+
 	private void showRetentionWarning(Stage primaryStage, Throwable failure) {
 		Alert alert = new Alert(Alert.AlertType.WARNING);
 		alert.initOwner(primaryStage);
@@ -4187,23 +4435,26 @@ public class QuestionBankApplication extends Application {
 		if (revisionExportRunning) {
 			return;
 		}
+		Subject subject = workingSubject;
+		if (!canOpenRevisionExport(subject, config, "Export Revision HTML")) {
+			return;
+		}
 		RevisionExportService eligibilityService = createRevisionExportService(config);
-		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
-				curriculumSelectionModel.getSubject(), eligibilityService::findExportableUnits,
-				eligibilityService::isDescriptorGroupingAvailable);
+		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, subject,
+				eligibilityService::findExportableUnits, eligibilityService::isDescriptorGroupingAvailable);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
-		Subject subject = dialog.getSelectedSubject();
+		Subject selectedSubject = dialog.getSelectedSubject();
 		Path destinationParent = dialog.getDestinationParent();
 		RevisionGroupingMode groupingMode = dialog.getGroupingMode();
 		Set<Long> selectedUnitIds = dialog.getSelectedUnitIds();
-		if (subject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
+		if (selectedSubject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
 			return;
 		}
-		Path destination = revisionExportDestination(destinationParent, subject);
-		startRevisionExport(primaryStage, config, subject, destination, groupingMode, selectedUnitIds);
+		Path destination = revisionExportDestination(destinationParent, selectedSubject);
+		startRevisionExport(primaryStage, config, selectedSubject, destination, groupingMode, selectedUnitIds);
 	}
 
 	private void showRevisionExportSuccess(RevisionExportResult result) {
@@ -4229,23 +4480,26 @@ public class QuestionBankApplication extends Application {
 		if (scormExportRunning) {
 			return;
 		}
+		Subject subject = workingSubject;
+		if (!canOpenRevisionExport(subject, config, "Export Revision SCORM")) {
+			return;
+		}
 		ScormExportService eligibilityService = createScormExportService(config);
-		ScormExportDialog dialog = new ScormExportDialog(primaryStage, curriculumSelectionModel.getSubjects(),
-				curriculumSelectionModel.getSubject(), eligibilityService::findExportableUnits,
+		ScormExportDialog dialog = new ScormExportDialog(primaryStage, subject, eligibilityService::findExportableUnits,
 				eligibilityService::isDescriptorGroupingAvailable);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
-		Subject subject = dialog.getSelectedSubject();
+		Subject selectedSubject = dialog.getSelectedSubject();
 		Path destinationParent = dialog.getDestinationParent();
 		RevisionGroupingMode groupingMode = dialog.getGroupingMode();
 		Set<Long> selectedUnitIds = dialog.getSelectedUnitIds();
-		if (subject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
+		if (selectedSubject == null || destinationParent == null || groupingMode == null || selectedUnitIds.isEmpty()) {
 			return;
 		}
-		Path destination = scormExportDestination(destinationParent, subject);
-		startScormExport(primaryStage, config, subject, destination, groupingMode, selectedUnitIds);
+		Path destination = scormExportDestination(destinationParent, selectedSubject);
+		startScormExport(primaryStage, config, selectedSubject, destination, groupingMode, selectedUnitIds);
 	}
 
 	private void showScormExportSuccess(ScormExportResult result) {
@@ -4458,19 +4712,14 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	// TODO remove/extract inner class
 	private void startDashboardQuestionCaptureRefresh(ExamBooklet booklet, Path storedPath, Runnable returnHandler) {
-		Task<List<Question>> task = new Task<>() {
+		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected List<Question> call() {
-
-				// Both Question and Answer panes need the same post-routing corpus snapshot.
-				// Load it once off the JavaFX thread instead of making each pane perform a
-				// synchronous SQLite query.
-				return List.copyOf(questionRepository.findAll());
-			}
-		};
+			// Both Question and Answer panes need the same post-routing corpus snapshot.
+			// Load it once off the JavaFX thread instead of making each pane perform a
+			// synchronous SQLite query.
+			return List.copyOf(questionRepository.findAll());
+		});
 		task.setOnSucceeded(_ -> {
 			if (corpusDashboardCaptureReturnHandler != returnHandler) {
 
@@ -4505,16 +4754,12 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startExamAssetsQuestionCaptureRefresh(ExamBooklet booklet, Path storedPath) {
-		Task<List<Question>> task = new Task<>() {
+		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected List<Question> call() {
-
-				// Rebuild both capture panes from one persistence snapshot rather than
-				// blocking JavaFX with two synchronous repository refreshes.
-				return List.copyOf(questionRepository.findAll());
-			}
-		};
+			// Rebuild both capture panes from one persistence snapshot rather than
+			// blocking JavaFX with two synchronous repository refreshes.
+			return List.copyOf(questionRepository.findAll());
+		});
 		task.setOnSucceeded(_ -> {
 			try {
 				Subject subject = booklet.getExam().getSubject();
@@ -4543,7 +4788,6 @@ public class QuestionBankApplication extends Application {
 		Thread.ofVirtual().name("exam-assets-question-capture-refresh").start(task);
 	}
 
-	// TODO remove/extract inner class
 	private void startLegacyQuestionCaptureRefresh(Subject subject, LegacyQuestionImportResult importResult) {
 		if (subject == null) {
 			throw new NullPointerException("subject");
@@ -4551,16 +4795,12 @@ public class QuestionBankApplication extends Application {
 		if (importResult == null) {
 			throw new NullPointerException("importResult");
 		}
-		Task<List<Question>> task = new Task<>() {
+		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected List<Question> call() {
-
-				// Legacy import has already committed. Load one immutable corpus snapshot
-				// away from JavaFX and publish that same snapshot to both capture panes.
-				return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
-			}
-		};
+			// Legacy import has already committed. Load one immutable corpus snapshot
+			// away from JavaFX and publish that same snapshot to both capture panes.
+			return List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+		});
 		task.setOnSucceeded(_ -> {
 			if (!Objects.equals(workingSubject, subject)) {
 
@@ -4683,7 +4923,6 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
-	// TODO remove/extract inner class
 	private void startWorkingSubjectCaptureRefresh(Subject subject, long generation) {
 
 		// Remove curriculum state belonging to the previous Subject immediately while
@@ -4704,21 +4943,17 @@ public class QuestionBankApplication extends Application {
 			// Clearing Working Subject requires no replacement persistence snapshot.
 			return;
 		}
-		Task<WorkingSubjectCaptureSnapshot> task = new Task<>() {
+		Task<WorkingSubjectCaptureSnapshot> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected WorkingSubjectCaptureSnapshot call() {
+			// Load curriculum first so successful publication can establish
+			// classification choices before either capture pane exposes Questions.
+			CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot = workingSubjectCurriculumSnapshotLoader
+					.apply(subject);
 
-				// Load curriculum first so successful publication can establish
-				// classification choices before either capture pane exposes Questions.
-				CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot = workingSubjectCurriculumSnapshotLoader
-						.apply(subject);
-
-				// One corpus read supplies both capture panes for this Subject transition.
-				List<Question> questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
-				return new WorkingSubjectCaptureSnapshot(curriculumSnapshot, questions);
-			}
-		};
+			// One corpus read supplies both capture panes for this Subject transition.
+			List<Question> questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+			return new WorkingSubjectCaptureSnapshot(curriculumSnapshot, questions);
+		});
 		task.setOnSucceeded(_ -> completeWorkingSubjectCaptureRefresh(subject, generation, task.getValue()));
 		task.setOnFailed(_ -> failWorkingSubjectCaptureRefresh(subject, generation, task.getException()));
 		Thread thread = new Thread(task, "working-subject-capture-refresh-" + generation);
@@ -4741,7 +4976,6 @@ public class QuestionBankApplication extends Application {
 		loadCorpusDashboardHome(subject, generation, -1L);
 	}
 
-	// TODO remove/extract inner class
 	private void startWorkingSubjectExamAssetsRefresh(Subject subject, long generation) {
 		if (examAssetsPane == null || workspaceModeHost == null
 				|| !workspaceModeHost.getChildren().contains(examAssetsPane)) {
@@ -4759,16 +4993,12 @@ public class QuestionBankApplication extends Application {
 			// Clearing Subject is complete once stale presentation has been removed.
 			return;
 		}
-		Task<ExamAssetsPane.SubjectSnapshot> task = new Task<>() {
+		Task<ExamAssetsPane.SubjectSnapshot> task = new ApplicationBackgroundTask<>(() -> {
 
-			@Override
-			protected ExamAssetsPane.SubjectSnapshot call() {
-
-				// All Exam, booklet, AnswerFile and assignment reads occur away from
-				// the JavaFX application thread.
-				return workingSubjectExamAssetsSnapshotLoader.apply(subject);
-			}
-		};
+			// All Exam, booklet, AnswerFile and assignment reads occur away from
+			// the JavaFX application thread.
+			return workingSubjectExamAssetsSnapshotLoader.apply(subject);
+		});
 		task.setOnSucceeded(_ -> {
 			if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
 
@@ -4805,6 +5035,24 @@ public class QuestionBankApplication extends Application {
 		startWorkingSubjectCaptureRefresh(subject, generation);
 		startWorkingSubjectExamAssetsRefresh(subject, generation);
 		startWorkingSubjectDashboardRefresh(subject, generation);
+	}
+
+	private void synchroniseActiveExamLifecycle(Exam updatedExam) {
+		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
+		if (activeBooklet == null || activeBooklet.getExam().getId() != updatedExam.getId()) {
+
+			// Dashboard lifecycle is independent of whichever booklet happens to be active
+			// in Capture.
+			return;
+		}
+		ExamBooklet updatedBooklet = new ExamBooklet(activeBooklet.getId(), updatedExam, activeBooklet.getName(),
+				activeBooklet.getSourceDocument(), activeBooklet.getQuestionFormat(),
+				activeBooklet.getExpectedQuestionCount());
+
+		// Persistence has already completed on the worker. Refresh only the immutable
+		// application snapshot here; never perform a second lifecycle write on JavaFX.
+		examMetadataPane.refreshActiveBookletPlanning(updatedBooklet);
+		refreshActiveExamContext();
 	}
 
 	private boolean transferQuestionSelectionToSharedContext() {

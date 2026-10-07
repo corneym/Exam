@@ -52,6 +52,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
 import javafx.application.Platform;
 import javafx.geometry.Orientation;
+import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -60,7 +61,9 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.HBox;
@@ -291,6 +294,20 @@ class CorpusDashboardPaneTest {
 		assertEquals(questionSection, workSplit.getItems().get(1));
 		assertEquals(1, workSplit.getDividers().size());
 		assertEquals(Priority.ALWAYS, VBox.getVgrow(workSplit));
+	}
+
+	@Test
+	void dashboardTableDataIsCentred(FxRobot robot) {
+		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<?> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
+
+		// Every Dashboard data column uses the same centred presentation. The test
+		// checks the cell factory directly so it does not depend on viewport size,
+		// scrolling or CSS timing.
+		assertCentredColumns(exams);
+		assertCentredColumns(booklets);
+		assertCentredColumns(questionWork);
 	}
 
 	@Test
@@ -563,6 +580,46 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void inspectQuestionsRoutesSelectedExamAndBookletScope(FxRobot robot) {
+		AtomicReference<Exam> routedExam = new AtomicReference<>();
+		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
+		robot.interact(() -> pane.setQuestionInspectionHandler((exam, booklet) -> {
+			routedExam.set(exam);
+			routedBooklet.set(booklet);
+		}));
+		Button inspectExam = robot.lookup("#corpus-dashboard-inspect-exam-questions").queryButton();
+		Button inspectBooklet = robot.lookup("#corpus-dashboard-inspect-booklet-questions").queryButton();
+		Button manageExamAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+
+		// The Dashboard automatically selects the first visible Exam. Inspection is
+		// read-only, so COMPLETE lifecycle does not disable the Exam-level route.
+		assertFalse(inspectExam.isDisable());
+		assertTrue(inspectBooklet.isDisable());
+		assertEquals(manageExamAssets.getParent(), inspectExam.getParent());
+		robot.interact(inspectExam::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertNull(routedBooklet.get());
+
+		// Selecting a booklet exposes a separate booklet-level inspection route in
+		// the same action row as booklet capture.
+		routedExam.set(null);
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
+		assertFalse(inspectBooklet.isDisable());
+		assertEquals(captureQuestions.getParent(), inspectBooklet.getParent());
+		robot.interact(inspectBooklet::fire);
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+		assertEquals(fixture.paper2.getId(), routedBooklet.get().getId());
+
+		// Clearing Exam structure leaves neither inspection action with a valid target.
+		robot.interact(() -> pane.replaceData(List.of(), List.of()));
+		assertTrue(inspectExam.isDisable());
+		assertTrue(inspectBooklet.isDisable());
+	}
+
+	@Test
 	void legacyQuestionImportIsSubjectLevelAndRequiresCurriculum(FxRobot robot) {
 		AtomicReference<Boolean> importCalled = new AtomicReference<>(Boolean.FALSE);
 		robot.interact(() -> pane.setLegacyQuestionImportHandler(() -> importCalled.set(Boolean.TRUE)));
@@ -587,6 +644,44 @@ class CorpusDashboardPaneTest {
 		// The workbook classification cannot be resolved without an authoritative
 		// curriculum version for this Subject.
 		assertTrue(importLegacy.isDisable());
+	}
+
+	@Test
+	void lifecycleBusyStateShowsProgressAndPreventsDuplicateAction(FxRobot robot) {
+		AtomicReference<Exam> routedExam = new AtomicReference<>();
+		robot.interact(() -> pane.setExamLifecycleHandler((exam, _) -> routedExam.set(exam)));
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		HBox progressRow = robot.lookup("#corpus-dashboard-exam-lifecycle-progress").queryAs(HBox.class);
+		ProgressIndicator progress = robot.lookup("#corpus-dashboard-exam-lifecycle-progress-indicator")
+				.queryAs(ProgressIndicator.class);
+		Label progressLabel = robot.lookup("#corpus-dashboard-exam-lifecycle-progress-label").queryAs(Label.class);
+
+		// The initially selected COMPLETE Exam is normally available for reactivation.
+		assertEquals("Mark Active", lifecycle.getText());
+		assertFalse(lifecycle.isDisable());
+		assertFalse(progressRow.isVisible());
+		assertFalse(progressRow.isManaged());
+		robot.interact(() -> pane.setExamLifecycleChangeInProgress(true));
+
+		// Busy feedback is visible inside Question Work and the lifecycle command is
+		// locked before another persistence request can be issued.
+		assertTrue(progressRow.isVisible());
+		assertTrue(progressRow.isManaged());
+		assertTrue(progress.isVisible());
+		assertEquals("Updating Exam state...", progressLabel.getText());
+		assertTrue(lifecycle.isDisable());
+		robot.interact(lifecycle::fire);
+		assertNull(routedExam.get());
+		robot.interact(() -> pane.setExamLifecycleChangeInProgress(false));
+
+		// Clearing busy state restores the normal lifecycle rule for the unchanged
+		// selected Exam.
+		assertFalse(progressRow.isVisible());
+		assertFalse(progressRow.isManaged());
+		assertFalse(lifecycle.isDisable());
+		robot.interact(lifecycle::fire);
+		assertNotNull(routedExam.get());
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
 	}
 
 	@Test
@@ -865,6 +960,17 @@ class CorpusDashboardPaneTest {
 		// and from the dash used to represent no ordinary work.
 		assertTrue(selectedCounts.getText().contains("Question booklets: 2 / not recorded"));
 		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / not recorded"));
+	}
+
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	private void assertCentredColumns(TableView<?> table) {
+		for (TableColumn column : table.getColumns()) {
+			TableCell cell = (TableCell) column.getCellFactory().call(column);
+
+			// A column without the centred factory would retain JavaFX's ordinary
+			// left-aligned data-cell presentation.
+			assertEquals(Pos.CENTER, cell.getAlignment(), table.getId() + " — " + column.getText());
+		}
 	}
 
 	private static final class Fixture {

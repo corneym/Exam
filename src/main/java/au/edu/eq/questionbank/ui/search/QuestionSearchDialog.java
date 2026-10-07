@@ -42,15 +42,16 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private double rememberedHeight = Double.NaN;
 	private double rememberedX = Double.NaN;
 	private double rememberedY = Double.NaN;
-	private final ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OK_DONE);
-	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
+	private final ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
 	private final ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
+	private final ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OTHER);
 	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Recapture Shared Context",
 			ButtonBar.ButtonData.OTHER);
-	private final ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
+	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
+	private boolean persistedClassificationChange;
 
 	/**
-	 * Creates a question-search dialog owned by the supplied window.
+	 * Creates an unrestricted question-search dialog owned by the supplied window.
 	 *
 	 * @param owner                         dialog owner
 	 * @param workingSubject                authoritative workspace Working Subject
@@ -68,6 +69,31 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
 			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
 			BiFunction<Long, CurriculumNode, Question> classificationUpdater) {
+		this(owner, workingSubject, curriculumRepository, retrievalService, allQuestionsSupplier, previewService,
+				outputApplicabilityRepository, classificationUpdater, QuestionSearchNarrowing.unrestricted());
+	}
+
+	/**
+	 * Creates a question-search dialog with an immutable result narrowing.
+	 *
+	 * @param owner                         dialog owner
+	 * @param workingSubject                authoritative workspace Working Subject
+	 * @param curriculumRepository          current curriculum hierarchy lookup
+	 * @param retrievalService              curriculum-aware Question retrieval
+	 * @param allQuestionsSupplier          complete stored Question retrieval
+	 * @param previewService                stored Question image preview service
+	 * @param outputApplicabilityRepository persisted per-Question revision-output
+	 *                                      exclusions
+	 * @param classificationUpdater         persistence operation for a
+	 *                                      classification-only Question update
+	 * @param searchNarrowing               additional result constraint retained
+	 *                                      across every Search scope and refresh
+	 * @throws NullPointerException if any argument is {@code null}
+	 */
+	public QuestionSearchDialog(Window owner, Subject workingSubject, CurriculumRepository curriculumRepository,
+			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
+			BiFunction<Long, CurriculumNode, Question> classificationUpdater, QuestionSearchNarrowing searchNarrowing) {
 		this.classificationUpdater = Objects.requireNonNull(classificationUpdater, "classificationUpdater");
 		initOwner(Objects.requireNonNull(owner, "owner"));
 
@@ -78,12 +104,25 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 				Objects.requireNonNull(retrievalService, "retrievalService"),
 				Objects.requireNonNull(allQuestionsSupplier, "allQuestionsSupplier"),
 				Objects.requireNonNull(previewService, "previewService"),
-				Objects.requireNonNull(outputApplicabilityRepository, "outputApplicabilityRepository"));
+				Objects.requireNonNull(outputApplicabilityRepository, "outputApplicabilityRepository"),
+				Objects.requireNonNull(searchNarrowing, "searchNarrowing"));
 		configureDialogShell();
 		configureSearchPaneCallbacks();
 		configureActionButtons();
 		configureResultConversion();
 		configureGeometry();
+	}
+
+	/**
+	 * Reports and clears whether inline classification persistence has changed the
+	 * Question corpus since the previous consumption.
+	 *
+	 * @return {@code true} when at least one Descriptor refinement was persisted
+	 */
+	public boolean consumePersistedClassificationChange() {
+		boolean changed = persistedClassificationChange;
+		persistedClassificationChange = false;
+		return changed;
 	}
 
 	/**
@@ -156,7 +195,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void configureActionButtons() {
-		getDialogPane().getButtonTypes().addAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
+		getDialogPane().getButtonTypes().setAll(editQuestionButtonType, splitQuestionButtonType, editMetadataButtonType,
 				recaptureSharedContextButtonType, editAnswerButtonType, ButtonType.CLOSE);
 		Button editQuestionButton = buttonFor(editQuestionButtonType);
 		Button splitQuestionButton = buttonFor(splitQuestionButtonType);
@@ -165,8 +204,13 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		Button editAnswerButton = buttonFor(editAnswerButtonType);
 		Button closeButton = buttonFor(ButtonType.CLOSE);
 
-		// Exam identity correction no longer belongs to Question Search. Exam/Assets is
-		// now the authoritative workspace for Provider, Year and Assessment editing.
+		// The five Question-edit actions form one uniformly sized group. Close remains
+		// on the same ButtonBar row but keeps its natural compact width.
+		for (Button button : List.of(editQuestionButton, splitQuestionButton, editMetadataButton,
+				recaptureSharedContextButton, editAnswerButton)) {
+			ButtonBar.setButtonUniformSize(button, true);
+		}
+		ButtonBar.setButtonUniformSize(closeButton, false);
 		configureActionButtonIds(editQuestionButton, splitQuestionButton, editMetadataButton,
 				recaptureSharedContextButton, editAnswerButton);
 		configureActionButtonBindings(editQuestionButton, splitQuestionButton, editMetadataButton,
@@ -273,7 +317,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 				return new EditRequest(selected, EditTarget.ANSWER);
 			}
 
-			// Close and non-edit actions do not publish an edit request.
+			// Close publishes no edit request.
 			return null;
 		});
 	}
@@ -485,6 +529,11 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			// Persist only classification_node_id. Capture relationships, regions and
 			// all other Question metadata remain unchanged.
 			Question updated = classificationUpdater.apply(selected.getId(), classification);
+
+			// Record the persistence change before updating presentation state so the
+			// application cannot miss an already-committed classification if later UI
+			// publication fails.
+			persistedClassificationChange = true;
 			searchPane.classificationSaved(updated.getId());
 			return updated;
 		} catch (IllegalArgumentException | IllegalStateException exception) {

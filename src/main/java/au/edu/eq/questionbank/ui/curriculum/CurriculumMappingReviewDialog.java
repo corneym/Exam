@@ -330,24 +330,10 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		coverageLabel.setMaxWidth(CONTENT_WIDTH);
 	}
 
-	// TODO Refactor to remove inner classes
 	private void configureReviewedMappingsList() {
 		reviewedMappingsList.setPrefWidth(CONTENT_WIDTH);
 		reviewedMappingsList.setPrefHeight(TARGET_LIST_HEIGHT);
-		reviewedMappingsList.setCellFactory(_ -> new ListCell<>() {
-
-			@Override
-			protected void updateItem(CurriculumMapping mapping, boolean empty) {
-				super.updateItem(mapping, empty);
-				setWrapText(true);
-				if (empty || mapping == null) {
-					setText(null);
-					return;
-				}
-				CurriculumNode target = mapping.getTarget();
-				setText(target.getCode() + "    " + target.getName());
-			}
-		});
+		reviewedMappingsList.setCellFactory(_ -> new ReviewedMappingCell());
 	}
 
 	private void configureSelectors() {
@@ -367,35 +353,9 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		setSelectorWidth(sourceDescriptorBox);
 	}
 
-	// TODO Refactor to remove inner classes
 	private void configureSourceNodeControls() {
-		sourceDescriptorBox.setButtonCell(new ListCell<>() {
-
-			@Override
-			protected void updateItem(CurriculumNode descriptor, boolean empty) {
-				super.updateItem(descriptor, empty);
-				if (empty || descriptor == null) {
-					setText(null);
-					return;
-				}
-				setText(descriptor.getCode());
-			}
-		});
-		sourceDescriptorBox.setCellFactory(_ -> new ListCell<>() {
-
-			@Override
-			protected void updateItem(CurriculumNode descriptor, boolean empty) {
-				super.updateItem(descriptor, empty);
-				setWrapText(true);
-				setPrefWidth(SOURCE_CELL_WIDTH);
-				if (empty || descriptor == null) {
-					setText(null);
-					return;
-				}
-				String reviewed = reviewedSourceIds.contains(descriptor.getId()) ? "    [reviewed]" : "";
-				setText(descriptor.getCode() + "    " + descriptor.getName() + reviewed);
-			}
-		});
+		sourceDescriptorBox.setButtonCell(new SourceDescriptorButtonCell());
+		sourceDescriptorBox.setCellFactory(_ -> new SourceDescriptorCell());
 		sourceDescriptorTextBox.setMinWidth(DESCRIPTOR_TEXT_WIDTH);
 		sourceDescriptorTextBox.setPrefWidth(DESCRIPTOR_TEXT_WIDTH);
 		sourceDescriptorTextBox.setMaxWidth(DESCRIPTOR_TEXT_WIDTH);
@@ -407,46 +367,10 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 				.setStyle("-fx-border-color: #b0b0b0; -fx-border-width: 1; -fx-background-color: white;");
 	}
 
-	// TODO Refactor to remove inner classes
 	private void configureSuggestionList() {
 		suggestionsList.setPrefWidth(CONTENT_WIDTH);
 		suggestionsList.setPrefHeight(TARGET_LIST_HEIGHT);
-		suggestionsList.setCellFactory(_ -> new ListCell<>() {
-
-			private final CheckBox checkBox = new CheckBox();
-			{
-				checkBox.setWrapText(true);
-				checkBox.setMaxWidth(CONTENT_WIDTH - SUGGESTION_HORIZONTAL_INSET);
-				checkBox.setOnAction(_ -> updateTargetSelection(getItem(), checkBox.isSelected()));
-				setGraphic(checkBox);
-			}
-
-			@Override
-			protected void updateItem(CurriculumMappingSuggestion suggestion, boolean empty) {
-				super.updateItem(suggestion, empty);
-				if (empty || suggestion == null) {
-					checkBox.setText("");
-					checkBox.setSelected(false);
-					setGraphic(null);
-					return;
-				}
-				long targetId = suggestion.getTarget().getId();
-				String text;
-				if (editingReview && supplementalTargetIds.contains(targetId)) {
-					text = "[current]    " + suggestion.getTarget().getCode() + "    "
-							+ suggestion.getTarget().getName();
-				} else {
-					String score = String.format(Locale.ROOT, "%.3f", suggestion.getScore());
-					String current = editingReview && originalReviewedTargetIds.contains(targetId) ? "    [current]"
-							: "";
-					text = score + "    " + suggestion.getTarget().getCode() + "    " + suggestion.getTarget().getName()
-							+ current;
-				}
-				checkBox.setText(text);
-				checkBox.setSelected(selectedTargetIds.contains(targetId));
-				setGraphic(checkBox);
-			}
-		});
+		suggestionsList.setCellFactory(_ -> new SuggestionCell());
 	}
 
 	private void configureSuggestionLists() {
@@ -963,5 +887,85 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 		sourceDescriptorBox.valueProperty()
 				.addListener((_, _, newDescriptor) -> handleSourceDescriptorChanged(newDescriptor));
 		reviewLevelBox.valueProperty().addListener((_, _, _) -> handleReviewLevelChanged());
+	}
+
+	private static final class ReviewedMappingCell extends ListCell<CurriculumMapping> {
+
+		@Override
+		protected void updateItem(CurriculumMapping mapping, boolean empty) {
+			super.updateItem(mapping, empty);
+			setWrapText(true);
+			if (empty || mapping == null) {
+				setText(null);
+				return;
+			}
+			CurriculumNode target = mapping.getTarget();
+			setText(target.getCode() + "    " + target.getName());
+		}
+	}
+
+	private static final class SourceDescriptorButtonCell extends ListCell<CurriculumNode> {
+
+		@Override
+		protected void updateItem(CurriculumNode descriptor, boolean empty) {
+			super.updateItem(descriptor, empty);
+			if (empty || descriptor == null) {
+				setText(null);
+				return;
+			}
+			setText(descriptor.getCode());
+		}
+	}
+
+	private final class SourceDescriptorCell extends ListCell<CurriculumNode> {
+
+		@Override
+		protected void updateItem(CurriculumNode descriptor, boolean empty) {
+			super.updateItem(descriptor, empty);
+			setWrapText(true);
+			setPrefWidth(SOURCE_CELL_WIDTH);
+			if (empty || descriptor == null) {
+				setText(null);
+				return;
+			}
+			String reviewed = reviewedSourceIds.contains(descriptor.getId()) ? "    [reviewed]" : "";
+			setText(descriptor.getCode() + "    " + descriptor.getName() + reviewed);
+		}
+	}
+
+	private final class SuggestionCell extends ListCell<CurriculumMappingSuggestion> {
+
+		private final CheckBox checkBox = new CheckBox();
+
+		private SuggestionCell() {
+			checkBox.setWrapText(true);
+			checkBox.setMaxWidth(CONTENT_WIDTH - SUGGESTION_HORIZONTAL_INSET);
+			checkBox.setOnAction(_ -> updateTargetSelection(getItem(), checkBox.isSelected()));
+			setGraphic(checkBox);
+		}
+
+		@Override
+		protected void updateItem(CurriculumMappingSuggestion suggestion, boolean empty) {
+			super.updateItem(suggestion, empty);
+			if (empty || suggestion == null) {
+				checkBox.setText("");
+				checkBox.setSelected(false);
+				setGraphic(null);
+				return;
+			}
+			long targetId = suggestion.getTarget().getId();
+			String text;
+			if (editingReview && supplementalTargetIds.contains(targetId)) {
+				text = "[current]    " + suggestion.getTarget().getCode() + "    " + suggestion.getTarget().getName();
+			} else {
+				String score = String.format(Locale.ROOT, "%.3f", suggestion.getScore());
+				String current = editingReview && originalReviewedTargetIds.contains(targetId) ? "    [current]" : "";
+				text = score + "    " + suggestion.getTarget().getCode() + "    " + suggestion.getTarget().getName()
+						+ current;
+			}
+			checkBox.setText(text);
+			checkBox.setSelected(selectedTargetIds.contains(targetId));
+			setGraphic(checkBox);
+		}
 	}
 }

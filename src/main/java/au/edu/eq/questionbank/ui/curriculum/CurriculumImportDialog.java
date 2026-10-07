@@ -5,7 +5,6 @@ import java.nio.file.Path;
 
 import au.edu.eq.questionbank.model.Subject;
 import javafx.geometry.Insets;
-import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
@@ -40,8 +39,8 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	 * Creates a curriculum-import dialog owned by the supplied window.
 	 *
 	 * @param owner              the window that owns the modal dialog
-	 * @param curriculumDataRoot the configured directory from which curriculum
-	 *                           workbooks may be selected
+	 * @param curriculumDataRoot the managed curriculum directory used as the
+	 *                           initial file-chooser location
 	 * @throws NullPointerException if {@code curriculumDataRoot} is {@code null}
 	 */
 	public CurriculumImportDialog(Window owner, Path curriculumDataRoot) {
@@ -53,7 +52,7 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	 * application Subject.
 	 *
 	 * @param owner              owner window
-	 * @param curriculumDataRoot configured curriculum data directory
+	 * @param curriculumDataRoot managed curriculum data directory
 	 * @param subject            Subject that will own the imported syllabus
 	 * @throws NullPointerException if {@code curriculumDataRoot} or {@code subject}
 	 *                              is {@code null}
@@ -156,6 +155,9 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Select Curriculum Excel File");
 		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel workbooks", "*.xlsx"));
+
+		// Managed curriculum storage remains the useful default browse location, but
+		// users may select a source workbook from anywhere on the filesystem.
 		File root = curriculumDataRoot.toFile();
 		if (root.isDirectory()) {
 			chooser.setInitialDirectory(root);
@@ -164,15 +166,7 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 		if (file == null) {
 			return;
 		}
-		Path selectedPath = file.toPath().toAbsolutePath().normalize();
-		if (!selectedPath.startsWith(curriculumDataRoot)) {
-			Alert alert = new Alert(Alert.AlertType.ERROR);
-			alert.setHeaderText("Curriculum files must be inside the configured curriculum directory.");
-			alert.setContentText(curriculumDataRoot.toString());
-			alert.showAndWait();
-			return;
-		}
-		selectedFile = selectedPath;
+		selectedFile = file.toPath().toAbsolutePath().normalize();
 		fileField.setText(selectedFile.toString());
 	}
 
