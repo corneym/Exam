@@ -42,45 +42,53 @@ class DefaultRestoreServiceTest {
 	}
 
 	@Test
-	void preparesDatabaseOnlyBackupWithoutManagedRoots() throws Exception {
+	void preparesDatabaseOnlyBackupWithoutSubjectRoot() throws Exception {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("data"));
 		Files.createDirectories(config.dataRoot());
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		database.initialiseSchema();
-		DefaultBackupService backupService = new DefaultBackupService(config, "Test");
-		BackupResult backup = backupService.createBackup(BackupRequest.automaticDatabase(config));
-		DefaultRestoreService restoreService = new DefaultRestoreService(config);
-		try (RestorePreparation preparation = restoreService.prepareRestore(backup.backupPath())) {
+		BackupResult backup = new DefaultBackupService(config, "Test")
+				.createBackup(BackupRequest.automaticDatabase(config));
+		try (RestorePreparation preparation = new DefaultRestoreService(config).prepareRestore(backup.backupPath())) {
 			assertEquals(BackupKind.AUTOMATIC_DATABASE, preparation.manifest().kind());
 			assertTrue(Files.isRegularFile(preparation.databasePath()));
-			assertFalse(Files.exists(preparation.pdfRoot()));
-			assertFalse(Files.exists(preparation.curriculumRoot()));
+			assertFalse(Files.exists(preparation.subjectsRoot()));
 		}
 	}
 
 	@Test
-	void preparesFullBackupWithoutChangingCurrentData() throws Exception {
+	void preparesFullSubjectFirstBackupWithoutChangingCurrentData() throws Exception {
 		ApplicationConfig sourceConfig = ApplicationConfig.fromDataRoot(tempDir.resolve("source"));
-		Files.createDirectories(sourceConfig.pdfDataRoot());
-		Files.createDirectories(sourceConfig.curriculumDataRoot());
-		Files.writeString(sourceConfig.pdfDataRoot().resolve("exam.pdf"), "original-pdf");
-		Files.writeString(sourceConfig.curriculumDataRoot().resolve("chemistry.xlsx"), "original-curriculum");
+		Path sourceExam = sourceConfig.dataRoot()
+				.resolve("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf");
+		Path sourceCurriculum = sourceConfig.dataRoot()
+				.resolve("subjects/Chemistry/curriculum/2025/sources/syllabus.pdf");
+		Path sourceLegacy = sourceConfig.dataRoot().resolve("subjects/Chemistry/legacy/2019/questions.xlsx");
+		Files.createDirectories(sourceExam.getParent());
+		Files.createDirectories(sourceCurriculum.getParent());
+		Files.createDirectories(sourceLegacy.getParent());
+		Files.writeString(sourceExam, "original-pdf");
+		Files.writeString(sourceCurriculum, "original-curriculum");
+		Files.writeString(sourceLegacy, "original-legacy");
 		SqliteDatabase sourceDatabase = new SqliteDatabase(sourceConfig.databasePath());
 		sourceDatabase.initialiseSchema();
-		Path backupDirectory = tempDir.resolve("backups");
-		DefaultBackupService backupService = new DefaultBackupService(sourceConfig, "Test");
-		BackupResult backup = backupService.createBackup(BackupRequest.full(backupDirectory));
+		BackupResult backup = new DefaultBackupService(sourceConfig, "Test")
+				.createBackup(BackupRequest.full(tempDir.resolve("backups")));
 		ApplicationConfig targetConfig = ApplicationConfig.fromDataRoot(tempDir.resolve("target"));
 		Files.createDirectories(targetConfig.dataRoot());
-		Files.writeString(targetConfig.dataRoot().resolve("current-marker.txt"), "unchanged");
-		DefaultRestoreService restoreService = new DefaultRestoreService(targetConfig);
-		try (RestorePreparation preparation = restoreService.prepareRestore(backup.backupPath())) {
+		Path currentMarker = targetConfig.dataRoot().resolve("current-marker.txt");
+		Files.writeString(currentMarker, "unchanged");
+		try (RestorePreparation preparation = new DefaultRestoreService(targetConfig)
+				.prepareRestore(backup.backupPath())) {
 			assertEquals(BackupKind.FULL, preparation.manifest().kind());
 			assertTrue(Files.isRegularFile(preparation.databasePath()));
-			assertEquals("original-pdf", Files.readString(preparation.pdfRoot().resolve("exam.pdf")));
-			assertEquals("original-curriculum",
-					Files.readString(preparation.curriculumRoot().resolve("chemistry.xlsx")));
-			assertEquals("unchanged", Files.readString(targetConfig.dataRoot().resolve("current-marker.txt")));
+			assertEquals("original-pdf", Files.readString(
+					preparation.subjectsRoot().resolve("Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
+			assertEquals("original-curriculum", Files
+					.readString(preparation.subjectsRoot().resolve("Chemistry/curriculum/2025/sources/syllabus.pdf")));
+			assertEquals("original-legacy",
+					Files.readString(preparation.subjectsRoot().resolve("Chemistry/legacy/2019/questions.xlsx")));
+			assertEquals("unchanged", Files.readString(currentMarker));
 		}
 	}
 
@@ -155,13 +163,12 @@ class DefaultRestoreServiceTest {
 			output.putNextEntry(new ZipEntry(BackupArchiveLayout.DATABASE_ENTRY));
 			Files.copy(databasePath, output);
 			output.closeEntry();
-			output.putNextEntry(new ZipEntry(BackupArchiveLayout.PDF_DIRECTORY_ENTRY));
-			output.closeEntry();
-			output.putNextEntry(new ZipEntry(BackupArchiveLayout.CURRICULUM_DIRECTORY_ENTRY));
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.SUBJECTS_DIRECTORY_ENTRY));
 			output.closeEntry();
 			CRC32 crc = new CRC32();
 			crc.update(managedContent);
-			ZipEntry managedEntry = new ZipEntry(BackupArchiveLayout.PDF_DIRECTORY_ENTRY + "exam.bin");
+			ZipEntry managedEntry = new ZipEntry(
+					BackupArchiveLayout.SUBJECTS_DIRECTORY_ENTRY + "Chemistry/exams/exam.bin");
 			managedEntry.setMethod(ZipEntry.STORED);
 			managedEntry.setSize(managedContent.length);
 			managedEntry.setCompressedSize(managedContent.length);
@@ -178,6 +185,38 @@ class DefaultRestoreServiceTest {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("target"));
 		DefaultRestoreService service = new DefaultRestoreService(config);
 		RestoreException exception = assertThrows(RestoreException.class, () -> service.prepareRestore(archivePath));
+		assertFalse(exception.applicationMustExit());
+	}
+
+	@Test
+	void rejectsRetiredFormatOneFullBackup() throws Exception {
+		Path databasePath = tempDir.resolve("format-one.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		Path archivePath = tempDir.resolve("format-one-full.zip");
+		try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(archivePath))) {
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.MANIFEST_ENTRY));
+			String manifest = """
+					backup.format.version=1
+					backup.kind=FULL
+					created.at=2026-10-07T00:00:00Z
+					database.schema.version=19
+					application.version=0.2
+					archive.entries=backup-manifest.properties,questionbank.db,pdf/,curriculum/
+					""";
+			output.write(manifest.getBytes(StandardCharsets.UTF_8));
+			output.closeEntry();
+			output.putNextEntry(new ZipEntry(BackupArchiveLayout.DATABASE_ENTRY));
+			Files.copy(databasePath, output);
+			output.closeEntry();
+			output.putNextEntry(new ZipEntry("pdf/"));
+			output.closeEntry();
+			output.putNextEntry(new ZipEntry("curriculum/"));
+			output.closeEntry();
+		}
+		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("target"));
+		RestoreException exception = assertThrows(RestoreException.class,
+				() -> new DefaultRestoreService(config).prepareRestore(archivePath));
 		assertFalse(exception.applicationMustExit());
 	}
 

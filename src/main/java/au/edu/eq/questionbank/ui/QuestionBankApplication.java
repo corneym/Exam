@@ -122,6 +122,8 @@ import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
+import au.edu.eq.questionbank.service.migration.DataLayoutMigrationRequiredException;
+import au.edu.eq.questionbank.service.migration.DataLayoutMigrationStartupGuard;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
@@ -330,7 +332,39 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		try {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			// Database schema upgrades may occur before layout inspection, but no ordinary
+			// repository/UI workflow is allowed to use managed path semantics until the
+			// Subject-first guard is satisfied.
+			database.initialiseSchema();
+			new DataLayoutMigrationStartupGuard(config, database).requireCurrentLayout();
 			startApplication(stage, config);
+		} catch (DataLayoutMigrationRequiredException e) {
+			showStartupError("Data Migration Required", """
+					This data directory still uses managed files from the pre-Sprint-14 layout.
+
+					The application will not open it with mixed old and new path semantics.
+
+					Configuration:
+					%s
+
+					Data root:
+					%s
+
+					Run a migration dry-run using the application configuration:
+
+					  --config "%s" --dry-run
+
+					Resolve every reported blocker. If an old curriculum workbook is reported,
+					assign it explicitly with:
+
+					  --assign-workbook "<legacy-relative.xlsx>" "<Subject>" "<Version>"
+
+					Then run the same command using --apply.
+
+					%s
+					""".formatted(propertiesFile, config.dataRoot(), propertiesFile, e.getMessage()));
 		} catch (IncompatibleDatabaseException e) {
 			showStartupError("Database Upgrade Required", """
 					The existing question-bank database contains old development question data
@@ -343,6 +377,15 @@ public class QuestionBankApplication extends Application {
 
 					You will need to re-import the curriculum and exam data afterwards.
 					""".formatted(config.databasePath()));
+		} catch (IOException e) {
+			showStartupError("Data Migration Check Failed", """
+					The application could not verify the managed-data layout safely.
+
+					Data root:
+					%s
+
+					%s
+					""".formatted(config.dataRoot(), e.getMessage()));
 		} catch (SQLException e) {
 			showStartupError("Database Error", """
 					The question-bank database could not be opened or upgraded.

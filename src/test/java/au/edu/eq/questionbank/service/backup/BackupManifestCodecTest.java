@@ -24,17 +24,17 @@ class BackupManifestCodecTest {
 	}
 
 	@Test
-	void readsAFullBackupManifest() throws Exception {
+	void readsASubjectFirstFullBackupManifest() throws Exception {
 		String manifestText = """
-				backup.format.version=1
+				backup.format.version=2
 				backup.kind=FULL
 				created.at=2026-09-04T08:00:00Z
 				database.schema.version=4
 				application.version=Development build
-				archive.entries=backup-manifest.properties,questionbank.db,pdf/,curriculum/
+				archive.entries=backup-manifest.properties,questionbank.db,subjects/
 				""";
 		BackupManifest manifest = codec.read(new ByteArrayInputStream(manifestText.getBytes(StandardCharsets.UTF_8)));
-		assertEquals(1, manifest.formatVersion());
+		assertEquals(2, manifest.formatVersion());
 		assertEquals(BackupKind.FULL, manifest.kind());
 		assertEquals(Instant.parse("2026-09-04T08:00:00Z"), manifest.createdAt());
 		assertEquals(4, manifest.databaseSchemaVersion());
@@ -44,7 +44,7 @@ class BackupManifestCodecTest {
 	@Test
 	void rejectsAMissingRequiredProperty() {
 		String manifestText = """
-				backup.format.version=1
+				backup.format.version=2
 				backup.kind=AUTOMATIC_DATABASE
 				created.at=2026-09-04T08:00:00Z
 				database.schema.version=4
@@ -57,7 +57,7 @@ class BackupManifestCodecTest {
 	@Test
 	void rejectsAnInvalidBackupKind() {
 		String manifestText = """
-				backup.format.version=1
+				backup.format.version=2
 				backup.kind=SOMETHING_ELSE
 				created.at=2026-09-04T08:00:00Z
 				database.schema.version=4
@@ -71,7 +71,7 @@ class BackupManifestCodecTest {
 	@Test
 	void rejectsAnInvalidCreationTimestamp() {
 		String manifestText = """
-				backup.format.version=1
+				backup.format.version=2
 				backup.kind=AUTOMATIC_DATABASE
 				created.at=not-a-timestamp
 				database.schema.version=4
@@ -85,7 +85,7 @@ class BackupManifestCodecTest {
 	@Test
 	void rejectsANonPositiveDatabaseSchemaVersion() {
 		String manifestText = """
-				backup.format.version=1
+				backup.format.version=2
 				backup.kind=AUTOMATIC_DATABASE
 				created.at=2026-09-04T08:00:00Z
 				database.schema.version=0
@@ -99,7 +99,7 @@ class BackupManifestCodecTest {
 	@Test
 	void rejectsAnUnsupportedFutureFormatVersion() {
 		String manifestText = """
-				backup.format.version=2
+				backup.format.version=3
 				backup.kind=AUTOMATIC_DATABASE
 				created.at=2026-09-04T08:00:00Z
 				database.schema.version=4
@@ -113,11 +113,25 @@ class BackupManifestCodecTest {
 	@Test
 	void rejectsArchiveEntriesThatDoNotMatchBackupKind() {
 		String manifestText = """
-				backup.format.version=1
-				backup.kind=AUTOMATIC_DATABASE
+				backup.format.version=2
+				backup.kind=FULL
 				created.at=2026-09-04T08:00:00Z
-				database.schema.version=4
+				database.schema.version=19
 				application.version=Development build
+				archive.entries=backup-manifest.properties,questionbank.db,pdf/,curriculum/
+				""";
+		assertThrows(BackupFormatException.class,
+				() -> codec.read(new ByteArrayInputStream(manifestText.getBytes(StandardCharsets.UTF_8))));
+	}
+
+	@Test
+	void rejectsRetiredFormatOneFullBackup() {
+		String manifestText = """
+				backup.format.version=2
+				backup.kind=FULL
+				created.at=2026-09-04T08:00:00Z
+				database.schema.version=19
+				application.version=0.2
 				archive.entries=backup-manifest.properties,questionbank.db,pdf/,curriculum/
 				""";
 		assertThrows(BackupFormatException.class,
@@ -135,25 +149,25 @@ class BackupManifestCodecTest {
 	}
 
 	@Test
-	void writeRejectsANonCurrentFormatVersion() {
-		BackupManifest manifest = new BackupManifest(2, BackupKind.FULL, Instant.parse("2026-09-04T08:00:00Z"), 4,
+	void writeRejectsRetiredFormatOneManifest() {
+		BackupManifest manifest = new BackupManifest(1, BackupKind.FULL, Instant.parse("2026-09-04T08:00:00Z"), 4,
 				"Development build");
 		assertThrows(IllegalArgumentException.class, () -> codec.write(manifest, new ByteArrayOutputStream()));
 	}
 
 	@Test
-	void writesDeterministicVersionOneManifest() throws Exception {
+	void writesDeterministicVersionTwoManifest() throws Exception {
 		BackupManifest manifest = BackupManifest.current(BackupKind.FULL, Instant.parse("2026-09-04T08:00:00Z"), 4,
 				"0.0.1-SNAPSHOT");
 		ByteArrayOutputStream output = new ByteArrayOutputStream();
 		codec.write(manifest, output);
 		String expected = """
-				backup.format.version=1
+				backup.format.version=2
 				backup.kind=FULL
 				created.at=2026-09-04T08:00:00Z
 				database.schema.version=4
 				application.version=0.0.1-SNAPSHOT
-				archive.entries=backup-manifest.properties,questionbank.db,pdf/,curriculum/
+				archive.entries=backup-manifest.properties,questionbank.db,subjects/
 				""";
 		assertEquals(expected, output.toString(StandardCharsets.UTF_8));
 	}

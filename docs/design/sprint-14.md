@@ -276,6 +276,16 @@ publish migration completion
 archive/remove old managed roots only after success
 ```
 
+Implementation uses `DataLayoutMigrationPlanner`, `DataLayoutMigrationExecutor`, `DataLayoutMigrationFinalizer` and `DataLayoutMigrationStartupGuard`.
+
+The planner derives Exam and curriculum-source ownership from SQLite, rejects unsafe/missing/conflicting sources, supports byte-identical interrupted-copy reuse, and requires explicit Subject/version assignment for old flat curriculum workbooks whose provenance was never persisted.
+
+Apply copies and verifies every destination before path publication. Exam and curriculum source references are then rewritten in one guarded SQLite transaction and resolved again before commit.
+
+After successful publication, the old active `pdf/` and `curriculum/` trees are copied or verified beneath `migration-archive/pre-subject-first/` before their old locations are removed. Unknown regular legacy-root files are preserved in that recovery archive rather than silently discarded.
+
+Normal desktop startup runs the migration guard after database schema initialisation and before ordinary managed-path workflows. An unmigrated or partially migrated installation therefore cannot silently operate with mixed path semantics.
+
 Migration must detect:
 
 - unsafe old relative paths;

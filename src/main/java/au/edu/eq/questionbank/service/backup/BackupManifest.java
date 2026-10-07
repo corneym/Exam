@@ -15,8 +15,14 @@ import java.util.List;
 public record BackupManifest(int formatVersion, BackupKind kind, Instant createdAt, int databaseSchemaVersion,
 		String applicationVersion) {
 
-	/** Current on-disk backup-manifest format version. */
-	public static final int CURRENT_FORMAT_VERSION = 1;
+	/**
+	 * Current Subject-first backup-package format version.
+	 * <p>
+	 * Format 2 replaces the format-1 full-backup {@code pdf/} and
+	 * {@code curriculum/} roots with one {@code subjects/} tree. Format 1 is
+	 * deliberately unsupported after the Sprint 14 compatibility boundary.
+	 */
+	public static final int CURRENT_FORMAT_VERSION = 2;
 
 	/**
 	 * Validates backup manifest metadata.
@@ -44,13 +50,13 @@ public record BackupManifest(int formatVersion, BackupKind kind, Instant created
 	}
 
 	/**
-	 * Creates manifest metadata using the current backup format version.
+	 * Creates manifest metadata using the current Subject-first backup format.
 	 *
-	 * @param kind                  kind of backup
+	 * @param kind                  backup kind
 	 * @param createdAt             creation timestamp
 	 * @param databaseSchemaVersion database schema version
 	 * @param applicationVersion    application version
-	 * @return version-1 manifest metadata
+	 * @return current-format manifest metadata
 	 */
 	public static BackupManifest current(BackupKind kind, Instant createdAt, int databaseSchemaVersion,
 			String applicationVersion) {

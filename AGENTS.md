@@ -235,6 +235,28 @@ state and other corpus relationships.
 `ManagedDataLayout` owns the Subject and syllabus-version directory identity.
 Distributed worker/coordinator packages are a separate future feature.
 
+## Data-Layout Migration
+
+Normal application runtime must not mix pre-Sprint-14 and Subject-first managed-path semantics.
+
+`DataLayoutMigrationPlanner` performs non-mutating inspection. It must calculate all managed moves and blockers before mutation.
+
+`DataLayoutMigrationExecutor` copies or reuses byte-identical destinations and verifies bytes before publishing any database path changes.
+
+Exam `source_documents.relative_path` and curriculum `source_pdf_path` rewrites are published in one guarded SQLite transaction. A stale or late failure rolls that transaction back.
+
+Old flat curriculum workbooks have no persisted Subject/version provenance and must be assigned explicitly. Migration must never guess their owner.
+
+`DataLayoutMigrationFinalizer` may archive/remove the old active `pdf/` and `curriculum/` roots only after every persisted managed reference is Subject-first and resolves successfully.
+
+The recovery archive is:
+
+`migration-archive/pre-subject-first/`
+
+Fresh installations create the application data root but do not create active legacy `pdf/` or `curriculum/` directories.
+
+`DataLayoutMigrationStartupGuard` runs before ordinary application repositories/UI use managed path semantics. If migration remains, normal startup must stop rather than create a mixed dataset.
+
 ## Coding Style & Naming Conventions
 
 Follow the existing Java style:

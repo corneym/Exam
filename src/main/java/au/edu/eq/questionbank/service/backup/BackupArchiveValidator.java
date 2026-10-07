@@ -64,8 +64,7 @@ final class BackupArchiveValidator {
 			if (BackupArchiveLayout.MANIFEST_ENTRY.equals(name) || BackupArchiveLayout.DATABASE_ENTRY.equals(name)) {
 				continue;
 			}
-			if (manifest.kind() == BackupKind.FULL && (name.startsWith(BackupArchiveLayout.PDF_DIRECTORY_ENTRY)
-					|| name.startsWith(BackupArchiveLayout.CURRICULUM_DIRECTORY_ENTRY))) {
+			if (manifest.kind() == BackupKind.FULL && name.startsWith(BackupArchiveLayout.SUBJECTS_DIRECTORY_ENTRY)) {
 				continue;
 			}
 			throw new BackupFormatException("Unexpected backup archive entry: " + name);

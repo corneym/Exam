@@ -9,6 +9,7 @@ This directory contains the canonical project documentation for the Exam Questio
 - [`design/sprint-*.md`](design/) — detailed sprint design, implementation decisions and verification evidence.
 - [`release-build.md`](release-build.md) — repeatable Windows release, versioning, packaging and installation-verification procedure.
 - [`Working-Instructions.md`](Working-Instructions.md) — repository-guided development rules. This operational file is maintained separately and is not rewritten as part of sprint-history consolidation.
+- [`data-layout-migration.md`](data-layout-migration.md) — supported dry-run, workbook-assignment, apply, recovery-archive and startup-gate procedure for pre-Sprint-14 data roots.
 
 The former `project-history.md`, `current-status.md` and `design/architecture-evolution.md` remain retired after consolidation into the roadmap/sprint-document model.
 

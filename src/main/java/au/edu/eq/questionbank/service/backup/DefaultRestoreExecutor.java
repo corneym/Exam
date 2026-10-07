@@ -181,11 +181,11 @@ public final class DefaultRestoreExecutor implements RestoreExecutor {
 
 	private void replaceLiveData(RestorePreparation preparation) throws IOException, SQLException {
 
-		// Database-only restores retain managed files; full restores publish managed
-		// trees before the database.
+		// Database-only restores retain current Subject-managed files. Full restores
+		// replace the complete portable Subject tree before publishing the database.
 		if (preparation.manifest().kind() == BackupKind.FULL) {
-			publishManagedRoot(preparation.pdfRoot(), config.pdfDataRoot());
-			publishManagedRoot(preparation.curriculumRoot(), config.curriculumDataRoot());
+			Path subjectsRoot = config.dataRoot().resolve("subjects").toAbsolutePath().normalize();
+			publishManagedRoot(preparation.subjectsRoot(), subjectsRoot);
 		}
 		publishDatabase(preparation);
 	}
@@ -214,11 +214,9 @@ public final class DefaultRestoreExecutor implements RestoreExecutor {
 		database.verifySchema();
 		database.verifyIntegrity();
 		if (manifest.kind() == BackupKind.FULL) {
-			if (!Files.isDirectory(config.pdfDataRoot())) {
-				throw new IOException("Restored PDF hierarchy is missing");
-			}
-			if (!Files.isDirectory(config.curriculumDataRoot())) {
-				throw new IOException("Restored curriculum hierarchy is missing");
+			Path subjectsRoot = config.dataRoot().resolve("subjects").toAbsolutePath().normalize();
+			if (!Files.isDirectory(subjectsRoot)) {
+				throw new IOException("Restored Subject hierarchy is missing");
 			}
 		}
 	}

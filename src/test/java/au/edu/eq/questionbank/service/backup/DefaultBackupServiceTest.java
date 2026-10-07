@@ -30,10 +30,12 @@ class DefaultBackupServiceTest {
 	Path tempDir;
 
 	@Test
-	void automaticDatabaseBackupExcludesManagedFiles() throws Exception {
+	void automaticDatabaseBackupExcludesManagedSubjectFiles() throws Exception {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("data"));
-		Files.createDirectories(config.pdfDataRoot());
-		Files.writeString(config.pdfDataRoot().resolve("exam.pdf"), "pdf-data");
+		Path subjectsRoot = config.dataRoot().resolve("subjects");
+		Path examPdf = subjectsRoot.resolve("Chemistry/exams/QCAA/2025/External Assessment/exam.pdf");
+		Files.createDirectories(examPdf.getParent());
+		Files.writeString(examPdf, "pdf-data");
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		database.initialiseSchema();
 		DefaultBackupService service = new DefaultBackupService(config, "Development build",
@@ -42,18 +44,24 @@ class DefaultBackupServiceTest {
 		try (ZipFile archive = new ZipFile(result.backupPath().toFile())) {
 			assertNotNull(archive.getEntry(BackupArchiveLayout.MANIFEST_ENTRY));
 			assertNotNull(archive.getEntry(BackupArchiveLayout.DATABASE_ENTRY));
-			assertNull(archive.getEntry(BackupArchiveLayout.PDF_DIRECTORY_ENTRY));
-			assertNull(archive.getEntry("pdf/exam.pdf"));
+			assertNull(archive.getEntry(BackupArchiveLayout.SUBJECTS_DIRECTORY_ENTRY));
+			assertNull(archive.getEntry("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf"));
 		}
 	}
 
 	@Test
-	void createsValidatedFullBackupContainingManagedData() throws Exception {
+	void createsValidatedFullBackupContainingSubjectScopedManagedData() throws Exception {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("data"));
-		Files.createDirectories(config.pdfDataRoot());
-		Files.createDirectories(config.curriculumDataRoot());
-		Files.writeString(config.pdfDataRoot().resolve("exam.pdf"), "pdf-data");
-		Files.writeString(config.curriculumDataRoot().resolve("chemistry.txt"), "curriculum-data");
+		Path subjectsRoot = config.dataRoot().resolve("subjects");
+		Path exam = subjectsRoot.resolve("Chemistry/exams/QCAA/2025/External Assessment/exam.pdf");
+		Path curriculum = subjectsRoot.resolve("Chemistry/curriculum/2025/sources/syllabus.pdf");
+		Path legacy = subjectsRoot.resolve("Chemistry/legacy/2019/questions.xlsx");
+		Files.createDirectories(exam.getParent());
+		Files.createDirectories(curriculum.getParent());
+		Files.createDirectories(legacy.getParent());
+		Files.writeString(exam, "pdf-data");
+		Files.writeString(curriculum, "curriculum-data");
+		Files.writeString(legacy, "legacy-data");
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -69,36 +77,36 @@ class DefaultBackupServiceTest {
 		assertEquals(destination.resolve("question-bank-full-2026-09-05T000000000Z.zip").toAbsolutePath().normalize(),
 				result.backupPath());
 		assertEquals(BackupKind.FULL, result.manifest().kind());
-		assertTrue(Files.isRegularFile(result.backupPath()));
+		assertEquals(2, result.manifest().formatVersion());
 		try (ZipFile archive = new ZipFile(result.backupPath().toFile())) {
 			assertNotNull(archive.getEntry(BackupArchiveLayout.MANIFEST_ENTRY));
 			assertNotNull(archive.getEntry(BackupArchiveLayout.DATABASE_ENTRY));
-			assertNotNull(archive.getEntry(BackupArchiveLayout.PDF_DIRECTORY_ENTRY));
-			assertNotNull(archive.getEntry("pdf/exam.pdf"));
-			assertNotNull(archive.getEntry(BackupArchiveLayout.CURRICULUM_DIRECTORY_ENTRY));
-			assertNotNull(archive.getEntry("curriculum/chemistry.txt"));
+			assertNotNull(archive.getEntry(BackupArchiveLayout.SUBJECTS_DIRECTORY_ENTRY));
+			assertNotNull(archive.getEntry("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf"));
+			assertNotNull(archive.getEntry("subjects/Chemistry/curriculum/2025/sources/syllabus.pdf"));
+			assertNotNull(archive.getEntry("subjects/Chemistry/legacy/2019/questions.xlsx"));
+			assertNull(archive.getEntry("pdf/"));
+			assertNull(archive.getEntry("curriculum/"));
 		}
 	}
 
 	@Test
 	void failedBackupDoesNotPublishFinalArchive() throws Exception {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("data"));
-		Files.createDirectories(config.pdfDataRoot());
-		Path curriculumParent = config.curriculumDataRoot().getParent();
-		Files.createDirectories(curriculumParent);
-		Files.writeString(config.curriculumDataRoot(), "not-a-directory");
+		Files.createDirectories(config.dataRoot());
+		Path subjectsRoot = config.dataRoot().resolve("subjects");
+		Files.writeString(subjectsRoot, "not-a-directory");
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		database.initialiseSchema();
 		DefaultBackupService service = new DefaultBackupService(config, "Development build",
 				Clock.fixed(Instant.parse("2026-09-05T03:00:00Z"), ZoneOffset.UTC));
 		Path destination = tempDir.resolve("backups");
 		assertThrows(BackupException.class, () -> service.createBackup(BackupRequest.full(destination)));
-		Path finalPath = destination.resolve("question-bank-full-2026-09-05T030000000Z.zip");
-		assertFalse(Files.exists(finalPath));
+		assertFalse(Files.exists(destination.resolve("question-bank-full-2026-09-05T030000000Z.zip")));
 	}
 
 	@Test
-	void fullBackupContainsEmptyManagedRootEntries() throws Exception {
+	void fullBackupContainsEmptySubjectsRootEntry() throws Exception {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("data"));
 		Files.createDirectories(config.dataRoot());
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
@@ -107,28 +115,23 @@ class DefaultBackupServiceTest {
 				Clock.fixed(Instant.parse("2026-09-05T01:00:00Z"), ZoneOffset.UTC));
 		BackupResult result = service.createBackup(BackupRequest.full(tempDir.resolve("backups")));
 		try (ZipFile archive = new ZipFile(result.backupPath().toFile())) {
-			ZipEntry pdf = archive.getEntry(BackupArchiveLayout.PDF_DIRECTORY_ENTRY);
-			ZipEntry curriculum = archive.getEntry(BackupArchiveLayout.CURRICULUM_DIRECTORY_ENTRY);
-			assertNotNull(pdf);
-			assertTrue(pdf.isDirectory());
-			assertNotNull(curriculum);
-			assertTrue(curriculum.isDirectory());
+			ZipEntry subjects = archive.getEntry(BackupArchiveLayout.SUBJECTS_DIRECTORY_ENTRY);
+			assertNotNull(subjects);
+			assertTrue(subjects.isDirectory());
 		}
 	}
 
 	@Test
-	void rejectsBackupDestinationAliasedIntoManagedRoot() throws Exception {
-		Path dataRoot = tempDir.resolve("alias");
-		Path pdfRoot = Files.createDirectories(dataRoot.resolve("pdf"));
-		Path curriculumRoot = Files.createDirectories(dataRoot.resolve("curriculum"));
-		Path databasePath = dataRoot.resolve("questionbank.db");
-		ApplicationConfig config = new ApplicationConfig(pdfRoot, curriculumRoot, databasePath);
-		SqliteDatabase database = new SqliteDatabase(databasePath);
+	void rejectsBackupDestinationAliasedIntoSubjectRoot() throws Exception {
+		Path dataRoot = Files.createDirectories(tempDir.resolve("alias"));
+		ApplicationConfig config = ApplicationConfig.fromDataRoot(dataRoot);
+		Path subjectsRoot = Files.createDirectories(dataRoot.resolve("subjects"));
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		database.initialiseSchema();
-		Path alias = tempDir.resolve("pdf-alias");
+		Path alias = tempDir.resolve("subjects-alias");
 		try {
-			Files.createSymbolicLink(alias, pdfRoot);
-		} catch (UnsupportedOperationException | IOException | SecurityException e) {
+			Files.createSymbolicLink(alias, subjectsRoot);
+		} catch (UnsupportedOperationException | IOException | SecurityException exception) {
 			return;
 		}
 		DefaultBackupService service = new DefaultBackupService(config, "Test");
@@ -136,51 +139,13 @@ class DefaultBackupServiceTest {
 	}
 
 	@Test
-	void rejectsDatabaseInsideManagedRoot() throws Exception {
-		Path dataRoot = tempDir.resolve("database-overlap");
-		Path pdfRoot = Files.createDirectories(dataRoot.resolve("pdf"));
-		Path curriculumRoot = Files.createDirectories(dataRoot.resolve("curriculum"));
-		Path databasePath = pdfRoot.resolve("questionbank.db");
-		ApplicationConfig config = new ApplicationConfig(pdfRoot, curriculumRoot, databasePath);
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		database.initialiseSchema();
-		DefaultBackupService service = new DefaultBackupService(config, "Test");
-		assertThrows(BackupException.class, () -> service.createBackup(BackupRequest.full(tempDir.resolve("backups"))));
-	}
-
-	@Test
-	void rejectsFullBackupInsideManagedPdfHierarchy() throws Exception {
+	void rejectsFullBackupInsideManagedSubjectHierarchy() throws Exception {
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(tempDir.resolve("data"));
 		Files.createDirectories(config.dataRoot());
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		database.initialiseSchema();
 		DefaultBackupService service = new DefaultBackupService(config, "Development build");
-		assertThrows(BackupException.class,
-				() -> service.createBackup(BackupRequest.full(config.pdfDataRoot().resolve("backups"))));
-	}
-
-	@Test
-	void rejectsIdenticalManagedRoots() throws Exception {
-		Path dataRoot = tempDir.resolve("same-root");
-		Path managedRoot = Files.createDirectories(dataRoot.resolve("managed"));
-		Path databasePath = dataRoot.resolve("questionbank.db");
-		ApplicationConfig config = new ApplicationConfig(managedRoot, managedRoot, databasePath);
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		database.initialiseSchema();
-		DefaultBackupService service = new DefaultBackupService(config, "Test");
-		assertThrows(BackupException.class, () -> service.createBackup(BackupRequest.full(tempDir.resolve("backups"))));
-	}
-
-	@Test
-	void rejectsNestedManagedRoots() throws Exception {
-		Path dataRoot = tempDir.resolve("nested-root");
-		Path pdfRoot = Files.createDirectories(dataRoot.resolve("managed"));
-		Path curriculumRoot = Files.createDirectories(pdfRoot.resolve("curriculum"));
-		Path databasePath = dataRoot.resolve("questionbank.db");
-		ApplicationConfig config = new ApplicationConfig(pdfRoot, curriculumRoot, databasePath);
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		database.initialiseSchema();
-		DefaultBackupService service = new DefaultBackupService(config, "Test");
-		assertThrows(BackupException.class, () -> service.createBackup(BackupRequest.full(tempDir.resolve("backups"))));
+		assertThrows(BackupException.class, () -> service.createBackup(
+				BackupRequest.full(config.dataRoot().resolve("subjects").resolve("Chemistry").resolve("backups"))));
 	}
 }

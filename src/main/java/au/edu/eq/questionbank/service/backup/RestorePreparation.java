@@ -53,19 +53,15 @@ public final class RestorePreparation implements AutoCloseable {
 		return manifest;
 	}
 
-	Path curriculumRoot() {
-		return stagingRoot.resolve("curriculum");
-	}
-
 	Path databasePath() {
 		return stagingRoot.resolve(BackupArchiveLayout.DATABASE_ENTRY);
 	}
 
-	Path pdfRoot() {
-		return stagingRoot.resolve("pdf");
-	}
-
 	Path stagingRoot() {
 		return stagingRoot;
+	}
+
+	Path subjectsRoot() {
+		return stagingRoot.resolve("subjects");
 	}
 }
