@@ -38,6 +38,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.service.backup;
 	opens au.edu.eq.questionbank.service.curriculum;
 	opens au.edu.eq.questionbank.service.document;
+	opens au.edu.eq.questionbank.service.legacy;
 	opens au.edu.eq.questionbank.service.migration;
 	opens au.edu.eq.questionbank.service.render;
 	opens au.edu.eq.questionbank.service.retrieval;
