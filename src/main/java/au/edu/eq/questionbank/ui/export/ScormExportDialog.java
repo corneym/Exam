@@ -78,38 +78,29 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		this.subject = subject;
 		this.exportableUnits = exportableUnits;
 		this.descriptorGroupingAvailable = descriptorGroupingAvailable;
-
 		setTitle("Export Revision SCORM");
 		setHeaderText("Create a SCORM 1.2 revision package for QLearn");
 		initOwner(owner);
-
 		ButtonType exportButtonType = new ButtonType("Export", ButtonBar.ButtonData.OK_DONE);
 		getDialogPane().getButtonTypes().addAll(exportButtonType, ButtonType.CANCEL);
-
 		subjectLabel.setId("scorm-export-subject");
 		subjectLabel.setText(subject.getName());
-
 		groupingBox.setId("scorm-export-grouping");
 		groupingBox.setPromptText("Select grouping");
 		groupingBox.setMaxWidth(Double.MAX_VALUE);
 		groupingBox.setTooltip(new Tooltip(
 				"Choose how Questions are organised in the generated SCORM package; stored curriculum and Question data are unchanged."));
-
 		destinationField.setId("scorm-export-destination");
 		destinationField.setEditable(false);
 		destinationField.setPromptText("Choose destination folder");
-
 		Button browseButton = new Button("Browse...");
 		browseButton.setId("scorm-export-browse");
 		browseButton.setOnAction(_ -> chooseDestination(owner));
-
 		HBox destinationBox = new HBox(FILE_CONTROL_SPACING, destinationField, browseButton);
-
 		ScrollPane unitScrollPane = new ScrollPane(unitBox);
 		unitScrollPane.setId("scorm-export-units");
 		unitScrollPane.setFitToWidth(true);
 		unitScrollPane.setPrefViewportHeight(UNIT_LIST_HEIGHT);
-
 		GridPane grid = new GridPane();
 		grid.setHgap(FORM_COLUMN_GAP);
 		grid.setVgap(FORM_ROW_GAP);
@@ -122,15 +113,11 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 		grid.add(groupingBox, 1, 2);
 		grid.add(new Label("Destination parent:"), 0, 3);
 		grid.add(destinationBox, 1, 3);
-
 		getDialogPane().setContent(grid);
-
 		exportButton = (Button) getDialogPane().lookupButton(exportButtonType);
 		exportButton.setId("scorm-export-start");
 		exportButton.setDisable(true);
-
 		groupingBox.valueProperty().addListener((_, _, _) -> updateExportButton());
-
 		refreshUnits();
 		refreshGroupingModes();
 		updateExportButton();
@@ -198,20 +185,17 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 	private void refreshGroupingModes() {
 		RevisionGroupingMode previous = groupingBox.getValue();
 		Set<Long> selectedUnitIds = getSelectedUnitIds();
-
 		if (selectedUnitIds.isEmpty()) {
 			groupingBox.getItems().clear();
 			groupingBox.setValue(null);
 			return;
 		}
-
 		boolean descriptorAvailable = descriptorGroupingAvailable.test(subject, selectedUnitIds);
 		if (descriptorAvailable) {
 			groupingBox.getItems().setAll(RevisionGroupingMode.DESCRIPTOR, RevisionGroupingMode.SUBTOPIC);
 		} else {
 			groupingBox.getItems().setAll(RevisionGroupingMode.SUBTOPIC);
 		}
-
 		if (previous != null && groupingBox.getItems().contains(previous)) {
 			groupingBox.setValue(previous);
 		} else if (descriptorAvailable) {
@@ -223,7 +207,6 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 
 	private void refreshUnits() {
 		unitBox.getChildren().clear();
-
 		List<Unit> units = exportableUnits.apply(subject);
 		if (units == null) {
 			throw new IllegalStateException("Exportable Unit provider returned null");
@@ -232,7 +215,6 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 			unitBox.getChildren().add(new Label("No Units contain revision questions."));
 			return;
 		}
-
 		for (Unit unit : units) {
 			if (unit == null) {
 				throw new IllegalStateException("Exportable Unit provider returned null");
@@ -240,7 +222,6 @@ public final class ScormExportDialog extends Dialog<ButtonType> {
 			if (!subject.equals(unit.getSyllabusVersion().getSubject())) {
 				throw new IllegalStateException("Exportable Unit belongs to another Subject");
 			}
-
 			CheckBox checkBox = new CheckBox(unit.toString());
 			checkBox.setId("scorm-export-unit-" + unit.getId());
 			checkBox.setTooltip(new Tooltip(

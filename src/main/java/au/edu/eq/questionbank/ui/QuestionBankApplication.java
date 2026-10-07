@@ -772,15 +772,12 @@ public class QuestionBankApplication extends Application {
 					"Select a Working Subject on the Corpus Dashboard before exporting revision material.");
 			return false;
 		}
-
 		CurriculumRepository repository = new SqliteCurriculumRepository(new SqliteDatabase(config.databasePath()));
 		List<SyllabusVersion> currentVersions = repository.findVersionsForSubject(subject).stream()
 				.filter(SyllabusVersion::isCurrent).toList();
-
 		if (currentVersions.size() == 1) {
 			return true;
 		}
-
 		if (currentVersions.isEmpty()) {
 
 			// Revision output is organised against the current curriculum. A newly
@@ -3542,7 +3539,6 @@ public class QuestionBankApplication extends Application {
 								+ " before curriculum mappings can be reviewed.");
 				return;
 			}
-
 			CurriculumMappingRepository mappingRepository = new SqliteCurriculumMappingRepository(database);
 			CurriculumMappingSuggester descriptorSuggester = new TfIdfCurriculumMappingSuggester(repository);
 			CurriculumMappingSuggester subtopicSuggester = new ConfirmedDescriptorSubtopicMappingSuggester(repository,
@@ -4439,12 +4435,10 @@ public class QuestionBankApplication extends Application {
 		if (revisionExportRunning) {
 			return;
 		}
-
 		Subject subject = workingSubject;
 		if (!canOpenRevisionExport(subject, config, "Export Revision HTML")) {
 			return;
 		}
-
 		RevisionExportService eligibilityService = createRevisionExportService(config);
 		RevisionExportDialog dialog = new RevisionExportDialog(primaryStage, subject,
 				eligibilityService::findExportableUnits, eligibilityService::isDescriptorGroupingAvailable);
@@ -4486,12 +4480,10 @@ public class QuestionBankApplication extends Application {
 		if (scormExportRunning) {
 			return;
 		}
-
 		Subject subject = workingSubject;
 		if (!canOpenRevisionExport(subject, config, "Export Revision SCORM")) {
 			return;
 		}
-
 		ScormExportService eligibilityService = createScormExportService(config);
 		ScormExportDialog dialog = new ScormExportDialog(primaryStage, subject, eligibilityService::findExportableUnits,
 				eligibilityService::isDescriptorGroupingAvailable);

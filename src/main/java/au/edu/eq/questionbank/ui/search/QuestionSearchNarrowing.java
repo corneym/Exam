@@ -71,8 +71,9 @@ public final class QuestionSearchNarrowing {
 	}
 
 	/**
-	 * @return user-facing description of this narrowing, or an empty String when
-	 *         unrestricted
+	 * Returns the user-facing description of this narrowing.
+	 *
+	 * @return user-facing description, or an empty String when unrestricted
 	 */
 	public String description() {
 		return description;
@@ -90,7 +91,9 @@ public final class QuestionSearchNarrowing {
 	}
 
 	/**
-	 * @return whether this narrowing restricts the complete Working Subject
+	 * Returns whether this narrowing restricts the complete Working Subject.
+	 *
+	 * @return {@code true} when the narrowing is restricted
 	 */
 	public boolean isRestricted() {
 		return this != UNRESTRICTED;

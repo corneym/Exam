@@ -44,11 +44,9 @@ class ScormExportDialogTest {
 		Subject chemistry = new Subject(1, "Chemistry");
 		SyllabusVersion syllabus = new SyllabusVersion(1, chemistry, "2025", true);
 		Unit unit = new Unit(10, syllabus, "1", "Unit 1", 1);
-
 		ScormExportDialog[] holder = new ScormExportDialog[1];
 		org.testfx.api.FxToolkit.setupFixture(
 				() -> holder[0] = new ScormExportDialog(stage, chemistry, _ -> List.of(unit), (_, _) -> true));
-
 		ScormExportDialog dialog = holder[0];
 		Node subjectControl = dialog.getDialogPane().lookup("#scorm-export-subject");
 		Field exportButtonField = ScormExportDialog.class.getDeclaredField("exportButton");
@@ -59,14 +57,11 @@ class ScormExportDialogTest {
 		assertTrue(subjectControl instanceof Label);
 		assertEquals("Chemistry", ((Label) subjectControl).getText());
 		assertEquals(chemistry, dialog.getSelectedSubject());
-
 		assertNull(dialog.getDestinationParent());
 		assertTrue(exportButton.isDisabled());
-
 		Path destination = Path.of("target", "scorm-export-test").toAbsolutePath().normalize();
 		Method setDestination = ScormExportDialog.class.getDeclaredMethod("setDestinationParent", Path.class);
 		setDestination.setAccessible(true);
-
 		org.testfx.api.FxToolkit.setupFixture(() -> {
 			try {
 				setDestination.invoke(dialog, destination);
@@ -75,7 +70,6 @@ class ScormExportDialogTest {
 			}
 		});
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertEquals(destination, dialog.getDestinationParent());
 		assertFalse(exportButton.isDisabled());
 	}
@@ -85,33 +79,26 @@ class ScormExportDialogTest {
 		Subject chemistry = new Subject(1, "Chemistry");
 		SyllabusVersion chemistrySyllabus = new SyllabusVersion(1, chemistry, "2025", true);
 		Unit chemistryUnit = new Unit(10, chemistrySyllabus, "1", "Chemistry Unit", 1);
-
 		ScormExportDialog[] chemistryHolder = new ScormExportDialog[1];
 		org.testfx.api.FxToolkit.setupFixture(() -> chemistryHolder[0] = new ScormExportDialog(stage, chemistry,
 				_ -> List.of(chemistryUnit), (_, _) -> true));
-
 		ScormExportDialog chemistryDialog = chemistryHolder[0];
 		@SuppressWarnings("unchecked")
 		ComboBox<RevisionGroupingMode> chemistryGroupingBox = (ComboBox<RevisionGroupingMode>) chemistryDialog
 				.getDialogPane().lookup("#scorm-export-grouping");
-
 		assertEquals(List.of(RevisionGroupingMode.DESCRIPTOR, RevisionGroupingMode.SUBTOPIC),
 				chemistryGroupingBox.getItems());
 		assertEquals(RevisionGroupingMode.DESCRIPTOR, chemistryDialog.getGroupingMode());
-
 		Subject physics = new Subject(2, "Physics");
 		SyllabusVersion physicsSyllabus = new SyllabusVersion(2, physics, "2025", true);
 		Unit physicsUnit = new Unit(20, physicsSyllabus, "1", "Physics Unit", 1);
-
 		ScormExportDialog[] physicsHolder = new ScormExportDialog[1];
 		org.testfx.api.FxToolkit.setupFixture(() -> physicsHolder[0] = new ScormExportDialog(stage, physics,
 				_ -> List.of(physicsUnit), (_, _) -> false));
-
 		ScormExportDialog physicsDialog = physicsHolder[0];
 		@SuppressWarnings("unchecked")
 		ComboBox<RevisionGroupingMode> physicsGroupingBox = (ComboBox<RevisionGroupingMode>) physicsDialog
 				.getDialogPane().lookup("#scorm-export-grouping");
-
 		assertEquals(List.of(RevisionGroupingMode.SUBTOPIC), physicsGroupingBox.getItems());
 		assertEquals(RevisionGroupingMode.SUBTOPIC, physicsDialog.getGroupingMode());
 		assertEquals(physics, physicsDialog.getSelectedSubject());
@@ -123,37 +110,28 @@ class ScormExportDialogTest {
 		SyllabusVersion syllabus = new SyllabusVersion(1, chemistry, "2025", true);
 		Unit completeUnit = new Unit(10, syllabus, "1", "Complete Unit", 1);
 		Unit incompleteUnit = new Unit(20, syllabus, "2", "Incomplete Unit", 2);
-
 		ScormExportDialog[] holder = new ScormExportDialog[1];
 		org.testfx.api.FxToolkit.setupFixture(
 				() -> holder[0] = new ScormExportDialog(stage, chemistry, _ -> List.of(completeUnit, incompleteUnit),
 						(_, selectedUnitIds) -> selectedUnitIds.equals(Set.of(completeUnit.getId()))));
-
 		ScormExportDialog dialog = holder[0];
-
 		@SuppressWarnings("unchecked")
 		ComboBox<RevisionGroupingMode> groupingBox = (ComboBox<RevisionGroupingMode>) dialog.getDialogPane()
 				.lookup("#scorm-export-grouping");
-
 		assertEquals(Set.of(completeUnit.getId(), incompleteUnit.getId()), dialog.getSelectedUnitIds());
 		assertEquals(List.of(RevisionGroupingMode.SUBTOPIC), groupingBox.getItems());
-
 		Field unitBoxField = ScormExportDialog.class.getDeclaredField("unitBox");
 		unitBoxField.setAccessible(true);
 		VBox unitBox = (VBox) unitBoxField.get(dialog);
-
 		CheckBox incompleteUnitBox = unitBox.getChildren().stream()
 				.filter(node -> "scorm-export-unit-20".equals(node.getId())).map(node -> (CheckBox) node).findFirst()
 				.orElseThrow();
-
 		assertNotNull(groupingBox.getTooltip());
 		assertTrue(groupingBox.getTooltip().getText().contains("stored curriculum and Question data are unchanged"));
 		assertNotNull(incompleteUnitBox.getTooltip());
 		assertTrue(incompleteUnitBox.getTooltip().getText().contains("generated SCORM package"));
-
 		org.testfx.api.FxToolkit.setupFixture(() -> incompleteUnitBox.setSelected(false));
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertEquals(Set.of(completeUnit.getId()), dialog.getSelectedUnitIds());
 		assertEquals(List.of(RevisionGroupingMode.DESCRIPTOR, RevisionGroupingMode.SUBTOPIC), groupingBox.getItems());
 	}

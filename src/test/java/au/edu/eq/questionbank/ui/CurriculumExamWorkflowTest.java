@@ -778,7 +778,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteExamWriter realWriter = new SqliteExamWriter(database);
 
@@ -789,12 +788,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			return robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery().filter(Button.class::isInstance)
 					.map(Button.class::cast).map(button -> "Mark Active".equals(button.getText())).orElse(false);
 		});
-
 		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
 		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
 		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);
@@ -806,7 +803,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.createDirectory(databasePath.getParent().resolve("invalid-lifecycle-database"));
 		SqliteExamWriter failingWriter = new SqliteExamWriter(new SqliteDatabase(invalidDatabasePath));
 		setField(application, "examWriter", failingWriter);
-
 		fireControl(robot, lifecycle);
 		waitForDialogShowing(robot, "Exam State");
 
@@ -816,7 +812,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(evaluateOnFx(robot, lifecycle::isDisabled));
 		assertEquals("Declared state: COMPLETE", selectedState.getText());
 		assertFalse(field(application, "corpusDashboardLifecycleChangeRunning", Boolean.class));
-
 		DialogPane error = showingDialogPane(robot, "Exam State");
 		Node okNode = error.lookupButton(ButtonType.OK);
 		assertTrue(okNode instanceof Button);
@@ -1072,21 +1067,17 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void mappingReviewDoesNotOpenForSingleSyllabusWorkingSubject(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		selectSubject(robot, "Biology");
-
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
 		ComboBox<SyllabusVersion> syllabuses = comboBox(robot, "#curriculum-syllabus");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			AtomicBoolean loaded = new AtomicBoolean();
 			robot.interact(() -> loaded.set(subjects.getValue() != null
 					&& "Biology".equals(subjects.getValue().getName()) && syllabuses.getItems().size() == 1));
 			return loaded.get();
 		});
-
 		assertEquals("Biology", subjects.getValue().getName());
 		assertEquals(1, syllabuses.getItems().size());
 		assertEquals("Biology", field(application, "workingSubject", Subject.class).getName());
-
 		Menu curriculumMenu = (Menu) invoke(application, "createCurriculumMenu",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
 		MenuItem reviewMappings = curriculumMenu.getItems().stream()
@@ -1097,7 +1088,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// thread available to inspect the prerequisite message.
 		Platform.runLater(reviewMappings::fire);
 		waitForDialogShowing(robot, "Curriculum Mapping");
-
 		DialogPane unavailable = showingDialogPane(robot, "Curriculum Mapping");
 		assertEquals("Mapping review is not available.", unavailable.getHeaderText());
 		assertTrue(unavailable.getContentText().contains("At least two syllabus versions"));
@@ -1106,7 +1096,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Reaching this alert proves the application stopped before constructing the
 		// actual mapping-review dialog.
 		assertNull(unavailable.lookup("#curriculum-mapping-coverage"));
-
 		Node okNode = unavailable.lookupButton(ButtonType.OK);
 		assertTrue(okNode instanceof Button);
 		robot.interact(((Button) okNode)::fire);
