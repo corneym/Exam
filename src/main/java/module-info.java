@@ -24,6 +24,7 @@ module au.edu.eq.questionbank {
 
 	opens au.edu.eq.questionbank;
 	opens au.edu.eq.questionbank.admin;
+	opens au.edu.eq.questionbank.diagnostics;
 	opens au.edu.eq.questionbank.importer.curriculum;
 	opens au.edu.eq.questionbank.importer.legacy;
 	opens au.edu.eq.questionbank.model;
