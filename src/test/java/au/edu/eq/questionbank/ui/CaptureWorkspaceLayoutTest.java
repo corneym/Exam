@@ -664,7 +664,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		AtomicBoolean started = new AtomicBoolean();
 		WaitForAsyncUtils.asyncFx(() -> {
 			started.set((Boolean) invoke(application, "showDashboardAnswerCapture",
-					new Class<?>[] { Question.class, Runnable.class }, first, dashboardReturn));
+					new Class<?>[] { Question.class, Runnable.class, long.class }, first, dashboardReturn, 0L));
 			return null;
 		}).get();
 		WaitForAsyncUtils.waitForFxEvents();
