@@ -46,7 +46,7 @@ public final class PerformanceOperation implements AutoCloseable {
 	 * Completes the measurement. Multiple calls are harmless.
 	 */
 	@Override
-	public void close() {
+	public synchronized void close() {
 		if (recorder == null || !completed.compareAndSet(false, true)) {
 			return;
 		}
@@ -56,8 +56,8 @@ public final class PerformanceOperation implements AutoCloseable {
 	/**
 	 * Marks this operation unsuccessful.
 	 */
-	public void failed() {
-		if (recorder != null) {
+	public synchronized void failed() {
+		if (recorder != null && !completed.get()) {
 			success = false;
 		}
 	}
@@ -77,11 +77,11 @@ public final class PerformanceOperation implements AutoCloseable {
 	 * @param count non-negative result count
 	 * @return this operation
 	 */
-	public PerformanceOperation resultCount(long count) {
+	public synchronized PerformanceOperation resultCount(long count) {
 		if (count < 0) {
 			throw new IllegalArgumentException("Result count must be non-negative");
 		}
-		if (recorder != null) {
+		if (recorder != null && !completed.get()) {
 			resultCount = count;
 		}
 		return this;

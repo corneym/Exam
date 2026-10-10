@@ -19,6 +19,8 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationPaths;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
@@ -299,6 +301,8 @@ public class QuestionBankApplication extends Application {
 	private Path applicationPropertiesFile = ApplicationPaths.propertiesFile();
 	private Runnable applicationRestartAction = this::restartApplicationAfterShutdown;
 	private final ApplicationRestartService applicationRestartService = new ApplicationRestartService();
+	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false,
+			ApplicationPaths.diagnosticsDirectory().resolve("performance.csv"));
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -2777,21 +2781,30 @@ public class QuestionBankApplication extends Application {
 			Runnable completionHandler) {
 		Objects.requireNonNull(completionHandler, "completionHandler");
 
-		// Several Dashboard refreshes may legitimately be requested within one Working
-		// Subject generation. Only the newest request may publish its snapshot.
+		// Only the newest Dashboard refresh may publish its results.
 		long dashboardGeneration = ++corpusDashboardRefreshGeneration;
+		PerformanceOperation refreshOperation = performanceRecorder.start("dashboard.refresh");
 		Task<CorpusDashboardSnapshot> task = new ApplicationBackgroundTask<>(() -> {
-
-			// Structural audit, Question status and curriculum mapping coverage remain
-			// one authoritative persistence generation.
-			return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject);
+			try (PerformanceOperation snapshotOperation = performanceRecorder.start("dashboard.snapshot",
+					refreshOperation.id())) {
+				try {
+					return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject,
+							snapshotOperation.id());
+				} catch (SQLException | RuntimeException | Error failure) {
+					snapshotOperation.failed();
+					refreshOperation.failed();
+					throw failure;
+				}
+			}
 		});
 		task.setOnSucceeded(_ -> {
 			try {
 				if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
 
-					// A later Subject change or later Dashboard refresh already owns the home
-					// surface. Never allow this older snapshot to overwrite newer persisted state.
+					// A superseded refresh did not publish its result.
+					// Record it as unsuccessful rather than a completed
+					// user-visible Dashboard refresh.
+					refreshOperation.failed();
 					return;
 				}
 				CorpusDashboardSnapshot snapshot = task.getValue();
@@ -2800,44 +2813,65 @@ public class QuestionBankApplication extends Application {
 					return;
 				}
 
-				// Ordinary refresh retains Dashboard-local filters and selection where they
-				// remain valid.
+				// Preserve current Dashboard filters and selection.
 				corpusDashboardPane.replaceData(snapshot.examStatuses(), snapshot.questions(),
 						snapshot.mappingCoverages(), snapshot.curriculumAvailable(), preferredQuestionId);
+			} catch (RuntimeException | Error failure) {
+				refreshOperation.failed();
+				throw failure;
 			} finally {
-
-				// Operation-specific callers, including lifecycle changes, keep their busy
-				// state until this authoritative refresh has either published or become stale.
-				completionHandler.run();
+				try {
+					completionHandler.run();
+				} catch (RuntimeException | Error failure) {
+					refreshOperation.failed();
+					throw failure;
+				} finally {
+					refreshOperation.close();
+				}
 			}
 		});
 		task.setOnFailed(_ -> {
+			refreshOperation.failed();
 			try {
 				if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
-
-					// Failure from superseded work is no longer relevant to the visible
-					// Dashboard and must not interrupt the newer request.
 					return;
 				}
 				showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
 						failureMessage(task.getException()));
 			} finally {
-
-				// Failure must release any operation-specific progress state as reliably as
-				// successful publication.
-				completionHandler.run();
+				try {
+					completionHandler.run();
+				} finally {
+					refreshOperation.close();
+				}
 			}
 		});
-
-		// Include both generations in the worker name so concurrent refreshes remain
-		// distinguishable during diagnostics.
+		task.setOnCancelled(_ -> {
+			refreshOperation.failed();
+			try {
+				completionHandler.run();
+			} finally {
+				refreshOperation.close();
+			}
+		});
 		Thread thread = new Thread(task, "corpus-dashboard-home-refresh-" + generation + "-" + dashboardGeneration);
 		thread.setDaemon(true);
-		thread.start();
+		try {
+			thread.start();
+		} catch (RuntimeException | Error failure) {
+			refreshOperation.failed();
+			refreshOperation.close();
+			throw failure;
+		}
 	}
 
 	private CorpusDashboardSnapshot loadCorpusDashboardSnapshot(ApplicationConfig config,
 			ExamCorpusAuditService auditService, Subject dashboardSubject) throws SQLException {
+		return loadCorpusDashboardSnapshot(config, auditService, dashboardSubject, 0);
+	}
+
+	private CorpusDashboardSnapshot loadCorpusDashboardSnapshot(ApplicationConfig config,
+			ExamCorpusAuditService auditService, Subject dashboardSubject, long parentOperationId) throws SQLException {
 		if (config == null) {
 			throw new NullPointerException("config");
 		}
@@ -2848,13 +2882,40 @@ public class QuestionBankApplication extends Application {
 			throw new NullPointerException("dashboardSubject");
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		CurriculumDashboardState curriculumState = loadCurriculumDashboardState(database, dashboardSubject);
+		CurriculumDashboardState curriculumState;
+		try (PerformanceOperation operation = performanceRecorder.start("dashboard.curriculum", parentOperationId)) {
+			try {
+				curriculumState = loadCurriculumDashboardState(database, dashboardSubject);
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+		List<ExamCorpusStatus> examStatuses;
+		try (PerformanceOperation operation = performanceRecorder.start("dashboard.audit", parentOperationId)) {
+			try {
+				examStatuses = auditService.assessSubject(dashboardSubject);
+				operation.resultCount(examStatuses.size());
+			} catch (SQLException | RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+		List<Question> questions;
+		try (PerformanceOperation operation = performanceRecorder.start("dashboard.question.findAll",
+				parentOperationId)) {
+			try {
+				questions = questionRepository.findAll();
+				operation.resultCount(questions.size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
 
-		// Structural audit, Question state and curriculum state are loaded as one
-		// Dashboard generation even though their completeness semantics remain
-		// separate.
-		return new CorpusDashboardSnapshot(auditService.assessSubject(dashboardSubject), questionRepository.findAll(),
-				curriculumState.mappingCoverages(), curriculumState.curriculumAvailable());
+		// Preserve the authoritative Dashboard snapshot contents.
+		return new CorpusDashboardSnapshot(examStatuses, questions, curriculumState.mappingCoverages(),
+				curriculumState.curriculumAvailable());
 	}
 
 	private CurriculumDashboardState loadCurriculumDashboardState(SqliteDatabase database, Subject subject) {
@@ -4361,9 +4422,9 @@ public class QuestionBankApplication extends Application {
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
-		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database, performanceRecorder);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(questionRepository,
-				new CurriculumSearchNodeExpansionService(curriculumRepository));
+				new CurriculumSearchNodeExpansionService(curriculumRepository), performanceRecorder);
 		QuestionPreviewService previewService = new QuestionPreviewService(createExamPdfStore(config),
 				questionExtractor);
 		LegacyQuestionMetadataService metadataService = new LegacyQuestionMetadataService(database);
@@ -4374,7 +4435,7 @@ public class QuestionBankApplication extends Application {
 		// may additionally constrain that same Search to one Exam or booklet.
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, workingSubject, curriculumRepository,
 				retrievalService, questionRepository::findAll, previewService, outputApplicabilityRepository,
-				questionRepository::updateClassification, searchNarrowing);
+				questionRepository::updateClassification, searchNarrowing, performanceRecorder);
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
@@ -4706,16 +4767,24 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
+		performanceRecorder = PerformanceRecorder.fromSystemProperties(ApplicationPaths.diagnosticsDirectory());
+		try (PerformanceOperation operation = performanceRecorder.start("application.startup")) {
+			try {
 
-		// Retain immutable application paths for asynchronous Dashboard refreshes and
-		// Dashboard-owned workflow routing.
-		applicationConfig = config;
-		curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
-		SqliteDatabase database = new SqliteDatabase(config.databasePath());
-		configureShutdown(config);
-		initialiseCaptureWorkflow(primaryStage, config, database);
-		configurePdfWorkspace();
-		configurePrimaryStage(primaryStage, config);
+				// Retain immutable application paths for asynchronous
+				// Dashboard refreshes and workflow routing.
+				applicationConfig = config;
+				curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
+				SqliteDatabase database = new SqliteDatabase(config.databasePath());
+				configureShutdown(config);
+				initialiseCaptureWorkflow(primaryStage, config, database);
+				configurePdfWorkspace();
+				configurePrimaryStage(primaryStage, config);
+			} catch (SQLException | RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
 	}
 
 	private void startCorpusDashboardQuestionCorrection(Question question, Runnable returnHandler) {

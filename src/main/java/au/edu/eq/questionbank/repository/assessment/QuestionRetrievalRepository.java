@@ -30,4 +30,19 @@ public interface QuestionRetrievalRepository {
 	 * @throws IllegalStateException    if persistence cannot be read
 	 */
 	List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes);
+
+	/**
+	 * Retrieves applicability matches with an optional diagnostic parent.
+	 * <p>
+	 * Implementations without instrumentation retain their existing retrieval
+	 * behaviour.
+	 *
+	 * @param currentNodes      requested current curriculum nodes
+	 * @param parentOperationId enclosing diagnostic operation ID
+	 * @return persisted applicability matches
+	 */
+	default List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes,
+			long parentOperationId) {
+		return findApplicableToNodes(currentNodes);
+	}
 }

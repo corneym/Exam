@@ -2,13 +2,18 @@ package au.edu.eq.questionbank.ui.search;
 
 import java.awt.image.BufferedImage;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
+import au.edu.eq.questionbank.ApplicationPaths;
+import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
@@ -128,6 +133,8 @@ public class QuestionSearchPane extends BorderPane {
 	private boolean restoringResultSelection;
 	private final Button saveClassificationButton = new Button("Save");
 	private final QuestionOutputApplicabilityRepository outputApplicabilityRepository;
+	private PerformanceOperation activeSearchOperation;
+	private final PerformanceRecorder performanceRecorder;
 
 	// Revision-output applicability is loaded independently from Search results.
 	// In All Questions scope the selected Question requires a separate
@@ -175,61 +182,54 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	/**
-	 * Creates a question-search pane with an immutable result narrowing.
+	 * Creates a question-search pane with immutable result narrowing.
 	 *
-	 * @param workingSubject                authoritative workspace Working Subject
-	 * @param curriculumRepository          current curriculum hierarchy lookup
+	 * @param workingSubject                authoritative workspace Subject
+	 * @param curriculumRepository          curriculum lookup
 	 * @param retrievalService              curriculum-aware Question retrieval
-	 * @param allQuestionsSupplier          complete stored Question retrieval
-	 * @param previewService                stored Question image preview service
-	 * @param outputApplicabilityRepository persisted per-Question revision-output
-	 *                                      exclusions
-	 * @param searchNarrowing               additional result constraint retained
-	 *                                      across every Search scope and refresh
-	 * @throws NullPointerException if any dependency is {@code null}
+	 * @param allQuestionsSupplier          complete Question retrieval
+	 * @param previewService                Question preview service
+	 * @param outputApplicabilityRepository output applicability persistence
+	 * @param searchNarrowing               immutable result constraint
 	 */
 	public QuestionSearchPane(Subject workingSubject, CurriculumRepository curriculumRepository,
 			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
 			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
 			QuestionSearchNarrowing searchNarrowing) {
-		if (workingSubject == null) {
-			throw new NullPointerException("workingSubject");
-		}
-		if (curriculumRepository == null) {
-			throw new NullPointerException("curriculumRepository");
-		}
-		if (retrievalService == null) {
-			throw new NullPointerException("retrievalService");
-		}
-		if (allQuestionsSupplier == null) {
-			throw new NullPointerException("allQuestionsSupplier");
-		}
-		if (previewService == null) {
-			throw new NullPointerException("previewService");
-		}
-		if (outputApplicabilityRepository == null) {
-			throw new NullPointerException("outputApplicabilityRepository");
-		}
-		if (searchNarrowing == null) {
-			throw new NullPointerException("searchNarrowing");
-		}
-		this.workingSubject = workingSubject;
-		this.curriculumRepository = curriculumRepository;
-		this.retrievalService = retrievalService;
-		this.allQuestionsSupplier = allQuestionsSupplier;
-		this.previewService = previewService;
-		this.outputApplicabilityRepository = outputApplicabilityRepository;
-		this.searchNarrowing = searchNarrowing;
+		this(workingSubject, curriculumRepository, retrievalService, allQuestionsSupplier, previewService,
+				outputApplicabilityRepository, searchNarrowing,
+				new PerformanceRecorder(false, ApplicationPaths.diagnosticsDirectory().resolve("performance.csv")));
+	}
+
+	/**
+	 * Creates a question-search pane with shared performance diagnostics.
+	 *
+	 * @param workingSubject                authoritative workspace Subject
+	 * @param curriculumRepository          curriculum lookup
+	 * @param retrievalService              curriculum-aware Question retrieval
+	 * @param allQuestionsSupplier          complete Question retrieval
+	 * @param previewService                Question preview service
+	 * @param outputApplicabilityRepository output applicability persistence
+	 * @param searchNarrowing               immutable result constraint
+	 * @param performanceRecorder           shared application recorder
+	 */
+	public QuestionSearchPane(Subject workingSubject, CurriculumRepository curriculumRepository,
+			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
+			QuestionSearchNarrowing searchNarrowing, PerformanceRecorder performanceRecorder) {
+		this.workingSubject = Objects.requireNonNull(workingSubject, "workingSubject");
+		this.curriculumRepository = Objects.requireNonNull(curriculumRepository, "curriculumRepository");
+		this.retrievalService = Objects.requireNonNull(retrievalService, "retrievalService");
+		this.allQuestionsSupplier = Objects.requireNonNull(allQuestionsSupplier, "allQuestionsSupplier");
+		this.previewService = Objects.requireNonNull(previewService, "previewService");
+		this.outputApplicabilityRepository = Objects.requireNonNull(outputApplicabilityRepository,
+				"outputApplicabilityRepository");
+		this.searchNarrowing = Objects.requireNonNull(searchNarrowing, "searchNarrowing");
+		this.performanceRecorder = Objects.requireNonNull(performanceRecorder, "performanceRecorder");
 		setPadding(new Insets(PANE_PADDING));
 		configureControls();
 		configureHandlers();
-
-		// Search is composed as two task columns. Subject loading establishes the
-		// authoritative Working Subject before current-syllabus navigation begins.
 		setCenter(createWorkspacePane());
-
-		// Search derives its initial curriculum hierarchy directly from the
-		// authoritative workspace Working Subject.
 		startWorkingSubjectNavigation();
 	}
 
@@ -410,6 +410,13 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void cancelActiveSearch() {
 		searchGeneration++;
+		if (activeSearchOperation != null) {
+
+			// Superseded work has not produced an accepted Search result.
+			activeSearchOperation.failed();
+			activeSearchOperation.close();
+			activeSearchOperation = null;
+		}
 		if (activeSearchTask != null) {
 			activeSearchTask.cancel();
 			activeSearchTask = null;
@@ -584,17 +591,32 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void completeSearch(Task<List<QuestionSearchResult>> task, long generation) {
-
-		// Cancellation can race with completion; only the current request may publish
-		// results.
 		if (generation != searchGeneration || task != activeSearchTask) {
 			return;
 		}
-		activeSearchTask = null;
-		List<QuestionSearchResult> results = task.getValue();
-		resultsList.getItems().setAll(results);
-		reselectEditedQuestion(results);
-		updateSearchStatus();
+		PerformanceOperation operation = activeSearchOperation;
+		try {
+			activeSearchTask = null;
+			List<QuestionSearchResult> results = task.getValue();
+			resultsList.getItems().setAll(results);
+			reselectEditedQuestion(results);
+			updateSearchStatus();
+
+			// Measure until the accepted results are published on the FX thread.
+			if (operation != null) {
+				operation.resultCount(results.size());
+			}
+		} catch (RuntimeException | Error failure) {
+			if (operation != null) {
+				operation.failed();
+			}
+			throw failure;
+		} finally {
+			if (operation != null) {
+				operation.close();
+			}
+			activeSearchOperation = null;
+		}
 	}
 
 	private void configureControls() {
@@ -1067,8 +1089,17 @@ public class QuestionSearchPane extends BorderPane {
 		if (generation != searchGeneration || task != activeSearchTask) {
 			return;
 		}
-		activeSearchTask = null;
-		statusLabel.setText(failureStatusText("Question search failed", task.getException()));
+		PerformanceOperation operation = activeSearchOperation;
+		try {
+			activeSearchTask = null;
+			statusLabel.setText(failureStatusText("Question search failed", task.getException()));
+		} finally {
+			if (operation != null) {
+				operation.failed();
+				operation.close();
+			}
+			activeSearchOperation = null;
+		}
 	}
 
 	private String failureStatusText(String summary, Throwable failure) {
@@ -1417,8 +1448,7 @@ public class QuestionSearchPane extends BorderPane {
 	private void refreshAutomaticSearch() {
 		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 
-			// All Questions remains scoped to the authoritative Working Subject. The
-			// existing result generation stays visible while this replacement loads.
+			// Retain accepted results while the replacement generation loads.
 			startAutomaticSearch(() -> {
 				List<Question> questions = allQuestionsSupplier.get().stream()
 						.filter(question -> workingSubject.equals(question.getExam().getSubject())).toList();
@@ -1428,22 +1458,18 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		CurriculumNode selectedNode = mostSpecificSelectedCurriculumNode();
 		if (selectedNode != null) {
-
-			// Re-evaluate current-curriculum applicability because a classification change
-			// can legitimately alter Search membership.
-			startAutomaticSearch(() -> QuestionSearchResult
-					.currentSyllabusResults(retrievalService.findQuestionsApplicableTo(selectedNode)), false);
+			startAutomaticSearch(sourceOperation -> retrieveCurrentSyllabus(
+					parentId -> retrievalService.findQuestionsApplicableTo(selectedNode, parentId), sourceOperation),
+					false);
 			return;
 		}
 		if (currentSyllabus == null) {
-
-			// This is an invalidated navigation state rather than an ordinary edit refresh.
-			// Rebuild the hierarchy through the normal Working Subject path.
 			startWorkingSubjectNavigation();
 			return;
 		}
-		startAutomaticSearch(() -> QuestionSearchResult
-				.currentSyllabusResults(retrievalService.findQuestionsApplicableTo(workingSubject)), false);
+		startAutomaticSearch(sourceOperation -> retrieveCurrentSyllabus(
+				parentId -> retrievalService.findQuestionsApplicableTo(workingSubject, parentId), sourceOperation),
+				false);
 	}
 
 	private void reloadSelectedOutputApplicability() {
@@ -1612,6 +1638,32 @@ public class QuestionSearchPane extends BorderPane {
 		}
 	}
 
+	private List<QuestionSearchResult> retrieveCurrentSyllabus(Function<Long, List<QuestionRetrievalResult>> loader,
+			PerformanceOperation parentOperation) {
+		List<QuestionRetrievalResult> retrieved;
+		try (PerformanceOperation operation = performanceRecorder.start("search.applicability", parentOperation.id())) {
+			try {
+
+				// Pass the applicability operation ID into the service.
+				retrieved = loader.apply(operation.id());
+				operation.resultCount(retrieved.size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+		try (PerformanceOperation operation = performanceRecorder.start("search.conversion", parentOperation.id())) {
+			try {
+				List<QuestionSearchResult> converted = QuestionSearchResult.currentSyllabusResults(retrieved);
+				operation.resultCount(converted.size());
+				return converted;
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+	}
+
 	private void setCurriculumControlsDisabled(boolean disabled) {
 
 		// Every visible hierarchy control is below the fixed workspace Working
@@ -1734,11 +1786,76 @@ public class QuestionSearchPane extends BorderPane {
 			statusLabel.setText("");
 			return;
 		}
+		startAutomaticSearch(
+				sourceOperation -> retrieveCurrentSyllabus(
+						parentId -> retrievalService.findQuestionsApplicableTo(currentNode, parentId), sourceOperation),
+				true);
+	}
 
-		// The retrieval service remains authoritative for current-curriculum
-		// applicability. Convert its results only at the Search presentation boundary.
-		startAutomaticSearch(() -> QuestionSearchResult
-				.currentSyllabusResults(retrievalService.findQuestionsApplicableTo(currentNode)));
+	private void startAutomaticSearch(Function<PerformanceOperation, List<QuestionSearchResult>> retrieval,
+			boolean clearVisibleResults) {
+		cancelActiveSearch();
+		if (clearVisibleResults) {
+			clearResults();
+		}
+		long generation = searchGeneration;
+		statusLabel.setText("Searching...");
+		PerformanceOperation refreshOperation = performanceRecorder.start("search.refresh");
+		activeSearchOperation = refreshOperation;
+		Task<List<QuestionSearchResult>> task = new BackgroundTask<>(() -> {
+			try (PerformanceOperation retrievalOperation = performanceRecorder.start("search.retrieval",
+					refreshOperation.id())) {
+				try {
+					List<QuestionSearchResult> sourceResults;
+					try (PerformanceOperation sourceOperation = performanceRecorder.start("search.source",
+							retrievalOperation.id())) {
+						try {
+							sourceResults = retrieval.apply(sourceOperation);
+							sourceOperation.resultCount(sourceResults.size());
+						} catch (RuntimeException | Error failure) {
+							sourceOperation.failed();
+							throw failure;
+						}
+					}
+					List<QuestionSearchResult> filteredResults;
+					try (PerformanceOperation filterOperation = performanceRecorder.start("search.filter",
+							retrievalOperation.id())) {
+						try {
+							filteredResults = sourceResults.stream()
+									.filter(result -> searchNarrowing.includes(result.question())).toList();
+							filterOperation.resultCount(filteredResults.size());
+						} catch (RuntimeException | Error failure) {
+							filterOperation.failed();
+							throw failure;
+						}
+					}
+					retrievalOperation.resultCount(filteredResults.size());
+					return filteredResults;
+				} catch (RuntimeException | Error failure) {
+					retrievalOperation.failed();
+					refreshOperation.failed();
+					throw failure;
+				}
+			}
+		});
+		activeSearchTask = task;
+		task.setOnSucceeded(_ -> completeSearch(task, generation));
+		task.setOnFailed(_ -> failSearch(task, generation));
+		task.setOnCancelled(_ -> {
+			if (generation != searchGeneration || task != activeSearchTask) {
+				return;
+			}
+			cancelActiveSearch();
+		});
+		try {
+			startBackgroundTask("question-search", task);
+		} catch (RuntimeException | Error failure) {
+			refreshOperation.failed();
+			refreshOperation.close();
+			activeSearchOperation = null;
+			activeSearchTask = null;
+			throw failure;
+		}
 	}
 
 	private void startAutomaticSearch(Subject subject) {
@@ -1748,11 +1865,10 @@ public class QuestionSearchPane extends BorderPane {
 			statusLabel.setText("");
 			return;
 		}
-
-		// Subject Search still means applicability anywhere in that Subject's current
-		// syllabus; the new result wrapper does not alter retrieval semantics.
 		startAutomaticSearch(
-				() -> QuestionSearchResult.currentSyllabusResults(retrievalService.findQuestionsApplicableTo(subject)));
+				sourceOperation -> retrieveCurrentSyllabus(
+						parentId -> retrievalService.findQuestionsApplicableTo(subject, parentId), sourceOperation),
+				true);
 	}
 
 	private void startAutomaticSearch(Supplier<List<QuestionSearchResult>> retrieval) {
@@ -1760,25 +1876,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startAutomaticSearch(Supplier<List<QuestionSearchResult>> retrieval, boolean clearVisibleResults) {
-		cancelActiveSearch();
-		if (clearVisibleResults) {
-
-			// Ordinary navigation deliberately replaces the old scope immediately. An
-			// edit refresh instead retains the accepted result generation until its
-			// replacement is ready.
-			clearResults();
-		}
-		long generation = searchGeneration;
-		statusLabel.setText("Searching...");
-
-		// Apply the immutable launch narrowing after retrieval conversion so the same
-		// constraint governs Current Syllabus, All Questions and edit-refresh paths.
-		Task<List<QuestionSearchResult>> task = new BackgroundTask<>(
-				() -> retrieval.get().stream().filter(result -> searchNarrowing.includes(result.question())).toList());
-		activeSearchTask = task;
-		task.setOnSucceeded(_ -> completeSearch(task, generation));
-		task.setOnFailed(_ -> failSearch(task, generation));
-		startBackgroundTask("question-search", task);
+		startAutomaticSearch(_ -> retrieval.get(), clearVisibleResults);
 	}
 
 	private void startBackgroundTask(String threadName, Task<?> task) {

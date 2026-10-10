@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -54,6 +55,28 @@ public final class PerformanceRecorder {
 	}
 
 	/**
+	 * Executes and measures an operation, recording both success and failure.
+	 *
+	 * The original exception or error is propagated unchanged.
+	 *
+	 * @param <T>    result type
+	 * @param name   stable operation identifier
+	 * @param action operation to execute
+	 * @return the operation result
+	 * @throws Exception if the operation fails
+	 */
+	public <T> T measure(String name, Callable<T> action) throws Exception {
+		try (PerformanceOperation operation = start(name)) {
+			try {
+				return action.call();
+			} catch (Exception | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+	}
+
+	/**
 	 * Begins an independent operation.
 	 *
 	 * @param name stable operation identifier
@@ -99,10 +122,15 @@ public final class PerformanceRecorder {
 						StandardOpenOption.CREATE_NEW);
 			}
 			Files.writeString(outputFile, line, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
-		} catch (IOException e) {
+		} catch (IOException | RuntimeException failure) {
 
-			// Diagnostics must not replace an application failure.
-			System.err.println("Performance diagnostics write failed: " + e.getMessage());
+			// Diagnostic output must not alter application behaviour.
+			try {
+				System.err.println("Performance diagnostics write failed: " + failure.getMessage());
+			} catch (RuntimeException ignored) {
+
+				// Reporting failure must also remain non-fatal.
+			}
 		}
 	}
 }

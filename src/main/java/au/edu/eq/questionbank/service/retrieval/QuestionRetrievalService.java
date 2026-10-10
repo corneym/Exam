@@ -1,10 +1,13 @@
 package au.edu.eq.questionbank.service.retrieval;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
@@ -23,119 +26,171 @@ public final class QuestionRetrievalService {
 
 	private final QuestionRetrievalRepository retrievalRepository;
 	private final CurriculumSearchNodeExpansionService searchNodeExpansionService;
+	private final PerformanceRecorder performanceRecorder;
 
 	/**
-	 * Creates a retrieval service backed by curriculum-aware question lookup.
+	 * Creates a retrieval service with diagnostics disabled.
 	 *
-	 * @param retrievalRepository        curriculum-aware question persistence
-	 *                                   boundary
-	 * @param searchNodeExpansionService current curriculum hierarchy expansion
-	 *                                   service
-	 * @throws NullPointerException if either dependency is {@code null}
+	 * @param retrievalRepository        curriculum-aware Question repository
+	 * @param searchNodeExpansionService curriculum search-node expansion
 	 */
 	public QuestionRetrievalService(QuestionRetrievalRepository retrievalRepository,
 			CurriculumSearchNodeExpansionService searchNodeExpansionService) {
+		this(retrievalRepository, searchNodeExpansionService,
+				new PerformanceRecorder(false, Path.of("performance.csv")));
+	}
+
+	/**
+	 * Creates a retrieval service using the supplied performance recorder.
+	 *
+	 * @param retrievalRepository        curriculum-aware Question repository
+	 * @param searchNodeExpansionService curriculum search-node expansion
+	 * @param performanceRecorder        application-level performance recorder
+	 */
+	public QuestionRetrievalService(QuestionRetrievalRepository retrievalRepository,
+			CurriculumSearchNodeExpansionService searchNodeExpansionService, PerformanceRecorder performanceRecorder) {
 		if (retrievalRepository == null) {
 			throw new NullPointerException("retrievalRepository");
 		}
 		if (searchNodeExpansionService == null) {
 			throw new NullPointerException("searchNodeExpansionService");
 		}
+		if (performanceRecorder == null) {
+			throw new NullPointerException("performanceRecorder");
+		}
+		this.performanceRecorder = performanceRecorder;
 		this.retrievalRepository = retrievalRepository;
 		this.searchNodeExpansionService = searchNodeExpansionService;
 	}
 
 	/**
-	 * Finds unique stored questions applicable within a current curriculum scope.
-	 * <p>
-	 * Descriptor searches are exact. Subtopic, topic and unit searches expand
-	 * downwards according to the current curriculum hierarchy.
-	 * <p>
-	 * Results are ordered by persistent question identifier. Historical
-	 * classifications remain unchanged and are exposed separately from the current
-	 * applicability that caused each result to match.
+	 * Finds Questions applicable to a current curriculum node.
 	 *
-	 * @param currentNode the current unit, topic, subtopic or descriptor being
-	 *                    searched
-	 * @return unique matching questions in deterministic order
-	 * @throws NullPointerException     if {@code currentNode} is {@code null}
-	 * @throws IllegalArgumentException if the node is not a supported current
-	 *                                  curriculum search scope
-	 * @throws IllegalStateException    if the curriculum hierarchy or persistence
-	 *                                  result is invalid
+	 * @param currentNode selected curriculum search scope
+	 * @return matching Questions with current applicability
 	 */
 	public List<QuestionRetrievalResult> findQuestionsApplicableTo(CurriculumNode currentNode) {
-		List<CurriculumNode> currentNodes = searchNodeExpansionService.expandSearchNode(currentNode);
-		if (currentNodes.isEmpty()) {
-			return List.of();
-		}
-		return retrieveForCurrentNodes(currentNodes);
+		return findQuestionsApplicableTo(currentNode, 0);
 	}
 
 	/**
-	 * Finds unique stored questions applicable anywhere within the subject's
-	 * current syllabus.
-	 * <p>
-	 * Historical classifications remain unchanged and may contribute through
-	 * confirmed mappings to current curriculum nodes.
+	 * Finds applicable Questions with correlated diagnostic measurements.
 	 *
-	 * @param subject the subject whose current curriculum is searched
-	 * @return unique matching questions in deterministic order
-	 * @throws NullPointerException  if {@code subject} is {@code null}
-	 * @throws IllegalStateException if the current curriculum hierarchy or
-	 *                               persistence result is invalid
+	 * @param currentNode       selected curriculum search scope
+	 * @param parentOperationId parent diagnostic operation ID
+	 * @return matching Questions with current applicability
 	 */
-	public List<QuestionRetrievalResult> findQuestionsApplicableTo(Subject subject) {
-		List<CurriculumNode> currentNodes = searchNodeExpansionService.expandSearchSubject(subject);
+	public List<QuestionRetrievalResult> findQuestionsApplicableTo(CurriculumNode currentNode, long parentOperationId) {
+		List<CurriculumNode> currentNodes;
+		try (PerformanceOperation operation = performanceRecorder.start("search.curriculum.expand",
+				parentOperationId)) {
+			try {
+				currentNodes = searchNodeExpansionService.expandSearchNode(currentNode);
+				operation.resultCount(currentNodes.size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
 		if (currentNodes.isEmpty()) {
 			return List.of();
 		}
-		return retrieveForCurrentNodes(currentNodes);
+		return retrieveForCurrentNodes(currentNodes, parentOperationId);
 	}
 
-	private List<QuestionRetrievalResult> retrieveForCurrentNodes(List<CurriculumNode> currentNodes) {
+	/**
+	 * Finds Questions applicable to the Subject's current syllabus.
+	 *
+	 * @param subject Subject to search
+	 * @return matching Questions with current applicability
+	 */
+	public List<QuestionRetrievalResult> findQuestionsApplicableTo(Subject subject) {
+		return findQuestionsApplicableTo(subject, 0);
+	}
 
-		// Persistent-ID ordering keeps results stable regardless of repository match
-		// order.
-		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
-		Map<Long, Map<Long, CurriculumNode>> applicabilityByQuestionId = new TreeMap<Long, Map<Long, CurriculumNode>>();
-		Map<Long, CurriculumNode> requestedNodesById = new TreeMap<Long, CurriculumNode>();
-		for (CurriculumNode currentNode : currentNodes) {
-			requestedNodesById.put(currentNode.getId(), currentNode);
-		}
-		List<QuestionApplicabilityMatch> matches = retrievalRepository.findApplicableToNodes(currentNodes);
-		if (matches == null) {
-			throw new IllegalStateException("Question retrieval repository returned null");
-		}
-		for (QuestionApplicabilityMatch match : matches) {
-			if (match == null) {
-				throw new IllegalStateException("Question retrieval repository returned a null match");
+	/**
+	 * Finds Subject-applicable Questions with correlated diagnostics.
+	 *
+	 * @param subject           Subject to search
+	 * @param parentOperationId parent diagnostic operation ID
+	 * @return matching Questions with current applicability
+	 */
+	public List<QuestionRetrievalResult> findQuestionsApplicableTo(Subject subject, long parentOperationId) {
+		List<CurriculumNode> currentNodes;
+		try (PerformanceOperation operation = performanceRecorder.start("search.curriculum.expand",
+				parentOperationId)) {
+			try {
+				currentNodes = searchNodeExpansionService.expandSearchSubject(subject);
+				operation.resultCount(currentNodes.size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
 			}
-			Question question = match.getQuestion();
-			CurriculumNode currentNode = match.getCurrentNode();
+		}
+		if (currentNodes.isEmpty()) {
+			return List.of();
+		}
+		return retrieveForCurrentNodes(currentNodes, parentOperationId);
+	}
 
-			// Repository results must not broaden the curriculum scope selected by the
-			// caller.
-			if (!requestedNodesById.containsKey(currentNode.getId())) {
-				throw new IllegalStateException("Question retrieval repository returned an unrequested current node");
+	private List<QuestionRetrievalResult> retrieveForCurrentNodes(List<CurriculumNode> currentNodes,
+			long parentOperationId) {
+		List<QuestionApplicabilityMatch> matches;
+		try (PerformanceOperation operation = performanceRecorder.start("search.repository.applicability",
+				parentOperationId)) {
+			try {
+				matches = retrievalRepository.findApplicableToNodes(currentNodes, operation.id());
+				if (matches == null) {
+					throw new IllegalStateException("Question retrieval repository returned null");
+				}
+				operation.resultCount(matches.size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
 			}
+		}
+		try (PerformanceOperation operation = performanceRecorder.start("search.matches.aggregate",
+				parentOperationId)) {
+			try {
 
-			// Merge repeated matches into one question while retaining each distinct reason
-			// it matched.
-			questionsById.putIfAbsent(question.getId(), question);
-			Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(question.getId());
-			if (applicability == null) {
-				applicability = new TreeMap<Long, CurriculumNode>();
-				applicabilityByQuestionId.put(question.getId(), applicability);
+				// Preserve persistent-ID ordering and distinct applicability.
+				Map<Long, Question> questionsById = new TreeMap<Long, Question>();
+				Map<Long, Map<Long, CurriculumNode>> applicabilityByQuestionId = new TreeMap<Long, Map<Long, CurriculumNode>>();
+				Map<Long, CurriculumNode> requestedNodesById = new TreeMap<Long, CurriculumNode>();
+				for (CurriculumNode currentNode : currentNodes) {
+					requestedNodesById.put(currentNode.getId(), currentNode);
+				}
+				for (QuestionApplicabilityMatch match : matches) {
+					if (match == null) {
+						throw new IllegalStateException("Question retrieval repository returned a null match");
+					}
+					Question question = match.getQuestion();
+					CurriculumNode currentNode = match.getCurrentNode();
+					if (!requestedNodesById.containsKey(currentNode.getId())) {
+						throw new IllegalStateException(
+								"Question retrieval repository returned an " + "unrequested current node");
+					}
+					questionsById.putIfAbsent(question.getId(), question);
+					Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(question.getId());
+					if (applicability == null) {
+						applicability = new TreeMap<Long, CurriculumNode>();
+						applicabilityByQuestionId.put(question.getId(), applicability);
+					}
+					applicability.putIfAbsent(currentNode.getId(), currentNode);
+				}
+				List<QuestionRetrievalResult> results = new ArrayList<QuestionRetrievalResult>();
+				for (Map.Entry<Long, Question> entry : questionsById.entrySet()) {
+					Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(entry.getKey());
+					results.add(new QuestionRetrievalResult(entry.getValue(),
+							new ArrayList<CurriculumNode>(applicability.values())));
+				}
+				List<QuestionRetrievalResult> uniqueResults = List.copyOf(results);
+				operation.resultCount(uniqueResults.size());
+				return uniqueResults;
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
 			}
-			applicability.putIfAbsent(currentNode.getId(), currentNode);
 		}
-		List<QuestionRetrievalResult> results = new ArrayList<QuestionRetrievalResult>();
-		for (Map.Entry<Long, Question> entry : questionsById.entrySet()) {
-			Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(entry.getKey());
-			results.add(new QuestionRetrievalResult(entry.getValue(),
-					new ArrayList<CurriculumNode>(applicability.values())));
-		}
-		return List.copyOf(results);
 	}
 }

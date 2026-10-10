@@ -3,7 +3,9 @@ package au.edu.eq.questionbank.repository.assessment;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -12,6 +14,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -53,6 +57,41 @@ class SqliteQuestionRetrievalRepositoryTest {
 		QuestionRetrievalRepository repository = new SqliteQuestionRepository(reopenedDatabase);
 		List<QuestionApplicabilityMatch> matches = repository.findApplicableToNodes(List.of(staleCurrentDescriptor));
 		assertEquals(0, matches.size());
+	}
+
+	@Test
+	void recordsCorrelatedSqlAndReconstructionTimings() throws Exception {
+		Fixture fixture = createFixture("batch-11-diagnostics.db");
+		SqliteDatabase database = new SqliteDatabase(fixture.databasePath());
+		database.initialiseSchema();
+		CurriculumNode currentDescriptor = reloadCurrentDescriptor(database, fixture);
+		Path csv = tempDirectory.resolve("performance.csv");
+		PerformanceRecorder recorder = new PerformanceRecorder(true, csv);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database, recorder);
+		List<QuestionApplicabilityMatch> matches;
+		try (PerformanceOperation parent = recorder.start("test.applicability")) {
+			matches = repository.findApplicableToNodes(List.of(currentDescriptor), parent.id());
+			parent.resultCount(matches.size());
+		}
+		assertEquals(3, matches.size());
+		List<String[]> records = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		String[] parent = records.stream().filter(row -> row[3].equals("test.applicability")).findFirst().orElseThrow();
+		String[] sql = records.stream().filter(row -> row[3].equals("search.repository.sql")).findFirst().orElseThrow();
+		String[] rows = records.stream().filter(row -> row[3].equals("search.repository.rows")).findFirst()
+				.orElseThrow();
+		String[] reconstruction = records.stream().filter(row -> row[3].equals("search.repository.reconstruct"))
+				.findFirst().orElseThrow();
+
+		// SQL and reconstruction belong to the same retrieval request.
+		assertEquals(parent[1], sql[2]);
+		assertEquals(parent[1], reconstruction[2]);
+
+		// Row iteration is nested within the SQL measurement.
+		assertEquals(sql[1], rows[2]);
+		for (String[] record : List.of(sql, rows, reconstruction)) {
+			assertTrue(Boolean.parseBoolean(record[5]));
+			assertEquals(3, Long.parseLong(record[6]));
+		}
 	}
 
 	@Test
