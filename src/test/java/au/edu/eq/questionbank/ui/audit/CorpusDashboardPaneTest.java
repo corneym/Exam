@@ -866,8 +866,8 @@ class CorpusDashboardPaneTest {
 				List.of(readyBooklet), new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0),
 				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
 
-		// The production Work column currently ignores structural
-		// incompleteness, even when no Questions exist.
+		// The Needs Work column must reflect structural incompleteness
+		// even when no Questions have been captured.
 		robot.interact(() -> pane.replaceData(List.of(unknownCounts, missingBooklets), List.of()));
 		TableColumn<ExamCorpusStatus, String> needsWork = exams.getColumns().stream()
 				.filter(column -> "Needs Work".equals(column.getText()))
