@@ -160,6 +160,8 @@ public class QuestionSearchPane extends BorderPane {
 	// separate application-level Subject selection.
 	private final Subject workingSubject;
 	private final QuestionSearchNarrowing searchNarrowing;
+	private PerformanceOperation activeOutputApplicabilityOperation;
+	private PerformanceOperation activePreviewOperation;
 
 	/**
 	 * Creates an unrestricted question-search pane.
@@ -398,6 +400,14 @@ public class QuestionSearchPane extends BorderPane {
 			activeOutputApplicabilityTask.cancel(false);
 			activeOutputApplicabilityTask = null;
 		}
+		if (activeOutputApplicabilityOperation != null) {
+
+			// Superseded selections are unsuccessful even when the
+			// background database retrieval continues to completion.
+			activeOutputApplicabilityOperation.failed();
+			activeOutputApplicabilityOperation.close();
+			activeOutputApplicabilityOperation = null;
+		}
 	}
 
 	private void cancelActivePreview() {
@@ -405,6 +415,14 @@ public class QuestionSearchPane extends BorderPane {
 		if (activePreviewTask != null) {
 			activePreviewTask.cancel(false);
 			activePreviewTask = null;
+		}
+		if (activePreviewOperation != null) {
+
+			// A superseded preview must be recorded as unsuccessful.
+			// Its background renderer may nevertheless finish later.
+			activePreviewOperation.failed();
+			activePreviewOperation.close();
+			activePreviewOperation = null;
 		}
 	}
 
@@ -532,20 +550,32 @@ public class QuestionSearchPane extends BorderPane {
 	private void completeOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
 			long questionId) {
 
-		// A completed background lookup may belong to a Question that is no longer
-		// selected. Generation and task identity prevent stale applicability from
-		// replacing the current Question's display.
+		// Only the current selection is permitted to publish results.
 		if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {
 			return;
 		}
 		activeOutputApplicabilityTask = null;
-		Question selectedQuestion = getSelectedQuestion();
-		if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
-			return;
+		PerformanceOperation operation = activeOutputApplicabilityOperation;
+		activeOutputApplicabilityOperation = null;
+		try {
+			Question selectedQuestion = getSelectedQuestion();
+			if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
+				operation.failed();
+				return;
+			}
+			List<QuestionOutputApplicabilityRow> rows = task.getValue();
+			outputApplicabilityList.getItems().setAll(rows);
+			updateOutputApplicabilityStatus();
+			updateOutputApplicabilityActionState();
+
+			// Finish after the results have been published to JavaFX.
+			operation.resultCount(rows.size());
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			throw failure;
+		} finally {
+			operation.close();
 		}
-		outputApplicabilityList.getItems().setAll(task.getValue());
-		updateOutputApplicabilityStatus();
-		updateOutputApplicabilityActionState();
 	}
 
 	private void completeOutputApplicabilityUpdate(Task<Void> task, long questionId, CurriculumNode currentNode,
@@ -580,14 +610,36 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		activePreviewTask = null;
-		Optional<BufferedImage> preview = task.getValue();
-		if (preview.isEmpty()) {
-			previewStatusLabel.setText("No stored question image.");
-			return;
+		PerformanceOperation operation = activePreviewOperation;
+		activePreviewOperation = null;
+		try (PerformanceOperation publication = performanceRecorder.start("search.preview.publish", operation.id())) {
+			try {
+				Optional<BufferedImage> preview = task.getValue();
+				if (preview.isEmpty()) {
+					previewStatusLabel.setText("No stored question image.");
+					publication.resultCount(0);
+					operation.resultCount(0);
+					return;
+				}
+
+				// Conversion from BufferedImage to a JavaFX Image occurs
+				// on the JavaFX application thread.
+				Image image = SwingFXUtils.toFXImage(preview.get(), null);
+				previewImageView.setImage(image);
+				previewStatusLabel.setText("");
+				publication.resultCount(1);
+				operation.resultCount(1);
+			} catch (RuntimeException | Error failure) {
+				publication.failed();
+				operation.failed();
+				throw failure;
+			}
+		} finally {
+
+			// The end-to-end timer includes JavaFX image conversion
+			// and publication, not merely background rendering.
+			operation.close();
 		}
-		Image image = SwingFXUtils.toFXImage(preview.get(), null);
-		previewImageView.setImage(image);
-		previewStatusLabel.setText("");
 	}
 
 	private void completeSearch(Task<List<QuestionSearchResult>> task, long generation) {
@@ -1021,11 +1073,20 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void displaySelectedResult(QuestionSearchResult result) {
+		try (PerformanceOperation operation = performanceRecorder.start("search.selection.details")) {
+			try {
 
-		// Question details, stored classification and revision-output applicability
-		// all represent the same selected Search result and must change together.
-		showResultDetails(result);
-		showSelectedClassification(result);
+				// These operations run synchronously on the JavaFX thread.
+				showResultDetails(result);
+				showSelectedClassification(result);
+				operation.resultCount(result == null ? 0 : 1);
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+
+		// Revision-output applicability loads independently in the background.
 		startOutputApplicabilityLoad(result);
 	}
 
@@ -1047,16 +1108,22 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		activeOutputApplicabilityTask = null;
-		if (!isSelectedQuestion(questionId)) {
-			return;
-		}
-		outputApplicabilityStatusLabel
-				.setText(failureStatusText("Revision output applicability unavailable", task.getException()));
-		outputApplicabilityList.getItems().clear();
+		PerformanceOperation operation = activeOutputApplicabilityOperation;
+		activeOutputApplicabilityOperation = null;
+		try {
+			operation.failed();
+			if (!isSelectedQuestion(questionId)) {
+				return;
+			}
+			outputApplicabilityStatusLabel
+					.setText(failureStatusText("Revision output applicability unavailable", task.getException()));
+			outputApplicabilityList.getItems().clear();
 
-		// A failed read leaves no trustworthy placement on which Include or Exclude
-		// could operate.
-		updateOutputApplicabilityActionState();
+			// Failed retrieval must not leave actions enabled against stale data.
+			updateOutputApplicabilityActionState();
+		} finally {
+			operation.close();
+		}
 	}
 
 	private void failOutputApplicabilityUpdate(Task<Void> task, long questionId) {
@@ -1082,7 +1149,14 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		activePreviewTask = null;
-		previewStatusLabel.setText(failureStatusText("Question preview unavailable", task.getException()));
+		PerformanceOperation operation = activePreviewOperation;
+		activePreviewOperation = null;
+		try {
+			operation.failed();
+			previewStatusLabel.setText(failureStatusText("Question preview unavailable", task.getException()));
+		} finally {
+			operation.close();
+		}
 	}
 
 	private void failSearch(Task<List<QuestionSearchResult>> task, long generation) {
@@ -1112,22 +1186,20 @@ public class QuestionSearchPane extends BorderPane {
 		return summary + ": " + failure.getMessage();
 	}
 
-	private List<CurriculumNode> findCompleteCurrentApplicability(Question question) {
+	private List<CurriculumNode> findCompleteCurrentApplicability(Question question, long parentOperationId) {
 		List<QuestionRetrievalResult> results = retrievalService
-				.findQuestionsApplicableTo(question.getExam().getSubject());
+				.findQuestionsApplicableTo(question.getExam().getSubject(), parentOperationId);
 		for (QuestionRetrievalResult result : results) {
 			if (result.getQuestion().getId() != question.getId()) {
 				continue;
 			}
 
-			// Output applicability is Subject-wide. The Search result may represent a
-			// much narrower Unit, Topic, Subtopic or Descriptor scope and therefore
-			// cannot be used as the complete set of output placements.
+			// Output applicability must include every current Subject
+			// placement, not merely the selected Search scope.
 			return result.getCurrentApplicability();
 		}
 
-		// A Question may legitimately have no current mapping or the Subject may have
-		// no current syllabus.
+		// No current applicability is a valid outcome.
 		return List.of();
 	}
 
@@ -1325,23 +1397,51 @@ public class QuestionSearchPane extends BorderPane {
 		return selectedQuestion != null && selectedQuestion.getId() == questionId;
 	}
 
-	private List<QuestionOutputApplicabilityRow> loadOutputApplicability(QuestionSearchResult result) {
-		Question question = result.question();
+	private List<QuestionOutputApplicabilityRow> loadOutputApplicability(QuestionSearchResult result,
+			long parentOperationId) {
+		try (PerformanceOperation retrievalOperation = performanceRecorder
+				.start("search.output-applicability.retrieval", parentOperationId)) {
+			try {
+				Question question = result.question();
+				List<CurriculumNode> currentApplicability;
+				try (PerformanceOperation subjectOperation = performanceRecorder
+						.start("search.output-applicability.subject", retrievalOperation.id())) {
+					try {
+						currentApplicability = findCompleteCurrentApplicability(question, subjectOperation.id());
+						subjectOperation.resultCount(currentApplicability.size());
+					} catch (RuntimeException | Error failure) {
+						subjectOperation.failed();
+						throw failure;
+					}
+				}
+				Set<Long> excludedCurrentNodeIds;
+				try (PerformanceOperation exclusionsOperation = performanceRecorder
+						.start("search.output-applicability.exclusions", retrievalOperation.id())) {
+					try {
+						excludedCurrentNodeIds = outputApplicabilityRepository.findExcludedCurrentNodeIds(question);
+						if (excludedCurrentNodeIds == null) {
+							throw new IllegalStateException(
+									"Question output applicability repository " + "returned null");
+						}
+						exclusionsOperation.resultCount(excludedCurrentNodeIds.size());
+					} catch (RuntimeException | Error failure) {
+						exclusionsOperation.failed();
+						throw failure;
+					}
+				}
 
-		// Search-result applicability explains why this Question matched the current
-		// Search scope. Revision-output applicability is different: it must show every
-		// current placement for the Question across its Subject, regardless of how
-		// narrowly Search itself is filtered.
-		List<CurriculumNode> currentApplicability = findCompleteCurrentApplicability(question);
-		Set<Long> excludedCurrentNodeIds = outputApplicabilityRepository.findExcludedCurrentNodeIds(question);
-		if (excludedCurrentNodeIds == null) {
-			throw new IllegalStateException("Question output applicability repository returned null");
+				// Preserve the existing order and exclusion semantics.
+				List<QuestionOutputApplicabilityRow> rows = currentApplicability.stream()
+						.map(currentNode -> new QuestionOutputApplicabilityRow(currentNode,
+								excludedCurrentNodeIds.contains(currentNode.getId())))
+						.toList();
+				retrievalOperation.resultCount(rows.size());
+				return rows;
+			} catch (RuntimeException | Error failure) {
+				retrievalOperation.failed();
+				throw failure;
+			}
 		}
-
-		// Only currently-derived placements are displayed. A stored exclusion for a
-		// node that is no longer applicable has no effect on current revision output.
-		return currentApplicability.stream().map(currentNode -> new QuestionOutputApplicabilityRow(currentNode,
-				excludedCurrentNodeIds.contains(currentNode.getId()))).toList();
 	}
 
 	private SubjectNavigation loadSubjectNavigation(Subject subject) {
@@ -1932,11 +2032,31 @@ public class QuestionSearchPane extends BorderPane {
 		long generation = outputApplicabilityGeneration;
 		long questionId = result.question().getId();
 		outputApplicabilityStatusLabel.setText("Loading revision output applicability...");
-		Task<List<QuestionOutputApplicabilityRow>> task = new BackgroundTask<>(() -> loadOutputApplicability(result));
+
+		// The outer measurement ends when JavaFX publishes the result,
+		// or when this selection is failed or superseded.
+		PerformanceOperation operation = performanceRecorder.start("search.output-applicability.load");
+		activeOutputApplicabilityOperation = operation;
+		Task<List<QuestionOutputApplicabilityRow>> task = new BackgroundTask<>(
+				() -> loadOutputApplicability(result, operation.id()));
 		activeOutputApplicabilityTask = task;
 		task.setOnSucceeded(_ -> completeOutputApplicabilityLoad(task, generation, questionId));
 		task.setOnFailed(_ -> failOutputApplicabilityLoad(task, generation, questionId));
-		startBackgroundTask("question-output-applicability", task);
+		task.setOnCancelled(_ -> {
+			if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {
+				return;
+			}
+			cancelActiveOutputApplicabilityLoad();
+		});
+		try {
+			startBackgroundTask("question-output-applicability", task);
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			operation.close();
+			activeOutputApplicabilityOperation = null;
+			activeOutputApplicabilityTask = null;
+			throw failure;
+		}
 	}
 
 	private void startOutputApplicabilityUpdate(Question question, CurriculumNode currentNode, boolean excluded) {
@@ -1961,12 +2081,40 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		long generation = previewGeneration;
-		previewStatusLabel.setText("Loading preview...");
-		Task<Optional<BufferedImage>> task = new BackgroundTask<>(() -> previewService.loadPreview(question));
-		activePreviewTask = task;
-		task.setOnSucceeded(_ -> completePreview(task, generation));
-		task.setOnFailed(_ -> failPreview(task, generation));
-		startBackgroundTask("question-preview", task);
+		PerformanceOperation operation = performanceRecorder.start("search.preview.load");
+		activePreviewOperation = operation;
+		try {
+			previewStatusLabel.setText("Loading preview...");
+			Task<Optional<BufferedImage>> task = new BackgroundTask<>(() -> {
+
+				// Measure rendering separately from the JavaFX
+				// publication phase.
+				try (PerformanceOperation rendering = performanceRecorder.start("search.preview.render",
+						operation.id())) {
+					try {
+						Optional<BufferedImage> preview = previewService.loadPreview(question);
+						rendering.resultCount(preview.isPresent() ? 1 : 0);
+						return preview;
+					} catch (Exception | Error failure) {
+						rendering.failed();
+						throw failure;
+					}
+				}
+			});
+			activePreviewTask = task;
+			task.setOnSucceeded(_ -> completePreview(task, generation));
+			task.setOnFailed(_ -> failPreview(task, generation));
+			startBackgroundTask("question-preview", task);
+		} catch (RuntimeException | Error failure) {
+
+			// A failure before the Task can start must also close
+			// the outer timing operation.
+			activePreviewTask = null;
+			activePreviewOperation = null;
+			operation.failed();
+			operation.close();
+			throw failure;
+		}
 	}
 
 	private void startWorkingSubjectNavigation() {

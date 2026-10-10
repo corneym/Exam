@@ -1626,6 +1626,7 @@ public class QuestionBankApplication extends Application {
 
 	private CurriculumSelectorPane createCurriculumSelectorPane(Stage primaryStage, SqliteDatabase database) {
 		CurriculumSelectorPane selectorPane = new CurriculumSelectorPane(curriculumSelectionModel);
+		selectorPane.setPerformanceRecorder(performanceRecorder);
 
 		// Working Subject changes are coordinated centrally so the pane never performs
 		// its Subject-dependent persistence reads on the JavaFX thread.
@@ -2619,6 +2620,7 @@ public class QuestionBankApplication extends Application {
 				pdfWorkspace::getAnswerPdfSession,
 				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.ANSWER, pageNumber),
 				(selected, completed) -> pdfWorkspace.openAnswerPdfAsync(selected.path(), completed));
+		answerCapturePane.setPerformanceRecorder(performanceRecorder);
 		answerCapturePane.refreshQuestions();
 		SharedContextCapturePane sharedContextCapturePane = new SharedContextCapturePane(
 				new SqliteSharedQuestionContextRepository(database), examMetadataPane::getBooklet, questionExtractor,
@@ -2631,6 +2633,7 @@ public class QuestionBankApplication extends Application {
 				pageNumber -> pdfWorkspace.showPage(PdfWorkspacePane.DocumentMode.EXAM, pageNumber),
 				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
+		questionCapturePane.setPerformanceRecorder(performanceRecorder);
 		questionCapturePane.refreshImportedQuestions();
 	}
 
@@ -3922,8 +3925,20 @@ public class QuestionBankApplication extends Application {
 
 		// Every Dashboard operation routes into an existing authoritative workflow.
 		dashboard.setAnswerCaptureHandler(question -> {
-			if (!showDashboardAnswerCapture(question, this::refreshAndShowCorpusDashboardHome)) {
-				showCorpusDashboardHome();
+			try (PerformanceOperation operation = performanceRecorder.start("dashboard.answer-capture.open")) {
+				try {
+					boolean started = showDashboardAnswerCapture(question, this::refreshAndShowCorpusDashboardHome,
+							operation.id());
+					if (!started) {
+						operation.failed();
+						showCorpusDashboardHome();
+						return;
+					}
+					operation.resultCount(1);
+				} catch (RuntimeException | Error failure) {
+					operation.failed();
+					throw failure;
+				}
 			}
 		});
 		dashboard.setMcqExplanationCaptureHandler(question -> {
@@ -4023,21 +4038,27 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private boolean showDashboardAnswerCapture(Question question, Runnable returnHandler) {
+	private boolean showDashboardAnswerCapture(Question question, Runnable returnHandler, long parentOperationId) {
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
 		if (returnHandler == null) {
 			throw new NullPointerException("returnHandler");
 		}
+		try (PerformanceOperation workspaceOperation = performanceRecorder.start("dashboard.answer-capture.workspace",
+				parentOperationId)) {
+			try {
 
-		// Dashboard Answer capture remains within the selected Exam even after the
-		// initial selected-booklet Question has been completed.
-		showDashboardAnswerCaptureWorkspace(question.getExam());
-		boolean started = answerCapturePane.captureAnswer(question);
+				// Dashboard Answer capture is scoped to the Exam.
+				showDashboardAnswerCaptureWorkspace(question.getExam());
+				workspaceOperation.resultCount(1);
+			} catch (RuntimeException | Error failure) {
+				workspaceOperation.failed();
+				throw failure;
+			}
+		}
+		boolean started = answerCapturePane.captureAnswer(question, parentOperationId);
 		if (!started) {
-
-			// A rejected transition owns no persistent Exam scope.
 			answerCapturePane.setExamScope(null);
 			setCaptureWorkspaceSectionVisibility(true, true, true);
 			return false;

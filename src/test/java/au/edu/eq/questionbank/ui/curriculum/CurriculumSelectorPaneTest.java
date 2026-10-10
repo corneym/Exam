@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -15,6 +17,7 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -201,6 +204,24 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
+	public void disabledHierarchyDiagnosticsCreateNoFile(FxRobot robot) throws Exception {
+		Path csv = Files.createTempDirectory("curriculum-disabled-performance-").resolve("performance.csv");
+		robot.interact(() -> {
+			pane.setPerformanceRecorder(new PerformanceRecorder(false, csv));
+		});
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		robot.interact(() -> {
+			units.getSelectionModel().select(unit3);
+			topics.getSelectionModel().select(topic31);
+		});
+		assertEquals(topic31, model.getTopic());
+		assertFalse(Files.exists(csv));
+	}
+
+	@Test
 	public void dropdownSelectionsSynchroniseCodeAndClassification(FxRobot robot) {
 		@SuppressWarnings("unchecked")
 		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
@@ -232,6 +253,44 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(subtopic311, model.getSubtopic());
 		assertNull(model.getDescriptor());
 		assertEquals(subtopic311, pane.selectedClassificationProperty().get());
+	}
+
+	@Test
+	public void hierarchySelectionRecordsCorrelatedDiagnostics(FxRobot robot) throws Exception {
+		Path csv = Files.createTempDirectory("curriculum-selection-performance-").resolve("performance.csv");
+		PerformanceRecorder recorder = new PerformanceRecorder(true, csv);
+		robot.interact(() -> pane.setPerformanceRecorder(recorder));
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+		robot.interact(() -> {
+			units.getSelectionModel().select(unit3);
+			topics.getSelectionModel().select(topic31);
+			subtopics.getSelectionModel().select(subtopic311);
+			descriptors.getSelectionModel().select(descriptor3111);
+		});
+		assertEquals(descriptor3111, model.getClassification());
+		assertTrue(Files.isRegularFile(csv));
+		List<String[]> rows = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		for (String operationName : List.of("capture.curriculum.unit", "capture.curriculum.topic",
+				"capture.curriculum.subtopic", "capture.curriculum.descriptor")) {
+			assertTrue(rows.stream().anyMatch(row -> row[3].equals(operationName) && row[5].equals("true")),
+					operationName);
+		}
+		for (String[] pair : List.of(new String[] { "capture.curriculum.unit", "capture.curriculum.topics.lookup" },
+				new String[] { "capture.curriculum.topic", "capture.curriculum.subtopics.lookup" },
+				new String[] { "capture.curriculum.subtopic", "capture.curriculum.descriptors.lookup" })) {
+			String[] parent = rows.stream().filter(row -> row[3].equals(pair[0])).findFirst().orElseThrow();
+			assertTrue(
+					rows.stream().anyMatch(
+							row -> row[3].equals(pair[1]) && row[2].equals(parent[1]) && row[5].equals("true")),
+					"Missing correlated lookup: " + pair[1]);
+		}
 	}
 
 	@Test

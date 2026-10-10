@@ -1,7 +1,12 @@
 package au.edu.eq.questionbank.ui.curriculum;
 
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
+import java.util.function.Supplier;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
@@ -62,6 +67,7 @@ public class CurriculumSelectorPane extends VBox {
 	private VBox classificationContext;
 	private VBox subjectContext;
 	private final Label readOnlySubjectLabel = new Label();
+	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
 
 	// The desktop application owns asynchronous Working Subject transitions. A
 	// standalone selector keeps its existing synchronous Subject behaviour.
@@ -359,6 +365,16 @@ public class CurriculumSelectorPane extends VBox {
 		// so control the retained section directly rather than disabling Working
 		// Subject as well.
 		classificationContext.setDisable(disabled);
+	}
+
+	/**
+	 * Configures performance diagnostics for curriculum navigation.
+	 *
+	 * @param performanceRecorder shared application recorder
+	 * @throws NullPointerException if the recorder is null
+	 */
+	public void setPerformanceRecorder(PerformanceRecorder performanceRecorder) {
+		this.performanceRecorder = Objects.requireNonNull(performanceRecorder, "performanceRecorder");
 	}
 
 	/**
@@ -813,8 +829,16 @@ public class CurriculumSelectorPane extends VBox {
 		if (refreshingSubjects || refreshingCode) {
 			return;
 		}
-		model.selectDescriptor(descriptorBox.getValue());
-		syncCodeFromSelection();
+		try (PerformanceOperation operation = performanceRecorder.start("capture.curriculum.descriptor")) {
+			try {
+				model.selectDescriptor(descriptorBox.getValue());
+				syncCodeFromSelection();
+				operation.resultCount(descriptorBox.getValue() == null ? 0 : 1);
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
 	}
 
 	private void handleSubjectSelection() {
@@ -843,15 +867,23 @@ public class CurriculumSelectorPane extends VBox {
 		if (refreshingSubjects || refreshingCode) {
 			return;
 		}
-		CurriculumNode subtopic = subtopicBox.getValue();
-		model.selectSubtopic(subtopic);
-		descriptorBox.getSelectionModel().clearSelection();
-		if (subtopic == null) {
-			hideDescriptorRow();
-		} else {
-			refreshDescriptorRow();
+		try (PerformanceOperation operation = performanceRecorder.start("capture.curriculum.subtopic")) {
+			try {
+				CurriculumNode subtopic = subtopicBox.getValue();
+				model.selectSubtopic(subtopic);
+				descriptorBox.getSelectionModel().clearSelection();
+				if (subtopic == null) {
+					hideDescriptorRow();
+				} else {
+					refreshDescriptorRow(operation.id());
+				}
+				syncCodeFromSelection();
+				operation.resultCount(descriptorBox.getItems().size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
 		}
-		syncCodeFromSelection();
 	}
 
 	private void handleSyllabusSelection() {
@@ -879,36 +911,57 @@ public class CurriculumSelectorPane extends VBox {
 		if (refreshingSubjects || refreshingCode) {
 			return;
 		}
-		CurriculumNode topic = topicBox.getValue();
-		model.selectTopic(topic);
-		if (topic == null) {
-			hideSubtopicRow();
-			hideDescriptorRow();
-			syncCodeFromSelection();
-			return;
+		try (PerformanceOperation operation = performanceRecorder.start("capture.curriculum.topic")) {
+			try {
+				CurriculumNode topic = topicBox.getValue();
+				model.selectTopic(topic);
+				if (topic == null) {
+					hideSubtopicRow();
+					hideDescriptorRow();
+					syncCodeFromSelection();
+					operation.resultCount(0);
+					return;
+				}
+				refreshFinalClassificationRows(operation.id());
+				syncCodeFromSelection();
+				operation.resultCount(
+						subtopicBox.isVisible() ? subtopicBox.getItems().size() : descriptorBox.getItems().size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
 		}
-		refreshFinalClassificationRows();
-		syncCodeFromSelection();
 	}
 
 	private void handleUnitSelection() {
 		if (refreshingSubjects || refreshingCode) {
 			return;
 		}
-		CurriculumNode unit = unitBox.getValue();
-		model.selectUnit(unit);
-		topicBox.getSelectionModel().clearSelection();
-		hideSubtopicRow();
-		hideDescriptorRow();
-		if (unit == null) {
-			topicBox.getItems().clear();
-			topicBox.setDisable(true);
-			syncCodeFromSelection();
-			return;
+		try (PerformanceOperation operation = performanceRecorder.start("capture.curriculum.unit")) {
+			try {
+				CurriculumNode unit = unitBox.getValue();
+				model.selectUnit(unit);
+				topicBox.getSelectionModel().clearSelection();
+				hideSubtopicRow();
+				hideDescriptorRow();
+				if (unit == null) {
+					topicBox.getItems().clear();
+					topicBox.setDisable(true);
+					syncCodeFromSelection();
+					operation.resultCount(0);
+					return;
+				}
+				List<CurriculumNode> topics = measureHierarchyLookup("capture.curriculum.topics.lookup", operation.id(),
+						model::getTopics);
+				topicBox.getItems().setAll(topics);
+				topicBox.setDisable(false);
+				syncCodeFromSelection();
+				operation.resultCount(topics.size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
 		}
-		topicBox.getItems().setAll(model.getTopics());
-		topicBox.setDisable(false);
-		syncCodeFromSelection();
 	}
 
 	private boolean hasCodePrefix(List<CurriculumNode> nodes, String code) {
@@ -979,23 +1032,59 @@ public class CurriculumSelectorPane extends VBox {
 		return false;
 	}
 
+	private List<CurriculumNode> measureHierarchyLookup(String name, long parentOperationId,
+			Supplier<List<CurriculumNode>> lookup) {
+		try (PerformanceOperation operation = performanceRecorder.start(name, parentOperationId)) {
+			try {
+
+				// The selection model performs the existing repository
+				// child lookup synchronously.
+				List<CurriculumNode> nodes = lookup.get();
+				operation.resultCount(nodes.size());
+				return nodes;
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+	}
+
 	private void refreshDescriptorRow() {
+		refreshDescriptorRow(0);
+	}
+
+	private void refreshDescriptorRow(long parentOperationId) {
 		descriptorBox.getSelectionModel().clearSelection();
-		descriptorBox.getItems().setAll(model.getDescriptors());
+		List<CurriculumNode> descriptors = measureHierarchyLookup("capture.curriculum.descriptors.lookup",
+				parentOperationId, model::getDescriptors);
+		descriptorBox.getItems().setAll(descriptors);
 		setDescriptorRowVisible(!descriptorBox.getItems().isEmpty());
 	}
 
 	private void refreshFinalClassificationRows() {
+		refreshFinalClassificationRows(0);
+	}
+
+	private void refreshFinalClassificationRows(long parentOperationId) {
 		subtopicBox.getSelectionModel().clearSelection();
 		descriptorBox.getSelectionModel().clearSelection();
-		if (!model.getSubtopics().isEmpty()) {
-			subtopicBox.getItems().setAll(model.getSubtopics());
+		List<CurriculumNode> availableSubtopics = measureHierarchyLookup("capture.curriculum.subtopics.lookup",
+				parentOperationId, model::getSubtopics);
+		if (!availableSubtopics.isEmpty()) {
+
+			// Retain the existing second lookup. Its cost is
+			// deliberately measured before considering optimisation.
+			List<CurriculumNode> displayedSubtopics = measureHierarchyLookup("capture.curriculum.subtopics.lookup",
+					parentOperationId, model::getSubtopics);
+			subtopicBox.getItems().setAll(displayedSubtopics);
 			showSubtopicRow();
 			hideDescriptorRow();
 			return;
 		}
 		hideSubtopicRow();
-		descriptorBox.getItems().setAll(model.getDescriptors());
+		List<CurriculumNode> descriptors = measureHierarchyLookup("capture.curriculum.descriptors.lookup",
+				parentOperationId, model::getDescriptors);
+		descriptorBox.getItems().setAll(descriptors);
 		setDescriptorRowVisible(!descriptorBox.getItems().isEmpty());
 	}
 

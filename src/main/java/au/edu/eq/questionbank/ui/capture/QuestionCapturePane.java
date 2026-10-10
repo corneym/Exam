@@ -3,16 +3,21 @@ package au.edu.eq.questionbank.ui.capture;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.LongConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
@@ -192,6 +197,7 @@ public final class QuestionCapturePane extends VBox {
 	private Runnable importedCaptureCompletedHandler = () -> {
 	};
 	private final Label importedQuestionQueueLabel = new Label("Question(s) awaiting capture");
+	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
 
 	/**
 	 * Creates the question-capture workflow and its repository integration.
@@ -796,6 +802,16 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Configures shared application performance diagnostics.
+	 *
+	 * @param performanceRecorder application recorder
+	 * @throws NullPointerException if the recorder is null
+	 */
+	public void setPerformanceRecorder(PerformanceRecorder performanceRecorder) {
+		this.performanceRecorder = Objects.requireNonNull(performanceRecorder, "performanceRecorder");
+	}
+
+	/**
 	 * Changes the transient Subject used to filter the imported Question-capture
 	 * queue.
 	 *
@@ -1023,35 +1039,104 @@ public final class QuestionCapturePane extends VBox {
 			if (!sharedContextCapturePane.hasCurrentSelection()) {
 				return;
 			}
-			if (!sharedContextCapturePane.acceptAutomaticRegion()) {
-				return;
+			try (PerformanceOperation operation = performanceRecorder.start("capture.question.shared-context.accept")) {
+				try {
+					try (PerformanceOperation acceptance = performanceRecorder
+							.start("capture.question.shared-context.region", operation.id())) {
+						try {
+							if (!sharedContextCapturePane.acceptAutomaticRegion()) {
+								acceptance.failed();
+								operation.failed();
+								return;
+							}
+							acceptance.resultCount(1);
+						} catch (RuntimeException | Error failure) {
+							acceptance.failed();
+							throw failure;
+						}
+					}
+					try (PerformanceOperation preview = performanceRecorder
+							.start("capture.question.shared-context.preview", operation.id())) {
+						try {
+							refreshSharedContextPreview();
+							preview.resultCount(1);
+						} catch (RuntimeException | Error failure) {
+							preview.failed();
+							throw failure;
+						}
+					}
+					try (PerformanceOperation controls = performanceRecorder
+							.start("capture.question.shared-context.controls", operation.id())) {
+						try {
+							updateQuestionCodeLock();
+							hideSharedContextStatus();
+							if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
+								saveStatusLabel.setText("Shared context captured — save the resolution.");
+							} else {
+								saveStatusLabel.setText("Shared context captured — add the question content.");
+							}
+							refreshSaveButtonState();
+							controls.resultCount(1);
+						} catch (RuntimeException | Error failure) {
+							controls.failed();
+							throw failure;
+						}
+					}
+					operation.resultCount(1);
+				} catch (RuntimeException | Error failure) {
+					operation.failed();
+					throw failure;
+				}
 			}
-
-			// Accepted Shared Context is displayed immediately as reference material but
-			// remains outside the Question-specific content-part list.
-			refreshSharedContextPreview();
-			updateQuestionCodeLock();
-			hideSharedContextStatus();
-			if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
-				saveStatusLabel.setText("Shared context captured — save the resolution.");
-			} else {
-				saveStatusLabel.setText("Shared context captured — add the question content.");
-			}
-			refreshSaveButtonState();
 			return;
 		}
 		if (currentSelection == null) {
 			return;
 		}
+		try (PerformanceOperation operation = performanceRecorder.start("capture.question.region.accept")) {
+			try {
 
-		// PDF selections become one content part at their current assembly position.
-		pendingContentParts.add(new PdfQuestionContentPart(currentSelection));
-		clearCurrentSelection();
-		refreshRegionPreviews();
-		setRegionCountLabel(pendingContentParts.size());
-		showQuestionPendingStatus();
-		updateQuestionCodeLock();
-		refreshSaveButtonState();
+				// Preserve the existing authoritative content-part order.
+				pendingContentParts.add(new PdfQuestionContentPart(currentSelection));
+				try (PerformanceOperation clearing = performanceRecorder
+						.start("capture.question.region.clear-selection", operation.id())) {
+					try {
+						clearCurrentSelection();
+						clearing.resultCount(1);
+					} catch (RuntimeException | Error failure) {
+						clearing.failed();
+						throw failure;
+					}
+				}
+				try (PerformanceOperation preview = performanceRecorder.start("capture.question.region.preview",
+						operation.id())) {
+					try {
+						refreshRegionPreviews();
+						preview.resultCount(pendingContentParts.size());
+					} catch (RuntimeException | Error failure) {
+						preview.failed();
+						throw failure;
+					}
+				}
+				try (PerformanceOperation controls = performanceRecorder.start("capture.question.region.controls",
+						operation.id())) {
+					try {
+						setRegionCountLabel(pendingContentParts.size());
+						showQuestionPendingStatus();
+						updateQuestionCodeLock();
+						refreshSaveButtonState();
+						controls.resultCount(pendingContentParts.size());
+					} catch (RuntimeException | Error failure) {
+						controls.failed();
+						throw failure;
+					}
+				}
+				operation.resultCount(pendingContentParts.size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
 	}
 
 	private void advanceLegacyQuestionSplit() {
@@ -1700,11 +1785,11 @@ public final class QuestionCapturePane extends VBox {
 		return controls;
 	}
 
-	private Task<QuestionSaveResult> createQuestionSaveTask(SqliteQuestionCaptureService.Request request) {
+	private Task<QuestionSaveResult> createQuestionSaveTask(SqliteQuestionCaptureService.Request request,
+			long parentOperationId) {
 
-		// Keep Task mechanics outside QuestionCapturePane; this method only binds the
-		// Question-specific persistence operation.
-		return new CaptureBackgroundTask<>(() -> persistQuestionCapture(request));
+		// The worker retains its explicit correlation ID across threads.
+		return new CaptureBackgroundTask<>(() -> persistQuestionCapture(request, parentOperationId));
 	}
 
 	private ScrollPane createRegionsScrollPane() {
@@ -2049,27 +2134,40 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void handleQuestionCodeChanged(String newCode) {
-		if (legacySplitCaptureState != null) {
+		try (PerformanceOperation operation = performanceRecorder.start("capture.question.code-change")) {
+			try {
+				if (legacySplitCaptureState != null) {
 
-			// Split metadata was already explicitly confirmed. Updating the displayed
-			// part must not invoke ordinary automatic multipart/context inference.
-			refreshQuestionCodeStatus(newCode);
-			refreshSaveButtonState();
-			return;
+					// Confirmed split metadata bypasses ordinary inference.
+					measureQuestionCodePhase("capture.question.code.duplicate", operation.id(),
+							() -> refreshQuestionCodeStatus(newCode));
+					measureQuestionCodePhase("capture.question.code.controls", operation.id(),
+							this::refreshSaveButtonState);
+					operation.resultCount(newCode == null ? 0 : newCode.length());
+					return;
+				}
+
+				// Pass the active inference ID into nested repository
+				// measurements, including reads on the JavaFX thread.
+				measureQuestionCodePhase("capture.question.code.infer", operation.id(), inferenceId -> {
+					if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
+						sharedContextCapturePane.selectContext(null);
+					}
+					applyAutomaticResponseType();
+					refreshSharedContextControls(inferenceId);
+				});
+				measureQuestionCodePhase("capture.question.code.duplicate", operation.id(),
+						() -> refreshQuestionCodeStatus(newCode));
+				measureQuestionCodePhase("capture.question.code.controls", operation.id(),
+						this::refreshSaveButtonState);
+
+				// Question codes themselves are never written to diagnostics.
+				operation.resultCount(newCode == null ? 0 : newCode.length());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
 		}
-		if (editingQuestion != null && !loadingQuestionEdit && !editingSourceMatches(newCode)) {
-			sharedContextCapturePane.selectContext(null);
-		}
-
-		// Resolve response type before shared-context controls because independent MCQ
-		// continuation depends on the effective response type.
-		applyAutomaticResponseType();
-		refreshSharedContextControls();
-
-		// Duplicate feedback is deliberately independent of classification and region
-		// state, so it appears as soon as the Question number is recognisable.
-		refreshQuestionCodeStatus(newCode);
-		refreshSaveButtonState();
 	}
 
 	private void handleResponseTypeChanged() {
@@ -2235,6 +2333,22 @@ public final class QuestionCapturePane extends VBox {
 		selectResponseType(question.getResponseType());
 	}
 
+	private void measureQuestionCodePhase(String name, long parentOperationId, LongConsumer action) {
+		try (PerformanceOperation operation = performanceRecorder.start(name, parentOperationId)) {
+			try {
+				action.accept(operation.id());
+				operation.resultCount(1);
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+	}
+
+	private void measureQuestionCodePhase(String name, long parentOperationId, Runnable action) {
+		measureQuestionCodePhase(name, parentOperationId, _ -> action.run());
+	}
+
 	private void moveContentPart(int contentIndex, int offset) {
 		int targetIndex = contentIndex + offset;
 		if (contentIndex < 0 || contentIndex >= pendingContentParts.size() || targetIndex < 0
@@ -2376,23 +2490,64 @@ public final class QuestionCapturePane extends VBox {
 
 	// Run validation, persistence and list reconstruction on the save task, away
 	// from the FX thread.
-	private QuestionSaveResult persistQuestionCapture(SqliteQuestionCaptureService.Request request) {
-		List<Question> beforeSave = questionRepository.findAll();
-		String validationError = validateStoredQuestion(request, beforeSave);
+	private QuestionSaveResult persistQuestionCapture(SqliteQuestionCaptureService.Request request,
+			long parentOperationId) {
+		List<Question> beforeSave;
+		try (PerformanceOperation readOperation = performanceRecorder.start("capture.question.save.read-before",
+				parentOperationId)) {
+			try {
+				beforeSave = questionRepository.findAll();
+				readOperation.resultCount(beforeSave.size());
+			} catch (RuntimeException | Error failure) {
+				readOperation.failed();
+				throw failure;
+			}
+		}
+		String validationError;
+		try (PerformanceOperation validationOperation = performanceRecorder.start("capture.question.save.validate",
+				parentOperationId)) {
+			try {
+				validationError = validateStoredQuestion(request, beforeSave);
+				if (validationError != null) {
+					validationOperation.failed();
+				} else {
+					validationOperation.resultCount(1);
+				}
+			} catch (RuntimeException | Error failure) {
+				validationOperation.failed();
+				throw failure;
+			}
+		}
 		if (validationError != null) {
 			return new QuestionSaveResult(null, beforeSave, validationError, null);
 		}
-		Question saved = questionCaptureService.save(request);
-		try {
-			return new QuestionSaveResult(saved, questionRepository.findAll(), null, null);
-		} catch (RuntimeException refreshFailure) {
+		Question saved;
+		try (PerformanceOperation persistenceOperation = performanceRecorder.start("capture.question.save.persist",
+				parentOperationId)) {
+			try {
+				saved = questionCaptureService.save(request);
+				persistenceOperation.resultCount(1);
+			} catch (RuntimeException | Error failure) {
+				persistenceOperation.failed();
+				throw failure;
+			}
+		}
+		try (PerformanceOperation refreshOperation = performanceRecorder.start("capture.question.save.refresh",
+				parentOperationId)) {
+			try {
+				List<Question> refreshed = questionRepository.findAll();
+				refreshOperation.resultCount(refreshed.size());
+				return new QuestionSaveResult(saved, refreshed, null, null);
+			} catch (RuntimeException refreshFailure) {
 
-			// The transaction has committed. Never report a refresh failure as a failed
-			// save.
-			List<Question> fallback = new ArrayList<>(beforeSave);
-			fallback.removeIf(question -> question.getId() == saved.getId());
-			fallback.add(saved);
-			return new QuestionSaveResult(saved, List.copyOf(fallback), null, refreshFailure);
+				// Persistence has already committed. Retain the original
+				// fallback semantics and never repeat the save transaction.
+				refreshOperation.failed();
+				List<Question> fallback = new ArrayList<>(beforeSave);
+				fallback.removeIf(question -> question.getId() == saved.getId());
+				fallback.add(saved);
+				return new QuestionSaveResult(saved, List.copyOf(fallback), null, refreshFailure);
+			}
 		}
 	}
 
@@ -2482,6 +2637,10 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshMultipartSharedContextControls() {
+		refreshMultipartSharedContextControls(0);
+	}
+
+	private void refreshMultipartSharedContextControls(long parentOperationId) {
 		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 		if (sourceCode == null) {
 			refreshUnresolvedImportedSharedContext();
@@ -2495,8 +2654,18 @@ public final class QuestionCapturePane extends VBox {
 		if (showImportedSharedContext(sourceCode)) {
 			return;
 		}
-		SourceQuestion sourceQuestion = sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode).orElse(null);
-		if (sourceQuestion != null && showStoredSharedContext(sourceCode, sourceQuestion)) {
+		SourceQuestion sourceQuestion;
+		try (PerformanceOperation lookup = performanceRecorder.start("capture.question.code.context.source",
+				parentOperationId)) {
+			try {
+				sourceQuestion = sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode).orElse(null);
+				lookup.resultCount(sourceQuestion == null ? 0 : 1);
+			} catch (RuntimeException | Error failure) {
+				lookup.failed();
+				throw failure;
+			}
+		}
+		if (sourceQuestion != null && showStoredSharedContext(sourceCode, sourceQuestion, parentOperationId)) {
 			return;
 		}
 		boolean required = importedQuestion != null && importedQuestion.isSharedContextUnresolved();
@@ -2577,16 +2746,29 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshSharedContextControls() {
+		refreshSharedContextControls(0);
+	}
+
+	private void refreshSharedContextControls(long parentOperationId) {
 		if (isNewIndependentMcqCapture()) {
 			refreshIndependentMcqSharedContextControls();
 		} else {
 			clearIndependentMcqSharedContextState();
-			refreshMultipartSharedContextControls();
+			refreshMultipartSharedContextControls(parentOperationId);
 		}
 
-		// Shared Context can change independently of ordinary Question content, so its
-		// reference preview must be refreshed after every Shared Context transition.
-		refreshSharedContextPreview();
+		// The reference preview is part of automatic inference,
+		// but is measured separately from repository lookup.
+		try (PerformanceOperation preview = performanceRecorder.start("capture.question.code.context.preview",
+				parentOperationId)) {
+			try {
+				refreshSharedContextPreview();
+				preview.resultCount(1);
+			} catch (RuntimeException | Error failure) {
+				preview.failed();
+				throw failure;
+			}
+		}
 	}
 
 	private void refreshSharedContextPreview() {
@@ -2722,9 +2904,6 @@ public final class QuestionCapturePane extends VBox {
 	private void saveQuestion() {
 		Integer marks = QuestionCaptureValidator.parsePositiveMarks(marksField.getText());
 		if (marks == null) {
-
-			// Save normally follows successful form validation, but retain a defensive
-			// boundary so malformed marks can never escape as NumberFormatException.
 			showAlert(Alert.AlertType.WARNING, "Question is incomplete.", "Marks must be a positive whole number.");
 			return;
 		}
@@ -2740,9 +2919,6 @@ public final class QuestionCapturePane extends VBox {
 			previousImportedIndex = selectedImportedQuestionIndex();
 			hadStoredContent = !importedQuestion.getContentParts().isEmpty();
 		}
-
-		// Persist the already-validated numeric marks rather than reparsing raw UI
-		// text at the persistence boundary.
 		SqliteQuestionCaptureService.Request request = SqliteQuestionCaptureService.Request.withContent(
 				captureOperation(), bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(), marks,
 				List.copyOf(pendingContentParts), curriculumSelectionModel.getClassification(), selectedResponseType(),
@@ -2750,24 +2926,60 @@ public final class QuestionCapturePane extends VBox {
 				continueSharedContextToNextMcq());
 		int savedPreviousImportedIndex = previousImportedIndex;
 		boolean savedHadStoredContent = hadStoredContent;
-		questionSaveInProgress = true;
-		setDisable(true);
-		saveStatusLabel.setText("Saving " + request.questionCode() + "...");
-		Task<QuestionSaveResult> saveTask = createQuestionSaveTask(request);
-		saveTask.setOnSucceeded(_ -> {
-			QuestionSaveResult result = saveTask.getValue();
-			completeQuestionSave(result, editing, imported, savedPreviousImportedIndex, savedHadStoredContent);
-		});
-		saveTask.setOnFailed(_ -> {
-			questionSaveInProgress = false;
-			setDisable(false);
-			saveStatusLabel.setText("Save failed — current question retained");
-			showAlert(Alert.AlertType.ERROR, "Question could not be saved.", "The question was not saved. "
-					+ "Your current question details and accepted content " + "have been retained.");
-		});
-		Thread saveThread = new Thread(saveTask, "question-save");
-		saveThread.setDaemon(true);
-		saveThread.start();
+		PerformanceOperation operation = performanceRecorder.start("capture.question.save");
+		try {
+			questionSaveInProgress = true;
+			setDisable(true);
+			saveStatusLabel.setText("Saving " + request.questionCode() + "...");
+			Task<QuestionSaveResult> saveTask = createQuestionSaveTask(request, operation.id());
+			saveTask.setOnSucceeded(_ -> {
+				try {
+					QuestionSaveResult result = saveTask.getValue();
+					if (result.validationError() != null) {
+						operation.failed();
+					}
+					try (PerformanceOperation publication = performanceRecorder.start("capture.question.save.publish",
+							operation.id())) {
+						try {
+							completeQuestionSave(result, editing, imported, savedPreviousImportedIndex,
+									savedHadStoredContent);
+							publication.resultCount(result.question() == null ? 0 : 1);
+						} catch (RuntimeException | Error failure) {
+							publication.failed();
+							operation.failed();
+							throw failure;
+						}
+					}
+					operation.resultCount(result.question() == null ? 0 : 1);
+				} catch (RuntimeException | Error failure) {
+					operation.failed();
+					throw failure;
+				} finally {
+					operation.close();
+				}
+			});
+			saveTask.setOnFailed(_ -> {
+				try {
+					operation.failed();
+					questionSaveInProgress = false;
+					setDisable(false);
+					saveStatusLabel.setText("Save failed — current question retained");
+				} finally {
+
+					// Finish timing before the modal error acknowledgement.
+					operation.close();
+				}
+				showAlert(Alert.AlertType.ERROR, "Question could not be saved.", "The question was not saved. "
+						+ "Your current question details and " + "accepted content have been retained.");
+			});
+			Thread saveThread = new Thread(saveTask, "question-save");
+			saveThread.setDaemon(true);
+			saveThread.start();
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			operation.close();
+			throw failure;
+		}
 	}
 
 	private void selectCaptureModeToggle(boolean imported) {
@@ -3142,8 +3354,32 @@ public final class QuestionCapturePane extends VBox {
 		sharedContextStatusLabel.setManaged(true);
 	}
 
-	private boolean showStoredSharedContext(String sourceCode, SourceQuestion sourceQuestion) {
-		SharedQuestionContext existingContext = findSharedContextForSourceQuestion(sourceQuestion);
+	private boolean showStoredSharedContext(String sourceCode, SourceQuestion sourceQuestion, long parentOperationId) {
+		List<Question> questions;
+		try (PerformanceOperation retrieval = performanceRecorder.start("capture.question.code.context.corpus",
+				parentOperationId)) {
+			try {
+
+				// This is the existing full-corpus retrieval, preserved
+				// so its cost can be established independently.
+				questions = currentQuestions();
+				retrieval.resultCount(questions.size());
+			} catch (RuntimeException | Error failure) {
+				retrieval.failed();
+				throw failure;
+			}
+		}
+		SharedQuestionContext existingContext;
+		try (PerformanceOperation matching = performanceRecorder.start("capture.question.code.context.scan",
+				parentOperationId)) {
+			try {
+				existingContext = findSharedContextForSourceQuestion(sourceQuestion, questions);
+				matching.resultCount(existingContext == null ? 0 : 1);
+			} catch (RuntimeException | Error failure) {
+				matching.failed();
+				throw failure;
+			}
+		}
 		if (existingContext != null) {
 			sharedContextCapturePane.selectContext(existingContext);
 			hideSharedContextControls();
