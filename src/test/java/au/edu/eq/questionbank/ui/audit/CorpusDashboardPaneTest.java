@@ -848,52 +848,44 @@ class CorpusDashboardPaneTest {
 	@Test
 	@SuppressWarnings("unchecked")
 	void needsWorkReflectsAuthoritativeExamCompletion(FxRobot robot) {
-
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
-
 		ExamCorpusStatus unknownCounts = new ExamCorpusStatus(fixture.activeExam,
 				new ExamAssetExpectations(null, 0, null, 0), List.of(), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0),
 				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
-
 		ExamCorpusStatus missingBooklets = new ExamCorpusStatus(fixture.activeExam,
 				new ExamAssetExpectations(1, 0, 0, 0), List.of(), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0),
 				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
-
 		ExamCorpusStatus excessBooklets = new ExamCorpusStatus(fixture.completeExam,
 				new ExamAssetExpectations(1, 2, 1, 1), fixture.completeExamStatus.bookletStatuses(),
 				fixture.completeExamStatus.questionSummary(), fixture.completeExamStatus.mcqExplanationSummary(),
 				fixture.completeExamStatus.findings());
-
-		ExamCorpusStatus exactCounts = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(0, 0, 0, 0),
-				List.of(), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0),
-				EnumSet.noneOf(ExamCorpusFinding.class));
+		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		ExamCorpusStatus exactCounts = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(readyBooklet), new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
 
 		// The production Work column currently ignores structural
 		// incompleteness, even when no Questions exist.
 		robot.interact(() -> pane.replaceData(List.of(unknownCounts, missingBooklets), List.of()));
-
 		TableColumn<ExamCorpusStatus, String> needsWork = exams.getColumns().stream()
 				.filter(column -> "Needs Work".equals(column.getText()))
 				.map(column -> (TableColumn<ExamCorpusStatus, String>) column).findFirst().orElseThrow();
-
 		assertEquals("Yes", needsWork.getCellData(unknownCounts));
 		assertEquals("Yes", needsWork.getCellData(missingBooklets));
-
 		robot.interact(() -> pane.replaceData(List.of(excessBooklets), fixture.questions()));
-
 		assertEquals("Yes", needsWork.getCellData(excessBooklets));
 
 		// Matching asset counts do not eliminate outstanding
 		// capture or classification requirements.
 		robot.interact(() -> pane.replaceData(List.of(fixture.completeExamStatus), fixture.questions()));
-
 		assertFalse(fixture.completeExamStatus.isReadyForCompletion());
 		assertEquals("Yes", needsWork.getCellData(fixture.completeExamStatus));
 
-		// When all recorded expectations are satisfied and
-		// no required capture work remains, no work is shown.
+		// Matching asset and Question counts, available source
+		// material and completed capture require no further work.
 		robot.interact(() -> pane.replaceData(List.of(exactCounts), List.of()));
-
 		assertTrue(exactCounts.isReadyForCompletion());
 		assertEquals("—", needsWork.getCellData(exactCounts));
 	}
