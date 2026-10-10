@@ -514,8 +514,8 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question question = captureQuestion(robot, "DASH-ANSWER");
 		AtomicBoolean returned = new AtomicBoolean();
 		Boolean started = WaitForAsyncUtils.asyncFx(() -> (Boolean) invoke(application, "showDashboardAnswerCapture",
-				new Class<?>[] { Question.class, Runnable.class }, question, (Runnable) () -> returned.set(true)))
-				.get();
+				new Class<?>[] { Question.class, Runnable.class, long.class }, question,
+				(Runnable) () -> returned.set(true), 0L)).get();
 		assertTrue(started.booleanValue());
 		Button returnToDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		assertTrue(returnToDashboard.isVisible());
@@ -539,8 +539,8 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(classification.isDisable());
 		AtomicBoolean returned = new AtomicBoolean();
 		Boolean started = WaitForAsyncUtils.asyncFx(() -> (Boolean) invoke(application, "showDashboardAnswerCapture",
-				new Class<?>[] { Question.class, Runnable.class }, question, (Runnable) () -> returned.set(true)))
-				.get();
+				new Class<?>[] { Question.class, Runnable.class, long.class }, question,
+				(Runnable) () -> returned.set(true), 0L)).get();
 		assertTrue(started.booleanValue());
 
 		// Answer capture uses already-persisted Question classification. Classification
